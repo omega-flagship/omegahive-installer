@@ -163,7 +163,8 @@ def socket_inode(listener_inode, server_port, client_port, deadline, cleanup=Fal
     accepted end of this connection must belong to this account."""
     local = "0100007F:" + format(server_port, "04X")
     remote = "0100007F:" + format(client_port, "04X")
-    end = min(deadline, time.monotonic() + 1)
+    # Bounded by the caller (at most 5 s per request), so a slow accept on a busy machine is waited for.
+    end = deadline
     while time.monotonic() < end:
         require(cleanup or not STOP)
         fd = os.open("/proc/" + str(os.getpid()) + "/net/tcp", os.O_RDONLY | os.O_NOFOLLOW)

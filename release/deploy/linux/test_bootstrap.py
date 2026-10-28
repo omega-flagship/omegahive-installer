@@ -253,7 +253,7 @@ class BootstrapTests(unittest.TestCase):
         # Each read of /proc/<pid>/net/tcp returns the next prepared view (kernel row layout).
         head = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
         views, real_open = [head + "".join(rows) for rows in rows_per_read], os.open
-        tmp = tempfile.mkdtemp()
+        holder = tempfile.TemporaryDirectory(); self.addCleanup(holder.cleanup); tmp = holder.name
         def fake_open(path, flags, *args, **kwargs):
             if str(path).startswith("/proc/"):
                 count = len(os.listdir(tmp)); name = os.path.join(tmp, str(count))
@@ -275,6 +275,19 @@ class BootstrapTests(unittest.TestCase):
             bootstrap.socket_inode("777", 8700, 0xD431, time.monotonic() + 5)
         with self.proc_tcp_views([listen, pending]), self.assertRaises(bootstrap.Refused):
             bootstrap.socket_inode("777", 8700, 0xD431, time.monotonic() + 0.3)
+        # A pending row never hides a foreign accepted row or a wrong listener in the same view.
+        other = row("01", "0100007F:D431", uid + 1, "889")
+        with self.proc_tcp_views([listen, pending, other]), self.assertRaises(bootstrap.Refused):
+            bootstrap.socket_inode("777", 8700, 0xD431, time.monotonic() + 5)
+        foreign_listen = row("0A", "00000000:0000", uid + 1, "777")
+        with self.proc_tcp_views([foreign_listen, pending], [listen, accepted]), self.assertRaises(bootstrap.Refused):
+            bootstrap.socket_inode("777", 8700, 0xD431, time.monotonic() + 5)
+        wrong_listen = row("0A", "00000000:0000", uid, "999")
+        with self.proc_tcp_views([wrong_listen, accepted]), self.assertRaises(bootstrap.Refused):
+            bootstrap.socket_inode("777", 8700, 0xD431, time.monotonic() + 0.3)
+        # Accept slower than one second is still waited for within the caller's bound.
+        with self.proc_tcp_views(*([[listen, pending]] * 60 + [[listen, accepted]])):
+            bootstrap.socket_inode("777", 8700, 0xD431, time.monotonic() + 5)
 
     def test_failure_message_is_plain_and_does_not_promise_data_safety(self):
         message = bootstrap.failure_message()
