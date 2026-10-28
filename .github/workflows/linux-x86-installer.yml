@@ -200,8 +200,8 @@ jobs:
           sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
       - name: Check and stage the download
         run: |
-          cd ci/kit && sha256sum -c omegahive-linux-r11.sh.sha256
-          sudo install -o "$HIVE_USER" -m 0600 omegahive-linux-r11.sh /home/$HIVE_USER/omegahive-linux.sh
+          cd ci/kit && sha256sum -c omegahive-linux-r12.sh.sha256
+          sudo install -o "$HIVE_USER" -m 0600 omegahive-linux-r12.sh /home/$HIVE_USER/omegahive-linux.sh
       - name: Run the installer as the newcomer (sh ~/omegahive-linux.sh)
         run: |
           set +e
