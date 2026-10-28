@@ -163,7 +163,8 @@ jobs:
           sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
           # Reboot stand-in: restart the user manager; the enabled service must come back by itself.
           sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-enabled omegahive.service
-          sudo systemctl restart "user@$U.service"
+          sudo systemctl stop "user@$U.service"; sleep 2
+          sudo systemctl start "user@$U.service" || { sudo systemctl status "user@$U.service" --no-pager -l | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' | tail -20; sudo journalctl -u "user@$U.service" --no-pager -n 40 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'; exit 1; }
           for i in $(seq 1 60); do sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-active --quiet omegahive.service && break; sleep 1; done
           sleep 5
           sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
@@ -249,7 +250,8 @@ jobs:
           sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
           # Reboot stand-in: restart the user manager; the enabled service must come back by itself.
           sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-enabled omegahive.service
-          sudo systemctl restart "user@$U.service"
+          sudo systemctl stop "user@$U.service"; sleep 2
+          sudo systemctl start "user@$U.service" || { sudo systemctl status "user@$U.service" --no-pager -l | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' | tail -20; sudo journalctl -u "user@$U.service" --no-pager -n 40 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'; exit 1; }
           for i in $(seq 1 60); do sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-active --quiet omegahive.service && break; sleep 1; done
           sleep 5
           sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
