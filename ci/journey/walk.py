@@ -173,23 +173,21 @@ def run():
         if info.get("fl"):
             way = "it opened by itself"
         if not way:
-            cand = page.get_by_role("button", name=re.compile(r"first light|finish setting up|set me up|set up your hive|get started|start setup", re.I))
-            link = page.get_by_role("link", name=re.compile(r"first light|finish setting up|set me up|set up your hive|get started", re.I))
-            for loc, what in ((cand, "button"), (link, "link")):
-                if visible(loc):
-                    label = (loc.first.get_attribute("aria-label") or loc.first.inner_text() or "").strip()
-                    click(loc)
-                    settle(page)
-                    way = f"{what} '{label[:60]}'"
-                    break
-        if way and not visible(page.locator("section.fl-panel"), 8000) and "first light" not in way.lower():
-            snap(page, "firstlight-way-in-page", note=f"pressed {way}; First Light not yet open")
-            cand = page.get_by_role("button", name=re.compile(r"first light|start|begin|continue", re.I))
-            if visible(cand):
-                label = (cand.first.inner_text() or "").strip()
-                click(cand)
-                settle(page)
-                way += f", then '{label[:60]}'"
+            pill = page.get_by_role("button", name=re.compile(r"^Getting started", re.I))
+            if visible(pill):
+                label = (pill.first.inner_text() or "").strip()
+                click(pill)
+                settle(page, 2500)
+                info = snap(page, "setup-getting-started", note=f"pressed the '{label[:60]}' pill on the hive")
+                way = f"'{label[:40]}' pill"
+                cand = page.get_by_role("button", name=re.compile(r"first light", re.I)).or_(page.get_by_role("link", name=re.compile(r"first light", re.I)))
+                if visible(cand):
+                    label = (cand.first.get_attribute("aria-label") or cand.first.inner_text() or "").strip()
+                    click(cand)
+                    settle(page, 2500)
+                    way += f", then '{label[:60]}'"
+                else:
+                    way += " (no First Light item on it)"
         if not visible(page.locator("section.fl-panel"), 3000):
             box = page.get_by_role("textbox").filter(has_not=page.locator("[type=password]"))
             if visible(box):
@@ -293,14 +291,15 @@ def run():
             if time.time() - same_since > 25:
                 ctl = panel.get_by_role("group", name="First Light controls")
                 nxt = ctl.get_by_role("button", name="Next", exact=True)
-                later = ctl.get_by_role("button", name="Later", exact=True)
+                later = panel.get_by_role("button", name="Later", exact=True)
                 close = ctl.get_by_role("button", name="Close", exact=True)
+                stop = ctl.get_by_role("button", name="Stop", exact=True)
                 if walked["next"] < 12 and visible(nxt) and nxt.first.is_enabled():
                     snap(page, f"fl-stuck-{info.get('fl_step')}", note="nothing moved for 25s; pressing Next")
                     click(nxt)
                     walked["next"] += 1
                 elif walked["next"] < 12 and visible(later):
-                    snap(page, f"fl-stuck-{info.get('fl_step')}", note="nothing moved for 25s and Next is not on; pressing Later")
+                    snap(page, f"fl-later-{info.get('fl_step')}", note="this step waits on something that needs a key; pressing the page's Later")
                     click(later)
                     walked["next"] += 1
                 elif visible(close):
@@ -308,8 +307,14 @@ def run():
                     click(close)
                     ended_how = "pressed Close on the last line"
                     break
+                elif visible(stop):
+                    snap(page, f"fl-stop-{info.get('fl_step')}", note="no Next, Later or Close left on this step; pressing Stop")
+                    click(stop)
+                    ended_how = f"pressed Stop at {info.get('fl_step')} (nothing further without a key)"
+                    settle(page, 1500)
+                    break
                 else:
-                    snap(page, f"fl-dead-end-{info.get('fl_step')}", ok=False, error="no way on (no Next, Later or Close)")
+                    snap(page, f"fl-dead-end-{info.get('fl_step')}", ok=False, error="no way on (no Next, Later, Close or Stop)")
                     ended_how = "dead end"
                     break
                 same_since = time.time()
@@ -321,78 +326,82 @@ def run():
         snap(page, "firstlight-end", ok=ended_how not in ("dead end", "time ran out"),
              note=f"ended: {ended_how}; walked {walked}; apps offered {apps_seen}; marks {info.get('marks')}")
 
+        if visible(panel):
+            stop = panel.get_by_role("button", name=re.compile(r"^(Stop|Close)$"))
+            if visible(stop):
+                click(stop)
+                settle(page, 1500)
+
         # ---- section 5.7 / 6: OmegaAssist ----
+        state["step"] = "apps"
+        def nav(name):
+            loc = page.get_by_role("link", name=name, exact=True).or_(page.get_by_role("button", name=name, exact=True))
+            if not visible(loc):
+                hdr = page.get_by_role("button", name="Apps", exact=True)
+                if visible(hdr):
+                    click(hdr)
+                    page.wait_for_timeout(800)
+            return loc
+        allapps = nav("All apps")
+        if visible(allapps):
+            click(allapps)
+            settle(page, 2500)
+            snap(page, "apps-all", note="the hive's All apps page, from the menu")
+        else:
+            page.goto(f"{BASE}/#/programs", wait_until="domcontentloaded")
+            settle(page, 2500)
+            snap(page, "apps-all", ok=False, note="no All apps in the menu; opened #/programs by address")
+
         state["step"] = "omegaassist"
-        in_app = "#/program/" in page.url
-        if not in_app:
-            apps_nav = page.get_by_role("link", name=re.compile(r"^apps$", re.I))
-            apps_btn = page.get_by_role("button", name=re.compile(r"^apps$", re.I))
-            if visible(apps_nav):
-                click(apps_nav)
-            elif visible(apps_btn):
-                click(apps_btn)
-            else:
-                page.goto(f"{BASE}/#/programs", wait_until="domcontentloaded")
-            settle(page, 3000)
-            snap(page, "apps-page", note="the hive's Apps")
+        assist = nav("Assist")
+        how = ""
+        if visible(assist):
+            click(assist)
+            how = "menu 'Assist'"
+        else:
             oa = page.get_by_role("button", name=re.compile("OmegaAssist")).or_(page.get_by_role("link", name=re.compile("OmegaAssist")))
             if visible(oa):
                 click(oa)
-            elif visible(page.get_by_text("OmegaAssist")):
-                click(page.get_by_text("OmegaAssist"))
-            settle(page, 3000)
-            opn = page.get_by_role("button", name=re.compile(r"^open( omegaassist)?$", re.I))
-            if "#/program/" not in page.url and visible(opn):
-                click(opn)
-                settle(page, 3000)
-        page.wait_for_timeout(6000)
+                how = "an OmegaAssist button on All apps"
+        settle(page, 3000)
+        page.wait_for_timeout(5000)
         info = probe(page)
-        in_app = "#/program/" in page.url or any("assist" in (f.get("url") or "").lower() for f in info.get("frames", []))
-        snap(page, "omegaassist-open", ok=in_app, error="" if in_app else "OmegaAssist did not open")
+        in_app = "#/program/" in page.url or bool(info.get("iframes"))
+        snap(page, "omegaassist-open", ok=in_app, note=f"opened by {how or 'nothing'}", error="" if in_app else "OmegaAssist did not open")
 
-        sent = False
-        targets = [page] + list(page.frames[1:])
-        for t in targets:
+        sent, where = False, ""
+        for t in list(page.frames[1:]) + [page]:
             try:
                 box = t.locator("textarea, [contenteditable=true], input[type=text]")
-                if box.count() and box.first.is_visible():
-                    box.first.click(timeout=3000)
-                    box.first.fill("hello")
-                    box.first.press("Enter")
-                    sent = True
+                for i in range(min(box.count(), 6)):
+                    el = box.nth(i)
+                    ph = (el.get_attribute("placeholder") or el.get_attribute("aria-label") or "")
+                    if not el.is_visible() or ph.lower().startswith("ask the hive"):
+                        continue
+                    el.click(timeout=3000)
+                    el.fill("hello")
+                    el.press("Enter")
+                    sent, where = True, f"{'app frame' if t is not page else 'page'} box '{ph[:60]}'"
+                    break
+                if sent:
                     break
             except Exception as e:  # noqa: BLE001
                 note_event("walk", f"typing hello failed: {e}")
         page.wait_for_timeout(15000)
-        snap(page, "omegaassist-hello", ok=sent, note="typed hello and pressed Enter (no key: the answer, if any, is what the page says)",
-             error="" if sent else "no text box found")
+        snap(page, "omegaassist-hello", ok=sent, note=f"typed hello and pressed Enter in {where} (no key: the answer, if any, is what the page says)",
+             error="" if sent else "no text box found in OmegaAssist")
 
         # ---- Studio, if there is a way in ----
         state["step"] = "studio"
-        found = None
-        for t in [page] + list(page.frames[1:]):
-            try:
-                loc = t.get_by_role("button", name=re.compile("Studio")).or_(t.get_by_role("link", name=re.compile("Studio")))
-                if loc.count() and loc.first.is_visible():
-                    found = (t, loc)
-                    break
-            except Exception:  # noqa: BLE001
-                pass
-        if not found:
-            page.goto(f"{BASE}/#/programs", wait_until="domcontentloaded")
+        studio = nav("Studio")
+        if visible(studio):
+            click(studio)
             settle(page, 3000)
-            loc = page.get_by_role("button", name=re.compile("Studio")).or_(page.get_by_role("link", name=re.compile("Studio")))
-            if visible(loc):
-                found = (page, loc)
-            elif visible(page.get_by_text(re.compile("Studio"))):
-                found = (page, page.get_by_text(re.compile("Studio")))
-        if found:
-            label = (found[1].first.get_attribute("aria-label") or found[1].first.inner_text() or "").strip()
-            click(found[1])
-            settle(page, 6000)
-            snap(page, "studio-open", note=f"pressed '{label[:60]}'")
+            page.wait_for_timeout(5000)
+            info = probe(page)
+            snap(page, "studio-open", ok="#/program/" in page.url or bool(info.get("iframes")), note="menu 'Studio'")
         else:
-            snap(page, "studio-no-way-in", ok=False, error="no Studio button or link on the Apps page or in OmegaAssist")
+            snap(page, "studio-no-way-in", ok=False, error="no Studio in the menu")
         browser.close()
 
 
