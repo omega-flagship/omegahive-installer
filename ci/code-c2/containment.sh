@@ -34,22 +34,29 @@ wait_service() {  # until the service process exists (max 15 s); prints its pids
   for i in $(seq 1 150); do p=$(pgrep -f -- '-m omegacode --config' || true); [ -n "$p" ] && { echo "$p" | tr '\n' ,; return 0; }; sleep 0.1; done
   return 1
 }
+port_free() {  # no socket of any state on :8724 (TIME_WAIT lasts up to 60 s after a killed listener)
+  for i in $(seq 1 90); do [ "$(ss -Htan 'sport = :8724' | wc -l)" = 0 ] && return 0; sleep 1; done
+  echo "  port 8724 still has sockets: $(ss -Htan 'sport = :8724' | awk '{print $1}' | sort | uniq -c | tr '\n' ' ')"
+}
 main_pid() { systemctl show -p MainPID --value "$1.service"; }
 exercised() {  # name, pids-or-empty
-  if [ -z "$2" ]; then echo "  NOT EXERCISED ($1): the service never appeared"; fail=1; else echo "  $1: live service pids [$2]"; fi
+  if [ -z "$2" ]; then echo "  NOT EXERCISED ($1): the service never appeared; probe said: $(sudo journalctl -u "$1.service" --no-pager -o cat -n 5 | tail -3 | tr '\n' ' ')"; fail=1; else echo "  $1: live service pids [$2]"; fi
 }
+port_free
 # 3 timeout: the service is live and the probe is frozen, so only the unit's RuntimeMaxSec can end the case
 run_unit c2-timeout -p RuntimeMaxSec=8 -- "$PY" "$PROBE" --source-root "$SRC" --python /tmp/runvenv/bin/python
 pids=$(wait_service || true); exercised c2-timeout "$pids"
 [ -n "$pids" ] && sudo kill -STOP "$(main_pid c2-timeout)"
 for i in $(seq 1 40); do systemctl is-active --quiet c2-timeout.service || break; sleep 0.5; done
 after c2-timeout runtime_limit "result:$(systemctl show -p Result --value c2-timeout.service)"
+port_free
 # 4 termination: SIGTERM to the probe while the service is live (graceful path)
 run_unit c2-term -- "$PY" "$PROBE" --source-root "$SRC" --python /tmp/runvenv/bin/python
 pids=$(wait_service || true); exercised c2-term "$pids"
 sudo systemctl kill --kill-whom=main --signal=TERM c2-term.service
 for i in $(seq 1 40); do systemctl is-active --quiet c2-term.service || break; sleep 0.5; done
 after c2-term sigterm_main "active_after=$(systemctl is-active c2-term.service)"
+port_free
 # 5 forced cancellation: freeze then SIGKILL the probe only (no cleanup possible): the service is orphaned inside the
 # unit's cgroup until the unit is stopped
 run_unit c2-kill -- "$PY" "$PROBE" --source-root "$SRC" --python /tmp/runvenv/bin/python
