@@ -355,6 +355,89 @@ jobs:
           sleep 5
           sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
 
+  kit-r13-arm:
+    # r13 on arm64 (aarch64 package set): same newcomer run, swi-prolog.org blocked, nothing seeded.
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 90
+    env:
+      HIVE_USER: kitarmuser
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fresh user with test-only sudo (apt-get and linger only)
+        run: |
+          sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
+          printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
+          sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
+      - name: Check and stage the r13 download; make swi-prolog.org unreachable (no seeding)
+        run: |
+          cd ci/kit && sha256sum -c omegahive-linux-r13.sh.sha256
+          sudo install -o "$HIVE_USER" -m 0600 omegahive-linux-r13.sh /home/$HIVE_USER/omegahive-linux.sh
+          # r13 carries the SWI-Prolog source: prove the install never needs swi-prolog.org.
+          printf '0.0.0.0 www.swi-prolog.org download.swi-prolog.org swi-prolog.org\n:: www.swi-prolog.org download.swi-prolog.org swi-prolog.org\n' | sudo tee -a /etc/hosts >/dev/null
+          ! curl -s -m 5 -o /dev/null https://www.swi-prolog.org/ && echo "swi-prolog.org is unreachable from this runner"
+          sudo test ! -e /home/$HIVE_USER/.local/share/omegahive/cache && echo "no seeded cache"
+      - name: Run the installer as the newcomer (sh ~/omegahive-linux.sh)
+        run: |
+          set +e
+          # Watch the release folder while the installer runs (it removes a failed release afterwards).
+          cat > /tmp/watch.sh <<'WATCH'
+          while true; do for d in /home/kitarmuser/.local/share/omegahive/releases/*/; do [ -d "$d" ] || continue
+            for x in "$d" "$d/runtime" "$d/runtime/python" "$d/runtime/python/bin" "$d/runtime/python/bin/python3.12" "$d/venv" "$d/venv/bin" "$d/venv/bin/python" "$d/venv/bin/python3" "$d/venv/bin/python3.12" "$d/venv/lib" "$d/venv/pyvenv.cfg"; do
+              if [ -e "$x" ] || [ -L "$x" ]; then stat -c '%a %U:%G %F %h %n' "$x"; fi; done; done 2>/dev/null; sleep 0.1; done
+          WATCH
+          ( sudo bash /tmp/watch.sh | awk '!seen[$0]++' > /tmp/watch.txt ) &
+          W=$!
+          sudo -iu "$HIVE_USER" bash -c 'script -qec "sh ~/omegahive-linux.sh" /dev/null' > /tmp/kit.out 2>&1
+          code=$?
+          sudo pkill -f /tmp/watch.sh || true; sleep 1
+          echo "--- watched release paths (perms owner type links path) ---"; cat /tmp/watch.txt
+          set -e
+          sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' /tmp/kit.out
+          echo "kit install exit $code"
+          if [ $code -ne 0 ]; then
+            L=$(sudo ls -t /home/$HIVE_USER/.local/share/omegahive/logs/ 2>/dev/null | head -1)
+            [ -n "$L" ] && sudo tail -n 60 "/home/$HIVE_USER/.local/share/omegahive/logs/$L" | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'
+            echo "--- bootstrap failure notes (secret-free by design) ---"
+            sudo sh -c "cat /home/$HIVE_USER/.local/share/omegahive/logs/bootstrap-failure-*.json 2>/dev/null" || true
+            echo "--- hive service journal (redacted) ---"
+            sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$(id -u "$HIVE_USER") journalctl --user -u omegahive.service --no-pager -n 60 -o short-monotonic 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' || true
+            echo "--- bootstrap diagnostic (traceback only) ---"
+            sudo cp ci/linux-x86/diag_bootstrap.py /home/$HIVE_USER/diag_bootstrap.py && sudo chown $HIVE_USER /home/$HIVE_USER/diag_bootstrap.py
+            U=$(id -u "$HIVE_USER")
+            sudo -iu "$HIVE_USER" bash -c 'V=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser(\"~/.local/share/omegahive/runtime.json\")))[\"python\"])" 2>/dev/null); [ -n "$V" ] && XDG_RUNTIME_DIR=/run/user/'"$U"' "$V" -I -B ~/diag_bootstrap.py' 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' | tail -40 || true
+            R=$(sudo ls -d /home/$HIVE_USER/.local/share/omegahive/releases/* 2>/dev/null | head -1)
+            echo "--- permission facts (no contents) ---"
+            sudo -iu "$HIVE_USER" bash -c 'umask'
+            for x in /home/$HIVE_USER /home/$HIVE_USER/.local /home/$HIVE_USER/.local/share /home/$HIVE_USER/.local/share/omegahive "$R" "$R/runtime" "$R/runtime/python" "$R/runtime/python/bin" "$R/runtime/python/bin/python3.12" "$R/venv" "$R/venv/bin" "$R/venv/bin/python" "$R/venv/bin/python3.12"; do sudo stat -c '%a %U:%G %F %n' "$x" 2>&1; done
+            sudo getfacl -p "$R/venv/bin" 2>/dev/null | head -8
+            mount | grep -E ' /home | / ' | head -3
+            exit $code
+          fi
+      - name: Status, sign-in, still running after logout
+        run: |
+          U=$(id -u "$HIVE_USER")
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+          out=$(sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" open)
+          link=$(printf '%s\n' "$out" | grep -o 'http://127.0.0.1:[0-9]*/local-signin#[A-Za-z0-9_-]\{43\}' | head -1)
+          code=${link##*#}; echo "::add-mask::$code"
+          port=$(printf '%s' "$link" | sed -E 's#http://127.0.0.1:([0-9]+)/.*#\1#')
+          status=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8700/api/auth/local/exchange \
+            -H "Host: 127.0.0.1:$port" -H "Origin: http://127.0.0.1:$port" -H 'Content-Type: application/json' --data "{\"code\":\"$code\"}")
+          echo "exchange HTTP $status (link port $port)"; [ "$status" = 200 ]
+          U=$(id -u "$HIVE_USER")
+          # Logout: end the person's login sessions only (linger keeps their user manager).
+          for s in $(loginctl list-sessions --no-legend | awk -v u="$HIVE_USER" '$3==u {print $1}'); do sudo loginctl terminate-session "$s"; done
+          sleep 10
+          curl -s -o /dev/null -w 'hive after logout: HTTP %{http_code}\n' -H 'Host: 127.0.0.1:8700' http://127.0.0.1:8700/api/health || true
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+          # Reboot stand-in: restart the user manager; the enabled service must come back by itself.
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-enabled omegahive.service
+          sudo systemctl stop "user@$U.service"; sleep 2
+          sudo systemctl start "user@$U.service" || { sudo systemctl status "user@$U.service" --no-pager -l | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' | tail -20; sudo journalctl -u "user@$U.service" --no-pager -n 40 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'; exit 1; }
+          for i in $(seq 1 60); do sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-active --quiet omegahive.service && break; sleep 1; done
+          sleep 5
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+
   code-r10:
     # Code C2 R10 (empty-seed fix) test profile on x86_64 Ubuntu 22.04: the eight test files packaged with R10.
     # Exact review ZIP, recomputed source digest, pinned interpreter and hash-pinned packages only. Synthetic data.
