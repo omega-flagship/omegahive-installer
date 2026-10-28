@@ -632,6 +632,11 @@ jobs:
           git apply "$GITHUB_WORKSPACE/ci/code-c2/RELAY_CHALLENGE_R2.patch"
           c=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after relay R2: $c"
           [ "$c" = "91 4cb9d79c801dee665c42fca33469e39c560a37fa462fe22eca2b50f8dbd580cd" ]
+          # Code r13 candidate 4: + enrolment R3 (c5bef444), digest 582f5656 (91 modules).
+          echo "c5bef4443199cb6f36d1996f9c867a6fe540b02b96219b137e98e33105b86fee  $GITHUB_WORKSPACE/ci/code-c2/ENROLMENT_R3.patch" | sha256sum -c -
+          git apply "$GITHUB_WORKSPACE/ci/code-c2/ENROLMENT_R3.patch"
+          d=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after enrolment R3: $d"
+          [ "$d" = "91 582f5656830f3a84328554639dfc788aadd841c16bc8027cdd27a19dc6e6daca" ]
       - name: Pinned Python and uv (checked against the publisher)
         run: |
           P=ci/linux-x86/x86_64-pins.json

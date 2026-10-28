@@ -1,0 +1,277 @@
+--- a/src/omegacode/registration.py
++++ b/src/omegacode/registration.py
+@@ -1,41 +1,120 @@
+-"""Narrow Hive service enrolment. No Hive operator token is held by this service."""
++"""Narrow, replay-safe Hive service enrolment and acknowledgement."""
+ import json
+ import pathlib
++import re
++import secrets
+ 
+ import httpx
+ 
+ from .common import CodeError, atomic_write, canonical
+ 
+ 
++def _json(response):
++    try:
++        value = response.json()
++        return value if isinstance(value, dict) else None
++    except (ValueError, TypeError):
++        return None
++
++
++def _active(value, operation_id, address):
++    receipt = value.get("receipt") if isinstance(value, dict) else None
++    return (isinstance(value.get("service_id"), str) and bool(value["service_id"])
++            and isinstance(value.get("service_token"), str) and bool(value["service_token"])
++            and isinstance(value.get("capability_secret"), str) and bool(value["capability_secret"])
++            and value.get("address") == address and isinstance(receipt, dict)
++            and receipt.get("operation_id") == operation_id
++            and receipt.get("service_id") == value.get("service_id")
++            and re.fullmatch(r"[0-9a-f]{64}", str(receipt.get("request_digest", "")))
++            and receipt.get("status") == "active")
++
++
++def _same_receipt(value, expected, status):
++    return (isinstance(value, dict) and value.get("operation_id") == expected.get("operation_id")
++            and value.get("request_digest") == expected.get("request_digest")
++            and value.get("service_id") == expected.get("service_id")
++            and value.get("status") == status)
++
++
+ def enrol(authority, root: pathlib.Path, enrol_token: str, port: int):
+-    authority.store.effect_guard()
+     if not authority.hive_url:
+         raise CodeError(400, "hive_required", "service registration needs the configured Hive")
+     path = root / "registration.json"
+-    if path.exists():
++    operation_path = root / "registration.operation.json"
++    if path.exists() and authority.registration and authority.registration.get("receipt", {}).get("status") == "active":
+         raise CodeError(409, "already_registered", "registration exists; rotate through the owner before replacing it")
++
+     address = f"http://127.0.0.1:{port}"
+     body = {"name": "omegacode", "version": "0.1.0", "address": address, "contract": "omegacode/1",
+             "surfaces": ["diff", "log", "editor"],
+             "capabilities": ["workspaces", "runs", "changesets", "verifications", "events"]}
+     try:
+-        response = authority.client.post(authority.hive_url + "/api/services/register", json=body,
++        if operation_path.exists():
++            operation = json.loads(operation_path.read_text())
++            if operation.get("enrol_token") != enrol_token or operation.get("body") != body:
++                raise CodeError(409, "registration_in_progress", "a different enrolment is already pending recovery")
++        else:
++            operation = {"operation_id": secrets.token_urlsafe(24), "enrol_token": enrol_token, "body": body}
++            atomic_write(operation_path, canonical(operation))
++    except (OSError, ValueError, TypeError):
++        raise CodeError(503, "registration_state_invalid", "saved enrolment recovery state is invalid") from None
++
++    operation_id = operation.get("operation_id")
++    if not isinstance(operation_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", operation_id):
++        raise CodeError(503, "registration_state_invalid", "saved enrolment operation is invalid")
++
++    # Replaying the exact request is safe: Hive returns the same pending identity.
++    try:
++        response = authority.client.post(authority.hive_url + "/api/services/register",
++                                         json={**body, "operation_id": operation_id},
+                                          headers={"Authorization": "Bearer " + enrol_token})
+     except httpx.HTTPError:
+-        raise CodeError(503, "registration_unknown", "registration response unavailable; owner must recover the enrolment receipt before retrying")
+-    if response.status_code != 200 and response.status_code != 201:
++        raise CodeError(503, "registration_unknown", "registration response unavailable; retry to recover the same operation") from None
++    if response.status_code not in (200, 201):
++        if response.status_code == 409 and (_json(response) or {}).get("code") == "operation_expired":
++            raise CodeError(409, "operation_expired", "Hive expired this enrolment; clear it through the owner before starting a new one")
+         raise CodeError(403, "registration_refused", "Hive refused service enrolment")
++    registration = _json(response)
++    receipt = registration.get("receipt") if registration else None
++    if (not registration or not isinstance(registration.get("service_id"), str)
++            or not registration.get("service_token") or not registration.get("capability_secret")
++            or registration.get("address") != address or not isinstance(receipt, dict)
++            or receipt.get("operation_id") != operation_id
++            or receipt.get("service_id") != registration.get("service_id")
++            or not re.fullmatch(r"[0-9a-f]{64}", str(receipt.get("request_digest", "")))
++            or receipt.get("status") not in ("pending", "active")):
++        raise CodeError(503, "registration_unknown", "invalid registration receipt; retry to recover the same operation")
++
++    # Persist credentials before acknowledgement. Service startup ignores pending credentials.
++    atomic_write(path, canonical(registration))
++    if receipt["status"] == "pending":
++        try:
++            ack = authority.client.post(authority.hive_url + f"/api/services/operations/{operation_id}/ack",
++                                        headers={"Authorization": "Bearer " + registration["service_token"]})
++            ack_value = _json(ack) if ack.status_code == 200 else None
++        except httpx.HTTPError:
++            ack_value = None
++        if not _same_receipt(ack_value, receipt, "active"):
++            # Ack may have committed even if its response was lost. Resolve before retrying.
++            try:
++                status = authority.client.get(authority.hive_url + f"/api/services/operations/{operation_id}",
++                                              headers={"Authorization": "Bearer " + registration["service_token"]})
++                status_value = _json(status) if status.status_code == 200 else None
++            except httpx.HTTPError:
++                status_value = None
++            if not _same_receipt(status_value, receipt, "active"):
++                raise CodeError(503, "registration_pending", "service credentials are saved; retry to finish acknowledgement")
++        registration["receipt"] = {**receipt, "status": "active"}
++    elif receipt.get("status") != "active":
++        raise CodeError(503, "registration_pending", "service registration is not active")
++
++    if not _active(registration, operation_id, address):
++        raise CodeError(503, "registration_unknown", "Hive returned an invalid active receipt")
++    atomic_write(path, canonical(registration))
+     try:
+-        registration = response.json()
+-        if not isinstance(registration["service_id"], str) or not isinstance(registration["service_token"], str) or not registration["service_token"]:
+-            raise ValueError()
+-        if registration.get("address", address) != address:
+-            raise ValueError()
+-    except (KeyError, TypeError, ValueError):
+-        raise CodeError(503, "registration_unknown", "invalid registration response; owner must recover the enrolment receipt")
+-    authority.store.effect_guard()
+-    atomic_write(path, canonical(registration))
++        operation_path.unlink()
++    except FileNotFoundError:
++        pass
+     authority.service_token = registration["service_token"]
+     authority.registration = registration
+-    # Never return keys or service authority to the caller or an event stream.
+     return {k: v for k, v in registration.items() if k in ("service_id", "address", "registered_at")}
+--- a/src/omegacode/service.py
++++ b/src/omegacode/service.py
+@@ -61,7 +61,12 @@
+         self.authority = Authority(self.store, operator_token, hive_url, transport, service_token)
+         registration = self.store.root / "registration.json"
+         self.authority.registration = json.loads(registration.read_text()) if registration.exists() else None
+-        if self.authority.registration:
++        if self.authority.registration and self.authority.registration.get("receipt", {}).get("status") == "pending":
++            # Host-issued credentials are persisted before acknowledgement so crash recovery
++            # can finish it, but a pending identity must never authorize service operations.
++            self.authority.registration = None
++            self.authority.service_token = None
++        elif self.authority.registration:
+             self.authority.service_token = self.authority.registration["service_token"]
+         self.processes = {}
+         self.run_principals = {}
+--- a/tests/test_service.py
++++ b/tests/test_service.py
+@@ -318,10 +318,18 @@
+ 
+ def test_enrolment_is_narrow_and_credentials_are_not_returned(tmp_path, repo):
+     seen = []
++    receipt = {"operation_id": None, "request_digest": "a" * 64, "service_id": "svc-test", "status": "pending"}
+     def transport(request):
+         seen.append(request)
+-        return httpx.Response(201, json={"service_id": "svc-test", "service_token": "synthetic-registered-secret",
+-                                         "capability_secret": "synthetic-capability-secret", "address": "http://127.0.0.1:8724"})
++        if request.url.path == "/api/services/register":
++            body = json.loads(request.content)
++            receipt["operation_id"] = body["operation_id"]
++            return httpx.Response(201, json={"service_id": "svc-test", "service_token": "synthetic-registered-secret",
++                "capability_secret": "synthetic-capability-secret", "address": "http://127.0.0.1:8724",
++                "registered_at": "synthetic", "receipt": dict(receipt)})
++        if request.url.path.endswith("/ack"):
++            return httpx.Response(200, json={**receipt, "status": "active"})
++        raise AssertionError(request.url)
+     s = Service(tmp_path / "registration", OPERATOR, {"synthetic": {"path": str(repo)}},
+                 "http://hive.invalid", httpx.MockTransport(transport))
+     try:
+@@ -332,11 +340,98 @@
+         assert "secret" not in response.text and "token" not in response.text
+         body = json.loads(seen[0].content)
+         assert body["surfaces"] == ["diff", "log", "editor"] and "pty" not in body["surfaces"]
++        assert 16 <= len(body["operation_id"]) <= 128
++        assert body["operation_id"] == receipt["operation_id"]
+         path = s.store.root / "registration.json"
+         assert path.stat().st_mode & 0o077 == 0
++        assert json.loads(path.read_text())["receipt"]["status"] == "active"
+         assert s.authority.service_token == "synthetic-registered-secret"
+         assert client.post("/v1/operator/register", headers={"Authorization": "Bearer " + OPERATOR},
+                            json={"enrol_token": "synthetic-one-time-enrol-token"}).status_code == 409
++    finally:
++        s.close()
++
++
++def test_enrolment_retry_reuses_operation_after_lost_register_response(tmp_path, repo):
++    root = tmp_path / "registration-retry"
++    operation_ids = []
++    def lost(request):
++        operation_ids.append(json.loads(request.content)["operation_id"])
++        raise httpx.ConnectError("synthetic lost response", request=request)
++    s = Service(root, OPERATOR, {"synthetic": {"path": str(repo)}}, "http://hive.invalid", httpx.MockTransport(lost))
++    try:
++        client = TestClient(create_app(s))
++        response = client.post("/v1/operator/register", headers={"Authorization": "Bearer " + OPERATOR},
++                               json={"enrol_token": "synthetic-one-time-enrol-token"})
++        assert response.status_code == 503 and response.json()["error"] == "registration_unknown"
++        operation = json.loads((root / "registration.operation.json").read_text())
++        operation_id = operation["operation_id"]
++        assert operation_ids == [operation_id]
++    finally:
++        s.close()
++
++    seen = []
++    def recovered(request):
++        seen.append(request)
++        if request.url.path.endswith("/register"):
++            body = json.loads(request.content)
++            assert body["operation_id"] == operation_id
++            return httpx.Response(201, json={"service_id": "svc-retry", "service_token": "synthetic-service-secret",
++                "capability_secret": "synthetic-capability-secret", "address": "http://127.0.0.1:8724",
++                "receipt": {"operation_id": operation_id, "request_digest": "b" * 64,
++                            "service_id": "svc-retry", "status": "pending"}})
++        return httpx.Response(200, json={"operation_id": operation_id, "request_digest": "b" * 64,
++                                         "service_id": "svc-retry", "status": "active"})
++    s2 = Service(root, OPERATOR, {"synthetic": {"path": str(repo)}}, "http://hive.invalid", httpx.MockTransport(recovered))
++    try:
++        response = TestClient(create_app(s2)).post("/v1/operator/register", headers={"Authorization": "Bearer " + OPERATOR},
++                                                    json={"enrol_token": "synthetic-one-time-enrol-token"})
++        assert response.status_code == 201
++        assert len([r for r in seen if r.url.path.endswith("/register")]) == 1
++        assert not (root / "registration.operation.json").exists()
++    finally:
++        s2.close()
++
++
++def test_enrolment_recovers_ack_that_committed_before_response_loss(tmp_path, repo):
++    operation_id = None
++    state = {"active": False}
++    def transport(request):
++        nonlocal operation_id
++        if request.url.path.endswith("/register"):
++            operation_id = json.loads(request.content)["operation_id"]
++            return httpx.Response(201, json={"service_id": "svc-ack", "service_token": "synthetic-ack-secret",
++                "capability_secret": "synthetic-capability-secret", "address": "http://127.0.0.1:8724",
++                "receipt": {"operation_id": operation_id, "request_digest": "c" * 64,
++                            "service_id": "svc-ack", "status": "pending"}})
++        if request.url.path.endswith("/ack"):
++            state["active"] = True
++            raise httpx.ReadTimeout("synthetic lost ack response", request=request)
++        return httpx.Response(200, json={"operation_id": operation_id, "request_digest": "c" * 64,
++                                         "service_id": "svc-ack", "status": "active" if state["active"] else "pending"})
++    s = Service(tmp_path / "registration-ack", OPERATOR, {"synthetic": {"path": str(repo)}},
++                "http://hive.invalid", httpx.MockTransport(transport))
++    try:
++        response = TestClient(create_app(s)).post("/v1/operator/register", headers={"Authorization": "Bearer " + OPERATOR},
++                                                   json={"enrol_token": "synthetic-one-time-enrol-token"})
++        assert response.status_code == 201
++        assert s.authority.registration["receipt"]["status"] == "active"
++        assert state["active"] and not (s.store.root / "registration.operation.json").exists()
++    finally:
++        s.close()
++
++
++def test_pending_registration_credentials_are_disabled_after_restart(tmp_path, repo):
++    root = tmp_path / "pending-registration"
++    root.mkdir()
++    (root / "registration.json").write_text(json.dumps({"service_id": "svc-pending",
++        "service_token": "synthetic-pending-secret", "capability_secret": "synthetic-pending-key",
++        "receipt": {"status": "pending"}}))
++    s = Service(root, OPERATOR, {"synthetic": {"path": str(repo)}}, "http://hive.invalid",
++                service_token="synthetic-configured-token")
++    try:
++        assert s.authority.registration is None
++        assert s.authority.service_token is None
+     finally:
+         s.close()
+ 
