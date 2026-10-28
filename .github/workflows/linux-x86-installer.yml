@@ -643,6 +643,11 @@ jobs:
           git apply "$GITHUB_WORKSPACE/ci/code-c2/ENROLMENT_R3_1.patch"; git apply "$GITHUB_WORKSPACE/ci/code-c2/ENROLMENT_R4_2.patch"
           e=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after enrolment R4.2: $e"
           [ "$e" = "91 f9c06caec083e2586b200d11eaa45a60aaf303cee5fe95522949837df88b7214" ]
+          # Candidate 5: R13 successor R1.3 (sealed 010e3e69; patch f986bf94) on the adopted f9c06cae, digest 117deeeb.
+          echo "f986bf9460f94124f2e3c49b918b9e6c34e421ec33b71446d5cf3a8525eac73b  $GITHUB_WORKSPACE/ci/code-c2/R13_SUCCESSOR_R1_3.patch" | sha256sum -c -
+          git apply "$GITHUB_WORKSPACE/ci/code-c2/R13_SUCCESSOR_R1_3.patch"
+          g=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after successor R1.3: $g"
+          [ "$g" = "91 117deeebede5a8a16b1a2bde5a6cd3c6ab414eaceb44392dc136144e279b4cc2" ]
       - name: Pinned Python and uv (checked against the publisher)
         run: |
           P=ci/linux-x86/x86_64-pins.json
