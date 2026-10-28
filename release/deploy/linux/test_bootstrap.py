@@ -151,8 +151,9 @@ class BootstrapTests(unittest.TestCase):
             def getsockname(self): return ('127.0.0.1', 40000)
             def sendall(self, raw): self.sent.append(raw)
             def close(self): pass
-        transport = Transport(); control = SimpleNamespace(supervisor_pid=lambda _home: 123)
-        api = bootstrap.OwnerAPI(control, {'python': '/synthetic/python', 'port': 8700}, Path('/synthetic/home'), 123, bootstrap.time.monotonic() + 30)
+        transport = Transport(); control = SimpleNamespace(supervisor_pid=lambda _home: 123, exe_matches=lambda _c, _h: True)
+        api = bootstrap.OwnerAPI(control, {'python': '/synthetic/python', 'port': 8700}, Path('/synthetic/home'), 123, bootstrap.time.monotonic() + 30,
+                                 {'pid': 123, 'listener_inode': '4242'})
         with patch.object(bootstrap.socket, 'socket', return_value=transport), \
                 patch.object(bootstrap.Path, 'resolve', return_value=Path('/synthetic/python')), \
                 patch.object(bootstrap, 'socket_inode', side_effect=bootstrap.Refused()), self.assertRaises(bootstrap.Refused):

@@ -24,7 +24,7 @@ import types
 import uuid
 
 SEED_PIN = (1627, "917fc8c77357ef076712e867e0f1026e8910fc0683b017f824111b2b5c62f0ee")
-CONTROL_PIN = (21497, 'e829fc54687603b320b609b58a38613431e293abebb01077ba6205cccb20f7a4')
+CONTROL_PIN = (22081, 'c7765a0e5f4c8c8e82fc8f20ce25d17b00d9200283bfa3947708d5ef9c1c637b')
 APPS = ("omegaassist", "omegadesign")
 MAX_BODY = 256 * 1024
 STOP = False
@@ -157,8 +157,10 @@ def descriptor_write(path, old_raw, old_identity, template):
     finally: os.close(fd)
 
 
-def socket_inode(pid, server_port, client_port, deadline, cleanup=False):
-    """Only socket-link metadata for this service; never read another FD body."""
+def socket_inode(listener_inode, server_port, client_port, deadline, cleanup=False):
+    """Only socket metadata. The service is not dumpable, so its /proc/<pid>/fd is unreadable here: instead its
+    hello attests the inode of its own loopback listener, and that must be the one LISTEN socket on the port; the
+    accepted end of this connection must belong to this account."""
     local = "0100007F:" + format(server_port, "04X")
     remote = "0100007F:" + format(client_port, "04X")
     end = min(deadline, time.monotonic() + 1)
@@ -176,22 +178,21 @@ def socket_inode(pid, server_port, client_port, deadline, cleanup=False):
                 require(fields[7].isdecimal() and int(fields[7]) == os.getuid() and fields[9].isdecimal())
                 if int(fields[9]) > 0: inodes.add(fields[9])
         require(len(inodes) <= 1)
-        links = set(); count = 0
-        with os.scandir("/proc/" + str(pid) + "/fd") as entries:
-            for entry in entries:
-                count += 1; require(count <= 1024)
-                require(entry.name.isdecimal())
-                try: target = os.readlink(entry.path)
-                except FileNotFoundError: continue
-                if re.fullmatch(r"socket:\[[0-9]+\]", target): links.add(target[8:-1])
-        if inodes and inodes <= links: return
+        listeners = set()
+        for line in raw.decode("ascii").splitlines()[1:]:
+            fields = line.split()
+            if len(fields) >= 10 and fields[1] == local and fields[3] == "0A":
+                require(fields[7].isdecimal() and int(fields[7]) == os.getuid() and fields[9].isdecimal())
+                listeners.add(fields[9])
+        if inodes and listeners == {listener_inode}: return
         time.sleep(min(0.02, max(0, end - time.monotonic())))
     raise Refused("The local HTTP service identity could not be verified.")
 
 
 class OwnerAPI:
-    def __init__(self, control, config, home, pid, deadline):
+    def __init__(self, control, config, home, pid, deadline, hello=None):
         self.control, self.config, self.home, self.pid = control, config, home, pid
+        self.hello = hello
         self.deadline, self.token, self.principal = deadline, None, None
 
     def request(self, method, path, payload=None, *, cleanup=False):
@@ -202,7 +203,10 @@ class OwnerAPI:
         end = time.monotonic() + 5 if cleanup else min(self.deadline, time.monotonic() + 5)
         require((cleanup or not STOP) and end - time.monotonic() > 0.1)
         require(self.control.supervisor_pid(self.home) == self.pid)
-        require(Path("/proc/" + str(self.pid) + "/exe").resolve(strict=True) == Path(self.config["python"]).resolve(strict=True))
+        # The service is not dumpable, so /proc/<pid>/exe is unreadable: its hello attests its executable and listener.
+        hello = self.hello
+        require(type(hello) is dict and hello.get("pid") == self.pid and self.control.exe_matches(self.config, hello)
+                and type(hello.get("listener_inode")) is str and hello["listener_inode"].isdecimal())
         require(time.monotonic() < end)
         connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         raw = bytearray()
@@ -210,7 +214,7 @@ class OwnerAPI:
             connection.settimeout(max(0.01, end - time.monotonic()))
             connection.connect(("127.0.0.1", self.config["port"]))
             require(connection.getpeername() == ("127.0.0.1", self.config["port"]))
-            socket_inode(self.pid, self.config["port"], connection.getsockname()[1], end, cleanup=cleanup)
+            socket_inode(hello["listener_inode"], self.config["port"], connection.getsockname()[1], end, cleanup=cleanup)
             body = None if payload is None else json.dumps(payload, separators=(",", ":")).encode()
             require(body is None or len(body) <= 16384)
             headers = {"Host": "127.0.0.1:" + str(self.config["port"]), "Origin": "http://127.0.0.1:" + str(self.config["port"]),
@@ -343,7 +347,7 @@ def bootstrap(runtime, seed_path):
                 and re.fullmatch(r"user:u_[A-Za-z0-9_-]+", hello["owner"]))
         signin, observed_pid = control.request(config, home, "signin", expected_pid=pid)
         require(type(signin) is dict and signin.get("ok") is True and observed_pid == pid)
-        api = OwnerAPI(control, config, home, pid, time.monotonic() + 50)
+        api = OwnerAPI(control, config, home, pid, time.monotonic() + 50, hello)
         try:
             api.login(signin.pop("code", None), hello["owner"])
             signin.clear()
@@ -365,7 +369,7 @@ def bootstrap(runtime, seed_path):
             try:
                 fresh, _pid = control.request(config, home, "hello")
                 if (type(fresh) is dict and fresh.get("ok") is True and fresh.get("local_owner") is True
-                        and fresh.get("instance") != hello["instance"]):
+                        and fresh.get("instance") != hello["instance"] and control.exe_matches(config, fresh)):
                     current, _ = read_owned(runtime, private=True)
                     require(strict_json(current).get("studio_maker_template") == template)
                     print("OmegaHive apps and the sleeping Studio template are configured.")

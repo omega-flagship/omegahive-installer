@@ -267,8 +267,8 @@ def request(config, home, op, expected_pid=None):
         pid, uid, _gid = struct.unpack('3i', client.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i')))
         require(uid == os.getuid() and pid == first == supervisor_pid(home),
                 'supervised_peer_mismatch')
-        require(Path('/proc/' + str(pid) + '/exe').resolve(strict=True)
-                == Path(config['python']).resolve(strict=True), 'service_executable_mismatch')
+        # The service is not dumpable, so /proc/<pid>/exe is unreadable here; the peer is bound by SO_PEERCRED and
+        # systemd's MainPID, and its hello attests its own executable (checked in validated_hello / exe_matches).
         client.sendall((json.dumps({'op': op}) + '\n').encode())
         raw = bytearray()
         end = time.monotonic() + _request_timeout(5)
@@ -306,8 +306,17 @@ def loader_agreement(config, environ=None):
     return expected
 
 
+def exe_matches(config, hello):
+    """The hive's self-attested executable must be exactly the configured Python (same file, by device and inode)."""
+    exe = hello.get('exe') if type(hello) is dict else None
+    real = os.stat(Path(config['python']).resolve(strict=True))
+    return (type(exe) is dict and set(exe) == {'dev', 'ino'} and all(type(exe[k]) is int for k in exe)
+            and (exe['dev'], exe['ino']) == (real.st_dev, real.st_ino))
+
+
 def validated_hello(config, answer):
     hello, pid = answer
+    require(exe_matches(config, hello), 'service_executable_mismatch')
     require(type(hello) is dict and hello.get('ok') is True and hello.get('local_owner') is True
             and type(hello.get('pid')) is int and hello['pid'] == pid
             and type(hello.get('port')) is int and hello['port'] == config['port']

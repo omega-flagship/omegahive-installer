@@ -29,6 +29,11 @@ serve = load('serve')
 
 
 class BoundaryTests(unittest.TestCase):
+    def setUp(self):
+        # The service's self-attested executable is checked by exe_matches (its own tests are below).
+        patcher = mock.patch.object(control, 'exe_matches', return_value=True)
+        patcher.start(); self.addCleanup(patcher.stop)
+
     def test_duplicate_and_nonfinite_json_are_refused(self):
         for module in (control, serve):
             for raw in ('{"x":1,"x":2}', '{"x":NaN}', '{"x":Infinity}'):
@@ -550,3 +555,25 @@ class FixedBrowserRuntimeTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SelfAttestedExecutableTests(unittest.TestCase):
+    def test_hello_executable_must_be_the_configured_python_by_device_and_inode(self):
+        with tempfile.TemporaryDirectory() as raw:
+            python = Path(raw) / 'python'; python.write_bytes(b'x'); other = Path(raw) / 'other'; other.write_bytes(b'y')
+            real, wrong = os.stat(python), os.stat(other)
+            cfg = {'python': str(python)}
+            self.assertTrue(control.exe_matches(cfg, {'exe': {'dev': real.st_dev, 'ino': real.st_ino}}))
+            for bad in ({}, {'exe': None}, {'exe': {'dev': real.st_dev}}, {'exe': {'dev': wrong.st_dev, 'ino': wrong.st_ino}},
+                        {'exe': {'dev': str(real.st_dev), 'ino': real.st_ino}}, {'exe': {'dev': real.st_dev, 'ino': real.st_ino, 'x': 1}}):
+                with self.subTest(bad=bad):
+                    self.assertFalse(control.exe_matches(cfg, bad))
+
+    def test_validated_hello_refuses_a_foreign_executable(self):
+        with tempfile.TemporaryDirectory() as raw:
+            python = Path(raw) / 'python'; python.write_bytes(b'x')
+            cfg = {'python': str(python), 'port': 8700}
+            hello = {'ok': True, 'local_owner': True, 'pid': 4000, 'port': 8700, 'instance': 'b' * 32, 'exe': {'dev': 0, 'ino': 0}}
+            with self.assertRaises(control.Refused):
+                control.validated_hello(cfg, (hello, 4000))
+

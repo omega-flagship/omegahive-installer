@@ -345,6 +345,29 @@ class LocalOwner:
         from .hive import token_hash
         return bool(token) and self.hive.db.one("SELECT 1 AS one FROM sessions WHERE token_hash = ?", (token_hash(token),)) is not None
 
+    def self_identity(self):
+        """What a client cannot read about this process once it is not dumpable (prepare_process): its executable's
+        identity and the inode of its loopback listener. Only the process itself may read /proc/self/fd and exe."""
+        if not sys.platform.startswith("linux"):
+            return {}
+        exe = os.stat("/proc/self/exe")
+        local = "0100007F:" + format(self.port, "04X")
+        listening = set()
+        with open("/proc/self/net/tcp", "rb") as stream:
+            for line in stream.read(4 * 1024 ** 2).decode("ascii", "replace").splitlines()[1:]:
+                fields = line.split()
+                if len(fields) >= 10 and fields[1] == local and fields[3] == "0A" and fields[7] == str(os.getuid()):
+                    listening.add(fields[9])
+        mine = set()
+        for name in os.listdir("/proc/self/fd"):
+            with contextlib.suppress(OSError):
+                target = os.readlink("/proc/self/fd/" + name)
+                if target.startswith("socket:[") and target.endswith("]"):
+                    mine.add(target[8:-1])
+        held = sorted(listening & mine)
+        return {"exe": {"dev": exe.st_dev, "ino": exe.st_ino},
+                "listener_inode": held[0] if len(held) == 1 else None}
+
     def status(self):
         return {"local_owner": True, "instance": self.instance, "port": self.port, "pid": os.getpid(),
                 "owner": self.principal, "preflight": self.preflight}
@@ -389,7 +412,7 @@ class LocalOwner:
         """One control request (a JSON object with "op") -> one JSON answer. The caller already passed the uid check."""
         op = request.get("op") if isinstance(request, dict) else None
         if op == "hello":
-            return dict(self.status(), ok=True)
+            return dict(self.status(), ok=True, **self.self_identity())
         if op == "signin":
             if self.principal is None:
                 return {"ok": False, "error": "no_owner"}
