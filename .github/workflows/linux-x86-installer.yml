@@ -751,6 +751,18 @@ jobs:
         run: |
           printf '%s  MANIFEST.sha256\n' "$STUDIO_STAGE1_MANIFEST_SHA256" | shasum -a 256 -c -
           shasum -a 256 -c MANIFEST.sha256
+      - name: Wait for the fresh runner to go quiet (Studio's admission refuses when CPU is busy; it cannot retry in-job)
+        run: |
+          # Post-boot indexing keeps the runner busy for a few minutes. Wait for idle CPU >= 70% on 3 consecutive 10 s samples.
+          ok=0
+          for i in $(seq 1 60); do
+            idle=$(top -l 2 -s 5 -n 0 | awk '/CPU usage/ {v=$7} END {sub("%","",v); print int(v)}')
+            echo "sample $i: idle ${idle}%"
+            if [ "${idle:-0}" -ge 70 ]; then ok=$((ok+1)); else ok=0; fi
+            [ $ok -ge 3 ] && break
+            sleep 5
+          done
+          sudo mdutil -a -i off >/dev/null 2>&1 || true
       - name: Public preparation (fetch + stage)
         working-directory: ci/mac
         run: |
