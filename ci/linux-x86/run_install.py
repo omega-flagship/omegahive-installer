@@ -33,6 +33,12 @@ def main():
                 info = os.lstat(path)
                 print("CI plain() refused: %s mode=%o uid=%d euid=%d link=%s dir=%s" % (
                     path, info.st_mode, info.st_uid, os.getuid(), os.path.islink(path), directory), file=sys.stderr)
+                current = os.umask(0o077); os.umask(current)
+                print("CI umask now %04o" % current, file=sys.stderr)
+                import subprocess
+                for target in (str(path), os.path.dirname(str(path)), os.path.dirname(os.path.dirname(str(path))), os.path.expanduser("~")):
+                    subprocess.run(["/usr/bin/getfacl", "-p", target], check=False)
+                    subprocess.run(["/usr/bin/stat", "-c", "%a %n", target], check=False)
             except OSError as error:
                 print("CI plain() refused: %s (%s)" % (path, error), file=sys.stderr)
             raise

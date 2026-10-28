@@ -65,6 +65,7 @@ jobs:
           sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
           printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
           sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
+          sudo apt-get install -y acl >/dev/null 2>&1 || true
           loginctl show-user "$HIVE_USER" -p Linger 2>/dev/null || echo "Linger not set (expected)"
 
       - name: Pinned Python for the entry (checked against the publisher)
