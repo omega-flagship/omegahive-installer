@@ -636,7 +636,13 @@ jobs:
           echo "c5bef4443199cb6f36d1996f9c867a6fe540b02b96219b137e98e33105b86fee  $GITHUB_WORKSPACE/ci/code-c2/ENROLMENT_R3.patch" | sha256sum -c -
           git apply "$GITHUB_WORKSPACE/ci/code-c2/ENROLMENT_R3.patch"
           d=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after enrolment R3: $d"
-          [ "$d" = "91 582f5656830f3a84328554639dfc788aadd841c16bc8027cdd27a19dc6e6daca" ]
+          [ "$d" = "91 b24395e5eba480d34c629b3a642ab4a1cbd9e4bd2d3b7a444b6df5f8fd7745ef" ]   # sealed R3 bytes (claimed 582f5656 is not reproducible)
+          # + enrolment R3.1 (891f9bc4) and R4 (ed08fad4): candidate 4 = R4, digest bcbfce1f (claimed 7a14806a not reproducible).
+          echo "891f9bc418bb561c8b377d6a59cb9a22e62a9732b518fec9294b94b50f47e74c  $GITHUB_WORKSPACE/ci/code-c2/ENROLMENT_R3_1.patch" | sha256sum -c -
+          echo "ed08fad4b91b674aa74e3b4108a1a840cf9d9426390b9bdb6ecb7439bce2803c  $GITHUB_WORKSPACE/ci/code-c2/ENROLMENT_R4.patch" | sha256sum -c -
+          git apply "$GITHUB_WORKSPACE/ci/code-c2/ENROLMENT_R3_1.patch"; git apply "$GITHUB_WORKSPACE/ci/code-c2/ENROLMENT_R4.patch"
+          e=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after enrolment R4: $e"
+          [ "$e" = "91 bcbfce1f3f762071093723f975e208fafee74ca44ef903691586c2c1d64e37f1" ]
       - name: Pinned Python and uv (checked against the publisher)
         run: |
           P=ci/linux-x86/x86_64-pins.json

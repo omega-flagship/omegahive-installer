@@ -1,0 +1,444 @@
+--- a/src/omegacode/registration.py
++++ b/src/omegacode/registration.py
+@@ -1,5 +1,8 @@
+ """Narrow, replay-safe Hive service enrolment and acknowledgement."""
++from contextlib import contextmanager
++import fcntl
+ import json
++import os
+ import pathlib
+ import re
+ import secrets
+@@ -7,6 +10,21 @@
+ import httpx
+ 
+ from .common import CodeError, atomic_write, canonical
++
++
++@contextmanager
++def _registration_lock(root):
++    """Serialize enrollment and recovery across threads and service processes."""
++    root.mkdir(parents=True, exist_ok=True, mode=0o700)
++    lock_path = root / "registration.lock"
++    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
++    try:
++        os.fchmod(fd, 0o600)
++        fcntl.flock(fd, fcntl.LOCK_EX)
++        yield
++    finally:
++        fcntl.flock(fd, fcntl.LOCK_UN)
++        os.close(fd)
+ 
+ 
+ def _json(response):
+@@ -29,34 +47,108 @@
+     return error if isinstance(error, str) else None
+ 
+ 
+-def _active(value, operation_id, address):
++def _same_receipt(value, expected, status):
++    return (isinstance(value, dict) and value.get("operation_id") == expected.get("operation_id")
++            and value.get("request_digest") == expected.get("request_digest")
++            and value.get("service_id") == expected.get("service_id")
++            and value.get("status") == status)
++
++
++def _valid_registration(value, operation_id, address):
+     receipt = value.get("receipt") if isinstance(value, dict) else None
+-    return (isinstance(value.get("service_id"), str) and bool(value["service_id"])
++    return (isinstance(value, dict) and isinstance(value.get("service_id"), str) and bool(value["service_id"])
+             and isinstance(value.get("service_token"), str) and bool(value["service_token"])
+             and isinstance(value.get("capability_secret"), str) and bool(value["capability_secret"])
+             and value.get("address") == address and isinstance(receipt, dict)
+             and receipt.get("operation_id") == operation_id
+             and receipt.get("service_id") == value.get("service_id")
+             and re.fullmatch(r"[0-9a-f]{64}", str(receipt.get("request_digest", "")))
+-            and receipt.get("status") == "active")
+-
+-
+-def _same_receipt(value, expected, status):
+-    return (isinstance(value, dict) and value.get("operation_id") == expected.get("operation_id")
+-            and value.get("request_digest") == expected.get("request_digest")
+-            and value.get("service_id") == expected.get("service_id")
+-            and value.get("status") == status)
+-
+-
+-def enrol(authority, root: pathlib.Path, enrol_token: str, port: int):
++            and receipt.get("status") in ("pending", "active"))
++
++
++def _remove_operation(operation_path, operation_id):
++    if not operation_path.exists():
++        return
++    try:
++        saved = json.loads(operation_path.read_text())
++    except (OSError, ValueError, TypeError):
++        raise CodeError(503, "registration_recovery_required", "saved enrolment state could not be read safely") from None
++    if saved.get("operation_id") != operation_id:
++        raise CodeError(503, "registration_recovery_required", "saved enrolment operation changed during recovery")
++    try:
++        operation_path.unlink()
++    except OSError:
++        raise CodeError(503, "registration_cleanup_pending", "registration is active but its saved one-time enrolment token could not be removed") from None
++
++
++def _clear_expired(path, operation_path, operation_id):
++    if path.exists():
++        try:
++            saved = json.loads(path.read_text())
++        except (OSError, ValueError, TypeError):
++            raise CodeError(503, "registration_recovery_required", "expired registration state could not be read safely") from None
++        if saved.get("receipt", {}).get("operation_id") != operation_id:
++            raise CodeError(503, "registration_recovery_required", "expired operation does not match saved credentials")
++        try:
++            path.unlink()
++        except OSError:
++            raise CodeError(503, "registration_recovery_required", "expired credentials could not be cleared safely") from None
++    _remove_operation(operation_path, operation_id)
++
++
++def _finish(authority, path, operation_path, registration, operation_id, address):
++    registration["receipt"] = {**registration["receipt"], "status": "active"}
++    if not _valid_registration(registration, operation_id, address):
++        raise CodeError(503, "registration_unknown", "Hive returned an invalid active receipt")
++    atomic_write(path, canonical(registration))
++    _remove_operation(operation_path, operation_id)
++    authority.service_token = registration["service_token"]
++    authority.registration = registration
++    return {k: v for k, v in registration.items() if k in ("service_id", "address", "registered_at")}
++
++
++def _status(authority, registration, operation_id):
++    try:
++        response = authority.client.get(authority.hive_url + f"/api/services/operations/{operation_id}",
++                                        headers={"Authorization": "Bearer " + registration["service_token"]})
++        return _json(response) if response.status_code == 200 else None
++    except httpx.HTTPError:
++        return None
++
++
++def _ack(authority, registration, operation_id, expected):
++    try:
++        response = authority.client.post(authority.hive_url + f"/api/services/operations/{operation_id}/ack",
++                                         headers={"Authorization": "Bearer " + registration["service_token"]})
++        receipt = _json(response) if response.status_code == 200 else None
++    except httpx.HTTPError:
++        receipt = None
++    if _same_receipt(receipt, expected, "active"):
++        return receipt
++    # Ack may have committed despite a lost response. Read the receipt before retrying.
++    receipt = _status(authority, registration, operation_id)
++    if _same_receipt(receipt, expected, "active"):
++        return receipt
++    return None
++
++
++def _enrol_locked(authority, root, enrol_token, port):
+     if not authority.hive_url:
+         raise CodeError(400, "hive_required", "service registration needs the configured Hive")
+     path = root / "registration.json"
+     operation_path = root / "registration.operation.json"
+-    if path.exists() and authority.registration and authority.registration.get("receipt", {}).get("status") == "active":
+-        raise CodeError(409, "already_registered", "registration exists; rotate through the owner before replacing it")
+-
+     address = f"http://127.0.0.1:{port}"
++
++    saved_registration = None
++    if path.exists():
++        try:
++            saved_registration = json.loads(path.read_text())
++        except (OSError, ValueError, TypeError):
++            raise CodeError(503, "registration_state_invalid", "saved registration state is invalid") from None
++        receipt = saved_registration.get("receipt") if isinstance(saved_registration, dict) else None
++        if isinstance(receipt, dict) and receipt.get("status") == "active":
++            raise CodeError(409, "already_registered", "registration exists; rotate through the owner before replacing it")
++
+     body = {"name": "omegacode", "version": "0.1.0", "address": address, "contract": "omegacode/1",
+             "surfaces": ["diff", "log", "editor"],
+             "capabilities": ["workspaces", "runs", "changesets", "verifications", "events"]}
+@@ -66,6 +158,8 @@
+             if operation.get("enrol_token") != enrol_token or operation.get("body") != body:
+                 raise CodeError(409, "registration_in_progress", "a different enrolment is already pending recovery")
+         else:
++            if saved_registration is not None:
++                raise CodeError(503, "registration_recovery_required", "pending credentials have no matching operation record")
+             operation = {"operation_id": secrets.token_urlsafe(24), "enrol_token": enrol_token, "body": body}
+             atomic_write(operation_path, canonical(operation))
+     except (OSError, ValueError, TypeError):
+@@ -75,7 +169,58 @@
+     if not isinstance(operation_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", operation_id):
+         raise CodeError(503, "registration_state_invalid", "saved enrolment operation is invalid")
+ 
+-    # Replaying the exact request is safe: Hive returns the same pending identity.
++    # If credentials were durably written before a crash, recover by status first.
++    # The host intentionally returns operation_complete on a post-ack re-register.
++    if saved_registration is not None:
++        if not _valid_registration(saved_registration, operation_id, address):
++            raise CodeError(503, "registration_recovery_required", "pending credentials do not match the saved operation")
++        expected = saved_registration["receipt"]
++        receipt = _status(authority, saved_registration, operation_id)
++        if _same_receipt(receipt, expected, "active"):
++            return _finish(authority, path, operation_path, saved_registration, operation_id, address)
++        if _same_receipt(receipt, expected, "pending"):
++            active = _ack(authority, saved_registration, operation_id, expected)
++            if active is not None:
++                return _finish(authority, path, operation_path, saved_registration, operation_id, address)
++            receipt = _status(authority, saved_registration, operation_id)
++            if _same_receipt(receipt, expected, "active"):
++                return _finish(authority, path, operation_path, saved_registration, operation_id, address)
++
++        # Status can disappear when the host expires and removes a pending identity.
++        # Replay the exact operation to distinguish expiry from a transient status error.
++        try:
++            replay = authority.client.post(authority.hive_url + "/api/services/register",
++                                           json={**body, "operation_id": operation_id},
++                                           headers={"Authorization": "Bearer " + enrol_token})
++        except httpx.HTTPError:
++            raise CodeError(503, "registration_pending", "saved credentials could not resolve the Hive operation; retry recovery") from None
++        replay_error = _error_code(_json(replay))
++        if replay.status_code == 409 and replay_error == "operation_expired":
++            _clear_expired(path, operation_path, operation_id)
++            authority.registration = None
++            authority.service_token = None
++            raise CodeError(409, "operation_expired", "Hive expired this enrolment; request a fresh enrolment token to retry")
++        if replay.status_code == 409 and replay_error == "operation_complete":
++            receipt = _status(authority, saved_registration, operation_id)
++            if _same_receipt(receipt, expected, "active"):
++                return _finish(authority, path, operation_path, saved_registration, operation_id, address)
++            raise CodeError(503, "registration_pending", "Hive reports a completed operation but its receipt is not yet readable")
++        replayed = _json(replay) if replay.status_code in (200, 201) else None
++        if not _valid_registration(replayed, operation_id, address):
++            raise CodeError(503, "registration_pending", "saved credentials could not resolve the Hive operation; retry recovery")
++        if any(replayed.get(key) != saved_registration.get(key) for key in ("service_id", "service_token", "capability_secret")):
++            raise CodeError(503, "registration_recovery_required", "Hive replay returned credentials that differ from the saved identity")
++        replay_receipt = replayed["receipt"]
++        if replay_receipt["status"] == "active":
++            saved_registration["receipt"] = replay_receipt
++            return _finish(authority, path, operation_path, saved_registration, operation_id, address)
++        active = _ack(authority, saved_registration, operation_id, replay_receipt)
++        if active is None:
++            raise CodeError(503, "registration_pending", "service credentials are saved; retry to finish acknowledgement")
++        saved_registration["receipt"] = replay_receipt
++        return _finish(authority, path, operation_path, saved_registration, operation_id, address)
++
++    # Replaying this exact request is safe only before credentials have been saved.
+     try:
+         response = authority.client.post(authority.hive_url + "/api/services/register",
+                                          json={**body, "operation_id": operation_id},
+@@ -83,63 +228,29 @@
+     except httpx.HTTPError:
+         raise CodeError(503, "registration_unknown", "registration response unavailable; retry to recover the same operation") from None
+     if response.status_code not in (200, 201):
+-        if response.status_code == 409 and _error_code(_json(response)) == "operation_expired":
+-            # The host has revoked and removed this pending identity. Discard only
+-            # local state bound to this exact operation so a fresh host enrolment
+-            # token can begin a new operation without reviving stale credentials.
+-            try:
+-                if path.exists():
+-                    saved = json.loads(path.read_text())
+-                    if saved.get("receipt", {}).get("operation_id") == operation_id:
+-                        path.unlink()
+-                operation_path.unlink()
+-            except (OSError, ValueError, TypeError):
+-                raise CodeError(503, "registration_recovery_required", "expired enrolment state could not be cleared safely") from None
++        error_code = _error_code(_json(response))
++        if response.status_code == 409 and error_code == "operation_expired":
++            _clear_expired(path, operation_path, operation_id)
+             authority.registration = None
+             authority.service_token = None
+             raise CodeError(409, "operation_expired", "Hive expired this enrolment; request a fresh enrolment token to retry")
++        if response.status_code == 409 and error_code == "operation_complete":
++            raise CodeError(503, "registration_recovery_required", "Hive says this operation is complete but local credentials are missing; owner recovery is required")
+         raise CodeError(403, "registration_refused", "Hive refused service enrolment")
++
+     registration = _json(response)
+-    receipt = registration.get("receipt") if registration else None
+-    if (not registration or not isinstance(registration.get("service_id"), str)
+-            or not registration.get("service_token") or not registration.get("capability_secret")
+-            or registration.get("address") != address or not isinstance(receipt, dict)
+-            or receipt.get("operation_id") != operation_id
+-            or receipt.get("service_id") != registration.get("service_id")
+-            or not re.fullmatch(r"[0-9a-f]{64}", str(receipt.get("request_digest", "")))
+-            or receipt.get("status") not in ("pending", "active")):
++    if not _valid_registration(registration, operation_id, address):
+         raise CodeError(503, "registration_unknown", "invalid registration receipt; retry to recover the same operation")
+-
+-    # Persist credentials before acknowledgement. Service startup ignores pending credentials.
+     atomic_write(path, canonical(registration))
+-    if receipt["status"] == "pending":
+-        try:
+-            ack = authority.client.post(authority.hive_url + f"/api/services/operations/{operation_id}/ack",
+-                                        headers={"Authorization": "Bearer " + registration["service_token"]})
+-            ack_value = _json(ack) if ack.status_code == 200 else None
+-        except httpx.HTTPError:
+-            ack_value = None
+-        if not _same_receipt(ack_value, receipt, "active"):
+-            # Ack may have committed even if its response was lost. Resolve before retrying.
+-            try:
+-                status = authority.client.get(authority.hive_url + f"/api/services/operations/{operation_id}",
+-                                              headers={"Authorization": "Bearer " + registration["service_token"]})
+-                status_value = _json(status) if status.status_code == 200 else None
+-            except httpx.HTTPError:
+-                status_value = None
+-            if not _same_receipt(status_value, receipt, "active"):
+-                raise CodeError(503, "registration_pending", "service credentials are saved; retry to finish acknowledgement")
+-        registration["receipt"] = {**receipt, "status": "active"}
+-    elif receipt.get("status") != "active":
+-        raise CodeError(503, "registration_pending", "service registration is not active")
+-
+-    if not _active(registration, operation_id, address):
+-        raise CodeError(503, "registration_unknown", "Hive returned an invalid active receipt")
+-    atomic_write(path, canonical(registration))
+-    try:
+-        operation_path.unlink()
+-    except FileNotFoundError:
+-        pass
+-    authority.service_token = registration["service_token"]
+-    authority.registration = registration
+-    return {k: v for k, v in registration.items() if k in ("service_id", "address", "registered_at")}
++    receipt = registration["receipt"]
++    if receipt["status"] == "active":
++        return _finish(authority, path, operation_path, registration, operation_id, address)
++    active = _ack(authority, registration, operation_id, receipt)
++    if active is None:
++        raise CodeError(503, "registration_pending", "service credentials are saved; retry to finish acknowledgement")
++    return _finish(authority, path, operation_path, registration, operation_id, address)
++
++
++def enrol(authority, root: pathlib.Path, enrol_token: str, port: int):
++    with _registration_lock(root):
++        return _enrol_locked(authority, root, enrol_token, port)
+--- a/tests/test_service.py
++++ b/tests/test_service.py
+@@ -3,7 +3,9 @@
+ import pathlib
+ import subprocess
+ import sys
++import threading
+ import time
++from concurrent.futures import ThreadPoolExecutor
+ 
+ import httpx
+ import pytest
+@@ -12,6 +14,7 @@
+ from omegacode.api import create_app
+ from omegacode.auth import ACTIONS
+ from omegacode.common import CodeError, canonical, digest
++from omegacode.registration import enrol
+ from omegacode.runner import group_members
+ from omegacode.service import Service
+ 
+@@ -471,6 +474,113 @@
+         s2.close()
+ 
+ 
++def test_enrolment_restart_recovers_ack_before_re_registering(tmp_path, repo):
++    root = tmp_path / "registration-crash"
++    root.mkdir()
++    operation_id = "operation-crash-recovery-123456"
++    token = "synthetic-one-time-enrol-token"
++    body = {"name": "omegacode", "version": "0.1.0", "address": "http://127.0.0.1:8724",
++            "contract": "omegacode/1", "surfaces": ["diff", "log", "editor"],
++            "capabilities": ["workspaces", "runs", "changesets", "verifications", "events"]}
++    receipt = {"operation_id": operation_id, "request_digest": "e" * 64, "service_id": "svc-crash", "status": "pending"}
++    (root / "registration.operation.json").write_bytes(canonical({"operation_id": operation_id, "enrol_token": token, "body": body}))
++    (root / "registration.json").write_bytes(canonical({"service_id": "svc-crash", "service_token": "synthetic-crash-token",
++        "capability_secret": "synthetic-crash-key", "address": body["address"], "receipt": receipt}))
++    calls = []
++    def transport(request):
++        calls.append(request.url.path)
++        if request.method == "GET" and request.url.path.endswith("/" + operation_id):
++            return httpx.Response(200, json={**receipt, "status": "active"})
++        raise AssertionError(f"unexpected recovery request: {request.method} {request.url.path}")
++    s = Service(root, OPERATOR, {"synthetic": {"path": str(repo)}}, "http://hive.invalid", httpx.MockTransport(transport))
++    try:
++        response = TestClient(create_app(s)).post("/v1/operator/register", headers={"Authorization": "Bearer " + OPERATOR},
++                                                   json={"enrol_token": token})
++        assert response.status_code == 201
++        assert calls == [f"/api/services/operations/{operation_id}"]
++        assert json.loads((root / "registration.json").read_text())["receipt"]["status"] == "active"
++        assert not (root / "registration.operation.json").exists()
++    finally:
++        s.close()
++
++
++def test_enrolment_process_crash_after_ack_recovers_from_status(tmp_path, repo):
++    root = tmp_path / "registration-post-ack-crash"
++    state = {"operation_id": None, "active": False}
++    def first_transport(request):
++        if request.url.path.endswith("/register"):
++            state["operation_id"] = json.loads(request.content)["operation_id"]
++            return httpx.Response(201, json={"service_id": "svc-post-ack", "service_token": "synthetic-post-ack-token",
++                "capability_secret": "synthetic-post-ack-key", "address": "http://127.0.0.1:8724",
++                "receipt": {"operation_id": state["operation_id"], "request_digest": "1" * 64,
++                            "service_id": "svc-post-ack", "status": "pending"}})
++        if request.url.path.endswith("/ack"):
++            state["active"] = True
++            raise KeyboardInterrupt("synthetic process crash after host ack commits")
++        raise AssertionError(request.url)
++    first = Service(root, OPERATOR, {"synthetic": {"path": str(repo)}}, "http://hive.invalid", httpx.MockTransport(first_transport))
++    try:
++        with pytest.raises(KeyboardInterrupt):
++            enrol(first.authority, root, "synthetic-one-time-enrol-token", 8724)
++        assert state["active"]
++        assert json.loads((root / "registration.json").read_text())["receipt"]["status"] == "pending"
++    finally:
++        first.close()
++
++    recovery_calls = []
++    def recovery_transport(request):
++        recovery_calls.append((request.method, request.url.path))
++        if request.method == "GET":
++            return httpx.Response(200, json={"operation_id": state["operation_id"], "request_digest": "1" * 64,
++                                             "service_id": "svc-post-ack", "status": "active"})
++        raise AssertionError(f"must recover before replay: {request.method} {request.url.path}")
++    restarted = Service(root, OPERATOR, {"synthetic": {"path": str(repo)}}, "http://hive.invalid",
++                        httpx.MockTransport(recovery_transport))
++    try:
++        result = enrol(restarted.authority, root, "synthetic-one-time-enrol-token", 8724)
++        assert result["service_id"] == "svc-post-ack"
++        assert recovery_calls == [("GET", f"/api/services/operations/{state['operation_id']}")]
++        assert not (root / "registration.operation.json").exists()
++    finally:
++        restarted.close()
++
++
++def test_concurrent_enrolments_cannot_create_two_service_identities(tmp_path, repo):
++    root = tmp_path / "registration-race"
++    guard = threading.Lock()
++    calls = {"register": 0, "ack": 0}
++    def transport(request):
++        if request.url.path.endswith("/register"):
++            body = json.loads(request.content)
++            with guard:
++                calls["register"] += 1
++            time.sleep(0.05)
++            return httpx.Response(201, json={"service_id": "svc-race", "service_token": "synthetic-race-token",
++                "capability_secret": "synthetic-race-key", "address": "http://127.0.0.1:8724",
++                "receipt": {"operation_id": body["operation_id"], "request_digest": "f" * 64,
++                            "service_id": "svc-race", "status": "pending"}})
++        if request.url.path.endswith("/ack"):
++            with guard:
++                calls["ack"] += 1
++            body = json.loads((root / "registration.json").read_text())
++            return httpx.Response(200, json={**body["receipt"], "status": "active"})
++        raise AssertionError(request.url)
++    s = Service(root, OPERATOR, {"synthetic": {"path": str(repo)}}, "http://hive.invalid", httpx.MockTransport(transport))
++    def attempt(token):
++        try:
++            return enrol(s.authority, root, token, 8724)
++        except CodeError as error:
++            return error.code
++    try:
++        with ThreadPoolExecutor(max_workers=2) as pool:
++            results = list(pool.map(attempt, ["synthetic-enrol-token-first", "synthetic-enrol-token-second"]))
++        assert sum(isinstance(item, dict) for item in results) == 1
++        assert sum(item == "already_registered" for item in results) == 1
++        assert calls == {"register": 1, "ack": 1}
++    finally:
++        s.close()
++
++
+ def test_running_agent_stops_when_live_hive_authority_ends(tmp_path, repo):
+     state = {"active": True, "binding": None}
+     def transport(request):

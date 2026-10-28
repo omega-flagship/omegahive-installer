@@ -1,0 +1,89 @@
+--- a/src/omegacode/registration.py
++++ b/src/omegacode/registration.py
+@@ -15,6 +15,18 @@
+         return value if isinstance(value, dict) else None
+     except (ValueError, TypeError):
+         return None
++
++
++def _error_code(value):
++    if not isinstance(value, dict):
++        return None
++    code = value.get("code")
++    if isinstance(code, str):
++        return code
++    error = value.get("error")
++    if isinstance(error, dict):
++        return error.get("code")
++    return error if isinstance(error, str) else None
+ 
+ 
+ def _active(value, operation_id, address):
+@@ -71,8 +83,21 @@
+     except httpx.HTTPError:
+         raise CodeError(503, "registration_unknown", "registration response unavailable; retry to recover the same operation") from None
+     if response.status_code not in (200, 201):
+-        if response.status_code == 409 and (_json(response) or {}).get("code") == "operation_expired":
+-            raise CodeError(409, "operation_expired", "Hive expired this enrolment; clear it through the owner before starting a new one")
++        if response.status_code == 409 and _error_code(_json(response)) == "operation_expired":
++            # The host has revoked and removed this pending identity. Discard only
++            # local state bound to this exact operation so a fresh host enrolment
++            # token can begin a new operation without reviving stale credentials.
++            try:
++                if path.exists():
++                    saved = json.loads(path.read_text())
++                    if saved.get("receipt", {}).get("operation_id") == operation_id:
++                        path.unlink()
++                operation_path.unlink()
++            except (OSError, ValueError, TypeError):
++                raise CodeError(503, "registration_recovery_required", "expired enrolment state could not be cleared safely") from None
++            authority.registration = None
++            authority.service_token = None
++            raise CodeError(409, "operation_expired", "Hive expired this enrolment; request a fresh enrolment token to retry")
+         raise CodeError(403, "registration_refused", "Hive refused service enrolment")
+     registration = _json(response)
+     receipt = registration.get("receipt") if registration else None
+--- a/tests/test_service.py
++++ b/tests/test_service.py
+@@ -436,6 +436,41 @@
+         s.close()
+ 
+ 
++def test_expired_enrolment_clears_only_its_pending_local_state(tmp_path, repo):
++    root = tmp_path / "expired-registration"
++    def expired(request):
++        return httpx.Response(409, json={"error": {"code": "operation_expired"}})
++    s = Service(root, OPERATOR, {"synthetic": {"path": str(repo)}}, "http://hive.invalid", httpx.MockTransport(expired))
++    try:
++        response = TestClient(create_app(s)).post("/v1/operator/register", headers={"Authorization": "Bearer " + OPERATOR},
++                                                   json={"enrol_token": "synthetic-expired-enrol-token"})
++        assert response.status_code == 409 and response.json()["error"] == "operation_expired"
++        assert not (root / "registration.operation.json").exists()
++        assert not (root / "registration.json").exists()
++    finally:
++        s.close()
++
++    operation_ids = []
++    def fresh(request):
++        if request.url.path.endswith("/register"):
++            body = json.loads(request.content)
++            operation_ids.append(body["operation_id"])
++            return httpx.Response(201, json={"service_id": "svc-fresh", "service_token": "synthetic-fresh-secret",
++                "capability_secret": "synthetic-fresh-key", "address": "http://127.0.0.1:8724",
++                "receipt": {"operation_id": body["operation_id"], "request_digest": "d" * 64,
++                            "service_id": "svc-fresh", "status": "pending"}})
++        return httpx.Response(200, json={"operation_id": operation_ids[-1], "request_digest": "d" * 64,
++                                         "service_id": "svc-fresh", "status": "active"})
++    s2 = Service(root, OPERATOR, {"synthetic": {"path": str(repo)}}, "http://hive.invalid", httpx.MockTransport(fresh))
++    try:
++        response = TestClient(create_app(s2)).post("/v1/operator/register", headers={"Authorization": "Bearer " + OPERATOR},
++                                                    json={"enrol_token": "synthetic-fresh-enrol-token"})
++        assert response.status_code == 201
++        assert len(operation_ids) == 1
++    finally:
++        s2.close()
++
++
+ def test_running_agent_stops_when_live_hive_authority_ends(tmp_path, repo):
+     state = {"active": True, "binding": None}
+     def transport(request):
