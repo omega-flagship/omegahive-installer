@@ -191,6 +191,42 @@ class BootstrapTests(unittest.TestCase):
             self.assertLess(wait, match.start(), match.group(0))
         self.assertTrue(re.search(r"control\.request\(config, home, ['\"]signin['\"]", body[wait:]))
 
+    def test_failure_note_carries_reason_and_locations_but_no_other_text(self):
+        try:
+            raise bootstrap.Refused("The service did not confirm its restart.")
+        except bootstrap.Refused as error:
+            note = json.loads(bootstrap.failure_note(error))
+        self.assertEqual(note["error"], "Refused")
+        self.assertEqual(note["reason"], "The service did not confirm its restart.")
+        self.assertTrue(note["where"] and all(":" in frame for frame in note["where"]))
+        try:
+            raise ValueError("local-signin#" + "A" * 43)
+        except ValueError as error:
+            note = json.loads(bootstrap.failure_note(error))
+        self.assertEqual((note["error"], note["reason"]), ("ValueError", ""))
+        self.assertNotIn("local-signin", json.dumps(note))
+        ControlRefused = type("Refused", (Exception,), {})
+        try:
+            raise ControlRefused("control_reply_timeout")
+        except ControlRefused as error:
+            self.assertEqual(json.loads(bootstrap.failure_note(error))["reason"], "control_reply_timeout")
+        try:
+            raise bootstrap.Refused("code local-signin#" + "B" * 43)
+        except bootstrap.Refused as error:
+            self.assertEqual(json.loads(bootstrap.failure_note(error))["reason"], "")
+
+    def test_failure_note_is_private_new_file_in_owned_logs_only(self):
+        with tempfile.TemporaryDirectory() as home:
+            logs = Path(home) / ".local/share/omegahive/logs"; logs.mkdir(parents=True, mode=0o700)
+            logs.chmod(0o700)
+            with patch.object(bootstrap.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir=home)):
+                bootstrap.record_failure(bootstrap.Refused("x"))
+                (written,) = logs.iterdir()
+                self.assertEqual(written.stat().st_mode & 0o777, 0o600)
+                logs.chmod(0o755)
+                bootstrap.record_failure(bootstrap.Refused("y"))
+                self.assertEqual(len(list(logs.iterdir())), 1)
+
     def test_failure_message_is_plain_and_does_not_promise_data_safety(self):
         message = bootstrap.failure_message()
         self.assertEqual(message, "The last setup step didn't finish. The details are in ~/.local/share/omegahive/logs")

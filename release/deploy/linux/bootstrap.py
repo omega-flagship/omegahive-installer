@@ -398,8 +398,42 @@ def main():
     bootstrap(args.runtime, args.seed)
 
 
+def failure_note(error):
+    """Secret-free reason for the logs folder: exception type, a Refused reason, and code locations only."""
+    frames = [f"{Path(frame.filename).name}:{frame.lineno}:{frame.name}"
+              for frame in __import__("traceback").extract_tb(error.__traceback__)]
+    # Refusal reasons (here and in control.py) are fixed reviewed strings; anything else stays out.
+    reason = str(error) if type(error).__name__ == "Refused" else ""
+    if not re.fullmatch(r"[A-Za-z0-9 _.,;:'()/-]{0,300}", reason):
+        reason = ""
+    return json.dumps({"step": "bootstrap", "error": type(error).__name__, "reason": reason[:300],
+                       "where": frames[-12:]}, indent=1) + "\n"
+
+
+def record_failure(error):
+    # Best effort: never masks the original failure, never follows a link, never overwrites.
+    try:
+        logs = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".local/share/omegahive/logs"
+        folder = os.open(logs, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            info = os.fstat(folder)
+            if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+                return
+            name = "bootstrap-failure-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8] + ".json"
+            fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=folder)
+            try:
+                os.write(fd, failure_note(error).encode())
+            finally:
+                os.close(fd)
+        finally:
+            os.close(folder)
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
     try: main()
-    except Exception:
+    except Exception as error:
+        record_failure(error)
         print(failure_message(), file=sys.stderr)
         raise SystemExit(1)
