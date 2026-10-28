@@ -1,0 +1,13 @@
+!(import! &self (library lib_import))
+!(git-import! "https://github.com/asi-alliance/OmegaClaw-Core.git")
+!(import! &self (library OmegaClaw-Core lib_omegaclaw))
+
+!(println! (eval (context-organ-status)))
+!(println! (eval (nal-step "((--> TestPerson teacher) (stv 0.9 0.8))" "((--> teacher helper) (stv 0.8 0.7))")))
+!(println! (eval (nal-step "((--> sample-agent careful) (stv 0.95 0.9))" "((--> careful reliable) (stv 0.9 0.9))")))
+!(println! (eval (pln-step "((Implication (Inheritance Pingu (IntSet Feathered)) (Inheritance Pingu Bird)) (stv 1.0 0.9))" "((Inheritance Pingu (IntSet Feathered)) (stv 1.0 0.9))")))
+!(println! (eval (pln-step "((Inheritance SampleAgent CarefulSystem) (stv 0.95 0.9))" "((Inheritance CarefulSystem ReliableSystem) (stv 0.9 0.9))")))
+!(println! (eval (truth-expectation 0.7 0.8)))
+!(add-atom &events (SmokeSpaceMarker "reasoning-space-smoke"))
+!(println! (eval (space-count events "(SmokeSpaceMarker $marker)")))
+!(println! (eval (space-find events "(SmokeSpaceMarker $marker)")))

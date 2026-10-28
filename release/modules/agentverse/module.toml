@@ -1,0 +1,55 @@
+id = "omegaclaw.remote.agentverse"
+kind = "remote-agent-organ"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+default_enabled = false
+
+provides = [
+  "space:agentverse",
+  "runtime-organ:agentverse",
+  "provider:agentverse",
+  "skill:agentverse-status",
+  "skill:agentverse-listener-status",
+  "skill:agentverse-listener-start",
+  "skill:agentverse-listener-stop",
+  "skill:agentverse-discover",
+  "skill:agentverse-remote-agents",
+  "skill:agentverse-register-agent",
+  "skill:agentverse-call",
+  "skill:agentverse-ask",
+  "skill:agentverse-trace",
+  "skill:agentverse-inbox",
+]
+
+requires = [
+  "python>=3.10",
+  "uagents>=0.22",
+]
+
+[env]
+AGENTVERSE_API_KEY = { required = false, secret = true }
+AGENTVERSE_SEED_PHRASE = { required = false, secret = true }
+OMEGACLAW_AGENTVERSE_ENDPOINT = { required = false }
+OMEGACLAW_AGENTVERSE_MAILBOX = { required = false, default = "0" }
+OMEGACLAW_AGENTVERSE_PORT = { required = false, default = "8101" }
+OMEGACLAW_AGENTVERSE_REGISTRY = { required = false, runtime_state = true, default = "memory/runtime/agentverse/agents.json" }
+
+[trace]
+writes = [
+  "AgentverseRequest",
+  "AgentverseRequestQueued",
+  "AgentverseResponse",
+  "AgentverseError",
+  "AgentverseListenerObserved",
+  "AgentverseListenerStarted",
+  "AgentverseListenerStopped",
+  "AgentverseInbound",
+  "AgentverseOutbound",
+  "AgentverseAcknowledgement",
+  "RemoteAgentObserved",
+  "AgentverseDiscovery",
+  "RemoteAgentRegistered",
+]

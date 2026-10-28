@@ -1,0 +1,45 @@
+id = "omegaclaw.immune.vm-policy"
+kind = "boundary-organ"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+default_enabled = false
+
+provides = [
+  "runtime-organ:vm-policy",
+  "skill:vm-policy-status",
+  "skill:vm-policy-exits",
+  "skill:vm-policy-atoms",
+  "skill:vm-policy-connections",
+  "skill:vm-policy-metrics",
+  "skill:vm-policy-audit",
+  "skill:vm-policy-enforcement-plan",
+  "skill:vm-policy-maintenance-window",
+  "skill:vm-policy-record-exit",
+  "skill:vm-policy-exit-history",
+  "skill:vm-policy-exit-summary",
+  "skill:vm-policy-last-trace",
+]
+
+requires = [
+  "python>=3.10",
+  "nft>=1",
+  "ufw>=0.36",
+]
+
+[trace]
+writes = [
+  "VMPolicyObserved",
+  "VMPolicyAudit",
+  "VMPolicyPlan",
+  "VMPolicyAtoms",
+  "VMPolicyConnectionsObserved",
+  "VMPolicyMetrics",
+  "VMPolicyMaintenanceWindowRequested",
+  "VMPolicyExitDecision",
+  "VMPolicyExitDecisionInvalid",
+  "VMPolicyExitHistoryObserved",
+  "VMPolicyExitSummaryObserved",
+]

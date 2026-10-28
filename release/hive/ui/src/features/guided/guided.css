@@ -1,0 +1,278 @@
+/* Guided demos by Ask: the presence on the target (per experience), the caption beside it, and the thread card.
+   Colours are the experience's own tokens only (stand-in r1 #4): the presence and the caption wear the experience
+   chrome (--xc-*, written by experiences/chrome.ts for every experience, light or dark); the parts shared with the
+   Ask thread (buttons, notes, the banked card) use the --color-* tokens, which the caption re-points at the chrome
+   and the thread keeps as the Ask's own. guided.test.ts measures the contrast in every experience. */
+
+.guide-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 56;
+  pointer-events: none;
+}
+.guide-glow {
+  position: fixed;
+  border-radius: 14px;
+  box-shadow:
+    0 0 0 2px var(--xc-accent),
+    0 0 30px 8px color-mix(in srgb, var(--xc-accent) 32%, transparent);
+  animation: guide-glow-in 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.guide-beacon {
+  position: fixed;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border-radius: 99px;
+  background: radial-gradient(circle, var(--xc-ink) 0 18%, color-mix(in srgb, var(--xc-accent) 90%, transparent) 30%, transparent 70%);
+  filter: drop-shadow(0 0 10px var(--xc-accent));
+  animation: guide-glide 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes guide-glow-in {
+  from {
+    opacity: 0;
+    transform: scale(1.04);
+  }
+}
+@keyframes guide-glide {
+  from {
+    left: var(--from-x);
+    top: var(--from-y);
+    opacity: 0.4;
+  }
+}
+
+/* each experience's own presence grammar */
+.guide-layer[data-experience='still'] .guide-glow {
+  border-radius: 3px;
+  box-shadow: 0 0 0 1.5px var(--xc-accent);
+}
+.guide-layer[data-experience='still'] .guide-beacon {
+  display: none;
+}
+.guide-layer[data-experience='cosmos'] .guide-glow {
+  border-radius: 999px;
+  box-shadow:
+    0 0 0 1.5px var(--xc-accent),
+    0 0 44px 14px color-mix(in srgb, var(--xc-accent) 28%, transparent);
+}
+.guide-layer[data-experience='construct'] .guide-glow {
+  border-radius: 0;
+  box-shadow: 0 0 0 2px var(--xc-accent);
+}
+.guide-layer[data-experience='construct'] .guide-beacon {
+  border-radius: 0;
+  width: 10px;
+  height: 18px;
+  margin: -9px 0 0 -5px;
+  background: var(--xc-accent);
+  filter: none;
+}
+.guide-layer[data-experience='flux'] .guide-glow {
+  border-radius: 28px;
+  box-shadow:
+    0 0 0 2px var(--xc-accent),
+    0 0 36px 10px color-mix(in srgb, var(--xc-accent) 30%, transparent);
+}
+.guide-layer[data-experience='canvas'] .guide-glow {
+  border-radius: 18px;
+  box-shadow: 0 0 0 2px var(--xc-accent);
+  outline: 1.5px dashed var(--xc-edge);
+  outline-offset: 5px;
+}
+.guide-layer[data-reduced] .guide-glow {
+  animation: none;
+}
+
+/* the caption beside the target, and an answer panel */
+.guide-caption {
+  position: fixed;
+  z-index: 57;
+  pointer-events: auto;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: min(var(--xc-radius), 16px);
+  border: 1px solid var(--xc-edge);
+  background: var(--xc-texture), var(--xc-surface);
+  backdrop-filter: var(--xc-blur);
+  -webkit-backdrop-filter: var(--xc-blur);
+  box-shadow: var(--xc-shadow);
+  color: var(--xc-ink);
+  font-family: var(--xc-font);
+  font-size: 13.5px;
+  /* the shared parts (buttons, notes, the banked card) read --color-*: here they are the experience's chrome */
+  --color-ink: var(--xc-ink);
+  --color-ink-2: var(--xc-ink-2);
+  --color-ink-3: var(--xc-ink-3);
+  --color-accent: var(--xc-accent);
+  line-height: 1.45;
+}
+.guide-answer-float {
+  left: 50%;
+  top: 72px;
+  translate: -50% 0;
+  width: min(440px, calc(100vw - 24px));
+}
+.guide-eyebrow {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 6px;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--color-ink-3);
+}
+.guide-badge {
+  padding: 0 6px;
+  border-radius: 99px;
+  border: 1px dashed color-mix(in srgb, currentColor 60%, transparent);
+  color: var(--color-ink-2);
+}
+.guide-text {
+  margin: 0;
+}
+.guide-note,
+.guide-status {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--color-ink-3);
+}
+.guide-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.guide-btn {
+  min-height: 30px;
+  padding: 0 11px;
+  border-radius: 99px;
+  border: 1px solid color-mix(in srgb, currentColor 60%, transparent);
+  background: transparent;
+  color: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.guide-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+.guide-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.guide-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.guide-btn[data-tone='primary'] {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+}
+.guide-btn[data-tone='quiet'] {
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-ink-3);
+}
+.guide-auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-ink-3);
+}
+@media (pointer: coarse) {
+  .guide-btn {
+    min-height: 44px;
+  }
+}
+
+/* in the Ask thread */
+.guide-card,
+.guide-in-thread {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, currentColor 60%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 6%, transparent);
+  font-size: 13px;
+}
+.guide-said {
+  margin: 0;
+  padding-left: 1.2em;
+  display: grid;
+  gap: 4px;
+}
+.guide-said li {
+  color: var(--color-ink-3);
+}
+.guide-said li[data-current] {
+  color: inherit;
+}
+/* a banked entry's qualification, in the transcript (never read as a result) */
+.guide-banked-tag {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 6px;
+  border-radius: 99px;
+  border: 1px dashed color-mix(in srgb, currentColor 60%, transparent);
+  color: var(--color-ink-2);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+/* a banked step, as recorded: never styled like a live result */
+.guide-banked {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  border: 1px dashed color-mix(in srgb, currentColor 60%, transparent);
+  background: transparent;
+  font-size: 12px;
+}
+.guide-banked-badge {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px;
+  margin: 0 0 4px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--color-ink-2);
+}
+.guide-banked dl {
+  display: grid;
+  grid-template-columns: minmax(5.5em, 9.5em) minmax(0, 1fr);
+  gap: 2px 8px;
+  margin: 0;
+}
+.guide-banked dt {
+  color: var(--color-ink-3);
+}
+.guide-banked dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.guide-banked code {
+  font-size: 11.5px;
+}
+
+/* A reading step whose panel has no room to show the viewer whole (a short desktop window): the panel's own bands that
+   may step aside (data-reading-yields, the mind panel's live-log ticker) do so for that step only; GuideLayer ends the
+   reflow when the step ends, and the store's reveal shows the viewer whole in the room that made. */
+html[data-guide-reflow] [data-reading-yields] {
+  display: none;
+}
+
+/* A reading step (a module viewer): toasts already on screen move to the top, off the lower half where viewers and
+   sheets sit (the same arrangement phones use inside an experience); new approval asks wait until it ends
+   (shell/approvalToasts asksWait). Nothing is dismissed; each toast keeps its own ttl, action and live region. `body`
+   outranks html[data-ask] / html[data-xc-active] .toast-stack, which place it for the Ask and the experiences. */
+html[data-guide-reading] body .toast-stack {
+  top: 0;
+  bottom: auto;
+  flex-direction: column;
+  padding-top: calc(var(--sat) + 64px);
+  padding-bottom: 0;
+}

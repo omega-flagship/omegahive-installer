@@ -1,0 +1,17 @@
+; Agentverse remote-agent catalog declarations.
+
+(SkillCatalog "Agentverse remote agents: agentverse-status, agentverse-listener-status, agentverse-listener-start, agentverse-listener-stop, agentverse-discover query optional-limit, agentverse-remote-agents, agentverse-register-agent name address schema capability, agentverse-call name payload, agentverse-ask destination schema payload, agentverse-trace, agentverse-inbox")
+(SkillHelp "agentverse" "Agentverse remote-agent affordances:")
+(SkillHelp "agentverse" "agentverse-status - inspect uAgents availability, configured endpoints, and trace path without exposing secrets")
+(SkillHelp "agentverse" "agentverse-listener-status - inspect the local uAgent listener that receives async AgentChatProtocol replies")
+(SkillHelp "agentverse" "agentverse-listener-start - start the local uAgent listener; needs OMEGACLAW_AGENTVERSE_ENDPOINT or a configured Agentverse mailbox")
+(SkillHelp "agentverse" "agentverse-listener-stop - stop the local uAgent listener process")
+(SkillHelp "agentverse" "agentverse-discover query optional-limit - search Agentverse/Almanac for relevant agents and store candidate atoms in &agentverse")
+(SkillHelp "agentverse" "agentverse-remote-agents - list configured Agentverse endpoint handles and addresses")
+(SkillHelp "agentverse" "agentverse-register-agent name address schema capability - add or update a known remote agent in &agentverse; exact repeats are no-ops")
+(SkillHelp "agentverse" "agentverse-call name payload - call a known RemoteAgent atom by name; AgentChatProtocol sends an official ChatMessage and returns AGENTVERSE-ACK on delivery")
+(SkillHelp "agentverse" "agentverse-ask destination schema payload - send a generic typed request to a remote Agentverse/uAgents address; use AgentChatProtocol for agents advertising AgentChatProtocol")
+(SkillHelp "agentverse" "agentverse-inbox - inspect listener outbound sends, acknowledgements, and inbound AgentChatProtocol replies")
+(SkillHelp "agentverse" "AgentChatProtocol acknowledgement proves delivery/acceptance, not necessarily the final async chat answer; full replies may require a listening local uAgent endpoint")
+(SkillHelp "agentverse" "agentverse-trace - inspect recent Agentverse request/response/error trace records")
+(SkillHelp "agentverse" "Agentverse is an external organ: useful for remote specialist agents, not a replacement for the agent's reasoning.")

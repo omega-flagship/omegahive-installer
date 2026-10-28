@@ -1,0 +1,28 @@
+id = "omegaclaw.external.web-search"
+kind = "external-info-organ"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+default_enabled = true
+
+provides = [
+  "provider:web-search",
+  "skill:web-search",
+  "skill:search",
+]
+
+requires = [
+  "python>=3.10",
+]
+
+[env.TAVILY_API_KEY]
+secret = true
+
+[trace]
+writes = [
+  "WebSearchRequested",
+  "WebSearchResult",
+  "WebSearchError",
+]

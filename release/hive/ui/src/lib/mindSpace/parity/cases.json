@@ -1,0 +1,435 @@
+{
+ "note": "Parity inputs: each expr is run as !expr after lib_nal, lib_pln, lib_hive, lib_mind, on MeTTaScript (parity.test.ts) and on PeTTa (scripts/mind-metta-parity.py).",
+ "cases": [
+  {
+   "group": "revision",
+   "name": "nal Truth_Revision (0.9, 0.5) (0.2, 0.3)",
+   "expr": "(Truth_Revision (stv 0.9 0.5) (stv 0.2 0.3))"
+  },
+  {
+   "group": "revision",
+   "name": "hive hive-truth-revision (0.9, 0.5) (0.2, 0.3)",
+   "expr": "(hive-truth-revision (stv 0.9 0.5) (stv 0.2 0.3))"
+  },
+  {
+   "group": "revision",
+   "name": "pln Truth__Revision (0.9, 0.5) (0.2, 0.3)",
+   "expr": "(Truth__Revision (stv 0.9 0.5) (stv 0.2 0.3))"
+  },
+  {
+   "group": "revision",
+   "name": "nal Truth_Revision (1.0, 0.9) (0.0, 0.9)",
+   "expr": "(Truth_Revision (stv 1.0 0.9) (stv 0.0 0.9))"
+  },
+  {
+   "group": "revision",
+   "name": "hive hive-truth-revision (1.0, 0.9) (0.0, 0.9)",
+   "expr": "(hive-truth-revision (stv 1.0 0.9) (stv 0.0 0.9))"
+  },
+  {
+   "group": "revision",
+   "name": "pln Truth__Revision (1.0, 0.9) (0.0, 0.9)",
+   "expr": "(Truth__Revision (stv 1.0 0.9) (stv 0.0 0.9))"
+  },
+  {
+   "group": "revision",
+   "name": "nal Truth_Revision (0.5, 0.01) (0.5, 0.01)",
+   "expr": "(Truth_Revision (stv 0.5 0.01) (stv 0.5 0.01))"
+  },
+  {
+   "group": "revision",
+   "name": "hive hive-truth-revision (0.5, 0.01) (0.5, 0.01)",
+   "expr": "(hive-truth-revision (stv 0.5 0.01) (stv 0.5 0.01))"
+  },
+  {
+   "group": "revision",
+   "name": "pln Truth__Revision (0.5, 0.01) (0.5, 0.01)",
+   "expr": "(Truth__Revision (stv 0.5 0.01) (stv 0.5 0.01))"
+  },
+  {
+   "group": "revision",
+   "name": "nal Truth_Revision (1.0, 0.99) (1.0, 0.99)",
+   "expr": "(Truth_Revision (stv 1.0 0.99) (stv 1.0 0.99))"
+  },
+  {
+   "group": "revision",
+   "name": "hive hive-truth-revision (1.0, 0.99) (1.0, 0.99)",
+   "expr": "(hive-truth-revision (stv 1.0 0.99) (stv 1.0 0.99))"
+  },
+  {
+   "group": "revision",
+   "name": "pln Truth__Revision (1.0, 0.99) (1.0, 0.99)",
+   "expr": "(Truth__Revision (stv 1.0 0.99) (stv 1.0 0.99))"
+  },
+  {
+   "group": "revision",
+   "name": "nal Truth_Revision (0.0, 0.999) (1.0, 0.001)",
+   "expr": "(Truth_Revision (stv 0.0 0.999) (stv 1.0 0.001))"
+  },
+  {
+   "group": "revision",
+   "name": "hive hive-truth-revision (0.0, 0.999) (1.0, 0.001)",
+   "expr": "(hive-truth-revision (stv 0.0 0.999) (stv 1.0 0.001))"
+  },
+  {
+   "group": "revision",
+   "name": "pln Truth__Revision (0.0, 0.999) (1.0, 0.001)",
+   "expr": "(Truth__Revision (stv 0.0 0.999) (stv 1.0 0.001))"
+  },
+  {
+   "group": "revision",
+   "name": "nal Truth_Revision (0.3, 0.0001) (0.7, 0.9999)",
+   "expr": "(Truth_Revision (stv 0.3 0.0001) (stv 0.7 0.9999))"
+  },
+  {
+   "group": "revision",
+   "name": "hive hive-truth-revision (0.3, 0.0001) (0.7, 0.9999)",
+   "expr": "(hive-truth-revision (stv 0.3 0.0001) (stv 0.7 0.9999))"
+  },
+  {
+   "group": "revision",
+   "name": "pln Truth__Revision (0.3, 0.0001) (0.7, 0.9999)",
+   "expr": "(Truth__Revision (stv 0.3 0.0001) (stv 0.7 0.9999))"
+  },
+  {
+   "group": "revision",
+   "name": "nal Truth_Revision (0.8, 0.5) (0.8, 0.5)",
+   "expr": "(Truth_Revision (stv 0.8 0.5) (stv 0.8 0.5))"
+  },
+  {
+   "group": "revision",
+   "name": "hive hive-truth-revision (0.8, 0.5) (0.8, 0.5)",
+   "expr": "(hive-truth-revision (stv 0.8 0.5) (stv 0.8 0.5))"
+  },
+  {
+   "group": "revision",
+   "name": "pln Truth__Revision (0.8, 0.5) (0.8, 0.5)",
+   "expr": "(Truth__Revision (stv 0.8 0.5) (stv 0.8 0.5))"
+  },
+  {
+   "group": "revision",
+   "name": "nal Truth_Revision (0.0, 0.5) (0.0, 0.5)",
+   "expr": "(Truth_Revision (stv 0.0 0.5) (stv 0.0 0.5))"
+  },
+  {
+   "group": "revision",
+   "name": "hive hive-truth-revision (0.0, 0.5) (0.0, 0.5)",
+   "expr": "(hive-truth-revision (stv 0.0 0.5) (stv 0.0 0.5))"
+  },
+  {
+   "group": "revision",
+   "name": "pln Truth__Revision (0.0, 0.5) (0.0, 0.5)",
+   "expr": "(Truth__Revision (stv 0.0 0.5) (stv 0.0 0.5))"
+  },
+  {
+   "group": "revision",
+   "name": "nal Truth_Revision (1.0, 0.98) (0.0, 0.02)",
+   "expr": "(Truth_Revision (stv 1.0 0.98) (stv 0.0 0.02))"
+  },
+  {
+   "group": "revision",
+   "name": "hive hive-truth-revision (1.0, 0.98) (0.0, 0.02)",
+   "expr": "(hive-truth-revision (stv 1.0 0.98) (stv 0.0 0.02))"
+  },
+  {
+   "group": "revision",
+   "name": "pln Truth__Revision (1.0, 0.98) (0.0, 0.02)",
+   "expr": "(Truth__Revision (stv 1.0 0.98) (stv 0.0 0.02))"
+  },
+  {
+   "group": "revision",
+   "name": "nal Truth_Revision (0.999999, 0.9) (1e-06, 0.9)",
+   "expr": "(Truth_Revision (stv 0.999999 0.9) (stv 1e-06 0.9))"
+  },
+  {
+   "group": "revision",
+   "name": "hive hive-truth-revision (0.999999, 0.9) (1e-06, 0.9)",
+   "expr": "(hive-truth-revision (stv 0.999999 0.9) (stv 1e-06 0.9))"
+  },
+  {
+   "group": "revision",
+   "name": "pln Truth__Revision (0.999999, 0.9) (1e-06, 0.9)",
+   "expr": "(Truth__Revision (stv 0.999999 0.9) (stv 1e-06 0.9))"
+  },
+  {
+   "group": "revision",
+   "name": "edge-nal Truth_Revision (1.0, 1.0) (0.0, 0.5)",
+   "expr": "(Truth_Revision (stv 1.0 1.0) (stv 0.0 0.5))"
+  },
+  {
+   "group": "revision",
+   "name": "edge-hive hive-truth-revision (1.0, 1.0) (0.0, 0.5)",
+   "expr": "(hive-truth-revision (stv 1.0 1.0) (stv 0.0 0.5))"
+  },
+  {
+   "group": "revision",
+   "name": "edge-pln Truth__Revision (1.0, 1.0) (0.0, 0.5)",
+   "expr": "(Truth__Revision (stv 1.0 1.0) (stv 0.0 0.5))"
+  },
+  {
+   "group": "revision",
+   "name": "edge-nal Truth_Revision (0.5, 0.0) (0.5, 0.0)",
+   "expr": "(Truth_Revision (stv 0.5 0.0) (stv 0.5 0.0))"
+  },
+  {
+   "group": "revision",
+   "name": "edge-hive hive-truth-revision (0.5, 0.0) (0.5, 0.0)",
+   "expr": "(hive-truth-revision (stv 0.5 0.0) (stv 0.5 0.0))"
+  },
+  {
+   "group": "revision",
+   "name": "edge-pln Truth__Revision (0.5, 0.0) (0.5, 0.0)",
+   "expr": "(Truth__Revision (stv 0.5 0.0) (stv 0.5 0.0))"
+  },
+  {
+   "group": "nal",
+   "name": "Truth_Deduction (0.9, 0.9) (0.8, 0.9)",
+   "expr": "(Truth_Deduction (stv 0.9 0.9) (stv 0.8 0.9))"
+  },
+  {
+   "group": "nal",
+   "name": "Truth_Induction (0.9, 0.9) (0.8, 0.9)",
+   "expr": "(Truth_Induction (stv 0.9 0.9) (stv 0.8 0.9))"
+  },
+  {
+   "group": "nal",
+   "name": "Truth_Abduction (0.9, 0.9) (0.8, 0.9)",
+   "expr": "(Truth_Abduction (stv 0.9 0.9) (stv 0.8 0.9))"
+  },
+  {
+   "group": "nal",
+   "name": "Truth_Deduction (1.0, 0.99) (1.0, 0.99)",
+   "expr": "(Truth_Deduction (stv 1.0 0.99) (stv 1.0 0.99))"
+  },
+  {
+   "group": "nal",
+   "name": "Truth_Induction (1.0, 0.99) (1.0, 0.99)",
+   "expr": "(Truth_Induction (stv 1.0 0.99) (stv 1.0 0.99))"
+  },
+  {
+   "group": "nal",
+   "name": "Truth_Abduction (1.0, 0.99) (1.0, 0.99)",
+   "expr": "(Truth_Abduction (stv 1.0 0.99) (stv 1.0 0.99))"
+  },
+  {
+   "group": "nal",
+   "name": "Truth_Deduction (0.0, 0.9) (1.0, 0.9)",
+   "expr": "(Truth_Deduction (stv 0.0 0.9) (stv 1.0 0.9))"
+  },
+  {
+   "group": "nal",
+   "name": "Truth_Induction (0.0, 0.9) (1.0, 0.9)",
+   "expr": "(Truth_Induction (stv 0.0 0.9) (stv 1.0 0.9))"
+  },
+  {
+   "group": "nal",
+   "name": "Truth_Abduction (0.0, 0.9) (1.0, 0.9)",
+   "expr": "(Truth_Abduction (stv 0.0 0.9) (stv 1.0 0.9))"
+  },
+  {
+   "group": "nal",
+   "name": "Truth_Deduction (0.5, 0.01) (0.5, 0.01)",
+   "expr": "(Truth_Deduction (stv 0.5 0.01) (stv 0.5 0.01))"
+  },
+  {
+   "group": "nal",
+   "name": "Truth_Induction (0.5, 0.01) (0.5, 0.01)",
+   "expr": "(Truth_Induction (stv 0.5 0.01) (stv 0.5 0.01))"
+  },
+  {
+   "group": "nal",
+   "name": "Truth_Abduction (0.5, 0.01) (0.5, 0.01)",
+   "expr": "(Truth_Abduction (stv 0.5 0.01) (stv 0.5 0.01))"
+  },
+  {
+   "group": "nal",
+   "name": "Truth_Deduction (1.0, 0.0001) (0.0001, 1.0)",
+   "expr": "(Truth_Deduction (stv 1.0 0.0001) (stv 0.0001 1.0))"
+  },
+  {
+   "group": "nal",
+   "name": "Truth_Induction (1.0, 0.0001) (0.0001, 1.0)",
+   "expr": "(Truth_Induction (stv 1.0 0.0001) (stv 0.0001 1.0))"
+  },
+  {
+   "group": "nal",
+   "name": "Truth_Abduction (1.0, 0.0001) (0.0001, 1.0)",
+   "expr": "(Truth_Abduction (stv 1.0 0.0001) (stv 0.0001 1.0))"
+  },
+  {
+   "group": "nal",
+   "name": "Truth_Deduction (0.999, 0.999) (0.001, 0.001)",
+   "expr": "(Truth_Deduction (stv 0.999 0.999) (stv 0.001 0.001))"
+  },
+  {
+   "group": "nal",
+   "name": "Truth_Induction (0.999, 0.999) (0.001, 0.001)",
+   "expr": "(Truth_Induction (stv 0.999 0.999) (stv 0.001 0.001))"
+  },
+  {
+   "group": "nal",
+   "name": "Truth_Abduction (0.999, 0.999) (0.001, 0.001)",
+   "expr": "(Truth_Abduction (stv 0.999 0.999) (stv 0.001 0.001))"
+  },
+  {
+   "group": "pln",
+   "name": "deduction |~pln (0.9, 0.9) (0.8, 0.9)",
+   "expr": "(mind-infer ((Inheritance A B) (stv 0.9 0.9)) ((Inheritance B C) (stv 0.8 0.9)))"
+  },
+  {
+   "group": "pln",
+   "name": "induction |~pln (0.9, 0.9) (0.8, 0.9)",
+   "expr": "(mind-infer ((Inheritance A B) (stv 0.9 0.9)) ((Inheritance A C) (stv 0.8 0.9)))"
+  },
+  {
+   "group": "pln",
+   "name": "abduction |~pln (0.9, 0.9) (0.8, 0.9)",
+   "expr": "(mind-infer ((Inheritance A C) (stv 0.9 0.9)) ((Inheritance B C) (stv 0.8 0.9)))"
+  },
+  {
+   "group": "pln",
+   "name": "deduction |~pln (1.0, 0.99) (1.0, 0.99)",
+   "expr": "(mind-infer ((Inheritance A B) (stv 1.0 0.99)) ((Inheritance B C) (stv 1.0 0.99)))"
+  },
+  {
+   "group": "pln",
+   "name": "induction |~pln (1.0, 0.99) (1.0, 0.99)",
+   "expr": "(mind-infer ((Inheritance A B) (stv 1.0 0.99)) ((Inheritance A C) (stv 1.0 0.99)))"
+  },
+  {
+   "group": "pln",
+   "name": "abduction |~pln (1.0, 0.99) (1.0, 0.99)",
+   "expr": "(mind-infer ((Inheritance A C) (stv 1.0 0.99)) ((Inheritance B C) (stv 1.0 0.99)))"
+  },
+  {
+   "group": "pln",
+   "name": "deduction |~pln (0.0, 0.9) (1.0, 0.9)",
+   "expr": "(mind-infer ((Inheritance A B) (stv 0.0 0.9)) ((Inheritance B C) (stv 1.0 0.9)))"
+  },
+  {
+   "group": "pln",
+   "name": "induction |~pln (0.0, 0.9) (1.0, 0.9)",
+   "expr": "(mind-infer ((Inheritance A B) (stv 0.0 0.9)) ((Inheritance A C) (stv 1.0 0.9)))"
+  },
+  {
+   "group": "pln",
+   "name": "abduction |~pln (0.0, 0.9) (1.0, 0.9)",
+   "expr": "(mind-infer ((Inheritance A C) (stv 0.0 0.9)) ((Inheritance B C) (stv 1.0 0.9)))"
+  },
+  {
+   "group": "pln",
+   "name": "deduction |~pln (0.5, 0.01) (0.5, 0.01)",
+   "expr": "(mind-infer ((Inheritance A B) (stv 0.5 0.01)) ((Inheritance B C) (stv 0.5 0.01)))"
+  },
+  {
+   "group": "pln",
+   "name": "induction |~pln (0.5, 0.01) (0.5, 0.01)",
+   "expr": "(mind-infer ((Inheritance A B) (stv 0.5 0.01)) ((Inheritance A C) (stv 0.5 0.01)))"
+  },
+  {
+   "group": "pln",
+   "name": "abduction |~pln (0.5, 0.01) (0.5, 0.01)",
+   "expr": "(mind-infer ((Inheritance A C) (stv 0.5 0.01)) ((Inheritance B C) (stv 0.5 0.01)))"
+  },
+  {
+   "group": "pln",
+   "name": "deduction |~pln (0.001, 0.5) (0.999, 0.5)",
+   "expr": "(mind-infer ((Inheritance A B) (stv 0.001 0.5)) ((Inheritance B C) (stv 0.999 0.5)))"
+  },
+  {
+   "group": "pln",
+   "name": "induction |~pln (0.001, 0.5) (0.999, 0.5)",
+   "expr": "(mind-infer ((Inheritance A B) (stv 0.001 0.5)) ((Inheritance A C) (stv 0.999 0.5)))"
+  },
+  {
+   "group": "pln",
+   "name": "abduction |~pln (0.001, 0.5) (0.999, 0.5)",
+   "expr": "(mind-infer ((Inheritance A C) (stv 0.001 0.5)) ((Inheritance B C) (stv 0.999 0.5)))"
+  },
+  {
+   "group": "pln",
+   "name": "deduction |~pln (1.0, 0.5) (0.0, 0.5)",
+   "expr": "(mind-infer ((Inheritance A B) (stv 1.0 0.5)) ((Inheritance B C) (stv 0.0 0.5)))"
+  },
+  {
+   "group": "pln",
+   "name": "induction |~pln (1.0, 0.5) (0.0, 0.5)",
+   "expr": "(mind-infer ((Inheritance A B) (stv 1.0 0.5)) ((Inheritance A C) (stv 0.0 0.5)))"
+  },
+  {
+   "group": "pln",
+   "name": "abduction |~pln (1.0, 0.5) (0.0, 0.5)",
+   "expr": "(mind-infer ((Inheritance A C) (stv 1.0 0.5)) ((Inheritance B C) (stv 0.0 0.5)))"
+  },
+  {
+   "group": "pln",
+   "name": "Truth__Deduction inconsistent premises",
+   "expr": "(Truth__Deduction (stv 0.5 0.9) (stv 0.2 0.9) (stv 0.3 0.9) (stv 0.9 0.9) (stv 0.9 0.9))"
+  },
+  {
+   "group": "pln",
+   "name": "Truth__Deduction Qs near 1",
+   "expr": "(Truth__Deduction (stv 0.5 0.9) (stv 0.99999 0.9) (stv 0.3 0.9) (stv 0.9 0.9) (stv 0.9 0.9))"
+  },
+  {
+   "group": "pln",
+   "name": "Truth__Induction sB = 1 (division by zero guarded)",
+   "expr": "(Truth__Induction (stv 0.5 0.9) (stv 1.0 0.9) (stv 0.3 0.9) (stv 0.9 0.9) (stv 0.9 0.9))"
+  },
+  {
+   "group": "pln",
+   "name": "Truth__ModusPonens",
+   "expr": "(Truth__ModusPonens (stv 0.7 0.9) (stv 0.8 0.6))"
+  },
+  {
+   "group": "expectation",
+   "name": "Truth_Expectation (0.0, 0.0)",
+   "expr": "(Truth_Expectation (stv 0.0 0.0))"
+  },
+  {
+   "group": "expectation",
+   "name": "Truth_Expectation (1.0, 1.0)",
+   "expr": "(Truth_Expectation (stv 1.0 1.0))"
+  },
+  {
+   "group": "expectation",
+   "name": "Truth_Expectation (0.69, 0.588235294117647)",
+   "expr": "(Truth_Expectation (stv 0.69 0.588235294117647))"
+  },
+  {
+   "group": "expectation",
+   "name": "Truth_Expectation (0.5, 0.9)",
+   "expr": "(Truth_Expectation (stv 0.5 0.9))"
+  },
+  {
+   "group": "engine",
+   "name": "lib_pln |~ (both orders, unique-atom collapse)",
+   "expr": "(|~ ((Inheritance A B) (stv 0.9 0.9)) ((Inheritance B C) (stv 0.8 0.9)))"
+  },
+  {
+   "group": "engine",
+   "name": "lib_nal |- deduction",
+   "expr": "(|- ((--> a b) (stv 0.9 0.9)) ((--> b c) (stv 0.8 0.9)))"
+  },
+  {
+   "group": "engine",
+   "name": "raw |~pln with no matching rule",
+   "expr": "(collapse (|~pln ((Inheritance A B) (stv 0.9 0.9)) ((Inheritance X Y) (stv 0.8 0.9))))"
+  },
+  {
+   "group": "engine",
+   "name": "stamp-disjoint? / stamp-merge",
+   "expr": "(stamp-merge ((ev b 2) (ev a 1)) ((ev a 1) (ev c 3)))"
+  },
+  {
+   "group": "engine",
+   "name": "pow-math (promotion decay)",
+   "expr": "(* 3.0 (pow-math (+ 1.0 (/ 43200.0 86400.0)) (- 0.0 0.7)))"
+  },
+  {
+   "group": "engine",
+   "name": "sort of score tuples",
+   "expr": "(sort ((-0.5 \"x1\" exchange) (-0.69 \"b1\" belief) (-0.5 \"a0\" belief)))"
+  }
+ ]
+}

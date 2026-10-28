@@ -1,0 +1,92 @@
+import type { GuideScript } from '../types'
+
+/** Apps, their own interfaces, and the two living canvases. */
+export const APP_SCRIPTS: GuideScript[] = [
+  {
+    id: 'commons-explorer',
+    title: 'The Commons Explorer',
+    blurb: 'What a swarm believes and why, as an app with its own interface.',
+    status: 'ready',
+    standing: 'Live (built in)',
+    triggers: ['show me how the commons explorer works', 'walk me through the commons explorer', 'demo the commons explorer'],
+    topics: ['commons explorer', 'the commons app', 'explorer', 'commons app'],
+    steps: [
+      { say: 'The Commons Explorer is an app over the swarm’s shared beliefs. Let’s open it for {swarm}.', do: { app: 'commons-explorer' }, target: [{ tour: 'program-stage-view' }, { region: 'app' }], wait: { for: 'target', ms: 6000 } },
+      { say: 'It reads the commons; it does not change it. Each belief keeps its truth value and its sources in view.', target: [{ tour: 'program-sources' }, { region: 'app' }] },
+      { say: 'Uncertainty is never hidden: where the evidence is thin, it says so.', target: [{ tour: 'detail-uncertainty' }, { region: 'app' }] },
+    ],
+  },
+  {
+    id: 'apps',
+    title: 'App interfaces (the case file and more)',
+    blurb: 'How apps plug into the hive with their own interfaces, sources and confirms.',
+    status: 'ready',
+    standing: 'Live',
+    triggers: ['show me how apps work', 'show me how the case file works', 'walk me through app interfaces', 'demo the case file'],
+    topics: ['apps', 'app', 'app interfaces', 'case file', 'programs', 'program', 'frame', 'plugins', 'evidence room'],
+    steps: [
+      { say: 'Apps plug into the hive. Each supplies a work graph and the hive shows it, with sources and uncertainty always visible.', do: { go: { name: 'programs' } }, target: [{ tour: 'programs-list' }, { region: 'page' }] },
+      { say: 'This one is a synthetic case file: a question, the claims that answer it, and the evidence for and against.', do: { app: 'contract-fixture' }, target: [{ tour: 'program-stage-view' }, { region: 'app' }], wait: { for: 'target', ms: 6000 } },
+      { say: 'Every item keeps its sources. An app’s action that matters, like posting a challenge, always shows you a confirm first.', target: [{ tour: 'program-sources' }, { region: 'app' }] },
+      { say: 'Private apps stay on the machine they belong to and are never shown on the cloud.', target: { region: 'app' } },
+    ],
+  },
+  {
+    id: 'tools-catalogue',
+    title: 'The Omega Tools catalogue',
+    blurb: 'The catalogue of tools, sets and foundations, with banked examples (inspection only).',
+    status: 'ready',
+    standing: 'Prepared, not mounted on any hive yet (the simulator shows an invented stand-in)',
+    triggers: ['show me how the tools catalogue works', 'show me the omega tools', 'walk me through the tools catalogue', 'demo omega tools'],
+    topics: ['tools catalogue', 'omega tools', 'tools catalog', 'catalogue', 'catalog', 'foundations', 'tool sets', 'skill catalogue'],
+    steps: [
+      { say: 'The Omega Tools catalogue lists tools, the sets they compose into, and the foundations underneath. It is not on any hive yet; this is an invented stand-in with the same shape.', do: { app: 'omega-tools' }, target: [{ tour: 'program-stage-view' }, { region: 'app' }], wait: { for: 'target', ms: 6000 } },
+      { say: 'Each node is typed: a tool, a set, a foundation, a component or a source. Inspecting one only reads it.', target: [{ tour: 'program-sources' }, { tour: 'program-stage-view' }, { region: 'app' }] },
+      { say: 'Examples are banked: recorded earlier, shown with “executed now: false”. Nothing in the catalogue runs a tool, and it offers no way to.', target: [{ tour: 'program-stage-view' }, { region: 'app' }] },
+    ],
+  },
+  {
+    id: 'evolve',
+    title: 'OmegaEvolve, the growth lab',
+    blurb: 'The evolving research pair: claims, experiments and their lineage.',
+    status: 'ready',
+    standing: 'Live (built in); experiments wait on owner items',
+    triggers: ['show me how evolve works', 'show me how omegaevolve works', 'walk me through the growth lab', 'demo evolve'],
+    topics: ['evolve', 'omegaevolve', 'growth lab', 'experiments', 'claims', 'lineage', 'research'],
+    steps: [
+      { say: 'OmegaEvolve is the growth lab: claims, the experiments that test them, and where each came from.', do: { app: 'omegaevolve' }, target: { region: 'app' }, wait: { for: 'target', ms: 6000 } },
+      { say: 'A claim is marked current, corrected or retracted, never quietly changed. Its lineage stays readable.', target: { region: 'app' } },
+      { say: 'Running new experiments waits on items its owners still have to settle, so today you can read and compare, not run.', target: { region: 'app' } },
+    ],
+  },
+  {
+    id: 'design',
+    title: 'The Design canvas',
+    blurb: 'Make, compare and deliver designs on one full-bleed living canvas.',
+    status: 'ready',
+    standing: 'Design studio Live; the living canvas is in review',
+    triggers: ['show me how design works', 'show me how the design canvas works', 'walk me through design', 'demo design'],
+    topics: ['design', 'design canvas', 'design studio', 'studio', 'drafts', 'decks', 'canvas design'],
+    steps: [
+      { say: 'Design is the studio. It opens as one full-bleed canvas: pan and zoom, and the controls appear beside what you select.', do: { app: 'omegadesign' }, target: { region: 'app' }, wait: { for: 'target', ms: 8000 } },
+      { say: 'Drafts can be compared side by side, and a live preview offers Accept or Reject. Nothing is kept until you press Keep.', target: { region: 'app' } },
+      { say: 'Watching a mind draw live on this canvas is planned, not built yet.', target: { region: 'app' } },
+    ],
+  },
+  {
+    id: 'code',
+    title: 'The Code canvas (vibe and hand)',
+    blurb: 'Code with minds: describe a change and a mind writes it in, or edit by hand.',
+    status: 'ready',
+    standing: 'Phase 1 Live; phase 2 in review',
+    triggers: ['show me how the code canvas works', 'show me how code works', 'walk me through coding', 'show me how vibe coding works', 'demo the code canvas'],
+    topics: ['code', 'code canvas', 'coding', 'vibe coding', 'vibe', 'workbench', 'code workbench', 'editor'],
+    steps: [
+      { say: 'This is Code: everything you can edit with minds, and what is running.', do: { go: { name: 'code' } }, target: { region: 'page' } },
+      { say: 'Open something and start an edit task. Starting one is your decision, so I’ll wait here until the canvas opens.', target: [{ region: 'code-editor' }], wait: { for: 'you' } },
+      { say: 'The file fills the canvas. You can edit it by hand, like any editor.', target: { region: 'code-editor' } },
+      { say: 'The minimap shows the whole file and where you are in it.', target: [{ region: 'code-minimap' }, { region: 'code-editor' }] },
+      { say: 'Or describe it: select some lines, choose Change, and say what should change. A mind writes it in, then you keep or skip each change and Accept behind a confirm.', target: { region: 'code-editor' } },
+    ],
+  },
+]

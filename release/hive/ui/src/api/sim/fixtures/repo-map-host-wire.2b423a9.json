@@ -1,0 +1,508 @@
+{
+  "header": {
+    "repo": "fixture-mini",
+    "sha": "0000000000000000000000000000000000000001",
+    "schema": "repo-map/1",
+    "state": "partial",
+    "reason": "1 of 4 Python files failed to parse",
+    "extractor": {
+      "id": "omegacode.repository_facts",
+      "parser": "python-ast-3.12",
+      "version": "fixture"
+    },
+    "generated_at": "2026-10-11T19:00:00Z",
+    "receipt": {
+      "artifact_ref": "fixture://repo-map/fixture-mini@0000001",
+      "digest": "sha256:synthetic"
+    },
+    "counts": {
+      "edges": 5,
+      "edges_by_basis": {
+        "declared": 1,
+        "heuristic": 1,
+        "syntax": 3
+      },
+      "edges_by_kind": {
+        "calls-expression": 1,
+        "defines": 1,
+        "imports": 1,
+        "test-doc-link": 2
+      },
+      "nodes": 6,
+      "nodes_by_kind": {
+        "def": 1,
+        "doc": 1,
+        "file": 3,
+        "test": 1
+      },
+      "refs": 10,
+      "unresolved": 1
+    },
+    "digest": "sha256:d24e899e4207fd0332748dc5b8dea35682067e43da5367926e8a43c22114efaf",
+    "visibility": "hive",
+    "pinned": false,
+    "revision_state": "partial",
+    "revision_reason": "1 of 4 Python files failed to parse",
+    "snapshot_digest": "sha256:synthetic-fixture-not-a-real-digest",
+    "coverage": {
+      "kinds": [
+        "file",
+        "module",
+        "def",
+        "import",
+        "test",
+        "doc"
+      ],
+      "languages": [
+        "python"
+      ],
+      "unresolved": [
+        {
+          "issue": "SyntaxError line 3",
+          "path": "pkg/broken.py"
+        }
+      ]
+    },
+    "space": {
+      "id": "repo:fixture-mini@0000000000000000000000000000000000000001",
+      "kind": "read-only",
+      "status": "incomplete",
+      "atoms": null,
+      "reason": "mount failed and the space was not cleared; contents unknown"
+    }
+  },
+  "revisions": [
+    {
+      "repo": "fixture-mini",
+      "sha": "0000000000000000000000000000000000000002",
+      "schema": "repo-map/1",
+      "state": "partial",
+      "reason": "1 of 4 Python files failed to parse",
+      "extractor": {
+        "id": "omegacode.repository_facts",
+        "parser": "python-ast-3.12",
+        "version": "fixture"
+      },
+      "generated_at": "2026-10-11T19:00:00Z",
+      "receipt": {
+        "artifact_ref": "fixture://repo-map/fixture-mini@0000001",
+        "digest": "sha256:synthetic"
+      },
+      "counts": {
+        "edges": 5,
+        "edges_by_basis": {
+          "declared": 1,
+          "heuristic": 1,
+          "syntax": 3
+        },
+        "edges_by_kind": {
+          "calls-expression": 1,
+          "defines": 1,
+          "imports": 1,
+          "test-doc-link": 2
+        },
+        "nodes": 7,
+        "nodes_by_kind": {
+          "def": 1,
+          "doc": 2,
+          "file": 3,
+          "test": 1
+        },
+        "refs": 10,
+        "unresolved": 1
+      },
+      "digest": "sha256:150dd71a5d8f95785af2295b1b35550d3058ddbcbadefaf37d4d1e71feef3778",
+      "visibility": "hive",
+      "pinned": false,
+      "revision_state": "partial",
+      "revision_reason": "1 of 4 Python files failed to parse"
+    },
+    {
+      "repo": "fixture-mini",
+      "sha": "0000000000000000000000000000000000000001",
+      "schema": "repo-map/1",
+      "state": "partial",
+      "reason": "1 of 4 Python files failed to parse",
+      "extractor": {
+        "id": "omegacode.repository_facts",
+        "parser": "python-ast-3.12",
+        "version": "fixture"
+      },
+      "generated_at": "2026-10-11T19:00:00Z",
+      "receipt": {
+        "artifact_ref": "fixture://repo-map/fixture-mini@0000001",
+        "digest": "sha256:synthetic"
+      },
+      "counts": {
+        "edges": 5,
+        "edges_by_basis": {
+          "declared": 1,
+          "heuristic": 1,
+          "syntax": 3
+        },
+        "edges_by_kind": {
+          "calls-expression": 1,
+          "defines": 1,
+          "imports": 1,
+          "test-doc-link": 2
+        },
+        "nodes": 6,
+        "nodes_by_kind": {
+          "def": 1,
+          "doc": 1,
+          "file": 3,
+          "test": 1
+        },
+        "refs": 10,
+        "unresolved": 1
+      },
+      "digest": "sha256:d24e899e4207fd0332748dc5b8dea35682067e43da5367926e8a43c22114efaf",
+      "visibility": "hive",
+      "pinned": false,
+      "revision_state": "partial",
+      "revision_reason": "1 of 4 Python files failed to parse"
+    }
+  ],
+  "node_detail": {
+    "repo": "fixture-mini",
+    "sha": "0000000000000000000000000000000000000001",
+    "node": {
+      "id": "file:pkg/util.py",
+      "kind": "file",
+      "label": "pkg/util.py",
+      "refs": [
+        {
+          "excerpt": "from pkg.core import add",
+          "line": 1,
+          "path": "pkg/util.py"
+        }
+      ],
+      "source_digest": "sha256:b2"
+    },
+    "revision_state": "partial",
+    "revision_reason": "1 of 4 Python files failed to parse",
+    "truncated": false,
+    "next_cursor": null,
+    "state": "ready",
+    "reason": null,
+    "nodes": [
+      {
+        "id": "file:pkg/core.py",
+        "kind": "file",
+        "label": "pkg/core.py",
+        "refs": [
+          {
+            "excerpt": "\"\"\"Core.\"\"\"",
+            "line": 1,
+            "path": "pkg/core.py"
+          }
+        ],
+        "source_digest": "sha256:a1"
+      },
+      {
+        "id": "def:pkg/core.py::add",
+        "kind": "def",
+        "label": "add",
+        "refs": [
+          {
+            "excerpt": "def add(a, b):",
+            "line": 4,
+            "path": "pkg/core.py"
+          }
+        ],
+        "source_digest": "sha256:a1"
+      }
+    ],
+    "edges": [
+      {
+        "basis": "syntax",
+        "from": "file:pkg/util.py",
+        "id": "e1",
+        "kind": "imports",
+        "refs": [
+          {
+            "excerpt": "from pkg.core import add",
+            "line": 1,
+            "path": "pkg/util.py"
+          }
+        ],
+        "to": "file:pkg/core.py"
+      },
+      {
+        "basis": "syntax",
+        "from": "file:pkg/util.py",
+        "id": "e3",
+        "kind": "calls-expression",
+        "refs": [
+          {
+            "excerpt": "return add(x, 1)",
+            "line": 6,
+            "path": "pkg/util.py"
+          }
+        ],
+        "to": "def:pkg/core.py::add"
+      }
+    ]
+  },
+  "presets": {
+    "repo": "fixture-mini",
+    "presets": [
+      {
+        "preset": "imports",
+        "description": "what the chosen nodes import (outgoing imports edges)",
+        "params": {
+          "type": "object",
+          "properties": {
+            "node_id": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "path": {
+              "type": "string",
+              "maxLength": 512
+            }
+          },
+          "additionalProperties": false,
+          "required": [],
+          "oneOf": [
+            {
+              "required": [
+                "node_id"
+              ]
+            },
+            {
+              "required": [
+                "path"
+              ]
+            }
+          ]
+        },
+        "basis_note": "syntactic import statements only; an import is not a resolved runtime dependency"
+      },
+      {
+        "preset": "potential-dependents",
+        "description": "what imports or calls the chosen nodes, followed transitively (cycle-safe) over incoming imports and calls-expression edges; each dependent carries its distance; max_depth 1 gives direct links only",
+        "params": {
+          "type": "object",
+          "properties": {
+            "node_id": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "path": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "max_depth": {
+              "type": "string",
+              "maxLength": 512
+            }
+          },
+          "additionalProperties": false,
+          "required": [],
+          "oneOf": [
+            {
+              "required": [
+                "node_id"
+              ]
+            },
+            {
+              "required": [
+                "path"
+              ]
+            }
+          ]
+        },
+        "basis_note": "static imports and call expressions followed transitively; possible dependents, not runtime impact and not a resolved call graph"
+      },
+      {
+        "preset": "defines",
+        "description": "what the chosen nodes define (outgoing defines edges)",
+        "params": {
+          "type": "object",
+          "properties": {
+            "node_id": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "path": {
+              "type": "string",
+              "maxLength": 512
+            }
+          },
+          "additionalProperties": false,
+          "required": [],
+          "oneOf": [
+            {
+              "required": [
+                "node_id"
+              ]
+            },
+            {
+              "required": [
+                "path"
+              ]
+            }
+          ]
+        },
+        "basis_note": "syntactic definitions only"
+      },
+      {
+        "preset": "calls-expression",
+        "description": "call expressions written in the chosen nodes (outgoing calls-expression edges)",
+        "params": {
+          "type": "object",
+          "properties": {
+            "node_id": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "path": {
+              "type": "string",
+              "maxLength": 512
+            }
+          },
+          "additionalProperties": false,
+          "required": [],
+          "oneOf": [
+            {
+              "required": [
+                "node_id"
+              ]
+            },
+            {
+              "required": [
+                "path"
+              ]
+            }
+          ]
+        },
+        "basis_note": "call expressions by name; not resolved calls"
+      },
+      {
+        "preset": "source-search",
+        "description": "nodes whose id, label, paths or excerpts contain q (case-insensitive)",
+        "params": {
+          "type": "object",
+          "properties": {
+            "q": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "kind": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "path_prefix": {
+              "type": "string",
+              "maxLength": 512
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "q"
+          ]
+        },
+        "basis_note": "lexical match on ids, labels, paths and excerpts only"
+      },
+      {
+        "preset": "test-doc-links",
+        "description": "test and doc links to or from the chosen nodes, each with its basis",
+        "params": {
+          "type": "object",
+          "properties": {
+            "node_id": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "path": {
+              "type": "string",
+              "maxLength": 512
+            }
+          },
+          "additionalProperties": false,
+          "required": [],
+          "oneOf": [
+            {
+              "required": [
+                "node_id"
+              ]
+            },
+            {
+              "required": [
+                "path"
+              ]
+            }
+          ]
+        },
+        "basis_note": "declared and static links only; not runtime coverage"
+      },
+      {
+        "preset": "drift",
+        "description": "nodes added, removed, changed or moved between revision 'from' and this one",
+        "params": {
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string",
+              "maxLength": 512
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "from"
+          ]
+        },
+        "basis_note": "node identity is the map's logical id; moved only with unique source_digest evidence"
+      }
+    ],
+    "limit": {
+      "default": 50,
+      "max": 200
+    }
+  },
+  "drift": {
+    "repo": "fixture-mini",
+    "from": "0000000000000000000000000000000000000001",
+    "to": "0000000000000000000000000000000000000002",
+    "basis_note": "node identity is the map's logical id; moved only with unique source_digest evidence",
+    "revision_state": "partial",
+    "revision_reason": "1 of 4 Python files failed to parse",
+    "from_revision_state": "partial",
+    "from_revision_reason": "1 of 4 Python files failed to parse",
+    "truncated": false,
+    "next_cursor": null,
+    "state": "ready",
+    "reason": null,
+    "added": [
+      {
+        "node": {
+          "id": "doc:extra.md",
+          "kind": "doc",
+          "label": "extra.md",
+          "source_digest": "sha256:extra-fixture"
+        },
+        "basis": "id absent in from"
+      }
+    ],
+    "removed": [],
+    "changed": [],
+    "moved": [
+      {
+        "from": {
+          "id": "file:pkg/util.py",
+          "kind": "file",
+          "label": "pkg/util.py",
+          "source_digest": "sha256:b2"
+        },
+        "to": {
+          "id": "file:pkg/newutil.py",
+          "kind": "file",
+          "label": "pkg/newutil.py",
+          "source_digest": "sha256:b2"
+        },
+        "basis": "unique source_digest match"
+      }
+    ]
+  }
+}

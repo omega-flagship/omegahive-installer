@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#05050f" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="description" content="OmegaHive: a living swarm of always-on minds." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>OmegaHive</title>
+    <script>
+      // If the app has not drawn anything a few seconds after loading, say so instead of a blank page.
+      ;(function () {
+        var shown = false
+        function show(msg) {
+          if (shown) return
+          // the app's chunk recovery (src/lib/chunkReload.ts) owns the page (checking, reloading, or it has said so): stand
+          // aside for good, so a timer scheduled before it took over never shows this later
+          if (document.documentElement.hasAttribute('data-hive-update')) { shown = true; return }
+          var root = document.getElementById('root')
+          if (root && root.childElementCount) return
+          shown = true
+          var d = document.createElement('div')
+          d.setAttribute('role', 'alert')
+          d.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;background:#05050f;color:#eceaff;font:15px/1.5 system-ui,sans-serif;text-align:center;z-index:99'
+          d.innerHTML = '<div style="max-width:360px"><div style="font-size:20px;font-weight:600;margin-bottom:8px">OmegaHive did not start</div><div style="opacity:.75;margin-bottom:16px" id="boot-why"></div><button style="padding:10px 18px;border-radius:12px;border:0;background:#a493ff;color:#0b0820;font-weight:600" onclick="location.reload(true)">Reload</button></div>'
+          document.body.appendChild(d)
+          document.getElementById('boot-why').textContent = msg || 'The page loaded, but its script did not run. Reloading usually fixes it.'
+        }
+        window.addEventListener('error', function (e) { setTimeout(function () { show(e && e.message ? 'Error: ' + e.message : '') }, 1500) }, true)
+        window.addEventListener('unhandledrejection', function (e) { setTimeout(function () { show(e && e.reason ? 'Error: ' + (e.reason.message || e.reason) : '') }, 1500) })
+        window.addEventListener('load', function () { setTimeout(function () { show('') }, 6000) })
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

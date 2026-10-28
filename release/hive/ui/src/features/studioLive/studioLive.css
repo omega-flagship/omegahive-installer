@@ -1,0 +1,91 @@
+/* J3 r4.3 O3: Directing Studio (in the Ask thread) and the one Stop bar (every look). */
+.sl-panel {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgb(255 255 255 / 0.04);
+  border: 1px solid rgb(190 190 255 / 0.16);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.sl-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.sl-title { font-weight: 600; }
+.sl-state { font-size: 12px; color: var(--color-ink-3, #8a89b3); }
+.sl-lines { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.sl-lines li { font-size: 12.5px; }
+.sl-lines li[data-first] { font-weight: 600; }
+.sl-lines li[data-tone='warn'] { color: var(--color-warn, #fbbf24); }
+.sl-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 8px; }
+.sl-toggle { display: inline-flex; border: 1px solid rgb(190 190 255 / 0.22); border-radius: 999px; overflow: hidden; }
+.sl-toggle button { font: inherit; font-size: 12.5px; padding: 4px 12px; min-height: 30px; background: transparent; color: inherit; border: 0; cursor: pointer; }
+.sl-toggle button[aria-pressed='true'] { background: rgb(164 147 255 / 0.28); font-weight: 600; }
+.sl-hint { font-size: 12px; color: var(--color-ink-3, #8a89b3); flex: 1 1 200px; }
+.sl-cards { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.sl-card { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 2px 8px; align-items: start; padding: 6px 8px; border-radius: 10px; background: rgb(255 255 255 / 0.03); border: 1px solid rgb(190 190 255 / 0.1); }
+.sl-card[data-tone='ok'] { border-color: rgb(74 222 128 / 0.3); }
+.sl-card[data-tone='warn'] { border-color: rgb(251 191 36 / 0.4); }
+.sl-card-icon { font-size: 12px; line-height: 18px; text-align: center; }
+.sl-card-text { font-size: 12.5px; }
+.sl-card-time { font-size: 11px; color: var(--color-ink-3, #8a89b3); }
+.sl-card-detail { grid-column: 2 / 4; font-size: 11.5px; color: var(--color-ink-3, #8a89b3); }
+.sl-dirs { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 2px; font-size: 12.5px; }
+.sl-chip-btn { min-height: 24px; padding: 1px 8px; font-size: 11.5px; margin-left: 6px; }
+.sl-dirs li span { color: var(--color-ink-3, #8a89b3); font-size: 11.5px; margin-left: 6px; }
+.sl-next { margin-top: 8px; padding: 6px 8px; border-radius: 10px; border: 1px dashed rgb(190 190 255 / 0.25); opacity: 0.85; }
+.sl-next textarea { width: 100%; font: inherit; font-size: 12.5px; color: inherit; background: transparent; border: 0; resize: vertical; }
+.sl-held { margin-top: 8px; padding: 6px 8px; border-radius: 10px; border: 1px solid rgb(251 191 36 / 0.4); background: rgb(251 191 36 / 0.06); }
+.sl-btn { font: inherit; font-size: 12.5px; min-height: 30px; padding: 4px 12px; border-radius: 999px; border: 1px solid rgb(190 190 255 / 0.25); background: rgb(255 255 255 / 0.05); color: inherit; cursor: pointer; }
+.sl-btn[data-tone='primary'] { background: rgb(164 147 255 / 0.85); color: #12112a; border-color: transparent; font-weight: 600; }
+/* readable on the dark bar and on light looks (Professional's Ask panel): one red that holds contrast on both */
+.sl-btn[data-tone='stop'] { background: rgb(251 113 133 / 0.16); border-color: rgb(225 29 72 / 0.7); color: #e11d48; font-weight: 600; }
+.sl-bar .sl-btn[data-tone='stop'] { color: #fda4af; }
+.sl-btn:disabled { opacity: 0.5; cursor: default; }
+.sl-setup p { margin: 4px 0; font-size: 12.5px; }
+.sl-setup .sl-month { font-weight: 600; font-size: 13px; }
+
+/* the one Stop, in every look: a small bar above every experience and app, clear of the safe areas */
+.sl-bar {
+  position: fixed;
+  z-index: 97;
+  top: calc(env(safe-area-inset-top, 0px) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* a fixed width, so Stop never moves while the status words change */
+  width: min(560px, calc(100vw - 32px));
+  padding: 4px 4px 4px 12px;
+  border-radius: 999px;
+  background: rgb(14 14 34 / 0.92);
+  border: 1px solid rgb(190 190 255 / 0.25);
+  color: #eef0ff;
+  font: 12.5px/1.3 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.35);
+}
+/* on an app page: in the page's flow, above the app's own toolbar (never covering it) */
+.sl-bar[data-inline] { position: relative; top: auto; left: auto; transform: none; margin: calc(env(safe-area-inset-top, 0px) + 6px) auto 6px; flex: none; z-index: 2; }
+.sl-bar-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sl-bar-money { flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; }
+.sl-bar-money::before { content: '· '; font-weight: 400; opacity: 0.7; }
+.sl-bar .sl-btn { flex: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .sl-bar[data-live='receiving'] .sl-dot { animation: sl-pulse 1.6s ease-in-out infinite; }
+}
+.sl-dot { width: 8px; height: 8px; border-radius: 50%; background: #4ade80; flex: none; }
+.sl-bar[data-live='stopped'] .sl-dot { background: #fb7185; }
+.sl-bar[data-live='waiting-for-studio'] .sl-dot, .sl-bar[data-live='closed-unmount'] .sl-dot { background: #fbbf24; }
+@keyframes sl-pulse { 50% { opacity: 0.35; } }
+
+/* r1.13 (Design phone P2): in the phone sheet the setup card is taller than the sheet, so its actions (Start / Not now)
+   stay pinned to the sheet's bottom edge while the person reads the values above them; nothing is hidden or reordered */
+.ask-sheet .sl-setup > .sl-row {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin: 8px -12px -10px;
+  padding: 8px 12px 10px;
+  border-radius: 0 0 16px 16px;
+  background: rgb(12 11 34 / 0.96);
+  border-top: 1px solid rgb(190 190 255 / 0.16);
+}

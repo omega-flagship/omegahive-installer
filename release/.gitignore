@@ -1,0 +1,127 @@
+# embedded vector store
+memory/chroma_db/
+chroma_db/
+
+# pulled in repos
+repos/
+
+# secrets
+.env
+
+# editor backup files
+*~
+Autotests/venv/
+Autotests/__pycache__/
+__pycache__/
+*.pyc
+Autotests/logs/
+
+# IDE
+.idea/
+
+# Runtime body: process logs, transient state, generated caches
+run/
+memory/*.log
+memory/*.jsonl
+memory/*.db
+memory/*.db-shm
+memory/*.db-wal
+memory/*.json
+memory/*.metta
+memory/*.md
+memory/*.html
+memory/*.txt
+memory/cycle-counter.txt
+memory/reboot_note.txt
+memory/backups/
+memory/runtime/
+memory/.audio-bin/
+memory/inbox/
+memory/outbox/
+memory/web/
+memory/web/terminal.log
+memory/web/*.json
+memory/web/*.txt
+
+# Generated media and published site runtime artifacts
+memory/*.png
+memory/*.jpg
+memory/*.jpeg
+memory/*.webp
+memory/*.gif
+memory/*.mp3
+memory/*.wav
+memory/*.m4a
+memory/*.mp4
+memory/web/public/
+
+# Live runtime instance notes that are memory/state, not source
+memory/omega-care-chain.txt
+memory/omega-goals.txt
+memory/omega-phase3-goals.md
+memory/omega-practice.txt
+
+# Local backup files created during live patching
+*.bak
+*.bak-*
+*.backup
+*.backup-*
+
+# Channel bridge runtime dependencies and private auth/session state
+channels/whatsapp_bridge/node_modules/
+channels/whatsapp_bridge/auth*/
+channels/whatsapp_bridge/*.bak-*
+channels/*.bak-*
+src/*.bak-*
+memory/*.bak-*
+web/omega-os/node_modules/
+
+# Credentials and local runtime config
+memory/home_assistant.json
+memory/librelinkup.json
+memory/librelinkup_cache.json
+channels/whatsapp_bridge/*auth*/
+# Module-owned WhatsApp bridge runtime dependencies and auth/session state
+modules/channel_whatsapp/src/whatsapp_bridge/node_modules/
+modules/channel_whatsapp/src/whatsapp_bridge/auth*/
+modules/channel_whatsapp/src/whatsapp_bridge/*auth*/
+modules/channel_whatsapp/src/whatsapp_bridge/*.bak-*
+
+
+# Local website project; not part of v0.01a GitHub release yet
+web/omega-os/
+
+# Local website/webhost project; not part of v0.01a GitHub release yet
+src/webhost.py
+tests/test_webhost_local.py
+docs/reference-spline-omega-os-brief.md
+docs/retired/omega-os-three-prototype/
+docs/review/patch-series/patches/90-local-web-ui-not-for-upstream.patch
+# --- GitHub prep: build output, environments, local data, editor/OS files ---
+node_modules/
+dist/
+build/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.pyo
+*.egg-info/
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+.env
+.env.*
+!.env.example
+!*.env.example
+hive.lock
+.omegadots/
+*.swp
+*.swo
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,1532 @@
+{
+ "note": "Sim commons parity cases (Surface sim-commons r1). INVENTED statements, agents and evidence; REAL truth maths. revisions: lib_nal Truth_Revision pairs. commons: per swarm, its members (grants), vocabulary (hive-vocab-add!) and assertions in order through lib_hive's hive-publish!, statements parsed as expressions (refusals included). The tests-* sequences are sim.test.ts's; the seed7-* ones are recorded from the default sim (SIM_COMMONS_CASES_OUT, commons.parity.test.ts). scripts/showreel-pln-reference.py runs them on PeTTa into petta-reference.json.",
+ "revisions": [
+  [
+   [
+    1,
+    0.5
+   ],
+   [
+    0,
+    0.5
+   ]
+  ],
+  [
+   [
+    1,
+    0.99
+   ],
+   [
+    0,
+    0.99
+   ]
+  ],
+  [
+   [
+    0.8,
+    0.9
+   ],
+   [
+    0.6,
+    0.5
+   ]
+  ],
+  [
+   [
+    0.9,
+    0.9
+   ],
+   [
+    0.1,
+    0.1
+   ]
+  ],
+  [
+   [
+    1,
+    0.98
+   ],
+   [
+    1,
+    0.98
+   ]
+  ],
+  [
+   [
+    0.71,
+    0.33
+   ],
+   [
+    0.64,
+    0.41
+   ]
+  ]
+ ],
+ "commons": [
+  {
+   "swarm": "tests-outcomes",
+   "members": [
+    "a_altr03",
+    "a_deneb2",
+    "a_vega01"
+   ],
+   "vocab": [
+    "glow",
+    "lumen"
+   ],
+   "steps": [
+    {
+     "agent": "a_vega01",
+     "statement": "(--> lumen glow)",
+     "tv": [
+      1,
+      0.5
+     ],
+     "stamp": [
+      "ev:x:1"
+     ]
+    },
+    {
+     "agent": "a_deneb2",
+     "statement": "(--> lumen glow)",
+     "tv": [
+      0,
+      0.5
+     ],
+     "stamp": [
+      "ev:y:1"
+     ]
+    },
+    {
+     "agent": "a_altr03",
+     "statement": "(--> lumen glow)",
+     "tv": [
+      0.2,
+      0.95
+     ],
+     "stamp": [
+      "ev:x:1",
+      "ev:z:9"
+     ]
+    },
+    {
+     "agent": "a_altr03",
+     "statement": "(--> lumen glow)",
+     "tv": [
+      0.9,
+      0.1
+     ],
+     "stamp": [
+      "ev:z:9"
+     ]
+    },
+    {
+     "agent": "a_altr03",
+     "statement": "(--> lumen glow)",
+     "tv": [
+      0.2,
+      0.95
+     ],
+     "stamp": [
+      "ev:z:9",
+      "ev:x:1"
+     ]
+    }
+   ]
+  },
+  {
+   "swarm": "tests-cap",
+   "members": [
+    "a_vega01"
+   ],
+   "vocab": [
+    "capped",
+    "glow"
+   ],
+   "steps": [
+    {
+     "agent": "a_vega01",
+     "statement": "(--> capped glow)",
+     "tv": [
+      1,
+      0.98
+     ],
+     "stamp": [
+      "ev:cap:1"
+     ]
+    },
+    {
+     "agent": "a_vega01",
+     "statement": "(--> capped glow)",
+     "tv": [
+      1,
+      0.98
+     ],
+     "stamp": [
+      "ev:cap:2"
+     ]
+    },
+    {
+     "agent": "a_vega01",
+     "statement": "(--> capped glow)",
+     "tv": [
+      1,
+      0.98
+     ],
+     "stamp": [
+      "ev:cap:3"
+     ]
+    },
+    {
+     "agent": "a_vega01",
+     "statement": "(--> capped glow)",
+     "tv": [
+      1,
+      0.98
+     ],
+     "stamp": [
+      "ev:cap:4"
+     ]
+    },
+    {
+     "agent": "a_vega01",
+     "statement": "(--> capped glow)",
+     "tv": [
+      1,
+      0.98
+     ],
+     "stamp": [
+      "ev:cap:5"
+     ]
+    },
+    {
+     "agent": "a_vega01",
+     "statement": "(--> capped glow)",
+     "tv": [
+      1,
+      0.98
+     ],
+     "stamp": [
+      "ev:cap:6"
+     ]
+    }
+   ]
+  },
+  {
+   "swarm": "tests-echo",
+   "members": [
+    "a_deneb2",
+    "a_vega01"
+   ],
+   "vocab": [
+    "glow",
+    "murmur"
+   ],
+   "steps": [
+    {
+     "agent": "a_vega01",
+     "statement": "(--> murmur glow)",
+     "tv": [
+      0.9,
+      0.6
+     ],
+     "stamp": [
+      "ev:e:1"
+     ]
+    },
+    {
+     "agent": "a_deneb2",
+     "statement": "(--> murmur glow)",
+     "tv": [
+      0.9,
+      0.6
+     ],
+     "stamp": [
+      "ev:e:1",
+      "ev:e:2"
+     ]
+    }
+   ]
+  },
+  {
+   "swarm": "tests-vocabulary",
+   "members": [
+    "a_vega01"
+   ],
+   "vocab": [
+    "star",
+    "vega"
+   ],
+   "steps": [
+    {
+     "agent": "a_vega01",
+     "statement": "(--> vega star)",
+     "tv": [
+      0.9,
+      0.5
+     ],
+     "stamp": [
+      "ev:a_vega01:1"
+     ]
+    },
+    {
+     "agent": "a_vega01",
+     "statement": "(--> invented-unmapped star)",
+     "tv": [
+      1,
+      0.5
+     ],
+     "stamp": [
+      "ev:a_vega01:2"
+     ]
+    },
+    {
+     "agent": "a_vega01",
+     "statement": "(--> vega-star related)",
+     "tv": [
+      0.8,
+      0.4
+     ],
+     "stamp": [
+      "ev:a_vega01:3"
+     ]
+    },
+    {
+     "agent": "a_vega01",
+     "statement": "(==> (--> vega star) (--> star vega))",
+     "tv": [
+      0.7,
+      0.4
+     ],
+     "stamp": [
+      "ev:a_vega01:4"
+     ]
+    }
+   ]
+  },
+  {
+   "swarm": "tests-membership",
+   "members": [
+    "a_vega01"
+   ],
+   "vocab": [
+    "star",
+    "vega"
+   ],
+   "steps": [
+    {
+     "agent": "a_vega01",
+     "statement": "(--> vega star)",
+     "tv": [
+      0.9,
+      0.5
+     ],
+     "stamp": [
+      "ev:a_vega01:1"
+     ]
+    },
+    {
+     "agent": "a_outsider",
+     "statement": "(--> vega star)",
+     "tv": [
+      0.1,
+      0.9
+     ],
+     "stamp": [
+      "ev:a_outsider:1"
+     ]
+    },
+    {
+     "agent": "a_outsider",
+     "statement": "(--> star vega)",
+     "tv": [
+      0.5,
+      0.5
+     ],
+     "stamp": [
+      "ev:a_outsider:2"
+     ]
+    },
+    {
+     "agent": "a_vega01",
+     "statement": "(--> vega star)",
+     "tv": [
+      0.7,
+      0.5
+     ],
+     "stamp": [
+      "ev:a_vega01:2"
+     ]
+    }
+   ]
+  },
+  {
+   "swarm": "seed7-s_lyra",
+   "members": [
+    "a_altr03",
+    "a_deneb2",
+    "a_mira04",
+    "a_vega01"
+   ],
+   "vocab": [
+    "altair",
+    "binary",
+    "cepheid",
+    "deneb",
+    "dimming-anomaly",
+    "double-double",
+    "dust-disk-host",
+    "epsilon-lyrae",
+    "fast-rotator",
+    "flare",
+    "kic-8462",
+    "luminous",
+    "m57",
+    "nebula",
+    "observed",
+    "periodic",
+    "planetary",
+    "pole-on",
+    "pulsar",
+    "redshift",
+    "ring-nebula",
+    "ring-observed",
+    "rr-lyrae",
+    "sheliak",
+    "star",
+    "supergiant",
+    "variable",
+    "vega"
+   ],
+   "steps": [
+    {
+     "agent": "a_vega01",
+     "statement": "(--> vega star)",
+     "tv": [
+      0.991,
+      0.864
+     ],
+     "stamp": [
+      "ev:a_vega01:1"
+     ]
+    },
+    {
+     "agent": "a_deneb2",
+     "statement": "(--> vega star)",
+     "tv": [
+      0.974,
+      0.864
+     ],
+     "stamp": [
+      "ev:a_deneb2:1"
+     ]
+    },
+    {
+     "agent": "a_altr03",
+     "statement": "(--> vega star)",
+     "tv": [
+      1,
+      0.864
+     ],
+     "stamp": [
+      "ev:a_altr03:1"
+     ]
+    },
+    {
+     "agent": "a_deneb2",
+     "statement": "(--> vega luminous)",
+     "tv": [
+      0.942,
+      0.86
+     ],
+     "stamp": [
+      "ev:a_deneb2:2"
+     ]
+    },
+    {
+     "agent": "a_altr03",
+     "statement": "(--> deneb supergiant)",
+     "tv": [
+      0.883,
+      0.587
+     ],
+     "stamp": [
+      "ev:a_altr03:2"
+     ]
+    },
+    {
+     "agent": "a_mira04",
+     "statement": "(--> deneb supergiant)",
+     "tv": [
+      0.928,
+      0.587
+     ],
+     "stamp": [
+      "ev:a_mira04:1"
+     ]
+    },
+    {
+     "agent": "a_mira04",
+     "statement": "(--> altair fast-rotator)",
+     "tv": [
+      0.874,
+      0.368
+     ],
+     "stamp": [
+      "ev:a_mira04:2"
+     ]
+    },
+    {
+     "agent": "a_vega01",
+     "statement": "(--> altair fast-rotator)",
+     "tv": [
+      0.889,
+      0.368
+     ],
+     "stamp": [
+      "ev:a_vega01:2"
+     ]
+    },
+    {
+     "agent": "a_deneb2",
+     "statement": "(--> altair fast-rotator)",
+     "tv": [
+      0.936,
+      0.368
+     ],
+     "stamp": [
+      "ev:a_deneb2:3"
+     ]
+    },
+    {
+     "agent": "a_altr03",
+     "statement": "(--> altair fast-rotator)",
+     "tv": [
+      0.951,
+      0.368
+     ],
+     "stamp": [
+      "ev:a_altr03:3"
+     ]
+    },
+    {
+     "agent": "a_vega01",
+     "statement": "(==> (--> star cepheid) (--> star periodic))",
+     "tv": [
+      1,
+      0.75
+     ],
+     "stamp": [
+      "ev:a_vega01:3"
+     ]
+    },
+    {
+     "agent": "a_deneb2",
+     "statement": "(==> (--> star cepheid) (--> star periodic))",
+     "tv": [
+      1,
+      0.75
+     ],
+     "stamp": [
+      "ev:a_deneb2:4"
+     ]
+    },
+    {
+     "agent": "a_altr03",
+     "statement": "(==> (--> star cepheid) (--> star periodic))",
+     "tv": [
+      0.924,
+      0.75
+     ],
+     "stamp": [
+      "ev:a_altr03:4"
+     ]
+    },
+    {
+     "agent": "a_deneb2",
+     "statement": "(--> vega dust-disk-host)",
+     "tv": [
+      0.762,
+      0.46
+     ],
+     "stamp": [
+      "ev:a_deneb2:5"
+     ]
+    },
+    {
+     "agent": "a_altr03",
+     "statement": "(--> vega dust-disk-host)",
+     "tv": [
+      0.837,
+      0.46
+     ],
+     "stamp": [
+      "ev:a_altr03:5"
+     ]
+    },
+    {
+     "agent": "a_altr03",
+     "statement": "(--> sheliak binary)",
+     "tv": [
+      0.965,
+      0.626
+     ],
+     "stamp": [
+      "ev:a_altr03:6"
+     ]
+    },
+    {
+     "agent": "a_mira04",
+     "statement": "(--> sheliak binary)",
+     "tv": [
+      0.939,
+      0.626
+     ],
+     "stamp": [
+      "ev:a_mira04:3"
+     ]
+    },
+    {
+     "agent": "a_mira04",
+     "statement": "(--> ring-nebula planetary)",
+     "tv": [
+      0.923,
+      0.695
+     ],
+     "stamp": [
+      "ev:a_mira04:4"
+     ]
+    },
+    {
+     "agent": "a_vega01",
+     "statement": "(--> ring-nebula planetary)",
+     "tv": [
+      0.942,
+      0.695
+     ],
+     "stamp": [
+      "ev:a_vega01:4"
+     ]
+    },
+    {
+     "agent": "a_vega01",
+     "statement": "(--> rr-lyrae variable)",
+     "tv": [
+      0.844,
+      0.449
+     ],
+     "stamp": [
+      "ev:a_vega01:5"
+     ]
+    },
+    {
+     "agent": "a_deneb2",
+     "statement": "(--> rr-lyrae variable)",
+     "tv": [
+      0.932,
+      0.449
+     ],
+     "stamp": [
+      "ev:a_deneb2:6"
+     ]
+    },
+    {
+     "agent": "a_altr03",
+     "statement": "(--> rr-lyrae variable)",
+     "tv": [
+      0.923,
+      0.449
+     ],
+     "stamp": [
+      "ev:a_altr03:7"
+     ]
+    },
+    {
+     "agent": "a_deneb2",
+     "statement": "(==> (--> star flare) (--> star variable))",
+     "tv": [
+      0.723,
+      0.234
+     ],
+     "stamp": [
+      "ev:a_deneb2:7"
+     ]
+    },
+    {
+     "agent": "a_altr03",
+     "statement": "(==> (--> star flare) (--> star variable))",
+     "tv": [
+      0.759,
+      0.234
+     ],
+     "stamp": [
+      "ev:a_altr03:8"
+     ]
+    },
+    {
+     "agent": "a_mira04",
+     "statement": "(==> (--> star flare) (--> star variable))",
+     "tv": [
+      0.754,
+      0.234
+     ],
+     "stamp": [
+      "ev:a_mira04:5"
+     ]
+    },
+    {
+     "agent": "a_vega01",
+     "statement": "(==> (--> star flare) (--> star variable))",
+     "tv": [
+      0.766,
+      0.234
+     ],
+     "stamp": [
+      "ev:a_vega01:6"
+     ]
+    },
+    {
+     "agent": "a_altr03",
+     "statement": "(--> kic-8462 dimming-anomaly)",
+     "tv": [
+      0.591,
+      0.188
+     ],
+     "stamp": [
+      "ev:a_altr03:9"
+     ]
+    },
+    {
+     "agent": "a_mira04",
+     "statement": "(--> kic-8462 dimming-anomaly)",
+     "tv": [
+      0.623,
+      0.188
+     ],
+     "stamp": [
+      "ev:a_mira04:6"
+     ]
+    },
+    {
+     "agent": "a_vega01",
+     "statement": "(--> kic-8462 dimming-anomaly)",
+     "tv": [
+      0.645,
+      0.188
+     ],
+     "stamp": [
+      "ev:a_vega01:7"
+     ]
+    },
+    {
+     "agent": "a_mira04",
+     "statement": "(--> epsilon-lyrae double-double)",
+     "tv": [
+      0.892,
+      0.347
+     ],
+     "stamp": [
+      "ev:a_mira04:7"
+     ]
+    },
+    {
+     "agent": "a_vega01",
+     "statement": "(--> epsilon-lyrae double-double)",
+     "tv": [
+      0.874,
+      0.347
+     ],
+     "stamp": [
+      "ev:a_vega01:8"
+     ]
+    },
+    {
+     "agent": "a_deneb2",
+     "statement": "(--> epsilon-lyrae double-double)",
+     "tv": [
+      0.865,
+      0.347
+     ],
+     "stamp": [
+      "ev:a_deneb2:8"
+     ]
+    },
+    {
+     "agent": "a_altr03",
+     "statement": "(--> epsilon-lyrae double-double)",
+     "tv": [
+      0.834,
+      0.347
+     ],
+     "stamp": [
+      "ev:a_altr03:10"
+     ]
+    },
+    {
+     "agent": "a_vega01",
+     "statement": "(--> m57 ring-observed)",
+     "tv": [
+      0.963,
+      0.72
+     ],
+     "stamp": [
+      "ev:a_vega01:9"
+     ]
+    },
+    {
+     "agent": "a_deneb2",
+     "statement": "(--> vega pole-on)",
+     "tv": [
+      0.779,
+      0.52
+     ],
+     "stamp": [
+      "ev:a_deneb2:9"
+     ]
+    },
+    {
+     "agent": "a_mira04",
+     "statement": "(--> deneb supergiant)",
+     "tv": [
+      0.095,
+      0.518
+     ],
+     "stamp": [
+      "ev:a_altr03:2",
+      "ev:a_mira04:8"
+     ]
+    },
+    {
+     "agent": "a_coral5",
+     "statement": "(--> vega star)",
+     "tv": [
+      0.988,
+      0.5
+     ],
+     "stamp": [
+      "ev:a_coral5:8"
+     ]
+    }
+   ]
+  },
+  {
+   "swarm": "seed7-s_kelp",
+   "members": [
+    "a_coral5",
+    "a_nori06",
+    "a_sedg07",
+    "a_wrak08"
+   ],
+   "vocab": [
+    "barren",
+    "canopy",
+    "canopy-former",
+    "crab",
+    "eats",
+    "grazes",
+    "habitat",
+    "holdfast",
+    "kelp",
+    "kelp-grazer",
+    "otter",
+    "present",
+    "recovers",
+    "reef",
+    "reef-exposing",
+    "reef-north",
+    "reef-south",
+    "spring-tide",
+    "stressed",
+    "sunflower-star",
+    "tide",
+    "urchin",
+    "urchin-dominated",
+    "urchin-eater",
+    "urchin-larva-eater",
+    "urchin-predator",
+    "warm-water"
+   ],
+   "steps": [
+    {
+     "agent": "a_coral5",
+     "statement": "(--> urchin kelp-grazer)",
+     "tv": [
+      0.975,
+      0.786
+     ],
+     "stamp": [
+      "ev:a_coral5:1"
+     ]
+    },
+    {
+     "agent": "a_nori06",
+     "statement": "(--> urchin kelp-grazer)",
+     "tv": [
+      0.972,
+      0.786
+     ],
+     "stamp": [
+      "ev:a_nori06:1"
+     ]
+    },
+    {
+     "agent": "a_nori06",
+     "statement": "(--> otter urchin-eater)",
+     "tv": [
+      0.931,
+      0.84
+     ],
+     "stamp": [
+      "ev:a_nori06:2"
+     ]
+    },
+    {
+     "agent": "a_sedg07",
+     "statement": "(==> (--> reef barren) (--> reef urchin-dominated))",
+     "tv": [
+      0.841,
+      0.73
+     ],
+     "stamp": [
+      "ev:a_sedg07:1"
+     ]
+    },
+    {
+     "agent": "a_wrak08",
+     "statement": "(--> kelp canopy-former)",
+     "tv": [
+      0.996,
+      0.692
+     ],
+     "stamp": [
+      "ev:a_wrak08:1"
+     ]
+    },
+    {
+     "agent": "a_coral5",
+     "statement": "(--> kelp canopy-former)",
+     "tv": [
+      0.991,
+      0.692
+     ],
+     "stamp": [
+      "ev:a_coral5:2"
+     ]
+    },
+    {
+     "agent": "a_nori06",
+     "statement": "(--> kelp canopy-former)",
+     "tv": [
+      1,
+      0.692
+     ],
+     "stamp": [
+      "ev:a_nori06:3"
+     ]
+    },
+    {
+     "agent": "a_sedg07",
+     "statement": "(--> kelp canopy-former)",
+     "tv": [
+      0.953,
+      0.692
+     ],
+     "stamp": [
+      "ev:a_sedg07:2"
+     ]
+    },
+    {
+     "agent": "a_coral5",
+     "statement": "(==> warm-water (--> kelp stressed))",
+     "tv": [
+      0.789,
+      0.358
+     ],
+     "stamp": [
+      "ev:a_coral5:3"
+     ]
+    },
+    {
+     "agent": "a_nori06",
+     "statement": "(==> warm-water (--> kelp stressed))",
+     "tv": [
+      0.818,
+      0.358
+     ],
+     "stamp": [
+      "ev:a_nori06:4"
+     ]
+    },
+    {
+     "agent": "a_sedg07",
+     "statement": "(==> warm-water (--> kelp stressed))",
+     "tv": [
+      0.788,
+      0.358
+     ],
+     "stamp": [
+      "ev:a_sedg07:3"
+     ]
+    },
+    {
+     "agent": "a_wrak08",
+     "statement": "(==> warm-water (--> kelp stressed))",
+     "tv": [
+      0.814,
+      0.358
+     ],
+     "stamp": [
+      "ev:a_wrak08:2"
+     ]
+    },
+    {
+     "agent": "a_nori06",
+     "statement": "(--> sunflower-star urchin-predator)",
+     "tv": [
+      0.867,
+      0.66
+     ],
+     "stamp": [
+      "ev:a_nori06:5"
+     ]
+    },
+    {
+     "agent": "a_sedg07",
+     "statement": "(--> reef-north barren)",
+     "tv": [
+      0.628,
+      0.47
+     ],
+     "stamp": [
+      "ev:a_sedg07:4"
+     ]
+    },
+    {
+     "agent": "a_wrak08",
+     "statement": "(--> holdfast habitat)",
+     "tv": [
+      0.91,
+      0.62
+     ],
+     "stamp": [
+      "ev:a_wrak08:3"
+     ]
+    },
+    {
+     "agent": "a_coral5",
+     "statement": "(==> (--> otter present) (--> kelp recovers))",
+     "tv": [
+      0.819,
+      0.429
+     ],
+     "stamp": [
+      "ev:a_coral5:4"
+     ]
+    },
+    {
+     "agent": "a_nori06",
+     "statement": "(==> (--> otter present) (--> kelp recovers))",
+     "tv": [
+      0.82,
+      0.429
+     ],
+     "stamp": [
+      "ev:a_nori06:6"
+     ]
+    },
+    {
+     "agent": "a_nori06",
+     "statement": "(--> spring-tide reef-exposing)",
+     "tv": [
+      0.846,
+      0.257
+     ],
+     "stamp": [
+      "ev:a_nori06:7"
+     ]
+    },
+    {
+     "agent": "a_sedg07",
+     "statement": "(--> spring-tide reef-exposing)",
+     "tv": [
+      0.843,
+      0.257
+     ],
+     "stamp": [
+      "ev:a_sedg07:5"
+     ]
+    },
+    {
+     "agent": "a_wrak08",
+     "statement": "(--> spring-tide reef-exposing)",
+     "tv": [
+      0.798,
+      0.257
+     ],
+     "stamp": [
+      "ev:a_wrak08:4"
+     ]
+    },
+    {
+     "agent": "a_coral5",
+     "statement": "(--> spring-tide reef-exposing)",
+     "tv": [
+      0.873,
+      0.257
+     ],
+     "stamp": [
+      "ev:a_coral5:5"
+     ]
+    },
+    {
+     "agent": "a_sedg07",
+     "statement": "(--> reef-south canopy)",
+     "tv": [
+      0.696,
+      0.2
+     ],
+     "stamp": [
+      "ev:a_sedg07:6"
+     ]
+    },
+    {
+     "agent": "a_wrak08",
+     "statement": "(--> reef-south canopy)",
+     "tv": [
+      0.685,
+      0.2
+     ],
+     "stamp": [
+      "ev:a_wrak08:5"
+     ]
+    },
+    {
+     "agent": "a_coral5",
+     "statement": "(--> reef-south canopy)",
+     "tv": [
+      0.708,
+      0.2
+     ],
+     "stamp": [
+      "ev:a_coral5:6"
+     ]
+    },
+    {
+     "agent": "a_nori06",
+     "statement": "(--> reef-south canopy)",
+     "tv": [
+      0.7,
+      0.2
+     ],
+     "stamp": [
+      "ev:a_nori06:8"
+     ]
+    },
+    {
+     "agent": "a_wrak08",
+     "statement": "(--> crab urchin-larva-eater)",
+     "tv": [
+      0.584,
+      0.17
+     ],
+     "stamp": [
+      "ev:a_wrak08:6"
+     ]
+    },
+    {
+     "agent": "a_coral5",
+     "statement": "(--> crab urchin-larva-eater)",
+     "tv": [
+      0.579,
+      0.17
+     ],
+     "stamp": [
+      "ev:a_coral5:7"
+     ]
+    },
+    {
+     "agent": "a_nori06",
+     "statement": "(--> crab urchin-larva-eater)",
+     "tv": [
+      0.607,
+      0.17
+     ],
+     "stamp": [
+      "ev:a_nori06:9"
+     ]
+    },
+    {
+     "agent": "a_wrak08",
+     "statement": "(==> (--> reef barren) (--> reef urchin-dominated))",
+     "tv": [
+      0.159,
+      0.511
+     ],
+     "stamp": [
+      "ev:a_sedg07:1",
+      "ev:a_wrak08:7"
+     ]
+    },
+    {
+     "agent": "a_anvl09",
+     "statement": "(--> urchin kelp-grazer)",
+     "tv": [
+      0.974,
+      0.5
+     ],
+     "stamp": [
+      "ev:a_anvl09:10"
+     ]
+    }
+   ]
+  },
+  {
+   "swarm": "seed7-s_forge",
+   "members": [
+    "a_anvl09",
+    "a_bell10",
+    "a_qnch11"
+   ],
+   "vocab": [
+    "backlog",
+    "blocked",
+    "budget",
+    "budget-burn",
+    "build",
+    "build-main",
+    "cache",
+    "cache-hit-rate",
+    "degraded",
+    "deploy",
+    "disk-node-3",
+    "gateway",
+    "green",
+    "healthy",
+    "high",
+    "latency",
+    "llm-latency",
+    "low",
+    "needs-page",
+    "nightly-deploy",
+    "on-track",
+    "p95-elevated",
+    "queue",
+    "queue-backlog",
+    "red",
+    "safe",
+    "service"
+   ],
+   "steps": [
+    {
+     "agent": "a_anvl09",
+     "statement": "(--> gateway healthy)",
+     "tv": [
+      0.99,
+      0.835
+     ],
+     "stamp": [
+      "ev:a_anvl09:1"
+     ]
+    },
+    {
+     "agent": "a_bell10",
+     "statement": "(--> gateway healthy)",
+     "tv": [
+      0.975,
+      0.835
+     ],
+     "stamp": [
+      "ev:a_bell10:1"
+     ]
+    },
+    {
+     "agent": "a_bell10",
+     "statement": "(--> build-main green)",
+     "tv": [
+      0.919,
+      0.85
+     ],
+     "stamp": [
+      "ev:a_bell10:2"
+     ]
+    },
+    {
+     "agent": "a_qnch11",
+     "statement": "(--> queue-backlog low)",
+     "tv": [
+      0.79,
+      0.368
+     ],
+     "stamp": [
+      "ev:a_qnch11:1"
+     ]
+    },
+    {
+     "agent": "a_anvl09",
+     "statement": "(--> queue-backlog low)",
+     "tv": [
+      0.828,
+      0.368
+     ],
+     "stamp": [
+      "ev:a_anvl09:2"
+     ]
+    },
+    {
+     "agent": "a_bell10",
+     "statement": "(--> queue-backlog low)",
+     "tv": [
+      0.856,
+      0.368
+     ],
+     "stamp": [
+      "ev:a_bell10:3"
+     ]
+    },
+    {
+     "agent": "a_qnch11",
+     "statement": "(--> queue-backlog low)",
+     "tv": [
+      0.786,
+      0.368
+     ],
+     "stamp": [
+      "ev:a_qnch11:2"
+     ]
+    },
+    {
+     "agent": "a_anvl09",
+     "statement": "(==> (--> service degraded) (--> service needs-page))",
+     "tv": [
+      0.978,
+      0.71
+     ],
+     "stamp": [
+      "ev:a_anvl09:3"
+     ]
+    },
+    {
+     "agent": "a_bell10",
+     "statement": "(==> (--> service degraded) (--> service needs-page))",
+     "tv": [
+      0.996,
+      0.71
+     ],
+     "stamp": [
+      "ev:a_bell10:4"
+     ]
+    },
+    {
+     "agent": "a_qnch11",
+     "statement": "(==> (--> service degraded) (--> service needs-page))",
+     "tv": [
+      0.998,
+      0.71
+     ],
+     "stamp": [
+      "ev:a_qnch11:3"
+     ]
+    },
+    {
+     "agent": "a_bell10",
+     "statement": "(--> cache-hit-rate high)",
+     "tv": [
+      0.781,
+      0.372
+     ],
+     "stamp": [
+      "ev:a_bell10:5"
+     ]
+    },
+    {
+     "agent": "a_qnch11",
+     "statement": "(--> cache-hit-rate high)",
+     "tv": [
+      0.772,
+      0.372
+     ],
+     "stamp": [
+      "ev:a_qnch11:4"
+     ]
+    },
+    {
+     "agent": "a_anvl09",
+     "statement": "(--> cache-hit-rate high)",
+     "tv": [
+      0.772,
+      0.372
+     ],
+     "stamp": [
+      "ev:a_anvl09:4"
+     ]
+    },
+    {
+     "agent": "a_qnch11",
+     "statement": "(--> llm-latency p95-elevated)",
+     "tv": [
+      0.438,
+      0.351
+     ],
+     "stamp": [
+      "ev:a_qnch11:5"
+     ]
+    },
+    {
+     "agent": "a_anvl09",
+     "statement": "(--> llm-latency p95-elevated)",
+     "tv": [
+      0.462,
+      0.351
+     ],
+     "stamp": [
+      "ev:a_anvl09:5"
+     ]
+    },
+    {
+     "agent": "a_anvl09",
+     "statement": "(--> nightly-deploy safe)",
+     "tv": [
+      0.869,
+      0.343
+     ],
+     "stamp": [
+      "ev:a_anvl09:6"
+     ]
+    },
+    {
+     "agent": "a_bell10",
+     "statement": "(--> nightly-deploy safe)",
+     "tv": [
+      0.795,
+      0.343
+     ],
+     "stamp": [
+      "ev:a_bell10:6"
+     ]
+    },
+    {
+     "agent": "a_qnch11",
+     "statement": "(--> nightly-deploy safe)",
+     "tv": [
+      0.809,
+      0.343
+     ],
+     "stamp": [
+      "ev:a_qnch11:6"
+     ]
+    },
+    {
+     "agent": "a_bell10",
+     "statement": "(--> disk-node-3 degraded)",
+     "tv": [
+      0.346,
+      0.399
+     ],
+     "stamp": [
+      "ev:a_bell10:7"
+     ]
+    },
+    {
+     "agent": "a_qnch11",
+     "statement": "(--> disk-node-3 degraded)",
+     "tv": [
+      0.351,
+      0.399
+     ],
+     "stamp": [
+      "ev:a_qnch11:7"
+     ]
+    },
+    {
+     "agent": "a_qnch11",
+     "statement": "(--> budget-burn on-track)",
+     "tv": [
+      0.898,
+      0.563
+     ],
+     "stamp": [
+      "ev:a_qnch11:8"
+     ]
+    },
+    {
+     "agent": "a_anvl09",
+     "statement": "(--> budget-burn on-track)",
+     "tv": [
+      0.863,
+      0.563
+     ],
+     "stamp": [
+      "ev:a_anvl09:7"
+     ]
+    },
+    {
+     "agent": "a_anvl09",
+     "statement": "(==> (--> build-main red) (--> deploy blocked))",
+     "tv": [
+      0.94,
+      0.769
+     ],
+     "stamp": [
+      "ev:a_anvl09:8"
+     ]
+    },
+    {
+     "agent": "a_bell10",
+     "statement": "(==> (--> build-main red) (--> deploy blocked))",
+     "tv": [
+      1,
+      0.769
+     ],
+     "stamp": [
+      "ev:a_bell10:8"
+     ]
+    },
+    {
+     "agent": "a_qnch11",
+     "statement": "(==> (--> build-main red) (--> deploy blocked))",
+     "tv": [
+      0.948,
+      0.769
+     ],
+     "stamp": [
+      "ev:a_qnch11:9"
+     ]
+    },
+    {
+     "agent": "a_anvl09",
+     "statement": "(==> (--> build-main red) (--> deploy blocked))",
+     "tv": [
+      0.967,
+      0.769
+     ],
+     "stamp": [
+      "ev:a_anvl09:9"
+     ]
+    },
+    {
+     "agent": "a_qnch11",
+     "statement": "(--> queue-backlog low)",
+     "tv": [
+      0.185,
+      0.49
+     ],
+     "stamp": [
+      "ev:a_anvl09:2",
+      "ev:a_qnch11:10"
+     ]
+    },
+    {
+     "agent": "a_vega01",
+     "statement": "(--> gateway healthy)",
+     "tv": [
+      0.983,
+      0.5
+     ],
+     "stamp": [
+      "ev:a_vega01:10"
+     ]
+    }
+   ]
+  }
+ ]
+}

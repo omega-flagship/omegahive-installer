@@ -1,0 +1,26 @@
+/* Professional's Ask skin (released; OmegaTown's is townAsk.css). Named first-party skins use the same experience chrome as HUD, native pages and shared dialogs.
+   This is furniture only. Classic/Still artwork and all authored creative content keep their own colours. */
+.ask-root[data-skin="professional"] {
+  --color-ink:var(--xc-ink); --color-ink-2:var(--xc-ink-2); --color-ink-3:var(--xc-ink-3);
+  --color-accent:var(--xc-accent); --color-accent-2:var(--xc-accent); --color-primary-top:var(--xc-accent);
+  --color-primary-ink:var(--xc-on-accent); --color-good:var(--xc-accent);
+  color:var(--xc-ink); font-family:var(--xc-font);
+}
+.ask-root[data-skin="professional"] :is(.ask-capsule,.ask-panel,.ask-pop) {
+  color:var(--xc-ink); background:var(--xc-raised); border-color:var(--xc-edge); box-shadow:var(--xc-shadow);
+  backdrop-filter:none; -webkit-backdrop-filter:none;
+}
+.ask-root[data-skin="professional"] :is(.ask-capsule:focus-within,.ask-btn:focus-visible,.ask-choice:focus-visible,.ask-icon:focus-visible) { outline-color:var(--xc-accent); }
+.ask-root[data-skin="professional"] :is(.ask-chip,.ask-icon,.ask-choice,.ask-btn,.ask-card,.ask-where,.ask-num) { color:var(--xc-ink); background:var(--xc-surface); border-color:var(--xc-line); }
+.ask-root[data-skin="professional"] :is(.ask-chip,.ask-icon,.ask-choice,.ask-btn):hover { background:var(--xc-surface); outline:1px solid var(--xc-accent); }
+.ask-root[data-skin="professional"] :is(.ask-choice[data-default],.ask-card) { border-color:var(--xc-edge); }
+.ask-root[data-skin="professional"] .ask-btn[data-tone="primary"] { background:var(--xc-accent); color:var(--xc-on-accent); border-color:var(--xc-accent); }
+.ask-root[data-skin="professional"] .ask-btn[data-tone="quiet"] { background:transparent; color:var(--xc-ink-2); }
+.ask-root[data-skin="professional"] .ask-head { border-color:var(--xc-line); }
+.ask-root[data-skin="professional"] .ask-grip span { background:var(--xc-edge); }
+.ask-root[data-skin="professional"] .ask-mark { color:var(--xc-accent); text-shadow:none; }
+.ask-root[data-skin="professional"] .ask-input { color:var(--xc-ink); }
+.ask-root[data-skin="professional"] .ask-input::placeholder { color:var(--xc-ink-3); }
+.ask-root[data-skin="professional"] :is(.ask-aurora,.ask-stars) { display:none; }
+.pr-ask-presence .ask-presence-pill { color:var(--xc-ink); background:var(--xc-raised); border-color:var(--xc-edge); font-family:var(--xc-font); }
+.ask-skip[data-experience="professional"] { color:var(--xc-ink); background:var(--xc-raised); outline-color:var(--xc-accent); font-family:var(--xc-font); }

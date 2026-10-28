@@ -1,0 +1,27 @@
+id = "omegaclaw.channel.hive"
+kind = "channel"
+version = "0.1.0"
+entrypoint = "entry.metta"
+optional = true
+default_enabled = true
+
+provides = [
+  "channel:hive",
+]
+
+requires = [
+  "python>=3.10",
+  "websockets>=12",
+]
+
+[env.HIVE_WS_URL]
+description = "OmegaDots Hive agent-hub WebSocket URL, e.g. ws://hive:8700/agent-hub"
+
+[env.HIVE_WS_TOKEN]
+description = "Bearer token identifying this agent to the hive"
+
+[trace]
+writes = [
+  "HiveMessageReceived",
+  "HiveMessageSent",
+]

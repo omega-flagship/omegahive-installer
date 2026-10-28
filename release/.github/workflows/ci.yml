@@ -1,0 +1,100 @@
+# OmegaHive CI. Every job is blocking: no continue-on-error anywhere.
+#
+# - core-tests:  the OmegaClaw Core unittest suite under tests/ (PeTTa-free).
+# - hive-petta:  builds the pinned toolchain with scripts/dev/setup_petta_env.sh (the same pins as
+#                deploy/setup_runtime.sh: Python 3.12, SWI-Prolog 10.1.14 from swipl-devel built against that Python,
+#                PeTTa ae66fa8, janus-swi 1.5.3), caches it by pin, and runs hive/tests with PETTA_PATH set.
+#                Most hive tests start PeTTa, so this job is the hive gate; there is no PeTTa-free hive job.
+#                Tests that need macOS sandbox-exec, Docker, HIVE_E2E=1, or a closed-source sibling repo
+#                (omegafusion, omegasocial, ...) skip themselves and say why in the pytest summary (-rs).
+# - hive-ui:     Node 22.12+ (vitest 5 and vite 8 need it): typecheck, lint, vitest, production build.
+#
+# First runs on GitHub Actions (2026-10-10): core-tests and hive-ui pass; hive-petta built the pinned toolchain and
+# passed 2402 hive tests. Its 19 failures were the Linux mind-sandbox tests, which need unprivileged user namespaces
+# (Ubuntu 24.04 blocks them by default through AppArmor), and one test that assumed SQLite's secure_delete default.
+name: hive-ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SWIPL_TAG: V10.1.14
+  PETTA_REF: ae66fa8
+  JANUS_VERSION: 1.5.3
+
+jobs:
+  core-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test runner (one module imports pytest helpers)
+        run: python -m pip install 'pytest>=8'
+      - name: tests/ (OmegaClaw Core, unittest)
+        run: python -m unittest discover -q -s tests
+
+  hive-petta:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: hive/requirements.txt
+      - name: Build prerequisites
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q cmake ninja-build libssl-dev libarchive-dev libpcre2-dev libyaml-dev \
+            zlib1g-dev libedit-dev libgmp-dev
+      - name: Cache SWI-Prolog and PeTTa (keyed by pin and Python)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/swipl-patched
+            ~/PeTTa
+          key: petta-${{ runner.os }}-py${{ steps.py.outputs.python-version }}-swipl-${{ env.SWIPL_TAG }}-petta-${{ env.PETTA_REF }}-v1
+      - name: Allow unprivileged user namespaces (the Linux mind sandbox needs them)
+        # Ubuntu 24.04 restricts them through AppArmor by default; the sandbox tests then fail with
+        # "Permission denied: /proc/self/setgroups". Production hosts must allow them too (see deploy/RUNBOOK.md).
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Install hive requirements
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r hive/requirements.txt
+      - name: Pinned toolchain (builds on a cache miss; always re-checks the bridges and a MeTTa run)
+        run: bash scripts/dev/setup_petta_env.sh --prefix "$HOME/swipl-patched" --petta "$HOME/PeTTa" --python "$(which python)" --runtime "$RUNNER_TEMP/omegadots-runtime"
+      - name: Toolchain environment
+        run: |
+          echo "PATH=$HOME/swipl-patched/bin:$PATH" >> "$GITHUB_ENV"
+          echo "PETTA_PATH=$HOME/PeTTa" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$(python -c 'import sys; print(sys.base_prefix)')/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+      - name: hive/tests
+        run: python -m pytest -q -rs -p no:cacheprovider hive/tests
+
+  hive-ui:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: hive/ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'   # latest 22.x LTS (>= 22.12)
+          cache: npm
+          cache-dependency-path: hive/ui/package-lock.json
+      - run: npm ci
+      - run: npx tsc -b --noEmit
+      - run: npm run lint
+      - run: npx vitest run
+      - run: npm run build

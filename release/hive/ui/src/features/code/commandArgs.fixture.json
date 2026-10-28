@@ -1,0 +1,636 @@
+{
+  "reference": "Python 3.12 shlex.split(posix=True, comments=False), no expansion",
+  "cases": [
+    {
+      "input": "python -c \"print('hello world')\"",
+      "args": [
+        "python",
+        "-c",
+        "print('hello world')"
+      ]
+    },
+    {
+      "input": "\"/a path/python\" \"a file.py\"",
+      "args": [
+        "/a path/python",
+        "a file.py"
+      ]
+    },
+    {
+      "input": "p \"\" '' suffix",
+      "args": [
+        "p",
+        "",
+        "",
+        "suffix"
+      ]
+    },
+    {
+      "input": "p pre\" mid \"post",
+      "args": [
+        "p",
+        "pre mid post"
+      ]
+    },
+    {
+      "input": "p 'a\\b'",
+      "args": [
+        "p",
+        "a\\b"
+      ]
+    },
+    {
+      "input": "p \"a\\qb\"",
+      "args": [
+        "p",
+        "a\\qb"
+      ]
+    },
+    {
+      "input": "p \"a\\$b\"",
+      "args": [
+        "p",
+        "a\\$b"
+      ]
+    },
+    {
+      "input": "p a\\\nb",
+      "args": [
+        "p",
+        "a\nb"
+      ]
+    },
+    {
+      "input": "p a b",
+      "args": [
+        "p",
+        "a b"
+      ]
+    },
+    {
+      "input": "p $(touch sentinel) ; && | > $HOME # comment",
+      "args": [
+        "p",
+        "$(touch",
+        "sentinel)",
+        ";",
+        "&&",
+        "|",
+        ">",
+        "$HOME",
+        "#",
+        "comment"
+      ]
+    },
+    {
+      "input": "p \"Ω😀; x\"",
+      "args": [
+        "p",
+        "Ω😀; x"
+      ]
+    },
+    {
+      "input": "p \"a\\\"b\"",
+      "args": [
+        "p",
+        "a\"b"
+      ]
+    },
+    {
+      "input": "p \"a\\\\b\"",
+      "args": [
+        "p",
+        "a\\b"
+      ]
+    },
+    {
+      "input": "p trailing\\",
+      "error": true
+    },
+    {
+      "input": "p \"unclosed",
+      "error": true
+    },
+    {
+      "input": "p 'unclosed",
+      "error": true
+    },
+    {
+      "input": "p ' \t \"$ ba\"  ",
+      "error": true
+    },
+    {
+      "input": "p $$;\\ \"\n",
+      "error": true
+    },
+    {
+      "input": "p \"# ;a\\aa#\t$' ",
+      "error": true
+    },
+    {
+      "input": "p ;\"Ω",
+      "error": true
+    },
+    {
+      "input": "p \"\t\\\na\"\n \t\\#",
+      "args": [
+        "p",
+        "\t\\\na",
+        "#"
+      ]
+    },
+    {
+      "input": "p #;\tbaab\"Ωa\t\"'  ",
+      "error": true
+    },
+    {
+      "input": "p #",
+      "args": [
+        "p",
+        "#"
+      ]
+    },
+    {
+      "input": "p $;;\n\\#'b\\\\\n\n",
+      "error": true
+    },
+    {
+      "input": "p #  a'$bΩa#\nΩa\t\"\"\"$\n; \\",
+      "error": true
+    },
+    {
+      "input": "p Ω;\t\\ \t\n \t",
+      "args": [
+        "p",
+        "Ω;",
+        " "
+      ]
+    },
+    {
+      "input": "p aΩ \n  \"\"\n;;\\b\"\"#\"\t\t",
+      "error": true
+    },
+    {
+      "input": "p Ω#a\na'\\\"#",
+      "error": true
+    },
+    {
+      "input": "p ;#",
+      "args": [
+        "p",
+        ";#"
+      ]
+    },
+    {
+      "input": "p ;  $  ",
+      "args": [
+        "p",
+        ";",
+        "$"
+      ]
+    },
+    {
+      "input": "p \"\t'b#  \nabb;b\t\\'' #Ω$a ",
+      "error": true
+    },
+    {
+      "input": "p Ω'\"b",
+      "error": true
+    },
+    {
+      "input": "p \"ΩΩ",
+      "error": true
+    },
+    {
+      "input": "p  'Ω#",
+      "error": true
+    },
+    {
+      "input": "p  ;b \\\\\na \";\\Ω#\\Ω' \"\"a'##ba\t\n\\",
+      "error": true
+    },
+    {
+      "input": "p \\aaaΩ\"#\\\tb\"''\na';\\'#b'\t\t\\$\n\t\"';",
+      "args": [
+        "p",
+        "aaaΩ#\\\tb",
+        "a;\\#b\t\t\\$\n\t\";"
+      ]
+    },
+    {
+      "input": "p Ω\t\n'$  \\$;\n\t\"  ",
+      "error": true
+    },
+    {
+      "input": "p \tΩab\t",
+      "args": [
+        "p",
+        "Ωab"
+      ]
+    },
+    {
+      "input": "p  \\\"\"#\t;#; \n# \n $Ω\n\\a '\"\\ \\\"; \\'",
+      "args": [
+        "p",
+        "\"#\t;#; \n# \n $Ω\n\\a ' \";",
+        "'"
+      ]
+    },
+    {
+      "input": "p  $ $' '$ #\"$\";\ta'\n $#a\\ ;'# \"",
+      "error": true
+    },
+    {
+      "input": "p Ω\t\n \n'#  \"ab$a \tbΩ'Ω#b\"' b'#Ω ",
+      "error": true
+    },
+    {
+      "input": "p #$#\\$Ω ΩΩ#'Ω b# ;ΩΩ\n\t \"Ω",
+      "error": true
+    },
+    {
+      "input": "p \\# $a$;\t'#\n$\t\\'a\n \\",
+      "error": true
+    },
+    {
+      "input": "p   Ω\"\nb",
+      "error": true
+    },
+    {
+      "input": "p 'a#b'#b \n\t$'$Ω ;$Ω\";$$\n\tb b ",
+      "error": true
+    },
+    {
+      "input": "p \t\n\t\n;\\a$Ω#;b$\"\t; \\\n''b\\\t\"a \n",
+      "args": [
+        "p",
+        ";a$Ω#;b$\t; \\\n''b\\\ta"
+      ]
+    },
+    {
+      "input": "p ;\ta$'  #\\ $Ω\"Ω\t",
+      "error": true
+    },
+    {
+      "input": "p   #$ '\t\t#\nΩ'ΩΩ\n\n\\ $a\nΩ;'a'$b'",
+      "error": true
+    },
+    {
+      "input": "p '\n",
+      "error": true
+    },
+    {
+      "input": "p a\"b\n#\n$b \\#;  b\\\t \"\n\\#bΩΩ\\$Ω;\n;",
+      "args": [
+        "p",
+        "ab\n#\n$b \\#;  b\\\t ",
+        "#bΩΩ$Ω;",
+        ";"
+      ]
+    },
+    {
+      "input": "p \n;",
+      "args": [
+        "p",
+        ";"
+      ]
+    },
+    {
+      "input": "p \n\"\\ $",
+      "error": true
+    },
+    {
+      "input": "p \nΩa\\a\t#a\"\t\"a Ωb\"\nb#'\"Ω\taΩ\\b$; ",
+      "args": [
+        "p",
+        "Ωaa",
+        "#a\ta",
+        "Ωb\nb#'Ω",
+        "aΩb$;"
+      ]
+    },
+    {
+      "input": "p \"'\\  #\n#\tbbΩ'  ;b\t#\t$\n\"'b",
+      "error": true
+    },
+    {
+      "input": "p Ω $Ω",
+      "args": [
+        "p",
+        "Ω",
+        "$Ω"
+      ]
+    },
+    {
+      "input": "p #\" \nb Ω\tba Ωba$##\\ Ω#b\t",
+      "error": true
+    },
+    {
+      "input": "p \n  $b '\tΩ\t; \";Ω\\a#$\t Ω\tΩ\"\ta'",
+      "args": [
+        "p",
+        "$b",
+        "\tΩ\t; \";Ω\\a#$\t Ω\tΩ\"\ta"
+      ]
+    },
+    {
+      "input": "p \t \n \"Ωa\\#\n\\bΩ\n\n; ",
+      "error": true
+    },
+    {
+      "input": "p ;'\"\";b\" b\\bb\";a b",
+      "error": true
+    },
+    {
+      "input": "p \" '#\n#  \"\n$\n\\\t ';; ;\n\"",
+      "error": true
+    },
+    {
+      "input": "p \n\\  #",
+      "args": [
+        "p",
+        " ",
+        "#"
+      ]
+    },
+    {
+      "input": "p ';a\"a \t;\"'Ω\"\n'aa$$b\t",
+      "error": true
+    },
+    {
+      "input": "p  '\tΩ$ \t $;\n '\\\"   ;\"$\" ",
+      "args": [
+        "p",
+        "\tΩ$ \t $;\n \"",
+        ";$"
+      ]
+    },
+    {
+      "input": "p a \"\n Ωa ",
+      "error": true
+    },
+    {
+      "input": "p ;a#b'\"\n;Ωa $a#b\ta$\n ab ;;$$# ",
+      "error": true
+    },
+    {
+      "input": "p \ta' ",
+      "error": true
+    },
+    {
+      "input": "p  '  ",
+      "error": true
+    },
+    {
+      "input": "p \"Ω \t\nb\\ b\t $\\bb\\ 'Ω'' \taΩ\n;",
+      "error": true
+    },
+    {
+      "input": "p b'a'a$;\t' \t\\\t'",
+      "args": [
+        "p",
+        "baa$;",
+        " \t\\\t"
+      ]
+    },
+    {
+      "input": "p \"a$' b\ta\\Ω",
+      "error": true
+    },
+    {
+      "input": "p b\\Ω\"b#$'b $  ;\\$' \\baa\tΩ$';",
+      "error": true
+    },
+    {
+      "input": "p \n \t;\"",
+      "error": true
+    },
+    {
+      "input": "p  ''",
+      "args": [
+        "p",
+        ""
+      ]
+    },
+    {
+      "input": "p a b'",
+      "error": true
+    },
+    {
+      "input": "p ;\n;$\t \t;\\\t\\b$b\n ",
+      "args": [
+        "p",
+        ";",
+        ";$",
+        ";\tb$b"
+      ]
+    },
+    {
+      "input": "p  b';",
+      "error": true
+    },
+    {
+      "input": "p ' ##Ω'$#Ω\"\\b;'Ω\t #Ω\\#\n\\\tΩ;'",
+      "error": true
+    },
+    {
+      "input": "p $\\'a  \n\"",
+      "error": true
+    },
+    {
+      "input": "p $a\t''Ω# ;\n'$\n;'\\#; \"#\t\n\" \n\"\\# ",
+      "error": true
+    },
+    {
+      "input": "p \"b # \nba\n #\t# $\n;a;",
+      "error": true
+    },
+    {
+      "input": "p \\$# \\",
+      "error": true
+    },
+    {
+      "input": "p \\ba b$#Ω\\ $$",
+      "args": [
+        "p",
+        "ba",
+        "b$#Ω $$"
+      ]
+    },
+    {
+      "input": "p \\#b ",
+      "args": [
+        "p",
+        "#b"
+      ]
+    },
+    {
+      "input": "p #  \t ;a'\n$\"\"Ωb;a''b b Ω \"aa\\",
+      "error": true
+    },
+    {
+      "input": "p b\\$'\nΩ'\"  a\t\nb\"a\n'\\; \t",
+      "error": true
+    },
+    {
+      "input": "p \tab\nbΩ'\\b\\\tΩ",
+      "error": true
+    },
+    {
+      "input": "p \\\\''\nbΩ$",
+      "args": [
+        "p",
+        "\\",
+        "bΩ$"
+      ]
+    },
+    {
+      "input": "p \t\n\"\\ba#",
+      "error": true
+    },
+    {
+      "input": "p ;b$Ω$\t$\t\\'\\\"",
+      "args": [
+        "p",
+        ";b$Ω$",
+        "$",
+        "'\""
+      ]
+    },
+    {
+      "input": "p ;\t \"#$ \\$#\"';#a\n'\t ",
+      "args": [
+        "p",
+        ";",
+        "#$ \\$#;#a\n"
+      ]
+    },
+    {
+      "input": "p ;'Ωa Ωa\t\"';b\n\"\"'",
+      "error": true
+    },
+    {
+      "input": "p aΩ\"b",
+      "error": true
+    },
+    {
+      "input": "p \n$\\$\n;\\$  ; ;;#Ωa   \tb \"'$$",
+      "error": true
+    },
+    {
+      "input": "p 'Ω\n#\\; ;;b\t'$'$ \nΩ",
+      "error": true
+    },
+    {
+      "input": "p \n\nb \";a #'ΩΩ\" \t\"# \"#;'",
+      "error": true
+    },
+    {
+      "input": "p \taΩ$\"# ab\na ;Ω$'\n\t'\t\t $b#",
+      "error": true
+    },
+    {
+      "input": "p $ a\"Ωaab'\\'aΩ #$",
+      "error": true
+    },
+    {
+      "input": "p ''$;;#$\\;\na\t'  #\"a#$",
+      "error": true
+    },
+    {
+      "input": "p b$aΩ\n 'a \t$ \t #a\n$b\\ $; \"b\n",
+      "error": true
+    },
+    {
+      "input": "p \t\"\n#b '$",
+      "error": true
+    },
+    {
+      "input": "p \n'a\n$ #$Ω;",
+      "error": true
+    },
+    {
+      "input": "p #'",
+      "error": true
+    },
+    {
+      "input": "p \n$\\\\bΩ\"\" '",
+      "error": true
+    },
+    {
+      "input": "p  \\a",
+      "args": [
+        "p",
+        "a"
+      ]
+    },
+    {
+      "input": "p Ω ab\n\n'$\"\n\nbaa  a\"b\\#'",
+      "args": [
+        "p",
+        "Ω",
+        "ab",
+        "$\"\n\nbaa  a\"b\\#"
+      ]
+    },
+    {
+      "input": "p \t b\n\"\"b;\\\\\t\\; '",
+      "error": true
+    },
+    {
+      "input": "p aΩ\tΩ\t ",
+      "args": [
+        "p",
+        "aΩ",
+        "Ω"
+      ]
+    },
+    {
+      "input": "p  a \naΩa ΩΩb\t\\\"\t\tΩ;'\nΩ\\ b#a$",
+      "error": true
+    },
+    {
+      "input": "p '\t\\$$\"\"#$aa\";Ω #",
+      "error": true
+    },
+    {
+      "input": "p bΩ $\"'\"Ω; ;#\" \\",
+      "error": true
+    },
+    {
+      "input": "p  Ωb'\t",
+      "error": true
+    },
+    {
+      "input": "p ;Ω  \"'\\#",
+      "error": true
+    },
+    {
+      "input": "p bb$  '#'\t;bΩ\t\n\n\nb",
+      "args": [
+        "p",
+        "bb$",
+        "#",
+        ";bΩ",
+        "b"
+      ]
+    },
+    {
+      "input": "p 'a;ba'\"'\\\\;\"\t; $$",
+      "args": [
+        "p",
+        "a;ba'\\;",
+        ";",
+        "$$"
+      ]
+    },
+    {
+      "input": "p \n\\\\'#\n\\b\t;;\\  $ ",
+      "error": true
+    },
+    {
+      "input": "p \t\"\t\n$\t\t#\ta\n\n\"Ω$\n#\n\"\\\"' \\$\n\\\n\\",
+      "error": true
+    }
+  ]
+}

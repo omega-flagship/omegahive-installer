@@ -1,0 +1,97 @@
+{
+  "$schema": "https://aka.ms/codetour-schema",
+  "title": "01 Follow an Ask request",
+  "description": "From the Ask bar in the UI, through choosing who answers, to the two ways a turn is answered (the mind itself, or the host-side conductor), intents, and the reply frames back in the page. Lines were read at this repository's handover commit; if a line has moved, search the file for the step's function or symbol name.",
+  "steps": [
+    {
+      "file": "hive/ui/src/features/ask/useAskField.ts",
+      "line": 257,
+      "title": "1. The Ask bar sends words to the mind",
+      "description": "The Ask field is on every page. Typed and spoken words take the same path: `askMind` (`hive/ui/src/features/ask/mind.ts` line 8). If a turn is already open the words **steer** it; otherwise they start a new request. The page builds `ctx` (route, experience, addressed mind) here. `via` records typed or spoken, for audit only."
+    },
+    {
+      "file": "hive/ui/src/features/ask/answerer.ts",
+      "line": 36,
+      "title": "2. Who answers, shown before the first send",
+      "description": "The page never picks a model. It mirrors the host's routing order (addressed mind's swarm, page swarm, default swarm, then the person's own personal mind) so it can show a chip, or a picker when nobody would answer. The host still decides; see step 8."
+    },
+    {
+      "file": "hive/ui/src/store/ask.ts",
+      "line": 1124,
+      "title": "3. The store makes one request with a stable id",
+      "description": "`send` builds the request body (line 1164): an `operation_id`, the text (capped at 4000 characters), the page context, `via`, and optional memory notes from the browser. The same body is kept so a retry sends exactly the same request under the same id."
+    },
+    {
+      "file": "hive/ui/src/api/live.ts",
+      "line": 534,
+      "title": "4. POST /api/ask",
+      "description": "The live client posts the body. A 2xx answer that is not this request's acceptance is treated as \"outcome unknown\", never as accepted or refused."
+    },
+    {
+      "file": "hive/core/app.py",
+      "line": 1554,
+      "title": "5. The host route",
+      "description": "`ask_person` requires a signed-in person. The body is read with a size cap, and errors map to a closed set of refusal reasons; host error text never reaches the page. The route answers 202 with the turn view."
+    },
+    {
+      "file": "hive/core/ask.py",
+      "line": 633,
+      "title": "6. Ask.create",
+      "description": "Validates the body and digests it. `_conducting()` says whether the host-side conductor is on (`HIVE_ASK_CONDUCTOR=1`; see line 271). The decision runs under a short per-person lock that is never held across an `await`."
+    },
+    {
+      "file": "hive/core/ask.py",
+      "line": 600,
+      "title": "7. The decision: replay, quota, route, busy, spend",
+      "description": "A repeated `operation_id` returns the original turn (a different body under the same id is `operation_conflict`). Then: rate quota, routing, mind asleep (ordinary path only), one turn per thread (`ask_busy`), payer conflict, and the thread's spend cap."
+    },
+    {
+      "file": "hive/core/ask.py",
+      "line": 316,
+      "title": "8. Routing: who answers",
+      "description": "The owner's order: the addressed mind's swarm, the page's swarm, the thread's mind, the person's default swarm, then their personal mind. Each candidate goes through `orchestrator` (line 293): the swarm must be visible and not archived, the person must **participate** (admin, owner or named in `shared_with`), and the answer is the swarm's coordinator. One deliberate exception (lines 293-312): when the swarm has no coordinator set and the request explicitly addressed a native mind of that swarm, that mind answers this turn in the coordinator's place, under the same participation and visibility checks; an external member is refused. That is a chosen route, not a reroute: a refused candidate is never passed on to another mind. A personal mind answers only its own person (line 312)."
+    },
+    {
+      "file": "hive/core/ask.py",
+      "line": 690,
+      "title": "9. Admission is one transaction",
+      "description": "The turn row, the person's room message, the mind's hub outbox message and the `accepted` frame commit together, or nothing does. A personal-mind turn stores no text or context on the host (line 704 and the module docstring)."
+    },
+    {
+      "file": "hive/core/ask.py",
+      "line": 706,
+      "title": "10. Path A: the mind answers",
+      "description": "Without the conductor, the request is queued for the coordinator mind in conversation `ask:<turn_id>`. `create` then calls `hive.deliver` (`hive/core/hive.py` line 1339), which sends it over the mind's hub socket. If the mind is not connected, the hub replays the outbox when it reconnects."
+    },
+    {
+      "file": "hive/core/ask.py",
+      "line": 866,
+      "title": "11. Path A: the mind's reply closes the turn",
+      "description": "When a mind sends a message, `hive/core/hive.py` line 1378 sees the `ask:` conversation and calls `Ask.reply`. Only the turn's own mind binds. `_close` (`hive/core/ask.py` line 837) is the single terminal transition: it writes the state and publishes `answer` and `done` frames, or `refused`."
+    },
+    {
+      "file": "hive/core/conductor.py",
+      "line": 692,
+      "title": "12. Path B: the host-side conductor loop",
+      "description": "With the conductor on, `create` calls `Conductor.start` (line 604) instead of waking the mind. `_run` is a bounded tool loop: a cap on model calls, a time cap, and a spend cap per turn. Each model call goes through `_model` (line 747), which estimates, checks budgets and reserves the worst case like the gateway route (tour 05). Tool calls (`say`, page acts, `dispatch`, `remember`) are handled in `_tools` (line 942)."
+    },
+    {
+      "file": "hive/core/conductor.py",
+      "line": 1064,
+      "title": "13. Intents: handing work to a team",
+      "description": "The `dispatch` tool records an intent on the person's own turn. It needs a named admin person. It **records only**: sending stays an explicit action by the person (`Intents.submit`)."
+    },
+    {
+      "file": "hive/core/ask_intents.py",
+      "line": 189,
+      "title": "14. Intents.record and submit",
+      "description": "`record` keeps the exact request body under host custody, at most one live intent per turn, and refuses turns older than 24 hours or bodies that try to set identity or money. `submit` (line 285) claims the intent and calls `Minds.instruct`. The intent is linked inside that same transaction, so the request exists only if the intent is linked."
+    },
+    {
+      "file": "hive/ui/src/store/ask.ts",
+      "line": 508,
+      "title": "15. The page renders the reply",
+      "description": "Frames arrive on the live event stream; only the asker receives them (`hive/core/visibility.py` line 416). `answer` frames can stream as pieces (`delta`), then one whole answer replaces them. `done` or `refused` ends the turn."
+    }
+  ]
+}

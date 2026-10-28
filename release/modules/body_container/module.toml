@@ -1,0 +1,30 @@
+id = "omegaclaw.body.container"
+kind = "runtime-organ"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+default_enabled = false
+
+provides = [
+  "runtime-organ:body-container",
+  "skill:body-container-status",
+  "skill:body-container-self",
+  "skill:body-container-launcher",
+  "skill:body-container-last-trace",
+]
+
+requires = [
+  "python>=3.10",
+  "host-launcher:platform-runner.app",
+]
+
+[env]
+OMEGACLAW_BODY_CONTAINER_CONFIG = { runtime_state = true, default = "memory/runtime/body_container/host.json" }
+
+[trace]
+writes = [
+  "BodyContainerObserved",
+  "BodyContainerLauncherSeen",
+]

@@ -1,0 +1,340 @@
+{
+ "html": [
+  {
+   "name": "canonical three parts",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div>\n<script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": null
+  },
+  {
+   "name": "canonical one part",
+   "scripts": [
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><script type=\"module\" src=\"./app.js\"></script></body></html>",
+   "reason": null
+  },
+  {
+   "name": "upper-case end tags, no </html>",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><script type=\"module\" src=\"./native-three.js\"></script><script type=\"module\" src=\"./native-three-addons.js\"></script><script type=\"module\" src=\"./app.js\"></script></BODY>",
+   "reason": null
+  },
+  {
+   "name": "wrong order",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": "index.html tags the script parts out of their listed order"
+  },
+  {
+   "name": "missing tag",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": "index.html needs exactly one <script type=\"module\" src=\"./native-three-addons.js\"></script>"
+  },
+  {
+   "name": "duplicate tag",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": "index.html needs exactly one <script type=\"module\" src=\"./native-three.js\"></script>"
+  },
+  {
+   "name": "extra classic script",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><script>evil()</script><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": "index.html has a script tag for an unlisted file"
+  },
+  {
+   "name": "extra upper-case script",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><SCRIPT>evil()</SCRIPT><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": "index.html has a script tag for an unlisted file"
+  },
+  {
+   "name": "tags inside an unclosed comment",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><!--<script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": "index.html has a comment before the part tags"
+  },
+  {
+   "name": "closed comment before the tags",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><!-- note --><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": "index.html has a comment before the part tags"
+  },
+  {
+   "name": "tags wrapped in a comment",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><!-- <script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script> -->\n</body>\n</html>\n",
+   "reason": "index.html ends with the part tags, then </body>"
+  },
+  {
+   "name": "tags swallowed by an open attribute quote",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><div title=\"<script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": "index.html has an unclosed <div> tag before the part tags"
+  },
+  {
+   "name": "tags inside a textarea",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><textarea><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": "index.html has an unclosed <textarea> before the part tags"
+  },
+  {
+   "name": "tags inside an unclosed title",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio<link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": "index.html has an unclosed <title> before the part tags"
+  },
+  {
+   "name": "title closed only by an appropriate end tag",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>a</titlex>b</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": null
+  },
+  {
+   "name": "titlex is not a raw-text element",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><titlex></titlex><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": null
+  },
+  {
+   "name": "tags inside a template",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><template><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": "index.html has <template> before the part tags"
+  },
+  {
+   "name": "tags inside noscript",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><noscript><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": "index.html has an unclosed <noscript> before the part tags"
+  },
+  {
+   "name": "tags inside svg",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><svg><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": "index.html has <svg> before the part tags"
+  },
+  {
+   "name": "quoted > inside an attribute",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><div data-x=\"a>b\" data-y='c>d' data-z=e><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": null
+  },
+  {
+   "name": "bogus end tag and bare <",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div></ x> a < b<script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": null
+  },
+  {
+   "name": "non-ASCII text that lower() would lengthen",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div>İİİ<p title=\"İ\">x</p><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": null
+  },
+  {
+   "name": "<head> only inside an attribute",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<html lang=\"en\"><body><div title=\"<head>\"><link rel=\"stylesheet\" href=\"./style.css\"><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": null
+  },
+  {
+   "name": "stylesheet link only inside a raw-text title",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title><link rel=\"stylesheet\" href=\"./style.css\"></title></head><body><div id=\"root\"></div><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": "index.html needs a real <link rel=\"stylesheet\" href=\"./style.css\"> tag before the part tags"
+  },
+  {
+   "name": "markup after the tags",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script><div></div></body></html>",
+   "reason": "index.html ends with the part tags, then </body>"
+  },
+  {
+   "name": "text between the tags",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><script type=\"module\" src=\"./native-three.js\"></script> x <script type=\"module\" src=\"./native-three-addons.js\"></script> x <script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": "index.html keeps the part tags together, with only whitespace between them"
+  },
+  {
+   "name": "stand-in r17-50d1dda: <select><head> before the tags",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<html><body><select><head><link rel=\"stylesheet\" href=\"./style.css\"></select><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script></body></html>",
+   "reason": null
+  },
+  {
+   "name": "frameset before the tags",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><div id=\"root\"></div><frameset></frameset><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": "index.html has <frameset> before the part tags"
+  },
+  {
+   "name": "table before the tags",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><table><tr><td>x</td></tr></table><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": null
+  },
+  {
+   "name": "early </body></html> before the tags",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div></body></html><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": null
+  },
+  {
+   "name": "second <html> and duplicate <head>",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Studio</title><link rel=\"stylesheet\" href=\"./style.css\"></head><body><div id=\"root\"></div><html data-app-channel=\"spoof\"><head><meta name=\"x\"><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": null
+  },
+  {
+   "name": "no <head> at all",
+   "scripts": [
+    "native-three.js",
+    "native-three-addons.js",
+    "app.js"
+   ],
+   "html": "<html lang=\"en\"><body><link rel=\"stylesheet\" href=\"./style.css\"><script type=\"module\" src=\"./native-three.js\"></script>\n<script type=\"module\" src=\"./native-three-addons.js\"></script>\n<script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+   "reason": null
+  }
+ ],
+ "names": {
+  "x.js": true,
+  "native-three.js": true,
+  "native_three-2.js": true,
+  "app.js": true,
+  "a.b.js": false,
+  "app.min.js": false,
+  "app.js\n": false,
+  "A.js": false,
+  "-a.js": false,
+  ".js": false,
+  "a.mjs": false,
+  "sub/a.js": false,
+  "../a.js": false,
+  "a.js ": false,
+  "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.js": false,
+  "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.js": true
+ }
+}

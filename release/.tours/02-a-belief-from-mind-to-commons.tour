@@ -1,0 +1,97 @@
+{
+  "$schema": "https://aka.ms/codetour-schema",
+  "title": "02 A belief from mind to commons",
+  "description": "How a mind's belief reaches its swarm's shared MeTTa space: the native skill, the REST and MCP routes, evidence stamps in Hive.publish, the space service, revision in lib_hive.metta, the operations log, and query. Lines were read at this repository's handover commit; if a line has moved, search the file for the step's function or symbol name.",
+  "steps": [
+    {
+      "file": "modules/hive/skills.metta",
+      "line": 1,
+      "title": "1. A native mind calls hive-publish",
+      "description": "Inside a native OmegaClaw mind, `hive-publish` is an ordinary skill. It calls into Python with the statement and its truth value (f = how true, c = how confident). `hive-publish` is on the native loop's local skip list (`modules/hive/src/hive_commons.py` line 932), so today it runs without asking the hive's policy gate, and a deny or ask rule on it is never consulted (K10). Unknown skills also default to allow (`hive/core/policy.py` line 219, K30). Universal gating is a launch requirement (K10, K30); see tour 06 step 13 and [FINDINGS.md](https://github.com/PhysixSNET/omegahive-schematics/blob/main/07-upgrade-path/FINDINGS.md)."
+    },
+    {
+      "file": "modules/hive/src/hive_commons.py",
+      "line": 102,
+      "title": "2. The mind's side of the REST call",
+      "description": "The skill posts to `/api/agent/publish` with the mind's own token and turns the answer into one line the mind reads back: outcome, canonical statement and stamp."
+    },
+    {
+      "file": "hive/core/app.py",
+      "line": 2238,
+      "title": "3. REST route: /api/agent/publish",
+      "description": "`agent_from` turns the bearer token into the mind's row (401 otherwise). The work runs in a thread pool because the space interpreter is synchronous."
+    },
+    {
+      "file": "hive/core/app.py",
+      "line": 652,
+      "title": "4. The other door: MCP",
+      "description": "External members (other agent runtimes) speak MCP on `/mcp`. The bearer is a harness code, rate-limited, with a 256 KB body cap. `tools/call` is handled in `hive/core/mcp.py` (line 332)."
+    },
+    {
+      "file": "hive/core/mcp.py",
+      "line": 442,
+      "title": "5. McpServer.call",
+      "description": "Unknown tools are 404; evidence publication is gated off (501). Most tools are policy-checked here under their native skill name. `hive_publish` and `hive_query` are checked inside their own handlers instead (next step)."
+    },
+    {
+      "file": "hive/core/mcp.py",
+      "line": 535,
+      "title": "6. _t_hive_publish: policy, then the same publish",
+      "description": "`policy.enforce` applies the hive's policy rules (allow, ask, deny). So an external member's publish is gated here, while a native mind's own `hive-publish` skips the gate (step 1, K10). Then it calls the same `Hive.publish` the REST route uses, so both doors share one path."
+    },
+    {
+      "file": "hive/core/hive.py",
+      "line": 1520,
+      "title": "7. Hive.publish: evidence, not repetition",
+      "description": "The mind must be in a swarm. Without cited evidence, the mind's own earlier stamp for this statement is reused, so saying the same thing twice cannot raise confidence. Repeating what the commons told you inherits the stamp you read (an echo)."
+    },
+    {
+      "file": "hive/core/hive.py",
+      "line": 1550,
+      "title": "8. Cited evidence must already exist",
+      "description": "Each cited id must be well formed and either minted earlier for this mind or present in a stored stamp. The match is exact, never a `LIKE` pattern. Otherwise a fresh id is minted (`_mint_stamp`, line 1515)."
+    },
+    {
+      "file": "hive/spaces/service.py",
+      "line": 214,
+      "title": "9. SpaceService.publish",
+      "description": "Checks 0 <= f <= 1 and 0 < c < 1. A member's symbols are added to the swarm vocabulary first. Only a known outcome is accepted: adopted, revised, chosen, kept, duplicate, quarantined or denied."
+    },
+    {
+      "file": "hive/spaces/sexpr.py",
+      "line": 130,
+      "title": "10. Input is parsed before it touches MeTTa",
+      "description": "Agent text is never spliced raw. `safe_statement` parses it (no variables allowed) and renders a canonical form. Swarm and agent ids go through `safe_symbol`."
+    },
+    {
+      "file": "hive/spaces/service.py",
+      "line": 204,
+      "title": "11. One call into PeTTa",
+      "description": "The service builds one `hive-publish!` call against the swarm's spaces `&commons_<swarm>`, `&vocab_<swarm>` and the shared access list `&hive_acl`. All interpreter calls run on one worker thread (`run`, line 99)."
+    },
+    {
+      "file": "hive/spaces/lib_hive.metta",
+      "line": 123,
+      "title": "12. hive-publish! in MeTTa",
+      "description": "In order: is there a publish grant for this agent; are all symbols in the vocabulary (else **quarantined**); is this exact assertion already there (**duplicate**). Otherwise the assertion is stored and integrated."
+    },
+    {
+      "file": "hive/spaces/lib_hive.metta",
+      "line": 99,
+      "title": "13. Integration and revision",
+      "description": "Each statement has one `Current` belief. With **disjoint** evidence stamps, the two truth values are revised (the rule at line 25, the same as NAL revision) and the stamps merged. With overlapping stamps the higher-confidence belief wins and the choice is recorded (`Chosen`). This is what stops minds that echo each other from inflating confidence."
+    },
+    {
+      "file": "hive/spaces/service.py",
+      "line": 125,
+      "title": "14. The operations log",
+      "description": "PeTTa keeps no state on disk. Each accepted mutation is appended to `spaces.log.jsonl`. On start, `_replay` (line 129) runs every entry again in order, so the commons survives restarts. Denied, quarantined and duplicate publishes are not logged (line 225)."
+    },
+    {
+      "file": "hive/core/hive.py",
+      "line": 1637,
+      "title": "15. Query",
+      "description": "`/api/agent/query` (`hive/core/app.py` line 2246) and MCP `hive_query` come here. The pattern goes through `safe_pattern` and runs as `hive-view` over the swarm's commons (`hive/spaces/service.py` line 260, `hive/spaces/lib_hive.metta` line 148). Each `Current` result is recorded as read by this mind, which is how step 7 detects echoes. Note: automatic reasoning from the mind loop is deliberately not wired in this build (see `STATUS.md`)."
+    }
+  ]
+}

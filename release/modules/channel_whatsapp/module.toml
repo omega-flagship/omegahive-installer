@@ -1,0 +1,73 @@
+id = "omegaclaw.channel.whatsapp"
+kind = "channel"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+default_enabled = false
+
+provides = [
+  "channel:whatsapp",
+  "skill:send-whatsapp",
+  "skill:send-family",
+  "skill:send-primary-operator",
+  "skill:send-whatsapp-base64",
+  "skill:send-primary-operator-base64",
+  "skill:whatsapp-inbox",
+  "skill:whatsapp-chats",
+  "skill:whatsapp-status",
+  "skill:read-whatsapp-chat",
+  "skill:read-whatsapp-chat-recent",
+  "skill:read-whatsapp-chat-full",
+  "skill:mark-whatsapp-read",
+  "skill:mark-whatsapp-unread",
+  "skill:set-whatsapp-primary",
+  "skill:send-whatsapp-to",
+  "skill:send-whatsapp-to-base64",
+  "skill:reply-whatsapp-to",
+  "skill:reply-whatsapp-to-base64",
+  "skill:reply-whatsapp-to-message",
+  "skill:reply-whatsapp-to-message-base64",
+  "skill:react-whatsapp-message",
+  "skill:unreact-whatsapp-message",
+  "skill:edit-whatsapp-message",
+  "skill:edit-whatsapp-message-base64",
+  "skill:delete-whatsapp-message",
+  "skill:send-whatsapp-file",
+  "skill:send-whatsapp-file-caption",
+  "skill:send-whatsapp-file-to",
+  "skill:send-whatsapp-file-caption-to",
+  "skill:reply-whatsapp-file-to",
+  "skill:reply-whatsapp-file-caption-to",
+]
+
+requires = [
+  "python>=3.10",
+  "node>=20",
+]
+
+[env.OMEGACLAW_WA_AUTH_DIR]
+runtime_state = true
+
+[env.WA_TARGET_JID]
+default = "configured-at-runtime"
+
+[env.WA_PRIMARY_JID]
+default = "configured-at-runtime"
+
+[env.WA_PORT]
+default = "3055"
+
+[trace]
+writes = [
+  "WhatsAppMessageReceived",
+  "WhatsAppMessageSent",
+  "WhatsAppMessageDelivered",
+  "WhatsAppMessageRead",
+  "WhatsAppMessageEdited",
+  "WhatsAppMessageDeleted",
+  "WhatsAppMessageReaction",
+  "WhatsAppChatObserved",
+  "PrimaryOperatorRouteUpdated",
+]

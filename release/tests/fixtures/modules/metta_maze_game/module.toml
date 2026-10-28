@@ -1,0 +1,23 @@
+id = "openclaw.game.metta-maze"
+kind = "simulation"
+version = "0.1.0"
+entrypoint = "entry.metta"
+optional = true
+
+provides = [
+  "simulation:metta-maze",
+  "skill:start-game",
+  "skill:observe-game-state",
+  "skill:act-in-game",
+]
+
+requires = [
+  "runtime:any",
+]
+
+[trace]
+writes = [
+  "GameStateObserved",
+  "GameActionTaken",
+  "SimulationOutcome",
+]

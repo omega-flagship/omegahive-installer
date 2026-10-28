@@ -1,0 +1,20 @@
+# CONTEXT_CF40 Source template; Linux NOT_RUN. Installer renders all five tokens.
+[Unit]
+Description=OmegaHive private local-owner hive
+After=network.target
+
+[Service]
+Type=simple
+UMask=0077
+LimitCORE=0
+WorkingDirectory=@WORKDIR@
+Environment=@SANDBOX_ENV@
+Environment=@LIBPYTHON_ENV@
+UnsetEnvironment=LD_PRELOAD LD_AUDIT PYTHONPATH PYTHONHOME
+ExecStart=@PYTHON@ -I -B @SERVE@ --runtime @RUNTIME@
+KillMode=control-group
+TimeoutStopSec=30
+Restart=no
+
+[Install]
+WantedBy=default.target

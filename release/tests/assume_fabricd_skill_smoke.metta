@@ -1,0 +1,63 @@
+!(import! &self (library lib_import))
+!(git-import! "https://github.com/asi-alliance/OmegaClaw-Core.git")
+!(import! &self (library lib_spaces))
+!(import! &self (library OmegaClaw-Core ./src/helper.py))
+!(import! &self (library OmegaClaw-Core ./modules/assume/entry.metta))
+
+; MeTTa-facing Assume lifecycle smoke.
+; Proves body-start daemon, load, predict, audit, explicit learn, writeback,
+; symbolic topology change, stale detection, graph reload, and no action path.
+
+!(bind! &assume (new-space))
+!(bind! &assume_work (new-space))
+!(bind! &events (new-space))
+
+!(println! ASSUME-SMOKE-INIT)
+!(println! (eval (initRuntimeOrgans)))
+
+!(add-atom &assume (AssumeContextFeature house ctx movie-night 0.9 0.8 observation))
+!(add-atom &assume (AssumeContextFeature house ctx resident-present 0.8 0.8 observation))
+!(add-atom &assume (AssumeAction house yellow-moody-scene lighting))
+!(add-atom &assume (AssumeAction house bright-practical-scene lighting))
+!(add-atom &assume (AssumeAction house ask-before-changing communication))
+!(add-atom &assume (AssumeFeatureEdge house movie-night yellow-moody-scene 0.72 0.8 4))
+!(add-atom &assume (AssumeFeatureEdge house movie-night ask-before-changing 0.45 0.7 2))
+!(add-atom &assume (AssumeFeatureEdge house resident-present yellow-moody-scene 0.68 0.8 4))
+!(add-atom &assume (AssumeFeatureEdge house resident-present bright-practical-scene 0.25 0.6 1))
+!(add-atom &assume (AssumeOutcome house ctx yellow-moody-scene approved resident-liked-it 0.5))
+
+!(println! ASSUME-SMOKE-STATUS-EMPTY)
+!(println! (eval (assume-status)))
+!(println! ASSUME-SMOKE-LOAD)
+!(println! (eval (assume-load house ctx)))
+!(println! ASSUME-SMOKE-STATUS-LOADED)
+!(println! (eval (assume-status)))
+!(println! ASSUME-SMOKE-PREDICT)
+!(println! (eval (assume-predict house ctx)))
+!(println! ASSUME-SMOKE-AUDIT)
+!(println! (eval (assume-audit house ctx yellow-moody-scene)))
+!(println! ASSUME-SMOKE-LEARN)
+!(println! (eval (assume-learn house ctx "{\"yellow-moody-scene\": 0.8, \"bright-practical-scene\": 0.2, \"ask-before-changing\": 0.5}")))
+!(println! ASSUME-SMOKE-WRITEBACK)
+!(println! (eval (assume-writeback house ctx)))
+!(println! ASSUME-SMOKE-OBSERVE-WRITEBACK)
+!(println! (eval (assume-observe-writeback house ctx)))
+!(println! ASSUME-SMOKE-REVIEW-MUTATION)
+!(println! (eval (assume-review-mutation house ctx movie-night yellow-moody-scene)))
+!(println! ASSUME-SMOKE-NO-COMMIT)
+!(println! "observe/review smoke stops before assume-apply-writeback; commits are live-memory-risk")
+!(println! ASSUME-SMOKE-AFTER-REVIEW)
+!(println! (eval (assume-review)))
+
+; Topology change: remove one edge symbolically. The daemon graph should become stale
+; until graph reload. The daemon process should stay alive.
+!(collapse (match &assume (AssumeFeatureEdge house movie-night ask-before-changing $w $c $e)
+                  (remove-atom &assume (AssumeFeatureEdge house movie-night ask-before-changing $w $c $e))))
+!(println! ASSUME-SMOKE-STATUS-STALE)
+!(println! (eval (assume-status)))
+!(println! ASSUME-SMOKE-RELOAD)
+!(println! (eval (assume-reload house ctx)))
+!(println! ASSUME-SMOKE-STATUS-RELOADED)
+!(println! (eval (assume-status)))
+!(println! ASSUME-SMOKE-WRITEBACK-AFTER-RELOAD)
+!(println! (eval (assume-writeback house ctx)))

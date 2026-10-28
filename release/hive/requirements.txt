@@ -1,0 +1,12 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+httpx>=0.27
+websockets>=12
+pytest>=8
+pillow>=10
+
+# Google connector backend B; exact versions are also frozen in the hash lock.
+-c google-constraints.txt
+google-auth==2.62.0
+google-auth-oauthlib==1.5.0
+google-api-python-client==2.201.0

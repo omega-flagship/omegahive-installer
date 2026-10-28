@@ -1,0 +1,10 @@
+{
+  "note": "Vendored byte-for-byte from the hive release (omegahive-private at 6838fab, last touched by 2ccc456f). lib_mind.metta is this package's own. pins.test.ts checks every sha256.",
+  "release": "6838fab",
+  "files": {
+    "lib_nal.metta": { "from": "lib_nal.metta", "sha256": "3f2894d9b1bc4e39fd7d0384aa6c8503b847eed38826222941ffa14dc0610283" },
+    "lib_pln.metta": { "from": "lib_pln.metta", "sha256": "05b63266ad79c3cd0b32a83a4596ad47923e612e746303628da7500bbcffa7ae" },
+    "lib_hive.metta": { "from": "hive/spaces/lib_hive.metta", "sha256": "6c999b280a304f8a1c02218427806a9bdc16a019efc79a94a3f6f8bc3cf630c9" }
+  },
+  "engine": { "package": "@mettascript/core + @mettascript/hyperon", "version": "3.4.0" }
+}

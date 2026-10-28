@@ -1,0 +1,1399 @@
+/*
+ * Hive power: Off (each experience's own dark and its own light-up) and Quiet (each experience's own rest).
+ * One state machine (features/power/machine.ts); these are only its embodiments. Everything is scoped under .pw-*.
+ * Reduced motion (.pw-reduced, or the system setting): no movement at all; the light-up is an instant fade.
+ */
+
+/* ---------- the layer ---------- */
+.pw-off {
+  position: fixed;
+  inset: 0;
+  z-index: 92; /* above Ω (80), the Ask and toasts; below a dialog an admin opened (lifted to 96 below) */
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  isolation: isolate;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+body[data-hive-power='off'][data-hive-admin] > .xc-backdrop {
+  z-index: 96;
+}
+.pw-off.pw-report {
+  background: transparent !important;
+  pointer-events: none;
+}
+.pw-off.pw-report > :not(.pw-card):not(.pw-sr) {
+  display: none;
+}
+.pw-off .pw-bg {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+}
+.pw-off.pw-lighting .pw-bg {
+  animation: pw-fade-out 0.7s ease 0.95s forwards;
+}
+@keyframes pw-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes pw-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+.pw-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  gap: 22px;
+  text-align: center;
+  padding: 24px;
+}
+.pw-caption {
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  max-width: 34ch;
+}
+.pw-note {
+  font-size: 13.5px;
+  line-height: 1.45;
+  max-width: 44ch;
+}
+.pw-button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+/* the one control on a dark screen: its ring shows on any focus, not only keyboard focus */
+.pw-button:focus {
+  outline: 3px solid #fff;
+  outline-offset: 10px;
+}
+.pw-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* the honest result, in each experience's own grammar */
+.pw-card {
+  position: fixed;
+  left: 50%;
+  bottom: calc(24px + var(--sab, 0px));
+  transform: translateX(-50%);
+  width: min(460px, calc(100vw - 32px));
+  pointer-events: auto;
+  padding: 16px 18px 14px;
+  font-size: 14px;
+  line-height: 1.45;
+  animation: pw-fade-in 0.4s ease both;
+  z-index: 2;
+}
+.pw-off:not(.pw-report) .pw-card {
+  position: static;
+  transform: none;
+  margin-top: 10px;
+  width: min(460px, 100%);
+  text-align: left;
+}
+.pw-card h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+.pw-card p {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+.pw-card .pw-close {
+  margin-top: 10px;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 12px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ---------- Classic: the star map collapses to one bright star, the Ω ---------- */
+.pw-classic .pw-bg {
+  background: #000;
+}
+.pw-classic {
+  color: #d9d4ff;
+  font-family: 'Inter Variable', Inter, system-ui, sans-serif;
+}
+.pw-classic .pw-converge i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #cfc7ff;
+  box-shadow: 0 0 6px #a493ff;
+  transform: translate(var(--x), var(--y));
+  opacity: 0;
+  animation: pw-converge 1.1s cubic-bezier(0.5, 0, 0.2, 1) both;
+  animation-delay: var(--d);
+}
+@keyframes pw-converge {
+  0% {
+    transform: translate(var(--x), var(--y));
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+}
+.pw-classic .pw-button {
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  color: #1a1240;
+  font-size: 46px;
+  font-weight: 700;
+  background: radial-gradient(circle at 50% 45%, #ffffff 0 34%, #e9e4ff 46%, #b7a9ff 66%, #8a74ff 100%);
+  box-shadow:
+    0 0 0 2px rgb(255 255 255 / 0.85),
+    0 0 28px 6px rgb(255 255 255 / 0.85),
+    0 0 90px 24px rgb(164 147 255 / 0.75),
+    0 0 220px 70px rgb(120 96 255 / 0.35);
+  animation: pw-breathe 4.5s ease-in-out infinite;
+}
+.pw-classic .pw-button.pw-dim {
+  cursor: default;
+  width: 18px;
+  height: 18px;
+  font-size: 0;
+  background: #e9e4ff;
+  box-shadow: 0 0 18px 4px rgb(164 147 255 / 0.55);
+}
+@keyframes pw-breathe {
+  50% {
+    box-shadow:
+      0 0 0 2px rgb(255 255 255 / 0.95),
+      0 0 36px 10px rgb(255 255 255 / 0.9),
+      0 0 120px 34px rgb(164 147 255 / 0.85),
+      0 0 260px 90px rgb(120 96 255 / 0.4);
+  }
+}
+.pw-classic .pw-bloom {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 120px;
+  height: 120px;
+  margin: -60px 0 0 -60px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff 0 20%, rgb(200 190 255 / 0.85) 40%, rgb(120 96 255 / 0.35) 65%, transparent 72%);
+  animation: pw-bloom 1.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@keyframes pw-bloom {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  70% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: scale(28);
+    opacity: 0;
+  }
+}
+.pw-classic .pw-constellation i {
+  position: absolute;
+  left: calc(50% + var(--x));
+  top: calc(50% + var(--y));
+  width: 7px;
+  height: 7px;
+  margin: -3.5px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 14px 4px rgb(164 147 255 / 0.9);
+  opacity: 0;
+  animation: pw-ignite 0.9s ease-out both;
+  animation-delay: var(--d);
+}
+@keyframes pw-ignite {
+  0% {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1.4);
+  }
+  100% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+}
+.pw-classic .pw-card {
+  background: rgb(14 12 34 / 0.9);
+  border: 1px solid rgb(164 147 255 / 0.35);
+  border-radius: 20px;
+  color: #eceaff;
+  backdrop-filter: blur(12px);
+}
+.pw-classic .pw-close {
+  border: 1px solid rgb(164 147 255 / 0.5);
+  background: rgb(164 147 255 / 0.16);
+  color: #fff;
+}
+
+/* ---------- Still: a blank cream page with an embossed, glowing Ω seal ---------- */
+.pw-still .pw-bg {
+  background: radial-gradient(ellipse at 50% 40%, #fbf8f2, #ece5d8 80%);
+}
+.pw-still {
+  color: #1b1712;
+  font-family: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+  perspective: 1600px;
+}
+.pw-still .pw-page {
+  position: relative;
+  width: min(420px, 86vw);
+  min-height: min(500px, 70dvh);
+  padding: 32px 20px;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 26px;
+  background: #fbf8f2;
+  border: 1px solid rgb(27 23 18 / 0.12);
+  border-radius: 4px 10px 10px 4px;
+  box-shadow:
+    inset 10px 0 18px -14px rgb(27 23 18 / 0.35),
+    0 30px 60px -30px rgb(27 23 18 / 0.35);
+  transform-origin: left center;
+}
+.pw-still .pw-button {
+  width: 108px;
+  height: 108px;
+  border-radius: 50%;
+  color: #fff6ee;
+  font-size: 46px;
+  background: radial-gradient(circle at 38% 32%, #e0574e, #a3221b 58%, #7c1812);
+  box-shadow:
+    inset 0 2px 3px rgb(255 255 255 / 0.45),
+    inset 0 -4px 8px rgb(60 6 3 / 0.55),
+    0 0 0 6px rgb(163 34 27 / 0.12),
+    0 0 34px 8px rgb(224 87 78 / 0.55),
+    0 0 90px 26px rgb(255 140 110 / 0.35);
+  text-shadow: 0 -1px 0 rgb(60 6 3 / 0.6), 0 1px 0 rgb(255 255 255 / 0.3);
+  animation: pw-seal 5s ease-in-out infinite;
+}
+.pw-still .pw-button:focus {
+  outline: 3px solid #a3221b;
+}
+.pw-still .pw-button.pw-dim {
+  cursor: default;
+  width: 72px;
+  height: 72px;
+  font-size: 30px;
+  color: #e8dfd2;
+  background: #f4efe6;
+  box-shadow:
+    inset 0 2px 4px rgb(27 23 18 / 0.18),
+    inset 0 -2px 3px rgb(255 255 255 / 0.9);
+  text-shadow: 0 1px 0 #fff, 0 -1px 0 rgb(27 23 18 / 0.25);
+}
+@keyframes pw-seal {
+  50% {
+    box-shadow:
+      inset 0 2px 3px rgb(255 255 255 / 0.45),
+      inset 0 -4px 8px rgb(60 6 3 / 0.55),
+      0 0 0 8px rgb(163 34 27 / 0.14),
+      0 0 46px 12px rgb(224 87 78 / 0.65),
+      0 0 120px 36px rgb(255 140 110 / 0.4);
+  }
+}
+.pw-still .pw-caption {
+  font-style: italic;
+  font-size: 16px;
+  color: #463e35;
+}
+.pw-still.pw-lighting .pw-page {
+  animation: pw-open 1s cubic-bezier(0.6, 0, 0.3, 1) both;
+}
+@keyframes pw-open {
+  to {
+    transform: rotateY(-120deg);
+    opacity: 0;
+  }
+}
+.pw-still .pw-typed {
+  position: absolute;
+  font-size: clamp(20px, 3.4vw, 30px);
+  color: #1b1712;
+  white-space: nowrap;
+  clip-path: inset(0 100% 0 0);
+  animation: pw-type 0.9s steps(30, end) 0.5s forwards;
+}
+@keyframes pw-type {
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+.pw-still .pw-card {
+  background: #fbf8f2;
+  border: 1px solid rgb(27 23 18 / 0.22);
+  border-radius: 6px;
+  box-shadow: 0 18px 40px -20px rgb(27 23 18 / 0.4);
+}
+.pw-still .pw-card h2 {
+  font-weight: 600;
+  font-size: 17px;
+}
+.pw-still .pw-close {
+  border: 1px solid rgb(27 23 18 / 0.22);
+  background: transparent;
+  color: #a3221b;
+}
+
+/* ---------- Canvas: a dark cloth over the board, a glowing Ω pin ---------- */
+.pw-canvas .pw-bg {
+  background:
+    radial-gradient(ellipse at 30% 20%, rgb(255 255 255 / 0.05), transparent 50%),
+    radial-gradient(ellipse at 75% 85%, rgb(0 0 0 / 0.45), transparent 60%),
+    repeating-linear-gradient(115deg, rgb(255 255 255 / 0.025) 0 2px, transparent 2px 7px),
+    repeating-linear-gradient(25deg, rgb(0 0 0 / 0.12) 0 1px, transparent 1px 5px),
+    #1c1c22;
+}
+.pw-canvas {
+  color: #e9e9f0;
+  font-family: 'Inter Variable', Inter, system-ui, sans-serif;
+}
+.pw-canvas .pw-board {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background-color: #f6f6f3;
+  background-image: radial-gradient(rgb(22 22 26 / 0.17) 1px, transparent 1.2px);
+  background-size: 22px 22px;
+  opacity: 0;
+}
+.pw-canvas.pw-lighting .pw-board {
+  opacity: 1;
+  animation: pw-fade-out 0.5s ease 1.25s forwards;
+}
+.pw-canvas .pw-board i {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  width: 150px;
+  height: 92px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(22 22 26 / 0.05), 0 8px 24px -8px rgb(22 22 26 / 0.14);
+  border-top: 3px solid #3b5bff;
+  opacity: 0;
+  animation: pw-fade-in 0.35s ease both;
+  animation-delay: var(--d);
+  animation-fill-mode: forwards;
+}
+@keyframes pw-card-in {
+  to {
+    opacity: 1;
+  }
+}
+.pw-canvas.pw-lighting .pw-board i {
+  animation-name: pw-card-in;
+}
+.pw-canvas.pw-lighting .pw-bg,
+.pw-canvas.pw-lighting .pw-stage {
+  animation: pw-cloth 0.9s cubic-bezier(0.6, 0, 0.4, 1) 0.15s forwards;
+}
+@keyframes pw-cloth {
+  to {
+    transform: translateY(-115%) rotate(-4deg);
+  }
+}
+.pw-canvas .pw-pin {
+  display: grid;
+  justify-items: center;
+}
+.pw-canvas .pw-button {
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 40px;
+  font-weight: 600;
+  background: radial-gradient(circle at 36% 30%, #9db0ff, #3b5bff 55%, #2338b8);
+  box-shadow:
+    0 0 0 2px rgb(255 255 255 / 0.6),
+    0 0 30px 8px rgb(110 140 255 / 0.85),
+    0 0 110px 30px rgb(59 91 255 / 0.55),
+    0 14px 18px -6px rgb(0 0 0 / 0.6);
+  animation: pw-pin 4s ease-in-out infinite;
+}
+.pw-canvas .pw-needle {
+  width: 3px;
+  height: 22px;
+  margin-top: -2px;
+  border-radius: 0 0 2px 2px;
+  background: linear-gradient(#c9cfe6, #6b7088);
+}
+.pw-canvas .pw-button.pw-dim {
+  cursor: default;
+  width: 56px;
+  height: 56px;
+  font-size: 24px;
+  color: rgb(255 255 255 / 0.55);
+  background: #2c2c35;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.12), 0 10px 14px -6px rgb(0 0 0 / 0.6);
+}
+@keyframes pw-pin {
+  50% {
+    box-shadow:
+      0 0 0 2px rgb(255 255 255 / 0.7),
+      0 0 40px 12px rgb(110 140 255 / 0.95),
+      0 0 140px 40px rgb(59 91 255 / 0.6),
+      0 14px 18px -6px rgb(0 0 0 / 0.6);
+  }
+}
+.pw-canvas .pw-card {
+  background: #fff;
+  color: #16161a;
+  border-radius: 14px;
+  border-top: 3px solid #3b5bff;
+  box-shadow: 0 2px 6px rgb(22 22 26 / 0.06), 0 24px 60px -12px rgb(22 22 26 / 0.28);
+}
+.pw-canvas .pw-close {
+  border: 0;
+  background: #3b5bff;
+  color: #fff;
+}
+
+/* ---------- Cosmos: deep space, one pulsing beacon ---------- */
+.pw-cosmos .pw-bg {
+  background: radial-gradient(ellipse at 50% 50%, #0a1230 0%, #02030b 70%);
+}
+.pw-cosmos {
+  color: #cfe0ff;
+  font-family: ui-monospace, 'IBM Plex Mono', monospace;
+}
+.pw-cosmos .pw-stars {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1px;
+  height: 1px;
+  border-radius: 50%;
+  z-index: -1;
+}
+.pw-cosmos.pw-lighting .pw-stars {
+  animation: pw-pullback 1.6s cubic-bezier(0.2, 0.6, 0.2, 1) both;
+}
+@keyframes pw-pullback {
+  from {
+    transform: scale(2.2);
+    opacity: 0.4;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.pw-cosmos .pw-button {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  color: #02030b;
+  font-size: 36px;
+  font-weight: 700;
+  background: radial-gradient(circle, #ffffff 0 30%, #9fd0ff 55%, #5aa9ff 100%);
+  box-shadow:
+    0 0 26px 8px rgb(160 210 255 / 0.9),
+    0 0 100px 30px rgb(90 169 255 / 0.6);
+}
+.pw-cosmos .pw-button::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 2px solid rgb(160 210 255 / 0.8);
+  animation: pw-ping 2.6s ease-out infinite;
+}
+@keyframes pw-ping {
+  from {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+.pw-cosmos .pw-button.pw-dim {
+  cursor: default;
+  width: 10px;
+  height: 10px;
+  font-size: 0;
+  box-shadow: 0 0 14px 4px rgb(90 169 255 / 0.6);
+}
+.pw-cosmos .pw-button.pw-dim::after {
+  display: none;
+}
+.pw-cosmos .pw-burst {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 90px;
+  height: 90px;
+  margin: -45px;
+  border-radius: 50%;
+  border: 3px solid #bfe0ff;
+  box-shadow: 0 0 40px #5aa9ff, inset 0 0 40px #5aa9ff;
+  animation: pw-burst 1.3s ease-out both;
+}
+@keyframes pw-burst {
+  to {
+    transform: scale(22);
+    opacity: 0;
+  }
+}
+.pw-cosmos .pw-orbits i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--r);
+  height: var(--r);
+  margin: calc(var(--r) / -2);
+  border-radius: 50%;
+  border: 1px solid rgb(90 169 255 / 0.35);
+  opacity: 0;
+  animation: pw-ignite 0.8s ease-out both;
+  animation-delay: var(--d);
+}
+.pw-cosmos .pw-orbits i::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e6f0ff;
+  box-shadow: 0 0 12px #5aa9ff;
+}
+.pw-cosmos .pw-card {
+  background: rgb(2 3 11 / 0.88);
+  border: 1px solid rgb(90 169 255 / 0.45);
+  border-radius: 4px;
+  font-family: ui-monospace, 'IBM Plex Mono', monospace;
+  font-size: 13px;
+  color: #e6f0ff;
+}
+.pw-cosmos .pw-card h2 {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 12px;
+  color: #5aa9ff;
+}
+.pw-cosmos .pw-close {
+  border: 1px solid #5aa9ff;
+  background: transparent;
+  color: #e6f0ff;
+}
+
+/* ---------- Flux: a still, dark pool and a luminous Ω droplet ---------- */
+.pw-flux .pw-bg {
+  background:
+    radial-gradient(ellipse at 50% 120%, rgb(255 95 210 / 0.08), transparent 60%),
+    radial-gradient(ellipse at 50% 50%, #170a26, #07030d 75%);
+}
+.pw-flux {
+  color: #ffeaf6;
+  font-family: 'Inter Variable', Inter, system-ui, sans-serif;
+}
+.pw-flux .pw-button {
+  width: 84px;
+  height: 104px;
+  border-radius: 50% 50% 50% 50% / 62% 62% 40% 40%;
+  color: #2a0b22;
+  font-size: 36px;
+  font-weight: 700;
+  padding-top: 18px;
+  background: radial-gradient(circle at 40% 62%, #ffffff 0 18%, #ffc2ec 40%, #ff5fd2 78%, #c2259c);
+  box-shadow:
+    0 0 30px 8px rgb(255 140 225 / 0.85),
+    0 0 110px 30px rgb(255 95 210 / 0.5);
+  animation: pw-drip 5s ease-in-out infinite;
+}
+@keyframes pw-drip {
+  50% {
+    transform: translateY(-4px) scaleY(1.03);
+  }
+}
+.pw-flux .pw-button.pw-dim {
+  cursor: default;
+  width: 26px;
+  height: 32px;
+  font-size: 0;
+  padding: 0;
+  box-shadow: 0 0 18px 4px rgb(255 95 210 / 0.45);
+  animation: none;
+}
+.pw-flux .pw-ripples i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100px;
+  height: 100px;
+  margin: -50px;
+  border-radius: 50%;
+  border: 2px solid rgb(255 150 225 / 0.8);
+  animation: pw-ripple 1.4s ease-out both;
+  animation-delay: var(--d);
+}
+@keyframes pw-ripple {
+  from {
+    transform: scale(0.4);
+    opacity: 1;
+  }
+  to {
+    transform: scale(16);
+    opacity: 0;
+  }
+}
+.pw-flux .pw-liquid {
+  position: absolute;
+  inset: -20%;
+  z-index: -1;
+  background:
+    radial-gradient(circle at 35% 40%, rgb(255 95 210 / 0.75), transparent 40%),
+    radial-gradient(circle at 65% 60%, rgb(140 90 255 / 0.7), transparent 42%);
+  filter: blur(30px);
+  opacity: 0;
+  animation: pw-liquid 1.5s ease both 0.2s;
+}
+@keyframes pw-liquid {
+  50% {
+    opacity: 1;
+    transform: scale(1.1) rotate(8deg);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.4) rotate(16deg);
+  }
+}
+.pw-flux .pw-card {
+  background: rgb(26 10 40 / 0.85);
+  border: 1px solid rgb(255 95 210 / 0.4);
+  border-radius: 28px;
+  color: #ffeaf6;
+  backdrop-filter: blur(16px);
+}
+.pw-flux .pw-close {
+  border: 0;
+  background: linear-gradient(135deg, #ff5fd2, #8c5aff);
+  color: #fff;
+  border-radius: 999px;
+}
+
+/* ---------- Construct: a black terminal, a blinking cursor, a bright boot prompt ---------- */
+.pw-construct .pw-bg {
+  background: #000800;
+}
+.pw-construct {
+  color: #7dff6a;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  text-shadow: 0 0 6px rgb(57 255 20 / 0.45);
+}
+.pw-construct .pw-tty {
+  position: absolute;
+  left: max(16px, env(safe-area-inset-left));
+  top: 16px;
+  right: 16px;
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: left;
+  white-space: pre-wrap;
+}
+.pw-construct .pw-tty div {
+  animation: pw-line 0.01s steps(1) both;
+  animation-delay: var(--d, 0s);
+}
+@keyframes pw-line {
+  from {
+    visibility: hidden;
+  }
+}
+.pw-construct .pw-cursor {
+  display: inline-block;
+  width: 0.6em;
+  height: 1.1em;
+  vertical-align: -0.2em;
+  background: #39ff14;
+  animation: pw-blink 1.1s steps(1) infinite;
+}
+@keyframes pw-blink {
+  50% {
+    opacity: 0;
+  }
+}
+.pw-construct .pw-button {
+  min-height: 52px;
+  padding: 0 22px;
+  border: 2px solid #39ff14;
+  border-radius: 2px;
+  background: rgb(57 255 20 / 0.08);
+  color: #eaffe4;
+  font-size: 20px;
+  letter-spacing: 0.12em;
+  text-shadow: 0 0 10px #39ff14, 0 0 22px #39ff14;
+  box-shadow: 0 0 22px rgb(57 255 20 / 0.55), inset 0 0 18px rgb(57 255 20 / 0.25);
+}
+.pw-construct .pw-button:focus {
+  outline: 3px solid #eaffe4;
+  outline-offset: 6px;
+}
+.pw-construct .pw-card {
+  background: #000800;
+  border: 1px solid #39ff14;
+  border-radius: 0;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+.pw-construct .pw-card h2 {
+  font-size: 13px;
+  color: #eaffe4;
+}
+.pw-construct .pw-close {
+  border: 1px solid #39ff14;
+  background: transparent;
+  color: #eaffe4;
+  border-radius: 0;
+}
+
+/* ---------- Resting: one per experience (RestFaces.tsx); the hive keeps working behind it ---------- */
+.pw-rest {
+  position: fixed;
+  inset: 0;
+  z-index: 88; /* above the experience and Ω; below the off screen and dialogs (a dialog ends a rest anyway) */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  isolation: isolate;
+  cursor: default;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  padding: max(20px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom));
+  animation: pw-fade-in 1.6s ease both;
+}
+.pw-rest .pw-scene {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+  pointer-events: none;
+}
+.pw-rest .pw-face {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  max-width: 100%;
+}
+.pw-rest .pw-clock {
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+.pw-rest .pw-ampm {
+  font-size: 0.28em;
+  margin-left: 0.25em;
+  letter-spacing: 0.08em;
+  opacity: 0.7;
+}
+.pw-rest .pw-foot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: max(22px, calc(env(safe-area-inset-bottom) + 14px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+}
+.pw-rest .pw-alert {
+  min-height: 1.4em;
+  font-size: 14px;
+  text-align: center;
+  animation: pw-fade-in 0.8s ease both;
+}
+.pw-rest .pw-alert:empty {
+  animation: none;
+}
+.pw-rest .pw-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pw-rest .pw-chip {
+  min-height: 36px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13px;
+  color: inherit;
+  cursor: pointer;
+  background: transparent;
+}
+.pw-rest .pw-chip b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.pw-rest .pw-chip:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.pw-rest .pw-working {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  opacity: 0.75;
+}
+.pw-rest .pw-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.6;
+  animation: pw-breathe 4s ease-in-out infinite;
+}
+.pw-rest .pw-busy {
+  background: linear-gradient(90deg, currentColor 0 40%, rgb(255 255 255 / 0.95) 50%, currentColor 60% 100%) 0 0 / 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: pw-shimmer 5s linear infinite;
+}
+.pw-rest .pw-busy .pw-pulse {
+  background: currentColor;
+}
+@keyframes pw-breathe {
+  0%,
+  100% {
+    transform: scale(0.8);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 0.9;
+  }
+}
+@keyframes pw-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+/* Classic: the hive's orbs drift in the dark; a large, thin clock */
+.pw-rest-classic {
+  background: radial-gradient(ellipse at 50% 45%, rgb(8 7 26 / 0.93), rgb(3 3 12 / 0.98));
+  color: #eceaff;
+  font-family: 'Inter Variable', Inter, system-ui, sans-serif;
+}
+.pw-rest-classic .pw-clock {
+  font-size: clamp(84px, 17vw, 220px);
+  font-weight: 100;
+  letter-spacing: -0.02em;
+  text-shadow: 0 0 60px rgb(164 147 255 / 0.4);
+}
+.pw-rest-classic .pw-date {
+  margin-top: 12px;
+  font-size: 15px;
+  font-weight: 300;
+  color: rgb(236 234 255 / 0.65);
+  letter-spacing: 0.08em;
+}
+.pw-rest-classic .pw-working {
+  color: #cfc7ff;
+}
+.pw-rest-classic .pw-alert {
+  color: #cfc7ff;
+  font-weight: 300;
+}
+.pw-rest-classic .pw-chip {
+  background: rgb(255 255 255 / 0.06);
+  border: 1px solid rgb(164 147 255 / 0.28);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.pw-rest-classic .pw-chip:hover {
+  background: rgb(255 255 255 / 0.12);
+}
+
+/* Still: paper; the time written out */
+.pw-rest-still {
+  background: #f4efe6;
+  color: #1b1712;
+  font-family: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+}
+.pw-rest-still .pw-words {
+  margin: 0;
+  max-width: 15ch;
+  font-size: clamp(38px, 6.4vw, 84px);
+  line-height: 1.12;
+  font-style: italic;
+  font-weight: 400;
+  text-wrap: balance;
+  color: #1b1712;
+}
+.pw-rest-still .pw-small {
+  margin-top: 26px;
+  font-size: 13px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-variant: small-caps;
+  color: #6b6156;
+  font-variant-numeric: tabular-nums;
+}
+.pw-rest-still .pw-ampm {
+  font-size: 1em;
+  margin-left: 0.35em;
+}
+.pw-rest-still .pw-rule {
+  width: 120px;
+  height: 1px;
+  margin-top: 26px;
+  background: #1b1712;
+  transform-origin: center;
+  animation: pw-ink 9s ease-in-out infinite;
+}
+@keyframes pw-ink {
+  0%,
+  100% {
+    transform: scaleX(0.35);
+    opacity: 0.25;
+  }
+  50% {
+    transform: scaleX(1);
+    opacity: 0.55;
+  }
+}
+.pw-rest-still .pw-working {
+  margin-top: 16px;
+  font-style: italic;
+  color: #463e35;
+}
+.pw-rest-still .pw-busy {
+  background-image: linear-gradient(90deg, #463e35 0 40%, #b9ab98 50%, #463e35 60% 100%);
+}
+.pw-rest-still .pw-alert {
+  font-style: italic;
+  font-size: 16px;
+  color: #463e35;
+}
+.pw-rest-still .pw-chips {
+  gap: 0;
+}
+.pw-rest-still .pw-chips li + li::before {
+  content: '·';
+  padding: 0 4px;
+  color: #8a7f72;
+}
+.pw-rest-still .pw-chip {
+  padding: 6px 6px;
+  font-size: 15px;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+  text-decoration-color: rgb(27 23 18 / 0.35);
+  border-radius: 0;
+}
+.pw-rest-still .pw-chip b {
+  font-weight: 400;
+}
+
+/* Canvas: a pencil-sketched clock face on the board; alerts are sticky notes */
+.pw-rest-canvas {
+  background:
+    radial-gradient(circle, rgb(22 22 26 / 0.14) 1px, transparent 1.4px) 0 0 / 22px 22px,
+    rgb(248 248 245 / 0.94);
+  backdrop-filter: blur(6px) saturate(0.6);
+  -webkit-backdrop-filter: blur(6px) saturate(0.6);
+  color: #2b2b31;
+  font-family: 'Inter Variable', Inter, system-ui, sans-serif;
+}
+.pw-rest-canvas .pw-sketch {
+  width: min(58vmin, 400px);
+  height: min(58vmin, 400px);
+  color: #34343c;
+  overflow: visible;
+}
+.pw-rest-canvas .pw-draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: pw-pencil 2.4s cubic-bezier(0.4, 0.1, 0.3, 1) 0.2s forwards;
+}
+.pw-rest-canvas .pw-draw-2 {
+  animation-delay: 1.1s;
+}
+.pw-rest-canvas .pw-hands {
+  animation: pw-fade-in 1.2s ease 1.6s both;
+}
+@keyframes pw-pencil {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.pw-rest-canvas .pw-num {
+  font-family: 'Bradley Hand', 'Chalkboard SE', 'Segoe Print', 'Comic Sans MS', cursive;
+  font-size: 15px;
+  fill: #34343c;
+}
+.pw-rest-canvas .pw-hand {
+  margin-top: 14px;
+  font-family: 'Bradley Hand', 'Chalkboard SE', 'Segoe Print', 'Comic Sans MS', cursive;
+  font-size: clamp(20px, 3vw, 28px);
+  color: #2b2b31;
+}
+.pw-rest-canvas .pw-working {
+  margin-top: 8px;
+  color: #3b5bff;
+}
+.pw-rest-canvas .pw-alert {
+  color: #3d3d47;
+}
+.pw-rest-canvas .pw-chips {
+  gap: 12px;
+}
+.pw-rest-canvas .pw-chip {
+  min-height: 44px;
+  padding: 10px 14px;
+  border-radius: 2px;
+  background: #fff3a8;
+  color: #2b2b31;
+  box-shadow: 0 1px 2px rgb(22 22 26 / 0.1), 0 10px 18px -10px rgb(22 22 26 / 0.45);
+  transform: rotate(-1.6deg);
+  font-family: 'Bradley Hand', 'Chalkboard SE', 'Segoe Print', 'Comic Sans MS', cursive;
+  font-size: 15px;
+}
+.pw-rest-canvas li:nth-child(2n) .pw-chip {
+  background: #d6ecff;
+  transform: rotate(1.4deg);
+}
+.pw-rest-canvas li:nth-child(3n) .pw-chip {
+  background: #ffd9e4;
+  transform: rotate(-0.6deg);
+}
+
+/* Cosmos: deep space drifting; the time is drawn as constellations (RestScene) */
+.pw-rest-cosmos {
+  background: radial-gradient(ellipse at 50% 40%, #0a1230 0%, #040716 55%, #01020a 100%);
+  color: #e6f0ff;
+  font-family: ui-monospace, 'IBM Plex Mono', monospace;
+  justify-content: flex-end;
+  padding-bottom: max(150px, 22vh);
+}
+.pw-rest-cosmos .pw-readout {
+  font-size: 12px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: rgb(159 208 255 / 0.8);
+}
+.pw-rest-cosmos .pw-readout .pw-clock {
+  color: #e6f0ff;
+}
+.pw-rest-cosmos .pw-ampm {
+  font-size: 1em;
+}
+.pw-rest-cosmos .pw-working {
+  margin-top: 12px;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #9fd0ff;
+}
+.pw-rest-cosmos .pw-alert {
+  font-size: 11.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.pw-rest-cosmos .pw-chip {
+  border: 1px solid rgb(159 208 255 / 0.35);
+  border-radius: 2px;
+  background: rgb(6 12 34 / 0.6);
+  font-size: 11.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.pw-rest-cosmos .pw-chip:hover {
+  border-color: #9fd0ff;
+}
+
+/* Flux: slow liquid (RestScene, softened here); the clock floats in it */
+.pw-rest-flux {
+  background: #0a0414;
+  color: #ffeaf6;
+  font-family: 'Inter Variable', Inter, system-ui, sans-serif;
+}
+.pw-rest-flux .pw-scene {
+  filter: blur(28px) saturate(1.25);
+  transform: scale(1.08);
+}
+.pw-rest-flux .pw-clock {
+  font-size: clamp(84px, 16vw, 210px);
+  font-weight: 200;
+  color: rgb(255 240 250 / 0.92);
+  mix-blend-mode: overlay;
+  text-shadow: 0 0 50px rgb(255 95 210 / 0.55);
+}
+.pw-rest-flux .pw-date {
+  margin-top: 10px;
+  font-size: 15px;
+  font-weight: 300;
+  letter-spacing: 0.06em;
+  color: rgb(255 234 246 / 0.8);
+}
+.pw-rest-flux .pw-chip {
+  background: rgb(255 255 255 / 0.1);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.25), 0 8px 24px -10px rgb(255 95 210 / 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Construct: low rain; a terminal clock */
+.pw-rest-construct {
+  background: #000600;
+  color: #7dff6a;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+}
+.pw-rest-construct .pw-scene {
+  opacity: 0.55;
+}
+.pw-rest-construct .pw-term {
+  width: min(620px, 100%);
+  border: 1px solid rgb(57 255 20 / 0.55);
+  background: rgb(0 8 0 / 0.86);
+  box-shadow: 0 0 40px -6px rgb(57 255 20 / 0.25);
+  font-size: 13px;
+}
+.pw-rest-construct .pw-term-bar {
+  padding: 4px 10px;
+  border-bottom: 1px solid rgb(57 255 20 / 0.4);
+  color: #000800;
+  background: #39ff14;
+  font-size: 12px;
+}
+.pw-rest-construct .pw-term-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 14px 16px 16px;
+}
+.pw-rest-construct .pw-prompt {
+  color: #eaffe4;
+}
+.pw-rest-construct .pw-blocks {
+  margin: 4px 0;
+  font-family: inherit;
+  font-size: clamp(16px, 5vw, 30px);
+  line-height: 1;
+  color: #b6ffa8;
+  text-shadow: 0 0 12px rgb(57 255 20 / 0.6);
+}
+.pw-rest-construct .pw-term-dim {
+  color: rgb(125 255 106 / 0.7);
+}
+.pw-rest-construct .pw-working {
+  margin-top: 0;
+  letter-spacing: 0;
+}
+.pw-rest-construct .pw-pulse {
+  border-radius: 0;
+}
+.pw-rest-construct .pw-chips {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.pw-rest-construct .pw-chip {
+  min-height: 28px;
+  padding: 2px 6px;
+  border-radius: 0;
+  color: #ffd166;
+  font-size: 13px;
+  text-align: left;
+}
+.pw-rest-construct .pw-chip:hover {
+  background: rgb(255 209 102 / 0.12);
+}
+.pw-rest-construct .pw-alert {
+  min-height: 0;
+  text-align: left;
+  font-size: 13px;
+}
+.pw-rest-construct .pw-cursor {
+  animation: pw-blink 1.1s steps(1) infinite;
+}
+@keyframes pw-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* "While you were away: …" after waking */
+.pw-away {
+  position: fixed;
+  left: 50%;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  transform: translateX(-50%);
+  z-index: 89;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(640px, calc(100vw - 24px));
+  min-height: 40px;
+  padding: 6px 6px 6px 14px;
+  border-radius: 999px;
+  font-size: 13.5px;
+  animation: pw-fade-in 0.4s ease both;
+}
+.pw-away span {
+  overflow-wrap: anywhere;
+}
+.pw-away .pw-away-go {
+  min-width: 0;
+  padding: 4px 10px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+.pw-away button {
+  flex: none;
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 999px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+.pw-away-classic,
+.pw-away-cosmos {
+  background: rgb(14 12 34 / 0.92);
+  color: #eceaff;
+  border: 1px solid rgb(164 147 255 / 0.35);
+}
+.pw-away-still {
+  background: #fbf8f2;
+  color: #1b1712;
+  border: 1px solid rgb(27 23 18 / 0.22);
+  font-family: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+}
+.pw-away-canvas {
+  background: #fff;
+  color: #16161a;
+  box-shadow: 0 8px 24px -8px rgb(22 22 26 / 0.3);
+}
+.pw-away-flux {
+  background: rgb(26 10 40 / 0.9);
+  color: #ffeaf6;
+}
+.pw-away-construct {
+  background: #000800;
+  color: #7dff6a;
+  border: 1px solid #39ff14;
+  border-radius: 0;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+/* ---------- reduced motion: nothing moves; the light-up is an instant fade ---------- */
+.pw-reduced,
+.pw-reduced *,
+.pw-reduced *::before,
+.pw-reduced *::after {
+  animation: none !important;
+}
+/* the controls change state instantly too (the light-up's own fade, below, is the one transition left) */
+.pw-reduced .pw-button,
+.pw-reduced .pw-button::before,
+.pw-reduced .pw-button::after,
+.pw-reduced .pw-close,
+.pw-reduced .pw-card {
+  transition: none !important;
+}
+.pw-reduced.pw-lighting {
+  background: transparent;
+}
+.pw-reduced.pw-lighting > * {
+  opacity: 0;
+  transition: opacity 0.15s linear;
+}
+.pw-reduced.pw-rest {
+  animation: none;
+}
+/* the still, dimmed rest: the scene is one frame, and quieter; nothing eases either */
+.pw-reduced.pw-rest *,
+.pw-reduced.pw-rest *::before,
+.pw-reduced.pw-rest *::after {
+  transition: none !important;
+}
+.pw-reduced.pw-rest .pw-scene {
+  filter: brightness(0.7) saturate(0.8);
+}
+.pw-reduced.pw-rest-flux .pw-scene {
+  filter: blur(28px) brightness(0.7) saturate(1);
+}
+.pw-reduced.pw-rest .pw-draw {
+  stroke-dashoffset: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pw-off *,
+  .pw-off *::before,
+  .pw-off *::after,
+  .pw-rest,
+  .pw-rest *,
+  .pw-away {
+    animation: none !important;
+  }
+  .pw-rest .pw-draw {
+    stroke-dashoffset: 0;
+  }
+  .pw-rest * {
+    transition: none !important;
+  }
+}
+
+/* a press that woke the rest: its click lands here, never on the page beneath (RestScreen.tsx shield, ~0.7 s) */
+.pw-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 88;
+  background: transparent;
+}
