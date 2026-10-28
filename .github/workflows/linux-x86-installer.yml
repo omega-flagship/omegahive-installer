@@ -83,7 +83,7 @@ jobs:
           SH=$(python3 -c "import json;print(json.load(open('ci/linux-x86/x86_64-pins.json'))['uv']['sha256'])")
           curl -fsSL -o /tmp/uv.tgz "$U" && echo "$SH  /tmp/uv.tgz" | sha256sum -c -
           sudo install -d -o "$HIVE_USER" -m 0700 /home/$HIVE_USER/probe && sudo tar -xzf /tmp/uv.tgz -C /home/$HIVE_USER/probe && sudo chown -R "$HIVE_USER:$HIVE_USER" /home/$HIVE_USER/probe
-          sudo -iu "$HIVE_USER" bash -c 'umask 077; P=$HOME/.cache/ci-entry/python/bin/python3.12; UV=$(ls $HOME/probe/*/uv); env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config venv --python "$P" $HOME/probe/venv; stat -c "%a %U:%G %F %h %n" $HOME/probe/venv $HOME/probe/venv/bin $HOME/probe/venv/bin/* $P; getfacl -p $HOME/probe/venv/bin 2>/dev/null | head -6; id; umask'
+          sudo -iu "$HIVE_USER" bash -c 'umask 077; P=$HOME/.cache/ci-entry/python/bin/python3.12; UV=$(find $HOME/probe -name uv -type f | head -1); echo "uv=$UV"; env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config venv --python "$P" $HOME/probe/venv; stat -c "%a %U:%G %F %h %n" $HOME/probe/venv $HOME/probe/venv/bin $HOME/probe/venv/bin/* $P; getfacl -p $HOME/probe/venv/bin 2>/dev/null | head -6; id; umask'
       - name: Build x86_64 catalogue and bundle
         run: |
           sudo install -d -o "$HIVE_USER" -m 0700 /home/$HIVE_USER/stage
