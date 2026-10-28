@@ -182,13 +182,16 @@ jobs:
         run: |
           set +e
           # Watch the release folder while the installer runs (it removes a failed release afterwards).
-          ( while true; do for d in /home/$HIVE_USER/.local/share/omegahive/releases/*/; do [ -d "$d" ] || continue
-              for x in "$d" "$d/runtime" "$d/runtime/python" "$d/runtime/python/bin" "$d/runtime/python/bin/python3.12" "$d/venv" "$d/venv/bin" "$d/venv/bin/python" "$d/venv/bin/python3" "$d/venv/bin/python3.12" "$d/venv/lib" "$d/venv/pyvenv.cfg"; do
-                [ -e "$x" ] || [ -L "$x" ] && sudo stat -c '%a %U:%G %F %h %n' "$x"; done; done 2>/dev/null; sleep 0.2; done | awk '!seen[$0]++' > /tmp/watch.txt ) &
+          cat > /tmp/watch.sh <<'WATCH'
+          while true; do for d in /home/kituser/.local/share/omegahive/releases/*/; do [ -d "$d" ] || continue
+            for x in "$d" "$d/runtime" "$d/runtime/python" "$d/runtime/python/bin" "$d/runtime/python/bin/python3.12" "$d/venv" "$d/venv/bin" "$d/venv/bin/python" "$d/venv/bin/python3" "$d/venv/bin/python3.12" "$d/venv/lib" "$d/venv/pyvenv.cfg"; do
+              if [ -e "$x" ] || [ -L "$x" ]; then stat -c '%a %U:%G %F %h %n' "$x"; fi; done; done 2>/dev/null; sleep 0.1; done
+          WATCH
+          ( sudo bash /tmp/watch.sh | awk '!seen[$0]++' > /tmp/watch.txt ) &
           W=$!
           sudo -iu "$HIVE_USER" bash -c 'script -qec "sh ~/omegahive-linux.sh" /dev/null' > /tmp/kit.out 2>&1
           code=$?
-          kill $W 2>/dev/null || true; sleep 1
+          sudo pkill -f /tmp/watch.sh || true; sleep 1
           echo "--- watched release paths (perms owner type links path) ---"; cat /tmp/watch.txt
           set -e
           sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' /tmp/kit.out
