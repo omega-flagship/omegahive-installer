@@ -126,12 +126,12 @@ jobs:
         run: |
           loginctl show-user "$HIVE_USER" -p Linger
           U=$(id -u "$HIVE_USER")
-          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U ~/.local/bin/omegahive status --json
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
 
       - name: Headless sign-in through the one-use link (code masked)
         run: |
           U=$(id -u "$HIVE_USER")
-          out=$(sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U ~/.local/bin/omegahive open)
+          out=$(sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" open)
           link=$(printf '%s\n' "$out" | grep -o 'http://127.0.0.1:[0-9]*/local-signin#[A-Za-z0-9_-]\{43\}' | head -1)
           code=${link##*#}
           echo "::add-mask::$code"
@@ -159,7 +159,7 @@ jobs:
           sleep 10
           curl -s -o /dev/null -w 'hive after logout: HTTP %{http_code}\n' -H 'Host: 127.0.0.1:8700' http://127.0.0.1:8700/api/health || true
           U=$(id -u "$HIVE_USER")
-          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U ~/.local/bin/omegahive status --json
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
 
       - name: Receipts (no secrets)
         if: always()
@@ -226,8 +226,8 @@ jobs:
       - name: Status, sign-in, still running after logout
         run: |
           U=$(id -u "$HIVE_USER")
-          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U ~/.local/bin/omegahive status --json
-          out=$(sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U ~/.local/bin/omegahive open)
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+          out=$(sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" open)
           link=$(printf '%s\n' "$out" | grep -o 'http://127.0.0.1:[0-9]*/local-signin#[A-Za-z0-9_-]\{43\}' | head -1)
           code=${link##*#}; echo "::add-mask::$code"
           port=$(printf '%s' "$link" | sed -E 's#http://127.0.0.1:([0-9]+)/.*#\1#')
@@ -235,5 +235,5 @@ jobs:
             -H "Host: 127.0.0.1:$port" -H "Origin: http://127.0.0.1:$port" -H 'Content-Type: application/json' --data "{\"code\":\"$code\"}")
           echo "exchange HTTP $status (link port $port)"; [ "$status" = 200 ]
           sudo loginctl terminate-user "$HIVE_USER" || true; sleep 10
-          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U ~/.local/bin/omegahive status --json
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
 

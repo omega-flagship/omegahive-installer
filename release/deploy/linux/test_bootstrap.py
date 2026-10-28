@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import json
+import re
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -184,9 +185,11 @@ class BootstrapTests(unittest.TestCase):
         # Type=simple start: data/run may not exist yet, so the first hello must be the bounded retry.
         source = Path(bootstrap.__file__).read_text()
         body = source[source.index("def bootstrap("):source.index("def failure_message(")]
-        first = body.index('"hello"') if '"hello"' in body else len(body)
-        self.assertLess(body.index("control.wait_for_hello(config, home)"), first)
-        self.assertLess(body.index("control.wait_for_hello(config, home)"), body.index('"signin"'))
+        wait = body.index("control.wait_for_hello(config, home)")
+        # Any direct request (either quote style) for hello or signin must come after the bounded wait.
+        for match in re.finditer(r"control\.request\(config, home, ['\"](hello|signin)['\"]", body):
+            self.assertLess(wait, match.start(), match.group(0))
+        self.assertTrue(re.search(r"control\.request\(config, home, ['\"]signin['\"]", body[wait:]))
 
     def test_failure_message_is_plain_and_does_not_promise_data_safety(self):
         message = bootstrap.failure_message()
