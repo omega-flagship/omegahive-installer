@@ -422,14 +422,11 @@ jobs:
           sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
       - name: Check and stage the download
         run: |
-          cd ci/kit && sha256sum -c omegahive-linux-r12.sh.sha256
-          sudo install -o "$HIVE_USER" -m 0600 omegahive-linux-r12.sh /home/$HIVE_USER/omegahive-linux.sh
-          # Tester workaround while swi-prolog.org DNS is down: the exact archive from our private release, then the
-          # guide's commands as the new user.
-          gh release download linux-test-20261028-r12 -R "$GITHUB_REPOSITORY" -p swipl-10.1.14.tar.gz -D /tmp/swi
-          sudo install -o "$HIVE_USER" -m 0600 /tmp/swi/swipl-10.1.14.tar.gz /home/$HIVE_USER/swipl-10.1.14.tar.gz
-          sudo install -o "$HIVE_USER" -m 0700 seed-swipl.sh /home/$HIVE_USER/seed-swipl.sh
-          sudo -iu "$HIVE_USER" sh ./seed-swipl.sh
+          cd ci/kit && sha256sum -c omegahive-linux-r13.sh.sha256
+          sudo install -o "$HIVE_USER" -m 0600 omegahive-linux-r13.sh /home/$HIVE_USER/omegahive-linux.sh
+          # r13 carries the SWI-Prolog source: the whole tester journey with swi-prolog.org unreachable, nothing seeded.
+          printf '0.0.0.0 www.swi-prolog.org download.swi-prolog.org swi-prolog.org\n:: www.swi-prolog.org download.swi-prolog.org swi-prolog.org\n' | sudo tee -a /etc/hosts >/dev/null
+          ! curl -s -m 5 -o /dev/null https://www.swi-prolog.org/ && echo "swi-prolog.org is unreachable from this runner"
         env:
           GH_TOKEN: ${{ github.token }}
       - name: Run the installer as the newcomer (sh ~/omegahive-linux.sh)
