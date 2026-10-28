@@ -544,6 +544,11 @@ jobs:
           git apply "$GITHUB_WORKSPACE/ci/code-c2/PORT_8724_PINNING_R1.patch"
           b=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after port pin: $b"
           [ "$b" = "90 b343944cd51eafa4581b98703ad051b78678fe34c6a25d15a99b8614f9b48b5f" ]
+          # Code r13 candidate 3: + relay challenge listener R2 (d29cf391), digest 4cb9d79c (91 modules).
+          echo "d29cf39168d5b276622ac4c9eb197bbd4986f1d01bf3449ae2d571d765a12727  $GITHUB_WORKSPACE/ci/code-c2/RELAY_CHALLENGE_R2.patch" | sha256sum -c -
+          git apply "$GITHUB_WORKSPACE/ci/code-c2/RELAY_CHALLENGE_R2.patch"
+          c=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after relay R2: $c"
+          [ "$c" = "91 4cb9d79c801dee665c42fca33469e39c560a37fa462fe22eca2b50f8dbd580cd" ]
       - name: Pinned Python and uv (checked against the publisher)
         run: |
           P=ci/linux-x86/x86_64-pins.json
@@ -572,6 +577,12 @@ jobs:
           test -L /tmp/runvenv/bin/python && echo "venv python is uv's symlink (no materialised copy)"
           env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip freeze --python /tmp/runvenv/bin/python | tee /tmp/c2-runtime-freeze.txt
           /tmp/testvenv/bin/python ci/code-c2/runtime_startup_probe_r8.py --source-root /tmp/c2/source_r10/src --python /tmp/runvenv/bin/python 2>&1 | tee /tmp/c2-probe.txt
+          grep -q '"ok": true' /tmp/c2-probe.txt && echo "layout 1 (uv symlink venv python): ok"
+          # Layout 2, as the installer ships it (materialize_venv_python): a regular copy inside the venv.
+          cp --remove-destination "$(readlink -f /tmp/runvenv/bin/python)" /tmp/runvenv/bin/python && chmod 0755 /tmp/runvenv/bin/python
+          test ! -L /tmp/runvenv/bin/python && /tmp/runvenv/bin/python -c "import sys, uvicorn; print('materialised venv python', sys.prefix)"
+          /tmp/testvenv/bin/python ci/code-c2/runtime_startup_probe_r8.py --source-root /tmp/c2/source_r10/src --python /tmp/runvenv/bin/python 2>&1 | tee -a /tmp/c2-probe.txt
+          [ "$(grep -c '"ok": true' /tmp/c2-probe.txt)" = 2 ] && echo "layout 2 (materialised copy): ok"
           grep -q '"ok": true' /tmp/c2-probe.txt || {
             echo "--- why the service exited: import the entry point on the runtime-only env (no secrets) ---"
             cd /tmp/c2/source_r10/src && /tmp/runvenv/bin/python -B -s -c "import omegacode.__main__, omegacode.service, omegacode.api; print('imports ok')" 2>&1 | tail -15
