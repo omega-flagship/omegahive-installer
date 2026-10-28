@@ -2,6 +2,8 @@
 import copy
 import importlib.util
 import json
+import time
+import os
 import re
 from pathlib import Path
 import tempfile
@@ -232,8 +234,47 @@ class BootstrapTests(unittest.TestCase):
                 (written,) = logs.iterdir()
                 self.assertEqual(written.stat().st_mode & 0o777, 0o600)
                 logs.chmod(0o755)
-                bootstrap.record_failure(bootstrap.Refused("y"))
+                self.assertFalse(bootstrap.record_failure(bootstrap.Refused("y")))
                 self.assertEqual(len(list(logs.iterdir())), 1)
+                logs.chmod(0o700)
+                for _ in range(3): bootstrap.record_failure(bootstrap.Refused("z"), keep=3)
+                self.assertEqual(len(list(logs.iterdir())), 3)
+
+    def test_failure_note_never_follows_a_linked_parent_folder(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as elsewhere:
+            real = Path(elsewhere) / "omegahive/logs"; real.mkdir(parents=True, mode=0o700); real.chmod(0o700)
+            (Path(home) / ".local/share").mkdir(parents=True)
+            (Path(home) / ".local/share/omegahive").symlink_to(Path(elsewhere) / "omegahive")
+            with patch.object(bootstrap.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir=home)):
+                self.assertFalse(bootstrap.record_failure(bootstrap.Refused("x")))
+            self.assertEqual(list(real.iterdir()), [])
+
+    def proc_tcp_views(self, *rows_per_read):
+        # Each read of /proc/<pid>/net/tcp returns the next prepared view (kernel row layout).
+        head = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
+        views, real_open = [head + "".join(rows) for rows in rows_per_read], os.open
+        tmp = tempfile.mkdtemp()
+        def fake_open(path, flags, *args, **kwargs):
+            if str(path).startswith("/proc/"):
+                count = len(os.listdir(tmp)); name = os.path.join(tmp, str(count))
+                with open(name, "w") as stream: stream.write(views[min(count, len(views) - 1)])
+                return real_open(name, os.O_RDONLY)
+            return real_open(path, flags, *args, **kwargs)
+        return patch.object(bootstrap.os, "open", side_effect=fake_open)
+
+    def test_listener_check_waits_for_accept_then_requires_this_account(self):
+        uid = os.getuid()
+        row = lambda st, rem, u, ino, loc="0100007F:21FC": f"   0: {loc} {rem} {st} 00000000:00000000 00:00000000 00000000 {u:>5} 0 {ino} 1 0\n"
+        listen = row("0A", "00000000:0000", uid, "777")
+        pending = row("01", "0100007F:D431", 0, "0")
+        accepted = row("01", "0100007F:D431", uid, "888")
+        with self.proc_tcp_views([listen, pending], [listen, accepted]):
+            bootstrap.socket_inode("777", 8700, 0xD431, time.monotonic() + 5)
+        foreign = row("01", "0100007F:D431", uid + 1, "888")
+        with self.proc_tcp_views([listen, foreign]), self.assertRaises(bootstrap.Refused):
+            bootstrap.socket_inode("777", 8700, 0xD431, time.monotonic() + 5)
+        with self.proc_tcp_views([listen, pending]), self.assertRaises(bootstrap.Refused):
+            bootstrap.socket_inode("777", 8700, 0xD431, time.monotonic() + 0.3)
 
     def test_failure_message_is_plain_and_does_not_promise_data_safety(self):
         message = bootstrap.failure_message()

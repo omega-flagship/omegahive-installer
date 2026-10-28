@@ -175,8 +175,12 @@ def socket_inode(listener_inode, server_port, client_port, deadline, cleanup=Fal
         for line in raw.decode("ascii").splitlines()[1:]:
             fields = line.split()
             if len(fields) >= 10 and fields[1:4] == [local, remote, "01"]:
-                require(fields[7].isdecimal() and int(fields[7]) == os.getuid() and fields[9].isdecimal())
-                if int(fields[9]) > 0: inodes.add(fields[9])
+                require(fields[9].isdecimal())
+                # Until the service accepts the connection the kernel shows inode 0 and uid 0 for its end:
+                # that is "not yet", so look again; once accepted it must belong to this account.
+                if int(fields[9]) > 0:
+                    require(fields[7].isdecimal() and int(fields[7]) == os.getuid())
+                    inodes.add(fields[9])
         require(len(inodes) <= 1)
         listeners = set()
         for line in raw.decode("ascii").splitlines()[1:]:
@@ -414,25 +418,33 @@ def failure_note(error):
                        "where": frames[-12:]}, indent=1) + "\n"
 
 
-def record_failure(error):
-    # Best effort: never masks the original failure, never follows a link, never overwrites.
+def record_failure(error, keep=20):
+    # Best effort: walks every folder below home without following links, never overwrites,
+    # keeps at most `keep` notes, and never masks the original failure.
+    opened = []
     try:
-        logs = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".local/share/omegahive/logs"
-        folder = os.open(logs, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        folder = os.open(pwd.getpwuid(os.getuid()).pw_dir, os.O_RDONLY | os.O_DIRECTORY)
+        opened.append(folder)
+        for part in (".local", "share", "omegahive", "logs"):
+            folder = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=folder)
+            opened.append(folder)
+        info = os.fstat(folder)
+        if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+            return False
+        if sum(name.startswith("bootstrap-failure-") for name in os.listdir(folder)) >= keep:
+            return False
+        name = "bootstrap-failure-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8] + ".json"
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=folder)
         try:
-            info = os.fstat(folder)
-            if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
-                return
-            name = "bootstrap-failure-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8] + ".json"
-            fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=folder)
-            try:
-                os.write(fd, failure_note(error).encode())
-            finally:
-                os.close(fd)
+            os.write(fd, failure_note(error).encode())
         finally:
-            os.close(folder)
+            os.close(fd)
+        return True
     except Exception:
-        pass
+        return False
+    finally:
+        for fd in reversed(opened):
+            os.close(fd)
 
 
 if __name__ == "__main__":
