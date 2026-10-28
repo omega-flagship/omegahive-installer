@@ -595,6 +595,11 @@ jobs:
             cd $GITHUB_WORKSPACE && /tmp/testvenv/bin/python /tmp/probe_dbg.py --source-root /tmp/c2/source_r10/src --python /tmp/runvenv/bin/python 2>&1 | tail -3
             echo "service stderr bytes: $(wc -c < /tmp/c2-svc-stderr.txt 2>/dev/null)"; tail -40 /tmp/c2-svc-stderr.txt 2>/dev/null
             exit 1; }
+      - name: Outer containment gate (transient systemd units; success, refusal, timeout, SIGTERM, SIGKILL)
+        run: |
+          sudo chmod 0755 /tmp/runvenv /tmp/testvenv 2>/dev/null || true
+          bash ci/code-c2/containment.sh "$GITHUB_WORKSPACE/ci/code-c2/runtime_startup_probe_r8.py" /tmp/c2/source_r10/src /tmp/testvenv/bin/python "$(id -un)" 2>&1 | tee /tmp/c2-containment.txt
+          grep -q "containment gate: PASS" /tmp/c2-containment.txt
       - name: Hyperon 0.2.10 worker smoke (pinned wheel, separate env)
         run: |
           W=hyperon-0.2.10-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
