@@ -312,3 +312,117 @@ jobs:
         with:
           name: code-r10-x86-receipts
           path: code-receipts/
+
+  journey:
+    # The newcomer's journey after install, in a real browser: the tester guide's First Light (section 5), OmegaAssist
+    # (section 6) and Studio if there is a way in. Same install and sign-in as the kit job. No AI key, ever: where a step
+    # needs one, the walk takes the page's own Not now / Later and records what the page says. Test tooling only.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      HIVE_USER: kituser
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fresh user with test-only sudo (apt-get and linger only)
+        run: |
+          sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
+          printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
+          sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
+      - name: Check and stage the download
+        run: |
+          cd ci/kit && sha256sum -c omegahive-linux-r12.sh.sha256
+          sudo install -o "$HIVE_USER" -m 0600 omegahive-linux-r12.sh /home/$HIVE_USER/omegahive-linux.sh
+      - name: Run the installer as the newcomer (sh ~/omegahive-linux.sh)
+        run: |
+          set +e
+          # Watch the release folder while the installer runs (it removes a failed release afterwards).
+          cat > /tmp/watch.sh <<'WATCH'
+          while true; do for d in /home/kituser/.local/share/omegahive/releases/*/; do [ -d "$d" ] || continue
+            for x in "$d" "$d/runtime" "$d/runtime/python" "$d/runtime/python/bin" "$d/runtime/python/bin/python3.12" "$d/venv" "$d/venv/bin" "$d/venv/bin/python" "$d/venv/bin/python3" "$d/venv/bin/python3.12" "$d/venv/lib" "$d/venv/pyvenv.cfg"; do
+              if [ -e "$x" ] || [ -L "$x" ]; then stat -c '%a %U:%G %F %h %n' "$x"; fi; done; done 2>/dev/null; sleep 0.1; done
+          WATCH
+          ( sudo bash /tmp/watch.sh | awk '!seen[$0]++' > /tmp/watch.txt ) &
+          W=$!
+          sudo -iu "$HIVE_USER" bash -c 'script -qec "sh ~/omegahive-linux.sh" /dev/null' > /tmp/kit.out 2>&1
+          code=$?
+          sudo pkill -f /tmp/watch.sh || true; sleep 1
+          echo "--- watched release paths (perms owner type links path) ---"; cat /tmp/watch.txt
+          set -e
+          sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' /tmp/kit.out
+          echo "kit install exit $code"
+          if [ $code -ne 0 ]; then
+            L=$(sudo ls -t /home/$HIVE_USER/.local/share/omegahive/logs/ 2>/dev/null | head -1)
+            [ -n "$L" ] && sudo tail -n 60 "/home/$HIVE_USER/.local/share/omegahive/logs/$L" | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'
+            echo "--- bootstrap failure notes (secret-free by design) ---"
+            sudo sh -c "cat /home/$HIVE_USER/.local/share/omegahive/logs/bootstrap-failure-*.json 2>/dev/null" || true
+            echo "--- hive service journal (redacted) ---"
+            sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$(id -u "$HIVE_USER") journalctl --user -u omegahive.service --no-pager -n 60 -o short-monotonic 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' || true
+            echo "--- bootstrap diagnostic (traceback only) ---"
+            sudo cp ci/linux-x86/diag_bootstrap.py /home/$HIVE_USER/diag_bootstrap.py && sudo chown $HIVE_USER /home/$HIVE_USER/diag_bootstrap.py
+            U=$(id -u "$HIVE_USER")
+            sudo -iu "$HIVE_USER" bash -c 'V=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser(\"~/.local/share/omegahive/runtime.json\")))[\"python\"])" 2>/dev/null); [ -n "$V" ] && XDG_RUNTIME_DIR=/run/user/'"$U"' "$V" -I -B ~/diag_bootstrap.py' 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' | tail -40 || true
+            R=$(sudo ls -d /home/$HIVE_USER/.local/share/omegahive/releases/* 2>/dev/null | head -1)
+            echo "--- permission facts (no contents) ---"
+            sudo -iu "$HIVE_USER" bash -c 'umask'
+            for x in /home/$HIVE_USER /home/$HIVE_USER/.local /home/$HIVE_USER/.local/share /home/$HIVE_USER/.local/share/omegahive "$R" "$R/runtime" "$R/runtime/python" "$R/runtime/python/bin" "$R/runtime/python/bin/python3.12" "$R/venv" "$R/venv/bin" "$R/venv/bin/python" "$R/venv/bin/python3.12"; do sudo stat -c '%a %U:%G %F %n' "$x" 2>&1; done
+            sudo getfacl -p "$R/venv/bin" 2>/dev/null | head -8
+            mount | grep -E ' /home | / ' | head -3
+            exit $code
+          fi
+      - name: Status and sign-in through the one-use link (as the kit job; code masked)
+        run: |
+          U=$(id -u "$HIVE_USER")
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+          out=$(sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" open)
+          link=$(printf '%s\n' "$out" | grep -o 'http://127.0.0.1:[0-9]*/local-signin#[A-Za-z0-9_-]\{43\}' | head -1)
+          code=${link##*#}; echo "::add-mask::$code"
+          port=$(printf '%s' "$link" | sed -E 's#http://127.0.0.1:([0-9]+)/.*#\1#')
+          status=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8700/api/auth/local/exchange \
+            -H "Host: 127.0.0.1:$port" -H "Origin: http://127.0.0.1:$port" -H 'Content-Type: application/json' --data "{\"code\":\"$code\"}")
+          echo "exchange HTTP $status (link port $port)"; [ "$status" = 200 ]
+          echo "LINK_PORT=$port" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test tooling only - Playwright for Python and Chromium (exact version) and the tunnel stand-in
+        run: |
+          python -m pip install --disable-pip-version-check playwright==1.48.0
+          python -m playwright install --with-deps chromium
+          sudo apt-get install -y socat >/dev/null
+          python -m playwright --version
+      - name: The tester's journey in a browser (First Light, OmegaAssist, Studio)
+        run: |
+          set +e
+          U=$(id -u "$HIVE_USER")
+          # The tester's tunnel: their browser's 127.0.0.1:$LINK_PORT carries bytes to the hive's 127.0.0.1:8700.
+          if [ "$LINK_PORT" != 8700 ]; then
+            socat TCP-LISTEN:$LINK_PORT,bind=127.0.0.1,fork,reuseaddr TCP:127.0.0.1:8700 &
+            sleep 1
+          fi
+          curl -s -o /dev/null -w "through the tunnel port: HTTP %{http_code}\n" http://127.0.0.1:$LINK_PORT/api/health
+          # A fresh link, as a tester does (section 8): the browser opens it itself, within the minute.
+          out=$(sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" open)
+          link=$(printf '%s\n' "$out" | grep -o 'http://127.0.0.1:[0-9]*/local-signin#[A-Za-z0-9_-]\{43\}' | head -1)
+          code=${link##*#}; echo "::add-mask::$code"
+          JOURNEY_BASE="http://127.0.0.1:$LINK_PORT" JOURNEY_CODE="$code" python -I ci/journey/walk.py /tmp/journey 2>&1 \
+            | sed -E 's#(local-signin)\#[A-Za-z0-9_-]+#\1\#<redacted>#g'
+          code=""
+          echo "--- hive service journal, last 40 lines (redacted) ---"
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U journalctl --user -u omegahive.service --no-pager -n 40 -o short-monotonic 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]+#\1\#<redacted>#g' | cut -c1-300
+          [ -s /tmp/journey/steps.json ]
+      - name: Receipts (no secrets)
+        if: always()
+        run: |
+          mkdir -p journey-receipts
+          cp /tmp/journey/*.png journey-receipts/ 2>/dev/null || true
+          for f in steps.json events.json; do
+            [ -f /tmp/journey/$f ] && sed -E 's#(local-signin)\#[A-Za-z0-9_-]+#\1\#<redacted>#g' /tmp/journey/$f > journey-receipts/$f
+          done
+          ! grep -rl 'local-signin#[A-Za-z0-9_-]\{43\}' journey-receipts/ 
+          ls -la journey-receipts | head -80
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: journey-receipts
+          path: journey-receipts/
