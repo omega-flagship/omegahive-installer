@@ -1,0 +1,156 @@
+name: linux-x86-installer (test only)
+
+# Proves the Linux installer on a fresh x86_64 Ubuntu 22.04 machine, the way a newcomer runs it:
+# a fresh unprivileged user, one sudo step (apt + linger), then sign-in through the one-use link and
+# the hive still running after the user's session ends. Test branch only; never runs on main.
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: ["ci/linux-x86-*"]
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      HIVE_USER: cihive
+      PREFIX: omegahive-linux-test-20261028
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Machine facts
+        run: |
+          uname -a; lsb_release -ds; uname -m; nproc; free -h; df -h /
+          python3 - <<'EOF'
+          import ctypes
+          libc = ctypes.CDLL(None, use_errno=True)
+          print("landlock_abi", libc.syscall(ctypes.c_long(444), None, ctypes.c_size_t(0), ctypes.c_uint32(1)))
+          EOF
+          cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null || true
+          sysctl kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true
+
+      - name: Release tree and source tarball
+        run: |
+          # release/ holds the exact release tree; its git tree hash must equal the recorded release tree.
+          R="$(cat ci/RELEASE_COMMIT)"; WANT="$(cat ci/RELEASE_TREE)"
+          TREE="$(git rev-parse HEAD:release)"
+          echo "release commit $R, tree $TREE (recorded $WANT)"; [ "$TREE" = "$WANT" ]
+          echo "R=$R" >> "$GITHUB_ENV"; echo "TREE=$TREE" >> "$GITHUB_ENV"
+          mkdir -p /tmp/inputs
+          git archive --format=tar --prefix="$PREFIX/" HEAD:release | gzip -n > /tmp/inputs/source.tar.gz
+          git show HEAD:release/deploy/linux/install.py > /tmp/inputs/install.py
+          git show HEAD:release/deploy/linux/bootstrap.py > /tmp/inputs/bootstrap.py
+          cp ci/linux-x86/inputs/* /tmp/inputs/
+          sha256sum /tmp/inputs/*
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Linux installer unit tests (on x86_64, before any install)
+        continue-on-error: true
+        run: |
+          cd release/deploy/linux
+          python3 --version
+          python3 -m unittest -v test_install test_frontdoor test_bootstrap test_build_kit test_kit_installer_prefix 2>&1 | tail -40
+
+      - name: Fresh user with test-only sudo (apt-get and linger only)
+        run: |
+          sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
+          printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
+          sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
+          loginctl show-user "$HIVE_USER" -p Linger 2>/dev/null || echo "Linger not set (expected)"
+
+      - name: Pinned Python for the entry (checked against the publisher)
+        run: |
+          U=$(python3 -c "import json;print(json.load(open('ci/linux-x86/x86_64-pins.json'))['python_stripped']['url'])")
+          S=$(python3 -c "import json;print(json.load(open('ci/linux-x86/x86_64-pins.json'))['python_stripped']['sha256'])")
+          curl -fsSL -o /tmp/pbs.tar.gz "$U"
+          echo "$S  /tmp/pbs.tar.gz" | sha256sum -c -
+          sudo -u "$HIVE_USER" mkdir -p /home/$HIVE_USER/.cache/ci-entry
+          sudo tar -xzf /tmp/pbs.tar.gz -C /home/$HIVE_USER/.cache/ci-entry
+          sudo chown -R "$HIVE_USER:$HIVE_USER" /home/$HIVE_USER/.cache
+
+      - name: Build x86_64 catalogue and bundle
+        run: |
+          sudo install -d -o "$HIVE_USER" -m 0700 /home/$HIVE_USER/stage
+          sudo cp -r /tmp/inputs ci/linux-x86 /home/$HIVE_USER/stage/ && sudo chown -R "$HIVE_USER:$HIVE_USER" /home/$HIVE_USER/stage
+          sudo -iu "$HIVE_USER" /home/$HIVE_USER/.cache/ci-entry/python/bin/python3.12 -I -B -S \
+            /home/$HIVE_USER/stage/linux-x86/make_catalogue.py \
+            --base-catalogue /home/$HIVE_USER/stage/linux-x86/arm-r7-catalogue.json \
+            --pins /home/$HIVE_USER/stage/linux-x86/x86_64-pins.json \
+            --source-tar /home/$HIVE_USER/stage/inputs/source.tar.gz --prefix "$PREFIX" \
+            --commit "$R" --tree "$TREE" --inputs /home/$HIVE_USER/stage/inputs \
+            --bundle /home/$HIVE_USER/bundle --release-id "ci-x86-${R:0:12}"
+
+      - name: Install as the fresh user (the real installer)
+        run: |
+          set +e
+          sudo -iu "$HIVE_USER" bash -c 'umask 077; script -qec "/home/'"$HIVE_USER"'/.cache/ci-entry/python/bin/python3.12 -I -B -S /home/'"$HIVE_USER"'/stage/linux-x86/run_install.py /home/'"$HIVE_USER"'/bundle" /dev/null' > /tmp/install.out 2>&1
+          code=$?
+          set -e
+          # The interactive path prints a live one-use link: never show it.
+          sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' /tmp/install.out
+          echo "install exit $code"
+          if [ $code -ne 0 ]; then
+            L=$(sudo ls -t /home/$HIVE_USER/.local/share/omegahive/logs/ 2>/dev/null | head -1)
+            [ -n "$L" ] && sudo tail -n 60 "/home/$HIVE_USER/.local/share/omegahive/logs/$L" | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'
+            exit $code
+          fi
+
+      - name: Status and linger
+        run: |
+          loginctl show-user "$HIVE_USER" -p Linger
+          U=$(id -u "$HIVE_USER")
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U ~/.local/bin/omegahive status --json
+
+      - name: Headless sign-in through the one-use link (code masked)
+        run: |
+          U=$(id -u "$HIVE_USER")
+          out=$(sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U ~/.local/bin/omegahive open)
+          link=$(printf '%s\n' "$out" | grep -o 'http://127.0.0.1:[0-9]*/local-signin#[A-Za-z0-9_-]\{43\}' | head -1)
+          code=${link##*#}
+          echo "::add-mask::$code"
+          printf '%s\n' "$out" | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'
+          port=$(printf '%s' "$link" | sed -E 's#http://127.0.0.1:([0-9]+)/.*#\1#')
+          echo "printed link port: $port"
+          # Same browser view as the SSH tunnel: Host/Origin name the tunnel's local port, bytes go to 8700.
+          status=$(curl -s -o /tmp/exchange.json -w '%{http_code}' -X POST http://127.0.0.1:8700/api/auth/local/exchange \
+            -H "Host: 127.0.0.1:$port" -H "Origin: http://127.0.0.1:$port" -H 'Content-Type: application/json' \
+            --data "{\"code\":\"$code\"}" -c /tmp/cookies)
+          echo "exchange HTTP $status"
+          [ "$status" = 200 ] || { cat /tmp/exchange.json; exit 1; }
+          again=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8700/api/auth/local/exchange \
+            -H "Host: 127.0.0.1:$port" -H "Origin: http://127.0.0.1:$port" -H 'Content-Type: application/json' --data "{\"code\":\"$code\"}")
+          echo "reused link HTTP $again (must not be 200)"; [ "$again" != 200 ]
+          tok=$(python3 -c "import json;d=json.load(open('/tmp/exchange.json'));print(d.get('token') or d.get('session') or '')")
+          [ -n "$tok" ] && echo "::add-mask::$tok"
+          auth=(); [ -n "$tok" ] && auth=(-H "Authorization: Bearer $tok")
+          me=$(curl -s -o /dev/null -w '%{http_code}' -b /tmp/cookies "${auth[@]}" -H "Host: 127.0.0.1:$port" http://127.0.0.1:8700/api/auth/me)
+          echo "signed-in /api/auth/me HTTP $me"; [ "$me" = 200 ]
+
+      - name: Still running after the user's sessions end
+        run: |
+          sudo loginctl terminate-user "$HIVE_USER" || true
+          sleep 10
+          curl -s -o /dev/null -w 'hive after logout: HTTP %{http_code}\n' -H 'Host: 127.0.0.1:8700' http://127.0.0.1:8700/api/health || true
+          U=$(id -u "$HIVE_USER")
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U ~/.local/bin/omegahive status --json
+
+      - name: Receipts (no secrets)
+        if: always()
+        run: |
+          mkdir -p receipts
+          sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' /tmp/install.out > receipts/install.out 2>/dev/null || true
+          { echo "release $R tree $TREE"; uname -a; lsb_release -ds; } > receipts/facts.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-x86-receipts
+          path: receipts/

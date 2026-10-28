@@ -1,0 +1,33 @@
+{
+  "schema": "omegadot-x86_64-runtime-pins/1",
+  "recorded_utc": "2026-10-28T10:20Z",
+  "by": "Dot (fetched to scratch and checked against the publisher's own checksum files)",
+  "python": {
+    "version": "3.12.16",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.12.16%2B20261026-x86_64-unknown-linux-gnu-install_only.tar.gz",
+    "bytes": 67921566,
+    "sha256": "6a79e922e50006b601f29e688407659da1c2b86ebcd4e9c7254cf234be8b89de",
+    "publisher_check": "matches the python-build-standalone 20261026 SHA256SUMS line"
+  },
+  "uv": {
+    "version": "0.13.6",
+    "url": "https://github.com/astral-sh/uv/releases/download/0.13.6/uv-x86_64-unknown-linux-gnu.tar.gz",
+    "bytes": 16799024,
+    "sha256": "f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645",
+    "publisher_check": "same bytes from GitHub and releases.astral.sh; matches published .sha256; GitHub URL mirrors the aarch64 catalogue"
+  },
+  "arch_neutral_reuse": [
+    "swipl_source 1a078f18... (13684969 B)",
+    "petta_source de1e2474... codeload",
+    "ui_prebuilt 37be24f5.../f5efdb6d...",
+    "apps omegaassist 71d182fb..., omegadesign 38671264..."
+  ],
+  "core_lock": "coordination/hive-prs/bundles/hive-requirements-linux-x86_64.lock",
+  "python_stripped": {
+    "version": "3.12.16",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.12.16%2B20261026-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+    "bytes": 34505639,
+    "sha256": "ce4f6d0a6cfdb3bed6e44c2f9affd85943c76a42e25ad3a259002f31d6fb8a20",
+    "publisher_check": "matches SHA256SUMS; mirrors the aarch64 catalogue's install_only_stripped choice"
+  }
+}
