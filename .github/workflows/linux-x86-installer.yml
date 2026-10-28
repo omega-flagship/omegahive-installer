@@ -474,7 +474,10 @@ jobs:
           env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip check --python /tmp/runvenv/bin/python
           env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip freeze --python /tmp/runvenv/bin/python | tee /tmp/c2-runtime-freeze.txt
           /tmp/testvenv/bin/python ci/code-c2/runtime_startup_probe_r6.py --source-root /tmp/c2/source_r10/src --python /tmp/runvenv/bin/python 2>&1 | tee /tmp/c2-probe.txt
-          grep -q '"ok": true' /tmp/c2-probe.txt
+          grep -q '"ok": true' /tmp/c2-probe.txt || {
+            echo "--- why the service exited: import the entry point on the runtime-only env (no secrets) ---"
+            cd /tmp/c2/source_r10/src && /tmp/runvenv/bin/python -B -s -c "import omegacode.__main__, omegacode.service, omegacode.api; print('imports ok')" 2>&1 | tail -15
+            exit 1; }
       - name: Hyperon 0.2.10 worker smoke (pinned wheel, separate env)
         run: |
           W=hyperon-0.2.10-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
