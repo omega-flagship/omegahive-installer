@@ -154,3 +154,48 @@ jobs:
         with:
           name: linux-x86-receipts
           path: receipts/
+
+  kit:
+    # The real newcomer download: one file, run as a fresh user exactly as the guide says.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      HIVE_USER: kituser
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fresh user with test-only sudo (apt-get and linger only)
+        run: |
+          sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
+          printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
+          sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
+      - name: Check and stage the download
+        run: |
+          cd ci/kit && sha256sum -c omegahive-linux-r9.sh.sha256
+          sudo install -o "$HIVE_USER" -m 0600 omegahive-linux-r9.sh /home/$HIVE_USER/omegahive-linux.sh
+      - name: Run the installer as the newcomer (sh ~/omegahive-linux.sh)
+        run: |
+          set +e
+          sudo -iu "$HIVE_USER" bash -c 'script -qec "sh ~/omegahive-linux.sh" /dev/null' > /tmp/kit.out 2>&1
+          code=$?
+          set -e
+          sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' /tmp/kit.out
+          echo "kit install exit $code"
+          if [ $code -ne 0 ]; then
+            L=$(sudo ls -t /home/$HIVE_USER/.local/share/omegahive/logs/ 2>/dev/null | head -1)
+            [ -n "$L" ] && sudo tail -n 60 "/home/$HIVE_USER/.local/share/omegahive/logs/$L" | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'
+            exit $code
+          fi
+      - name: Status, sign-in, still running after logout
+        run: |
+          U=$(id -u "$HIVE_USER")
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U ~/.local/bin/omegahive status --json
+          out=$(sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U ~/.local/bin/omegahive open)
+          link=$(printf '%s\n' "$out" | grep -o 'http://127.0.0.1:[0-9]*/local-signin#[A-Za-z0-9_-]\{43\}' | head -1)
+          code=${link##*#}; echo "::add-mask::$code"
+          port=$(printf '%s' "$link" | sed -E 's#http://127.0.0.1:([0-9]+)/.*#\1#')
+          status=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8700/api/auth/local/exchange \
+            -H "Host: 127.0.0.1:$port" -H "Origin: http://127.0.0.1:$port" -H 'Content-Type: application/json' --data "{\"code\":\"$code\"}")
+          echo "exchange HTTP $status (link port $port)"; [ "$status" = 200 ]
+          sudo loginctl terminate-user "$HIVE_USER" || true; sleep 10
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U ~/.local/bin/omegahive status --json
+
