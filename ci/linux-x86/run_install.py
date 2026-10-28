@@ -23,6 +23,20 @@ def main():
     catalogue = json.loads((bundle / "release-manifest.json").read_text())
     # Run the public release validator on a ready=True copy, so the test catalogue has the exact public shape.
     base.validate_catalogue(dict(catalogue, ready=True))
+    # CI diagnostics only: name the exact path and its metadata when plain() refuses (never contents).
+    original_plain = base.plain
+    def traced_plain(path, owner=None, directory=False):
+        try:
+            return original_plain(path, owner, directory)
+        except base.Refused:
+            try:
+                info = os.lstat(path)
+                print("CI plain() refused: %s mode=%o uid=%d euid=%d link=%s dir=%s" % (
+                    path, info.st_mode, info.st_uid, os.getuid(), os.path.islink(path), directory), file=sys.stderr)
+            except OSError as error:
+                print("CI plain() refused: %s (%s)" % (path, error), file=sys.stderr)
+            raise
+    base.plain = traced_plain
     home = base.canonical_home()
     os.umask(0o077)
     for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
