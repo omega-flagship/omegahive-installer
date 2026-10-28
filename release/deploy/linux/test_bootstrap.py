@@ -180,6 +180,14 @@ class BootstrapTests(unittest.TestCase):
 
 
 
+    def test_first_hello_waits_for_the_freshly_started_service(self):
+        # Type=simple start: data/run may not exist yet, so the first hello must be the bounded retry.
+        source = Path(bootstrap.__file__).read_text()
+        body = source[source.index("def bootstrap("):source.index("def failure_message(")]
+        first = body.index('"hello"') if '"hello"' in body else len(body)
+        self.assertLess(body.index("control.wait_for_hello(config, home)"), first)
+        self.assertLess(body.index("control.wait_for_hello(config, home)"), body.index('"signin"'))
+
     def test_failure_message_is_plain_and_does_not_promise_data_safety(self):
         message = bootstrap.failure_message()
         self.assertEqual(message, "The last setup step didn't finish. The details are in ~/.local/share/omegahive/logs")

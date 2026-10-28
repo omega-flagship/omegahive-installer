@@ -340,7 +340,8 @@ def bootstrap(runtime, seed_path):
         info = os.fstat(lock)
         require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and info.st_nlink == 1 and stat.S_IMODE(info.st_mode) == 0o600)
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        hello, pid = control.request(config, home, "hello")
+        # The service was only just started; wait (bounded) for its control socket like `open` does.
+        hello, pid = control.wait_for_hello(config, home)
         require(type(hello) is dict and hello.get("ok") is True and hello.get("local_owner") is True
                 and hello.get("pid") == pid and hello.get("port") == config["port"]
                 and type(hello.get("instance")) is str and type(hello.get("owner")) is str
