@@ -370,6 +370,17 @@ def run():
         snap(page, "omegaassist-open", ok=in_app, note=f"opened by {how or 'nothing'}", error="" if in_app else "OmegaAssist did not open")
 
         sent, where = False, ""
+        # OmegaAssist's own typing box opens from its "Type to Omega" button (the hive's "Ask the hive" bar is skipped)
+        for t in list(page.frames[1:]) + [page]:
+            try:
+                typer = t.get_by_role("button", name=re.compile(r"Type to Omega", re.I))
+                if typer.count() and typer.first.is_visible():
+                    typer.first.click(timeout=3000)
+                    page.wait_for_timeout(1500)
+                    note_event("walk", "pressed 'Type to Omega'")
+                    break
+            except Exception as e:  # noqa: BLE001
+                note_event("walk", f"Type to Omega not pressed: {e}")
         for t in list(page.frames[1:]) + [page]:
             try:
                 box = t.locator("textarea, [contenteditable=true], input[type=text]")
@@ -393,6 +404,9 @@ def run():
 
         # ---- Studio, if there is a way in ----
         state["step"] = "studio"
+        # Assist fills the screen and hides the hive's sidebar: go back to All apps, where Studio is listed
+        page.goto(page.url.split("#")[0] + "#/programs")
+        settle(page, 3000)
         studio = nav("Studio")
         if visible(studio):
             click(studio)
