@@ -46,6 +46,14 @@ def main():
                 print("CI plain() refused: %s (%s)" % (path, error), file=sys.stderr)
             raise
     base.plain = traced_plain
+    tracer = str(pathlib.Path(__file__).with_name("trace_helper.py"))
+    original_run = base.Installer.run
+    def traced_run(self, argv, **kwargs):
+        # CI diagnostics only: the bootstrap helper hides its exception; run it through a tracing wrapper.
+        if len(argv) >= 4 and argv[1:3] == ["-I", "-B"] and argv[3].endswith("bootstrap.py"):
+            argv = argv[:3] + [tracer] + argv[3:]
+        return original_run(self, argv, **kwargs)
+    base.Installer.run = traced_run
     home = base.canonical_home()
     os.umask(0o077)
     for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):

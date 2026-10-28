@@ -314,6 +314,30 @@ def exe_matches(config, hello):
             and (exe['dev'], exe['ino']) == (real.st_dev, real.st_ino))
 
 
+def listener_matches(config, hello):
+    """The hive's attested listener must be the only LISTEN socket on 127.0.0.1:<port> in this network namespace,
+    and owned by this account. Checked before any sign-in code is requested."""
+    inode = hello.get('listener_inode') if type(hello) is dict else None
+    if type(inode) is not str or not inode.isdecimal() or inode == '0':
+        return False
+    local = '0100007F:' + format(config['port'], '04X')
+    fd = os.open('/proc/self/net/tcp', os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        raw = os.read(fd, 4 * 1024 ** 2 + 1)
+    finally:
+        os.close(fd)
+    if len(raw) > 4 * 1024 ** 2:
+        return False
+    listening = set()
+    for line in raw.decode('ascii', 'replace').splitlines()[1:]:
+        fields = line.split()
+        if len(fields) >= 10 and fields[1] == local and fields[3] == '0A':
+            if fields[7] != str(os.getuid()):
+                return False
+            listening.add(fields[9])
+    return listening == {inode}
+
+
 def validated_hello(config, answer):
     hello, pid = answer
     require(exe_matches(config, hello), 'service_executable_mismatch')
@@ -407,6 +431,7 @@ def main():
             env['XAUTHORITY'] = str(authority_path)
         root_program(OPENER)
     require(runtime(args.runtime)[2] == fingerprint, 'descriptor_changed_before_signin')
+    require(listener_matches(config, hello), 'service_listener_mismatch')
     answer, _ = request(config, home, 'signin', pid)
     url = ''
     issued = time.monotonic()

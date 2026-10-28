@@ -24,7 +24,7 @@ import types
 import uuid
 
 SEED_PIN = (1627, "917fc8c77357ef076712e867e0f1026e8910fc0683b017f824111b2b5c62f0ee")
-CONTROL_PIN = (22081, 'c7765a0e5f4c8c8e82fc8f20ce25d17b00d9200283bfa3947708d5ef9c1c637b')
+CONTROL_PIN = (23156, 'f33777c18ccb656f07f6a8c5bc7fa93509b8193b0d70d9fe0549df47c891dabc')
 APPS = ("omegaassist", "omegadesign")
 MAX_BODY = 256 * 1024
 STOP = False
@@ -345,7 +345,8 @@ def bootstrap(runtime, seed_path):
                 and hello.get("pid") == pid and hello.get("port") == config["port"]
                 and type(hello.get("instance")) is str and type(hello.get("owner")) is str
                 and re.fullmatch(r"user:u_[A-Za-z0-9_-]+", hello["owner"]))
-        require(control.exe_matches(config, hello))   # attested executable checked before any sign-in code is requested
+        # The attested executable and loopback listener are checked before any sign-in code is requested.
+        require(control.exe_matches(config, hello) and control.listener_matches(config, hello))
         signin, observed_pid = control.request(config, home, "signin", expected_pid=pid)
         require(type(signin) is dict and signin.get("ok") is True and observed_pid == pid)
         api = OwnerAPI(control, config, home, pid, time.monotonic() + 50, hello)

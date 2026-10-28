@@ -33,6 +33,8 @@ class BoundaryTests(unittest.TestCase):
         # The service's self-attested executable is checked by exe_matches (its own tests are below).
         patcher = mock.patch.object(control, 'exe_matches', return_value=True)
         patcher.start(); self.addCleanup(patcher.stop)
+        listener = mock.patch.object(control, 'listener_matches', return_value=True)
+        listener.start(); self.addCleanup(listener.stop)
 
     def test_duplicate_and_nonfinite_json_are_refused(self):
         for module in (control, serve):
@@ -294,6 +296,16 @@ class BoundaryTests(unittest.TestCase):
             calls.assert_called_once_with(cfg, Path('/home/test'), 'hello')
             opener.assert_not_called()
         self.assertIsNone(control._HELLO_DEADLINE.get())
+
+    def test_unattested_listener_refuses_before_any_signin_request(self):
+        hello = {'ok': True, 'local_owner': True, 'pid': 4000, 'port': 8700, 'instance': 'b' * 32}
+        for display in ({'DISPLAY': ':0'}, {}):
+            with self.subTest(display=display), mock.patch.object(control, 'listener_matches', return_value=False), \
+                 self.control_context('open', lambda *args: (hello, 4000), display=display) as (cfg, _, calls, opener, _):
+                with self.assertRaisesRegex(control.Refused, '^service_listener_mismatch$'):
+                    control.main()
+                self.assertEqual([c.args[2] for c in calls.call_args_list], ['hello'])   # never 'signin'
+                opener.assert_not_called()
 
     def test_expired_hello_budget_refuses_before_supervisor_spawn(self):
         token = control._HELLO_DEADLINE.set(10.0)
@@ -576,4 +588,27 @@ class SelfAttestedExecutableTests(unittest.TestCase):
             hello = {'ok': True, 'local_owner': True, 'pid': 4000, 'port': 8700, 'instance': 'b' * 32, 'exe': {'dev': 0, 'ino': 0}}
             with self.assertRaises(control.Refused):
                 control.validated_hello(cfg, (hello, 4000))
+
+
+class AttestedListenerTests(unittest.TestCase):
+    def tcp(self, rows):
+        header = '  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n'
+        body = ''.join('   0: %s 00000000:0000 %s 00000000:00000000 00:00000000 00000000  %s        0 %s 1 0 0 0 0\n' % r for r in rows)
+        read_fd, write_fd = os.pipe(); os.write(write_fd, (header + body).encode()); os.close(write_fd)
+        return mock.patch.object(control.os, 'open', return_value=read_fd)
+
+    def test_only_the_attested_inode_listening_on_the_port_matches(self):
+        me = str(os.getuid()); port = '0100007F:21FC'   # 8700
+        cases = [
+            ([(port, '0A', me, '777')], {'listener_inode': '777'}, True),
+            ([(port, '0A', me, '777'), (port, '0A', me, '778')], {'listener_inode': '777'}, False),   # a second listener
+            ([(port, '0A', me, '778')], {'listener_inode': '777'}, False),                            # not the attested one
+            ([(port, '0A', '0', '777')], {'listener_inode': '777'}, False),                           # another account
+            ([(port, '01', me, '777')], {'listener_inode': '777'}, False),                            # not listening
+            ([(port, '0A', me, '777')], {'listener_inode': None}, False),
+            ([(port, '0A', me, '777')], {'listener_inode': '7a7'}, False),
+        ]
+        for rows, hello, want in cases:
+            with self.subTest(rows=rows, hello=hello), self.tcp(rows):
+                self.assertIs(control.listener_matches({'port': 8700}, hello), want)
 
