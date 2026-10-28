@@ -36,7 +36,10 @@ def main():
                 current = os.umask(0o077); os.umask(current)
                 print("CI umask now %04o" % current, file=sys.stderr)
                 import subprocess
-                for target in (str(path), os.path.dirname(str(path)), os.path.dirname(os.path.dirname(str(path))), os.path.expanduser("~")):
+                release = os.path.dirname(os.path.dirname(str(path)))
+                for target in (str(path), release, os.path.dirname(release), os.path.expanduser("~"), "/tmp",
+                               os.path.expanduser("~/.local/share/omegahive"), os.path.expanduser("~/.local/share/omegahive/cache"),
+                               os.path.expanduser("~/.local/share/omegahive/cache/uv"), os.environ.get("TMPDIR", "/tmp")):
                     subprocess.run(["/usr/bin/getfacl", "-p", target], check=False)
                     subprocess.run(["/usr/bin/stat", "-c", "%a %n", target], check=False)
             except OSError as error:
