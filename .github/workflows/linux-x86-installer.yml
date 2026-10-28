@@ -109,6 +109,10 @@ jobs:
           if [ $code -ne 0 ]; then
             L=$(sudo ls -t /home/$HIVE_USER/.local/share/omegahive/logs/ 2>/dev/null | head -1)
             [ -n "$L" ] && sudo tail -n 60 "/home/$HIVE_USER/.local/share/omegahive/logs/$L" | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'
+            echo "--- bootstrap diagnostic (traceback only) ---"
+            sudo cp ci/linux-x86/diag_bootstrap.py /home/$HIVE_USER/diag_bootstrap.py && sudo chown $HIVE_USER /home/$HIVE_USER/diag_bootstrap.py
+            U=$(id -u "$HIVE_USER")
+            sudo -iu "$HIVE_USER" bash -c 'V=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser(\"~/.local/share/omegahive/runtime.json\")))[\"python\"])" 2>/dev/null); [ -n "$V" ] && XDG_RUNTIME_DIR=/run/user/'"$U"' "$V" -I -B ~/diag_bootstrap.py' 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' | tail -40 || true
             R=$(sudo ls -d /home/$HIVE_USER/.local/share/omegahive/releases/* 2>/dev/null | head -1)
             echo "--- permission facts (no contents) ---"
             sudo -iu "$HIVE_USER" bash -c 'umask'
@@ -207,6 +211,10 @@ jobs:
           if [ $code -ne 0 ]; then
             L=$(sudo ls -t /home/$HIVE_USER/.local/share/omegahive/logs/ 2>/dev/null | head -1)
             [ -n "$L" ] && sudo tail -n 60 "/home/$HIVE_USER/.local/share/omegahive/logs/$L" | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'
+            echo "--- bootstrap diagnostic (traceback only) ---"
+            sudo cp ci/linux-x86/diag_bootstrap.py /home/$HIVE_USER/diag_bootstrap.py && sudo chown $HIVE_USER /home/$HIVE_USER/diag_bootstrap.py
+            U=$(id -u "$HIVE_USER")
+            sudo -iu "$HIVE_USER" bash -c 'V=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser(\"~/.local/share/omegahive/runtime.json\")))[\"python\"])" 2>/dev/null); [ -n "$V" ] && XDG_RUNTIME_DIR=/run/user/'"$U"' "$V" -I -B ~/diag_bootstrap.py' 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' | tail -40 || true
             R=$(sudo ls -d /home/$HIVE_USER/.local/share/omegahive/releases/* 2>/dev/null | head -1)
             echo "--- permission facts (no contents) ---"
             sudo -iu "$HIVE_USER" bash -c 'umask'
