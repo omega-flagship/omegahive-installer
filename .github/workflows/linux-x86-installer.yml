@@ -473,7 +473,7 @@ jobs:
           env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip install --python /tmp/runvenv/bin/python --require-hashes --no-deps --only-binary=:all: -r ci/code-c2/CODE_R10_X86_RUNTIME_REQUIREMENTS_R1.lock
           env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip check --python /tmp/runvenv/bin/python
           env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip freeze --python /tmp/runvenv/bin/python | tee /tmp/c2-runtime-freeze.txt
-          python3 ci/code-c2/runtime_startup_probe_r4.py --source-root /tmp/c2/source_r10/src --python /tmp/runvenv/bin/python 2>&1 | tee /tmp/c2-probe.txt
+          /tmp/testvenv/bin/python ci/code-c2/runtime_startup_probe_r4.py --source-root /tmp/c2/source_r10/src --python /tmp/runvenv/bin/python 2>&1 | tee /tmp/c2-probe.txt
           grep -q '"ok": true' /tmp/c2-probe.txt
       - name: Hyperon 0.2.10 worker smoke (pinned wheel, separate env)
         run: |
