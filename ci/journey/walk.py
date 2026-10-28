@@ -383,7 +383,8 @@ def run():
                 note_event("walk", f"Type to Omega not pressed: {e}")
         for t in list(page.frames[1:]) + [page]:
             try:
-                box = t.locator("textarea, [contenteditable=true], input[type=text]")
+                box = t.get_by_placeholder(re.compile(r"Say something to Omega", re.I)).or_(
+                    t.locator("textarea, [contenteditable=true], input:not([type]), input[type=text], input[type=search]"))
                 for i in range(min(box.count(), 6)):
                     el = box.nth(i)
                     ph = (el.get_attribute("placeholder") or el.get_attribute("aria-label") or "")
