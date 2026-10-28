@@ -1,0 +1,57 @@
+--- a/src/omegacode/__main__.py
++++ b/src/omegacode/__main__.py
+@@ -12,11 +12,27 @@
+ from .service_lock import ServiceLock, LockError
+ 
+ 
++SERVICE_HOST = "127.0.0.1"
++SERVICE_PORT = 8724
++
++
++def configured_service_port(config):
++    """Keep the production API on the reviewed loopback endpoint only."""
++    port = config.get("port", SERVICE_PORT)
++    if type(port) is not int or port != SERVICE_PORT:
++        raise ValueError("OmegaCode must bind to 127.0.0.1:8724")
++    return SERVICE_PORT
++
++
+ def main():
+     parser = argparse.ArgumentParser(description="OmegaCode trusted disposable development service")
+     parser.add_argument("--config", type=pathlib.Path, required=True)
+     args = parser.parse_args()
+     config = json.loads(args.config.read_text())
++    try:
++        port = configured_service_port(config)
++    except ValueError as exc:
++        parser.error(str(exc))
+     root = pathlib.Path(config["data_root"]).resolve()
+     root.mkdir(parents=True, mode=0o700, exist_ok=True)
+     try:
+@@ -37,7 +53,7 @@
+         service = Service(root, token_path.read_text().strip(),
+                           config["repositories"], config.get("hive_url"), service_token=service_token, toolchains=config.get("toolchains"),
+                           language_servers=config.get("language_servers"), owner=owner)
+-        uvicorn.run(create_purpose_app(service, config.get("port", 8724), enabled=config.get("proposal_tests_enabled", False), capacity=config.get("proposal_status_capacity", 8)), host="127.0.0.1", port=config.get("port", 8724),
++        uvicorn.run(create_purpose_app(service, port, enabled=config.get("proposal_tests_enabled", False), capacity=config.get("proposal_status_capacity", 8)), host=SERVICE_HOST, port=port,
+                     access_log=False, log_level="warning")
+     finally:
+         try:
+--- /dev/null
++++ b/tests/test_service_entrypoint.py
+@@ -0,0 +1,15 @@
++import pytest
++
++from omegacode.__main__ import SERVICE_PORT, configured_service_port
++
++
++def test_production_service_port_defaults_to_reviewed_loopback_port():
++    assert configured_service_port({}) == 8724
++    assert SERVICE_PORT == 8724
++
++
++def test_production_service_port_accepts_only_exact_integer_port():
++    assert configured_service_port({"port": 8724}) == 8724
++    for value in (0, 8080, 8725, "8724", True, None):
++        with pytest.raises(ValueError, match="127.0.0.1:8724"):
++            configured_service_port({"port": value})

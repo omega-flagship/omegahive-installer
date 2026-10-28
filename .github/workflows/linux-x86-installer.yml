@@ -426,3 +426,69 @@ jobs:
         with:
           name: journey-receipts
           path: journey-receipts/
+
+  code-c2:
+    # Code r13 candidate 2 = R10 + terminal source precondition (8dd27853) + port pin (6d1370e8), digest b343944c.
+    # Separate from the R10 result. Tests on the 22-package test lock; then a clean 17-package runtime-only install,
+    # pip check and the startup probe; then a pinned Hyperon 0.2.10 worker import/query smoke. Synthetic data only.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rebuild candidate 2 from the exact R10 ZIP and the two reviewed patches
+        run: |
+          echo "5e316adcd336d73b564bcbfdb4b85e03b0744fccd1dce59795f7bb6620dcaa86  ci/code-r10/CODE_C2_EMPTY_SEED_R10_REVIEW.zip" | sha256sum -c -
+          echo "8dd278533cbf169916f5dc7a9f68b52c233d9b2e89ea5b9e48f31ba7e9db8834  ci/code-c2/TERMINAL_SOURCE_PRECONDITION_R10.patch" | sha256sum -c -
+          echo "6d1370e85bf2e431de9949dff55d7d9834eeaa1cd88aad90c10c5f324afca220  ci/code-c2/PORT_8724_PINNING_R1.patch" | sha256sum -c -
+          mkdir -p /tmp/c2 && cd /tmp/c2 && unzip -q "$GITHUB_WORKSPACE/ci/code-r10/CODE_C2_EMPTY_SEED_R10_REVIEW.zip"
+          cd /tmp/c2/source_r10
+          git apply "$GITHUB_WORKSPACE/ci/code-c2/TERMINAL_SOURCE_PRECONDITION_R10.patch"
+          a=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after terminal patch: $a"
+          [ "$a" = "90 66ebeff4a0fbf1148337fbb4d8e96a3b7679548cdd22182531cc79f4742e5a09" ]
+          git apply "$GITHUB_WORKSPACE/ci/code-c2/PORT_8724_PINNING_R1.patch"
+          b=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after port pin: $b"
+          [ "$b" = "90 b343944cd51eafa4581b98703ad051b78678fe34c6a25d15a99b8614f9b48b5f" ]
+      - name: Pinned Python and uv (checked against the publisher)
+        run: |
+          P=ci/linux-x86/x86_64-pins.json
+          U=$(python3 -c "import json;print(json.load(open('$P'))['python_stripped']['url'])"); H=$(python3 -c "import json;print(json.load(open('$P'))['python_stripped']['sha256'])")
+          curl -fsSL -o /tmp/pbs.tar.gz "$U" && echo "$H  /tmp/pbs.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/py && tar -xzf /tmp/pbs.tar.gz -C /tmp/py
+          U=$(python3 -c "import json;print(json.load(open('$P'))['uv']['url'])"); H=$(python3 -c "import json;print(json.load(open('$P'))['uv']['sha256'])")
+          curl -fsSL -o /tmp/uv.tgz "$U" && echo "$H  /tmp/uv.tgz" | sha256sum -c -
+          mkdir -p /tmp/uvx && tar -xzf /tmp/uv.tgz -C /tmp/uvx
+          echo "UV=$(find /tmp/uvx -name uv -type f | head -1)" >> "$GITHUB_ENV"
+      - name: Candidate 2 tests (22-package test lock)
+        run: |
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config venv --python /tmp/py/python/bin/python3.12 /tmp/testvenv
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip install --python /tmp/testvenv/bin/python --require-hashes --no-deps --only-binary=:all: -r ci/code-r10/requirements.lock
+          cd /tmp/c2/source_r10
+          git config --global user.name ci; git config --global user.email ci@example.invalid
+          PYTHONPATH=src:tests /tmp/testvenv/bin/python -m pytest -q -p no:cacheprovider tests 2>&1 | tee /tmp/c2-pytest.txt
+      - name: Runtime-only install (17-package lock), pip check and startup probe
+        run: |
+          echo "d31b5e35f103c7d7d7d75649ff93ba2786e0113fb49197adf0480fd9a5552db5  ci/code-c2/CODE_R10_X86_RUNTIME_REQUIREMENTS_R1.lock" | sha256sum -c -
+          echo "b80505769571c33ed909fa16ab597f73e522425fa616a3fbf93f76ba7500cfc8  ci/code-c2/runtime_startup_probe_r4.py" | sha256sum -c -
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config venv --python /tmp/py/python/bin/python3.12 /tmp/runvenv
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip install --python /tmp/runvenv/bin/python --require-hashes --no-deps --only-binary=:all: -r ci/code-c2/CODE_R10_X86_RUNTIME_REQUIREMENTS_R1.lock
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip check --python /tmp/runvenv/bin/python
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip freeze --python /tmp/runvenv/bin/python | tee /tmp/c2-runtime-freeze.txt
+          python3 ci/code-c2/runtime_startup_probe_r4.py --source-root /tmp/c2/source_r10/src --python /tmp/runvenv/bin/python 2>&1 | tee /tmp/c2-probe.txt
+          grep -q '"ok": true' /tmp/c2-probe.txt
+      - name: Hyperon 0.2.10 worker smoke (pinned wheel, separate env)
+        run: |
+          W=hyperon-0.2.10-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          curl -fsSL -o /tmp/$W "https://files.pythonhosted.org/packages/py3/h/hyperon/$W" || curl -fsSL -o /tmp/$W "$(curl -fsSL https://pypi.org/pypi/hyperon/0.2.10/json | python3 -c "import json,sys;print([f['url'] for f in json.load(sys.stdin)['urls'] if f['filename']=='$W'][0])")"
+          echo "12a0479df6afadda7562ffe10e7d63a6701aaec02f7177b91412bc05a09ed419  /tmp/$W" | sha256sum -c -
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config venv --python /tmp/py/python/bin/python3.12 /tmp/hyvenv
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip install --python /tmp/hyvenv/bin/python --no-deps --no-index /tmp/$W
+          /tmp/hyvenv/bin/python -I -c "import hyperon, json; m=hyperon.MeTTa(); r=m.run('!(+ 1 2)'); print(json.dumps({'hyperon_file': hyperon.__file__, 'result': str(r)}))" | tee /tmp/c2-hyperon.txt
+          grep -q '3' /tmp/c2-hyperon.txt
+      - name: Receipts (no secrets)
+        if: always()
+        run: mkdir -p c2-receipts && cp /tmp/c2-*.txt c2-receipts/ 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: code-c2-x86-receipts
+          path: c2-receipts/

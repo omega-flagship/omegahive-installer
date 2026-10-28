@@ -1,0 +1,172 @@
+--- a/src/omegacode/api.py
++++ b/src/omegacode/api.py
+@@ -402,9 +402,16 @@
+     timeout_seconds: int = Field(default=30, ge=1, le=3600)
+ 
+ 
++class TerminalSourcePrecondition(Model):
++    workspace_id: str = Field(min_length=1, max_length=160)
++    generation: int = Field(strict=True, ge=1)
++    tree_digest: str = Field(pattern=r'^[a-f0-9]{64}$')
++
++
+ class TerminalControl(Operation):
+     kind: Literal["input", "resize"]
+     data_base64: str | None = Field(default=None, max_length=10924)
++    source_precondition: TerminalSourcePrecondition | None = None
+     rows: int | None = Field(default=None, ge=1, le=500)
+     cols: int | None = Field(default=None, ge=1, le=500)
+ 
+--- a/src/omegacode/service.py
++++ b/src/omegacode/service.py
+@@ -12,6 +12,7 @@
+ import json
+ import os
+ import pathlib
++import re
+ import platform
+ import signal
+ import shutil
+@@ -2026,6 +2027,15 @@
+         ws = self.workspace(run["workspace_id"])
+         self._proposal_watchdog_guard(run.get("launch_custody_id"))
+         kind = payload.get("kind")
++        source_precondition = payload.get("source_precondition")
++        if source_precondition is not None:
++            if kind != "input" or not isinstance(source_precondition, dict) or set(source_precondition) != {"workspace_id", "generation", "tree_digest"}:
++                raise CodeError(400, "invalid_source_precondition", "source_precondition is supported only on input and needs workspace_id, generation, and tree_digest")
++            if (not isinstance(source_precondition.get("workspace_id"), str) or
++                    type(source_precondition.get("generation")) is not int or source_precondition["generation"] < 1 or
++                    not isinstance(source_precondition.get("tree_digest"), str) or
++                    not re.fullmatch(r"[a-f0-9]{64}", source_precondition["tree_digest"])):
++                raise CodeError(400, "invalid_source_precondition", "source_precondition is malformed")
+         data = b""
+         if kind == "input":
+             if any(k in payload for k in ("rows", "cols")):
+@@ -2047,15 +2057,22 @@
+             current = self.store.get("run", run_id)
+             if not current.get("terminal") or current["status"] not in ("starting", "running"):
+                 raise CodeError(409, "terminal_inactive", "run has no active interactive terminal")
++            current_ws = self.workspace(current["workspace_id"])
++            if source_precondition is not None and (
++                    current["workspace_id"] != source_precondition["workspace_id"] or
++                    current_ws["id"] != source_precondition["workspace_id"] or
++                    current_ws["generation"] != source_precondition["generation"] or
++                    current_ws["tree_digest"] != source_precondition["tree_digest"]):
++                raise CodeError(409, "source_changed", "This file changed. Start a new trace.")
+             controls = [x for x in self.store.list("terminal_control") if x["run_id"] == run_id]
+             if len(controls) >= 1024 or sum(x["input_bytes"] for x in controls) + len(data) > 65536:
+                 raise CodeError(429, "terminal_budget", "terminal control or input byte budget exhausted")
+-            record = {"id": ident("tc"), "run_id": run_id, "workspace_id": ws["id"],
++            record = {"id": ident("tc"), "run_id": run_id, "workspace_id": current_ws["id"],
+                       "sequence": len(controls) + 1, "actor": principal.actor, "kind": kind,
+                       "input_bytes": len(data), "input_digest": digest(data) if data else None,
+                       "status": "queued", "created_at": stamp(), "payload": payload}
+             self.store.put("terminal_control", record)
+-            self.store.emit(ws, "terminal.queued", {k: v for k, v in record.items() if k != "payload"})
++            self.store.emit(current_ws, "terminal.queued", {k: v for k, v in record.items() if k != "payload"})
+             return {k: v for k, v in record.items() if k != "payload"}
+         result = self._operation(principal, "run", ws, exact, apply)
+         self._proposal_watchdog_guard(run.get("launch_custody_id"))
+--- /dev/null
++++ b/tests/test_terminal_source_precondition.py
+@@ -0,0 +1,99 @@
++import base64
++import sys
++import time
++import uuid
++
++import pytest
++from pydantic import ValidationError
++from omegacode.api import TerminalControl
++from omegacode.common import CodeError
++from test_service import repo, service, principal, workspace, edit
++
++
++def active_run(service, p, ws):
++    run_id = 'run_' + uuid.uuid4().hex
++    run = {
++        'id': run_id, 'workspace_id': ws['id'], 'terminal': True, 'status': 'running',
++        'argv': [sys.executable], 'timeout_seconds': 60, 'generation': ws['generation'],
++        'tree_digest': ws['tree_digest'], 'nonce': 'launch_' + uuid.uuid4().hex,
++        'grant_id': p.grant['id'], 'created_at': time.time(), 'actor': p.actor,
++    }
++    service.store.put('run', run)
++    return run
++
++
++def input_payload(precondition, operation_id='step-input'):
++    return {
++        'operation_id': operation_id,
++        'kind': 'input',
++        'data_base64': base64.b64encode(b'{"op":"step-next"}\n').decode(),
++        'source_precondition': precondition,
++    }
++
++
++def test_terminal_input_precondition_is_checked_atomically_and_exact_retry_replays(service, monkeypatch):
++    monkeypatch.setattr(service, "reconcile", lambda: None)
++    p, _ = principal(service)
++    ws = workspace(service, p)
++    run = active_run(service, p, ws)
++    precondition = {'workspace_id': ws['id'], 'generation': ws['generation'], 'tree_digest': ws['tree_digest']}
++
++    accepted = service.terminal_control(p, run['id'], input_payload(precondition))
++    assert accepted['status'] == 'queued'
++    assert service.terminal_control(p, run['id'], input_payload(precondition)) == accepted
++    assert len([x for x in service.store.list('terminal_control') if x['run_id'] == run['id']]) == 1
++
++
++def test_changed_workspace_refuses_retry_that_was_never_previously_received(service, monkeypatch):
++    monkeypatch.setattr(service, "reconcile", lambda: None)
++    p, _ = principal(service)
++    ws = workspace(service, p)
++    run = active_run(service, p, ws)
++    old = {'workspace_id': ws['id'], 'generation': ws['generation'], 'tree_digest': ws['tree_digest']}
++    # The UI has retained operation_id and body, but the first POST never reached the service.
++    edit(service, p, ws, 'print("changed")\n', op='source-changed')
++
++    with pytest.raises(CodeError) as refused:
++        service.terminal_control(p, run['id'], input_payload(old, 'retry-after-source-change'))
++    assert refused.value.code == 'source_changed'
++    assert not [x for x in service.store.list('terminal_control') if x['run_id'] == run['id']]
++
++
++
++def test_source_precondition_is_rechecked_after_initial_read_before_atomic_apply(service, monkeypatch):
++    monkeypatch.setattr(service, "reconcile", lambda: None)
++    p, _ = principal(service)
++    ws = workspace(service, p)
++    run = active_run(service, p, ws)
++    old = {"workspace_id": ws["id"], "generation": ws["generation"], "tree_digest": ws["tree_digest"]}
++    original_operation = service._operation
++
++    def interleave(principal, action, selected_ws, payload, apply, validate_result=None):
++        if action == "run" and payload.get("source_precondition"):
++            # This is the gap between terminal_control's first workspace read and its locked apply.
++            edit(service, p, ws, 'print("concurrent change")\n', op="interleaved-head-change")
++        return original_operation(principal, action, selected_ws, payload, apply, validate_result)
++
++    monkeypatch.setattr(service, "_operation", interleave)
++    with pytest.raises(CodeError) as refused:
++        service.terminal_control(p, run["id"], input_payload(old, "interleaved-step-input"))
++    assert refused.value.code == "source_changed"
++    assert not [x for x in service.store.list("terminal_control") if x["run_id"] == run["id"]]
++
++def test_source_precondition_is_input_only_and_strict(service, monkeypatch):
++    monkeypatch.setattr(service, "reconcile", lambda: None)
++    p, _ = principal(service)
++    ws = workspace(service, p)
++    run = active_run(service, p, ws)
++    precondition = {"workspace_id": ws["id"], "generation": ws["generation"], "tree_digest": ws["tree_digest"]}
++    with pytest.raises(CodeError) as refused:
++        service.terminal_control(p, run["id"], {
++            "operation_id": "resize-with-pre", "kind": "resize", "rows": 24, "cols": 80,
++            "source_precondition": precondition,
++        })
++    assert refused.value.code == "invalid_source_precondition"
++    with pytest.raises(ValidationError):
++        TerminalControl.model_validate({
++            "operation_id": "bool-generation", "kind": "input", "data_base64": "eA==",
++            "source_precondition": {**precondition, "generation": True},
++        })
