@@ -1,0 +1,6 @@
+{
+  "id": "omegaevolve", "name": "OmegaEvolve", "version": "0.3.0", "contract": "0.1",
+  "description": "An evolving Omega and Iter pair: shared AGI research, contributions and sealed offline experiments toward beneficial general intelligence.",
+  "module": "program.py", "capabilities": ["evolve:read", "evolve:write"], "icon": "flask",
+  "app": {"open_stage": "unfold", "home": "objective", "tagline": "Research that improves the hive and its capacity to improve"}
+}

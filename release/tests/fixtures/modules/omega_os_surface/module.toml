@@ -1,0 +1,25 @@
+id = "omegaclaw.os.omega-surface"
+kind = "operating-surface"
+version = "0.1.0"
+entrypoint = "entry.metta"
+optional = true
+
+provides = [
+  "surface:omega-os",
+  "skill:open-window",
+  "skill:show-artifact",
+  "skill:move-window",
+  "skill:focus-surface",
+]
+
+requires = [
+  "browser:any",
+  "websocket:any",
+]
+
+[trace]
+writes = [
+  "UIEvent",
+  "UserInteraction",
+  "SurfaceStateChanged",
+]

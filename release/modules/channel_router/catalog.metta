@@ -1,0 +1,13 @@
+(SkillCatalog "Channels: receive, send, send-control, send-hive-to conversation_id message, send-file path, send-file-caption path caption, list-inbox, channel-status")
+(SkillHelp "channels" "Channel router affordances:")
+(SkillHelp "channels" "receive returns typed CHANNEL_EVENT context views; text is utterance content, route/conversation/message ids are metadata")
+(SkillHelp "channels" "send-control message - send to the current control route chosen from symbolic channel state")
+(SkillHelp "channels" "send-control-base64 payload - multiline/formatted control send")
+(SkillHelp "channels" "send-hive-to conversation_id message - on a hive, answer one conversation by the id its event shows (explicit_reply_affordance); needed when several people are waiting")
+(SkillHelp "channels" "send-file path - send a file/image to the latest control channel")
+(SkillHelp "channels" "list-inbox - inspect recently received files/media for active channel")
+(SkillHelp "channels" "channel-status - inspect selected channel, bind mode, and transport state")
+(SkillHelp "channels" "ChannelEvent contract: primary/control route uses send message; explicit routes expose conversation_id for send-to/reply-to commands")
+(SkillHelp "channels" "Legacy notice parsing is compatibility only; new channel modules should emit structured ChannelEvent payloads")
+
+(SkillHelp "channels" "initChannels - initialize configured communication membranes")

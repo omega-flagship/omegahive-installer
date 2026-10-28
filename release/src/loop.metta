@@ -1,0 +1,205 @@
+(= (maxNewInputLoops) (empty))
+(= (maxWakeLoops) (empty))
+(= (sleepInterval) (empty))
+(= (LLM) (empty))
+(= (provider) (empty))
+(= (maxOutputToken) (empty))
+(= (reasoningMode) (empty))
+(= (wakeupInterval) (empty))
+(= (spamShield) (empty))
+(= (maxPersistentAtomsChars) (empty))
+(= (maxAgendaAtomsChars) (empty))
+(= (maxBeliefAtomsChars) (empty))
+(= (maxWorldAtomsChars) (empty))
+(= (maxEventAtomsChars) (empty))
+(= (maxActivityAtomsChars) (empty))
+(= (maxScratchAtomsChars) (empty))
+
+!(import_prolog_function once)
+
+(= (initLoop)
+   (progn (configure maxNewInputLoops 12) ;bounded restart posture; the agent can choose more with energy skills
+          (configure maxWakeLoops 6) ;warm autonomous wake posture, not idle-only
+          (configure spamShield False) ;the per-cycle "DO NOT RE-SEND" nag trained wind-down silence (docs/omegadots/DRIFT.md)
+          (configure LLM gpt-5.4)
+          (configure provider OpenAI)
+          (configure sleepInterval 3) ;slower continuous loop
+          (configure maxOutputToken 6000)
+          (configure reasoningMode medium)
+          (configure wakeupInterval 900) ;autonomous warm wake interval; messages still wake immediately
+          ; Temporary survival bounds from the current architecture.
+          ; Keep these until full ECAN/attention-driven pruning can replace
+          ; automatic char-pressure removal with reasoned graph maintenance.
+          (configure maxPersistentAtomsChars 10000)
+          (configure maxAgendaAtomsChars 20000)
+          (configure maxBeliefAtomsChars 50000)
+          (configure maxWorldAtomsChars 50000)
+          (configure maxEventAtomsChars 50000)
+          (configure maxActivityAtomsChars 60000)
+          (configure maxScratchAtomsChars 20000)
+          (change-state! &prevmsg "")
+          (change-state! &lastresults "")
+          (change-state! &lastResponseMsgNew false)
+          (change-state! &lastResponseSexpr ())
+          (change-state! &maxNewInputLoops (maxNewInputLoops))
+          (change-state! &maxWakeLoops (maxWakeLoops))
+          (change-state! &sleepInterval (sleepInterval))
+          (change-state! &wakeupInterval (wakeupInterval))
+          (change-state! &maxPersistentAtomsChars (maxPersistentAtomsChars))
+          (change-state! &maxAgendaAtomsChars (maxAgendaAtomsChars))
+          (change-state! &maxBeliefAtomsChars (maxBeliefAtomsChars))
+          (change-state! &maxWorldAtomsChars (maxWorldAtomsChars))
+          (change-state! &maxEventAtomsChars (maxEventAtomsChars))
+          (change-state! &maxActivityAtomsChars (maxActivityAtomsChars))
+          (change-state! &maxScratchAtomsChars (maxScratchAtomsChars))
+          ; Neutral boot posture: enough attention to orient, then the agent can choose.
+          (change-state! &energyMode "warm")
+          (change-state! &cycle 1)
+          (change-state! &practiceStartCycle 1)
+          (change-state! &practiceLabel "none")
+          (change-state! &nextWakeAt (+ (get_time) (get-state &wakeupInterval)))
+          ; Clean boot should initialize memory/channels, then listen.
+          ; Human input and scheduled wakeups grant LLM turns explicitly.
+          (change-state! &loops 0)))
+
+(= (initRuntimeOrgans)
+   (let $started (collapse (match &self (RuntimeOrgan $name $call)
+                                  (if (runtime-organ-trusted $name)
+                                      (RuntimeOrganStarted $name (eval $call))
+                                      (RuntimeOrganRejected $name untrusted))))
+        (if (== $started ()) RuntimeOrgansNone $started)))
+
+; On a hive the SKILLS line names only what this mind's policy lets it use or ask for (discovery always stays).
+(= (skills-context)
+   (if (== (commchannel) hive)
+       (py-call (hive_commons.skill_hints (getSkills)))
+       (getSkills)))
+
+(= (getContext)
+   (getContext "" "" ""))
+
+(= (getContext $inputctx)
+   (getContext $inputctx "" ""))
+
+(= (getContext $inputctx $skillctx)
+   (getContext $inputctx $skillctx ""))
+
+(= (getContext $inputctx $skillctx $currentinput)
+   (string-safe (py-str ("PROMPT: " (getPrompt)
+                         " SKILLS: " (skills-context)
+                         " BACKGROUND_PROMOTED_MEMORY_HINTS: " (promoted-memory-hints)
+                         " RELEVANT_INPUT_RECALL: " $inputctx
+                         " SKILL_RECALL: " $skillctx
+                         " RECENT_HISTORY: " (getHistory)
+                         " LAST_SKILL_USE_RESULTS: " (py-call (helper.context_last_results (get-state &lastresults) (maxLastResultsContext)))
+                         " CURRENT_INPUT: " $currentinput
+                         " CURRENT_FRAME: " (py-call (helper.context_current_frame $currentinput (get-state &lastresults)))
+                         " SPIN_COUNTER: " (eval (spin-counter-context))
+                         " TIME: " (get_time_as_string)
+                         " OUTPUT_FORMAT: Up to 5 lines, do not wrap quotes around args, do not use variables:" (newline)
+                         " toolName1 arg1" (newline)
+                         " toolName2 arg2" (newline)
+                         " toolName3 arg3" (newline)
+                         " toolName4 arg4" (newline)
+                         " toolName5 arg5" (newline)))))
+
+(= (HandleError $msg $cmd $sexpr)
+   (case $sexpr (((Error $a $b) (let $new (append (get-state &error) (($msg $cmd)))
+                                          (change-state! &error $new)))
+                 ($else $sexpr))))
+
+; Before a command runs, a hive decides whether it may (policy rules and human
+; approvals; see hive/core/policy.py): True, or the text recorded instead of a
+; result.  Off the hive every command is allowed.
+(= (command-gate $cmd)
+   (if (== (commchannel) hive)
+       (py-call (hive_commons.authorize (repr $cmd)))
+       True))
+
+(= (command-results $items)
+   (if (== $items ())
+       ()
+       (let* (($cmd (car-atom $items))
+              ($rest (cdr-atom $items))
+              ($gate (command-gate $cmd))
+              ($result (if (== $gate True)
+                           (HandleError SINGLE_COMMAND_FORMAT_ERROR_NOTHING_WAS_DONE_PLEASE_FIX_AND_RETRY
+                                        $cmd
+                                        (catch (let $R (once (reduce $cmd))
+                                                    (py-call (helper.normalize_string $R)))))
+                           $gate)))
+             (cons (COMMAND_RETURN: ($cmd $result))
+                   (command-results $rest)))))
+
+; A response that is nothing but `wait` is the mind choosing to wait: its remaining turns end here, so it makes no
+; model call until new input arrives (any hub message resets &loops: a person's or mind's message, and the hive's
+; goal, claim, approval and schedule notes) or its wait expires
+; (&nextWakeAt: "wait 900" asks for 900 seconds; a bare reason keeps its own wake interval; the runtime's own
+; provider-error wait, wait "LLM-PROVIDER-...", retries after 60 seconds). Any other response, or
+; no response, leaves the loop as it was. Efficiency inside the mind's own loop, never a limit: the mind chooses.
+(= (honor-chosen-wait $sexpr)
+   (let $seconds (py-call (helper.chosen_wait_seconds (repr $sexpr)))
+        (if (< $seconds 0)
+            wait-not-chosen
+            (progn (change-state! &loops 0)
+                   (if (> $seconds 0) (change-state! &nextWakeAt (+ (get_time) $seconds)) _)
+                   (wait-chosen $seconds)))))
+
+(= (omegaclaw)
+   (omegaclaw 1))
+
+!(change-state! &loopBootInitialized false)
+
+(= (omegaclaw $k)
+   (progn (if (== (get-state &loopBootInitialized) true)
+	                        (progn (change-state! &loops (- (get-state &loops) 1))
+	                               (run-runtime-hooks cycle))
+                          (progn (initLoop)
+                                 (initMemory)
+                                 (initChannels)
+                                 (initRuntimeOrgans)
+                                 (change-state! &loopBootInitialized true)))
+          (change-state! &cycle $k)
+          (progn (println! (---------iteration $k))
+                 (let* (($msgrcv (string-safe (repr (receive))))
+                        ($msgnew (prog1 (and (> (string_length $msgrcv) 0) (!= $msgrcv (get-state &prevmsg)))
+                                        (if (> (string_length $msgrcv) 0) (change-state! &prevmsg $msgrcv) _)))
+                        ($msg (get-state &prevmsg))
+                        ($_ (if $msgnew
+                                (change-state! &loops (get-state &maxNewInputLoops)) _))
+                        ($inputctx (input-recall $msgnew $msg))
+                        ($skillctx (skill-recall $msgnew $msg))
+                        ($lastmessage (if $msgnew (HUMAN-MSG: $msg) (if (spamShield) " DO NOT RE-SEND OR SPAM!" "")))
+                        ($prompt (getContext $inputctx $skillctx $lastmessage)))
+	                            (if (> (get-state &loops) 0)
+	                                (let* (($_ (change-state! &nextWakeAt (+ (get_time) (get-state &wakeupInterval))))
+	                                       ($_ (println! $lastmessage))
+	                                       ($send $prompt)
+                                       ($_ (println! (CHARS_SENT: (string_length $send))))
+                                       ($respi (if (== (provider) OpenAI)
+                                                   (useGPT (LLM) (maxOutputToken) (reasoningMode) $send)
+                                                   (py-call (lib_llm_ext.callProvider (provider) $send (maxOutputToken)))))
+                                       ($resp (py-call (helper.signature_balance_parentheses $respi)))
+                                       ($response $resp)
+                                       ($sexpr (catch (sread $response)))
+                                       ($_ (change-state! &error ()))
+                                       ($_ (HandleError MULTI_COMMAND_FAILURE_NOTHING_WAS_DONE_PLEASE_CORRECT_PARENTHESES_AND_USE_QUOTES_AND_RETRY $response $sexpr))
+                                       ($_ (println! (RESPONSE: $sexpr)))
+                                       ($results (RESULTS: (command-results $sexpr)))
+                                       ($_ (println! $results))
+                                       ($_ (change-state! &lastResponseMsgNew $msgnew))
+                                       ($_ (change-state! &lastResponseSexpr $sexpr))
+                                       ($_ (change-state! &lastResponseText $response))
+                                       ($_ (change-state! &lastResponseResults $results))
+                                       ($_ (run-runtime-hooks response))
+                                       ($_ (honor-chosen-wait $sexpr)))
+                                      (progn (if (or $msgnew  (not (== $sexpr ()))) (addToHistory $msg $response $sexpr $msgnew $results) _)
+                                             (change-state! &lastresults (string-safe (repr $results)))))
+                                (if (> (get_time) (get-state &nextWakeAt))
+                                    (change-state! &loops (+ 2 (get-state &maxWakeLoops))) _)))
+	              (bound-runtime-spaces-by-role memory)
+                 (save-runtime-spaces-by-role memory)
+                 (sleep (get-state &sleepInterval))
+                 (cut)
+                 (gc)
+                 (omegaclaw (+ 1 $k)))))

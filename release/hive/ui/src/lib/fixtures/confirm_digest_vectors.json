@@ -1,0 +1,216 @@
+{
+ "schema": "omegahive.confirm-digest-vectors/1",
+ "rule": "payload_digest = 'sha256:' + hex(sha256(utf8(canonical(payload)))); canonical = JSON, object keys sorted by Unicode code point at every level, separators ',' and ':' with no whitespace, non-ASCII written as UTF-8; in strings and keys only these are escaped: \\\" \\\\ \\b \\f \\n \\r \\t, and every other U+0000-U+001F as \\u00xx with lowercase hex (exactly JSON.stringify); integers only within +-(2^53-1), no other numbers; the payload is normalized first (items [], params {}, base_revision null when missing or null). See hive/PROGRAMS.md 9d.",
+ "vectors": [
+  {
+   "name": "empty",
+   "payload": {
+    "items": [],
+    "params": {},
+    "base_revision": null
+   },
+   "canonical": "{\"base_revision\":null,\"items\":[],\"params\":{}}",
+   "digest": "sha256:5e6570a4ca3809cd8b0b4c6834b71f56d01fd8a6323924dc601b10d7f4537a09"
+  },
+  {
+   "name": "key order at every level",
+   "payload": {
+    "params": {
+     "b": 1,
+     "a": {
+      "z": true,
+      "y": false
+     }
+    },
+    "base_revision": "r1",
+    "items": [
+     "i2",
+     "i1"
+    ]
+   },
+   "canonical": "{\"base_revision\":\"r1\",\"items\":[\"i2\",\"i1\"],\"params\":{\"a\":{\"y\":false,\"z\":true},\"b\":1}}",
+   "digest": "sha256:8271a251f6c3efdd34068238a987950392b863e0eb93c0ec571b4e0ab533f0f0"
+  },
+  {
+   "name": "unicode text as UTF-8",
+   "payload": {
+    "items": [
+     "i1"
+    ],
+    "params": {
+     "to": "Zoë",
+     "note": "日本語 – “quotes” 😀"
+    },
+    "base_revision": null
+   },
+   "canonical": "{\"base_revision\":null,\"items\":[\"i1\"],\"params\":{\"note\":\"日本語 – “quotes” 😀\",\"to\":\"Zoë\"}}",
+   "digest": "sha256:ded80806ed7a8d266199bbe78c76a001b4215ec656dae08ab1de8124a5d49893"
+  },
+  {
+   "name": "escapes: quote, backslash, control characters, U+2028",
+   "payload": {
+    "items": [],
+    "params": {
+     "s": "a\"b\\c\n\t\u0001\u001f /"
+    },
+    "base_revision": null
+   },
+   "canonical": "{\"base_revision\":null,\"items\":[],\"params\":{\"s\":\"a\\\"b\\\\c\\n\\t\\u0001\\u001f /\"}}",
+   "digest": "sha256:ed6afb2a3d37c65aba0470a0654e65e354c63670c216d3072f431dc787b933c4"
+  },
+  {
+   "name": "key sort is by code point, not UTF-16 unit",
+   "payload": {
+    "items": [],
+    "params": {
+     "！": 1,
+     "😀": 2,
+     "a": 3,
+     "Z": 4
+    },
+    "base_revision": null
+   },
+   "canonical": "{\"base_revision\":null,\"items\":[],\"params\":{\"Z\":4,\"a\":3,\"！\":1,\"😀\":2}}",
+   "digest": "sha256:db88caa4d4ee97d54261acb3fc3b36e317e836c3710cb095dc6b5875c5e3d422"
+  },
+  {
+   "name": "nested arrays and objects, booleans and null",
+   "payload": {
+    "items": [
+     "i1"
+    ],
+    "params": {
+     "list": [
+      1,
+      [
+       2,
+       [
+        3,
+        {
+         "k": null
+        }
+       ]
+      ],
+      true,
+      false,
+      null
+     ],
+     "o": {}
+    },
+    "base_revision": 7
+   },
+   "canonical": "{\"base_revision\":7,\"items\":[\"i1\"],\"params\":{\"list\":[1,[2,[3,{\"k\":null}]],true,false,null],\"o\":{}}}",
+   "digest": "sha256:cb1e2039fb51286c2271d0f4aade167bd02f8d9158c90433e4f2e641a63314a2"
+  },
+  {
+   "name": "integers at the safe bounds",
+   "payload": {
+    "items": [],
+    "params": {
+     "max": 9007199254740991,
+     "min": -9007199254740991,
+     "zero": 0,
+     "neg": -42
+    },
+    "base_revision": null
+   },
+   "canonical": "{\"base_revision\":null,\"items\":[],\"params\":{\"max\":9007199254740991,\"min\":-9007199254740991,\"neg\":-42,\"zero\":0}}",
+   "digest": "sha256:13ea96fb69649ee740858b589114c02576d49aebf9d682d507c5e72eb0586164"
+  },
+  {
+   "name": "a file entry",
+   "payload": {
+    "items": [
+     "i1"
+    ],
+    "params": {},
+    "base_revision": null,
+    "file": {
+     "name": "note.txt",
+     "mime": "text/plain",
+     "size": 5,
+     "sha256": "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    }
+   },
+   "canonical": "{\"base_revision\":null,\"file\":{\"mime\":\"text/plain\",\"name\":\"note.txt\",\"sha256\":\"sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\",\"size\":5},\"items\":[\"i1\"],\"params\":{}}",
+   "digest": "sha256:90254d4ab96799a201c98c9f24fb79c70f3db15a7aa273cd076d1fff4b824dbb"
+  },
+  {
+   "name": "backspace and form feed use the short escapes",
+   "payload": {
+    "items": [],
+    "params": {
+     "s": "\b\f"
+    },
+    "base_revision": null
+   },
+   "canonical": "{\"base_revision\":null,\"items\":[],\"params\":{\"s\":\"\\b\\f\"}}",
+   "digest": "sha256:5476a633e1dddaec23d966f28bb6bd04aca7b2c7657af0b7fdfe0206711d90bb"
+  },
+  {
+   "name": "a key containing a quote and a backslash",
+   "payload": {
+    "items": [],
+    "params": {
+     "a\"b\\c": "v"
+    },
+    "base_revision": null
+   },
+   "canonical": "{\"base_revision\":null,\"items\":[],\"params\":{\"a\\\"b\\\\c\":\"v\"}}",
+   "digest": "sha256:9a2b761670db485bb14c3a7767ee9274717800d1e11259c8a4adbd92b9fafeab"
+  },
+  {
+   "name": "U+0007 as a lowercase \\u escape",
+   "payload": {
+    "items": [],
+    "params": {
+     "bell": "\u0007",
+     "us": "\u001f",
+     "tab": "\t",
+     "cr": "\r"
+    },
+    "base_revision": null
+   },
+   "canonical": "{\"base_revision\":null,\"items\":[],\"params\":{\"bell\":\"\\u0007\",\"cr\":\"\\r\",\"tab\":\"\\t\",\"us\":\"\\u001f\"}}",
+   "digest": "sha256:b56a7fd788454e826730897cfc2ed5d4e9a4c956f0244c8a2244d48bcd303e7f"
+  }
+ ],
+ "refused": [
+  {
+   "name": "a decimal",
+   "payload_json": "{\"items\":[],\"params\":{\"x\":1.5},\"base_revision\":null}"
+  },
+  {
+   "name": "an integer-valued float",
+   "payload_json": "{\"items\":[],\"params\":{\"x\":1.0},\"base_revision\":null}"
+  },
+  {
+   "name": "an exponent form",
+   "payload_json": "{\"items\":[],\"params\":{\"x\":1e3},\"base_revision\":null}"
+  },
+  {
+   "name": "negative zero as a float",
+   "payload_json": "{\"items\":[],\"params\":{\"x\":-0.0},\"base_revision\":null}"
+  },
+  {
+   "name": "above 2^53-1",
+   "payload_json": "{\"items\":[],\"params\":{\"x\":9007199254740992},\"base_revision\":null}"
+  },
+  {
+   "name": "below -(2^53-1)",
+   "payload_json": "{\"items\":[],\"params\":{\"x\":-9007199254740992},\"base_revision\":null}"
+  },
+  {
+   "name": "NaN",
+   "payload_json": "{\"items\":[],\"params\":{\"x\":NaN},\"base_revision\":null}"
+  },
+  {
+   "name": "Infinity",
+   "payload_json": "{\"items\":[],\"params\":{\"x\":Infinity},\"base_revision\":null}"
+  },
+  {
+   "name": "a lone surrogate",
+   "payload_json": "{\"items\":[],\"params\":{\"x\":\"\\ud800\"},\"base_revision\":null}"
+  }
+ ]
+}

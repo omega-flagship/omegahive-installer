@@ -1,0 +1,471 @@
+--- a/src/omegacode/registration.py
++++ b/src/omegacode/registration.py
+@@ -14,6 +14,7 @@
+ 
+ _PROCESS_LOCKS = {}
+ _PROCESS_LOCKS_GUARD = threading.Lock()
++_REGISTRATION_LOCK_TIMEOUT_SECONDS = 30
+ 
+ 
+ @contextmanager
+@@ -23,9 +24,13 @@
+     key = str(root.resolve())
+     with _PROCESS_LOCKS_GUARD:
+         process_lock = _PROCESS_LOCKS.setdefault(key, threading.RLock())
+-    with process_lock:
++    if not process_lock.acquire(timeout=_REGISTRATION_LOCK_TIMEOUT_SECONDS):
++        raise CodeError(503, "registration_busy", "service registration is busy; retry recovery")
++    try:
+         with _file_registration_lock(root):
+             yield
++    finally:
++        process_lock.release()
+ 
+ 
+ @contextmanager
+@@ -87,6 +92,8 @@
+         saved = json.loads(operation_path.read_text())
+     except (OSError, ValueError, TypeError):
+         raise CodeError(503, "registration_recovery_required", "saved enrolment state could not be read safely") from None
++    if not isinstance(saved, dict):
++        raise CodeError(503, "registration_recovery_required", "saved enrolment state has an unsupported shape")
+     if saved.get("operation_id") != operation_id:
+         raise CodeError(503, "registration_recovery_required", "saved enrolment operation changed during recovery")
+     try:
+@@ -96,18 +103,31 @@
+ 
+ 
+ def _clear_expired(path, operation_path, operation_id):
++    # Validate both records before deleting either one. A malformed operation
++    # file must not leave recovery half-cleared by deleting the registration first.
++    if operation_path.exists():
++        try:
++            operation = json.loads(operation_path.read_text())
++        except (OSError, ValueError, TypeError):
++            raise CodeError(503, "registration_recovery_required", "expired enrolment operation could not be read safely") from None
++        if not isinstance(operation, dict) or operation.get("operation_id") != operation_id:
++            raise CodeError(503, "registration_recovery_required", "expired enrolment operation has an unsupported shape or identity")
+     if path.exists():
+         try:
+             saved = json.loads(path.read_text())
+         except (OSError, ValueError, TypeError):
+             raise CodeError(503, "registration_recovery_required", "expired registration state could not be read safely") from None
+-        if saved.get("receipt", {}).get("operation_id") != operation_id:
++        if not isinstance(saved, dict) or not isinstance(saved.get("receipt"), dict):
++            raise CodeError(503, "registration_recovery_required", "expired registration state has an unsupported shape")
++        if saved["receipt"].get("operation_id") != operation_id:
+             raise CodeError(503, "registration_recovery_required", "expired operation does not match saved credentials")
++    # Remove the short-lived token record only after all state passed validation.
++    _remove_operation(operation_path, operation_id)
++    if path.exists():
+         try:
+             path.unlink()
+         except OSError:
+             raise CodeError(503, "registration_recovery_required", "expired credentials could not be cleared safely") from None
+-    _remove_operation(operation_path, operation_id)
+ 
+ 
+ def _finish(authority, path, operation_path, registration, operation_id, address):
+@@ -159,7 +179,9 @@
+             saved_registration = json.loads(path.read_text())
+         except (OSError, ValueError, TypeError):
+             raise CodeError(503, "registration_state_invalid", "saved registration state is invalid") from None
+-        receipt = saved_registration.get("receipt") if isinstance(saved_registration, dict) else None
++        if not isinstance(saved_registration, dict) or not isinstance(saved_registration.get("receipt"), dict):
++            raise CodeError(503, "registration_recovery_required", "saved registration state has an unsupported shape")
++        receipt = saved_registration["receipt"]
+         if isinstance(receipt, dict) and receipt.get("status") == "active":
+             raise CodeError(409, "already_registered", "registration exists; rotate through the owner before replacing it")
+ 
+@@ -169,6 +191,8 @@
+     try:
+         if operation_path.exists():
+             operation = json.loads(operation_path.read_text())
++            if not isinstance(operation, dict):
++                raise CodeError(503, "registration_recovery_required", "saved enrolment operation has an unsupported shape")
+             if operation.get("enrol_token") != enrol_token or operation.get("body") != body:
+                 raise CodeError(409, "registration_in_progress", "a different enrolment is already pending recovery")
+         else:
+--- a/src/omegacode/symbolic.py
++++ b/src/omegacode/symbolic.py
+@@ -11,6 +11,7 @@
+ MAX_ATOMS = 4096
+ MAX_SNAPSHOT_BYTES = 262144
+ MAX_SESSION_SNAPSHOT_BYTES = 1048576
++STEP_OBSERVATION_WINDOW = 100
+ 
+ 
+ def sha(value):
+@@ -147,7 +148,7 @@
+         trace = {'id': 'step_' + sha([state['context'],source_digest,state['sequence']]),
+                  'source_digest': source_digest, 'steps': 0, 'budget': budget,
+                  'runner': RunnerState(metta,source), 'status': 'paused', 'results': [],
+-                 'observations': []}
++                 'observations': [], 'observation_total': 0}
+         state['step_trace'] = trace
+     else:
+         if trace is None or request.get('trace_id') != trace['id']:
+@@ -172,23 +173,34 @@
+             results = [[str(atom) for atom in group] for group in trace['runner'].current_results()]
+             if len(encoded(results)) > MAX_SNAPSHOT_BYTES:
+                 raise ValueError('step result exceeds bounded inspection size')
+-            trace['results'] = results
+-            trace['status'] = ('complete' if trace['runner'].is_complete() else
+-                               'budget-exhausted' if trace['steps'] == trace['budget'] else 'paused')
++            next_status = ('complete' if trace['runner'].is_complete() else
++                           'budget-exhausted' if trace['steps'] == trace['budget'] else 'paused')
+             atoms = sorted(atom_strings(metta))
+             observation = {'input_sequence':state['sequence'],'step_count':trace['steps'],
+-                           'status':trace['status'],'results_digest':sha(results),
++                           'status':next_status,'results_digest':sha(results),
+                            'rendered_atoms_digest':sha(atoms)}
+             # Retain a bounded recent event window, not an unbounded execution log.
+-            trace['observations'] = (trace['observations'] + [observation])[-100:]
++            # Commit results/status only with the observation that makes them current.
++            trace['results'] = results
++            trace['status'] = next_status
++            trace['observation_total'] += 1
++            trace['observations'] = (trace['observations'] + [observation])[-STEP_OBSERVATION_WINDOW:]
+         except Exception:
+             trace['status'] = 'faulted'
+             raise
++    observations = trace['observations']
++    dropped_prefix = trace['observation_total'] - len(observations)
+     return {'trace_id':trace['id'],'source_digest':trace['source_digest'],
+             'context':state['context'],'step_count':trace['steps'],'max_steps':trace['budget'],
+-            'status':trace['status'],'results':trace['results'],'observations':trace['observations'],
+-            'results_currency':'last successful step batch' if trace['observations'] else 'not yet observed',
+-            'last_observed_step':trace['observations'][-1]['step_count'] if trace['observations'] else 0,
++            'status':trace['status'],'results':trace['results'],'observations':observations,
++            'observation_total':trace['observation_total'],
++            'observation_window_limit':STEP_OBSERVATION_WINDOW,
++            'observation_dropped_prefix':dropped_prefix,
++            'observation_coverage':'complete-history' if dropped_prefix == 0 else 'recent-tail',
++            'first_retained_input_sequence':observations[0]['input_sequence'] if observations else None,
++            'first_retained_step':observations[0]['step_count'] if observations else None,
++            'results_currency':'last successful step batch' if observations else 'not yet observed',
++            'last_observed_step':observations[-1]['step_count'] if observations else 0,
+             'engine_api':'hyperon.runner.RunnerState.run_step',
+             'substitutions_available':False,'grounded_call_trace_available':False,
+             'persistence':'resident process only; no automatic replay',
+--- /dev/null
++++ b/standalone_checks/registration_p3.py
+@@ -0,0 +1,90 @@
++"""Standard-library checks for the P3 guards; no HTTP client or service is started."""
++import json
++import sys
++import tempfile
++import threading
++import types
++import unittest
++from pathlib import Path
++
++ROOT = Path(__file__).parents[1]
++sys.path.insert(0, str(ROOT / "src"))
++httpx = types.ModuleType("httpx")
++httpx.HTTPError = type("HTTPError", (Exception,), {})
++sys.modules.setdefault("httpx", httpx)
++
++from omegacode.common import CodeError
++import omegacode.registration as registration
++
++
++class RegistrationP3Test(unittest.TestCase):
++    def assert_recovery_error(self, call):
++        with self.assertRaises(CodeError) as raised:
++            call()
++        self.assertEqual(raised.exception.status, 503)
++        self.assertEqual(raised.exception.code, "registration_recovery_required")
++
++    def test_non_object_operation_and_registration_json_fail_closed(self):
++        for raw in (b"[]", b'"state"', b"null"):
++            with self.subTest(raw=raw), tempfile.TemporaryDirectory() as directory:
++                root = Path(directory)
++                operation = root / "registration.operation.json"
++                operation.write_bytes(raw)
++                self.assert_recovery_error(lambda: registration._remove_operation(operation, "op-id"))
++                self.assert_recovery_error(lambda: registration._clear_expired(root / "missing.json", operation, "op-id"))
++                authority = types.SimpleNamespace(hive_url="http://hive.invalid", client=None)
++                self.assert_recovery_error(lambda: registration._enrol_locked(authority, root, "demo-token", 8724))
++
++                saved = root / "registration.json"
++                saved.write_bytes(raw)
++                self.assert_recovery_error(lambda: registration._clear_expired(saved, operation, "op-id"))
++                self.assert_recovery_error(lambda: registration._enrol_locked(authority, root, "demo-token", 8724))
++
++    def test_non_object_receipts_fail_closed(self):
++        for receipt in (b"[]", b'"receipt"', b"null"):
++            with self.subTest(receipt=receipt), tempfile.TemporaryDirectory() as directory:
++                root = Path(directory)
++                saved = root / "registration.json"
++                saved.write_bytes(b'{"receipt":' + receipt + b'}')
++                authority = types.SimpleNamespace(hive_url="http://hive.invalid", client=None)
++                self.assert_recovery_error(lambda: registration._enrol_locked(authority, root, "demo-token", 8724))
++                self.assert_recovery_error(lambda: registration._clear_expired(saved, root / "operation.json", "op-id"))
++
++    def test_expired_cleanup_validates_before_removing_either_record(self):
++        for raw in (b"[]", b'"operation"', b"null"):
++            with self.subTest(raw=raw), tempfile.TemporaryDirectory() as directory:
++                root = Path(directory)
++                operation_id = "synthetic-operation-id"
++                saved = root / "registration.json"
++                saved_bytes = json.dumps({"receipt": {"operation_id": operation_id}}, sort_keys=True,
++                                         separators=(",", ":")).encode()
++                saved.write_bytes(saved_bytes)
++                operation = root / "registration.operation.json"
++                operation.write_bytes(raw)
++                self.assert_recovery_error(lambda: registration._clear_expired(saved, operation, operation_id))
++                self.assertEqual(saved.read_bytes(), saved_bytes)
++                self.assertEqual(operation.read_bytes(), raw)
++
++    def test_same_process_lock_wait_returns_bounded_503(self):
++        registration._REGISTRATION_LOCK_TIMEOUT_SECONDS = 0.04
++        with tempfile.TemporaryDirectory() as directory:
++            root = Path(directory)
++            result = []
++
++            def contend():
++                try:
++                    with registration._registration_lock(root):
++                        result.append("acquired")
++                except CodeError as error:
++                    result.append((error.status, error.code))
++
++            with registration._registration_lock(root):
++                thread = threading.Thread(target=contend)
++                thread.start()
++                thread.join(timeout=1)
++                self.assertFalse(thread.is_alive())
++            self.assertEqual(result, [(503, "registration_busy")])
++
++
++if __name__ == "__main__":
++    unittest.main()
+--- a/tests/test_service.py
++++ b/tests/test_service.py
+@@ -369,6 +369,9 @@
+                                json={"enrol_token": "synthetic-one-time-enrol-token"})
+         assert response.status_code == 503 and response.json()["error"] == "registration_unknown"
+         operation = json.loads((root / "registration.operation.json").read_text())
++        operation_path = root / "registration.operation.json"
++        assert operation_path.stat().st_mode & 0o077 == 0
++        assert operation["enrol_token"] == "synthetic-one-time-enrol-token"
+         operation_id = operation["operation_id"]
+         assert operation_ids == [operation_id]
+     finally:
+@@ -607,6 +610,90 @@
+             child.wait(timeout=5)
+ 
+ 
++@pytest.mark.parametrize("raw", [b"[]", b'"state"', b"null"])
++def test_registration_recovery_refuses_non_object_state(tmp_path, raw):
++    from omegacode.registration import _clear_expired, _enrol_locked, _remove_operation
++    from types import SimpleNamespace
++
++    operation_path = tmp_path / "registration.operation.json"
++    operation_path.write_bytes(raw)
++    with pytest.raises(CodeError) as removed:
++        _remove_operation(operation_path, "synthetic-operation-id")
++    assert removed.value.status == 503 and removed.value.code == "registration_recovery_required"
++
++    authority = SimpleNamespace(hive_url="http://hive.invalid", client=None)
++    with pytest.raises(CodeError) as enrolled:
++        _enrol_locked(authority, tmp_path, "synthetic-enrol-token", 8724)
++    assert enrolled.value.status == 503 and enrolled.value.code == "registration_recovery_required"
++
++    registration_path = tmp_path / "registration.json"
++    registration_path.write_bytes(raw)
++    with pytest.raises(CodeError) as expired:
++        _clear_expired(registration_path, operation_path, "synthetic-operation-id")
++    assert expired.value.status == 503 and expired.value.code == "registration_recovery_required"
++
++
++@pytest.mark.parametrize("raw", [b"[]", b'"state"', b"null"])
++def test_enrolment_refuses_non_object_saved_registration(tmp_path, raw):
++    from omegacode.registration import _enrol_locked
++    from types import SimpleNamespace
++
++    (tmp_path / "registration.json").write_bytes(raw)
++    authority = SimpleNamespace(hive_url="http://hive.invalid", client=None)
++    with pytest.raises(CodeError) as refused:
++        _enrol_locked(authority, tmp_path, "synthetic-enrol-token", 8724)
++    assert refused.value.status == 503 and refused.value.code == "registration_recovery_required"
++
++
++@pytest.mark.parametrize("receipt", [b"[]", b'"receipt"', b"null"])
++def test_enrolment_refuses_non_object_saved_receipt(tmp_path, receipt):
++    from omegacode.registration import _enrol_locked, _clear_expired
++    from types import SimpleNamespace
++
++    registration_path = tmp_path / "registration.json"
++    registration_path.write_bytes(b'{"receipt":' + receipt + b'}')
++    authority = SimpleNamespace(hive_url="http://hive.invalid", client=None)
++    with pytest.raises(CodeError) as refused:
++        _enrol_locked(authority, tmp_path, "synthetic-enrol-token", 8724)
++    assert refused.value.status == 503 and refused.value.code == "registration_recovery_required"
++    with pytest.raises(CodeError) as expired:
++        _clear_expired(registration_path, tmp_path / "registration.operation.json", "synthetic-operation-id")
++    assert expired.value.status == 503 and expired.value.code == "registration_recovery_required"
++
++
++@pytest.mark.parametrize("raw", [b"[]", b'"operation"', b"null"])
++def test_expired_cleanup_validates_operation_before_removing_registration(tmp_path, raw):
++    from omegacode.registration import _clear_expired
++
++    operation_id = "synthetic-operation-id"
++    registration_path = tmp_path / "registration.json"
++    registration_path.write_bytes(canonical({"receipt": {"operation_id": operation_id}}))
++    operation_path = tmp_path / "registration.operation.json"
++    operation_path.write_bytes(raw)
++    with pytest.raises(CodeError) as refused:
++        _clear_expired(registration_path, operation_path, operation_id)
++    assert refused.value.status == 503 and refused.value.code == "registration_recovery_required"
++    assert registration_path.exists() and registration_path.read_bytes() == canonical({"receipt": {"operation_id": operation_id}})
++    assert operation_path.read_bytes() == raw
++
++
++def test_registration_thread_lock_wait_is_bounded(tmp_path, monkeypatch):
++    import omegacode.registration as registration
++    from omegacode.common import CodeError
++
++    monkeypatch.setattr(registration, "_REGISTRATION_LOCK_TIMEOUT_SECONDS", 0.05)
++    def contender():
++        with registration._registration_lock(tmp_path):
++            return "acquired"
++
++    with registration._registration_lock(tmp_path):
++        with ThreadPoolExecutor(max_workers=1) as pool:
++            future = pool.submit(contender)
++            with pytest.raises(CodeError) as refused:
++                future.result(timeout=1)
++    assert refused.value.status == 503 and refused.value.code == "registration_busy"
++
++
+ def test_running_agent_stops_when_live_hive_authority_ends(tmp_path, repo):
+     state = {"active": True, "binding": None}
+     def transport(request):
+--- /dev/null
++++ b/tests/test_trace_coverage.py
+@@ -0,0 +1,122 @@
++import importlib.util
++import sys
++import types
++import unittest
++from unittest.mock import patch
++from pathlib import Path
++
++
++MODULE = Path(__file__).parents[1] / 'src/omegacode/symbolic.py'
++SPEC = importlib.util.spec_from_file_location('trace_candidate_symbolic', MODULE)
++symbolic = importlib.util.module_from_spec(SPEC)
++SPEC.loader.exec_module(symbolic)
++
++
++class FakeSpace:
++    def atom_count(self):
++        return 0
++
++    def get_atoms(self):
++        return []
++
++
++class FakeRunner:
++    def __init__(self, metta, source):
++        self.calls = 0
++
++    def is_complete(self):
++        return False
++
++    def run_step(self):
++        self.calls += 1
++
++    def current_results(self):
++        return [[str(self.calls)]]
++
++
++class FakeMetta:
++    def space(self):
++        return FakeSpace()
++
++
++def install_runner(modules):
++    hyperon = types.ModuleType('hyperon')
++    runner = types.ModuleType('hyperon.runner')
++    runner.RunnerState = FakeRunner
++    hyperon.runner = runner
++    modules.update({'hyperon': hyperon, 'hyperon.runner': runner})
++
++
++class TraceCoverageTest(unittest.TestCase):
++    def test_step_status_distinguishes_full_history_from_dropped_prefix(self):
++        with patch.dict(sys.modules) as modules:
++            install_runner(modules)
++            state = {'context': {'run_id': 'synthetic-run'}, 'sequence': 1}
++            started = symbolic.step_command(FakeMetta(), {
++                'id': 'start', 'op': 'step-start', 'source': '!(+ 1 1)', 'max_steps': 1000,
++            }, state)
++            self.assertEqual(started['observation_total'], 0)
++            self.assertEqual(started['observation_dropped_prefix'], 0)
++            self.assertEqual(started['observation_coverage'], 'complete-history')
++            self.assertIsNone(started['first_retained_input_sequence'])
++            self.assertIsNone(started['first_retained_step'])
++
++            for sequence in range(2, 103):
++                state['sequence'] = sequence
++                current = symbolic.step_command(FakeMetta(), {
++                    'id': f'next-{sequence}', 'op': 'step-next', 'trace_id': started['trace_id'], 'count': 1,
++                }, state)
++
++            self.assertEqual(current['observation_total'], 101)
++            self.assertEqual(current['observation_window_limit'], 100)
++            self.assertEqual(len(current['observations']), 100)
++            self.assertEqual(current['observation_dropped_prefix'], 1)
++            self.assertEqual(current['observation_coverage'], 'recent-tail')
++            self.assertEqual(current['first_retained_input_sequence'], 3)
++            self.assertEqual(current['first_retained_step'], 2)
++            self.assertEqual(current['last_observed_step'], 101)
++
++            state['sequence'] = 103
++            status = symbolic.step_command(FakeMetta(), {
++                'id': 'status', 'op': 'step-status', 'trace_id': started['trace_id'],
++            }, state)
++            self.assertEqual(status['observation_total'], 101)
++            self.assertEqual(status['observation_dropped_prefix'], 1)
++            self.assertEqual(status['observations'], current['observations'])
++
++    def test_failed_observation_does_not_publish_unobserved_results(self):
++        with patch.dict(sys.modules) as modules:
++            install_runner(modules)
++            state = {'context': {'run_id': 'synthetic-run'}, 'sequence': 1}
++            started = symbolic.step_command(FakeMetta(), {
++                'id': 'start', 'op': 'step-start', 'source': '!(+ 1 1)', 'max_steps': 10,
++            }, state)
++            state['sequence'] = 2
++            observed = symbolic.step_command(FakeMetta(), {
++                'id': 'one', 'op': 'step-next', 'trace_id': started['trace_id'], 'count': 1,
++            }, state)
++            self.assertEqual(observed['results'], [['1']])
++            self.assertEqual(observed['observation_total'], 1)
++
++            state['sequence'] = 3
++            with patch.object(symbolic, 'atom_strings', side_effect=ValueError('injected observation failure')):
++                with self.assertRaisesRegex(ValueError, 'injected observation failure'):
++                    symbolic.step_command(FakeMetta(), {
++                        'id': 'fault', 'op': 'step-next', 'trace_id': started['trace_id'], 'count': 1,
++                    }, state)
++
++            state['sequence'] = 4
++            after_fault = symbolic.step_command(FakeMetta(), {
++                'id': 'status', 'op': 'step-status', 'trace_id': started['trace_id'],
++            }, state)
++            self.assertEqual(after_fault['status'], 'faulted')
++            self.assertEqual(after_fault['step_count'], 2)
++            self.assertEqual(after_fault['results'], [['1']])
++            self.assertEqual(after_fault['results_currency'], 'last successful step batch')
++            self.assertEqual(after_fault['observation_total'], 1)
++            self.assertEqual(after_fault['last_observed_step'], 1)
++            self.assertEqual(len(after_fault['observations']), 1)
++
++
++if __name__ == '__main__':
++    unittest.main()

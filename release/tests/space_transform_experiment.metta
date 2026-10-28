@@ -1,0 +1,61 @@
+!(import! &self (library lib_import))
+!(git-import! "https://github.com/asi-alliance/OmegaClaw-Core.git")
+!(import! &self (library OmegaClaw-Core lib_omegaclaw))
+
+; Experiment only: prove whether MeTTa can do atomspace surgery without touching live memory.
+
+(= (sandbox-replace-exact $oldstr $newstr $reason)
+   (let* (($old (sread $oldstr))
+          ($new (sread $newstr))
+          ($present (car-atom (collapse (find &events $old)))))
+         (if (== $present true)
+             (progn (remove-atom &events $old)
+                    (add-atom &events $new)
+                    (add-atom &events (Event "test" "sandbox-replace-exact" $reason "0.9"))
+                    (Replaced $old $new))
+             (NotFound $old))))
+
+(= (sandbox-transform-pattern $patternstr $replacementstr $reason)
+   (let* (($pattern (sread $patternstr))
+          ($replacement (sread $replacementstr)))
+         (progn (collapse (match &events $pattern
+                                  (remove-atom &events $pattern)))
+                (add-atom &events $replacement)
+                (add-atom &events (Event "test" "sandbox-transform-pattern" $reason "0.9"))
+                (Transformed $pattern $replacement))))
+
+!(add-atom &events (SandboxOld "alpha" "one" "0.5"))
+!(println! (eval (space-find events "(SandboxOld \"alpha\" \"one\" \"0.5\")")))
+!(println! (eval (sandbox-replace-exact "(SandboxOld \"alpha\" \"one\" \"0.5\")" "(SandboxNew \"alpha\" \"merged-one\" \"0.9\")" "exact replace smoke")))
+!(println! (eval (space-find events "(SandboxOld \"alpha\" \"one\" \"0.5\")")))
+!(println! (eval (space-find events "(SandboxNew \"alpha\" \"merged-one\" \"0.9\")")))
+!(println! (eval (space-find events "(Event \"test\" \"sandbox-replace-exact\" $reason \"0.9\")")))
+
+!(add-atom &events (SandboxDup "beta" "first" "0.4"))
+!(add-atom &events (SandboxDup "beta" "second" "0.4"))
+!(println! (eval (space-count events "(SandboxDup \"beta\" $note $conf)")))
+!(println! (eval (sandbox-transform-pattern "(SandboxDup \"beta\" $note $conf)" "(SandboxMerged \"beta\" \"first+second\" \"0.8\")" "pattern transform smoke")))
+!(println! (eval (space-count events "(SandboxDup \"beta\" $note $conf)")))
+!(println! (eval (space-find events "(SandboxMerged \"beta\" \"first+second\" \"0.8\")")))
+!(println! (eval (space-find events "(Event \"test\" \"sandbox-transform-pattern\" $reason \"0.9\")")))
+
+(= (sandbox-space-handle events) &events)
+(= (sandbox-space-handle persistent) &persistent)
+
+(= (sandbox-general-transform $source $patternstr $target $replacementstr $reason)
+   (let* (($source-space (sandbox-space-handle $source))
+          ($target-space (sandbox-space-handle $target))
+          ($pattern (sread $patternstr))
+          ($replacement (sread $replacementstr)))
+         (progn (collapse (match $source-space $pattern
+                                  (remove-atom $source-space $pattern)))
+                (add-atom $target-space $replacement)
+                (add-atom &events (Event "test" "sandbox-general-transform" $reason "0.9"))
+                (GeneralTransformed $source $target $pattern $replacement))))
+
+!(add-atom &persistent (SandboxPersistent "gamma" "old-detail" "0.4"))
+!(println! (eval (space-find persistent "(SandboxPersistent \"gamma\" $note $conf)")))
+!(println! (eval (sandbox-general-transform persistent "(SandboxPersistent \"gamma\" $note $conf)" events "(SandboxPersistentMerged \"gamma\" \"summary\" \"0.8\")" "persistent to events smoke")))
+!(println! (eval (space-find persistent "(SandboxPersistent \"gamma\" $note $conf)")))
+!(println! (eval (space-find events "(SandboxPersistentMerged \"gamma\" \"summary\" \"0.8\")")))
+!(println! (eval (space-find events "(Event \"test\" \"sandbox-general-transform\" $reason \"0.9\")")))

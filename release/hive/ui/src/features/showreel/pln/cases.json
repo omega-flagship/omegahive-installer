@@ -1,0 +1,20 @@
+{
+  "note": "Demo D4 worked examples. INVENTED atoms, REAL truth functions: each case calls one function of the hive's lib_pln.metta / lib_nal.metta (release 388fd72) on these inputs. scripts/showreel-pln-reference.py runs every case on PeTTa and writes petta-reference.json; pln.test.ts checks the page's numbers against it. An arg {\"from\": id} is that earlier case's conclusion. A case with \"branch\" is not shown on the page: it checks the transcription's other branches against PeTTa. Term strengths (stv 0.1 0.9) are lib_pln's own default (STV $X), which |~pln passes for a term with no truth value of its own.",
+  "cases": [
+    { "id": "pln-c2w", "fn": "Truth__c2w", "args": [0.9] },
+    { "id": "pln-w2c", "fn": "Truth__w2c", "args": [9] },
+    { "id": "pln-mp-room", "fn": "Truth__ModusPonens", "args": [[0.9, 0.9], [0.8, 0.9]] },
+    { "id": "nal-ded-studio", "fn": "Truth_Deduction", "args": [[0.9, 0.9], [0.95, 0.9]] },
+    { "id": "pln-ind-tools", "fn": "Truth__Induction", "args": [[0.1, 0.9], [0.1, 0.9], [0.1, 0.9], [0.7, 0.9], [0.6, 0.8]] },
+    { "id": "pln-rev-stalled", "fn": "Truth__Revision", "args": [[0.8, 0.9], [0.6, 0.5]] },
+    { "id": "nal-rev-stalled", "fn": "Truth_Revision", "args": [[0.8, 0.9], [0.6, 0.5]] },
+    { "id": "pln-mp-stalled", "fn": "Truth__ModusPonens", "args": [{ "from": "pln-rev-stalled" }, [0.9, 0.9]] },
+    { "id": "pln-ded-compare", "fn": "Truth__Deduction", "args": [[0.1, 0.9], [0.1, 0.9], [0.1, 0.9], [0.9, 0.9], [0.8, 0.9]] },
+    { "id": "pln-rev-cap", "fn": "Truth__Revision", "args": [[0.9, 0.99], [0.7, 0.95]] },
+    { "id": "nal-rev-cap", "fn": "Truth_Revision", "args": [[0.9, 0.99], [0.7, 0.95]] },
+    { "id": "pln-abd-health", "fn": "Truth__Abduction", "args": [[0.1, 0.9], [0.1, 0.9], [0.1, 0.9], [0.9, 0.9], [0.8, 0.9]] },
+    { "id": "nal-rev-mind", "fn": "Truth_Revision", "args": [[0.8, 0.8], [0.9, 0.5]] },
+    { "id": "pln-ded-inconsistent", "fn": "Truth__Deduction", "args": [[0.2, 0.9], [0.1, 0.9], [0.1, 0.9], [0.9, 0.9], [0.5, 0.9]], "branch": "inconsistent" },
+    { "id": "pln-ded-q-near-1", "fn": "Truth__Deduction", "args": [[0.5, 0.9], [1, 0.9], [0.5, 0.9], [1, 0.9], [0.5, 0.9]], "branch": "q-near-1" }
+  ]
+}

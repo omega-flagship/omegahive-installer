@@ -1,0 +1,103 @@
+/* The Coffee Room's identity: warm, in every look. The warmth is one colour (--coffee); each look's chrome
+   (experiences/chrome.ts → data-xc-material / data-xc-scheme) sets how it is drawn: glass looks glow softly, paper (Still)
+   stays ink-on-paper, terminal (Construct) draws it in the console's own accent with square corners. */
+:root {
+  --coffee: #f0b97a;
+  --coffee-ink: #f6d2a6;
+  --coffee-soft: color-mix(in srgb, var(--coffee) 13%, transparent);
+  --coffee-edge: color-mix(in srgb, var(--coffee) 38%, transparent);
+}
+html[data-xc-scheme='light'] {
+  --coffee: #9a5a1c;
+  --coffee-ink: #6e3d0c;
+  --coffee-soft: color-mix(in srgb, var(--coffee) 9%, transparent);
+  --coffee-edge: color-mix(in srgb, var(--coffee) 45%, transparent);
+}
+html[data-xc-active][data-xc-material='terminal'] {
+  --coffee: var(--xc-accent);
+  --coffee-ink: var(--xc-accent);
+}
+
+.coffee-mark {
+  color: var(--coffee);
+  background: var(--coffee-soft);
+  border: 1px solid var(--coffee-edge);
+}
+.coffee-entry {
+  border-color: var(--coffee-edge);
+  background: linear-gradient(120deg, var(--coffee-soft), transparent 75%);
+}
+.coffee-entry:hover,
+.coffee-entry-active {
+  background: linear-gradient(120deg, color-mix(in srgb, var(--coffee) 22%, transparent), transparent 85%);
+}
+.coffee-entry:focus-visible,
+.coffee-action:focus-visible,
+.coffee-origin:focus-visible,
+.coffee-msg:focus-visible {
+  outline: 2px solid var(--coffee);
+  outline-offset: 2px;
+}
+.coffee-pin,
+.coffee-count {
+  color: var(--coffee-ink);
+  background: var(--coffee-soft);
+}
+.coffee-note {
+  border-color: var(--coffee-edge);
+  background: var(--coffee-soft);
+}
+.coffee-note svg { color: var(--coffee); }
+.coffee-origin {
+  border-color: var(--coffee-edge);
+  background: transparent;
+}
+.coffee-origin:hover { background: var(--coffee-soft); }
+.coffee-origin svg { color: var(--coffee); }
+
+/* a mind's unprompted note: quieter than talk */
+.coffee-thought {
+  border-color: var(--coffee-edge);
+  background: color-mix(in srgb, var(--coffee) 5%, transparent);
+}
+.coffee-thought svg { color: var(--coffee); }
+
+/* break-off actions: on hover or keyboard focus of the message; always there where nothing hovers (phones) */
+.coffee-action {
+  color: var(--coffee-ink);
+  border: 1px solid transparent;
+}
+.coffee-action:hover { background: var(--coffee-soft); border-color: var(--coffee-edge); }
+@media (hover: hover) and (pointer: fine) {
+  /* where a pointer hovers, the actions float over the message's top edge and take no room in the transcript */
+  .coffee-msg { position: relative; }
+  .coffee-actions {
+    position: absolute;
+    top: -10px;
+    right: 0;
+    margin: 0;
+    padding: 2px;
+    border: 1px solid var(--coffee-edge);
+    border-radius: 12px;
+    background: var(--xc-surface, rgb(11 11 33 / 0.96));
+    box-shadow: 0 6px 18px -8px rgb(0 0 0 / 0.6);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s;
+  }
+  .coffee-msg:hover .coffee-actions,
+  .coffee-msg:focus-within .coffee-actions,
+  .coffee-msg:focus .coffee-actions { opacity: 1; pointer-events: auto; }
+}
+
+/* the message a back-link jumped to */
+.coffee-lit { box-shadow: 0 0 0 2px var(--coffee); transition: box-shadow 0.4s; padding: 4px; }
+
+html[data-xc-active][data-xc-material='terminal'] :is(.coffee-entry, .coffee-mark, .coffee-note, .coffee-origin, .coffee-thought, .coffee-action, .coffee-pin, .coffee-count) {
+  border-radius: 2px;
+}
+html[data-xc-active][data-xc-material='paper'] .coffee-entry { background: var(--coffee-soft); }
+
+@media (prefers-reduced-motion: reduce) {
+  .coffee-actions, .coffee-lit { transition: none; }
+}

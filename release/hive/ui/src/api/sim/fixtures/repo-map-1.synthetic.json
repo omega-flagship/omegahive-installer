@@ -1,0 +1,29 @@
+{
+  "schema": "repo-map/1",
+  "repo": "fixture-mini",
+  "sha": "0000000000000000000000000000000000000001",
+  "snapshot_digest": "sha256:synthetic-fixture-not-a-real-digest",
+  "extractor": {"id": "omegacode.repository_facts", "version": "fixture", "parser": "python-ast-3.12"},
+  "generated_at": "2026-10-11T19:00:00Z",
+  "receipt": {"digest": "sha256:synthetic", "artifact_ref": "fixture://repo-map/fixture-mini@0000001"},
+  "state": "partial",
+  "reason": "1 of 4 Python files failed to parse",
+  "coverage": {"kinds": ["file", "module", "def", "import", "test", "doc"], "languages": ["python"], "unresolved": [{"path": "pkg/broken.py", "issue": "SyntaxError line 3"}]},
+  "nodes": [
+    {"id": "file:pkg/core.py", "kind": "file", "label": "pkg/core.py", "source_digest": "sha256:a1", "refs": [{"path": "pkg/core.py", "line": 1, "excerpt": "\"\"\"Core.\"\"\""}]},
+    {"id": "def:pkg/core.py::add", "kind": "def", "label": "add", "source_digest": "sha256:a1", "refs": [{"path": "pkg/core.py", "line": 4, "excerpt": "def add(a, b):"}]},
+    {"id": "file:pkg/util.py", "kind": "file", "label": "pkg/util.py", "source_digest": "sha256:b2", "refs": [{"path": "pkg/util.py", "line": 1, "excerpt": "from pkg.core import add"}]},
+    {"id": "file:pkg/broken.py", "kind": "file", "label": "pkg/broken.py", "source_digest": "sha256:c3", "refs": []},
+    {"id": "test:tests/test_core.py::test_add", "kind": "test", "label": "test_add", "source_digest": "sha256:d4", "refs": [{"path": "tests/test_core.py", "line": 3, "excerpt": "def test_add():"}]},
+    {"id": "doc:docs/core.md", "kind": "doc", "label": "docs/core.md", "source_digest": "sha256:e5", "refs": [{"path": "docs/core.md", "line": 5, "excerpt": "See `pkg/core.py:4`."}]}
+  ],
+  "edges": [
+    {"id": "e1", "kind": "imports", "from": "file:pkg/util.py", "to": "file:pkg/core.py", "basis": "syntax", "refs": [{"path": "pkg/util.py", "line": 1, "excerpt": "from pkg.core import add"}]},
+    {"id": "e2", "kind": "defines", "from": "file:pkg/core.py", "to": "def:pkg/core.py::add", "basis": "syntax", "refs": [{"path": "pkg/core.py", "line": 4, "excerpt": "def add(a, b):"}]},
+    {"id": "e3", "kind": "calls-expression", "from": "file:pkg/util.py", "to": "def:pkg/core.py::add", "basis": "syntax", "refs": [{"path": "pkg/util.py", "line": 6, "excerpt": "return add(x, 1)"}]},
+    {"id": "e4", "kind": "test-doc-link", "from": "test:tests/test_core.py::test_add", "to": "def:pkg/core.py::add", "basis": "heuristic", "refs": [{"path": "tests/test_core.py", "line": 4, "excerpt": "assert add(1, 2) == 3"}]},
+    {"id": "e5", "kind": "test-doc-link", "from": "doc:docs/core.md", "to": "def:pkg/core.py::add", "basis": "declared", "refs": [{"path": "docs/core.md", "line": 5, "excerpt": "See `pkg/core.py:4`."}]}
+  ],
+  "truncated": false,
+  "next_cursor": null
+}

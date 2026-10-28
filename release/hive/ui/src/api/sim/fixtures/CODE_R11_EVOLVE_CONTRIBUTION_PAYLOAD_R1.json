@@ -1,0 +1,52 @@
+{
+  "title": "Predega R11 harder durable-learning developmental report",
+  "claim": "Local developmental v3, three seed trajectories, 24 arbitrary bindings and 72 fixed query phrasings per seed, with full-support rehearsal. The 216 pooled queries are clustered, not independent trials. initial: frozen 26/216; gd_sgd 26/216; Adam 26/216; pc_sgd 26/216; PC+Adam 26/216; Adam matched calls 26/216; pc_adam_reset 26/216; gd_adam_reset 26/216; memory_only 26/216; gd_adam_memory 26/216; pc_sgd_memory 26/216; PC+Adam+MeTTa 26/216; native_lookup 0/216. cohort_1: frozen 26/216; gd_sgd 34/216; Adam 72/216; pc_sgd 35/216; PC+Adam 68/216; Adam matched calls 74/216; pc_adam_reset 68/216; gd_adam_reset 72/216; memory_only 89/216; gd_adam_memory 84/216; pc_sgd_memory 83/216; PC+Adam+MeTTa 79/216; native_lookup 72/216. cohort_2: frozen 26/216; gd_sgd 62/216; Adam 136/216; pc_sgd 61/216; PC+Adam 134/216; Adam matched calls 145/216; pc_adam_reset 135/216; gd_adam_reset 137/216; memory_only 152/216; gd_adam_memory 151/216; pc_sgd_memory 154/216; PC+Adam+MeTTa 148/216; native_lookup 144/216. cohort_3: frozen 26/216; gd_sgd 88/216; Adam 196/216; pc_sgd 84/216; PC+Adam 198/216; Adam matched calls 211/216; pc_adam_reset 190/216; gd_adam_reset 191/216; memory_only 216/216; gd_adam_memory 212/216; pc_sgd_memory 216/216; PC+Adam+MeTTa 208/216; native_lookup 216/216. repeat_full_prefix: frozen 26/216; gd_sgd 113/216; Adam 205/216; pc_sgd 106/216; PC+Adam 211/216; Adam matched calls 213/216; pc_adam_reset 190/216; gd_adam_reset 191/216; memory_only 216/216; gd_adam_memory 211/216; pc_sgd_memory 216/216; PC+Adam+MeTTa 212/216; native_lookup 216/216. correction_four_keys: frozen 35/216; gd_sgd 125/216; Adam 200/216; pc_sgd 120/216; PC+Adam 200/216; Adam matched calls 208/216; pc_adam_reset 189/216; gd_adam_reset 192/216; memory_only 216/216; gd_adam_memory 210/216; pc_sgd_memory 216/216; PC+Adam+MeTTa 214/216; native_lookup 216/216. Final corrections/retention: frozen changed 9/36, unchanged 26/180; gd_sgd changed 11/36, unchanged 114/180; Adam changed 35/36, unchanged 165/180; pc_sgd changed 9/36, unchanged 111/180; PC+Adam changed 34/36, unchanged 166/180; Adam matched calls changed 36/36, unchanged 172/180; pc_adam_reset changed 33/36, unchanged 156/180; gd_adam_reset changed 32/36, unchanged 160/180; memory_only changed 36/36, unchanged 180/180; gd_adam_memory changed 36/36, unchanged 174/180; pc_sgd_memory changed 36/36, unchanged 180/180; PC+Adam+MeTTa changed 35/36, unchanged 179/180; native_lookup changed 36/36, unchanged 180/180. PC+Adam improves on identical-support repetition (198/216 to211/216) while its reset control remains190/216, then after correction ties ordinary Adam at200/216 and trails matched-call Adam208/216. PC+Adam+MeTTa214/216 remains below memory-only/native216/216; negative residual/retrieval interactions and seed differences remain. Recorded fit-and-save seconds: PC+Adam 228.598, Adam 94.027, matched-call Adam 230.097. These are descriptive reported times and matched recorded call counts, not isolated throughput or equal FLOPs/full cost. Code rechecked retained complete-text score tables, checkpoint bytes/parents and output comparisons; it did not rerun models/native reasoning, freshly decode tokens, independently establish model custody or seal a study. The private native configuration needed by the full reader is intentionally omitted. No general superiority, host admission, adoption or deployment is established. R10/v2 remains a distinct method and is not superseded or retracted.",
+  "method": "Immutable R11 import, with all thirteen arms across six stages and fixed changed/unchanged partitions. Producer reports actual frozen-suffix PC/Adam and native MeTTa controls. Code executed only the retained parent scoring/parity controls and inert checkpoint inspection, plus fit declaration/counter checks; scientific verdict remains unassessed. Per-reference origins distinguish imported reports from local retained-artifact validation, with no host-authority assertion.",
+  "evidence": [
+    {
+      "source": "sha256:e5b815769cec2b116463c40defa205980d070152fc2f1d9e1869b95874b29ff9",
+      "locator": "archive:c3ab5041ce51410c6148a40cfaaa35b718caf910899eaf17e5c3337b2e38215b/project_graph/experiments/durable-learning-20261012-v3/registration/plan.json",
+      "origin": "imported-report"
+    },
+    {
+      "source": "sha256:c16303d04f38dd457f1000ca9111d90a4cc0c7d4683aaa26150509699bfdd5b2",
+      "locator": "archive:c3ab5041ce51410c6148a40cfaaa35b718caf910899eaf17e5c3337b2e38215b/project_graph/experiments/durable-learning-20261012-v3/results/summary-index.json",
+      "origin": "imported-report"
+    },
+    {
+      "source": "sha256:097edc8a50bd45d30b1d2192ec0d159a1b68c0f866fbbc3d6a002c467f1643ca",
+      "locator": "archive:c3ab5041ce51410c6148a40cfaaa35b718caf910899eaf17e5c3337b2e38215b/project_graph/benchmarks/durable-learning-20261012-v3-dashboard.json",
+      "origin": "imported-report"
+    },
+    {
+      "source": "sha256:53d581acb2f231d022e4509bce39d4cdcabcf37d0a2bc995a135907ada25dc68",
+      "locator": "archive:c3ab5041ce51410c6148a40cfaaa35b718caf910899eaf17e5c3337b2e38215b/project_graph/durable_combo_learning.py",
+      "origin": "imported-report"
+    },
+    {
+      "source": "sha256:da65c015ae119cb09464f2ea6ad5c3cfcc2da3e4269053f2a53fd7f3a3d5fdde",
+      "locator": "archive:c3ab5041ce51410c6148a40cfaaa35b718caf910899eaf17e5c3337b2e38215b/project_graph/durable_combo_results.py",
+      "origin": "imported-report"
+    },
+    {
+      "source": "sha256:0fd0efe3972f34a3717886435e7b6123d22d657757911c59cdf127dd96a4005a",
+      "locator": "workspace:coordination/omegacode/intake/predictive-coding/observatory-r11/CODE_R11_CUSTODY_RECEIPT_R1.json",
+      "origin": "local-retained-artifact-validation"
+    },
+    {
+      "source": "sha256:ee30820144cd466aa355169b6592504a40c5c3ce3c0dc9167add4ba322df2840",
+      "locator": "workspace:coordination/omegacode/intake/predictive-coding/observatory-r11/CODE_R11_RETAINED_RESULTS_BINDING_R1.json",
+      "origin": "local-retained-artifact-validation"
+    },
+    {
+      "source": "sha256:979ea664f602a4acb0f84303d07bec60bcd9c1c32429945524d0690ebe62c1b6",
+      "locator": "workspace:coordination/omegacode/intake/predictive-coding/observatory-r11/CODE_R11_FIT_DECLARATIONS_BINDING_R1.json",
+      "origin": "local-retained-artifact-validation"
+    }
+  ],
+  "uncertainty": {
+    "method": "qualitative",
+    "status": "unverified"
+  },
+  "affected_revision": "R11:c3ab5041ce51410c6148a40cfaaa35b718caf910899eaf17e5c3337b2e38215b"
+}

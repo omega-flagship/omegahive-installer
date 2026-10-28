@@ -1,0 +1,729 @@
+name: linux-x86-installer (test only)
+
+# Proves the Linux installer on a fresh x86_64 Ubuntu 22.04 machine, the way a newcomer runs it:
+# a fresh unprivileged user, one sudo step (apt + linger), then sign-in through the one-use link and
+# the hive still running after the user's session ends. Test branch only; never runs on main.
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: ["ci/linux-x86-*"]
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      HIVE_USER: cihive
+      PREFIX: omegahive-linux-test-20261028
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Machine facts
+        run: |
+          uname -a; lsb_release -ds; uname -m; nproc; free -h; df -h /
+          python3 - <<'EOF'
+          import ctypes
+          libc = ctypes.CDLL(None, use_errno=True)
+          print("landlock_abi", libc.syscall(ctypes.c_long(444), None, ctypes.c_size_t(0), ctypes.c_uint32(1)))
+          EOF
+          cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null || true
+          sysctl kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true
+
+      - name: Release tree and source tarball
+        run: |
+          # release/ holds the exact release tree; its git tree hash must equal the recorded release tree.
+          R="$(cat ci/RELEASE_COMMIT)"; WANT="$(cat ci/RELEASE_TREE)"
+          TREE="$(git rev-parse HEAD:release)"
+          echo "release commit $R, tree $TREE (recorded $WANT)"; [ "$TREE" = "$WANT" ]
+          echo "R=$R" >> "$GITHUB_ENV"; echo "TREE=$TREE" >> "$GITHUB_ENV"
+          mkdir -p /tmp/inputs
+          git archive --format=tar --prefix="$PREFIX/" HEAD:release | gzip -n > /tmp/inputs/source.tar.gz
+          git show HEAD:release/deploy/linux/install.py > /tmp/inputs/install.py
+          git show HEAD:release/deploy/linux/bootstrap.py > /tmp/inputs/bootstrap.py
+          cp ci/linux-x86/inputs/* /tmp/inputs/
+          sha256sum /tmp/inputs/*
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Linux installer unit tests (on x86_64, before any install)
+        continue-on-error: true
+        run: |
+          cd release/deploy/linux
+          python3 --version
+          python3 -m unittest -v test_install test_frontdoor test_bootstrap test_build_kit test_kit_installer_prefix 2>&1 | tail -40
+
+      - name: Fresh user with test-only sudo (apt-get and linger only)
+        run: |
+          sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
+          printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
+          sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
+          sudo apt-get install -y acl >/dev/null 2>&1 || true
+          loginctl show-user "$HIVE_USER" -p Linger 2>/dev/null || echo "Linger not set (expected)"
+
+      - name: Pinned Python for the entry (checked against the publisher)
+        run: |
+          U=$(python3 -c "import json;print(json.load(open('ci/linux-x86/x86_64-pins.json'))['python_stripped']['url'])")
+          S=$(python3 -c "import json;print(json.load(open('ci/linux-x86/x86_64-pins.json'))['python_stripped']['sha256'])")
+          curl -fsSL -o /tmp/pbs.tar.gz "$U"
+          echo "$S  /tmp/pbs.tar.gz" | sha256sum -c -
+          sudo -u "$HIVE_USER" mkdir -p /home/$HIVE_USER/.cache/ci-entry
+          sudo tar -xzf /tmp/pbs.tar.gz -C /home/$HIVE_USER/.cache/ci-entry
+          sudo chown -R "$HIVE_USER:$HIVE_USER" /home/$HIVE_USER/.cache
+
+      - name: Probe uv venv permissions exactly as the installer does
+        run: |
+          U=$(python3 -c "import json;print(json.load(open('ci/linux-x86/x86_64-pins.json'))['uv']['url'])")
+          SH=$(python3 -c "import json;print(json.load(open('ci/linux-x86/x86_64-pins.json'))['uv']['sha256'])")
+          curl -fsSL -o /tmp/uv.tgz "$U" && echo "$SH  /tmp/uv.tgz" | sha256sum -c -
+          sudo install -d -o "$HIVE_USER" -m 0700 /home/$HIVE_USER/probe && sudo tar -xzf /tmp/uv.tgz -C /home/$HIVE_USER/probe && sudo chown -R "$HIVE_USER:$HIVE_USER" /home/$HIVE_USER/probe
+          sudo -iu "$HIVE_USER" bash -c 'umask 077; P=$HOME/.cache/ci-entry/python/bin/python3.12; UV=$(find $HOME/probe -name uv -type f | head -1); echo "uv=$UV"; env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config venv --python "$P" $HOME/probe/venv; stat -c "%a %U:%G %F %h %n" $HOME/probe/venv $HOME/probe/venv/bin $HOME/probe/venv/bin/* $P; getfacl -p $HOME/probe/venv/bin 2>/dev/null | head -6; id; umask'
+      - name: Build x86_64 catalogue and bundle
+        run: |
+          sudo install -d -o "$HIVE_USER" -m 0700 /home/$HIVE_USER/stage
+          sudo cp -r /tmp/inputs ci/linux-x86 /home/$HIVE_USER/stage/ && sudo chown -R "$HIVE_USER:$HIVE_USER" /home/$HIVE_USER/stage
+          sudo -iu "$HIVE_USER" /home/$HIVE_USER/.cache/ci-entry/python/bin/python3.12 -I -B -S \
+            /home/$HIVE_USER/stage/linux-x86/make_catalogue.py \
+            --base-catalogue /home/$HIVE_USER/stage/linux-x86/arm-r7-catalogue.json \
+            --pins /home/$HIVE_USER/stage/linux-x86/x86_64-pins.json \
+            --source-tar /home/$HIVE_USER/stage/inputs/source.tar.gz --prefix "$PREFIX" \
+            --commit "$R" --tree "$TREE" --inputs /home/$HIVE_USER/stage/inputs \
+            --bundle /home/$HIVE_USER/bundle --release-id "ci-x86-${R:0:12}"
+
+      - name: Install as the fresh user (the real installer)
+        run: |
+          set +e
+          sudo -iu "$HIVE_USER" bash -c 'umask 077; script -qec "/home/'"$HIVE_USER"'/.cache/ci-entry/python/bin/python3.12 -I -B -S /home/'"$HIVE_USER"'/stage/linux-x86/run_install.py /home/'"$HIVE_USER"'/bundle" /dev/null' > /tmp/install.out 2>&1
+          code=$?
+          set -e
+          # The interactive path prints a live one-use link: never show it.
+          sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' /tmp/install.out
+          echo "install exit $code"
+          if [ $code -ne 0 ]; then
+            L=$(sudo ls -t /home/$HIVE_USER/.local/share/omegahive/logs/ 2>/dev/null | head -1)
+            [ -n "$L" ] && sudo tail -n 60 "/home/$HIVE_USER/.local/share/omegahive/logs/$L" | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'
+            echo "--- bootstrap failure notes (secret-free by design) ---"
+            sudo sh -c "cat /home/$HIVE_USER/.local/share/omegahive/logs/bootstrap-failure-*.json 2>/dev/null" || true
+            echo "--- hive service journal (redacted) ---"
+            sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$(id -u "$HIVE_USER") journalctl --user -u omegahive.service --no-pager -n 60 -o short-monotonic 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' || true
+            echo "--- bootstrap diagnostic (traceback only) ---"
+            sudo cp ci/linux-x86/diag_bootstrap.py /home/$HIVE_USER/diag_bootstrap.py && sudo chown $HIVE_USER /home/$HIVE_USER/diag_bootstrap.py
+            U=$(id -u "$HIVE_USER")
+            sudo -iu "$HIVE_USER" bash -c 'V=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser(\"~/.local/share/omegahive/runtime.json\")))[\"python\"])" 2>/dev/null); [ -n "$V" ] && XDG_RUNTIME_DIR=/run/user/'"$U"' "$V" -I -B ~/diag_bootstrap.py' 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' | tail -40 || true
+            R=$(sudo ls -d /home/$HIVE_USER/.local/share/omegahive/releases/* 2>/dev/null | head -1)
+            echo "--- permission facts (no contents) ---"
+            sudo -iu "$HIVE_USER" bash -c 'umask'
+            for x in /home/$HIVE_USER /home/$HIVE_USER/.local /home/$HIVE_USER/.local/share /home/$HIVE_USER/.local/share/omegahive "$R" "$R/runtime" "$R/runtime/python" "$R/runtime/python/bin" "$R/runtime/python/bin/python3.12" "$R/venv" "$R/venv/bin" "$R/venv/bin/python" "$R/venv/bin/python3.12"; do sudo stat -c '%a %U:%G %F %n' "$x" 2>&1; done
+            sudo getfacl -p "$R/venv/bin" 2>/dev/null | head -8
+            mount | grep -E ' /home | / ' | head -3
+            exit $code
+          fi
+
+      - name: Status and linger
+        run: |
+          loginctl show-user "$HIVE_USER" -p Linger
+          U=$(id -u "$HIVE_USER")
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+
+      - name: Headless sign-in through the one-use link (code masked)
+        run: |
+          U=$(id -u "$HIVE_USER")
+          out=$(sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" open)
+          link=$(printf '%s\n' "$out" | grep -o 'http://127.0.0.1:[0-9]*/local-signin#[A-Za-z0-9_-]\{43\}' | head -1)
+          code=${link##*#}
+          echo "::add-mask::$code"
+          printf '%s\n' "$out" | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'
+          port=$(printf '%s' "$link" | sed -E 's#http://127.0.0.1:([0-9]+)/.*#\1#')
+          echo "printed link port: $port"
+          # Same browser view as the SSH tunnel: Host/Origin name the tunnel's local port, bytes go to 8700.
+          status=$(curl -s -o /tmp/exchange.json -w '%{http_code}' -X POST http://127.0.0.1:8700/api/auth/local/exchange \
+            -H "Host: 127.0.0.1:$port" -H "Origin: http://127.0.0.1:$port" -H 'Content-Type: application/json' \
+            --data "{\"code\":\"$code\"}" -c /tmp/cookies)
+          echo "exchange HTTP $status"
+          [ "$status" = 200 ] || { cat /tmp/exchange.json; exit 1; }
+          again=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8700/api/auth/local/exchange \
+            -H "Host: 127.0.0.1:$port" -H "Origin: http://127.0.0.1:$port" -H 'Content-Type: application/json' --data "{\"code\":\"$code\"}")
+          echo "reused link HTTP $again (must not be 200)"; [ "$again" != 200 ]
+          tok=$(python3 -c "import json;d=json.load(open('/tmp/exchange.json'));print(d.get('token') or d.get('session') or '')")
+          [ -n "$tok" ] && echo "::add-mask::$tok"
+          auth=(); [ -n "$tok" ] && auth=(-H "Authorization: Bearer $tok")
+          me=$(curl -s -o /dev/null -w '%{http_code}' -b /tmp/cookies "${auth[@]}" -H "Host: 127.0.0.1:$port" http://127.0.0.1:8700/api/auth/me)
+          echo "signed-in /api/auth/me HTTP $me"; [ "$me" = 200 ]
+
+      - name: Still running after the user's sessions end
+        run: |
+          U=$(id -u "$HIVE_USER")
+          # Logout: end the person's login sessions only (linger keeps their user manager).
+          for s in $(loginctl list-sessions --no-legend | awk -v u="$HIVE_USER" '$3==u {print $1}'); do sudo loginctl terminate-session "$s"; done
+          sleep 10
+          curl -s -o /dev/null -w 'hive after logout: HTTP %{http_code}\n' -H 'Host: 127.0.0.1:8700' http://127.0.0.1:8700/api/health || true
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+          # Reboot stand-in: restart the user manager; the enabled service must come back by itself.
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-enabled omegahive.service
+          sudo systemctl stop "user@$U.service"; sleep 2
+          sudo systemctl start "user@$U.service" || { sudo systemctl status "user@$U.service" --no-pager -l | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' | tail -20; sudo journalctl -u "user@$U.service" --no-pager -n 40 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'; exit 1; }
+          for i in $(seq 1 60); do sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-active --quiet omegahive.service && break; sleep 1; done
+          sleep 5
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+
+      - name: Receipts (no secrets)
+        if: always()
+        run: |
+          mkdir -p receipts
+          sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' /tmp/install.out > receipts/install.out 2>/dev/null || true
+          { echo "release $R tree $TREE"; uname -a; lsb_release -ds; } > receipts/facts.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-x86-receipts
+          path: receipts/
+
+  kit:
+    # The real newcomer download: one file, run as a fresh user exactly as the guide says.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      HIVE_USER: kituser
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fresh user with test-only sudo (apt-get and linger only)
+        run: |
+          sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
+          printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
+          sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
+      - name: Check and stage the download
+        run: |
+          cd ci/kit && sha256sum -c omegahive-linux-r12.sh.sha256
+          sudo install -o "$HIVE_USER" -m 0600 omegahive-linux-r12.sh /home/$HIVE_USER/omegahive-linux.sh
+          # Tester workaround while swi-prolog.org DNS is down: the exact archive from our private release, then the
+          # guide's commands as the new user.
+          gh release download linux-test-20261028-r12 -R "$GITHUB_REPOSITORY" -p swipl-10.1.14.tar.gz -D /tmp/swi
+          sudo install -o "$HIVE_USER" -m 0600 /tmp/swi/swipl-10.1.14.tar.gz /home/$HIVE_USER/swipl-10.1.14.tar.gz
+          sudo install -o "$HIVE_USER" -m 0700 seed-swipl.sh /home/$HIVE_USER/seed-swipl.sh
+          sudo -iu "$HIVE_USER" sh ./seed-swipl.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Run the installer as the newcomer (sh ~/omegahive-linux.sh)
+        run: |
+          set +e
+          # Watch the release folder while the installer runs (it removes a failed release afterwards).
+          cat > /tmp/watch.sh <<'WATCH'
+          while true; do for d in /home/kituser/.local/share/omegahive/releases/*/; do [ -d "$d" ] || continue
+            for x in "$d" "$d/runtime" "$d/runtime/python" "$d/runtime/python/bin" "$d/runtime/python/bin/python3.12" "$d/venv" "$d/venv/bin" "$d/venv/bin/python" "$d/venv/bin/python3" "$d/venv/bin/python3.12" "$d/venv/lib" "$d/venv/pyvenv.cfg"; do
+              if [ -e "$x" ] || [ -L "$x" ]; then stat -c '%a %U:%G %F %h %n' "$x"; fi; done; done 2>/dev/null; sleep 0.1; done
+          WATCH
+          ( sudo bash /tmp/watch.sh | awk '!seen[$0]++' > /tmp/watch.txt ) &
+          W=$!
+          sudo -iu "$HIVE_USER" bash -c 'script -qec "sh ~/omegahive-linux.sh" /dev/null' > /tmp/kit.out 2>&1
+          code=$?
+          sudo pkill -f /tmp/watch.sh || true; sleep 1
+          echo "--- watched release paths (perms owner type links path) ---"; cat /tmp/watch.txt
+          set -e
+          sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' /tmp/kit.out
+          echo "kit install exit $code"
+          if [ $code -ne 0 ]; then
+            L=$(sudo ls -t /home/$HIVE_USER/.local/share/omegahive/logs/ 2>/dev/null | head -1)
+            [ -n "$L" ] && sudo tail -n 60 "/home/$HIVE_USER/.local/share/omegahive/logs/$L" | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'
+            echo "--- bootstrap failure notes (secret-free by design) ---"
+            sudo sh -c "cat /home/$HIVE_USER/.local/share/omegahive/logs/bootstrap-failure-*.json 2>/dev/null" || true
+            echo "--- hive service journal (redacted) ---"
+            sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$(id -u "$HIVE_USER") journalctl --user -u omegahive.service --no-pager -n 60 -o short-monotonic 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' || true
+            echo "--- bootstrap diagnostic (traceback only) ---"
+            sudo cp ci/linux-x86/diag_bootstrap.py /home/$HIVE_USER/diag_bootstrap.py && sudo chown $HIVE_USER /home/$HIVE_USER/diag_bootstrap.py
+            U=$(id -u "$HIVE_USER")
+            sudo -iu "$HIVE_USER" bash -c 'V=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser(\"~/.local/share/omegahive/runtime.json\")))[\"python\"])" 2>/dev/null); [ -n "$V" ] && XDG_RUNTIME_DIR=/run/user/'"$U"' "$V" -I -B ~/diag_bootstrap.py' 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' | tail -40 || true
+            R=$(sudo ls -d /home/$HIVE_USER/.local/share/omegahive/releases/* 2>/dev/null | head -1)
+            echo "--- permission facts (no contents) ---"
+            sudo -iu "$HIVE_USER" bash -c 'umask'
+            for x in /home/$HIVE_USER /home/$HIVE_USER/.local /home/$HIVE_USER/.local/share /home/$HIVE_USER/.local/share/omegahive "$R" "$R/runtime" "$R/runtime/python" "$R/runtime/python/bin" "$R/runtime/python/bin/python3.12" "$R/venv" "$R/venv/bin" "$R/venv/bin/python" "$R/venv/bin/python3.12"; do sudo stat -c '%a %U:%G %F %n' "$x" 2>&1; done
+            sudo getfacl -p "$R/venv/bin" 2>/dev/null | head -8
+            mount | grep -E ' /home | / ' | head -3
+            exit $code
+          fi
+      - name: Status, sign-in, still running after logout
+        run: |
+          U=$(id -u "$HIVE_USER")
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+          out=$(sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" open)
+          link=$(printf '%s\n' "$out" | grep -o 'http://127.0.0.1:[0-9]*/local-signin#[A-Za-z0-9_-]\{43\}' | head -1)
+          code=${link##*#}; echo "::add-mask::$code"
+          port=$(printf '%s' "$link" | sed -E 's#http://127.0.0.1:([0-9]+)/.*#\1#')
+          status=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8700/api/auth/local/exchange \
+            -H "Host: 127.0.0.1:$port" -H "Origin: http://127.0.0.1:$port" -H 'Content-Type: application/json' --data "{\"code\":\"$code\"}")
+          echo "exchange HTTP $status (link port $port)"; [ "$status" = 200 ]
+          U=$(id -u "$HIVE_USER")
+          # Logout: end the person's login sessions only (linger keeps their user manager).
+          for s in $(loginctl list-sessions --no-legend | awk -v u="$HIVE_USER" '$3==u {print $1}'); do sudo loginctl terminate-session "$s"; done
+          sleep 10
+          curl -s -o /dev/null -w 'hive after logout: HTTP %{http_code}\n' -H 'Host: 127.0.0.1:8700' http://127.0.0.1:8700/api/health || true
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+          # Reboot stand-in: restart the user manager; the enabled service must come back by itself.
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-enabled omegahive.service
+          sudo systemctl stop "user@$U.service"; sleep 2
+          sudo systemctl start "user@$U.service" || { sudo systemctl status "user@$U.service" --no-pager -l | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' | tail -20; sudo journalctl -u "user@$U.service" --no-pager -n 40 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'; exit 1; }
+          for i in $(seq 1 60); do sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-active --quiet omegahive.service && break; sleep 1; done
+          sleep 5
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+
+  kit-r13:
+    # r13 (R21): the same newcomer run with swi-prolog.org blocked and nothing seeded.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      HIVE_USER: kitr13user
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fresh user with test-only sudo (apt-get and linger only)
+        run: |
+          sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
+          printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
+          sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
+      - name: Check and stage the r13 download; make swi-prolog.org unreachable (no seeding)
+        run: |
+          cd ci/kit && sha256sum -c omegahive-linux-r13.sh.sha256
+          sudo install -o "$HIVE_USER" -m 0600 omegahive-linux-r13.sh /home/$HIVE_USER/omegahive-linux.sh
+          # r13 carries the SWI-Prolog source: prove the install never needs swi-prolog.org.
+          printf '0.0.0.0 www.swi-prolog.org download.swi-prolog.org swi-prolog.org\n:: www.swi-prolog.org download.swi-prolog.org swi-prolog.org\n' | sudo tee -a /etc/hosts >/dev/null
+          ! curl -s -m 5 -o /dev/null https://www.swi-prolog.org/ && echo "swi-prolog.org is unreachable from this runner"
+          sudo test ! -e /home/$HIVE_USER/.local/share/omegahive/cache && echo "no seeded cache"
+      - name: Run the installer as the newcomer (sh ~/omegahive-linux.sh)
+        run: |
+          set +e
+          # Watch the release folder while the installer runs (it removes a failed release afterwards).
+          cat > /tmp/watch.sh <<'WATCH'
+          while true; do for d in /home/kitr13user/.local/share/omegahive/releases/*/; do [ -d "$d" ] || continue
+            for x in "$d" "$d/runtime" "$d/runtime/python" "$d/runtime/python/bin" "$d/runtime/python/bin/python3.12" "$d/venv" "$d/venv/bin" "$d/venv/bin/python" "$d/venv/bin/python3" "$d/venv/bin/python3.12" "$d/venv/lib" "$d/venv/pyvenv.cfg"; do
+              if [ -e "$x" ] || [ -L "$x" ]; then stat -c '%a %U:%G %F %h %n' "$x"; fi; done; done 2>/dev/null; sleep 0.1; done
+          WATCH
+          ( sudo bash /tmp/watch.sh | awk '!seen[$0]++' > /tmp/watch.txt ) &
+          W=$!
+          sudo -iu "$HIVE_USER" bash -c 'script -qec "sh ~/omegahive-linux.sh" /dev/null' > /tmp/kit.out 2>&1
+          code=$?
+          sudo pkill -f /tmp/watch.sh || true; sleep 1
+          echo "--- watched release paths (perms owner type links path) ---"; cat /tmp/watch.txt
+          set -e
+          sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' /tmp/kit.out
+          echo "kit install exit $code"
+          if [ $code -ne 0 ]; then
+            L=$(sudo ls -t /home/$HIVE_USER/.local/share/omegahive/logs/ 2>/dev/null | head -1)
+            [ -n "$L" ] && sudo tail -n 60 "/home/$HIVE_USER/.local/share/omegahive/logs/$L" | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'
+            echo "--- bootstrap failure notes (secret-free by design) ---"
+            sudo sh -c "cat /home/$HIVE_USER/.local/share/omegahive/logs/bootstrap-failure-*.json 2>/dev/null" || true
+            echo "--- hive service journal (redacted) ---"
+            sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$(id -u "$HIVE_USER") journalctl --user -u omegahive.service --no-pager -n 60 -o short-monotonic 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' || true
+            echo "--- bootstrap diagnostic (traceback only) ---"
+            sudo cp ci/linux-x86/diag_bootstrap.py /home/$HIVE_USER/diag_bootstrap.py && sudo chown $HIVE_USER /home/$HIVE_USER/diag_bootstrap.py
+            U=$(id -u "$HIVE_USER")
+            sudo -iu "$HIVE_USER" bash -c 'V=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser(\"~/.local/share/omegahive/runtime.json\")))[\"python\"])" 2>/dev/null); [ -n "$V" ] && XDG_RUNTIME_DIR=/run/user/'"$U"' "$V" -I -B ~/diag_bootstrap.py' 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' | tail -40 || true
+            R=$(sudo ls -d /home/$HIVE_USER/.local/share/omegahive/releases/* 2>/dev/null | head -1)
+            echo "--- permission facts (no contents) ---"
+            sudo -iu "$HIVE_USER" bash -c 'umask'
+            for x in /home/$HIVE_USER /home/$HIVE_USER/.local /home/$HIVE_USER/.local/share /home/$HIVE_USER/.local/share/omegahive "$R" "$R/runtime" "$R/runtime/python" "$R/runtime/python/bin" "$R/runtime/python/bin/python3.12" "$R/venv" "$R/venv/bin" "$R/venv/bin/python" "$R/venv/bin/python3.12"; do sudo stat -c '%a %U:%G %F %n' "$x" 2>&1; done
+            sudo getfacl -p "$R/venv/bin" 2>/dev/null | head -8
+            mount | grep -E ' /home | / ' | head -3
+            exit $code
+          fi
+      - name: Status, sign-in, still running after logout
+        run: |
+          U=$(id -u "$HIVE_USER")
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+          out=$(sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" open)
+          link=$(printf '%s\n' "$out" | grep -o 'http://127.0.0.1:[0-9]*/local-signin#[A-Za-z0-9_-]\{43\}' | head -1)
+          code=${link##*#}; echo "::add-mask::$code"
+          port=$(printf '%s' "$link" | sed -E 's#http://127.0.0.1:([0-9]+)/.*#\1#')
+          status=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8700/api/auth/local/exchange \
+            -H "Host: 127.0.0.1:$port" -H "Origin: http://127.0.0.1:$port" -H 'Content-Type: application/json' --data "{\"code\":\"$code\"}")
+          echo "exchange HTTP $status (link port $port)"; [ "$status" = 200 ]
+          U=$(id -u "$HIVE_USER")
+          # Logout: end the person's login sessions only (linger keeps their user manager).
+          for s in $(loginctl list-sessions --no-legend | awk -v u="$HIVE_USER" '$3==u {print $1}'); do sudo loginctl terminate-session "$s"; done
+          sleep 10
+          curl -s -o /dev/null -w 'hive after logout: HTTP %{http_code}\n' -H 'Host: 127.0.0.1:8700' http://127.0.0.1:8700/api/health || true
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+          # Reboot stand-in: restart the user manager; the enabled service must come back by itself.
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-enabled omegahive.service
+          sudo systemctl stop "user@$U.service"; sleep 2
+          sudo systemctl start "user@$U.service" || { sudo systemctl status "user@$U.service" --no-pager -l | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' | tail -20; sudo journalctl -u "user@$U.service" --no-pager -n 40 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'; exit 1; }
+          for i in $(seq 1 60); do sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-active --quiet omegahive.service && break; sleep 1; done
+          sleep 5
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+
+  kit-r13-arm:
+    # r13 on arm64 (aarch64 package set): same newcomer run, swi-prolog.org blocked, nothing seeded.
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 90
+    env:
+      HIVE_USER: kitarmuser
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fresh user with test-only sudo (apt-get and linger only)
+        run: |
+          sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
+          printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
+          sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
+      - name: Check and stage the r13 download; make swi-prolog.org unreachable (no seeding)
+        run: |
+          cd ci/kit && sha256sum -c omegahive-linux-r13.sh.sha256
+          sudo install -o "$HIVE_USER" -m 0600 omegahive-linux-r13.sh /home/$HIVE_USER/omegahive-linux.sh
+          # r13 carries the SWI-Prolog source: prove the install never needs swi-prolog.org.
+          printf '0.0.0.0 www.swi-prolog.org download.swi-prolog.org swi-prolog.org\n:: www.swi-prolog.org download.swi-prolog.org swi-prolog.org\n' | sudo tee -a /etc/hosts >/dev/null
+          ! curl -s -m 5 -o /dev/null https://www.swi-prolog.org/ && echo "swi-prolog.org is unreachable from this runner"
+          sudo test ! -e /home/$HIVE_USER/.local/share/omegahive/cache && echo "no seeded cache"
+      - name: Run the installer as the newcomer (sh ~/omegahive-linux.sh)
+        run: |
+          set +e
+          # Watch the release folder while the installer runs (it removes a failed release afterwards).
+          cat > /tmp/watch.sh <<'WATCH'
+          while true; do for d in /home/kitarmuser/.local/share/omegahive/releases/*/; do [ -d "$d" ] || continue
+            for x in "$d" "$d/runtime" "$d/runtime/python" "$d/runtime/python/bin" "$d/runtime/python/bin/python3.12" "$d/venv" "$d/venv/bin" "$d/venv/bin/python" "$d/venv/bin/python3" "$d/venv/bin/python3.12" "$d/venv/lib" "$d/venv/pyvenv.cfg"; do
+              if [ -e "$x" ] || [ -L "$x" ]; then stat -c '%a %U:%G %F %h %n' "$x"; fi; done; done 2>/dev/null; sleep 0.1; done
+          WATCH
+          ( sudo bash /tmp/watch.sh | awk '!seen[$0]++' > /tmp/watch.txt ) &
+          W=$!
+          sudo -iu "$HIVE_USER" bash -c 'script -qec "sh ~/omegahive-linux.sh" /dev/null' > /tmp/kit.out 2>&1
+          code=$?
+          sudo pkill -f /tmp/watch.sh || true; sleep 1
+          echo "--- watched release paths (perms owner type links path) ---"; cat /tmp/watch.txt
+          set -e
+          sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' /tmp/kit.out
+          echo "kit install exit $code"
+          if [ $code -ne 0 ]; then
+            L=$(sudo ls -t /home/$HIVE_USER/.local/share/omegahive/logs/ 2>/dev/null | head -1)
+            [ -n "$L" ] && sudo tail -n 60 "/home/$HIVE_USER/.local/share/omegahive/logs/$L" | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'
+            echo "--- bootstrap failure notes (secret-free by design) ---"
+            sudo sh -c "cat /home/$HIVE_USER/.local/share/omegahive/logs/bootstrap-failure-*.json 2>/dev/null" || true
+            echo "--- hive service journal (redacted) ---"
+            sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$(id -u "$HIVE_USER") journalctl --user -u omegahive.service --no-pager -n 60 -o short-monotonic 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' || true
+            echo "--- bootstrap diagnostic (traceback only) ---"
+            sudo cp ci/linux-x86/diag_bootstrap.py /home/$HIVE_USER/diag_bootstrap.py && sudo chown $HIVE_USER /home/$HIVE_USER/diag_bootstrap.py
+            U=$(id -u "$HIVE_USER")
+            sudo -iu "$HIVE_USER" bash -c 'V=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser(\"~/.local/share/omegahive/runtime.json\")))[\"python\"])" 2>/dev/null); [ -n "$V" ] && XDG_RUNTIME_DIR=/run/user/'"$U"' "$V" -I -B ~/diag_bootstrap.py' 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' | tail -40 || true
+            R=$(sudo ls -d /home/$HIVE_USER/.local/share/omegahive/releases/* 2>/dev/null | head -1)
+            echo "--- permission facts (no contents) ---"
+            sudo -iu "$HIVE_USER" bash -c 'umask'
+            for x in /home/$HIVE_USER /home/$HIVE_USER/.local /home/$HIVE_USER/.local/share /home/$HIVE_USER/.local/share/omegahive "$R" "$R/runtime" "$R/runtime/python" "$R/runtime/python/bin" "$R/runtime/python/bin/python3.12" "$R/venv" "$R/venv/bin" "$R/venv/bin/python" "$R/venv/bin/python3.12"; do sudo stat -c '%a %U:%G %F %n' "$x" 2>&1; done
+            sudo getfacl -p "$R/venv/bin" 2>/dev/null | head -8
+            mount | grep -E ' /home | / ' | head -3
+            exit $code
+          fi
+      - name: Status, sign-in, still running after logout
+        run: |
+          U=$(id -u "$HIVE_USER")
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+          out=$(sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" open)
+          link=$(printf '%s\n' "$out" | grep -o 'http://127.0.0.1:[0-9]*/local-signin#[A-Za-z0-9_-]\{43\}' | head -1)
+          code=${link##*#}; echo "::add-mask::$code"
+          port=$(printf '%s' "$link" | sed -E 's#http://127.0.0.1:([0-9]+)/.*#\1#')
+          status=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8700/api/auth/local/exchange \
+            -H "Host: 127.0.0.1:$port" -H "Origin: http://127.0.0.1:$port" -H 'Content-Type: application/json' --data "{\"code\":\"$code\"}")
+          echo "exchange HTTP $status (link port $port)"; [ "$status" = 200 ]
+          U=$(id -u "$HIVE_USER")
+          # Logout: end the person's login sessions only (linger keeps their user manager).
+          for s in $(loginctl list-sessions --no-legend | awk -v u="$HIVE_USER" '$3==u {print $1}'); do sudo loginctl terminate-session "$s"; done
+          sleep 10
+          curl -s -o /dev/null -w 'hive after logout: HTTP %{http_code}\n' -H 'Host: 127.0.0.1:8700' http://127.0.0.1:8700/api/health || true
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+          # Reboot stand-in: restart the user manager; the enabled service must come back by itself.
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-enabled omegahive.service
+          sudo systemctl stop "user@$U.service"; sleep 2
+          sudo systemctl start "user@$U.service" || { sudo systemctl status "user@$U.service" --no-pager -l | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' | tail -20; sudo journalctl -u "user@$U.service" --no-pager -n 40 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'; exit 1; }
+          for i in $(seq 1 60); do sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-active --quiet omegahive.service && break; sleep 1; done
+          sleep 5
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+
+  code-r10:
+    # Code C2 R10 (empty-seed fix) test profile on x86_64 Ubuntu 22.04: the eight test files packaged with R10.
+    # Exact review ZIP, recomputed source digest, pinned interpreter and hash-pinned packages only. Synthetic data.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Machine facts
+        run: |
+          { uname -a; lsb_release -ds; nproc; } | tee /tmp/code-facts.txt
+      - name: Exact review ZIP and source digest
+        run: |
+          echo "5e316adcd336d73b564bcbfdb4b85e03b0744fccd1dce59795f7bb6620dcaa86  ci/code-r10/CODE_C2_EMPTY_SEED_R10_REVIEW.zip" | sha256sum -c -
+          mkdir -p /tmp/r10 && cd /tmp/r10 && unzip -q "$GITHUB_WORKSPACE/ci/code-r10/CODE_C2_EMPTY_SEED_R10_REVIEW.zip"
+          out=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" /tmp/r10/source_r10/src/omegacode); echo "$out"
+          [ "$out" = "90 4b33ce2842bada7bd76ce64523be3d4d7f0e72f97993af9cb034d63156fcd9dd" ]
+      - name: Pinned Python and uv (checked against the publisher)
+        run: |
+          P=ci/linux-x86/x86_64-pins.json
+          U=$(python3 -c "import json;print(json.load(open('$P'))['python_stripped']['url'])"); H=$(python3 -c "import json;print(json.load(open('$P'))['python_stripped']['sha256'])")
+          curl -fsSL -o /tmp/pbs.tar.gz "$U" && echo "$H  /tmp/pbs.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/py && tar -xzf /tmp/pbs.tar.gz -C /tmp/py
+          U=$(python3 -c "import json;print(json.load(open('$P'))['uv']['url'])"); H=$(python3 -c "import json;print(json.load(open('$P'))['uv']['sha256'])")
+          curl -fsSL -o /tmp/uv.tgz "$U" && echo "$H  /tmp/uv.tgz" | sha256sum -c -
+          mkdir -p /tmp/uvx && tar -xzf /tmp/uv.tgz -C /tmp/uvx
+          /tmp/py/python/bin/python3.12 -VV
+      - name: Hash-pinned packages only
+        run: |
+          UV=$(find /tmp/uvx -name uv -type f | head -1)
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config venv --python /tmp/py/python/bin/python3.12 /tmp/venv
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip install --python /tmp/venv/bin/python --require-hashes --no-deps --only-binary=:all: -r ci/code-r10/requirements.lock
+          /tmp/venv/bin/python -m pip --version >/dev/null 2>&1 || true
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip check --python /tmp/venv/bin/python
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip freeze --python /tmp/venv/bin/python | tee /tmp/code-freeze.txt
+      - name: R10 eight-file profile
+        run: |
+          cd /tmp/r10/source_r10
+          git config --global user.name ci; git config --global user.email ci@example.invalid
+          PYTHONPATH=src:tests /tmp/venv/bin/python -m pytest -q -p no:cacheprovider tests 2>&1 | tee /tmp/code-pytest.txt
+          PYTHONPATH=src:tests /tmp/venv/bin/python -m pytest -q -p no:cacheprovider "tests/test_service.py::test_workspace_creation_from_valid_empty_git_commit" 2>&1 | tail -2 | tee -a /tmp/code-pytest.txt
+      - name: Receipts (no secrets)
+        if: always()
+        run: mkdir -p code-receipts && cp /tmp/code-facts.txt /tmp/code-freeze.txt /tmp/code-pytest.txt code-receipts/ 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: code-r10-x86-receipts
+          path: code-receipts/
+
+  journey:
+    # The newcomer's journey after install, in a real browser: the tester guide's First Light (section 5), OmegaAssist
+    # (section 6) and Studio if there is a way in. Same install and sign-in as the kit job. No AI key, ever: where a step
+    # needs one, the walk takes the page's own Not now / Later and records what the page says. Test tooling only.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      HIVE_USER: kituser
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fresh user with test-only sudo (apt-get and linger only)
+        run: |
+          sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
+          printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
+          sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
+      - name: Check and stage the download
+        run: |
+          cd ci/kit && sha256sum -c omegahive-linux-r13.sh.sha256
+          sudo install -o "$HIVE_USER" -m 0600 omegahive-linux-r13.sh /home/$HIVE_USER/omegahive-linux.sh
+          # r13 carries the SWI-Prolog source: the whole tester journey with swi-prolog.org unreachable, nothing seeded.
+          printf '0.0.0.0 www.swi-prolog.org download.swi-prolog.org swi-prolog.org\n:: www.swi-prolog.org download.swi-prolog.org swi-prolog.org\n' | sudo tee -a /etc/hosts >/dev/null
+          ! curl -s -m 5 -o /dev/null https://www.swi-prolog.org/ && echo "swi-prolog.org is unreachable from this runner"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Run the installer as the newcomer (sh ~/omegahive-linux.sh)
+        run: |
+          set +e
+          # Watch the release folder while the installer runs (it removes a failed release afterwards).
+          cat > /tmp/watch.sh <<'WATCH'
+          while true; do for d in /home/kituser/.local/share/omegahive/releases/*/; do [ -d "$d" ] || continue
+            for x in "$d" "$d/runtime" "$d/runtime/python" "$d/runtime/python/bin" "$d/runtime/python/bin/python3.12" "$d/venv" "$d/venv/bin" "$d/venv/bin/python" "$d/venv/bin/python3" "$d/venv/bin/python3.12" "$d/venv/lib" "$d/venv/pyvenv.cfg"; do
+              if [ -e "$x" ] || [ -L "$x" ]; then stat -c '%a %U:%G %F %h %n' "$x"; fi; done; done 2>/dev/null; sleep 0.1; done
+          WATCH
+          ( sudo bash /tmp/watch.sh | awk '!seen[$0]++' > /tmp/watch.txt ) &
+          W=$!
+          sudo -iu "$HIVE_USER" bash -c 'script -qec "sh ~/omegahive-linux.sh" /dev/null' > /tmp/kit.out 2>&1
+          code=$?
+          sudo pkill -f /tmp/watch.sh || true; sleep 1
+          echo "--- watched release paths (perms owner type links path) ---"; cat /tmp/watch.txt
+          set -e
+          sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' /tmp/kit.out
+          echo "kit install exit $code"
+          if [ $code -ne 0 ]; then
+            L=$(sudo ls -t /home/$HIVE_USER/.local/share/omegahive/logs/ 2>/dev/null | head -1)
+            [ -n "$L" ] && sudo tail -n 60 "/home/$HIVE_USER/.local/share/omegahive/logs/$L" | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'
+            echo "--- bootstrap failure notes (secret-free by design) ---"
+            sudo sh -c "cat /home/$HIVE_USER/.local/share/omegahive/logs/bootstrap-failure-*.json 2>/dev/null" || true
+            echo "--- hive service journal (redacted) ---"
+            sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$(id -u "$HIVE_USER") journalctl --user -u omegahive.service --no-pager -n 60 -o short-monotonic 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' || true
+            echo "--- bootstrap diagnostic (traceback only) ---"
+            sudo cp ci/linux-x86/diag_bootstrap.py /home/$HIVE_USER/diag_bootstrap.py && sudo chown $HIVE_USER /home/$HIVE_USER/diag_bootstrap.py
+            U=$(id -u "$HIVE_USER")
+            sudo -iu "$HIVE_USER" bash -c 'V=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser(\"~/.local/share/omegahive/runtime.json\")))[\"python\"])" 2>/dev/null); [ -n "$V" ] && XDG_RUNTIME_DIR=/run/user/'"$U"' "$V" -I -B ~/diag_bootstrap.py' 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' | tail -40 || true
+            R=$(sudo ls -d /home/$HIVE_USER/.local/share/omegahive/releases/* 2>/dev/null | head -1)
+            echo "--- permission facts (no contents) ---"
+            sudo -iu "$HIVE_USER" bash -c 'umask'
+            for x in /home/$HIVE_USER /home/$HIVE_USER/.local /home/$HIVE_USER/.local/share /home/$HIVE_USER/.local/share/omegahive "$R" "$R/runtime" "$R/runtime/python" "$R/runtime/python/bin" "$R/runtime/python/bin/python3.12" "$R/venv" "$R/venv/bin" "$R/venv/bin/python" "$R/venv/bin/python3.12"; do sudo stat -c '%a %U:%G %F %n' "$x" 2>&1; done
+            sudo getfacl -p "$R/venv/bin" 2>/dev/null | head -8
+            mount | grep -E ' /home | / ' | head -3
+            exit $code
+          fi
+      - name: Status and sign-in through the one-use link (as the kit job; code masked)
+        run: |
+          U=$(id -u "$HIVE_USER")
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+          out=$(sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" open)
+          link=$(printf '%s\n' "$out" | grep -o 'http://127.0.0.1:[0-9]*/local-signin#[A-Za-z0-9_-]\{43\}' | head -1)
+          code=${link##*#}; echo "::add-mask::$code"
+          port=$(printf '%s' "$link" | sed -E 's#http://127.0.0.1:([0-9]+)/.*#\1#')
+          status=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8700/api/auth/local/exchange \
+            -H "Host: 127.0.0.1:$port" -H "Origin: http://127.0.0.1:$port" -H 'Content-Type: application/json' --data "{\"code\":\"$code\"}")
+          echo "exchange HTTP $status (link port $port)"; [ "$status" = 200 ]
+          echo "LINK_PORT=$port" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test tooling only - Playwright for Python and Chromium (exact version) and the tunnel stand-in
+        run: |
+          python -m pip install --disable-pip-version-check playwright==1.48.0
+          python -m playwright install --with-deps chromium
+          sudo apt-get install -y socat >/dev/null
+          python -m playwright --version
+      - name: The tester's journey in a browser (First Light, OmegaAssist, Studio)
+        run: |
+          set +e
+          U=$(id -u "$HIVE_USER")
+          # The tester's tunnel: their browser's 127.0.0.1:$LINK_PORT carries bytes to the hive's 127.0.0.1:8700.
+          if [ "$LINK_PORT" != 8700 ]; then
+            socat TCP-LISTEN:$LINK_PORT,bind=127.0.0.1,fork,reuseaddr TCP:127.0.0.1:8700 &
+            sleep 1
+          fi
+          curl -s -o /dev/null -w "through the tunnel port: HTTP %{http_code}\n" http://127.0.0.1:$LINK_PORT/api/health
+          # A fresh link, as a tester does (section 8): the browser opens it itself, within the minute.
+          out=$(sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" open)
+          link=$(printf '%s\n' "$out" | grep -o 'http://127.0.0.1:[0-9]*/local-signin#[A-Za-z0-9_-]\{43\}' | head -1)
+          code=${link##*#}; echo "::add-mask::$code"
+          JOURNEY_BASE="http://127.0.0.1:$LINK_PORT" JOURNEY_CODE="$code" python -I ci/journey/walk.py /tmp/journey 2>&1 \
+            | sed -E 's#(local-signin)\#[A-Za-z0-9_-]+#\1\#<redacted>#g'
+          code=""
+          echo "--- hive service journal, last 40 lines (redacted) ---"
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U journalctl --user -u omegahive.service --no-pager -n 40 -o short-monotonic 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]+#\1\#<redacted>#g' | cut -c1-300
+          [ -s /tmp/journey/steps.json ]
+      - name: Receipts (no secrets)
+        if: always()
+        run: |
+          mkdir -p journey-receipts
+          cp /tmp/journey/*.png journey-receipts/ 2>/dev/null || true
+          for f in steps.json events.json; do
+            [ -f /tmp/journey/$f ] && sed -E 's#(local-signin)\#[A-Za-z0-9_-]+#\1\#<redacted>#g' /tmp/journey/$f > journey-receipts/$f
+          done
+          ! grep -rl 'local-signin#[A-Za-z0-9_-]\{43\}' journey-receipts/ 
+          ls -la journey-receipts | head -80
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: journey-receipts
+          path: journey-receipts/
+
+  code-c2:
+    # Code r13 candidate 2 = R10 + terminal source precondition (8dd27853) + port pin (6d1370e8), digest b343944c.
+    # Separate from the R10 result. Tests on the 22-package test lock; then a clean 17-package runtime-only install,
+    # pip check and the startup probe; then a pinned Hyperon 0.2.10 worker import/query smoke. Synthetic data only.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rebuild candidate 2 from the exact R10 ZIP and the two reviewed patches
+        run: |
+          echo "5e316adcd336d73b564bcbfdb4b85e03b0744fccd1dce59795f7bb6620dcaa86  ci/code-r10/CODE_C2_EMPTY_SEED_R10_REVIEW.zip" | sha256sum -c -
+          echo "8dd278533cbf169916f5dc7a9f68b52c233d9b2e89ea5b9e48f31ba7e9db8834  ci/code-c2/TERMINAL_SOURCE_PRECONDITION_R10.patch" | sha256sum -c -
+          echo "6d1370e85bf2e431de9949dff55d7d9834eeaa1cd88aad90c10c5f324afca220  ci/code-c2/PORT_8724_PINNING_R1.patch" | sha256sum -c -
+          mkdir -p /tmp/c2 && cd /tmp/c2 && unzip -q "$GITHUB_WORKSPACE/ci/code-r10/CODE_C2_EMPTY_SEED_R10_REVIEW.zip"
+          cd /tmp/c2/source_r10
+          git apply "$GITHUB_WORKSPACE/ci/code-c2/TERMINAL_SOURCE_PRECONDITION_R10.patch"
+          a=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after terminal patch: $a"
+          [ "$a" = "90 66ebeff4a0fbf1148337fbb4d8e96a3b7679548cdd22182531cc79f4742e5a09" ]
+          git apply "$GITHUB_WORKSPACE/ci/code-c2/PORT_8724_PINNING_R1.patch"
+          b=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after port pin: $b"
+          [ "$b" = "90 b343944cd51eafa4581b98703ad051b78678fe34c6a25d15a99b8614f9b48b5f" ]
+          # Code r13 candidate 3: + relay challenge listener R2 (d29cf391), digest 4cb9d79c (91 modules).
+          echo "d29cf39168d5b276622ac4c9eb197bbd4986f1d01bf3449ae2d571d765a12727  $GITHUB_WORKSPACE/ci/code-c2/RELAY_CHALLENGE_R2.patch" | sha256sum -c -
+          git apply "$GITHUB_WORKSPACE/ci/code-c2/RELAY_CHALLENGE_R2.patch"
+          c=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after relay R2: $c"
+          [ "$c" = "91 4cb9d79c801dee665c42fca33469e39c560a37fa462fe22eca2b50f8dbd580cd" ]
+          # Code r13 candidate 4: + enrolment R3 (c5bef444), digest 582f5656 (91 modules).
+          echo "c5bef4443199cb6f36d1996f9c867a6fe540b02b96219b137e98e33105b86fee  $GITHUB_WORKSPACE/ci/code-c2/ENROLMENT_R3.patch" | sha256sum -c -
+          git apply "$GITHUB_WORKSPACE/ci/code-c2/ENROLMENT_R3.patch"
+          d=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after enrolment R3: $d"
+          [ "$d" = "91 b24395e5eba480d34c629b3a642ab4a1cbd9e4bd2d3b7a444b6df5f8fd7745ef" ]   # sealed R3 bytes (claimed 582f5656 is not reproducible)
+          # + enrolment R3.1 (891f9bc4) and R4.2 (7527edc0, applies to R3.1): candidate 4 = R4.2, digest f9c06cae.
+          echo "891f9bc418bb561c8b377d6a59cb9a22e62a9732b518fec9294b94b50f47e74c  $GITHUB_WORKSPACE/ci/code-c2/ENROLMENT_R3_1.patch" | sha256sum -c -
+          echo "7527edc05bb5cee168bb757b5937145d160404cd354d1d7fce2b71ff262a5e9e  $GITHUB_WORKSPACE/ci/code-c2/ENROLMENT_R4_2.patch" | sha256sum -c -
+          git apply "$GITHUB_WORKSPACE/ci/code-c2/ENROLMENT_R3_1.patch"; git apply "$GITHUB_WORKSPACE/ci/code-c2/ENROLMENT_R4_2.patch"
+          e=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after enrolment R4.2: $e"
+          [ "$e" = "91 f9c06caec083e2586b200d11eaa45a60aaf303cee5fe95522949837df88b7214" ]
+          # Candidate 5: R13 successor R1.3 (sealed 010e3e69; patch f986bf94) on the adopted f9c06cae, digest 117deeeb.
+          echo "f986bf9460f94124f2e3c49b918b9e6c34e421ec33b71446d5cf3a8525eac73b  $GITHUB_WORKSPACE/ci/code-c2/R13_SUCCESSOR_R1_3.patch" | sha256sum -c -
+          git apply "$GITHUB_WORKSPACE/ci/code-c2/R13_SUCCESSOR_R1_3.patch"
+          g=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after successor R1.3: $g"
+          [ "$g" = "91 117deeebede5a8a16b1a2bde5a6cd3c6ab414eaceb44392dc136144e279b4cc2" ]
+          # Candidate 6: R13 successor R1.4 P3 follow-up (archive c7478c1e), digest 4a5737b1.
+          echo "96ce33072d675c7eee7fe9438bccdbe0501cc69bdf7ad2ff179cfa37b85620ae  $GITHUB_WORKSPACE/ci/code-c2/R13_SUCCESSOR_R1_4.patch" | sha256sum -c -
+          git apply --exclude=README.md --exclude='standalone_checks/*' "$GITHUB_WORKSPACE/ci/code-c2/R13_SUCCESSOR_R1_4.patch"
+          h=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after successor R1.4: $h"
+          [ "$h" = "91 4a5737b1296bcb49ff44a002684129c18e95a749d8ce3362cd97df18953b449d" ]
+          # Candidate 7: R13 successor R1.5.1 trace API (archive 35ef34cb). Patch generated by Dot from the two exact archives
+          # (src + tests); the digest check binds it to the archive bytes.
+          echo "d78c97696d46cad5c169a212d63ce3f57492ad681901732ea83fcd733e8e8ad5  $GITHUB_WORKSPACE/ci/code-c2/R1_4_TO_R1_5_1.patch" | sha256sum -c -
+          git apply "$GITHUB_WORKSPACE/ci/code-c2/R1_4_TO_R1_5_1.patch"
+          k=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after successor R1.5.1: $k"
+          [ "$k" = "92 892f333ee430c5f10a9985f97109e1fa511b1fa020a925de9c49ac73ed64387d" ]
+      - name: Pinned Python and uv (checked against the publisher)
+        run: |
+          P=ci/linux-x86/x86_64-pins.json
+          U=$(python3 -c "import json;print(json.load(open('$P'))['python_stripped']['url'])"); H=$(python3 -c "import json;print(json.load(open('$P'))['python_stripped']['sha256'])")
+          curl -fsSL -o /tmp/pbs.tar.gz "$U" && echo "$H  /tmp/pbs.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/py && tar -xzf /tmp/pbs.tar.gz -C /tmp/py
+          U=$(python3 -c "import json;print(json.load(open('$P'))['uv']['url'])"); H=$(python3 -c "import json;print(json.load(open('$P'))['uv']['sha256'])")
+          curl -fsSL -o /tmp/uv.tgz "$U" && echo "$H  /tmp/uv.tgz" | sha256sum -c -
+          mkdir -p /tmp/uvx && tar -xzf /tmp/uv.tgz -C /tmp/uvx
+          echo "UV=$(find /tmp/uvx -name uv -type f | head -1)" >> "$GITHUB_ENV"
+      - name: Candidate 2 tests (22-package test lock)
+        run: |
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config venv --python /tmp/py/python/bin/python3.12 /tmp/testvenv
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip install --python /tmp/testvenv/bin/python --require-hashes --no-deps --only-binary=:all: -r ci/code-r10/requirements.lock
+          cd /tmp/c2/source_r10
+          git config --global user.name ci; git config --global user.email ci@example.invalid
+          PYTHONPATH=src:tests /tmp/testvenv/bin/python -m pytest -q -p no:cacheprovider tests 2>&1 | tee /tmp/c2-pytest.txt
+      - name: Runtime-only install (17-package lock), pip check and startup probe
+        run: |
+          echo "d31b5e35f103c7d7d7d75649ff93ba2786e0113fb49197adf0480fd9a5552db5  ci/code-c2/CODE_R10_X86_RUNTIME_REQUIREMENTS_R1.lock" | sha256sum -c -
+          echo "d9b546f44b3767bb66cbba96fc8db55739a1a2c6deae37415c5df464d1a8c509  ci/code-c2/runtime_startup_probe_r8.py" | sha256sum -c -
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config venv --python /tmp/py/python/bin/python3.12 /tmp/runvenv
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip install --python /tmp/runvenv/bin/python --require-hashes --no-deps --only-binary=:all: -r ci/code-c2/CODE_R10_X86_RUNTIME_REQUIREMENTS_R1.lock
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip check --python /tmp/runvenv/bin/python
+          # Probe R8 keeps the given venv path: the plain uv layout (bin/python is a symlink) must now work as is.
+          test -L /tmp/runvenv/bin/python && echo "venv python is uv's symlink (no materialised copy)"
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip freeze --python /tmp/runvenv/bin/python | tee /tmp/c2-runtime-freeze.txt
+          /tmp/testvenv/bin/python ci/code-c2/runtime_startup_probe_r8.py --source-root /tmp/c2/source_r10/src --python /tmp/runvenv/bin/python 2>&1 | tee /tmp/c2-probe.txt
+          grep -q '"ok": true' /tmp/c2-probe.txt && echo "layout 1 (uv symlink venv python): ok"
+          # Layout 2, as the installer ships it (materialize_venv_python): a regular copy inside the venv.
+          cp --remove-destination "$(readlink -f /tmp/runvenv/bin/python)" /tmp/runvenv/bin/python && chmod 0755 /tmp/runvenv/bin/python
+          test ! -L /tmp/runvenv/bin/python && /tmp/runvenv/bin/python -c "import sys, uvicorn; print('materialised venv python', sys.prefix)"
+          /tmp/testvenv/bin/python ci/code-c2/runtime_startup_probe_r8.py --source-root /tmp/c2/source_r10/src --python /tmp/runvenv/bin/python 2>&1 | tee -a /tmp/c2-probe.txt
+          [ "$(grep -c '"ok": true' /tmp/c2-probe.txt)" = 2 ] && echo "layout 2 (materialised copy): ok"
+          grep -q '"ok": true' /tmp/c2-probe.txt || {
+            echo "--- why the service exited: import the entry point on the runtime-only env (no secrets) ---"
+            cd /tmp/c2/source_r10/src && /tmp/runvenv/bin/python -B -s -c "import omegacode.__main__, omegacode.service, omegacode.api; print('imports ok')" 2>&1 | tail -15
+            echo "--- the service's own stderr, started once with a synthetic config (token redacted) ---"
+            sh $GITHUB_WORKSPACE/ci/code-c2/why_exit.sh /tmp/runvenv/bin/python /tmp/c2/source_r10/src
+            echo "--- the probe itself, with its stderr drain also keeping the bytes (diagnostic copy, token never on stderr) ---"
+            sed "s#            state\['stderr_bytes'\] += len(chunk)#            state['stderr_bytes'] += len(chunk); open('/tmp/c2-svc-stderr.txt', 'ab').write(chunk)#" \
+              $GITHUB_WORKSPACE/ci/code-c2/runtime_startup_probe_r8.py > /tmp/probe_dbg.py
+            grep -c c2-svc-stderr /tmp/probe_dbg.py
+            cd $GITHUB_WORKSPACE && /tmp/testvenv/bin/python /tmp/probe_dbg.py --source-root /tmp/c2/source_r10/src --python /tmp/runvenv/bin/python 2>&1 | tail -3
+            echo "service stderr bytes: $(wc -c < /tmp/c2-svc-stderr.txt 2>/dev/null)"; tail -40 /tmp/c2-svc-stderr.txt 2>/dev/null
+            exit 1; }
+      - name: Outer containment gate (transient systemd units; success, refusal, timeout, SIGTERM, SIGKILL)
+        run: |
+          sudo chmod 0755 /tmp/runvenv /tmp/testvenv 2>/dev/null || true
+          bash ci/code-c2/containment.sh "$GITHUB_WORKSPACE/ci/code-c2/runtime_startup_probe_r8.py" /tmp/c2/source_r10/src /tmp/testvenv/bin/python "$(id -un)" 2>&1 | tee /tmp/c2-containment.txt
+          grep -q "containment gate: PASS" /tmp/c2-containment.txt
+      - name: Hyperon 0.2.10 worker smoke (pinned wheel, separate env)
+        run: |
+          W=hyperon-0.2.10-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          curl -fsSL -o /tmp/$W "https://files.pythonhosted.org/packages/py3/h/hyperon/$W" || curl -fsSL -o /tmp/$W "$(curl -fsSL https://pypi.org/pypi/hyperon/0.2.10/json | python3 -c "import json,sys;print([f['url'] for f in json.load(sys.stdin)['urls'] if f['filename']=='$W'][0])")"
+          echo "12a0479df6afadda7562ffe10e7d63a6701aaec02f7177b91412bc05a09ed419  /tmp/$W" | sha256sum -c -
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config venv --python /tmp/py/python/bin/python3.12 /tmp/hyvenv
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip install --python /tmp/hyvenv/bin/python --no-deps --no-index /tmp/$W
+          /tmp/hyvenv/bin/python -I -c "import hyperon, json; m=hyperon.MeTTa(); r=m.run('!(+ 1 2)'); print(json.dumps({'hyperon_file': hyperon.__file__, 'result': str(r)}))" | tee /tmp/c2-hyperon.txt
+          grep -q '3' /tmp/c2-hyperon.txt
+      - name: Receipts (no secrets)
+        if: always()
+        run: mkdir -p c2-receipts && cp /tmp/c2-*.txt c2-receipts/ 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: code-c2-x86-receipts
+          path: c2-receipts/

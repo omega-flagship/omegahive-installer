@@ -1,0 +1,81 @@
+import type { GuideScript } from '../types'
+
+/** The mind's brain: beliefs, memory, reasoning, thinking, and the Lab that tests it. */
+export const BRAIN_SCRIPTS: GuideScript[] = [
+  {
+    id: 'beliefs',
+    title: 'Belief revision and truth values',
+    blurb: 'How a swarm’s shared beliefs carry a truth value, and when the hive revises them or picks one.',
+    status: 'ready',
+    standing: 'Live',
+    triggers: ['show me how belief revision works', 'show me how truth values work', 'how does the commons work', 'walk me through belief revision', 'explain belief revision', 'demo belief revision'],
+    topics: ['belief revision', 'revision', 'beliefs', 'belief', 'truth values', 'truth value', 'commons', 'swarm commons', 'shared beliefs', 'provenance', 'evidence', 'independent evidence', 'confidence', 'strength'],
+    steps: [
+      { say: 'Every swarm keeps a commons: beliefs its minds share. Here is {swarm}’s, drawn as a sky.', do: { swarm: 'commons' }, target: [{ tour: 'swarm-constellation' }, { tour: 'swarm-sky' }, { feature: 'swarms.beliefs' }, { region: 'page' }] },
+      { say: 'Each star is a belief. The nearer the core and the brighter, the surer the swarm is.', target: [{ tour: 'star' }, { tour: 'swarm-constellation' }, { tour: 'swarm-sky' }] },
+      { say: 'Let’s open one: “{belief}”. Its truth value is two numbers: strength, how often it holds, and confidence, how much evidence stands behind it.', do: { swarm: 'commons', belief: true }, target: [{ tour: 'prov-truth' }, { region: 'page' }] },
+      { say: 'Each report that shaped it is listed. When two reports rest on independent evidence, the hive revises them together and confidence grows.', target: [{ tour: 'prov-assertions' }, { tour: 'prov-truth' }] },
+      { say: 'When the evidence overlaps, it does not add them up: it chooses one. So repeating a belief never inflates it.', target: [{ tour: 'prov-choices' }, { tour: 'prov-assertions' }] },
+      { say: 'And here are the sources: which mind reported what. Nothing in the commons is anonymous.', target: [{ tour: 'prov-sources' }, { tour: 'prov-truth' }] },
+    ],
+  },
+  {
+    id: 'memory',
+    title: 'A mind’s memory: spaces and atoms',
+    blurb: 'Each mind’s private memory, as MeTTa spaces of atoms, and how minds lend each other a view.',
+    status: 'ready',
+    standing: 'Live',
+    triggers: ['show me how memory works', 'show me how a mind remembers', 'walk me through memory spaces', 'show me the atomspace', 'demo memory'],
+    topics: ['memory', 'memory spaces', 'spaces', 'atoms', 'atomspace', 'metta', 'remember', 'recall', 'memory sharing', 'what a mind knows'],
+    steps: [
+      { say: 'A mind’s memory is its own: MeTTa spaces of atoms, run on PeTTa. Let’s open {mind}’s.', do: { mind: 'memory' }, target: [{ tour: 'memory-spaces' }, { region: 'page' }], wait: { for: 'target', ms: 8000 } },
+      { say: 'Each space holds one kind of memory: persistent facts, its agenda, its own beliefs, the world, events, and more. You can browse the atoms, retire one, or reset a space.', target: { tour: 'memory-spaces' } },
+      { say: 'Minds can lend each other a view of a space for a set time, with consent, read logs and a way to take it back.', target: [{ tour: 'memory-sharing' }, { tour: 'memory-spaces' }] },
+      { say: 'Nothing a mind did is deleted, only moved to its archive. Its Thinking tab shows what it read and wrote, step by step.', do: { mind: 'mind' }, target: [{ tour: 'mind-replay' }, { region: 'page' }] },
+    ],
+  },
+  {
+    id: 'reasoning',
+    title: 'NAL, PLN and NARS reasoning',
+    blurb: 'The logic skills a mind calls, and how you can see whether it is really reasoning.',
+    status: 'ready',
+    standing: 'Live (no page per skill yet)',
+    triggers: ['show me how nal works', 'explain nal', 'show me how pln works', 'show me how nars works', 'walk me through reasoning', 'show me how a mind reasons', 'demo pln'],
+    topics: ['nal', 'pln', 'nars', 'reasoning', 'logic', 'inference', 'deduction', 'abduction', 'induction', 'non axiomatic logic', 'probabilistic logic networks', 'hyperon', 'dormancy meter', 'skills', 'tools'],
+    steps: [
+      { say: 'A mind’s reasoning happens in its atom spaces. The language model is the voice that chooses which skill to use.', do: { mind: 'model' }, target: [{ tour: 'mind-tools' }, { region: 'page' }] },
+      { say: 'This is {mind}’s Tools inventory: every skill it proved it loaded, and what it may call. That includes nal-step, pln-step, nars-query and nars-derive.', target: { tour: 'mind-tools' } },
+      { say: 'The meter here counts NAL, PLN, NARS, MeTTa and belief writes, so you can see whether it is actually reasoning or just talking.', target: { tour: 'mind-tools' } },
+      { say: 'Each step it takes, with its inputs and results, shows in Thinking. An individual skill has no page of its own yet; this is where to watch it.', do: { mind: 'mind' }, target: [{ tour: 'mind-replay' }, { region: 'page' }] },
+    ],
+  },
+  {
+    id: 'thinking',
+    title: 'Thinking and traces',
+    blurb: 'Every reasoning step a mind takes: input, response, commands, timing and tokens.',
+    status: 'ready',
+    standing: 'Live',
+    triggers: ['show me how thinking works', 'show me how traces work', 'walk me through a mind’s thinking', 'show me what a mind is thinking'],
+    topics: ['thinking', 'traces', 'trace', 'timeline', 'replay', 'steps', 'what a mind is thinking', 'health'],
+    steps: [
+      { say: 'Here is {mind}’s Thinking: each step it took, with what it read, what it said, the commands it ran, and the time and tokens it used.', do: { mind: 'mind' }, target: [{ tour: 'mind-replay' }, { region: 'page' }] },
+      { say: 'You can replay a run step by step. Nothing is deleted: old traces move to the archive.', target: [{ tour: 'mind-replay' }, { region: 'page' }] },
+      { say: 'Across all minds, Health sorts errors, finds loops, and names which mind answers an incident.', do: { go: { name: 'health' } }, target: [{ tour: 'health-mind' }, { region: 'page' }] },
+    ],
+  },
+  {
+    id: 'lab',
+    title: 'The Lab and benchmarks',
+    blurb: 'Tests and benchmarks for the hive itself, including the epistemic bench for belief updates.',
+    status: 'ready',
+    standing: 'Live',
+    triggers: ['show me how the lab works', 'walk me through the benchmarks', 'show me the epistemic benchmark', 'demo the lab'],
+    topics: ['lab', 'benchmarks', 'benchmark', 'tests', 'scorecard', 'epistemic', 'epistemic resolve', 'drift', 'bench'],
+    steps: [
+      { say: 'The Lab tests the hive itself. The scorecard sums up the latest runs.', do: { go: { name: 'lab' } }, target: [{ tour: 'lab-scorecard' }, { region: 'page' }] },
+      { say: 'Health is shown by dimension. Cost is projected from measured tokens; it is not money spent.', target: [{ tour: 'lab-dims' }, { tour: 'lab-scorecard' }] },
+      { say: 'The epistemic bench checks the swarm’s belief-update discipline, using Crawford and Hammer’s Epistemic Resolve.', do: { go: { name: 'lab', suite: 'bench-epistemic' } }, target: { region: 'page' } },
+      { say: 'History keeps every run, so drift shows over time.', do: { go: { name: 'lab', suite: 'bench-epistemic', tab: 'history' } }, target: [{ tour: 'lab-history' }, { region: 'page' }] },
+    ],
+  },
+]

@@ -1,0 +1,13 @@
+!(import! &self (library lib_import))
+!(git-import! "https://github.com/asi-alliance/OmegaClaw-Core.git")
+!(import! &self (library OmegaClaw-Core lib_omegaclaw))
+!(bind! &agenda (new-space))
+!(bind! &events (new-space))
+
+!(println! (eval (agenda-goal "sandbox-agenda-hygiene active high first-step")))
+!(println! (eval (agenda-by-name "sandbox-agenda-hygiene")))
+!(println! (eval (agenda-goal "sandbox-agenda-hygiene waiting medium second-step")))
+!(println! (eval (agenda-by-name "sandbox-agenda-hygiene")))
+!(println! (eval (space-count agenda "(Goal \"sandbox-agenda-hygiene\" $status $priority $next)")))
+!(println! (eval (agenda-retire "sandbox-agenda-hygiene" "smoke complete")))
+!(println! (eval (agenda-by-name "sandbox-agenda-hygiene")))

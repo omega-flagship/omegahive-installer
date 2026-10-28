@@ -1,0 +1,403 @@
+/* The demo showreel (Surface D4): its bar, the layers of how, the demo cursor and the draw layer. Colours are the
+   experience's own chrome tokens (--xc-*), as the guided caption's are (guided.css), so it reads in every look,
+   light or dark. The cursor and the marks are aria-hidden; under reduced motion nothing glides or draws. */
+
+.sr-bar,
+.sr-layers {
+  position: fixed;
+  z-index: 58;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: min(var(--xc-radius), 16px);
+  border: 1px solid var(--xc-edge);
+  background: var(--xc-texture), var(--xc-surface);
+  backdrop-filter: var(--xc-blur);
+  -webkit-backdrop-filter: var(--xc-blur);
+  box-shadow: var(--xc-shadow);
+  color: var(--xc-ink);
+  font-family: var(--xc-font);
+  font-size: 13.5px;
+  line-height: 1.45;
+  --color-ink: var(--xc-ink);
+  --color-ink-2: var(--xc-ink-2);
+  --color-ink-3: var(--xc-ink-3);
+  --color-accent: var(--xc-accent);
+  pointer-events: auto;
+}
+/* a wide screen: the bottom-left corner, clear of the Ask (centred) and the clock and toasts (right); a phone: the top */
+.sr-bar {
+  left: 16px;
+  bottom: calc(var(--sab, 0px) + 72px);
+  width: min(400px, calc(100vw - 32px));
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
+}
+@media (max-width: 767px) {
+  .sr-bar {
+    bottom: auto;
+    top: calc(var(--sat, 0px) + 8px);
+    right: 16px;
+    width: auto;
+    max-height: 45vh;
+  }
+}
+.sr-bar .guide-controls {
+  margin-top: 8px;
+}
+.sr-title {
+  margin: 0;
+  font-weight: 600;
+}
+.sr-status {
+  margin-top: 2px;
+}
+.sr-bar[data-status='took-over'] .sr-status {
+  color: var(--xc-ink);
+  font-weight: 600;
+}
+.sr-answer {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--xc-accent) 50%, transparent);
+  background: color-mix(in srgb, var(--xc-accent) 8%, transparent);
+}
+.sr-q {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--xc-ink-3);
+}
+
+/* the layers of how: a side panel on a wide screen, a sheet above the Ask on a phone */
+.sr-layers {
+  /* a reading panel: the chrome's surface laid twice over its raised colour, so the page behind does not show through */
+  background:
+    var(--xc-texture),
+    linear-gradient(var(--xc-surface), var(--xc-surface)),
+    linear-gradient(var(--xc-surface), var(--xc-surface)),
+    var(--xc-raised);
+  top: 72px;
+  right: 16px;
+  bottom: calc(var(--sab, 0px) + var(--ask-room, 0px) + 16px);
+  width: min(460px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+@media (max-width: 767px) {
+  .sr-layers {
+    top: auto;
+    left: 16px;
+    right: 16px;
+    width: auto;
+    max-height: 62vh;
+  }
+}
+.sr-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sr-crumbs li + li::before {
+  content: '›';
+  padding: 0 4px;
+  color: var(--xc-ink-3);
+}
+.sr-crumb {
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--xc-ink-3);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.sr-crumbs li[data-seen] .sr-crumb {
+  color: var(--xc-ink-2);
+}
+.sr-crumb[aria-current] {
+  color: var(--xc-ink);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.sr-crumb:focus-visible {
+  outline: 2px solid var(--xc-accent);
+}
+.sr-synthetic {
+  white-space: nowrap;
+}
+.sr-synthetic-inline {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--xc-ink-3);
+}
+.sr-layer-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+}
+.sr-layer-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.sr-layers footer {
+  margin-top: 0;
+}
+.sr-dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 10px;
+  margin: 0;
+}
+.sr-dl dt {
+  color: var(--xc-ink-3);
+}
+.sr-dl dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sr-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+.sr-list li {
+  overflow-wrap: anywhere;
+}
+.sr-block {
+  display: block;
+  font-size: 12.5px;
+}
+.sr-muted {
+  color: var(--xc-ink-3);
+  font-size: 12.5px;
+}
+.sr-h {
+  margin: 8px 0 4px;
+  font-weight: 600;
+}
+.sr-tag {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 99px;
+  border: 1px solid color-mix(in srgb, currentColor 50%, transparent);
+  font-size: 11px;
+}
+.sr-pre {
+  margin: 4px 0 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--xc-ink) 7%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sr-ln {
+  color: var(--xc-ink-3);
+}
+.sr-ref {
+  overflow-wrap: anywhere;
+}
+.sr-graphs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+@media (max-width: 520px) {
+  .sr-graphs {
+    grid-template-columns: 1fr;
+  }
+}
+.sr-graph {
+  margin: 0;
+}
+.sr-graph figcaption {
+  font-size: 12px;
+  color: var(--xc-ink-3);
+}
+.sr-graph svg {
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--xc-ink) 4%, transparent);
+}
+.sr-edge {
+  stroke: var(--xc-ink-3);
+  stroke-width: 1;
+}
+.sr-atom circle {
+  fill: var(--xc-ink-2);
+}
+.sr-atom[data-kind='link'] circle {
+  fill: none;
+  stroke: var(--xc-ink-2);
+  stroke-width: 1.5;
+}
+.sr-atom[data-change='new'] circle,
+.sr-atom[data-change='changed'] circle {
+  fill: var(--xc-accent);
+  stroke: var(--xc-accent);
+}
+.sr-atom text {
+  fill: var(--xc-ink);
+  font-size: 9px;
+}
+.sr-atom .sr-tv {
+  fill: var(--xc-ink-3);
+  font-size: 8.5px;
+}
+
+/* the PLN maths: plain HTML and CSS typesetting */
+.pln-layer {
+  display: grid;
+  gap: 10px;
+}
+.pln-intro {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--xc-ink-2);
+}
+.pln-step {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--xc-edge);
+}
+.pln-step summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 10px;
+  cursor: pointer;
+}
+.pln-rule {
+  font-weight: 600;
+}
+.pln-src {
+  font-size: 12px;
+  color: var(--xc-ink-3);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.pln-premises {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 2px;
+  font-size: 12.5px;
+}
+.pln-role {
+  color: var(--xc-ink-3);
+}
+.pln-atom {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.pln-stv {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.pln-w {
+  font-size: 12px;
+  color: var(--xc-ink-3);
+  white-space: nowrap;
+}
+.pln-from {
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--xc-accent);
+  font: inherit;
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.pln-h {
+  margin: 8px 0 2px;
+  font-size: 12px;
+  color: var(--xc-ink-3);
+}
+.pln-formula {
+  display: grid;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--xc-ink) 5%, transparent);
+  font-family: 'STIX Two Math', 'Cambria Math', 'Latin Modern Math', Georgia, serif;
+  font-size: 14px;
+  overflow-x: auto;
+}
+.pln-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 2px;
+}
+.pln-op,
+.pln-fn {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.pln-out {
+  font-family: var(--xc-font);
+  font-size: 12.5px;
+  color: var(--xc-ink-2);
+}
+.pln-var sub {
+  font-size: 0.7em;
+}
+.pln-sign {
+  white-space: pre;
+}
+.pln-frac {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  vertical-align: middle;
+  margin: 0 3px;
+}
+.pln-frac-n {
+  padding: 0 3px 1px;
+  border-bottom: 1px solid currentColor;
+}
+.pln-frac-d {
+  padding: 1px 3px 0;
+}
+.pln-plugged .pln-num {
+  color: var(--xc-accent);
+}
+.pln-conclusion {
+  margin: 8px 0 0;
+  font-weight: 600;
+}
+.pln-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--xc-ink-3);
+}
+.pln-cap {
+  color: var(--xc-ink-2);
+}
+.pln-compare {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px dashed var(--xc-edge);
+  font-size: 12.5px;
+}
+.pln-compare p {
+  margin: 2px 0;
+}

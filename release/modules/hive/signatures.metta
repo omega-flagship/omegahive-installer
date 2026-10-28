@@ -1,0 +1,70 @@
+(SkillSignature hive-publish (Arg metta statement) (Arg number frequency) (Arg number confidence))
+(SkillSignature hive-query (Arg metta pattern))
+(SkillSignature hive-belief (Arg metta statement))
+(SkillSignature hive-goals)
+(SkillSignature hive-goal-claim (Arg text goal))
+(SkillSignature hive-goal-done (Arg text goal) (Arg rest-text result))
+(SkillSignature hive-goal-fail (Arg text goal) (Arg rest-text reason))
+(SkillSignature hive-goal-create (Arg text parent) (Arg rest-text title))
+(SkillSignature hive-shares)
+(SkillSignature hive-share-request (Arg text owner) (Arg text space) (Arg number minutes) (Arg rest-text reason))
+(SkillSignature hive-share-grant (Arg text share))
+(SkillSignature hive-share-deny (Arg text share) (Arg rest-text reason))
+(SkillSignature hive-share-offer (Arg text dot) (Arg text space) (Arg number minutes))
+(SkillSignature hive-shared (Arg text share) (Arg rest-text filter))
+(SkillSignature hive-exhibit (Arg text to) (Arg number minutes) (Arg rest-text text))
+(SkillSignature hive-exhibit-space (Arg text to) (Arg text space) (Arg number minutes) (Arg rest-text filter))
+(SkillSignature hive-shared-page (Arg text share) (Arg number offset) (Arg rest-text filter))
+(SkillSignature hive-shared-body (Arg text share) (Arg number part))
+(SkillSignature hive-health)
+(SkillSignature hive-review-complete (Arg text request) (Arg rest-text json))
+(SkillSignature hive-asset-put (Arg text path) (Arg rest-text name))
+(SkillSignature hive-asset-get (Arg text sha) (Arg rest-text where))
+(SkillSignature hive-review-receipts (Arg text digest))
+(SkillSignature hive-goal-review (Arg text goal) (Arg text decision) (Arg rest-text notes))
+(SkillSignature hive-rooms)
+(SkillSignature hive-room-post (Arg text room) (Arg rest-text text))
+(SkillSignature hive-coffee-note (Arg rest-text text))
+(SkillSignature hive-finding (Arg rest-text json))
+(SkillSignature hive-revision-read (Arg text artifact) (Arg number n))
+(SkillSignature hive-revision (Arg text artifact) (Arg rest-text json))
+(SkillSignature hive-revision-part (Arg text artifact) (Arg number n) (Arg rest-text text))
+(SkillSignature hive-artifact-create (Arg rest-text json))
+(SkillSignature hive-request (Arg rest-text json))
+(SkillSignature hive-lifecycle-start (Arg text lease))
+(SkillSignature hive-lifecycle-stop (Arg text lease))
+(SkillSignature hive-lifecycle-status (Arg text lease))
+(SkillSignature hive-goal-get (Arg text goal))
+(SkillSignature hive-goal-propose (Arg text goal) (Arg rest-text proposal))
+(SkillSignature hive-goal-cancel-ack (Arg text goal))
+(SkillSignature hive-goal-heartbeat (Arg text goal))
+
+(SkillSignature hive-plan-return (Arg text request) (Arg text artifact) (Arg number revision))
+
+(SkillSignature hive-findings-read (Arg text artifact))
+
+(SkillSignature hive-plan-review-context (Arg text request) (Arg text artifact) (Arg number revision))
+
+(SkillSignature hive-finding-response (Arg text finding) (Arg rest-text json))
+
+(SkillSignature hive-finding-disposition (Arg text finding) (Arg rest-text json))
+
+(SkillSignature hive-flows)
+(SkillSignature hive-flow-draft (Arg rest-text json))
+(SkillSignature hive-flow-revise (Arg text artifact) (Arg rest-text json))
+(SkillSignature hive-flow-read (Arg text artifact) (Arg number revision))
+
+(SkillSignature hive-flow-drafts)
+
+(SkillSignature hive-flow-publish (Arg rest-text json))
+
+(SkillSignature hive-flow-run (Arg text name) (Arg rest-text json))
+
+(SkillSignature hive-flow-retire (Arg text name))
+
+(SkillSignature hive-flow-run-get (Arg text id))
+
+(SkillSignature hive-flow-cancel (Arg text id))
+
+(SkillSignature repo-query (Arg rest-text json))
+(SkillSignature calendar-read (Arg rest-text json))

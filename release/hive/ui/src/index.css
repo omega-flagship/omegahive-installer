@@ -1,0 +1,772 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-display: 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Inter Variable', Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+
+  --color-void: #04040f;
+  --color-abyss: #080822;
+  --color-ink: #eceaff;
+  --color-ink-2: #b9b8dc;
+  --color-ink-3: #8a89b3;
+  /* ink-4 is the faintest text allowed: >=4.5:1 on void (5.24), glass (4.98) and the glass sheen top (4.56). */
+  --color-ink-4: #7e7da9;
+  /* Below 4.5:1 on void (3.25): decoration only (rules, dots, disabled glyphs), never text. */
+  --color-ink-5: #5d5c86;
+  /* line / line-2 are dividers and card edges (decorative, ~1.2-1.4:1). */
+  --color-line: rgb(170 170 255 / 0.12);
+  --color-line-2: rgb(190 190 255 / 0.2);
+  /* control: the edge of anything you operate (text fields, switch tracks, the selected segment).
+     Solid so it holds >=3:1 (WCAG 1.4.11) on every surface: void 3.96, glass 3.76, glass sheen 3.44. */
+  --color-control: #6868a0;
+  --color-glass: rgb(16 16 44 / 0.62);
+  --color-glass-2: rgb(24 24 62 / 0.72);
+  --color-accent: #a493ff;
+  --color-primary-top: #b9aeff;
+  --color-primary-ink: #0b0820;
+  --color-accent-2: #6ee7ff;
+  --color-good: #4ade80;
+  --color-warn: #fbbf24;
+  --color-bad: #fb7185;
+
+  /* Type scale (rem, so the OS text size applies). Nine steps; no half pixels.
+       text-caption  11px  uppercase eyebrows, chip and badge labels only; never sentences
+       text-meta     12px  the floor for body copy: timestamps, hints, slugs, helper lines
+       text-small    13px  secondary body, dense lists
+       text-body     14px  default body copy
+       text-lead     16px  card titles, emphasised body
+       text-title-sm 18px  section titles
+       text-title    22px  page titles on phone
+       text-heading  28px  page titles
+       text-display  36px  hero numbers and greetings
+     Older text-[Npx] literals migrate to these as pages are touched. */
+  --text-caption: 0.6875rem;
+  --text-caption--line-height: 1rem;
+  --text-meta: 0.75rem;
+  --text-meta--line-height: 1.125rem;
+  --text-small: 0.8125rem;
+  --text-small--line-height: 1.25rem;
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.375rem;
+  --text-lead: 1rem;
+  --text-lead--line-height: 1.5rem;
+  --text-title-sm: 1.125rem;
+  --text-title-sm--line-height: 1.625rem;
+  --text-title: 1.375rem;
+  --text-title--line-height: 1.875rem;
+  --text-heading: 1.75rem;
+  --text-heading--line-height: 2.25rem;
+  --text-display: 2.25rem;
+  --text-display--line-height: 2.625rem;
+
+  --ease-spring: cubic-bezier(0.22, 1.2, 0.36, 1);
+  --animate-breathe: breathe 3.2s ease-in-out infinite;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-spin-slow: spin 6s linear infinite;
+
+  @keyframes breathe {
+    0%, 100% { transform: scale(1); opacity: 0.9; }
+    50% { transform: scale(1.12); opacity: 1; }
+  }
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    --sat: env(safe-area-inset-top, 0px);
+    --sab: env(safe-area-inset-bottom, 0px);
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+    background: var(--color-void);
+    overscroll-behavior: none;
+  }
+  body {
+    margin: 0;
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv11', 'ss01';
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    overflow: hidden;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: var(--look-selection, rgb(164 147 255 / 0.4));
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-accent-2);
+    outline-offset: 2px;
+    border-radius: 10px;
+  }
+  button {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  input,
+  textarea,
+  select {
+    font: inherit;
+    /* 16px prevents iOS zoom-on-focus */
+    font-size: max(16px, 1em);
+  }
+  @media (min-width: 768px) {
+    input,
+    textarea,
+    select {
+      font-size: inherit;
+    }
+  }
+}
+
+@layer components {
+  .glass {
+    background:
+      linear-gradient(180deg, rgb(255 255 255 / 0.045), rgb(255 255 255 / 0.012) 40%),
+      var(--color-glass);
+    backdrop-filter: blur(22px) saturate(150%);
+    -webkit-backdrop-filter: blur(22px) saturate(150%);
+    border: 1px solid var(--color-line);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.07),
+      inset 0 0 40px rgb(140 130 255 / 0.04),
+      0 20px 60px -20px rgb(0 0 0 / 0.7);
+  }
+  .glass-strong {
+    background:
+      linear-gradient(180deg, rgb(255 255 255 / 0.05), rgb(255 255 255 / 0.01) 50%),
+      var(--look-strong, rgb(11 11 33 / 0.94));
+    backdrop-filter: blur(28px) saturate(160%);
+    -webkit-backdrop-filter: blur(28px) saturate(160%);
+    border: 1px solid var(--color-line);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.08),
+      0 30px 80px -24px rgb(0 0 0 / 0.85);
+  }
+  .hairline-t {
+    border-top: 1px solid var(--color-line);
+  }
+  .hairline-b {
+    border-bottom: 1px solid var(--color-line);
+  }
+  .eyebrow {
+    font-family: var(--font-display);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+  }
+  .skeleton {
+    background: linear-gradient(90deg, rgb(255 255 255 / 0.04) 25%, rgb(255 255 255 / 0.1) 50%, rgb(255 255 255 / 0.04) 75%);
+    background-size: 200% 100%;
+    animation: var(--animate-shimmer);
+    border-radius: 8px;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .thin-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(160 160 255 / 0.2) transparent;
+  }
+  .text-glow {
+    text-shadow: 0 0 24px var(--look-glow, rgb(164 147 255 / 0.45));
+  }
+}
+
+/* App motifs (shell/appLook.ts): host-drawn patterns behind an app's page, tinted by the app's accent.
+   Pure gradients, no images or URLs; faint enough to sit behind text (decoration only). */
+.app-motif {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  --m: color-mix(in srgb, var(--app-accent, #a493ff) 14%, transparent);
+  --m2: color-mix(in srgb, var(--app-accent-2, #6ee7ff) 10%, transparent);
+  mask-image: linear-gradient(180deg, black, transparent 75%);
+  -webkit-mask-image: linear-gradient(180deg, black, transparent 75%);
+}
+.app-motif[data-motif='constellation'] {
+  background-image:
+    radial-gradient(circle at 12% 18%, var(--m) 0 1.5px, transparent 2.5px),
+    radial-gradient(circle at 68% 9%, var(--m2) 0 1.5px, transparent 2.5px),
+    radial-gradient(circle at 41% 33%, var(--m) 0 1px, transparent 2px),
+    radial-gradient(circle at 87% 41%, var(--m) 0 2px, transparent 3px),
+    radial-gradient(circle at 23% 52%, var(--m2) 0 1px, transparent 2px);
+  background-size: 340px 260px;
+}
+.app-motif[data-motif='strata'] {
+  background-image: repeating-radial-gradient(ellipse 120% 70% at 85% -10%, transparent 0 22px, var(--m) 22px 23px);
+}
+.app-motif[data-motif='lattice'] {
+  background-image:
+    repeating-linear-gradient(45deg, transparent 0 23px, var(--m) 23px 24px),
+    repeating-linear-gradient(-45deg, transparent 0 23px, var(--m2) 23px 24px);
+}
+.app-motif[data-motif='grain'] {
+  background-image:
+    radial-gradient(var(--m) 0.6px, transparent 1px),
+    radial-gradient(var(--m2) 0.6px, transparent 1px);
+  background-size: 5px 5px, 7px 7px;
+  background-position: 0 0, 2px 3px;
+}
+.app-motif[data-motif='rings'] {
+  background-image: repeating-radial-gradient(circle at 100% 0%, transparent 0 26px, var(--m) 26px 27px, transparent 27px 34px, var(--m2) 34px 35px);
+}
+.app-motif[data-motif='ruled'] {
+  background-image:
+    linear-gradient(90deg, transparent 63px, var(--m2) 63px 64px, transparent 64px),
+    repeating-linear-gradient(180deg, transparent 0 31px, var(--m) 31px 32px);
+}
+.app-motif[data-motif='blueprint'] {
+  background-image:
+    linear-gradient(var(--m) 1px, transparent 1px),
+    linear-gradient(90deg, var(--m) 1px, transparent 1px),
+    linear-gradient(var(--m2) 1px, transparent 1px),
+    linear-gradient(90deg, var(--m2) 1px, transparent 1px);
+  background-size: 120px 120px, 120px 120px, 24px 24px, 24px 24px;
+}
+/* An app's type pairing reaches its headings and eyebrows; body text stays the look's. */
+[data-app-type='technical'] .eyebrow,
+[data-app-type='mono'] .eyebrow {
+  font-family: var(--font-display);
+  letter-spacing: 0.08em;
+}
+[data-app-type='editorial'] h1,
+[data-app-type='editorial'] h2 {
+  letter-spacing: -0.005em;
+  font-weight: 600;
+}
+[data-app-type='mono'] {
+  font-family: var(--font-display);
+}
+
+/* A look's text size (shell/uiVariant TEXT_SCALE, set as --text-scale): the type scale only. The root rem is never
+   changed, so spacing, radii and hit targets stay the same at every text size (Kimi r1g P1). Values mirror @theme. */
+html[data-ui-density] {
+  --text-caption: calc(0.6875rem * var(--text-scale, 1));
+  --text-caption--line-height: calc(1rem * var(--text-scale, 1));
+  --text-meta: calc(0.75rem * var(--text-scale, 1));
+  --text-meta--line-height: calc(1.125rem * var(--text-scale, 1));
+  --text-small: calc(0.8125rem * var(--text-scale, 1));
+  --text-small--line-height: calc(1.25rem * var(--text-scale, 1));
+  --text-body: calc(0.875rem * var(--text-scale, 1));
+  --text-body--line-height: calc(1.375rem * var(--text-scale, 1));
+  --text-lead: calc(1rem * var(--text-scale, 1));
+  --text-lead--line-height: calc(1.5rem * var(--text-scale, 1));
+  --text-title-sm: calc(1.125rem * var(--text-scale, 1));
+  --text-title-sm--line-height: calc(1.625rem * var(--text-scale, 1));
+  --text-title: calc(1.375rem * var(--text-scale, 1));
+  --text-title--line-height: calc(1.875rem * var(--text-scale, 1));
+  --text-heading: calc(1.75rem * var(--text-scale, 1));
+  --text-heading--line-height: calc(2.25rem * var(--text-scale, 1));
+  --text-display: calc(2.25rem * var(--text-scale, 1));
+  --text-display--line-height: calc(2.625rem * var(--text-scale, 1));
+}
+
+/* A look with motion 'none' (shell/uiVariant.ts) stills CSS animation as well as framer-motion. */
+[data-ui-motion='none'] *,
+[data-ui-motion='none'] *::before,
+[data-ui-motion='none'] *::after {
+  animation-duration: 0s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0s !important;
+}
+
+/* Text fields that use the divider edge get the control edge instead, so every field is visible (1.4.11).
+   Same layer as the utilities, won on specificity, so state colours like border-bad still apply. */
+@layer utilities {
+  :is(input, textarea, select):is(.border-line, .border-line-2) {
+    border-color: var(--color-control);
+  }
+  :is(input, textarea, select):is(.border-line, .border-line-2):focus {
+    border-color: var(--color-accent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.12s !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* P8 checked theme colours switch atomically, including under the global reduced-motion duration.
+   This boundary excludes the host identity and confirmation cards, which are siblings. */
+[data-memory-themed],
+[data-memory-themed] *,
+[data-memory-themed]::before,
+[data-memory-themed]::after,
+[data-memory-themed] *::before,
+[data-memory-themed] *::after {
+  transition-property: none !important;
+}
+
+/* Hue slider: the track is the whole colour wheel, the thumb a glowing ring. */
+.hue-range {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 10px;
+  border-radius: 999px;
+  margin: 17px 0;
+  background: linear-gradient(90deg, hsl(0 90% 62%), hsl(60 90% 62%), hsl(120 90% 62%), hsl(180 90% 62%), hsl(240 90% 62%), hsl(300 90% 62%), hsl(360 90% 62%));
+  cursor: pointer;
+}
+.hue-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid #fff;
+  background: transparent;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.3), 0 0 16px rgb(255 255 255 / 0.5);
+}
+.hue-range::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 3px solid #fff;
+  background: transparent;
+}
+
+@keyframes orbit-x {
+  from { transform: translateX(calc(var(--r) * -1)); }
+  to { transform: translateX(var(--r)); }
+}
+@keyframes orbit-y {
+  from { transform: translateY(calc(var(--r) * -1)); }
+  to { transform: translateY(var(--r)); }
+}
+@keyframes star-pulse {
+  0% { r: 4; opacity: 0.9; }
+  100% { r: 34; opacity: 0; }
+}
+
+/* Timeline scrubber: a thin hue track that fills up to the replay cursor. */
+.scrub {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 32px;
+  background: transparent;
+  cursor: pointer;
+}
+.scrub:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.scrub::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, hsl(var(--hue) 100% 75%) var(--fill), rgb(255 255 255 / 0.1) var(--fill));
+}
+.scrub::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, hsl(var(--hue) 100% 75%) var(--fill), rgb(255 255 255 / 0.1) var(--fill));
+}
+.scrub::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 4px hsl(var(--hue) 100% 70% / 0.3), 0 0 14px hsl(var(--hue) 100% 70% / 0.8);
+}
+.scrub::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 4px hsl(var(--hue) 100% 70% / 0.3), 0 0 14px hsl(var(--hue) 100% 70% / 0.8);
+}
+
+/* Guided tour: the pointer presses and a ring ripples out from its tip. */
+@keyframes tour-ripple {
+  0% { transform: translate(-50%, -50%) scale(0.2); opacity: 0.95; }
+  100% { transform: translate(-50%, -50%) scale(1.6); opacity: 0; }
+}
+@keyframes tour-press {
+  0%, 100% { transform: scale(1); }
+  40% { transform: scale(0.82); }
+}
+.tour-ripple {
+  animation: tour-ripple 0.6s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+  box-shadow: 0 0 18px rgb(110 231 255 / 0.6);
+}
+.tour-press {
+  animation: tour-press 0.28s ease-out;
+}
+
+/* Toasts sit above the phone tab bar (and the home indicator); on desktop, the bottom-right corner. */
+.toast-stack { padding-bottom: calc(var(--sab) + 84px); }
+@media (min-width: 768px) { .toast-stack { padding-bottom: 16px; } }
+
+/* Navigation entries open their own menu on a touch long-press (shell/longPress.ts): no system callout competes. */
+[data-nav-key][aria-haspopup='menu'] { -webkit-touch-callout: none; }
+
+/* Short desktop windows: tighten the rail so every destination fits without hidden scrolling (UI review 2026-10-04). */
+@media (min-width: 768px) and (max-height: 980px) {
+  .rail-item { height: 32px; }
+  .rail-group { padding-top: 6px; }
+}
+
+/* ---------------------------------------------------------------------------------------------------------------
+   Experience chrome (experiences/chrome.ts). applyChrome() writes --xc-* on <html> plus data-xc-material,
+   data-xc-scheme and, inside an experience, data-xc-active. Two families of classes:
+   - .xc-window .xc-menu .xc-item .xc-button .xc-input .xc-scrim .xc-heading: host windows that always wear the
+     chrome (Ω menu, Everything, an app's windows). In classic they wear CLASSIC_CHROME (the defaults below).
+   - .xc-dress .xc-frame .xc-page .xc-backdrop: classic windows and pages. They do nothing in classic (unchanged,
+     looks included); inside an experience they re-point the classic tokens at the chrome, so every Button, field,
+     card and line in them follows, and a light chrome gets a light companion of the --color-* tokens.
+   Unlayered on purpose: these win over Tailwind's layered utilities without !important.
+   --------------------------------------------------------------------------------------------------------------- */
+:root {
+  --xc-surface: rgb(11 11 33 / 0.96);
+  --xc-raised: rgb(24 24 62 / 0.96);
+  --xc-ink: #eceaff;
+  --xc-ink-2: #b9b8dc;
+  --xc-ink-3: #8a89b3;
+  --xc-line: rgb(170 170 255 / 0.14);
+  --xc-edge: #6868a0;
+  --xc-accent: #a493ff;
+  --xc-on-accent: #0b0820;
+  --xc-danger: #fb7185;
+  --xc-on-danger: #1a0509;
+  --xc-font: 'Inter Variable', Inter, system-ui, sans-serif;
+  --xc-display: 'Inter Variable', Inter, system-ui, sans-serif;
+  --xc-radius: 18px;
+  --xc-control-radius: 12px;
+  --xc-scrim: rgb(0 0 0 / 0.55);
+  --xc-shadow: 0 30px 80px -24px rgb(0 0 0 / 0.85);
+  --xc-hover: color-mix(in srgb, var(--xc-ink) 8%, transparent);
+  --xc-press: color-mix(in srgb, var(--xc-ink) 14%, transparent);
+  /* material texture layered over the surface */
+  --xc-texture: linear-gradient(180deg, rgb(255 255 255 / 0.05), rgb(255 255 255 / 0.01) 50%);
+  --xc-blur: blur(28px) saturate(160%);
+}
+html[data-xc-material='paper'] {
+  --xc-texture:
+    radial-gradient(color-mix(in srgb, var(--xc-ink) 5%, transparent) 0.6px, transparent 1px) 0 0 / 5px 5px,
+    radial-gradient(color-mix(in srgb, var(--xc-ink) 4%, transparent) 0.6px, transparent 1px) 2px 3px / 7px 7px;
+  --xc-blur: none;
+}
+html[data-xc-material='terminal'] {
+  --xc-texture: repeating-linear-gradient(180deg, transparent 0 2px, color-mix(in srgb, var(--xc-accent) 6%, transparent) 2px 3px);
+  --xc-blur: none;
+}
+html[data-xc-material='none'] {
+  --xc-texture: linear-gradient(transparent, transparent);
+  --xc-blur: none;
+}
+html[data-xc-scheme='light'] {
+  --xc-hover: color-mix(in srgb, var(--xc-ink) 6%, transparent);
+  --xc-press: color-mix(in srgb, var(--xc-ink) 11%, transparent);
+}
+
+.xc-window,
+.xc-menu {
+  background: var(--xc-texture), var(--xc-surface);
+  color: var(--xc-ink);
+  border: 1px solid var(--xc-line);
+  border-radius: var(--xc-radius);
+  box-shadow: var(--xc-shadow);
+  font-family: var(--xc-font);
+  backdrop-filter: var(--xc-blur);
+  -webkit-backdrop-filter: var(--xc-blur);
+}
+.xc-menu {
+  border-radius: min(var(--xc-radius), 14px);
+}
+html[data-xc-scheme='light'] :is(.xc-window, .xc-menu) {
+  color-scheme: light;
+}
+.xc-heading {
+  font-family: var(--xc-display);
+  color: var(--xc-ink);
+  font-weight: 600;
+}
+.xc-ink-2 { color: var(--xc-ink-2); }
+.xc-ink-3 { color: var(--xc-ink-3); }
+.xc-divider { border-color: var(--xc-line); }
+.xc-item {
+  color: var(--xc-ink);
+  border-radius: calc(var(--xc-control-radius) * 0.6);
+  outline: none;
+  transition: background-color 0.12s;
+}
+.xc-item:hover { background: var(--xc-hover); }
+.xc-item:focus-visible {
+  background: var(--xc-press);
+  box-shadow: inset 0 0 0 2px var(--xc-accent);
+}
+.xc-item[aria-checked='true'] { background: var(--xc-raised); }
+.xc-item:disabled,
+.xc-item[aria-disabled='true'] { cursor: default; opacity: 0.6; }
+.xc-item:disabled:hover { background: transparent; }
+.xc-mark { color: var(--xc-accent); }
+.xc-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--xc-edge);
+  border-radius: var(--xc-control-radius);
+  background: transparent;
+  color: var(--xc-ink);
+  font-family: var(--xc-font);
+  font-weight: 500;
+  transition: background-color 0.12s, filter 0.12s;
+}
+.xc-button:hover { background: var(--xc-hover); }
+.xc-button:focus-visible { outline: 2px solid var(--xc-accent); outline-offset: 2px; }
+.xc-button.xc-primary { background: var(--xc-accent); border-color: var(--xc-accent); color: var(--xc-on-accent); font-weight: 600; }
+.xc-button.xc-danger { background: var(--xc-danger); border-color: var(--xc-danger); color: var(--xc-on-danger); font-weight: 600; }
+.xc-button:is(.xc-primary, .xc-danger):hover { filter: brightness(1.08); }
+.xc-button.xc-subtle { border-color: transparent; color: var(--xc-ink-2); }
+.xc-button.xc-subtle:hover { color: var(--xc-ink); }
+.xc-input {
+  background: color-mix(in srgb, var(--xc-ink) 4%, transparent);
+  border: 1px solid var(--xc-edge);
+  border-radius: var(--xc-control-radius);
+  color: var(--xc-ink);
+  font-family: var(--xc-font);
+  outline: none;
+}
+.xc-input::placeholder { color: var(--xc-ink-3); }
+.xc-input:focus { border-color: var(--xc-accent); box-shadow: 0 0 0 1px var(--xc-accent); }
+.xc-input.xc-bare { background: transparent; border-color: transparent; box-shadow: none; }
+.xc-scrim { background: var(--xc-scrim); }
+html[data-xc-material='glass'] .xc-scrim { backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+.xc-window :focus-visible,
+.xc-menu :focus-visible { outline-color: var(--xc-accent); }
+
+/* The dress: classic tokens re-pointed at the chrome, only inside an experience. */
+html[data-xc-active] .xc-dress {
+  --color-void: var(--xc-surface);
+  --color-abyss: var(--xc-surface);
+  --color-ink: var(--xc-ink);
+  --color-ink-2: var(--xc-ink-2);
+  --color-ink-3: var(--xc-ink-3);
+  --color-ink-4: var(--xc-ink-3);
+  --color-ink-5: color-mix(in srgb, var(--xc-ink-3) 55%, transparent);
+  --color-line: var(--xc-line);
+  --color-line-2: color-mix(in srgb, var(--xc-edge) 60%, transparent);
+  --color-control: var(--xc-edge);
+  --color-glass: var(--xc-raised);
+  --color-glass-2: var(--xc-raised);
+  --color-accent: var(--xc-accent);
+  --color-accent-2: var(--xc-accent);
+  --color-primary-top: var(--xc-accent);
+  --color-primary-ink: var(--xc-on-accent);
+  --color-bad: var(--xc-danger);
+  --look-strong: var(--xc-surface);
+  --look-page-a: var(--xc-surface);
+  --look-page-b: var(--xc-surface);
+  --look-selection: color-mix(in srgb, var(--xc-accent) 30%, transparent);
+  /* app surfaces (features/programs/style.ts CARD, SURFACE) sit under the chrome's ink, so they take its surfaces too */
+  --look-card: var(--xc-raised);
+  --look-panel: color-mix(in srgb, var(--xc-surface) 72%, transparent);
+  --font-sans: var(--xc-font);
+  --font-display: var(--xc-display);
+  font-family: var(--xc-font);
+  color: var(--xc-ink);
+}
+/* light chrome: white tints become ink tints, and status colours darken to stay >=4.5:1 on light surfaces */
+html[data-xc-active][data-xc-scheme='light'] .xc-dress {
+  color-scheme: light;
+  /* role and status pastels (features/programs/style.ts toneInk) are drawn mostly in the ink: >=4.5:1 on raised */
+  --tone-tint: 35%;
+  --color-white: var(--xc-ink);
+  --color-good: #11713f;
+  --color-warn: #8a5000;
+}
+html[data-xc-active] .xc-dress :focus-visible { outline-color: var(--xc-accent); }
+/* the classic pages' few hard-coded navy surfaces (sticky headers, table heads, wells) follow the chrome too */
+html[data-xc-active] .xc-dress :is([class*='bg-[#0'], [class*='bg-[#1']):not(.xc-backdrop, .xc-frame) { background-color: var(--xc-surface); }
+html[data-xc-active] .xc-dress [class*='bg-[#0b0820]'] { background-color: var(--xc-on-accent); }
+html[data-xc-active] .xc-dress [class*='from-[#0'] { --tw-gradient-from: var(--xc-surface); }
+html[data-xc-active] .xc-dress [class*='via-[#0'] { --tw-gradient-via: var(--xc-surface); }
+html[data-xc-active] .xc-dress [class*='shadow-[0_14px_18px_-6px_#0'] { box-shadow: 0 14px 18px -6px var(--xc-surface); }
+html[data-xc-active] .xc-dress .glass,
+html[data-xc-active] .xc-dress .glass-strong {
+  background: var(--xc-texture), var(--xc-raised);
+  border-color: var(--xc-line);
+  box-shadow: none;
+  backdrop-filter: var(--xc-blur);
+  -webkit-backdrop-filter: var(--xc-blur);
+}
+html[data-xc-active] .xc-dress .skeleton {
+  background: linear-gradient(90deg, var(--xc-hover) 25%, var(--xc-press) 50%, var(--xc-hover) 75%);
+  background-size: 200% 100%;
+}
+html[data-xc-active] .xc-dress .thin-scroll { scrollbar-color: color-mix(in srgb, var(--xc-ink) 25%, transparent) transparent; }
+/* a window frame (dialogs, toasts, the palette, sheets) */
+html[data-xc-active] .xc-dress.xc-frame,
+html[data-xc-active] .xc-dress .xc-frame {
+  background: var(--xc-texture), var(--xc-surface) !important;
+  border: 1px solid var(--xc-line);
+  border-radius: var(--xc-radius);
+  box-shadow: var(--xc-shadow);
+  backdrop-filter: var(--xc-blur);
+  -webkit-backdrop-filter: var(--xc-blur);
+}
+/* phone sheets and top-anchored panels keep their flush edges */
+@media (max-width: 767px) {
+  html[data-xc-active] .xc-dress .xc-frame.xc-flush-b { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+  html[data-xc-active] .xc-dress .xc-frame.xc-flush-t { border-top-left-radius: 0; border-top-right-radius: 0; }
+}
+/* a classic page: full-bleed on phones, a window on desktop */
+html[data-xc-active] .xc-dress.xc-page,
+html[data-xc-active] .xc-dress .xc-page {
+  background: var(--xc-texture), var(--xc-surface) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+@media (min-width: 768px) {
+  html[data-xc-active] .xc-dress.xc-page,
+  html[data-xc-active] .xc-dress .xc-page {
+    border-color: var(--xc-line);
+    border-radius: var(--xc-radius);
+    box-shadow: var(--xc-shadow);
+  }
+}
+html[data-xc-active] .xc-dress .xc-backdrop,
+html[data-xc-active] .xc-dress.xc-backdrop {
+  background: var(--xc-scrim);
+}
+html[data-xc-active]:not([data-xc-material='glass']) :is(.xc-dress .xc-backdrop, .xc-dress.xc-backdrop) {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+/* Sheets on phones: a solid surface (classic). Replaces a Tailwind !important utility so the dress can override it. */
+.sheet-solid { background-color: rgb(11 11 34 / 0.97) !important; }
+.sheet-solid-98 { background-color: rgb(11 11 34 / 0.98) !important; }
+html[data-xc-active] .xc-dress :is(.sheet-solid, .sheet-solid-98) { background: var(--xc-texture), var(--xc-surface) !important; }
+/* nothing under the bottom-left Ω inside an experience on phones (pages and sheets reserve its 56px corner) */
+@media (max-width: 767px) {
+  html[data-xc-active] .xc-dress .xc-omega-pad { padding-bottom: calc(56px + var(--sab, 0px)); }
+  /* a floor under the sheet's own reserve (ui/Sheet), which keeps the universal Ask's room too; never a fixed height in its place */
+  html[data-xc-active] .xc-dress .xc-omega-spacer { --xc-omega-floor: calc(48px + var(--sab, 0px)); }
+}
+/* Lab tiles and charts (features/lab) and the swarm's sky (features/swarm): their own navy and white hairlines in
+   classic (values unchanged); inside an experience the chrome's raised surface and ink, so a light experience gets
+   light tiles that its dressed ink reads on (consistency audit 2026-10-07: the navy stayed and the ink went dark). */
+:root {
+  --lab-tile: #0d0d26;
+  --lab-tile-empty: #0b0b22;
+  --lab-well: rgb(0 0 0 / 0.22);
+  --lab-hair: #ffffff;
+  --lab-ink-faint: #5d5c86;
+  --lab-running: #7dd3fc;
+  --swarm-sky-edge: rgb(4 4 16 / 0.6);
+  --swarm-sky-tint: 22%;
+}
+html[data-xc-active] .xc-dress {
+  --lab-tile: var(--xc-raised);
+  --lab-tile-empty: var(--xc-surface);
+  --lab-well: color-mix(in srgb, var(--xc-ink) 5%, transparent);
+  --lab-hair: var(--xc-ink);
+  --lab-ink-faint: var(--xc-ink-3);
+  --swarm-sky-edge: color-mix(in srgb, var(--xc-surface) 60%, transparent);
+}
+/* sky-700: 5.9:1 on white, >=4.5:1 on every light chrome's raised surface. The sky's hue glow at its centre is a
+   faint wash on a light chrome (22% of a deep hue turned the paper lavender and put the statements under 4.5:1). */
+html[data-xc-active][data-xc-scheme='light'] .xc-dress {
+  --lab-running: #0369a1;
+  --swarm-sky-tint: 8%;
+}
+/* MeTTa syntax (ui/MeTTa.tsx): the classic pastels in classic; in a dark experience the parentheses a little lighter
+   (they are drawn at 0.85 opacity, and the classic pastels fell to 3.5:1 on the swarm sky's hue glow); on a light chrome
+   the same hues inked darker. forms/readability.test.ts renders them and measures every token, parentheses composited
+   at their opacity, on each experience's surface, raised surface and swarm sky. */
+:root {
+  --metta-p0: #8f8cc0;
+  --metta-p1: #7aa2d6;
+  --metta-p2: #b48fd6;
+  --metta-p3: #6fb7b0;
+  --metta-copula: #f5c06b;
+  --metta-var: #f0a3d4;
+  --metta-num: #9be3c3;
+  --metta-str: #a5e3a1;
+  --metta-head: #c9c3ff;
+  --metta-sym: #ecebff;
+}
+html[data-xc-active] .xc-dress {
+  --metta-p0: #adabd1;
+  --metta-p1: #91b2de;
+  --metta-p2: #c2a3de;
+  --metta-p3: #78bcb6;
+}
+html[data-xc-active][data-xc-scheme='light'] .xc-dress {
+  --metta-p0: #48456e;
+  --metta-p1: #234a7c;
+  --metta-p2: #5a3186;
+  --metta-p3: #1b5751;
+  --metta-copula: #8a5000;
+  --metta-var: #a3246f;
+  --metta-num: #11713f;
+  --metta-str: #2f6b1f;
+  --metta-head: #4b3fb0;
+  --metta-sym: var(--xc-ink);
+}
+/* light chrome: black tints become faint ink tints (wells, inputs) instead of grey slabs */
+html[data-xc-active][data-xc-scheme='light'] .xc-dress { --color-black: color-mix(in srgb, var(--xc-ink) 25%, transparent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .xc-item, .xc-button { transition: none; }
+}
+[data-ui-motion='none'] :is(.xc-item, .xc-button) { transition: none; }
+
+/* Ω itself: the same place and glyph everywhere, worn in the chrome of the experience (or app) it sits in */
+.xc-omega {
+  background: var(--xc-texture), var(--xc-surface);
+  color: var(--xc-ink);
+  border: 1px solid var(--xc-edge);
+  box-shadow: var(--xc-shadow);
+  font-family: var(--xc-display);
+  backdrop-filter: var(--xc-blur);
+  -webkit-backdrop-filter: var(--xc-blur);
+  transition: background-color 0.12s, color 0.12s;
+}
+/* the button is Ω's hit area (36 px, or a 44 px square on a coarse pointer); the disc inside it is the glyph */
+.xc-omega-hit { background: none; border: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+.xc-omega-hit:focus-visible { outline: none; }
+.xc-omega-hit:hover .xc-omega,
+.xc-omega-hit[aria-expanded='true'] .xc-omega { background: var(--xc-raised); color: var(--xc-accent); }
+.xc-omega-hit:focus-visible .xc-omega { outline: 2px solid var(--xc-accent); outline-offset: 2px; border-radius: 999px; }
+
+/* Toasts inside an experience: under every modal window (dialogs and the palette start at z 55), and on phones at the
+   top, clear of composers, command lines, toolbars and Ω along the bottom edge. */
+html[data-xc-active] .toast-stack { z-index: 50; }
+@media (max-width: 767px) {
+  html[data-xc-active] .toast-stack {
+    top: 0;
+    bottom: auto;
+    flex-direction: column;
+    padding-top: calc(var(--sat, 0px) + 64px);
+    padding-bottom: 0;
+  }
+}
+
+/* screen-reader-only text (global) */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }

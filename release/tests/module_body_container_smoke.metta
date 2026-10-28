@@ -1,0 +1,10 @@
+!(import! &self (library lib_import))
+!(git-import! "https://github.com/asi-alliance/OmegaClaw-Core.git")
+!(import! &self (library OmegaClaw-Core modules/body_container/entry.metta))
+
+!(println! (match &self (TrustedRuntimeOrgan "body-container") true))
+!(println! (eval (initBodyContainerOrgan)))
+!(println! (eval (body-container-status)))
+!(println! (eval (body-container-self)))
+!(println! (match &self (Provides omegaclaw.body.container $thing) $thing))
+!(println! (match &self (BodyContainerCapability omega-body-vm $capability) $capability))

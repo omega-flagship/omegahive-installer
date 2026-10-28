@@ -1,0 +1,82 @@
+{
+  "scope": "synthetic explicit byte-map fixture, existing Code extractor only",
+  "implementation_sha256": "abb4127d0281a3bf587cc0fd51b0dc0e0e05be06f93af2feceac50098905ca5d",
+  "parser": "python-ast-module-facts-v1/python-3.9.6",
+  "sources": [
+    [
+      "pkg/__init__.py",
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    ],
+    [
+      "pkg/broken.py",
+      "093816b0a7586b7174e87aba83f6b87ad029c0fe1badd0c171bd7e25fc9e37d9"
+    ],
+    [
+      "pkg/math.py",
+      "da7d6710efa298c21352ded0a964e25b9de43e488b2d2b6d979d0b1c4d682c1e"
+    ],
+    [
+      "pkg/use.py",
+      "990aceac96e8a4a77a54cca55294938582ce9f883fefb83bbb73f3ed6b17285a"
+    ]
+  ],
+  "facts": [
+    {
+      "path": "pkg/math.py",
+      "line": 1,
+      "kind": "defines_name",
+      "subject": "pkg.math",
+      "target": "square"
+    },
+    {
+      "path": "pkg/use.py",
+      "line": 1,
+      "kind": "imports_module_candidate",
+      "subject": "pkg.use",
+      "target": "pkg.math"
+    },
+    {
+      "path": "pkg/use.py",
+      "line": 1,
+      "kind": "imports_module_candidate",
+      "subject": "pkg.use",
+      "target": "pkg.math.square"
+    },
+    {
+      "path": "pkg/use.py",
+      "line": 2,
+      "kind": "defines_name",
+      "subject": "pkg.use",
+      "target": "answer"
+    },
+    {
+      "path": "pkg/use.py",
+      "line": 3,
+      "kind": "calls_expression",
+      "subject": "pkg.use",
+      "target": "square"
+    }
+  ],
+  "dependencies": [
+    [
+      "pkg/use.py",
+      "pkg/__init__.py"
+    ],
+    [
+      "pkg/use.py",
+      "pkg/math.py"
+    ]
+  ],
+  "diagnostics": [
+    [
+      "pkg/broken.py",
+      "source could not be parsed; syntax facts unavailable"
+    ]
+  ],
+  "snapshot_digest": "3e9db83fa0e57583a13f7a5a7db19ab4c6610465d582f2012af1b647e84c452b",
+  "stale_source_refused": true,
+  "fs_scan_performed": false,
+  "effect_authority": false,
+  "state": "partial",
+  "meaning": "malformed file retained in census; syntax findings from remaining files retained; no runtime call graph or target-map claim"
+}

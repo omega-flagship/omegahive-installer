@@ -1,0 +1,39 @@
+id = "omegaclaw.memory.scratch-space"
+kind = "memory-organ"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = false
+default_enabled = true
+
+provides = [
+  "space:scratch",
+  "space:scratch-ttl",
+  "runtime-organ:scratch-space",
+  "skill:scratch-status",
+  "skill:scratch-add",
+  "skill:scratch-remove",
+  "skill:scratch-touch",
+  "skill:scratch-find",
+  "skill:scratch-examples",
+  "skill:scratch-all-with-ttl",
+  "skill:scratch-count",
+  "skill:scratch-pressure",
+  "skill:scratch-gc",
+  "skill:scratch-promote",
+  "skill:promote-scratch",
+]
+
+requires = [
+  "python>=3.10",
+]
+
+[trace]
+writes = [
+  "ScratchAtomAdded",
+  "ScratchAtomRemoved",
+  "ScratchAtomTouched",
+  "ScratchAtomExpired",
+  "ScratchAtomPromoted",
+]

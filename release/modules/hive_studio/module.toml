@@ -1,0 +1,27 @@
+id = "omegaclaw.hive.studio"
+kind = "swarm-organ"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+# Never in modules/loader.metta: the hive's supervisor loads it into an omega mind only while Studio sessions are on
+# (OMEGACLAW_EXTRA_MODULES=hive_studio plus one import line in that mind's run.metta, J3 host R6.1).
+default_enabled = false
+
+provides = [
+  "skill:hive-studio-context",
+  "skill:hive-studio-publish",
+  "skill:hive-studio-done",
+]
+
+requires = [
+  "python>=3.10",
+]
+
+[env.HIVE_API_URL]
+description = "Base URL of the OmegaDots Hive this agent belongs to"
+
+[env.HIVE_WS_TOKEN]
+secret = true
+description = "This execution's own hive token"

@@ -1,0 +1,1 @@
+Open (Apache-2.0): OmegaHive, the platform: server, UI, Ask, minds, swarms, demos, docs and theory. Three folders are Closed Source for Product Consideration (see docs/START_HERE.md).

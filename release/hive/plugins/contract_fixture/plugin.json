@@ -1,0 +1,10 @@
+{
+  "id": "contract-fixture",
+  "name": "Contract fixture",
+  "version": "0.1.0",
+  "contract": "0.1",
+  "description": "A synthetic question with support and counterevidence, for testing programs and hosts against contract 0.1.",
+  "module": "program.py",
+  "capabilities": ["goals:write"],
+  "icon": "flask"
+}

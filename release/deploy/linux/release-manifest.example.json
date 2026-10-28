@@ -1,0 +1,150 @@
+{
+  "schema": "studio-linux-user-release/2",
+  "ready": false,
+  "release_id": null,
+  "source_revision": null,
+  "source_tree": null,
+  "min_free_bytes": null,
+  "core_roots": [
+    "fastapi",
+    "uvicorn",
+    "httpx",
+    "websockets",
+    "pytest",
+    "pillow"
+  ],
+  "python_version": null,
+  "uv_version": null,
+  "swipl_version": null,
+  "petta_commit": null,
+  "platforms": {
+    "x86_64": {
+      "uv": {
+        "url": null,
+        "bytes": null,
+        "sha256": null
+      },
+      "python": {
+        "url": null,
+        "bytes": null,
+        "sha256": null
+      },
+      "swipl_source": {
+        "url": null,
+        "bytes": null,
+        "sha256": null
+      },
+      "petta_source": {
+        "url": null,
+        "bytes": null,
+        "sha256": null
+      },
+      "source_payload": {
+        "path": "payload/source_payload",
+        "bytes": null,
+        "sha256": null,
+        "files": null,
+        "prefix": null
+      },
+      "core_lock": {
+        "path": "payload/core_lock",
+        "bytes": null,
+        "sha256": null
+      },
+      "build_lock": {
+        "path": "payload/build_lock",
+        "bytes": null,
+        "sha256": null
+      }
+    },
+    "aarch64": {
+      "uv": {
+        "url": null,
+        "bytes": null,
+        "sha256": null
+      },
+      "python": {
+        "url": null,
+        "bytes": null,
+        "sha256": null
+      },
+      "swipl_source": {
+        "url": null,
+        "bytes": null,
+        "sha256": null
+      },
+      "petta_source": {
+        "url": null,
+        "bytes": null,
+        "sha256": null
+      },
+      "source_payload": {
+        "path": "payload/source_payload",
+        "bytes": null,
+        "sha256": null,
+        "files": null,
+        "prefix": null
+      },
+      "core_lock": {
+        "path": "payload/core_lock",
+        "bytes": null,
+        "sha256": null
+      },
+      "build_lock": {
+        "path": "payload/build_lock",
+        "bytes": null,
+        "sha256": null
+      }
+    }
+  },
+  "apps": [
+    {
+      "id": "omegaassist",
+      "path": "payload/omegaassist.zip",
+      "prefix": null,
+      "bytes": 67497,
+      "sha256": "71d182fb8d47253e4e77a7e2e98cf12cd893a4a7c3556932a0371845d36f82b1",
+      "digest": "sha256:d1f75a8207aca4b44c4d356f6b1221025dc505810e298d8c43145273815f946a",
+      "files": null
+    },
+    {
+      "id": "omegadesign",
+      "path": "payload/omegadesign.zip",
+      "prefix": "omegadesign-release/0.4.20/",
+      "bytes": 423197,
+      "sha256": "3867126432bc6add54bf1d0b6bd246d0ccd1c241652b5a521da9513a07ea4e70",
+      "digest": "sha256:866514650a9aecc652ad08b5da1f5f483d027608fd047e5df90fbf2f99d7ee00",
+      "files": null
+    }
+  ],
+  "bootstrap": {
+    "seed": {
+      "path": "payload/seed",
+      "bytes": null,
+      "sha256": null
+    },
+    "helper": {
+      "path": "payload/helper",
+      "bytes": null,
+      "sha256": null
+    }
+  },
+  "module_files": null,
+  "default_model": null,
+  "embedding_model": null,
+  "ssh_target": null,
+  "ui_prebuilt": {
+    "archive": {
+      "path": "payload/hive-ui-dist-r2.tar.gz",
+      "bytes": 2588368,
+      "sha256": "37be24f5708146dfc881aaa4e915d7e02aff6fd2ea0adc5dfde34497b89dc4a9"
+    },
+    "manifest": {
+      "path": "payload/hive-ui-dist-r2.manifest.json",
+      "bytes": 31997,
+      "sha256": "f5efdb6d987bdf8fc55ea41885d042b4c1f124e3abdb81002d6269ef498b8258"
+    },
+    "source_revision": "ee370059eb0f28356bc1c3fc78caaa0d2183d6c6",
+    "source_tree": "a56a4f732610a6b43198ac4bf0652b83a5f790e4"
+  }
+}

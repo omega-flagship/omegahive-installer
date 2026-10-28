@@ -1,0 +1,74 @@
+id = "omegaclaw.hive.commons"
+kind = "swarm-organ"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+default_enabled = true
+
+provides = [
+  "skill:hive-flow-cancel",
+  "skill:hive-flow-run-get",
+  "skill:hive-flow-retire",
+  "skill:hive-flow-run",
+  "skill:hive-flow-publish",
+  "skill:hive-flow-drafts",
+  "skill:hive-flows",
+  "skill:hive-flow-draft",
+  "skill:hive-flow-revise",
+  "skill:hive-flow-read",
+  "skill:hive-publish",
+  "skill:hive-query",
+  "skill:hive-belief",
+  "skill:hive-goals",
+  "skill:hive-goal-claim",
+  "skill:hive-goal-done",
+  "skill:hive-goal-fail",
+  "skill:hive-goal-create",
+  "skill:hive-goal-get",
+  "skill:hive-goal-propose",
+  "skill:hive-goal-cancel-ack",
+  "skill:hive-goal-heartbeat",
+  "skill:hive-shares",
+  "skill:hive-share-request",
+  "skill:hive-share-grant",
+  "skill:hive-share-deny",
+  "skill:hive-share-offer",
+  "skill:hive-shared",
+  "skill:hive-shared-page",
+  "skill:hive-shared-body",
+  "skill:hive-health",
+  "skill:hive-review-complete",
+  "skill:hive-finding",
+  "skill:hive-revision-read",
+  "skill:hive-revision",
+  "skill:hive-revision-part",
+  "skill:hive-artifact-create",
+  "skill:hive-request",
+  "skill:hive-lifecycle-start",
+  "skill:hive-lifecycle-stop",
+  "skill:hive-lifecycle-status",
+  "skill:hive-exhibit",
+  "skill:hive-exhibit-space",
+  "skill:hive-rooms",
+  "skill:hive-room-post",
+  "skill:repo-query",
+  "skill:calendar-read",
+]
+
+requires = [
+  "python>=3.10",
+]
+
+[env.HIVE_API_URL]
+description = "Base URL of the OmegaDots Hive this agent belongs to"
+
+[env.HIVE_WS_TOKEN]
+secret = true
+description = "This agent's hive token"
+
+[trace]
+writes = [
+  "HiveBeliefPublished",
+]

@@ -1,0 +1,7 @@
+sentence-transformers
+chromadb
+janus-swi
+openai
+uagents
+requests
+websocket-client

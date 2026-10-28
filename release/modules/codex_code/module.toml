@@ -1,0 +1,50 @@
+id = "omegaclaw.skill.codex-code"
+kind = "coding-organ"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+default_enabled = false
+
+provides = [
+  "provider:codex-code",
+  "skill:codex-code-status",
+  "skill:codex-code-atoms",
+  "skill:codex-code-containment-check",
+  "skill:codex-code",
+  "skill:codex-code-readonly",
+  "skill:codex-code-start",
+  "skill:codex-code-readonly-start",
+  "skill:codex-code-jobs",
+  "skill:codex-code-job-status",
+  "skill:codex-code-result",
+  "skill:codex-code-cancel",
+  "skill:codex-code-events",
+  "skill:codex-code-last-trace",
+]
+
+requires = [
+  "python>=3.10",
+  "node>=20",
+  "npm:@openai/codex@0.133.0",
+  "openrouter:model:qwen/qwen3-coder-next",
+]
+
+[env]
+OPENROUTER_API_KEY = { required = true, secret = true }
+OMEGACLAW_CODEX_PROFILE = { required = false, default = "qwen-coder-next" }
+OMEGACLAW_CODEX_MODEL = { required = false, default = "qwen/qwen3-coder-next" }
+OMEGACLAW_CODEX_SANDBOX_READONLY = { required = false, default = "read-only" }
+OMEGACLAW_CODEX_SANDBOX_EDIT = { required = false, default = "workspace-write" }
+OMEGACLAW_CODEX_DANGEROUS_BYPASS = { required = false, default = "0" }
+OMEGACLAW_CODEX_MAX_ACTIVE_JOBS = { required = false, default = "1" }
+
+[trace]
+writes = [
+  "CodexCodeCall",
+  "CodexCodeResult",
+  "CodexJobStarted",
+  "CodexJobComplete",
+  "CodexJobError",
+]

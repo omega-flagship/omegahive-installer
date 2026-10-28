@@ -1,0 +1,32 @@
+{
+  "title": "Predega R7 MacBook mechanics report",
+  "claim": "Reported CPU core mechanics pass; full bridge validation false and cache-logit gate false, cache disabled. Native false/exception probes deliberately exit1 without Ready and remove scratch. No scientific accuracy, learning, independent custody or deployment acceptance is established.",
+  "method": "Imported exact-byte R7 mechanics reports inspected by Code; producer native/model execution was not rerun. Read-only retention as claims, with reported negative results preserved.",
+  "evidence": [
+    {
+      "source": "sha256:3a88e9fc966b048ee3fa63411e842e2408ef6cab29a479d0a42586be3bacbbce",
+      "locator": "archive:873435804fa93683a165d7d7ec44e583bc4f49adbb6f7441660d1c4bdee71e0d/omega_pc_lab/runs/mac-cpu-smoke-20261011/summary.json",
+      "origin": "imported-report"
+    },
+    {
+      "source": "sha256:0ce055c5677a3ce72705d6cb530d332e696b6dbc9773148dc8f792d1a540b3f1",
+      "locator": "archive:873435804fa93683a165d7d7ec44e583bc4f49adbb6f7441660d1c4bdee71e0d/omega_pc_lab/runs/mac-cpu-smoke-20261011/bridge-validation.json",
+      "origin": "imported-report"
+    },
+    {
+      "source": "sha256:03fc06df1065d41db0b15612043f4610d0de7669627557be308714000ad7b7c9",
+      "locator": "archive:873435804fa93683a165d7d7ec44e583bc4f49adbb6f7441660d1c4bdee71e0d/omega_pc_lab/runs/mac-cpu-smoke-20261011/protocol.json",
+      "origin": "imported-report"
+    },
+    {
+      "source": "sha256:04bdf0d1df70996ef78a076615c84d40e46bc4a66b1f01c95fcfc2be3aa820c1",
+      "locator": "archive:873435804fa93683a165d7d7ec44e583bc4f49adbb6f7441660d1c4bdee71e0d/project_graph/benchmarks/hive-petta-qualification-m4pro-r3-20261011.json",
+      "origin": "imported-report"
+    }
+  ],
+  "uncertainty": {
+    "method": "qualitative",
+    "status": "unverified"
+  },
+  "affected_revision": "R7:873435804fa93683a165d7d7ec44e583bc4f49adbb6f7441660d1c4bdee71e0d"
+}

@@ -1,0 +1,57 @@
+{
+  "title": "Predega R10 durable-learning v2 developmental report",
+  "claim": "Producer-reported local developmental v2, one seed, six dependent checkpoints; complete-response correctness is reported separately from first-token CE training. initial: frozen 4/24; Adam (producer gd) 4/24; PC 4/24; teacher-MSE ridge control 4/24; teacher-MSE PC-energy control 4/24; pc_reset 4/24; memory_only 4/24; gd_memory 4/24; pc_memory 4/24; native_lookup 0/24. cohort_1: frozen 4/24; Adam (producer gd) 10/24; PC 11/24; teacher-MSE ridge control 4/24; teacher-MSE PC-energy control 4/24; pc_reset 11/24; memory_only 10/24; gd_memory 11/24; pc_memory 11/24; native_lookup 8/24. cohort_2: frozen 4/24; Adam (producer gd) 16/24; PC 17/24; teacher-MSE ridge control 4/24; teacher-MSE PC-energy control 4/24; pc_reset 16/24; memory_only 18/24; gd_memory 16/24; pc_memory 19/24; native_lookup 16/24. cohort_3: frozen 4/24; Adam (producer gd) 24/24; PC 18/24; teacher-MSE ridge control 4/24; teacher-MSE PC-energy control 4/24; pc_reset 15/24; memory_only 24/24; gd_memory 24/24; pc_memory 24/24; native_lookup 24/24. repeat_full_prefix: frozen 4/24; Adam (producer gd) 24/24; PC 21/24; teacher-MSE ridge control 4/24; teacher-MSE PC-energy control 4/24; pc_reset 15/24; memory_only 24/24; gd_memory 24/24; pc_memory 24/24; native_lookup 24/24. correction: frozen 4/24; Adam (producer gd) 24/24; PC 21/24; teacher-MSE ridge control 4/24; teacher-MSE PC-energy control 4/24; pc_reset 14/24; memory_only 24/24; gd_memory 24/24; pc_memory 24/24; native_lookup 24/24. Final corrected cases: frozen 0/2; Adam (producer gd) 2/2; PC 1/2; teacher-MSE ridge control 0/2; teacher-MSE PC-energy control 0/2; pc_reset 1/2; memory_only 2/2; gd_memory 2/2; pc_memory 2/2; native_lookup 2/2. PC remains 21/24 overall and 1/2 corrected while Adam is 24/24 and 2/2 corrected. No independent grading, sealed study, general PC advantage, complete cost comparison, host run, module admission or live adoption is established. Earlier v1 negatives remain separate; this v2 contribution neither supersedes nor retracts them.",
+  "method": "Source-bound import of retained report totals and all ten controls across all six rounds. Evidence carries archive-member byte digests and submitter-declared imported origin. Code verified retained bytes and plan binding, not the evaluator or model outcomes. This is an ordinary contribution, not benchmark registration or assessment.",
+  "evidence": [
+    {
+      "source": "sha256:04c1b5955d60444645f3ad2fcaa17e9bdfa3defbcbb24cbc48aa8d2aa257d044",
+      "locator": "archive:0c74e6d18b72d33893c3e828a52eae71f1c7c52163ee136be54286f0bbe92540/project_graph/experiments/durable-learning-20261012-v2/results/summary-index.json",
+      "origin": "imported-report"
+    },
+    {
+      "source": "sha256:ca40bd30b9555bd0229a5688b568dd006c25fadf34b5bd2d490a904aa34f7dd1",
+      "locator": "archive:0c74e6d18b72d33893c3e828a52eae71f1c7c52163ee136be54286f0bbe92540/project_graph/experiments/durable-learning-20261012-v2/registration/plan.json",
+      "origin": "imported-report"
+    },
+    {
+      "source": "sha256:af87d0f47ae7dd4ef6ef8d56ae42d7f6095c3b9b7d7e8b7606f4846412f1d6af",
+      "locator": "archive:0c74e6d18b72d33893c3e828a52eae71f1c7c52163ee136be54286f0bbe92540/project_graph/experiments/durable-learning-20261012-v2/results/round-5/train-result.json",
+      "origin": "imported-report"
+    },
+    {
+      "source": "sha256:b10e9c2d7c04c4efcdc0277faae6e226971f323631e7536f510c642badb5f4be",
+      "locator": "archive:0c74e6d18b72d33893c3e828a52eae71f1c7c52163ee136be54286f0bbe92540/project_graph/experiments/durable-learning-20261012-v2/results/round-0/parent-scored.json",
+      "origin": "imported-report"
+    },
+    {
+      "source": "sha256:8ac259969356cb2a8f1eca9ecd025a868121d64ba6c694cda6dcdc58607a35e6",
+      "locator": "archive:0c74e6d18b72d33893c3e828a52eae71f1c7c52163ee136be54286f0bbe92540/project_graph/experiments/durable-learning-20261012-v2/results/round-1/parent-scored.json",
+      "origin": "imported-report"
+    },
+    {
+      "source": "sha256:95f61e81d5a1e9d2919e030bf32f1da1b4288a27b0a5f3ac6be62b9870960b00",
+      "locator": "archive:0c74e6d18b72d33893c3e828a52eae71f1c7c52163ee136be54286f0bbe92540/project_graph/experiments/durable-learning-20261012-v2/results/round-2/parent-scored.json",
+      "origin": "imported-report"
+    },
+    {
+      "source": "sha256:e41820e944a5f6e330f87e9ae00b84ce39066e082b39b092b4629742ad735c98",
+      "locator": "archive:0c74e6d18b72d33893c3e828a52eae71f1c7c52163ee136be54286f0bbe92540/project_graph/experiments/durable-learning-20261012-v2/results/round-3/parent-scored.json",
+      "origin": "imported-report"
+    },
+    {
+      "source": "sha256:29c03fa0bdbcf3215d27ee0138954e5cb92296c0ba406c9323c18704fa3b8c01",
+      "locator": "archive:0c74e6d18b72d33893c3e828a52eae71f1c7c52163ee136be54286f0bbe92540/project_graph/experiments/durable-learning-20261012-v2/results/round-4/parent-scored.json",
+      "origin": "imported-report"
+    },
+    {
+      "source": "sha256:75835b5bb25a551107ccd1521cb3699096efe0858e17f102c9f5cad47cec0141",
+      "locator": "archive:0c74e6d18b72d33893c3e828a52eae71f1c7c52163ee136be54286f0bbe92540/project_graph/experiments/durable-learning-20261012-v2/results/round-5/parent-scored.json",
+      "origin": "imported-report"
+    }
+  ],
+  "uncertainty": {
+    "method": "qualitative",
+    "status": "unverified"
+  },
+  "affected_revision": "R10:0c74e6d18b72d33893c3e828a52eae71f1c7c52163ee136be54286f0bbe92540"
+}

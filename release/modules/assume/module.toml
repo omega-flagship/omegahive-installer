@@ -1,0 +1,93 @@
+id = "omegaclaw.reasoning.assume"
+kind = "predictive-reasoning-organ"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+default_enabled = true
+
+provides = [
+  "space:assume",
+  "space:assume-work",
+  "runtime-organ:assume",
+  "skill:assume-status",
+  "skill:assume-state",
+  "skill:assume-review",
+  "skill:assume-load",
+  "skill:assume-reload",
+  "skill:assume-demo-list",
+  "skill:assume-demo-load",
+  "skill:assume-demo-predict",
+  "skill:assume-demo-audit",
+  "skill:assume-demo-learn",
+  "skill:assume-demo-writeback",
+  "skill:assume-import-demo",
+  "skill:assume-situation-status",
+  "skill:assume-init-situation",
+  "skill:assume-add-context-feature",
+  "skill:assume-add-action",
+  "skill:assume-add-feature-edge",
+  "skill:assume-reload-situation",
+  "skill:assume-predict",
+  "skill:assume-clear-work",
+  "skill:assume-work",
+  "skill:assume-observe-predict",
+  "skill:assume-audit",
+  "skill:assume-observe-audit",
+  "skill:assume-outcome",
+  "skill:assume-error",
+  "skill:assume-learn",
+  "skill:assume-learn-from-atoms",
+  "skill:assume-evidence-summary",
+  "skill:assume-observe-evidence-summary",
+  "skill:assume-growth-pressure",
+  "skill:assume-observe-growth-pressure",
+  "skill:assume-adjustment-pressure",
+  "skill:assume-observe-adjustment-pressure",
+  "skill:assume-growth-proposals",
+  "skill:assume-observe-growth-proposals",
+  "skill:assume-review-growth",
+  "skill:assume-observe-growth-review",
+  "skill:assume-review-adjustment",
+  "skill:assume-review-adjustment-detail",
+  "skill:assume-writeback",
+  "skill:assume-observe-writeback",
+  "skill:assume-review-mutation",
+  "skill:assume-apply-writeback",
+  "skill:assume-accept-growth",
+  "skill:assume-accept-adjustment",
+  "skill:assume-trace"
+]
+
+requires = [
+  "python>=3.10",
+  "fabricpc:external-repo",
+  "jax>=0.4",
+  "optax>=0.2",
+]
+
+[env]
+FABRICPC_REPO = { required = false }
+FABRICPC_PYTHON = { required = false }
+OMEGACLAW_ASSUME_REQUEST_TIMEOUT_SECONDS = { required = false, default = "30" }
+OMEGACLAW_ASSUME_PATH = { required = false, runtime_state = true, default = "memory/assume.metta" }
+OMEGACLAW_ASSUME_TRACE_PATH = { required = false, runtime_state = true, default = "memory/assume_trace.metta" }
+OMEGACLAW_ASSUME_STDERR_PATH = { required = false, runtime_state = true, default = "memory/assume_fabricd.stderr.log" }
+
+[trace]
+writes = [
+  "AssumeGraphNotReady",
+  "AssumePredictionReport",
+  "AssumeGuardReport",
+  "AssumeEvidenceSummary",
+  "AssumeGrowthPressure",
+  "AssumeProposedFeatureEdge",
+  "AssumeGrowthJudgement",
+  "AssumeWeightMutation",
+  "AssumeWritebackDelta",
+  "AssumeWritebackCommitSucceeded",
+  "AssumeWritebackApplied",
+  "AssumeStructuralPersisted",
+  "AssumeEvidencePersisted"
+]

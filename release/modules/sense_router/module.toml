@@ -1,0 +1,24 @@
+id = "omegaclaw.sense.router"
+kind = "sense-router"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+default_enabled = true
+
+provides = [
+  "runtime-organ:sense-router",
+  "skill:observe",
+]
+
+requires = [
+  "python>=3.10",
+]
+
+[trace]
+writes = [
+  "ObservationRequested",
+  "ObservationResult",
+  "ObservationUnknownTarget",
+]

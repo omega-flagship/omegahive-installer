@@ -1,0 +1,61 @@
+id = "omegahive.code"
+kind = "coding-organ"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+default_enabled = true
+
+provides = [
+  "skill:code-retrieve",
+  "skill:code-proof-result",
+  "skill:code-proof-check",
+  "skill:code-git-original-export",
+  "skill:code-merge-preview",
+  "skill:code-merge-files",
+  "skill:code-merge-bytes",
+  "skill:code-merge-apply",
+  "skill:code-git-export",
+  "skill:code-git-export-state",
+  "skill:code-git-patch",
+
+  "skill:code-git",
+  "skill:code-review",
+  "skill:code-hunks",
+  "skill:code-hunk-bytes",
+  "skill:code-select",
+
+  "skill:code-repos",
+  "skill:code-open",
+  "skill:code-tools",
+  "skill:code-read",
+  "skill:code-search",
+  "skill:code-replace",
+  "skill:code-exec",
+  "skill:code-status",
+  "skill:code-changes",
+  "skill:code-check",
+  "skill:code-create",
+  "skill:code-move",
+  "skill:code-remove",
+  "skill:code-runs",
+  "skill:code-verifications",
+  "skill:code-output",
+  "skill:code-diagnostics",
+]
+
+requires = [
+  "python>=3.10",
+  "service:omegacode",
+]
+
+[env.HIVE_API_URL]
+description = "Base URL of the hive this mind belongs to"
+
+[env.HIVE_WS_TOKEN]
+secret = true
+description = "This mind's own hive token; coding capabilities are issued for it, per goal it holds"
+
+[env.OMEGACODE_SRC]
+description = "Path to the OmegaCode service's src (for its native client)"

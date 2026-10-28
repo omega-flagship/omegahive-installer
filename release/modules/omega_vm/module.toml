@@ -1,0 +1,27 @@
+id = "omegaclaw.device.omega-vm"
+kind = "workspace-device"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+default_enabled = false
+
+provides = [
+  "skill:vm-status",
+  "skill:vm-boot",
+  "skill:vm-shell",
+  "skill:vm-last-trace",
+]
+
+requires = [
+  "python>=3.10",
+  "qemu-system-aarch64>=8",
+  "busybox>=1",
+]
+
+[trace]
+writes = [
+  "OmegaVMBooted",
+  "OmegaVMCommandRan",
+]

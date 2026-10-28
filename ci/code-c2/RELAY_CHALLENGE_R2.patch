@@ -1,0 +1,484 @@
+--- a/src/omegacode/api.py
++++ b/src/omegacode/api.py
+@@ -3,6 +3,7 @@
+ from typing import Annotated, Literal
+ import asyncio
+ import json
++from urllib.parse import urlsplit
+ 
+ from fastapi import FastAPI, Depends, Header, Query, Request, WebSocket, WebSocketDisconnect
+ from fastapi.exceptions import RequestValidationError
+@@ -11,6 +12,7 @@
+ from pydantic import BaseModel, ConfigDict, Field, StrictBool
+ 
+ from .common import CodeError
++from .relay_auth import RelayChallengeStore
+ from .service import Service
+ from .registration import enrol
+ 
+@@ -53,6 +55,15 @@
+ 
+ class Enrol(Model):
+     enrol_token: str = Field(min_length=24, max_length=4000)
++
++
++class RelayChallenge(Model):
++    version: int = Field(strict=True, ge=1, le=1)
++    service_id: str = Field(min_length=1, max_length=160)
++    nonce: str = Field(pattern=r"^[0-9a-f]{64}$")
++    method: str = Field(pattern=r"^[A-Z]{1,16}$")
++    path: str = Field(min_length=1, max_length=4096)
++    body_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+ 
+ 
+ class Operation(Model):
+@@ -533,6 +544,24 @@
+ 
+     app = FastAPI(title="OmegaCode", version="0.1.0", lifespan=lifespan)
+     app.state.service = service
++    app.state.relay_challenges = RelayChallengeStore(ttl_seconds=5.0, max_pending=1024)
++
++    def relay_connection(scope):
++        client, server = scope.get("client"), scope.get("server")
++        if (not isinstance(client, (tuple, list)) or len(client) < 2
++                or not isinstance(server, (tuple, list)) or len(server) < 2):
++            return None
++        return (str(client[0]), int(client[1]), str(server[0]), int(server[1]))
++
++    def request_target(scope):
++        try:
++            raw_path = scope.get("raw_path") or str(scope.get("path", "")).encode("ascii", "strict")
++            query = scope.get("query_string", b"")
++            path = raw_path.decode("ascii")
++            query_text = query.decode("ascii")
++        except (UnicodeDecodeError, UnicodeEncodeError, AttributeError):
++            return None
++        return path + ("?" + query_text if query_text else "")
+ 
+     @app.exception_handler(CodeError)
+     async def code_error(request, exc):
+@@ -568,13 +597,27 @@
+         try: service._check_owner()
+         except CodeError as error:
+             return JSONResponse(status_code=error.status, content={'error':error.code,'message':error.message})
+-        if request.method in ("POST", "PUT", "PATCH"):
++        authorization = request.headers.get("authorization", "")
++        relayed_host_capability = authorization.startswith("Bearer hc1.")
++        if request.method in ("POST", "PUT", "PATCH") or relayed_host_capability:
+             body = bytearray()
+             async for chunk in request.stream():
+                 body.extend(chunk)
+                 if len(body) > 34 * 1024 * 1024:
+                     return JSONResponse(status_code=413, content={"error": "request_limit"})
+             request._body = bytes(body)
++        else:
++            body = bytearray()
++        if relayed_host_capability:
++            challenge_id = request.headers.get("x-omegacode-relay-challenge", "")
++            connection = relay_connection(request.scope)
++            target = request_target(request.scope)
++            if (connection is None or target is None
++                    or not app.state.relay_challenges.consume(
++                        connection, challenge_id, method=request.method, path=target, body=bytes(body))):
++                return JSONResponse(status_code=403,
++                                    content={"error": "relay_proof_failed",
++                                             "message": "same-connection Hive relay proof is required"})
+         try: service._check_owner()
+         except CodeError as error:
+             return JSONResponse(status_code=error.status, content={'error':error.code,'message':error.message})
+@@ -587,6 +630,36 @@
+         return service.authority.authenticate(authorization[7:], x_hive_token)
+ 
+     P = Depends(principal)
++
++    @app.post("/v1/relay-challenge")
++    def relay_challenge(body: RelayChallenge, request: Request):
++        service._check_owner()
++        if request.headers.get("authorization") or request.headers.get("x-hive-token"):
++            raise CodeError(400, "relay_challenge_bearer_forbidden", "relay challenge requests must not carry a bearer")
++        registration = service.authority.registration or {}
++        if body.service_id != registration.get("service_id"):
++            raise CodeError(404, "not_found", "relay challenge is unavailable")
++        connection = relay_connection(request.scope)
++        try:
++            registered = urlsplit(registration.get("address", ""))
++            registered_listener = (registered.scheme, registered.hostname, registered.port)
++        except (TypeError, ValueError):
++            registered_listener = (None, None, None)
++        if (connection is None or connection[0] != "127.0.0.1" or connection[2] != "127.0.0.1"
++                or connection[3] != port or registered_listener != ("http", "127.0.0.1", port)):
++            raise CodeError(403, "relay_connection_refused", "relay challenge requires the registered loopback listener")
++        secret = registration.get("capability_secret")
++        if not isinstance(secret, str) or len(secret) < 32:
++            raise CodeError(503, "relay_proof_unavailable", "registered relay proof is unavailable")
++        if body.path == "/v1/relay-challenge" or any(c in body.path for c in "\r\n#\x00"):
++            raise CodeError(422, "relay_challenge_invalid", "relay target path is not canonical")
++        try:
++            challenge_id, proof = app.state.relay_challenges.issue(
++                connection, secret=secret, service_id=body.service_id, nonce=body.nonce,
++                method=body.method, path=body.path, body_sha256=body.body_sha256)
++        except ValueError:
++            raise CodeError(422, "relay_challenge_invalid", "relay challenge fields are invalid") from None
++        return {"version": 1, "challenge_id": challenge_id, "proof": proof}
+ 
+     def operator(p):
+         service._check_owner()
+@@ -935,6 +1008,15 @@
+         protocols = socket.headers.get("sec-websocket-protocol", "").split(",")
+         protocol = next((v.strip() for v in protocols if v.strip().startswith("oc-cap.")), None)
+         token = socket.headers.get("authorization", "").removeprefix("Bearer ") or (protocol[7:] if protocol else "")
++        if token.startswith("hc1."):
++            challenge_id = socket.headers.get("x-omegacode-relay-challenge", "")
++            connection = relay_connection(socket.scope)
++            target = request_target(socket.scope)
++            if (connection is None or target is None
++                    or not app.state.relay_challenges.consume(
++                        connection, challenge_id, method="GET", path=target, body=b"")):
++                await socket.close(code=4403)
++                return
+         try:
+             p = service.authority.authenticate(token, socket.headers.get("x-hive-token"))
+             record = await asyncio.to_thread(service.run, p, id)
+--- a/src/omegacode/relay_auth.py
++++ b/src/omegacode/relay_auth.py
+@@ -0,0 +1,108 @@
++"""Same-connection Hive relay proof primitives and one-use challenge state."""
++
++from __future__ import annotations
++
++import hashlib
++import hmac
++import json
++import re
++import secrets
++import threading
++import time
++
++from .common import CodeError
++
++DOMAIN = b"omegacode-relay-v1\n"
++_HEX_64 = re.compile(r"^[0-9a-f]{64}$")
++_METHOD = re.compile(r"^[A-Z]{1,16}$")
++_BAD_PERCENT = re.compile(r"%(?![0-9a-fA-F]{2})")
++
++
++def proof_fields(service_id: str, nonce: str, method: str, path: str,
++                 body_sha256: str, challenge_id: str) -> dict:
++    if not isinstance(service_id, str) or not service_id or len(service_id) > 160:
++        raise ValueError("invalid service_id")
++    if not isinstance(nonce, str) or not _HEX_64.fullmatch(nonce):
++        raise ValueError("nonce must be 32 bytes encoded as lowercase hex")
++    if not isinstance(method, str) or not _METHOD.fullmatch(method):
++        raise ValueError("method must be a bounded uppercase token")
++    if (not isinstance(path, str) or not path.startswith("/") or not path.isascii() or len(path) > 4096
++            or any(c in path for c in "\\\r\n#\x00") or any(ord(c) <= 0x20 for c in path)
++            or _BAD_PERCENT.search(path)):
++        raise ValueError("path must be a canonical origin-form path and query")
++    if not isinstance(body_sha256, str) or not _HEX_64.fullmatch(body_sha256):
++        raise ValueError("body_sha256 must be lowercase SHA-256 hex")
++    if not isinstance(challenge_id, str) or not challenge_id or len(challenge_id) > 160:
++        raise ValueError("invalid challenge_id")
++    return {"service_id": service_id, "nonce": nonce, "method": method,
++            "path": path, "body_sha256": body_sha256, "challenge_id": challenge_id}
++
++
++def canonical(value: dict) -> bytes:
++    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
++
++
++def challenge_proof(secret: str, *, service_id: str, nonce: str, method: str,
++                    path: str, body_sha256: str, challenge_id: str) -> str:
++    """Lowercase hex HMAC-SHA256 used by the agreed R13 relay contract."""
++    if not isinstance(secret, str) or len(secret) < 32:
++        raise ValueError("capability secret is missing or too short")
++    fields = proof_fields(service_id, nonce, method, path, body_sha256, challenge_id)
++    return hmac.new(secret.encode("utf-8"), DOMAIN + canonical(fields), hashlib.sha256).hexdigest()
++
++
++class RelayChallengeStore:
++    """Bounded single-use challenges keyed to the ASGI-visible TCP 4-tuple."""
++
++    def __init__(self, ttl_seconds: float = 5.0, max_pending: int = 1024):
++        self.ttl_seconds = ttl_seconds
++        self.max_pending = max_pending
++        self._pending = {}
++        self._connections = {}
++        self._lock = threading.Lock()
++
++    def _expire(self, now: float) -> None:
++        expired = [challenge_id for challenge_id, item in self._pending.items()
++                   if item["expires_at"] <= now]
++        for challenge_id in expired:
++            item = self._pending.pop(challenge_id)
++            if self._connections.get(item["connection"]) == challenge_id:
++                self._connections.pop(item["connection"], None)
++
++    def issue(self, connection: tuple, *, secret: str, service_id: str, nonce: str,
++              method: str, path: str, body_sha256: str) -> tuple[str, str]:
++        # Validate every caller-supplied field before changing shared state.
++        if not isinstance(secret, str) or len(secret) < 32:
++            raise CodeError(503, "relay_proof_unavailable", "registered relay proof is unavailable")
++        challenge_id = "rly_" + secrets.token_hex(16)
++        fields = proof_fields(service_id, nonce, method, path, body_sha256, challenge_id)
++        proof = hmac.new(secret.encode("utf-8"), DOMAIN + canonical(fields), hashlib.sha256).hexdigest()
++        now = time.monotonic()
++        with self._lock:
++            self._expire(now)
++            if connection in self._connections:
++                raise CodeError(409, "relay_challenge_pending", "consume or let the current relay challenge expire")
++            if len(self._pending) >= self.max_pending:
++                raise CodeError(429, "relay_challenge_busy", "relay challenge capacity is full")
++            self._pending[challenge_id] = {"connection": connection, "fields": fields,
++                                           "expires_at": now + self.ttl_seconds}
++            self._connections[connection] = challenge_id
++        return challenge_id, proof
++
++    def consume(self, connection: tuple, challenge_id: str, *, method: str, path: str,
++                body: bytes) -> bool:
++        if not isinstance(challenge_id, str) or not challenge_id or len(challenge_id) > 160:
++            return False
++        now = time.monotonic()
++        with self._lock:
++            self._expire(now)
++            item = self._pending.get(challenge_id)
++            if item is None or item["connection"] != connection:
++                return False
++            # Consume before checking the request binding or authenticating its bearer.
++            self._pending.pop(challenge_id, None)
++            self._connections.pop(connection, None)
++        fields = item["fields"]
++        return (item["expires_at"] > now and fields["method"] == method
++                and fields["path"] == path
++                and fields["body_sha256"] == hashlib.sha256(body).hexdigest())
+--- a/tests/test_relay_challenge.py
++++ b/tests/test_relay_challenge.py
+@@ -0,0 +1,229 @@
++"""Same-connection relay proof: synthetic local requests only."""
++
++import base64
++import asyncio
++import hashlib
++import hmac
++import re
++import socket
++import subprocess
++import threading
++import time
++
++from fastapi.testclient import TestClient
++import httpx
++import pytest
++from starlette.routing import WebSocketRoute
++import uvicorn
++
++from omegacode.api import create_app
++from omegacode.common import CodeError, canonical
++from omegacode.relay_auth import RelayChallengeStore, challenge_proof
++from omegacode.service import Service
++
++
++SECRET = "synthetic-capability-secret-0123456789abcdef"
++SERVICE_ID = "svc_synthetic_0123456789"
++OPERATOR = "synthetic-relay-test-operator-token-123456789"
++
++
++@pytest.fixture
++def repo(tmp_path):
++    path = tmp_path / "repo"
++    path.mkdir()
++    (path / "hello.py").write_text("print('synthetic')\n")
++    for argv in (["git", "init", "-q", str(path)], ["git", "-C", str(path), "add", "."],
++                 ["git", "-C", str(path), "-c", "user.name=Test", "-c",
++                  "user.email=test@example.invalid", "commit", "-qm", "synthetic"]):
++        subprocess.run(argv, check=True, capture_output=True)
++    return path
++
++
++@pytest.fixture
++def service(tmp_path, repo):
++    value = Service(tmp_path / "state", OPERATOR, {"synthetic": {"path": str(repo)}})
++    yield value
++    value.close()
++
++
++def hc1_token(service):
++    claims = {"id": "cap_synthetic_123", "iss": "hive", "aud": SERVICE_ID,
++              "actor": "user:synthetic", "kind": "human", "task_id": "goal_synthetic",
++              "swarm_id": "swarm_synthetic", "repository_id": "synthetic", "actions": ["read"],
++              "paths": [], "argv_prefixes": [], "exp": time.time() + 300,
++              "max_runs": 0, "max_runtime_seconds": 60, "grant_id": "grant_synthetic"}
++    payload = base64.urlsafe_b64encode(canonical(claims)).decode().rstrip("=")
++    sig = hmac.new(SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
++    return "hc1." + payload + "." + sig
++
++
++def registration(service):
++    service.authority.registration = {"service_id": SERVICE_ID, "service_token": "synthetic-service-token",
++                                      "capability_secret": SECRET, "address": "http://127.0.0.1:8724"}
++    service.authority.host_live = lambda claims: None
++
++
++def challenge_payload(method="GET", path="/v1/capabilities", body=b""):
++    return {"version": 1, "service_id": SERVICE_ID, "nonce": "a" * 64,
++            "method": method, "path": path, "body_sha256": hashlib.sha256(body).hexdigest()}
++
++
++def relay_headers(service, challenge_id):
++    return {"Authorization": "Bearer " + hc1_token(service),
++            "X-OmegaCode-Relay-Challenge": challenge_id}
++
++
++def test_challenge_proof_binds_exact_relay_request(service):
++    registration(service)
++    client = TestClient(create_app(service), base_url="http://127.0.0.1:8724",
++                        client=("127.0.0.1", 50000))
++    payload = challenge_payload()
++    response = client.post("/v1/relay-challenge", json=payload)
++    assert response.status_code == 200, response.text
++    value = response.json()
++    assert set(value) == {"version", "challenge_id", "proof"}
++    assert value["version"] == 1
++    assert re.fullmatch(r"[A-Za-z0-9_-]{16,128}", value["challenge_id"])
++    assert value["proof"] == challenge_proof(
++        SECRET, service_id=SERVICE_ID, nonce=payload["nonce"], method=payload["method"],
++        path=payload["path"], body_sha256=payload["body_sha256"], challenge_id=value["challenge_id"])
++    assert SECRET not in response.text and "service_token" not in response.text
++
++
++def test_hc1_requires_matching_challenge_and_consumes_before_auth(service):
++    registration(service)
++    client = TestClient(create_app(service), base_url="http://127.0.0.1:8724",
++                        client=("127.0.0.1", 50001))
++    token = hc1_token(service)
++    no_proof = client.get("/v1/capabilities", headers={"Authorization": "Bearer " + token})
++    assert no_proof.status_code == 403 and no_proof.json()["error"] == "relay_proof_failed"
++
++    response = client.post("/v1/relay-challenge", json=challenge_payload())
++    challenge_id = response.json()["challenge_id"]
++    accepted = client.get("/v1/capabilities", headers=relay_headers(service, challenge_id))
++    assert accepted.status_code == 200, accepted.text
++    replay = client.get("/v1/capabilities", headers=relay_headers(service, challenge_id))
++    assert replay.status_code == 403 and replay.json()["error"] == "relay_proof_failed"
++
++
++def test_challenge_is_connection_bound_and_request_mismatch_consumes_it(service):
++    registration(service)
++    app = create_app(service)
++    first = TestClient(app, base_url="http://127.0.0.1:8724", client=("127.0.0.1", 50002))
++    second = TestClient(app, base_url="http://127.0.0.1:8724", client=("127.0.0.1", 50003))
++    challenge_id = first.post("/v1/relay-challenge", json=challenge_payload()).json()["challenge_id"]
++    other_connection = second.get("/v1/capabilities", headers=relay_headers(service, challenge_id))
++    assert other_connection.status_code == 403
++    same_connection_wrong_method = first.post("/v1/capabilities", headers=relay_headers(service, challenge_id), json={})
++    assert same_connection_wrong_method.status_code == 403
++    retry = first.get("/v1/capabilities", headers=relay_headers(service, challenge_id))
++    assert retry.status_code == 403
++
++
++def test_challenge_rejects_wrong_service_and_bearer_on_challenge(service):
++    registration(service)
++    client = TestClient(create_app(service), base_url="http://127.0.0.1:8724",
++                        client=("127.0.0.1", 50004))
++    wrong = challenge_payload() | {"service_id": "svc_other"}
++    assert client.post("/v1/relay-challenge", json=wrong).status_code == 404
++    with_bearer = client.post("/v1/relay-challenge", json=challenge_payload(),
++                              headers={"Authorization": "Bearer ignored"})
++    assert with_bearer.status_code == 400
++
++
++def test_hc1_websocket_consumes_same_connection_challenge_before_auth(service, monkeypatch):
++    registration(service)
++    app = create_app(service)
++    client = TestClient(app, base_url="http://127.0.0.1:8724",
++                        client=("127.0.0.1", 50006))
++    path = "/v1/runs/run_synthetic/stream"
++    headers = {"Authorization": "Bearer " + hc1_token(service)}
++    route = next(route for route in app.routes
++                 if isinstance(route, WebSocketRoute) and route.path == "/v1/runs/{id}/stream")
++
++    class FakeSocket:
++        def __init__(self, request_headers):
++            self.headers = {key.lower(): value for key, value in request_headers.items()}
++            self.scope = {"client": ("127.0.0.1", 50006), "server": ("127.0.0.1", 8724),
++                          "path": path, "raw_path": path.encode("ascii"), "query_string": b""}
++            self.close_code = None
++
++        async def close(self, code):
++            self.close_code = code
++
++    run_calls = []
++    def reject_missing_run(principal, run_id):
++        run_calls.append(run_id)
++        raise CodeError(404, "not_found", "synthetic run not found")
++    monkeypatch.setattr(service, "run", reject_missing_run)
++
++    unproved = FakeSocket(headers)
++    asyncio.run(route.endpoint(unproved, "run_synthetic"))
++    assert unproved.close_code == 4403
++    assert run_calls == []
++
++    payload = challenge_payload(method="GET", path=path)
++    challenge = client.post("/v1/relay-challenge", json=payload).json()
++    headers["X-OmegaCode-Relay-Challenge"] = challenge["challenge_id"]
++    proved = FakeSocket(headers)
++    asyncio.run(route.endpoint(proved, "run_synthetic"))
++    # The non-existent run is checked only after the relay proof was consumed.
++    assert proved.close_code == 1008
++    assert run_calls == ["run_synthetic"]
++
++
++def test_proof_rejects_noncanonical_origin_form_targets():
++    base = {"service_id": SERVICE_ID, "nonce": "a" * 64, "method": "GET",
++            "body_sha256": hashlib.sha256(b"").hexdigest(), "challenge_id": "rly_synthetic"}
++    for path in ("https://host/path", "/café", "/bad%ZZ", "/with space", "/x#fragment", "/x\\y"):
++        with pytest.raises(ValueError):
++            challenge_proof(SECRET, path=path, **base)
++
++
++def test_pending_challenge_store_is_bounded_per_connection_and_expires():
++    store = RelayChallengeStore(ttl_seconds=0.01, max_pending=1)
++    common = {"service_id": SERVICE_ID, "nonce": "b" * 64, "method": "GET",
++              "path": "/v1/capabilities", "body_sha256": hashlib.sha256(b"").hexdigest()}
++    connection = ("127.0.0.1", 50005, "127.0.0.1", 8724)
++    challenge_id, _ = store.issue(connection, secret=SECRET, **common)
++    try:
++        store.issue(connection, secret=SECRET, **common)
++        assert False, "a second in-flight challenge on one connection must be refused"
++    except Exception as exc:
++        assert getattr(exc, "code", None) == "relay_challenge_pending"
++    time.sleep(0.02)
++    replacement, _ = store.issue(connection, secret=SECRET, **common)
++    assert replacement != challenge_id
++    assert not store.consume(connection, challenge_id, method="GET", path="/v1/capabilities", body=b"")
++
++
++def test_uvicorn_keepalive_reuses_the_challenged_tcp_connection(service):
++    # Unlike TestClient, this exercises Uvicorn and a real persistent loopback socket.
++    with socket.socket() as probe:
++        probe.bind(("127.0.0.1", 0))
++        port = probe.getsockname()[1]
++    registration(service)
++    service.authority.registration["address"] = f"http://127.0.0.1:{port}"
++    server = uvicorn.Server(uvicorn.Config(create_app(service, port), host="127.0.0.1", port=port,
++                                          log_level="critical", access_log=False, lifespan="off"))
++    thread = threading.Thread(target=server.run, daemon=True)
++    thread.start()
++    deadline = time.monotonic() + 5
++    while not server.started and time.monotonic() < deadline:
++        time.sleep(0.01)
++    assert server.started, "Uvicorn did not start within the bounded test interval"
++    try:
++        limits = httpx.Limits(max_keepalive_connections=1, max_connections=1)
++        with httpx.Client(base_url=f"http://127.0.0.1:{port}", limits=limits,
++                          timeout=2, trust_env=False, http2=False) as client:
++            payload = challenge_payload()
++            proof_response = client.post("/v1/relay-challenge", json=payload)
++            assert proof_response.status_code == 200, proof_response.text
++            challenge_id = proof_response.json()["challenge_id"]
++            relayed = client.get("/v1/capabilities", headers=relay_headers(service, challenge_id))
++            assert relayed.status_code == 200, relayed.text
++    finally:
++        server.should_exit = True
++        thread.join(timeout=5)
++        assert not thread.is_alive(), "Uvicorn test server did not stop cleanly"
++

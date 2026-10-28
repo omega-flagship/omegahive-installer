@@ -1,0 +1,1077 @@
+diff --git a/src/omegacode/api.py b/src/omegacode/api.py
+index 9fe7f76..d21b98d 100644
+--- a/src/omegacode/api.py
++++ b/src/omegacode/api.py
+@@ -965,6 +965,11 @@ def create_app(service: Service, port=8724):
+     def proof_result(id: str, p=P):
+         return service.proof_result(p, id)
+ 
++    @app.get('/v1/runs/{id}/symbolic-trace-result')
++    def symbolic_trace_result(id: str, after: int = Query(0, ge=0, le=4096),
++                              limit: int = Query(100, ge=1, le=100), p=P):
++        return service.symbolic_trace_result(p, id, after, limit)
++
+     @app.get("/v1/runs/{id}/output")
+     def run_output(id: str, after: int = Query(0, ge=0, le=4194304), limit: int = Query(16384, ge=1, le=65536), p=P):
+         return service.run_output(p, id, after, limit)
+diff --git a/src/omegacode/client.py b/src/omegacode/client.py
+index 3cafdd5..b0be3f1 100644
+--- a/src/omegacode/client.py
++++ b/src/omegacode/client.py
+@@ -75,6 +75,7 @@ class NativeClient:
+                    "run-result-source": ('GET', f'/v1/workspaces/{ws}/run-results/{result_id}/source'),
+                    "run-result-import": ('POST', f'/v1/workspaces/{ws}/run-results/{result_id}/import'),
+                    "proof-result": ("GET", f"/v1/runs/{run}/proof-result"),
++                   "symbolic-trace-result": ("GET", f"/v1/runs/{run}/symbolic-trace-result"),
+                    "run-output": ("GET", f"/v1/runs/{run}/output"),
+                    "run-status": ("GET", f"/v1/runs/{run}"),
+                    "terminal-control": ("POST", f"/v1/runs/{run}/terminal"),
+@@ -86,7 +87,7 @@ class NativeClient:
+         if action not in methods:
+             raise ValueError("unsupported native client operation")
+         scoped_action = "run" if action == "terminal-control" else "read" if action == "terminal-control-status" else "edit" if action in ("restore", "completion-apply", "language-rename-apply", "review-apply", "git-export") else "read" if action in ("git-export-state", "git-export-patch", "git-context", "review-create", "review-state", "review-content", "language-servers", "language-query", "completion-preview", "run-history", "verification-history", "diagnostics", "toolchains", "tree", "workspace-state", "changes", "run-status", "run-source", "checkpoint-list") else action
+-        request = dict(task_id=task_id, repository_id=repository_id, actions=["read", "events"] if action in ("run-output", "proof-result") else [scoped_action], ttl_seconds=300)
++        request = dict(task_id=task_id, repository_id=repository_id, actions=["read", "events"] if action in ("run-output", "proof-result", "symbolic-trace-result") else [scoped_action], ttl_seconds=300)
+         if action == 'workspace-fork':
+             request['actions'] = ['read','workspace']
+         if action == 'function-scope-preview':
+@@ -162,10 +163,12 @@ class NativeClient:
+                 body.pop(key, None)
+         if action == "terminal-control-status":
+             body.pop("control_id", None)
+-        if action in ("cancel", "run-status", "run-output", "run-source", "proof-result", "terminal-control", "terminal-control-status"):
++        if action in ("cancel", "run-status", "run-output", "run-source", "proof-result", "symbolic-trace-result", "terminal-control", "terminal-control-status"):
+             body.pop("run_id", None)
+         if action == "artifact":
+             body.pop("digest", None)
++        if action == "symbolic-trace-result":
++            body = {"after": payload.get("after", 0), "limit": payload.get("limit", 100)}
+         response = self.http.request(method, self.code_url+path, params=body if method=="GET" else None,
+                                      json=body if method!="GET" else None,
+                                      headers={"Authorization":"Bearer "+token,"X-Hive-Token":self.member_token})
+diff --git a/src/omegacode/registration.py b/src/omegacode/registration.py
+index e83f28b..8324817 100644
+--- a/src/omegacode/registration.py
++++ b/src/omegacode/registration.py
+@@ -15,7 +15,7 @@ from .common import CodeError, atomic_write, canonical
+ _PROCESS_LOCKS = {}
+ _PROCESS_LOCKS_GUARD = threading.Lock()
+ _REGISTRATION_LOCK_TIMEOUT_SECONDS = 30
+-REGISTRATION_RETRY_AFTER_SECONDS = 35
++REGISTRATION_RETRY_AFTER_SECONDS = _REGISTRATION_LOCK_TIMEOUT_SECONDS + 5
+ 
+ 
+ @contextmanager
+diff --git a/src/omegacode/service.py b/src/omegacode/service.py
+index 9a3afe9..66d949f 100644
+--- a/src/omegacode/service.py
++++ b/src/omegacode/service.py
+@@ -2454,6 +2454,79 @@ class Service(Suggestions, Iterations, RunResults):
+         currency = 'current' if current['generation']==record['generation'] and current['tree_digest']==record['tree_digest'] else 'historical'
+         return {**envelope, **result, 'currency':currency}
+ 
++    def symbolic_trace_result(self, principal, run_id, after=0, limit=100):
++        """Private historical inspection; artifact custody does not authenticate stdout."""
++        if (type(after) is not int or not 0 <= after <= 4096
++                or type(limit) is not int or not 1 <= limit <= 100):
++            raise CodeError(400, 'invalid_symbolic_trace_cursor', 'trace needs an observation offset and limit 1 to 100')
++        record = self.run(principal, run_id)
++        ws = self.workspace(record['workspace_id'])
++
++        def authorize(current):
++            self._live(principal)
++            self._authorize(principal, 'read', current, {})
++            self._authorize(principal, 'events', current, {})
++            self._live(principal)
++            if principal.grant['paths']:
++                raise CodeError(403, 'symbolic_trace_scope', 'symbolic evidence requires full workspace read/event scope')
++
++        def controls():
++            rows = self.store.db.execute("SELECT body FROM records WHERE kind='terminal_control' "
++                "AND json_extract(body,'$.run_id')=? ORDER BY json_extract(body,'$.sequence') LIMIT 1025",
++                (run_id,)).fetchall()
++            if len(rows) > 1024:
++                raise CodeError(409, 'symbolic_trace_invalid', 'saved terminal controls exceed the reader bound',
++                                {'reader_code': 'control_limit'})
++            return [json.loads(row[0]) for row in rows]
++
++        fields = ('id', 'workspace_id', 'nonce', 'generation', 'tree_digest', 'terminal', 'evaluator_digest',
++                  'status', 'descendants_terminated', 'output_digest', 'receipt_digest', 'symbolic_session')
++        def binding(run):
++            return {key: run[key] for key in fields if key in run}
++
++        authorize(ws)
++        self.authority.gate(principal, 'events', {'workspace_id': ws['id'], 'run_id': run_id,
++            'resource': 'symbolic-trace-result', 'after': after, 'limit': limit})
++        with self.store.lock:
++            record = self.store.get('run', run_id)
++            if record.get('workspace_id') != ws['id']:
++                raise CodeError(409, 'symbolic_trace_evidence_changed', 'saved run workspace changed during inspection')
++            retained_controls = controls()
++            captured = canonical([binding(record), retained_controls])
++        if not record.get('symbolic_session'):
++            raise CodeError(409, 'not_symbolic_run', 'run has no frozen symbolic helper')
++        if record.get('status') in ('prepared', 'starting', 'running', 'cancel_requested'):
++            raise CodeError(409, 'symbolic_trace_not_final', 'historical symbolic inspection requires a terminal run')
++        if record.get('descendants_terminated') is not True:
++            raise CodeError(409, 'symbolic_trace_unconfirmed', 'saved symbolic process termination is unconfirmed')
++        if not record.get('output_digest') or not record.get('receipt_digest'):
++            raise CodeError(409, 'symbolic_trace_unconfirmed', 'saved symbolic output and receipt are required')
++        output = self.store.read_blob(record['output_digest'], ws['id'], max_bytes=MAX_LOG)
++        receipt = self.store.read_blob(record['receipt_digest'], ws['id'], max_bytes=512 * 1024)
++        from .symbolic_trace_reader import TraceReadError, inspect_trace
++        try:
++            inspected = inspect_trace(output, record, retained_controls, receipt, after=after, limit=limit)
++        except TraceReadError as error:
++            raise CodeError(409, 'symbolic_trace_invalid', str(error), {'reader_code': error.code}) from None
++        with self.store.lock:
++            current = self.workspace(ws['id'])
++            authorize(current)
++            latest = self.workspace(ws['id'])
++            if (any(latest.get(key) != current.get(key) for key in ('id', 'task_id', 'swarm_id', 'repository_id'))
++                    or canonical([binding(self.store.get('run', run_id)), controls()]) != captured):
++                raise CodeError(409, 'symbolic_trace_evidence_changed', 'saved symbolic evidence changed during inspection')
++            for artifact in (record['output_digest'], record['receipt_digest']):
++                if not self.store.db.execute('SELECT 1 FROM artifact_refs WHERE digest=? AND workspace=?',
++                                             (artifact, ws['id'])).fetchone():
++                    raise CodeError(403, 'artifact_forbidden', 'artifact is not referenced by this workspace')
++            currency = ('current' if latest['generation'] == record['generation']
++                        and latest['tree_digest'] == record['tree_digest'] else 'historical')
++        return {'run_id': run_id, 'workspace_id': ws['id'], 'generation': record['generation'],
++            'tree_digest': record['tree_digest'], 'run_status': record['status'], 'currency': currency,
++            'status': 'inspected', 'result': inspected,
++            'custody': {'workspace_artifact_references_checked': True,
++                        'output_digest': record['output_digest'], 'receipt_digest': record['receipt_digest']}}
++
+     def evidence_history(self, principal, ws_id, kind, limit=50, cursor=None):
+         """Bounded workspace evidence page; cursor binds its workspace and evidence kind."""
+         if kind not in ("run", "verification") or type(limit) is not int or not 1 <= limit <= 100:
+diff --git a/src/omegacode/store.py b/src/omegacode/store.py
+index 6e6b535..52fe5ee 100644
+--- a/src/omegacode/store.py
++++ b/src/omegacode/store.py
+@@ -4,9 +4,11 @@ from __future__ import annotations
+ 
+ import contextlib
+ import json
++import os
+ import pathlib
+ import re
+ import sqlite3
++import stat
+ import threading
+ 
+ from .common import CodeError, atomic_write, canonical, digest, stamp
+@@ -94,13 +96,26 @@ class Store:
+         self.db.execute("INSERT OR IGNORE INTO artifact_refs VALUES(?,?,?)", (hash_, workspace, kind))
+         return hash_
+ 
+-    def read_blob(self, hash_: str, workspace: str) -> bytes:
++    def read_blob(self, hash_: str, workspace: str, *, max_bytes: int | None = None) -> bytes:
++        if max_bytes is not None and (type(max_bytes) is not int or max_bytes < 0):
++            raise CodeError(400, "invalid_artifact_limit", "artifact byte limit must be a nonnegative integer")
+         with self.lock:
+             allowed = self.db.execute("SELECT 1 FROM artifact_refs WHERE digest=? AND workspace=?", (hash_, workspace)).fetchone()
+         if not allowed:
+             raise CodeError(403, "artifact_forbidden", "artifact is not referenced by this workspace")
++        path = self.blob_path(hash_)
+         try:
+-            data = self.blob_path(hash_).read_bytes()
++            with path.open("rb") as stream:
++                before = os.fstat(stream.fileno())
++                if not stat.S_ISREG(before.st_mode):
++                    raise CodeError(409, "artifact_corrupt", "referenced artifact is not a regular file")
++                if max_bytes is not None and before.st_size > max_bytes:
++                    raise CodeError(409, "artifact_too_large", "referenced artifact exceeds the read bound")
++                data = stream.read() if max_bytes is None else stream.read(max_bytes + 1)
++                after = os.fstat(stream.fileno())
++                if max_bytes is not None and (len(data) > max_bytes or len(data) != before.st_size
++                                              or before.st_size != after.st_size):
++                    raise CodeError(409, "artifact_too_large", "referenced artifact exceeds the read bound")
+         except FileNotFoundError:
+             raise CodeError(409, "artifact_missing", "referenced artifact is missing")
+         if digest(data) != hash_:
+diff --git a/b/src/omegacode/symbolic_trace_reader.py b/src/omegacode/symbolic_trace_reader.py
+new file mode 100644
+index 0000000..8d9a571
+--- /dev/null
++++ b/src/omegacode/symbolic_trace_reader.py
+@@ -0,0 +1,489 @@
++"""Pure, bounded inspection of a retained cooperative symbolic transcript.
++
++Callers must obtain these bytes/records through the existing workspace custody
++and read/events authorization. Matching hashes here does not grant access or
++authenticate stdout: a program can print protocol-shaped JSON. This module does
++not import a runtime, execute, restore, replay, or claim current admission.
++"""
++from __future__ import annotations
++
++import base64
++import hashlib
++import json
++import math
++import re
++
++
++MAX_LOG = 4 * 1024 * 1024
++MAX_CONTROLS = 1024
++MAX_INPUT = 65536
++MAX_FRAMES = 4096
++MAX_TRACES = 32
++PROTOCOL = 'omegacode-symbolic-jsonl-v1'
++STEP_PROTOCOL = 'omegacode-hyperon-runner-step-v1'
++COVERAGE_MEANING = ('recent successful materialized step-next inspection batches; '
++                    'not advances, reductions or delivered output')
++STEP_OPS = ('step-start', 'step-next', 'step-status', 'step-clear')
++OBS_KEYS = {'input_sequence', 'step_count', 'status', 'results_digest', 'rendered_atoms_digest'}
++
++
++class TraceReadError(ValueError):
++    """The supplied evidence cannot support this reader's bounded schema."""
++
++    def __init__(self, code, message):
++        self.code = code
++        super().__init__(message)
++
++
++def _fail(code, message):
++    raise TraceReadError(code, message)
++
++
++def _bytes_digest(raw):
++    return hashlib.sha256(raw).hexdigest()
++
++
++def _encoded(value):
++    try:
++        return json.dumps(value, sort_keys=True, separators=(',', ':'),
++                          ensure_ascii=False, allow_nan=False).encode('utf-8')
++    except (ValueError, TypeError, UnicodeError, RecursionError):
++        _fail('invalid_json_value', 'evidence contains a non-JSON value')
++
++
++def _digest(value):
++    return _bytes_digest(_encoded(value))
++
++
++def _unique(pairs):
++    value = {}
++    for key, item in pairs:
++        if key in value:
++            _fail('duplicate_json_key', 'duplicate JSON object keys are refused')
++        value[key] = item
++    return value
++
++
++def _float(text):
++    value = float(text)
++    if not math.isfinite(value):
++        _fail('invalid_json_number', 'nonfinite JSON numbers are refused')
++    return value
++
++
++def _constant(_):
++    _fail('invalid_json_number', 'nonfinite JSON constants are refused')
++
++
++def _json(raw, limit):
++    if type(raw) is not bytes or not 0 < len(raw) <= limit:
++        _fail('json_size', 'JSON bytes are absent or exceed the reader bound')
++    try:
++        return json.loads(raw.decode('utf-8'), object_pairs_hook=_unique,
++                          parse_float=_float, parse_constant=_constant)
++    except TraceReadError:
++        raise
++    except (ValueError, UnicodeError, RecursionError):
++        _fail('invalid_json', 'evidence is not bounded valid UTF-8 JSON')
++
++
++def _int(value, low=0, high=MAX_FRAMES):
++    return type(value) is int and low <= value <= high
++
++
++def _text(value, limit=160):
++    if type(value) is not str or not 0 < len(value) <= limit:
++        return False
++    try:
++        return len(value.encode('utf-8')) <= limit
++    except UnicodeError:
++        return False
++
++
++def _hex(value):
++    return type(value) is str and re.fullmatch('[a-f0-9]{64}', value) is not None
++
++
++def _keys(value, required, optional=()):
++    if type(value) is not dict or not set(required) <= value.keys() or set(value) - set(required) - set(optional):
++        _fail('frame_schema', 'transcript object has missing or unknown fields')
++
++
++def _context(run):
++    if type(run) is not dict or any(not _text(run.get(k), 256) for k in ('id', 'workspace_id', 'nonce')):
++        _fail('run_binding', 'run identity is missing or malformed')
++    if (not _int(run.get('generation'), 1, 2**63-1) or not _hex(run.get('tree_digest'))
++            or run.get('terminal') is not True or not _hex(run.get('evaluator_digest'))):
++        _fail('run_binding', 'run is not a saved symbolic terminal generation')
++    if run.get('status') in ('prepared', 'starting', 'running', 'cancel_requested'):
++        _fail('run_not_final', 'historical inspection requires a terminal run record')
++    if not _text(run.get('status'), 64) or type(run.get('descendants_terminated')) is not bool:
++        _fail('run_binding', 'run termination metadata is malformed')
++    session = run.get('symbolic_session')
++    if (type(session) is not dict or session.get('protocol') != PROTOCOL
++            or not _text(session.get('runtime_id')) or not _hex(session.get('identity_digest'))
++            or not _hex(session.get('helper_digest'))
++            or session.get('all_inputs_require_run_authority') is not True
++            or session.get('sandboxed') is not False):
++        _fail('symbolic_binding', 'saved symbolic helper/runtime binding is malformed')
++    return {'run_id': run['id'], 'generation': run['generation'], 'tree_digest': run['tree_digest'],
++            'runtime_identity_digest': session['identity_digest'], 'runtime': 'hyperon'}
++
++
++def _inputs(controls, run):
++    """Reassemble submitted bytes; control sequence is NOT worker sequence."""
++    if type(controls) not in (list, tuple) or len(controls) > MAX_CONTROLS:
++        _fail('control_limit', 'at most 1024 ordered stored controls are supported')
++    stream, segments, ids = bytearray(), [], set()
++    for sequence, record in enumerate(controls, 1):
++        if (type(record) is not dict or not {'id', 'run_id', 'workspace_id', 'sequence', 'actor',
++                'payload', 'kind', 'input_bytes', 'input_digest'} <= record.keys()
++                or not _text(record.get('id')) or record['id'] in ids
++                or type(record.get('sequence')) is not int or record['sequence'] != sequence
++                or record.get('run_id') != run['id'] or record.get('workspace_id') != run['workspace_id']
++                or not _text(record.get('actor'), 256) or type(record.get('payload')) is not dict):
++            _fail('control_binding', 'stored controls need unique identity and contiguous run-bound sequence')
++        ids.add(record['id'])
++        payload = record['payload']
++        if payload.get('kind') != record.get('kind'):
++            _fail('control_binding', 'stored control kind differs from its payload')
++        if record['kind'] == 'resize':
++            if (type(record.get('input_bytes')) is not int or record['input_bytes'] != 0
++                    or record.get('input_digest') is not None
++                    or 'data_base64' in payload or any(not _int(payload.get(k), 1, 500) for k in ('rows', 'cols'))):
++                _fail('control_binding', 'resize control is malformed')
++            continue
++        if record['kind'] != 'input' or any(k in payload for k in ('rows', 'cols')):
++            _fail('control_binding', 'unknown or mixed stored terminal control')
++        try:
++            if type(payload.get('data_base64')) is not str or len(payload['data_base64']) > 10924:
++                raise ValueError()
++            data = base64.b64decode(payload['data_base64'], validate=True)
++        except (ValueError, TypeError):
++            _fail('control_binding', 'stored input is not valid base64')
++        if (not 1 <= len(data) <= 8192 or type(record.get('input_bytes')) is not int
++                or record['input_bytes'] != len(data) or record.get('input_digest') != _bytes_digest(data)):
++            _fail('control_binding', 'stored input length or digest differs from submitted bytes')
++        if len(stream) + len(data) > MAX_INPUT:
++            _fail('input_limit', 'submitted input stream exceeds 65536 bytes')
++        segments.append((len(stream), len(stream) + len(data), sequence))
++        stream.extend(data)
++    requests, offset = {}, 0
++    while b'\n' in stream[offset:]:
++        end = stream.index(b'\n', offset) + 1
++        raw = bytes(stream[offset:end])
++        if len(raw) > 8192 or len(requests) >= MAX_FRAMES:
++            _fail('input_alignment_unknown', 'input framing exceeds the supported worker bounds')
++        request = _json(raw, 8192)
++        if type(request) is not dict:
++            _fail('input_alignment_unknown', 'non-object input prevents supported command correlation')
++        touched = [sequence for start, stop, sequence in segments if start < end and stop > offset]
++        requests[len(requests)+1] = {'request': request, 'frame_digest': _bytes_digest(raw),
++            'controls': {'first': touched[0], 'last': touched[-1]}}
++        offset = end
++    if len(stream) - offset > 8192:
++        _fail('input_alignment_unknown', 'unterminated submitted input exceeds a worker frame')
++    return requests, offset != len(stream)
++
++
++def _trace_catalog(requests, context):
++    catalog = {}
++    for sequence, item in requests.items():
++        request = item['request']
++        source, budget = request.get('source'), request.get('max_steps', 10000)
++        if (request.get('op') != 'step-start' or not _text(request.get('id'))
++                or set(request) - {'id', 'op', 'source', 'max_steps'}
++                or not _text(source, 7000) or not _int(budget, 1, 10000)):
++            continue
++        source_digest = _bytes_digest(source.encode('utf-8'))
++        trace_id = 'step_' + _digest([context, source_digest, sequence])
++        catalog[trace_id] = {'start_sequence': sequence, 'source_digest': source_digest, 'max_steps': budget}
++    return catalog
++
++
++def _coverage(value, rows):
++    _keys(value, {'total_observations', 'retained_observations', 'dropped_observations', 'truncated',
++                 'first_retained_input_sequence', 'first_retained_step_count', 'window_limit', 'coverage'})
++    total, retained, dropped = (value.get(k) for k in ('total_observations', 'retained_observations', 'dropped_observations'))
++    if (not all(_int(n) for n in (total, retained, dropped)) or retained != len(rows)
++            or retained != min(total, 100)
++            or dropped != total-retained or type(value['truncated']) is not bool
++            or value['truncated'] != (dropped > 0) or type(value['window_limit']) is not int
++            or value['window_limit'] != 100 or value['coverage'] != COVERAGE_MEANING
++            or value['first_retained_input_sequence'] != (rows[0]['input_sequence'] if rows else None)
++            or value['first_retained_step_count'] != (rows[0]['step_count'] if rows else None)):
++        _fail('coverage_invalid', 'declared observation coverage is inconsistent')
++    # Equality alone would accept booleans in integer cursor fields.
++    if rows and (type(value['first_retained_input_sequence']) is not int
++                 or type(value['first_retained_step_count']) is not int):
++        _fail('coverage_invalid', 'coverage cursors must be actual integers')
++    return value.copy()
++
++
++def _trace_result(result, request, sequence, context, catalog, traces, observations, requests, reasons):
++    required = {'trace_id', 'source_digest', 'context', 'step_count', 'max_steps', 'status', 'results',
++        'observations', 'results_currency', 'last_observed_step', 'engine_api', 'substitutions_available',
++        'grounded_call_trace_available', 'persistence', 'effects_reversed'}
++    coverage_keys = {'observation_coverage', 'observation_total', 'observation_window_limit',
++        'observation_dropped_prefix', 'first_retained_input_sequence', 'first_retained_step'}
++    _keys(result, required, coverage_keys)
++    trace_id = result['trace_id']
++    saved = catalog.get(trace_id) if type(trace_id) is str else None
++    if (saved is None or result['source_digest'] != saved['source_digest'] or _encoded(result['context']) != _encoded(context)
++            or result['max_steps'] != saved['max_steps'] or type(result['max_steps']) is not int
++            or not _int(result['step_count'], 0, saved['max_steps'])
++            or saved['start_sequence'] > sequence
++            or (request['op'] == 'step-start' and saved['start_sequence'] != sequence)
++            or (request['op'] != 'step-start' and request.get('trace_id') != trace_id)):
++        _fail('trace_binding', 'reported trace differs from saved context or submitted source')
++    if (result['status'] not in ('paused', 'complete', 'budget-exhausted', 'faulted')
++            or result['engine_api'] != 'hyperon.runner.RunnerState.run_step'
++            or result['substitutions_available'] is not False or result['grounded_call_trace_available'] is not False
++            or result['effects_reversed'] is not False
++            or result['persistence'] != 'resident process only; no automatic replay'):
++        _fail('trace_schema', 'reported trace capability metadata is unsupported')
++    groups = result['results']
++    if (type(groups) is not list or any(type(group) is not list or any(type(atom) is not str for atom in group)
++                                      for group in groups) or len(_encoded(groups)) > 262144):
++        _fail('trace_schema', 'reported result groups are malformed or oversized')
++    rows = result['observations']
++    if type(rows) is not list or len(rows) > 100:
++        _fail('observation_schema', 'reported recent window exceeds 100 observations')
++    prior_sequence, prior_steps = 0, 0
++    for row in rows:
++        _keys(row, OBS_KEYS)
++        row_sequence, steps = row['input_sequence'], row['step_count']
++        submitted = requests.get(row_sequence, {}).get('request', {}) if type(row_sequence) is int else {}
++        if (not _int(row_sequence, saved['start_sequence']+1, sequence) or row_sequence <= prior_sequence
++                or not _int(steps, prior_steps, result['step_count'])
++                or row['status'] not in ('paused', 'complete', 'budget-exhausted')
++                or not _hex(row['results_digest']) or not _hex(row['rendered_atoms_digest'])
++                or submitted.get('op') != 'step-next' or submitted.get('trace_id') != trace_id):
++            _fail('observation_binding', 'observation is not ordered or correlated to a submitted step-next')
++        key = (trace_id, row_sequence)
++        if key in observations and observations[key] != row:
++            _fail('observation_conflict', 'one trace/input sequence reports conflicting observations')
++        observations[key] = row.copy()
++        prior_sequence, prior_steps = row_sequence, steps
++    if (type(result['last_observed_step']) is not int
++            or result['last_observed_step'] != (rows[-1]['step_count'] if rows else 0)
++            or result['results_currency'] != ('last successful step batch' if rows else 'not yet observed')):
++        _fail('observation_schema', 'reported last-successful observation metadata disagrees')
++    if request['op'] == 'step-next' and (result['status'] == 'faulted' or not rows
++                                        or rows[-1]['input_sequence'] != sequence):
++        _fail('observation_binding', 'successful step-next response lacks its inspection sample')
++    if request['op'] == 'step-next' and rows[-1]['status'] != result['status']:
++        _fail('observation_binding', 'successful step-next sample differs from the reported status')
++    if result['status'] == 'budget-exhausted' and result['step_count'] != saved['max_steps']:
++        _fail('trace_schema', 'budget-exhausted trace is below its budget')
++    if result['status'] != 'faulted' and rows and rows[-1]['step_count'] != result['step_count']:
++        _fail('observation_binding', 'successful trace state differs from the latest reported sample')
++    if rows and _digest(groups) != rows[-1]['results_digest']:
++        reasons.add('results_not_bound_to_last_observation')
++    if result['status'] == 'faulted':
++        reasons.add('reported_trace_fault')
++    coverage = None
++    r13_coverage_fields = {'observation_total', 'observation_window_limit',
++        'observation_dropped_prefix', 'first_retained_input_sequence', 'first_retained_step'}
++    if 'observation_coverage' not in result and r13_coverage_fields.intersection(result):
++        _fail('coverage_invalid', 'partial R13 observation coverage metadata is inconsistent')
++    if 'observation_coverage' in result:
++        reported = result['observation_coverage']
++        if type(reported) is dict:
++            # Retain compatibility with the earlier structured coverage shape.
++            if r13_coverage_fields.intersection(result):
++                _fail('coverage_invalid', 'structured and R13 observation coverage metadata are mixed')
++            coverage = _coverage(reported, rows)
++        else:
++            if (type(reported) is not str or reported not in ('complete-history', 'recent-tail')
++                    or not r13_coverage_fields <= set(result)):
++                _fail('coverage_invalid', 'declared R13 observation coverage is incomplete')
++            total = result['observation_total']
++            dropped = result['observation_dropped_prefix']
++            first_sequence = result['first_retained_input_sequence']
++            first_step = result['first_retained_step']
++            if (not _int(total) or not _int(dropped) or dropped != total - len(rows)
++                    or len(rows) > 100 or result['observation_window_limit'] != 100
++                    or type(result['observation_window_limit']) is not int
++                    or reported != ('recent-tail' if dropped else 'complete-history')
++                    or first_sequence != (rows[0]['input_sequence'] if rows else None)
++                    or first_step != (rows[0]['step_count'] if rows else None)
++                    or (rows and (type(first_sequence) is not int or type(first_step) is not int))):
++                _fail('coverage_invalid', 'declared R13 observation coverage is inconsistent')
++            coverage = {'total_observations': total, 'retained_observations': len(rows),
++                'dropped_observations': dropped, 'truncated': dropped > 0,
++                'first_retained_input_sequence': first_sequence, 'first_retained_step_count': first_step,
++                'window_limit': 100, 'coverage': COVERAGE_MEANING}
++    previous = traces.get(trace_id)
++    if previous and previous['cleared_reported']:
++        _fail('trace_order', 'a cleared trace cannot report another successful response')
++    if previous and result['step_count'] < previous['reported_step_count']:
++        _fail('trace_order', 'reported step count went backwards')
++    if previous and previous['reported_coverage'] is not None and coverage is not None:
++        if coverage['total_observations'] < previous['reported_coverage']['total_observations']:
++            _fail('coverage_invalid', 'reported materialization count went backwards')
++    if coverage is not None:
++        if coverage['total_observations'] < sum(key[0] == trace_id for key in observations):
++            _fail('coverage_invalid', 'reported total understates unique observations already inspected')
++        possible = sum(item['request'].get('op') == 'step-next'
++                       and item['request'].get('trace_id') == trace_id for n, item in requests.items() if n <= sequence)
++        if coverage['total_observations'] > possible:
++            _fail('coverage_invalid', 'reported samples exceed submitted step-next commands')
++    else:
++        reasons.add('legacy_observation_coverage_unknown')
++    if trace_id not in traces and len(traces) >= MAX_TRACES:
++        _fail('trace_limit', 'historical report supports at most 32 traces')
++    traces[trace_id] = {'trace_id': trace_id, 'source_digest': saved['source_digest'],
++        'start_input_sequence': saved['start_sequence'], 'reported_step_count': result['step_count'],
++        'max_steps': saved['max_steps'], 'reported_status': result['status'],
++        'reported_coverage': coverage, 'coverage_known': coverage is not None,
++        'cleared_reported': previous['cleared_reported'] if previous else False}
++
++
++def inspect_trace(output: bytes, run: dict, controls, receipt_bytes: bytes, *, after=0, limit=100):
++    """Inspect immutable supplied evidence; page unique *reported* observations.
++
++    Raises TraceReadError on corrupt bindings/unsupported schemas. Incompleteness
++    is explicit, and no result authenticates the author of stdout or native work.
++    Caller remains responsible for obtaining all inputs under existing authority.
++    """
++    if not _int(after, 0, MAX_FRAMES) or not _int(limit, 1, 100):
++        _fail('report_cursor', 'report needs an observation offset and limit 1..100')
++    context = _context(run)
++    if type(output) is not bytes or not len(output) <= MAX_LOG:
++        _fail('output_limit', 'output bytes exceed the retained-log bound')
++    if not _hex(run.get('output_digest')) or run['output_digest'] != _bytes_digest(output):
++        _fail('output_binding', 'output differs from the saved artifact digest')
++    if (not _hex(run.get('receipt_digest')) or type(receipt_bytes) is not bytes
++            or run['receipt_digest'] != _bytes_digest(receipt_bytes)):
++        _fail('receipt_binding', 'receipt differs from the saved artifact digest')
++    receipt = _json(receipt_bytes, 512*1024)
++    if (type(receipt) is not dict or receipt.get('nonce') != run['nonce'] or receipt.get('run_id') != run['id']
++            or receipt.get('terminal') is not True or type(receipt.get('descendants_terminated')) is not bool
++            or type(receipt.get('output_bytes')) is not int or receipt['output_bytes'] != len(output)
++            or not _text(receipt.get('status'), 64)):
++        _fail('receipt_binding', 'receipt is not bound to this saved terminal output')
++    requests, partial_input = _inputs(controls, run)
++    consumed = receipt.get('terminal_controls')
++    if type(consumed) is not list or len(consumed) > len(controls):
++        _fail('receipt_controls', 'receipt consumed controls are malformed')
++    for actual, saved in zip(consumed, controls):
++        if type(actual) is not dict or _encoded(actual) != _encoded({k: saved[k] for k in
++                ('id', 'sequence', 'kind', 'input_bytes', 'input_digest', 'actor')}):
++            _fail('receipt_controls', 'receipt consumed prefix differs from stored controls')
++    reasons = set()
++    if partial_input: reasons.add('submitted_partial_frame')
++    if len(consumed) != len(controls): reasons.add('submitted_controls_not_reported_consumed')
++    if receipt['status'] != 'completed' or run['status'] != 'completed': reasons.add('run_not_reported_completed')
++    if receipt['status'] == 'output_limit' or run['status'] == 'output_limit': reasons.add('output_limit')
++    if len(output) == MAX_LOG: reasons.add('output_at_capture_limit')
++    if run['descendants_terminated'] is not True or receipt['descendants_terminated'] is not True:
++        reasons.add('termination_unconfirmed')
++    catalog = _trace_catalog(requests, context)
++    traces, observations, responses = {}, {}, set()
++    ready, last_sequence = False, 0
++    if output.count(b'\n') > MAX_FRAMES:
++        _fail('frame_limit', 'transcript exceeds 4096 complete frames')
++    lines = output.split(b'\n')
++    if lines[-1]: reasons.add('partial_output_frame')
++    lines = lines[:-1]
++    if len(lines) > MAX_FRAMES:
++        _fail('frame_limit', 'transcript exceeds 4096 complete frames')
++    for line in lines:
++        frame = _json(line, 65536)
++        if type(frame) is not dict:
++            _fail('frame_schema', 'transcript frame is not an object')
++        if frame.get('event') == 'ready':
++            _keys(frame, {'event', 'protocol', 'runtime', 'persistence', 'atom_count', 'context',
++                          'snapshot_representation', 'step_protocol', 'step_commands'})
++            if (ready or responses or frame['protocol'] != PROTOCOL or frame['runtime'] != 'hyperon'
++                    or _encoded(frame['context']) != _encoded(context) or frame['step_protocol'] != STEP_PROTOCOL
++                    or frame['step_commands'] != list(STEP_OPS)
++                    or type(frame['atom_count']) is not int or frame['atom_count'] != 0
++                    or frame['snapshot_representation'] != 'rendered-atom-multiset-v1'
++                    or frame['persistence'] != 'resident process only; no automatic replay'):
++                _fail('ready_binding', 'ready frame differs from the saved run context/protocol')
++            ready = True
++            continue
++        if not ready:
++            _fail('ready_missing', 'a supported ready frame must precede observations')
++        if frame.get('event') not in ('result', 'error'):
++            _fail('frame_schema', 'unsupported transcript event')
++        sequence = frame.get('input_sequence')
++        if not _int(sequence, 1, len(requests)) or sequence <= last_sequence:
++            _fail('response_order', 'response is not an ordered submitted-input correlation')
++        request = requests[sequence]['request']
++        expected_id = request.get('id')
++        if type(expected_id) is not str or len(expected_id) > 160: expected_id = None
++        if frame.get('id') != expected_id:
++            _fail('response_binding', 'response id differs from parsed submitted input')
++        responses.add(sequence)
++        last_sequence = sequence
++        if frame['event'] == 'error':
++            _keys(frame, {'event', 'id', 'reason', 'input_sequence', 'state_may_have_changed'})
++            if type(frame['reason']) is not str or len(frame['reason']) > 2000 or frame['state_may_have_changed'] is not True:
++                _fail('error_schema', 'error frame is malformed')
++            reasons.add('reported_input_error_state_uncertain')
++            continue
++        _keys(frame, {'event', 'id', 'op', 'result', 'atom_count', 'input_sequence'})
++        if (not _text(request.get('id')) or frame['op'] != request.get('op') or not _text(frame['op'], 64)
++                or not _int(frame['atom_count'], 0, 2**63-1)):
++            _fail('response_binding', 'response operation/count differs from submitted command')
++        if frame['op'] in STEP_OPS:
++            allowed = {'step-start': {'id', 'op', 'source', 'max_steps'},
++                'step-next': {'id', 'op', 'trace_id', 'count'},
++                'step-status': {'id', 'op', 'trace_id'}, 'step-clear': {'id', 'op', 'trace_id'}}
++            if (set(request) - allowed[frame['op']] or not _text(request.get('id'))
++                    or (frame['op'] == 'step-next' and not _int(request.get('count', 1), 1, 1000))):
++                _fail('response_binding', 'successful step response has an invalid submitted command schema')
++        elif frame['op'] not in ('eval', 'add', 'remove', 'query', 'atoms', 'close', 'snapshot',
++                                 'snapshots', 'snapshot-atoms', 'snapshot-bytes', 'diff'):
++            _fail('response_binding', 'successful response has an unknown command')
++        if frame['op'] in STEP_OPS[:3]:
++            _trace_result(frame['result'], request, sequence, context, catalog, traces, observations, requests, reasons)
++        elif frame['op'] == 'step-clear':
++            result = frame['result']
++            _keys(result, {'trace_id', 'cleared', 'effects_reversed'})
++            if (not _text(result['trace_id']) or result['trace_id'] != request.get('trace_id')
++                    or result['trace_id'] not in traces
++                    or result['cleared'] is not True or result['effects_reversed'] is not False):
++                _fail('clear_binding', 'clear response lacks a previously observed trace binding')
++            traces[result['trace_id']]['cleared_reported'] = True
++    if not ready:
++        _fail('ready_missing', 'no supported ready frame was retained')
++    missing = sorted(requests.keys() - responses)
++    if missing: reasons.add('submitted_inputs_without_response')
++    if not traces: reasons.add('trace_not_observed')
++    ordered = sorted(observations.items(), key=lambda pair: (pair[1]['input_sequence'], pair[0][0]))
++    if after > len(ordered):
++        _fail('report_cursor', 'observation offset exceeds inspected unique rows')
++    page = []
++    for (trace_id, sequence), row in ordered[after:after+limit]:
++        item = requests[sequence]
++        page.append({'trace_id': trace_id, **row, 'submitted_frame_digest': item['frame_digest'],
++                     'submitted_control_range': item['controls']})
++    report = {'protocol': 'omegacode-symbolic-historical-readback-v1',
++        'scope': 'cooperative retained transcript; supplied artifact bindings; historical inspection only',
++        'run_id': run['id'], 'workspace_id': run['workspace_id'], 'context': context,
++        'output_digest': run['output_digest'], 'receipt_digest': run['receipt_digest'],
++        'evaluator_digest': run['evaluator_digest'], 'helper_digest': run['symbolic_session']['helper_digest'],
++        'runtime_id': run['symbolic_session']['runtime_id'],
++        'submitted_controls_binding_digest': _digest([{k: record[k] for k in
++            ('id', 'sequence', 'kind', 'input_bytes', 'input_digest', 'actor')} for record in controls]),
++        'evidence_origin': 'caller-provided run/control/receipt/output; provenance unattested by this pure reader',
++        'record_origin_authenticated': False, 'workspace_custody_checked_here': False,
++        'supplied_content_hashes_match': True, 'authorization_checked_here': False,
++        'stdout_author_authenticated': False, 'native_integrity_verified': False,
++        'reductions_verified': False, 'execution_effects_verified': False, 'history_complete': False,
++        'current_engine_admission_verified': False, 'engine_invoked_by_reader': False,
++        'replay_performed': False, 'submitted_inputs': len(requests),
++        'reported_consumed_controls': len(consumed), 'control_consumption_is_execution': False,
++        'correlated_response_frames': len(responses), 'missing_response_count': len(missing),
++        'first_missing_input_sequences': missing[:16], 'incomplete_reasons': sorted(reasons),
++        'traces': list(traces.values()), 'observations': page, 'after': after,
++        'next': after+len(page), 'eof': after+len(page) == len(ordered),
++        'unique_reported_observations': len(ordered),
++        'observation_meaning': 'deduplicated reported samples keyed by trace and input sequence; not reductions or advances'}
++    if len(_encoded(report)) > 65536:
++        _fail('report_limit', 'typed readback exceeds the 65536-byte response bound')
++    return report
+diff --git a/b/tests/service_fixture.py b/tests/service_fixture.py
+new file mode 100644
+index 0000000..5e4eeb0
+--- /dev/null
++++ b/tests/service_fixture.py
+@@ -0,0 +1,118 @@
++"""Synthetic retained transcript fixture derived verbatim from the frozen Service r1.1 tests.
++Real Service/Store/Authority; no native process or source-repository provenance claim.
++"""
++import base64
++import json
++import time
++import httpx
++from omegacode.common import canonical, digest
++from omegacode.service import Service
++
++OPERATOR = 'synthetic-symbolic-service-operator-123456789'
++
++class Fixture:
++    """Seeded source metadata/host reports are synthetic; storage and guards are actual."""
++    def __init__(self, root):
++        self.policy = 'allow'
++        self.authorizations = []
++        def hive(request):
++            if request.method == 'GET' and request.url.path == '/api/agent/goals/task-synthetic':
++                return httpx.Response(200, json={'swarm_id': 'swarm-synthetic', 'claimed_by': 'agent:synthetic'})
++            if request.method == 'POST' and request.url.path == '/api/agent/authorize':
++                self.authorizations.append(json.loads(request.content))
++                return httpx.Response(200, json={'decision': self.policy})
++            raise AssertionError('unexpected mock-host request: ' + str(request.url))
++        self.service = Service(root, OPERATOR, {}, hive_url='https://synthetic-hive.invalid',
++                               transport=httpx.MockTransport(hive))
++        self.principal = self.person()
++        store = self.service.store
++        with store.transaction():
++            raw = b'private_fixture = 1\n'
++            tree = self.service._manifest({'private_fixture.py': {'digest': store.blob(raw, 'ws-synthetic', 'source'),
++                'size': len(raw), 'executable': False}}, 'ws-synthetic')
++            self.workspace = {'id': 'ws-synthetic', 'task_id': 'task-synthetic', 'swarm_id': 'swarm-synthetic',
++                'repository_id': 'repo-synthetic', 'generation': 1, 'tree_digest': tree,
++                'base_tree_digest': tree, 'base_commit': 'synthetic-no-git-claim',
++                'history': [{'generation': 1, 'tree_digest': tree, 'author': self.principal.actor}]}
++            store.put('workspace', self.workspace)
++        self.run = {'id': 'run-synthetic', 'workspace_id': self.workspace['id'], 'nonce': 'synthetic-nonce',
++            'generation': 1, 'tree_digest': tree, 'terminal': True, 'evaluator_digest': '2' * 64,
++            'status': 'completed', 'descendants_terminated': True, 'created_at': time.time(),
++            'symbolic_session': {'runtime_id': 'synthetic-hyperon', 'identity_digest': '3' * 64,
++                'helper_digest': '4' * 64, 'protocol': 'omegacode-symbolic-jsonl-v1',
++                'all_inputs_require_run_authority': True, 'sandboxed': False}}
++        context = {'run_id': self.run['id'], 'generation': 1, 'tree_digest': tree,
++                   'runtime_identity_digest': '3' * 64, 'runtime': 'hyperon'}
++        source = '!(+ 1 1)'
++        trace = 'step_' + digest(canonical([context, digest(source.encode()), 1]))
++        commands = [{'id': 'q1', 'op': 'step-start', 'source': source, 'max_steps': 8},
++                    {'id': 'q2', 'op': 'step-next', 'trace_id': trace}]
++        self.controls = [self.control(index, command) for index, command in enumerate(commands, 1)]
++        ready = {'event': 'ready', 'protocol': 'omegacode-symbolic-jsonl-v1', 'runtime': 'hyperon',
++            'persistence': 'resident process only; no automatic replay', 'atom_count': 0, 'context': context,
++            'snapshot_representation': 'rendered-atom-multiset-v1',
++            'step_protocol': 'omegacode-hyperon-runner-step-v1',
++            'step_commands': ['step-start', 'step-next', 'step-status', 'step-clear']}
++        common = {'trace_id': trace, 'source_digest': digest(source.encode()), 'context': context,
++            'max_steps': 8, 'engine_api': 'hyperon.runner.RunnerState.run_step',
++            'substitutions_available': False, 'grounded_call_trace_available': False,
++            'persistence': 'resident process only; no automatic replay', 'effects_reversed': False}
++        start = {**common, 'step_count': 0, 'status': 'paused', 'results': [], 'observations': [],
++                 'observation_total': 0, 'observation_window_limit': 100, 'observation_dropped_prefix': 0,
++                 'observation_coverage': 'complete-history', 'first_retained_input_sequence': None,
++                 'first_retained_step': None, 'results_currency': 'not yet observed', 'last_observed_step': 0}
++        observation = {'input_sequence': 2, 'step_count': 1, 'status': 'complete',
++            'results_digest': digest(canonical([['2']])), 'rendered_atoms_digest': digest(canonical([]))}
++        complete = {**common, 'step_count': 1, 'status': 'complete', 'results': [['2']],
++            'observations': [observation], 'observation_total': 1, 'observation_window_limit': 100,
++            'observation_dropped_prefix': 0, 'observation_coverage': 'complete-history',
++            'first_retained_input_sequence': 2, 'first_retained_step': 1,
++            'results_currency': 'last successful step batch', 'last_observed_step': 1}
++        frames = [ready, {'event': 'result', 'id': 'q1', 'op': 'step-start', 'result': start,
++                          'atom_count': 0, 'input_sequence': 1},
++                  {'event': 'result', 'id': 'q2', 'op': 'step-next', 'result': complete,
++                   'atom_count': 0, 'input_sequence': 2}]
++        self.output = b''.join(canonical(frame) + b'\n' for frame in frames)
++        self.receipt = {'nonce': self.run['nonce'], 'run_id': self.run['id'], 'status': 'completed',
++            'terminal': True, 'descendants_terminated': True, 'output_bytes': len(self.output),
++            'terminal_controls': [{key: row[key] for key in
++                ('id', 'sequence', 'kind', 'input_bytes', 'input_digest', 'actor')} for row in self.controls]}
++        self.retain()
++
++    def person(self, **changes):
++        config = dict(actor='person:synthetic', kind='human', task_id='task-synthetic',
++            swarm_id='swarm-synthetic', repository_id='repo-synthetic', actions=['read', 'events', 'edit'])
++        config.update(changes)
++        issued = self.service.authority.issue(**config)
++        return self.service.authority.authenticate(issued['token'], config.get('member_token'))
++
++    def control(self, sequence, command):
++        data = canonical(command) + b'\n'
++        return {'id': 'tc-synthetic-' + str(sequence), 'run_id': self.run['id'],
++            'workspace_id': self.workspace['id'], 'sequence': sequence, 'actor': self.principal.actor,
++            'kind': 'input', 'input_bytes': len(data), 'input_digest': digest(data), 'status': 'queued',
++            'created_at': 1.0, 'payload': {'operation_id': 'synthetic-control-' + str(sequence),
++                                        'kind': 'input', 'data_base64': base64.b64encode(data).decode()}}
++
++    def retain(self):
++        with self.service.store.transaction():
++            self.run['output_digest'] = self.service.store.blob(self.output, self.workspace['id'], 'run-output')
++            self.run['receipt_digest'] = self.service.store.blob(canonical(self.receipt), self.workspace['id'], 'run-receipt')
++            self.service.store.put('run', self.run)
++            for control in reversed(self.controls):  # Physical insertion order must not control protocol order.
++                self.service.store.put('terminal_control', control)
++
++    def inspect(self, **kwargs):
++        return self.service.symbolic_trace_result(self.principal, self.run['id'], **kwargs)
++
++    def mutate_run(self, **changes):
++        self.run.update(changes)
++        with self.service.store.transaction():
++            self.service.store.put('run', self.run)
++
++    def edit_source(self):
++        ws = self.service.workspace(self.workspace['id'])
++        prior = self.service.manifest(ws)['files']['private_fixture.py']['digest']
++        return self.service.edit(self.principal, ws['id'], {'operation_id': 'synthetic-real-edit',
++            'expected_generation': ws['generation'], 'expected_tree_digest': ws['tree_digest'],
++            'edits': [{'path': 'private_fixture.py', 'expected_digest': prior, 'content': 'private_fixture = 2\n'}]})
+diff --git a/tests/test_service.py b/tests/test_service.py
+index b7c701d..088a492 100644
+--- a/tests/test_service.py
++++ b/tests/test_service.py
+@@ -725,6 +725,11 @@ def test_operator_registration_busy_returns_retry_after(service, monkeypatch):
+     assert "wait at least 35 seconds" in response.json()["message"]
+ 
+ 
++def test_registration_retry_delay_tracks_lock_timeout_margin():
++    import omegacode.registration as registration
++    assert registration.REGISTRATION_RETRY_AFTER_SECONDS == registration._REGISTRATION_LOCK_TIMEOUT_SECONDS + 5
++
++
+ def test_running_agent_stops_when_live_hive_authority_ends(tmp_path, repo):
+     state = {"active": True, "binding": None}
+     def transport(request):
+diff --git a/b/tests/test_symbolic_trace_api.py b/tests/test_symbolic_trace_api.py
+new file mode 100644
+index 0000000..729498b
+--- /dev/null
++++ b/tests/test_symbolic_trace_api.py
+@@ -0,0 +1,243 @@
++"""Actual in-process ASGI and NativeClient plumbing; synthetic retained evidence only."""
++import json
++
++import httpx
++import pytest
++from fastapi.testclient import TestClient
++
++from omegacode.api import create_app
++from omegacode.client import NativeClient
++from service_fixture import Fixture, OPERATOR
++
++
++@pytest.fixture
++def case(tmp_path):
++    fixture = Fixture(tmp_path / 'state')
++    # Do not enter TestClient's lifespan: the real monitor/listener is outside this scope.
++    api = TestClient(create_app(fixture.service))
++    try:
++        yield fixture, api
++    finally:
++        api.close()
++        fixture.service.close()
++
++
++def capability(fixture, **changes):
++    config = {'actor': 'person:synthetic', 'kind': 'human', 'task_id': 'task-synthetic',
++              'swarm_id': 'swarm-synthetic', 'repository_id': 'repo-synthetic', 'actions': ['read', 'events']}
++    config.update(changes)
++    return fixture.service.authority.issue(**config)['token']
++
++
++def headers(token):
++    return {'Authorization': 'Bearer ' + token}
++
++
++def url(fixture):
++    return '/v1/runs/' + fixture.run['id'] + '/symbolic-trace-result'
++
++
++def assert_private_report(response, fixture, *tokens):
++    assert response.status_code == 200
++    result = response.json()
++    assert result['status'] == 'inspected'
++    assert result['custody']['workspace_artifact_references_checked'] is True
++    report = result['result']
++    for key in ('authorization_checked_here', 'record_origin_authenticated', 'workspace_custody_checked_here',
++                'stdout_author_authenticated', 'native_integrity_verified', 'execution_effects_verified',
++                'history_complete', 'current_engine_admission_verified', 'engine_invoked_by_reader', 'replay_performed'):
++        assert report[key] is False
++    for value in (OPERATOR, *tokens, '!(+ 1 1)', fixture.controls[0]['payload']['data_base64']):
++        assert value not in response.text
++    assert 'payload' not in report and 'controls' not in report
++    return result
++
++
++def test_actual_asgi_preserves_private_custody_and_current_then_historical(case):
++    fixture, api = case
++    token = capability(fixture)
++    current = assert_private_report(api.get(url(fixture), headers=headers(token)), fixture, token)
++    assert current['currency'] == 'current' and current['generation'] == 1
++    fixture.edit_source()  # Actual local Service edit; no process or provider.
++    historical = assert_private_report(api.get(url(fixture), headers=headers(token)), fixture, token)
++    assert historical['currency'] == 'historical' and historical['generation'] == 1
++    assert historical['tree_digest'] == current['tree_digest']
++
++
++def test_asgi_pages_observations_without_raw_command_dump(case):
++    fixture, api = case
++    token = capability(fixture)
++    response = api.get(url(fixture), params={'after': 1, 'limit': 1}, headers=headers(token))
++    result = assert_private_report(response, fixture, token)['result']
++    assert result['after'] == 1 and result['observations'] == [] and result['eof'] is True
++    assert result['unique_reported_observations'] == 1
++    assert result['traces'][0]['reported_coverage']['total_observations'] == 1
++
++
++def test_current_r13_coverage_string_is_validated_and_normalized(case):
++    fixture, api = case
++    token = capability(fixture)
++    response = api.get(url(fixture), headers=headers(token))
++    report = response.json()['result']
++    assert report['traces'][0]['coverage_known'] is True
++    assert report['traces'][0]['reported_coverage']['coverage']
++    fixture.output = fixture.output.replace(b'"observation_total":1', b'"observation_total":2')
++    fixture.retain()
++    refused = api.get(url(fixture), headers=headers(token))
++    assert refused.status_code == 409 and refused.json()['details']['reader_code'] == 'coverage_invalid'
++
++
++def test_partial_r13_coverage_metadata_is_not_misclassified_as_legacy(case):
++    fixture, api = case
++    token = capability(fixture)
++    original = fixture.output
++    fixture.output = original.replace(b'"observation_coverage":"complete-history",', b'')
++    assert fixture.output != original
++    fixture.receipt['output_bytes'] = len(fixture.output)
++    fixture.retain()
++    refused = api.get(url(fixture), headers=headers(token))
++    assert refused.status_code == 409 and refused.json()['details']['reader_code'] == 'coverage_invalid'
++
++
++def test_oversized_trace_artifact_is_refused_before_reader(monkeypatch, case):
++    import omegacode.service as service_module
++    fixture, api = case
++    monkeypatch.setattr(service_module, 'MAX_LOG', 1)
++    response = api.get(url(fixture), headers=headers(capability(fixture)))
++    assert response.status_code == 409 and response.json()['error'] == 'artifact_too_large'
++
++
++def test_api_does_not_authenticate_operator_or_missing_bearer_as_reader(case):
++    fixture, api = case
++    assert api.get(url(fixture)).status_code == 401
++    response = api.get(url(fixture), headers=headers(OPERATOR))
++    assert response.status_code == 403 and response.json()['error'] == 'coding_capability_required'
++
++
++@pytest.mark.parametrize('changes,code', [({'actions': ['read']}, 'action_forbidden'),
++    ({'actions': ['events']}, 'action_forbidden'), ({'task_id': 'foreign-task'}, 'workspace_forbidden'),
++    ({'paths': ['private_fixture.py']}, 'symbolic_trace_scope')])
++def test_actual_asgi_reuses_existing_scope_refusals(case, changes, code):
++    fixture, api = case
++    response = api.get(url(fixture), headers=headers(capability(fixture, **changes)))
++    assert response.status_code == 403 and response.json()['error'] == code
++
++
++def test_actual_asgi_preserves_service_error_details_and_termination_hold(case):
++    fixture, api = case
++    token = capability(fixture)
++    response = api.get(url(fixture), params={'after': 2}, headers=headers(token))
++    assert response.status_code == 409
++    assert response.json()['error'] == 'symbolic_trace_invalid'
++    assert response.json()['details'] == {'reader_code': 'report_cursor'}
++    fixture.mutate_run(descendants_terminated=False)
++    response = api.get(url(fixture), headers=headers(token))
++    assert response.status_code == 409 and response.json()['error'] == 'symbolic_trace_unconfirmed'
++
++
++def test_actual_asgi_retains_artifact_custody_and_hash_refusal(case):
++    fixture, api = case
++    fixture.service.store.blob_path(fixture.run['receipt_digest']).write_bytes(b'synthetic corruption')
++    response = api.get(url(fixture), headers=headers(capability(fixture)))
++    assert response.status_code == 409 and response.json()['error'] == 'artifact_corrupt'
++
++
++@pytest.mark.parametrize('params', [{'after': -1}, {'after': 4097}, {'after': 'true'},
++    {'after': '1.5'}, {'limit': 0}, {'limit': 101}, {'limit': 'false'}])
++def test_standard_query_validation_is_422_before_artifact_reads(case, monkeypatch, params):
++    fixture, api = case
++    token = capability(fixture)
++    def no_read(*args, **kwargs):
++        raise AssertionError('invalid query reached artifact read')
++    monkeypatch.setattr(fixture.service.store, 'read_blob', no_read)
++    response = api.get(url(fixture), params=params, headers=headers(token))
++    assert response.status_code == 422 and 'detail' in response.json()
++
++
++def test_only_get_is_exposed(case):
++    fixture, api = case
++    response = api.post(url(fixture), headers=headers(capability(fixture)), json={})
++    assert response.status_code == 405
++
++
++def native_bridge(fixture, api, token, *, capability_status=200):
++    requests = []
++    def transport(request):
++        requests.append(request)
++        if request.url.host == 'synthetic-hive.invalid':
++            assert request.method == 'POST' and request.url.path == '/api/agent/code/capability'
++            if capability_status != 200:
++                return httpx.Response(capability_status, json={'error': 'action_forbidden',
++                    'message': 'synthetic delegated member lacks events authority'})
++            return httpx.Response(200, json={'token': token})
++        assert request.url.host == 'synthetic-code.invalid'
++        response = api.request(request.method, request.url.raw_path.decode('ascii'), headers=dict(request.headers))
++        return httpx.Response(response.status_code, json=response.json())
++    client = NativeClient('https://synthetic-hive.invalid', 'synthetic-member-secret',
++        code_url='https://synthetic-code.invalid', transport=httpx.MockTransport(transport))
++    return client, requests
++
++
++def test_native_client_exact_capability_and_query_shape_preserves_actual_asgi_result(case):
++    fixture, api = case
++    token = capability(fixture)
++    client, requests = native_bridge(fixture, api, token)
++    try:
++        result = client.call('symbolic-trace-result', 'task-synthetic', 'repo-synthetic',
++            {'run_id': fixture.run['id'], 'after': 1, 'limit': 7,
++             'workspace_id': fixture.workspace['id'], 'actions': ['run'],
++             'data_base64': 'DO_NOT_FORWARD', 'instruction': 'DO_NOT_FORWARD'})
++    finally:
++        client.close()
++    assert result['ok'] is True and result['phase'] == 'operation' and result['http_status'] == 200
++    assert result['result']['currency'] == 'current'
++    assert result['result']['result']['after'] == 1
++    assert result['result']['custody']['workspace_artifact_references_checked'] is True
++    assert result['result']['result']['native_integrity_verified'] is False
++    cap, operation = requests
++    assert json.loads(cap.content) == {'task_id': 'task-synthetic', 'repository_id': 'repo-synthetic',
++                                     'actions': ['read', 'events'], 'ttl_seconds': 300}
++    assert operation.method == 'GET' and operation.url.path == url(fixture)
++    assert dict(operation.url.params) == {'after': '1', 'limit': '7'}
++    encoded = json.dumps(result)
++    assert all(value not in encoded for value in (token, 'synthetic-member-secret', 'DO_NOT_FORWARD'))
++
++
++def test_native_client_default_query_is_observation_page_not_output_byte_page(case):
++    fixture, api = case
++    client, requests = native_bridge(fixture, api, capability(fixture))
++    try:
++        response = client.call('symbolic-trace-result', 'task-synthetic', 'repo-synthetic', {'run_id': fixture.run['id']})
++    finally:
++        client.close()
++    assert response['ok'] is True
++    assert dict(requests[1].url.params) == {'after': '0', 'limit': '100'}
++
++
++def test_native_client_capability_refusal_does_not_upgrade_or_reach_code(case):
++    fixture, api = case
++    client, requests = native_bridge(fixture, api, 'unused', capability_status=403)
++    try:
++        result = client.call('symbolic-trace-result', 'task-synthetic', 'repo-synthetic',
++                             {'run_id': fixture.run['id'], 'delegated': True, 'actions': ['run', 'events']})
++    finally:
++        client.close()
++    assert result == {'ok': False, 'phase': 'capability', 'http_status': 403,
++                      'result': {'error': 'action_forbidden',
++                                 'message': 'synthetic delegated member lacks events authority'}}
++    assert len(requests) == 1
++    assert json.loads(requests[0].content)['actions'] == ['read', 'events']
++    assert 'delegated' not in json.loads(requests[0].content)
++
++
++def test_native_client_operation_refusal_keeps_service_envelope(case):
++    fixture, api = case
++    fixture.mutate_run(descendants_terminated=False)
++    client, requests = native_bridge(fixture, api, capability(fixture))
++    try:
++        result = client.call('symbolic-trace-result', 'task-synthetic', 'repo-synthetic', {'run_id': fixture.run['id']})
++    finally:
++        client.close()
++    assert result['ok'] is False and result['phase'] == 'operation' and result['http_status'] == 409
++    assert result['result']['error'] == 'symbolic_trace_unconfirmed'
++    assert len(requests) == 2

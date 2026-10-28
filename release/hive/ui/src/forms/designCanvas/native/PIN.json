@@ -1,0 +1,16 @@
+{
+  "schema": "surface-vendored-design-native-1",
+  "origin": "omegadesign release 0.4.4-sharing, tools/",
+  "design_version": "0.4.4-sharing",
+  "lock": "tools/bundle.lock.json",
+  "copied_byte_exact": true,
+  "edit": "never: replace the whole folder from a newer pinned Design release, with this file",
+  "files": {
+    "scene.mjs": "72c4d8c172fb54647f697c8e4394c339689a745b8d84d0e92bc4ce25255adf60",
+    "maker-trace.mjs": "d1b5b4d0409dd5e96c8497c63a3caabb103e18b706f19011e5257f3b2d6d5528",
+    "source.mjs": "f942b45486cbdaf0466123751ec9ab1da29d361f2ac8f7b864bfe6a800411996",
+    "project.mjs": "4ddc5a319340571744ec257ff6bd941975d90fa3a7e508ab82425d5c980833f2",
+    "brief-change.mjs": "f47ffc11a3f5bd6d78cc1fb907dac11deaa6da7c417476a0e76f8b95f3ca0932",
+    "live-edits.mjs": "07942978aa8642946806d3797e65f453adb000b3cb318271906d2f54607310d2"
+  }
+}

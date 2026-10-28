@@ -1,0 +1,455 @@
+/* First Light (R2): the eight marks, the ring on what a step points at, and one small panel just above the Ask.
+   Colours are the experience's own chrome tokens (--xc-*, written for every experience, light or dark), as the guided
+   demos use; the guest band is amber (--color-warn). Touch targets are at least 44 px on phones and coarse pointers.
+   Reduced motion: no glide, no breathing; the marks light without moving. */
+
+.fl-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 57;
+  pointer-events: none;
+  font-family: var(--xc-font, var(--font-sans, system-ui, sans-serif));
+  --color-ink: var(--xc-ink);
+  --color-ink-2: var(--xc-ink-2);
+  --color-ink-3: var(--xc-ink-3);
+  --color-accent: var(--xc-accent);
+}
+.fl-live {
+  position: fixed;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+.fl-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---- the marks: eight points, one per beat */
+.fl-marks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin: -2px 0 8px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--xc-edge);
+  color: var(--xc-ink);
+}
+.fl-marks ol {
+  display: flex;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fl-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+}
+.fl-dot {
+  display: block;
+  width: 9px;
+  height: 9px;
+  border-radius: 99px;
+  border: 1.5px solid color-mix(in srgb, var(--xc-ink-3) 80%, transparent);
+  background: transparent;
+  transition: background 0.4s, box-shadow 0.4s, border-color 0.4s;
+}
+.fl-mark[data-state='active'] .fl-dot {
+  border-color: var(--xc-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--xc-accent) 25%, transparent);
+}
+.fl-mark[data-state='ready'] .fl-dot {
+  border-color: var(--xc-accent);
+  background: var(--xc-accent);
+  box-shadow: 0 0 10px 2px color-mix(in srgb, var(--xc-accent) 45%, transparent);
+}
+.fl-mark[data-state='skipped'] .fl-dot {
+  opacity: 0.55;
+}
+.fl-mark[data-state='blocked'] .fl-dot {
+  border-color: var(--color-warn, #fbbf24);
+  border-right-color: transparent;
+}
+.fl-mark[data-state='later'] .fl-dot {
+  width: 5px;
+  height: 5px;
+  border-style: dotted;
+  opacity: 0.6;
+}
+.fl-where {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--xc-ink-2);
+}
+
+/* ---- the ring on what the step points at */
+.fl-ring {
+  position: fixed;
+  border-radius: 14px;
+  box-shadow:
+    0 0 0 2px var(--xc-accent),
+    0 0 28px 6px color-mix(in srgb, var(--xc-accent) 30%, transparent);
+  transition: left 0.5s cubic-bezier(0.2, 0.8, 0.2, 1), top 0.5s cubic-bezier(0.2, 0.8, 0.2, 1), width 0.5s, height 0.5s;
+}
+.fl-ring--mind {
+  border-radius: 999px;
+  animation: fl-breathe 3.2s ease-in-out infinite;
+}
+.fl-ring--lit {
+  box-shadow:
+    0 0 0 2px var(--xc-accent),
+    0 0 60px 22px color-mix(in srgb, var(--xc-accent) 45%, transparent);
+  animation: fl-light 1.2s ease-out both;
+}
+@keyframes fl-breathe {
+  50% {
+    box-shadow:
+      0 0 0 2px var(--xc-accent),
+      0 0 40px 12px color-mix(in srgb, var(--xc-accent) 40%, transparent);
+  }
+}
+@keyframes fl-light {
+  from {
+    box-shadow:
+      0 0 0 2px var(--xc-accent),
+      0 0 8px 2px color-mix(in srgb, var(--xc-accent) 30%, transparent);
+  }
+}
+.fl-layer[data-reduced] .fl-ring,
+.fl-layer[data-reduced] .fl-dot {
+  transition: none;
+  animation: none;
+}
+
+/* ---- the panel, just above the Ask */
+.fl-panel {
+  position: fixed;
+  left: 50%;
+  translate: -50% 0;
+  width: min(620px, calc(100vw - 32px));
+  max-height: 66vh;
+  overflow-y: auto;
+  pointer-events: auto;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border-radius: min(var(--xc-radius, 16px), 18px);
+  border: 1px solid var(--xc-edge);
+  /* the look's own surface, made solid: the page under the panel never shows through the caption */
+  background: var(--xc-texture, none), var(--xc-surface);
+  background: var(--xc-texture, none), rgb(from var(--xc-surface) r g b / 0.99);
+  backdrop-filter: var(--xc-blur);
+  -webkit-backdrop-filter: var(--xc-blur);
+  box-shadow: var(--xc-shadow);
+  color: var(--xc-ink);
+  font-size: 14px;
+  line-height: 1.45;
+}
+.fl-panel[hidden] {
+  display: none;
+}
+.fl-panel p {
+  margin: 0;
+}
+.fl-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fl-caption {
+  font-size: 15px;
+  color: var(--xc-ink);
+}
+.fl-cc {
+  display: inline-block;
+  padding: 0 4px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
+  font-size: 10px;
+  line-height: 15px;
+  vertical-align: 2px;
+  color: var(--xc-ink-3);
+}
+.fl-sim {
+  margin-bottom: 8px !important;
+  font-size: 12px;
+  color: var(--xc-ink-2);
+}
+.fl-sim-tag {
+  padding: 1px 7px;
+  border-radius: 99px;
+  border: 1px dashed currentColor;
+  font-weight: 600;
+}
+.fl-band {
+  margin-bottom: 8px !important;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--color-warn, #fbbf24) 70%, transparent);
+  background: color-mix(in srgb, var(--color-warn, #fbbf24) 16%, transparent);
+  color: var(--xc-ink);
+  font-size: 13px;
+}
+.fl-notice {
+  margin-bottom: 8px !important;
+  font-size: 12.5px;
+  color: var(--xc-ink-2);
+}
+.fl-state {
+  font-size: 13px;
+  color: var(--xc-ink-2);
+}
+.fl-state-tag {
+  display: inline-block;
+  padding: 0 7px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid currentColor;
+}
+.fl-state-tag[data-state='ready'] {
+  color: var(--xc-accent);
+}
+.fl-state-tag[data-state='blocked'] {
+  color: var(--color-warn, #fbbf24);
+}
+.fl-state-tag[data-state='skipped'] {
+  border-style: dashed;
+}
+.fl-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--xc-edge);
+  background: color-mix(in srgb, var(--xc-ink) 5%, transparent);
+}
+.fl-card-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--xc-ink-3);
+}
+.fl-amount {
+  font-size: 16px;
+  font-weight: 600;
+}
+.fl-bar {
+  height: 6px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--xc-ink) 14%, transparent);
+  overflow: hidden;
+}
+.fl-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--color-warn, #fbbf24);
+}
+.fl-pays,
+.fl-small {
+  font-size: 12.5px;
+  color: var(--xc-ink-2);
+}
+.fl-error {
+  font-size: 13px;
+  color: var(--xc-ink);
+}
+.fl-greeting {
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--xc-accent);
+  font-size: 15px;
+  color: var(--xc-ink);
+}
+.fl-chips,
+.fl-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.fl-controls {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--xc-edge);
+}
+.fl-btn {
+  min-height: 36px;
+  padding: 0 13px;
+  border-radius: 99px;
+  border: 1px solid color-mix(in srgb, currentColor 55%, transparent);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.fl-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+.fl-btn:focus-visible,
+.fl-input:focus-visible {
+  outline: 2px solid var(--xc-accent);
+  outline-offset: 2px;
+}
+.fl-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.fl-btn[data-tone='primary'] {
+  border-color: var(--xc-accent);
+  background: color-mix(in srgb, var(--xc-accent) 20%, transparent);
+}
+.fl-btn[data-tone='quiet'] {
+  border-color: transparent;
+  color: var(--xc-ink-3);
+}
+.fl-other {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.fl-input {
+  width: 8em;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--xc-edge);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+@media (pointer: coarse), (max-width: 640px) {
+  .fl-btn,
+  .fl-input {
+    min-height: 44px;
+  }
+}
+
+/* ---- phones: the marks shrink to the top edge; the panel keeps the hive visible above it */
+.fl-layer[data-phone] .fl-marks ol {
+  gap: 7px;
+}
+.fl-layer[data-phone] .fl-where {
+  font-size: 10px;
+}
+.fl-layer[data-phone] .fl-panel {
+  width: calc(100vw - 32px);
+  max-height: 60vh;
+  padding: 10px 12px;
+}
+
+/* ---- each look's own form */
+/* Cosmos: beacons on a dotted flight path, HUD capitals for the label */
+.fl-layer[data-experience='cosmos'] .fl-marks ol {
+  background-image: linear-gradient(90deg, color-mix(in srgb, var(--xc-ink-3) 60%, transparent) 50%, transparent 50%);
+  background-size: 6px 1px;
+  background-repeat: repeat-x;
+  background-position: 0 50%;
+}
+.fl-layer[data-experience='cosmos'] .fl-where {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 10px;
+}
+.fl-layer[data-experience='cosmos'] .fl-ring--mind {
+  border-radius: 999px;
+}
+/* Still: one italic line of type with eight ink points; no glow, no camera */
+.fl-layer[data-experience='still'] .fl-where {
+  font-style: italic;
+}
+.fl-layer[data-experience='still'] .fl-mark[data-state='ready'] .fl-dot {
+  box-shadow: none;
+}
+.fl-layer[data-experience='still'] .fl-ring {
+  border-radius: 3px;
+  box-shadow: 0 0 0 1.5px var(--xc-accent);
+  animation: none;
+}
+.fl-layer[data-experience='still'] .fl-panel {
+  box-shadow: none;
+  border-radius: 6px;
+}
+/* Construct: square, terminal-like */
+.fl-layer[data-experience='construct'] .fl-ring,
+.fl-layer[data-experience='construct'] .fl-panel,
+.fl-layer[data-experience='construct'] .fl-btn,
+.fl-layer[data-experience='construct'] .fl-dot {
+  border-radius: 0;
+}
+
+/* the controls stay in reach when the panel scrolls (a phone with a long card) */
+.fl-controls {
+  position: sticky;
+  bottom: -12px;
+  margin-bottom: -2px;
+  padding-bottom: 2px;
+  background: var(--xc-surface);
+  background: rgb(from var(--xc-surface) r g b / 0.99);
+}
+.fl-layer[data-phone] .fl-caption {
+  font-size: 14px;
+}
+.fl-layer[data-phone] .fl-sim,
+.fl-layer[data-phone] .fl-band {
+  font-size: 12px;
+}
+.fl-layer[data-phone] .fl-controls {
+  gap: 4px;
+}
+.fl-layer[data-phone] .fl-btn {
+  padding: 0 11px;
+}
+
+/* R3: beat 5 (your apps), beat 6 (your Ask) and the hand-off */
+.fl-apps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fl-apps li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  align-items: center;
+}
+.fl-apps li .fl-btn {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+.fl-app-name {
+  font-weight: 650;
+}
+.fl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12.5px;
+}
+.fl-field .fl-input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 14px;
+}
+textarea.fl-input {
+  resize: vertical;
+  min-height: 44px;
+}

@@ -1,0 +1,21 @@
+; Assume skill catalog declarations.
+; Imported as SkillCatalog / SkillHelp atoms by the Assume organ loader.
+
+(SkillCatalog "Assume prediction: assume-status, assume-situation-status domain situation, assume-load domain situation, assume-predict domain situation, assume-audit domain situation action")
+(SkillHelp "assume" "Assume predictive organ:")
+(SkillHelp "assume" "assume-status - inspect warm predictive organ")
+(SkillHelp "assume" "assume-situation-status domain situation - readiness and coverage")
+(SkillHelp "assume" "assume-init-situation domain situation reason - birth a new prediction situation")
+(SkillHelp "assume" "assume-add-context-feature domain situation feature strength confidence source")
+(SkillHelp "assume" "assume-add-action domain action kind")
+(SkillHelp "assume" "assume-add-feature-edge domain feature action weight confidence evidence")
+(SkillHelp "assume" "assume-load domain situation, assume-reload domain situation, assume-reload-situation domain situation, assume-predict domain situation")
+(SkillHelp "assume" "assume-state domain situation - inspect canonical graph state; assume-clear-work and assume-work inspect the working membrane")
+(SkillHelp "assume" "assume-observe-predict domain situation, assume-observe-audit domain situation action")
+(SkillHelp "assume" "assume-audit domain situation action - support, confidence, evidence, error pressure, NAL truth")
+(SkillHelp "assume" "assume-outcome / assume-error - explicit evidence for later chosen learning; assume-evidence-summary and assume-observe-evidence-summary inspect it")
+(SkillHelp "assume" "assume-learn-from-atoms, assume-growth-pressure, assume-observe-growth-pressure, assume-growth-proposals, assume-observe-growth-proposals")
+(SkillHelp "assume" "assume-adjustment-pressure, assume-observe-adjustment-pressure, assume-review-growth, assume-observe-growth-review")
+(SkillHelp "assume" "assume-review-adjustment, assume-review-adjustment-detail, assume-writeback, assume-observe-writeback, assume-review-mutation, assume-apply-writeback")
+(SkillHelp "assume" "assume-accept-growth / assume-accept-adjustment only after explicit review; assume-trace count inspects mutation/writeback traces")
+(SkillHelp "assume" "Demo graphs: assume-demo-list, assume-demo-load, assume-demo-predict, assume-demo-audit, assume-demo-learn, assume-demo-writeback, assume-import-demo")
