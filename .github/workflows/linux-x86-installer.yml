@@ -578,6 +578,12 @@ jobs:
             cd /tmp/c2/source_r10/src && /tmp/runvenv/bin/python -B -s -c "import omegacode.__main__, omegacode.service, omegacode.api; print('imports ok')" 2>&1 | tail -15
             echo "--- the service's own stderr, started once with a synthetic config (token redacted) ---"
             sh $GITHUB_WORKSPACE/ci/code-c2/why_exit.sh /tmp/runvenv/bin/python /tmp/c2/source_r10/src
+            echo "--- the probe itself, with its stderr drain also keeping the bytes (diagnostic copy, token never on stderr) ---"
+            sed "s#            state\['stderr_bytes'\] += len(chunk)#            state['stderr_bytes'] += len(chunk); open('/tmp/c2-svc-stderr.txt', 'ab').write(chunk)#" \
+              $GITHUB_WORKSPACE/ci/code-c2/runtime_startup_probe_r6.py > /tmp/probe_dbg.py
+            grep -c c2-svc-stderr /tmp/probe_dbg.py
+            cd $GITHUB_WORKSPACE && /tmp/testvenv/bin/python /tmp/probe_dbg.py --source-root /tmp/c2/source_r10/src --python /tmp/runvenv/bin/python 2>&1 | tail -3
+            echo "service stderr bytes: $(wc -c < /tmp/c2-svc-stderr.txt 2>/dev/null)"; tail -40 /tmp/c2-svc-stderr.txt 2>/dev/null
             exit 1; }
       - name: Hyperon 0.2.10 worker smoke (pinned wheel, separate env)
         run: |
