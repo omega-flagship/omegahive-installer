@@ -101,6 +101,12 @@ jobs:
           if [ $code -ne 0 ]; then
             L=$(sudo ls -t /home/$HIVE_USER/.local/share/omegahive/logs/ 2>/dev/null | head -1)
             [ -n "$L" ] && sudo tail -n 60 "/home/$HIVE_USER/.local/share/omegahive/logs/$L" | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'
+            R=$(sudo ls -d /home/$HIVE_USER/.local/share/omegahive/releases/* 2>/dev/null | head -1)
+            echo "--- permission facts (no contents) ---"
+            sudo -iu "$HIVE_USER" bash -c 'umask'
+            for x in /home/$HIVE_USER /home/$HIVE_USER/.local /home/$HIVE_USER/.local/share /home/$HIVE_USER/.local/share/omegahive "$R" "$R/runtime" "$R/runtime/python" "$R/runtime/python/bin" "$R/runtime/python/bin/python3.12" "$R/venv" "$R/venv/bin" "$R/venv/bin/python" "$R/venv/bin/python3.12"; do sudo stat -c '%a %U:%G %F %n' "$x" 2>&1; done
+            sudo getfacl -p "$R/venv/bin" 2>/dev/null | head -8
+            mount | grep -E ' /home | / ' | head -3
             exit $code
           fi
 
@@ -183,6 +189,12 @@ jobs:
           if [ $code -ne 0 ]; then
             L=$(sudo ls -t /home/$HIVE_USER/.local/share/omegahive/logs/ 2>/dev/null | head -1)
             [ -n "$L" ] && sudo tail -n 60 "/home/$HIVE_USER/.local/share/omegahive/logs/$L" | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'
+            R=$(sudo ls -d /home/$HIVE_USER/.local/share/omegahive/releases/* 2>/dev/null | head -1)
+            echo "--- permission facts (no contents) ---"
+            sudo -iu "$HIVE_USER" bash -c 'umask'
+            for x in /home/$HIVE_USER /home/$HIVE_USER/.local /home/$HIVE_USER/.local/share /home/$HIVE_USER/.local/share/omegahive "$R" "$R/runtime" "$R/runtime/python" "$R/runtime/python/bin" "$R/runtime/python/bin/python3.12" "$R/venv" "$R/venv/bin" "$R/venv/bin/python" "$R/venv/bin/python3.12"; do sudo stat -c '%a %U:%G %F %n' "$x" 2>&1; done
+            sudo getfacl -p "$R/venv/bin" 2>/dev/null | head -8
+            mount | grep -E ' /home | / ' | head -3
             exit $code
           fi
       - name: Status, sign-in, still running after logout
