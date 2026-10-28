@@ -493,6 +493,8 @@ jobs:
           grep -q '"ok": true' /tmp/c2-probe.txt || {
             echo "--- why the service exited: import the entry point on the runtime-only env (no secrets) ---"
             cd /tmp/c2/source_r10/src && /tmp/runvenv/bin/python -B -s -c "import omegacode.__main__, omegacode.service, omegacode.api; print('imports ok')" 2>&1 | tail -15
+            echo "--- the service's own stderr, started once with a synthetic config (token redacted) ---"
+            sh $GITHUB_WORKSPACE/ci/code-c2/why_exit.sh /tmp/runvenv/bin/python /tmp/c2/source_r10/src
             exit 1; }
       - name: Hyperon 0.2.10 worker smoke (pinned wheel, separate env)
         run: |
