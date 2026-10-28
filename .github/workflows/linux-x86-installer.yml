@@ -202,6 +202,14 @@ jobs:
         run: |
           cd ci/kit && sha256sum -c omegahive-linux-r12.sh.sha256
           sudo install -o "$HIVE_USER" -m 0600 omegahive-linux-r12.sh /home/$HIVE_USER/omegahive-linux.sh
+          # Tester workaround while swi-prolog.org DNS is down: the exact archive from our private release, then the
+          # guide's commands as the new user.
+          gh release download linux-test-20261028-r12 -R "$GITHUB_REPOSITORY" -p swipl-10.1.14.tar.gz -D /tmp/swi
+          sudo install -o "$HIVE_USER" -m 0600 /tmp/swi/swipl-10.1.14.tar.gz /home/$HIVE_USER/swipl-10.1.14.tar.gz
+          sudo install -o "$HIVE_USER" -m 0700 seed-swipl.sh /home/$HIVE_USER/seed-swipl.sh
+          sudo -iu "$HIVE_USER" sh ./seed-swipl.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Run the installer as the newcomer (sh ~/omegahive-linux.sh)
         run: |
           set +e
@@ -333,6 +341,14 @@ jobs:
         run: |
           cd ci/kit && sha256sum -c omegahive-linux-r12.sh.sha256
           sudo install -o "$HIVE_USER" -m 0600 omegahive-linux-r12.sh /home/$HIVE_USER/omegahive-linux.sh
+          # Tester workaround while swi-prolog.org DNS is down: the exact archive from our private release, then the
+          # guide's commands as the new user.
+          gh release download linux-test-20261028-r12 -R "$GITHUB_REPOSITORY" -p swipl-10.1.14.tar.gz -D /tmp/swi
+          sudo install -o "$HIVE_USER" -m 0600 /tmp/swi/swipl-10.1.14.tar.gz /home/$HIVE_USER/swipl-10.1.14.tar.gz
+          sudo install -o "$HIVE_USER" -m 0700 seed-swipl.sh /home/$HIVE_USER/seed-swipl.sh
+          sudo -iu "$HIVE_USER" sh ./seed-swipl.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Run the installer as the newcomer (sh ~/omegahive-linux.sh)
         run: |
           set +e
