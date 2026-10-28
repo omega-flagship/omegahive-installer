@@ -264,3 +264,51 @@ jobs:
           sleep 5
           sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
 
+  code-r10:
+    # Code C2 R10 (empty-seed fix) test profile on x86_64 Ubuntu 22.04: the eight test files packaged with R10.
+    # Exact review ZIP, recomputed source digest, pinned interpreter and hash-pinned packages only. Synthetic data.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Machine facts
+        run: |
+          { uname -a; lsb_release -ds; nproc; } | tee /tmp/code-facts.txt
+      - name: Exact review ZIP and source digest
+        run: |
+          echo "5e316adcd336d73b564bcbfdb4b85e03b0744fccd1dce59795f7bb6620dcaa86  ci/code-r10/CODE_C2_EMPTY_SEED_R10_REVIEW.zip" | sha256sum -c -
+          mkdir -p /tmp/r10 && cd /tmp/r10 && unzip -q "$GITHUB_WORKSPACE/ci/code-r10/CODE_C2_EMPTY_SEED_R10_REVIEW.zip"
+          out=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" /tmp/r10/source_r10/src/omegacode); echo "$out"
+          [ "$out" = "90 4b33ce2842bada7bd76ce64523be3d4d7f0e72f97993af9cb034d63156fcd9dd" ]
+      - name: Pinned Python and uv (checked against the publisher)
+        run: |
+          P=ci/linux-x86/x86_64-pins.json
+          U=$(python3 -c "import json;print(json.load(open('$P'))['python_stripped']['url'])"); H=$(python3 -c "import json;print(json.load(open('$P'))['python_stripped']['sha256'])")
+          curl -fsSL -o /tmp/pbs.tar.gz "$U" && echo "$H  /tmp/pbs.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/py && tar -xzf /tmp/pbs.tar.gz -C /tmp/py
+          U=$(python3 -c "import json;print(json.load(open('$P'))['uv']['url'])"); H=$(python3 -c "import json;print(json.load(open('$P'))['uv']['sha256'])")
+          curl -fsSL -o /tmp/uv.tgz "$U" && echo "$H  /tmp/uv.tgz" | sha256sum -c -
+          mkdir -p /tmp/uvx && tar -xzf /tmp/uv.tgz -C /tmp/uvx
+          /tmp/py/python/bin/python3.12 -VV
+      - name: Hash-pinned packages only
+        run: |
+          UV=$(find /tmp/uvx -name uv -type f | head -1)
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config venv --python /tmp/py/python/bin/python3.12 /tmp/venv
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip install --python /tmp/venv/bin/python --require-hashes --no-deps --only-binary=:all: -r ci/code-r10/requirements.lock
+          /tmp/venv/bin/python -m pip --version >/dev/null 2>&1 || true
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip check --python /tmp/venv/bin/python
+          env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip freeze --python /tmp/venv/bin/python | tee /tmp/code-freeze.txt
+      - name: R10 eight-file profile
+        run: |
+          cd /tmp/r10/source_r10
+          git config --global user.name ci; git config --global user.email ci@example.invalid
+          PYTHONPATH=src:tests /tmp/venv/bin/python -m pytest -q -p no:cacheprovider tests 2>&1 | tee /tmp/code-pytest.txt
+          PYTHONPATH=src:tests /tmp/venv/bin/python -m pytest -q -p no:cacheprovider "tests/test_service.py::test_workspace_creation_from_valid_empty_git_commit" 2>&1 | tail -2 | tee -a /tmp/code-pytest.txt
+      - name: Receipts (no secrets)
+        if: always()
+        run: mkdir -p code-receipts && cp /tmp/code-facts.txt /tmp/code-freeze.txt /tmp/code-pytest.txt code-receipts/ 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: code-r10-x86-receipts
+          path: code-receipts/
