@@ -345,6 +345,7 @@ def bootstrap(runtime, seed_path):
                 and hello.get("pid") == pid and hello.get("port") == config["port"]
                 and type(hello.get("instance")) is str and type(hello.get("owner")) is str
                 and re.fullmatch(r"user:u_[A-Za-z0-9_-]+", hello["owner"]))
+        require(control.exe_matches(config, hello))   # attested executable checked before any sign-in code is requested
         signin, observed_pid = control.request(config, home, "signin", expected_pid=pid)
         require(type(signin) is dict and signin.get("ok") is True and observed_pid == pid)
         api = OwnerAPI(control, config, home, pid, time.monotonic() + 50, hello)
