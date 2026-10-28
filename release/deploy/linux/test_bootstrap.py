@@ -210,10 +210,18 @@ class BootstrapTests(unittest.TestCase):
             raise ControlRefused("control_reply_timeout")
         except ControlRefused as error:
             self.assertEqual(json.loads(bootstrap.failure_note(error))["reason"], "control_reply_timeout")
+        for secret in ("code local-signin#" + "B" * 43, "token " + "aB3_-" * 9, "Bearer " + "x" * 30,
+                       "/home/someone/.local/share/omegahive", "pid 4242"):
+            try:
+                raise bootstrap.Refused(secret)
+            except bootstrap.Refused as error:
+                self.assertEqual(json.loads(bootstrap.failure_note(error))["reason"], "", secret)
         try:
-            raise bootstrap.Refused("code local-signin#" + "B" * 43)
-        except bootstrap.Refused as error:
-            self.assertEqual(json.loads(bootstrap.failure_note(error))["reason"], "")
+            raise RuntimeError("SENTINEL-SECRET")
+        except RuntimeError as error:
+            raw = bootstrap.failure_note(error)
+        self.assertNotIn("SENTINEL", raw)
+        self.assertNotIn("/", "".join(json.loads(raw)["where"]))
 
     def test_failure_note_is_private_new_file_in_owned_logs_only(self):
         with tempfile.TemporaryDirectory() as home:

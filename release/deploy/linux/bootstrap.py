@@ -404,7 +404,11 @@ def failure_note(error):
               for frame in __import__("traceback").extract_tb(error.__traceback__)]
     # Refusal reasons (here and in control.py) are fixed reviewed strings; anything else stays out.
     reason = str(error) if type(error).__name__ == "Refused" else ""
-    if not re.fullmatch(r"[A-Za-z0-9 _.,;:'()/-]{0,300}", reason):
+    # Only a lowercase code (control.py) or plain words without digits (bootstrap.py) pass:
+    # a token, code or path has digits, long runs or other characters and is dropped.
+    code = re.fullmatch(r"[a-z][a-z_]{0,63}", reason)
+    words = len(reason) <= 300 and all(re.fullmatch(r"[A-Za-z.,;:'()-]{1,24}", w) for w in reason.split())
+    if not (code or words):
         reason = ""
     return json.dumps({"step": "bootstrap", "error": type(error).__name__, "reason": reason[:300],
                        "where": frames[-12:]}, indent=1) + "\n"
