@@ -1,0 +1,251 @@
+--- a/README.md
++++ b/README.md
+@@ -1,19 +1,17 @@
+-# OmegaCode R13 successor R1.3 — sealed source review candidate
++# OmegaCode R13 successor R1.4 — Kimi P3 follow-up candidate
+ 
+-Parent is Dot's adopted R13 source candidate, exact digest `f9c06caec083e2586b200d11eaa45a60aaf303cee5fe95522949837df88b7214` (R4.2 review ZIP `7877750717e3ac12cb7b3ae0757721403a1547dc0df439444a493ca7e9b3e977`). This archive contains the complete 91-module Python source tree, all 11 inherited tests, the added service/trace regression tests, and a standalone registration check outside pytest's `tests/` discovery tree.
++Parent: Dot-selected R13 successor R1.3, source digest `117deeebede5a8a16b1a2bde5a6cd3c6ab414eaceb44392dc136144e279b4cc2`; sealed parent ZIP SHA-256 `010e3e69e1ba783c5e4f076c83cbc2d80c84f88dfb6d1a37a95baf80a2d0ca8d`.
+ 
+-## Included changes
++This separate follow-up candidate addresses four non-blocking Kimi P3s from the R1.3 review:
+ 
+-- Hyperon step status labels complete observation history versus a recent tail and reports total observations, dropped prefix count, 100-entry window limit, and first retained input sequence/step. Each observation remains a successful batch, not an individual reduction.
+-- Results and status now publish atomically with their matching rendered-atom observation. If observation fails after an engine batch, the prior successful results remain current; the step count may still show the engine advanced, and the trace faults.
+-- Registration recovery refuses non-object operation, registration, or receipt JSON with `503 registration_recovery_required`, including arrays, strings, and null. Expiry cleanup validates both files before deleting either.
+-- Same-process lock acquisition has a 30-second timeout and returns `503 registration_busy`. Cross-process serialization remains under the owner-only `flock`; the existing HTTP client retains its finite 10-second request timeout.
+-- Pending enrolment token policy is unchanged from the adopted RC decision: retained owner-only (`0600`) while recovery is pending, removed upon activation, never returned or logged.
++- Registration lock contention now includes a machine-readable `Retry-After: 35`, an error detail with the same delay, and operator-facing guidance. The readme instructs operators to wait at least 35 seconds after a registration request timeout or `registration_busy` before retrying recovery; no automatic retry was added.
++- The Hyperon stepper prepares the next retained observation window and count before mutating current result/status, and marks the publication boundary against adding fallible work below it. Failure injection now covers atom inspection, encoded-size calculation, and digest calculation.
++- The standalone registration check restores the global lock timeout through `unittest.mock.patch` cleanup.
++- The missing-receipt recovery behavior is documented: malformed or receipt-less persisted registration state fails closed with `503 registration_recovery_required`; credentials are retained for operator recovery.
+ 
+-## Evidence and pending gates
++## Test boundary and release state
+ 
+-The exact trace-coverage component is stand-in SHIP'd. An independent reviewer confirmed a pre-existing results-currency defect on the R13 base and earlier trace candidate. The updated source contains an injected-failure regression, but that reviewer has not yet independently rerun the updated candidate.
++Source digest: `4a5737b1296bcb49ff44a002684129c18e95a749d8ce3362cd97df18953b449d` (91 modules). All 12 test files passed twice on the exact candidate source under Python 3.12.13 / pytest 9.1.1: 125 passed plus three injected-failure subcases on each run. The four standalone registration checks passed. These are Mac source/component results only; they do not inherit R1.3's review, host interop, or x86 qualification.
+ 
+-Local available checks: four registration standalone checks and two trace tests pass; changed Python files compile. This environment lacks pytest/FastAPI/httpx, so the full source suite was not run here. Dot has a venv312 and is asked to run the full suite twice, host-route interop, and x86 CI on this exact sealed package. No live Hyperon runtime, service, browser journey, or deployment was exercised.
++This follow-up is prepared for exact-byte review and remains a candidate. It must not replace R1.3's selected source pin without paired review, host interop, x86 CI, and an owner decision. No test fixture or live service was changed; no live registration, Hive, provider, model, or Hyperon runtime was accessed.
+ 
+-This uniquely named ZIP is sealed for review only. It is not adopted, installed, or deployed. The adopted R13 parent and live service remain unchanged.
+--- a/src/omegacode/api.py
++++ b/src/omegacode/api.py
+@@ -568,7 +568,12 @@
+         body = {"error": exc.code, "message": exc.message}
+         if exc.details is not None:
+             body["details"] = exc.details
+-        return JSONResponse(status_code=exc.status, content=body)
++        headers = {}
++        if (exc.code == "registration_busy" and isinstance(exc.details, dict)
++                and type(exc.details.get("retry_after_seconds")) is int
++                and exc.details["retry_after_seconds"] > 0):
++            headers["Retry-After"] = str(exc.details["retry_after_seconds"])
++        return JSONResponse(status_code=exc.status, content=body, headers=headers)
+ 
+     def contains_unpaired_surrogate(value):
+         if isinstance(value,str):
+--- a/src/omegacode/registration.py
++++ b/src/omegacode/registration.py
+@@ -15,6 +15,7 @@
+ _PROCESS_LOCKS = {}
+ _PROCESS_LOCKS_GUARD = threading.Lock()
+ _REGISTRATION_LOCK_TIMEOUT_SECONDS = 30
++REGISTRATION_RETRY_AFTER_SECONDS = 35
+ 
+ 
+ @contextmanager
+@@ -25,7 +26,9 @@
+     with _PROCESS_LOCKS_GUARD:
+         process_lock = _PROCESS_LOCKS.setdefault(key, threading.RLock())
+     if not process_lock.acquire(timeout=_REGISTRATION_LOCK_TIMEOUT_SECONDS):
+-        raise CodeError(503, "registration_busy", "service registration is busy; retry recovery")
++        raise CodeError(503, "registration_busy",
++                        f"service registration is busy; wait at least {REGISTRATION_RETRY_AFTER_SECONDS} seconds before retrying recovery",
++                        {"retry_after_seconds": REGISTRATION_RETRY_AFTER_SECONDS})
+     try:
+         with _file_registration_lock(root):
+             yield
+--- a/src/omegacode/symbolic.py
++++ b/src/omegacode/symbolic.py
+@@ -179,12 +179,15 @@
+             observation = {'input_sequence':state['sequence'],'step_count':trace['steps'],
+                            'status':next_status,'results_digest':sha(results),
+                            'rendered_atoms_digest':sha(atoms)}
++            next_observations = (trace['observations'] + [observation])[-STEP_OBSERVATION_WINDOW:]
++            next_total = trace['observation_total'] + 1
+             # Retain a bounded recent event window, not an unbounded execution log.
+             # Commit results/status only with the observation that makes them current.
++            # No fallible computation may be added below this publication boundary.
+             trace['results'] = results
+             trace['status'] = next_status
+-            trace['observation_total'] += 1
+-            trace['observations'] = (trace['observations'] + [observation])[-STEP_OBSERVATION_WINDOW:]
++            trace['observation_total'] = next_total
++            trace['observations'] = next_observations
+         except Exception:
+             trace['status'] = 'faulted'
+             raise
+--- a/standalone_checks/registration_p3.py
++++ b/standalone_checks/registration_p3.py
+@@ -5,6 +5,7 @@
+ import threading
+ import types
+ import unittest
++from unittest.mock import patch
+ from pathlib import Path
+ 
+ ROOT = Path(__file__).parents[1]
+@@ -66,24 +67,24 @@
+                 self.assertEqual(operation.read_bytes(), raw)
+ 
+     def test_same_process_lock_wait_returns_bounded_503(self):
+-        registration._REGISTRATION_LOCK_TIMEOUT_SECONDS = 0.04
+-        with tempfile.TemporaryDirectory() as directory:
+-            root = Path(directory)
+-            result = []
++        with patch.object(registration, "_REGISTRATION_LOCK_TIMEOUT_SECONDS", 0.04):
++            with tempfile.TemporaryDirectory() as directory:
++                root = Path(directory)
++                result = []
+ 
+-            def contend():
+-                try:
+-                    with registration._registration_lock(root):
+-                        result.append("acquired")
+-                except CodeError as error:
+-                    result.append((error.status, error.code))
++                def contend():
++                    try:
++                        with registration._registration_lock(root):
++                            result.append("acquired")
++                    except CodeError as error:
++                        result.append((error.status, error.code, error.details))
+ 
+-            with registration._registration_lock(root):
+-                thread = threading.Thread(target=contend)
+-                thread.start()
+-                thread.join(timeout=1)
+-                self.assertFalse(thread.is_alive())
+-            self.assertEqual(result, [(503, "registration_busy")])
++                with registration._registration_lock(root):
++                    thread = threading.Thread(target=contend)
++                    thread.start()
++                    thread.join(timeout=1)
++                    self.assertFalse(thread.is_alive())
++                self.assertEqual(result, [(503, "registration_busy", {"retry_after_seconds": 35})])
+ 
+ 
+ if __name__ == "__main__":
+--- a/tests/test_service.py
++++ b/tests/test_service.py
+@@ -694,6 +694,37 @@
+     assert refused.value.status == 503 and refused.value.code == "registration_busy"
+ 
+ 
++def test_operator_registration_busy_returns_retry_after(service, monkeypatch):
++    import omegacode.registration as registration
++
++    monkeypatch.setattr(registration, "_REGISTRATION_LOCK_TIMEOUT_SECONDS", 0.05)
++    entered = threading.Event()
++    release = threading.Event()
++
++    def hold_lock():
++        with registration._registration_lock(service.store.root):
++            entered.set()
++            release.wait(timeout=2)
++
++    with ThreadPoolExecutor(max_workers=1) as pool:
++        held = pool.submit(hold_lock)
++        assert entered.wait(timeout=1)
++        try:
++            client = TestClient(create_app(service))
++            response = client.post("/v1/operator/register",
++                headers={"Authorization": "Bearer " + OPERATOR},
++                json={"enrol_token": "synthetic-enrol-token-123456"})
++        finally:
++            release.set()
++            held.result(timeout=2)
++
++    assert response.status_code == 503
++    assert response.headers["retry-after"] == "35"
++    assert response.json()["error"] == "registration_busy"
++    assert response.json()["details"] == {"retry_after_seconds": 35}
++    assert "wait at least 35 seconds" in response.json()["message"]
++
++
+ def test_running_agent_stops_when_live_hive_authority_ends(tmp_path, repo):
+     state = {"active": True, "binding": None}
+     def transport(request):
+--- a/tests/test_trace_coverage.py
++++ b/tests/test_trace_coverage.py
+@@ -85,37 +85,39 @@
+             self.assertEqual(status['observations'], current['observations'])
+ 
+     def test_failed_observation_does_not_publish_unobserved_results(self):
+-        with patch.dict(sys.modules) as modules:
+-            install_runner(modules)
+-            state = {'context': {'run_id': 'synthetic-run'}, 'sequence': 1}
+-            started = symbolic.step_command(FakeMetta(), {
+-                'id': 'start', 'op': 'step-start', 'source': '!(+ 1 1)', 'max_steps': 10,
+-            }, state)
+-            state['sequence'] = 2
+-            observed = symbolic.step_command(FakeMetta(), {
+-                'id': 'one', 'op': 'step-next', 'trace_id': started['trace_id'], 'count': 1,
+-            }, state)
+-            self.assertEqual(observed['results'], [['1']])
+-            self.assertEqual(observed['observation_total'], 1)
++        for failing_input in ('atom_strings', 'encoded', 'sha'):
++            with self.subTest(failing_input=failing_input), patch.dict(sys.modules) as modules:
++                install_runner(modules)
++                state = {'context': {'run_id': 'synthetic-run'}, 'sequence': 1}
++                started = symbolic.step_command(FakeMetta(), {
++                    'id': 'start', 'op': 'step-start', 'source': '!(+ 1 1)', 'max_steps': 10,
++                }, state)
++                state['sequence'] = 2
++                observed = symbolic.step_command(FakeMetta(), {
++                    'id': 'one', 'op': 'step-next', 'trace_id': started['trace_id'], 'count': 1,
++                }, state)
++                self.assertEqual(observed['results'], [['1']])
++                self.assertEqual(observed['observation_total'], 1)
+ 
+-            state['sequence'] = 3
+-            with patch.object(symbolic, 'atom_strings', side_effect=ValueError('injected observation failure')):
+-                with self.assertRaisesRegex(ValueError, 'injected observation failure'):
+-                    symbolic.step_command(FakeMetta(), {
+-                        'id': 'fault', 'op': 'step-next', 'trace_id': started['trace_id'], 'count': 1,
+-                    }, state)
++                state['sequence'] = 3
++                with patch.object(symbolic, failing_input,
++                                  side_effect=ValueError(f'injected {failing_input} failure')):
++                    with self.assertRaisesRegex(ValueError, f'injected {failing_input} failure'):
++                        symbolic.step_command(FakeMetta(), {
++                            'id': 'fault', 'op': 'step-next', 'trace_id': started['trace_id'], 'count': 1,
++                        }, state)
+ 
+-            state['sequence'] = 4
+-            after_fault = symbolic.step_command(FakeMetta(), {
+-                'id': 'status', 'op': 'step-status', 'trace_id': started['trace_id'],
+-            }, state)
+-            self.assertEqual(after_fault['status'], 'faulted')
+-            self.assertEqual(after_fault['step_count'], 2)
+-            self.assertEqual(after_fault['results'], [['1']])
+-            self.assertEqual(after_fault['results_currency'], 'last successful step batch')
+-            self.assertEqual(after_fault['observation_total'], 1)
+-            self.assertEqual(after_fault['last_observed_step'], 1)
+-            self.assertEqual(len(after_fault['observations']), 1)
++                state['sequence'] = 4
++                after_fault = symbolic.step_command(FakeMetta(), {
++                    'id': 'status', 'op': 'step-status', 'trace_id': started['trace_id'],
++                }, state)
++                self.assertEqual(after_fault['status'], 'faulted')
++                self.assertEqual(after_fault['step_count'], 2)
++                self.assertEqual(after_fault['results'], [['1']])
++                self.assertEqual(after_fault['results_currency'], 'last successful step batch')
++                self.assertEqual(after_fault['observation_total'], 1)
++                self.assertEqual(after_fault['last_observed_step'], 1)
++                self.assertEqual(len(after_fault['observations']), 1)
+ 
+ 
+ if __name__ == '__main__':

@@ -648,6 +648,11 @@ jobs:
           git apply "$GITHUB_WORKSPACE/ci/code-c2/R13_SUCCESSOR_R1_3.patch"
           g=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after successor R1.3: $g"
           [ "$g" = "91 117deeebede5a8a16b1a2bde5a6cd3c6ab414eaceb44392dc136144e279b4cc2" ]
+          # Candidate 6: R13 successor R1.4 P3 follow-up (archive c7478c1e), digest 4a5737b1.
+          echo "96ce33072d675c7eee7fe9438bccdbe0501cc69bdf7ad2ff179cfa37b85620ae  $GITHUB_WORKSPACE/ci/code-c2/R13_SUCCESSOR_R1_4.patch" | sha256sum -c -
+          git apply --exclude=README.md --exclude='standalone_checks/*' "$GITHUB_WORKSPACE/ci/code-c2/R13_SUCCESSOR_R1_4.patch"
+          h=$(python3 "$GITHUB_WORKSPACE/ci/code-r10/digest.py" src/omegacode); echo "after successor R1.4: $h"
+          [ "$h" = "91 4a5737b1296bcb49ff44a002684129c18e95a749d8ce3362cd97df18953b449d" ]
       - name: Pinned Python and uv (checked against the publisher)
         run: |
           P=ci/linux-x86/x86_64-pins.json
