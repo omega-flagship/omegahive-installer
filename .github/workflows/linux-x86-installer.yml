@@ -468,12 +468,12 @@ jobs:
       - name: Runtime-only install (17-package lock), pip check and startup probe
         run: |
           echo "d31b5e35f103c7d7d7d75649ff93ba2786e0113fb49197adf0480fd9a5552db5  ci/code-c2/CODE_R10_X86_RUNTIME_REQUIREMENTS_R1.lock" | sha256sum -c -
-          echo "b80505769571c33ed909fa16ab597f73e522425fa616a3fbf93f76ba7500cfc8  ci/code-c2/runtime_startup_probe_r4.py" | sha256sum -c -
+          echo "59992380c3e1217f3a81b5877addeeffeef199d85a1b5cc622036dfd370e4bac  ci/code-c2/runtime_startup_probe_r6.py" | sha256sum -c -
           env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config venv --python /tmp/py/python/bin/python3.12 /tmp/runvenv
           env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip install --python /tmp/runvenv/bin/python --require-hashes --no-deps --only-binary=:all: -r ci/code-c2/CODE_R10_X86_RUNTIME_REQUIREMENTS_R1.lock
           env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip check --python /tmp/runvenv/bin/python
           env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip freeze --python /tmp/runvenv/bin/python | tee /tmp/c2-runtime-freeze.txt
-          /tmp/testvenv/bin/python ci/code-c2/runtime_startup_probe_r4.py --source-root /tmp/c2/source_r10/src --python /tmp/runvenv/bin/python 2>&1 | tee /tmp/c2-probe.txt
+          /tmp/testvenv/bin/python ci/code-c2/runtime_startup_probe_r6.py --source-root /tmp/c2/source_r10/src --python /tmp/runvenv/bin/python 2>&1 | tee /tmp/c2-probe.txt
           grep -q '"ok": true' /tmp/c2-probe.txt
       - name: Hyperon 0.2.10 worker smoke (pinned wheel, separate env)
         run: |

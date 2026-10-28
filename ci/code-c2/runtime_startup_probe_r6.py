@@ -17,6 +17,7 @@ import signal
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 
 import httpx
@@ -30,6 +31,34 @@ class ProbeError(RuntimeError):
 
 SERVICE_HOST = '127.0.0.1'
 SERVICE_PORT = 8724
+MAX_STDERR_BYTES = 65536
+INTERRUPTED = False
+
+
+def _handle_signal(signum, frame):
+    """Record a graceful cancellation; leave control flow intact so finally can stop the child group."""
+    global INTERRUPTED
+    INTERRUPTED = True
+
+
+def _drain_stderr(stream, pgid: int, state: dict) -> None:
+    """Discard service stderr while enforcing a strict byte cap and terminating a noisy child group."""
+    try:
+        while True:
+            chunk = stream.read(4096)
+            if not chunk:
+                return
+            state['stderr_bytes'] += len(chunk)
+            if state['stderr_bytes'] > MAX_STDERR_BYTES and not state['stderr_limit_exceeded']:
+                state['stderr_limit_exceeded'] = True
+                try:
+                    os.killpg(pgid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                except OSError:
+                    state['stderr_stop_failed'] = True
+    except OSError:
+        state['stderr_read_failed'] = True
 
 
 def require_fixed_port_available() -> int:
@@ -90,12 +119,22 @@ def listener_records(port: int, proc_net: pathlib.Path = pathlib.Path('/proc/net
         except OSError as exc:
             raise ProbeError('linux_proc_tcp_unavailable') from exc
         for line in lines:
-            fields = line.split()
-            if len(fields) < 10 or fields[3] != '0A':
+            if not line.strip():
                 continue
+            fields = line.split()
+            if len(fields) < 10:
+                raise ProbeError('proc_listener_record_malformed')
             try:
                 raw_address, raw_port = fields[1].split(':')
                 observed_port = int(raw_port, 16)
+                state_code = fields[3]
+                if not re.fullmatch(r'[0-9A-Fa-f]{2}', state_code):
+                    raise ValueError()
+            except (ValueError, IndexError) as exc:
+                raise ProbeError('proc_listener_record_malformed') from exc
+            if state_code != '0A':
+                continue
+            try:
                 inode = int(fields[9])
                 uid = int(fields[7])
             except (ValueError, IndexError) as exc:
@@ -206,6 +245,8 @@ async def check_http_boundary(port: int, token: str, process: subprocess.Popen[b
     timeout = httpx.Timeout(0.5, connect=0.5, read=0.5, write=0.5, pool=0.5)
     async with httpx.AsyncClient(trust_env=False, timeout=timeout) as client:
         while loop.time() < deadline:
+            if INTERRUPTED:
+                raise ProbeError('runtime_probe_interrupted')
             if process.poll() is not None:
                 raise ProbeError('service_exited_before_ready')
             try:
@@ -297,43 +338,65 @@ def run_probe(source: pathlib.Path, python: pathlib.Path) -> dict:
         os.chmod(config, 0o600)
 
         env = service_environment(temp, source)
-        log_path = temp / 'service.stderr.log'
         process: subprocess.Popen[bytes] | None = None
         pgid: int | None = None
+        stderr_state = {'stderr_bytes': 0, 'stderr_limit_exceeded': False,
+                        'stderr_stop_failed': False, 'stderr_read_failed': False}
+        stderr_thread: threading.Thread | None = None
         outcome: dict | None = None
         failure: ProbeError | None = None
-        with log_path.open('wb') as log:
-            os.chmod(log_path, 0o600)
-            try:
-                process = subprocess.Popen(
-                    service_argv(python, config),
-                    cwd=temp, env=env, stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL, stderr=log,
-                    start_new_session=True,
-                )
-                # start_new_session makes the child its session and group leader.
-                # Retain pid as pgid even if it exits before the first health poll.
-                pgid = process.pid
-                if os.getpgid(process.pid) != pgid:
-                    raise ProbeError('service_group_not_isolated')
-                http_result = asyncio.run(check_http_boundary(port, token, process))
-                listeners = verify_loopback_listener(port, process.pid)
-                outcome = {**http_result, 'listener_addresses': listeners,
-                           'synthetic_state': True}
-            except ProbeError as exc:
-                failure = exc
-            except OSError as exc:
-                failure = ProbeError('runtime_probe_os_error')
-            except Exception as exc:
-                failure = ProbeError('runtime_probe_failed')
-            finally:
-                if process is not None and pgid is not None:
-                    try:
-                        stop_owned_process_group(process, pgid)
-                    except ProbeError as exc:
-                        failure = exc
-                    except Exception as exc:
-                        failure = ProbeError('service_group_cleanup_failed')
+        try:
+            process = subprocess.Popen(
+                service_argv(python, config),
+                cwd=temp, env=env, stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, bufsize=0,
+                start_new_session=True,
+            )
+            # start_new_session makes the child its session and group leader.
+            # Retain pid as pgid even if it exits before the first health poll.
+            pgid = process.pid
+            stderr_thread = threading.Thread(target=_drain_stderr,
+                                             args=(process.stderr, pgid, stderr_state),
+                                             name='omegacode-probe-stderr', daemon=True)
+            stderr_thread.start()
+            if os.getpgid(process.pid) != pgid:
+                raise ProbeError('service_group_not_isolated')
+            if INTERRUPTED:
+                raise ProbeError('runtime_probe_interrupted')
+            http_result = asyncio.run(check_http_boundary(port, token, process))
+            if INTERRUPTED:
+                raise ProbeError('runtime_probe_interrupted')
+            if stderr_state['stderr_limit_exceeded']:
+                raise ProbeError('service_stderr_limit_exceeded')
+            if stderr_state['stderr_stop_failed'] or stderr_state['stderr_read_failed']:
+                raise ProbeError('service_stderr_census_failed')
+            listeners = verify_loopback_listener(port, process.pid)
+            outcome = {**http_result, 'listener_addresses': listeners,
+                       'synthetic_state': True}
+        except ProbeError as exc:
+            failure = exc
+        except OSError as exc:
+            failure = ProbeError('runtime_probe_os_error')
+        except Exception as exc:
+            failure = ProbeError('runtime_probe_failed')
+        finally:
+            if process is not None and pgid is not None:
+                try:
+                    stop_owned_process_group(process, pgid)
+                except ProbeError as exc:
+                    failure = exc
+                except Exception as exc:
+                    failure = ProbeError('service_group_cleanup_failed')
+            if stderr_thread is not None:
+                stderr_thread.join(timeout=5)
+                if stderr_thread.is_alive():
+                    failure = ProbeError('service_stderr_drain_did_not_finish')
+                elif stderr_state['stderr_limit_exceeded'] and failure is None:
+                    failure = ProbeError('service_stderr_limit_exceeded')
+                elif (stderr_state['stderr_stop_failed'] or stderr_state['stderr_read_failed']) and failure is None:
+                    failure = ProbeError('service_stderr_census_failed')
+            if INTERRUPTED and failure is None:
+                failure = ProbeError('runtime_probe_interrupted')
 
         if failure is not None:
             raise failure
@@ -344,9 +407,10 @@ def run_probe(source: pathlib.Path, python: pathlib.Path) -> dict:
 
 
 def main() -> int:
+    global INTERRUPTED
     parser = argparse.ArgumentParser()
     parser.add_argument('--source-root', required=True, type=pathlib.Path,
-                        help='directory containing source_r10/src/omegacode')
+                        help='staged release root containing omegacode/__main__.py (PYTHONPATH=releases/<pin>)')
     parser.add_argument('--python', required=True, type=pathlib.Path,
                         help='absolute path to the hash-pinned Python interpreter')
     args = parser.parse_args()
@@ -355,14 +419,23 @@ def main() -> int:
     if not (source / 'omegacode' / '__main__.py').is_file() or not python.is_file():
         print(json.dumps({'ok': False, 'failure': 'source_or_interpreter_missing'}))
         return 2
+    INTERRUPTED = False
+    prior_signals = {}
     try:
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            prior_signals[signum] = signal.signal(signum, _handle_signal)
         outcome = run_probe(source, python)
+        if INTERRUPTED:
+            raise ProbeError('runtime_probe_interrupted')
     except ProbeError as exc:
         print(json.dumps({'ok': False, 'failure': exc.code}, sort_keys=True))
         return 1
     except OSError:
         print(json.dumps({'ok': False, 'failure': 'runtime_probe_os_error'}, sort_keys=True))
         return 1
+    finally:
+        for signum, handler in prior_signals.items():
+            signal.signal(signum, handler)
     print(json.dumps({'ok': True, **outcome, 'process_group_clean': True}, sort_keys=True))
     return 0
 
