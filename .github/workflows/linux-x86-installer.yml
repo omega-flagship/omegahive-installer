@@ -571,6 +571,10 @@ jobs:
           env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config venv --python /tmp/py/python/bin/python3.12 /tmp/runvenv
           env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip install --python /tmp/runvenv/bin/python --require-hashes --no-deps --only-binary=:all: -r ci/code-c2/CODE_R10_X86_RUNTIME_REQUIREMENTS_R1.lock
           env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip check --python /tmp/runvenv/bin/python
+          # As the installer does (materialize_venv_python): the venv's python is a regular copy, not a symlink, so a
+          # probe that resolves paths still runs inside the venv (probe R6/R7 call .resolve() on --python).
+          cp --remove-destination "$(readlink -f /tmp/runvenv/bin/python)" /tmp/runvenv/bin/python && chmod 0755 /tmp/runvenv/bin/python
+          test ! -L /tmp/runvenv/bin/python && /tmp/runvenv/bin/python -c "import sys, uvicorn; print('venv python', sys.prefix)"
           env -i HOME=$HOME PATH=/usr/bin:/bin "$UV" --no-config pip freeze --python /tmp/runvenv/bin/python | tee /tmp/c2-runtime-freeze.txt
           /tmp/testvenv/bin/python ci/code-c2/runtime_startup_probe_r6.py --source-root /tmp/c2/source_r10/src --python /tmp/runvenv/bin/python 2>&1 | tee /tmp/c2-probe.txt
           grep -q '"ok": true' /tmp/c2-probe.txt || {
