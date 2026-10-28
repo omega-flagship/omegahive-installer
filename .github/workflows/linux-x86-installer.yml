@@ -155,10 +155,17 @@ jobs:
 
       - name: Still running after the user's sessions end
         run: |
-          sudo loginctl terminate-user "$HIVE_USER" || true
+          U=$(id -u "$HIVE_USER")
+          # Logout: end the person's login sessions only (linger keeps their user manager).
+          for s in $(loginctl list-sessions --no-legend | awk -v u="$HIVE_USER" '$3==u {print $1}'); do sudo loginctl terminate-session "$s"; done
           sleep 10
           curl -s -o /dev/null -w 'hive after logout: HTTP %{http_code}\n' -H 'Host: 127.0.0.1:8700' http://127.0.0.1:8700/api/health || true
-          U=$(id -u "$HIVE_USER")
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+          # Reboot stand-in: restart the user manager; the enabled service must come back by itself.
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-enabled omegahive.service
+          sudo systemctl restart "user@$U.service"
+          for i in $(seq 1 60); do sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-active --quiet omegahive.service && break; sleep 1; done
+          sleep 5
           sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
 
       - name: Receipts (no secrets)
@@ -234,6 +241,16 @@ jobs:
           status=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8700/api/auth/local/exchange \
             -H "Host: 127.0.0.1:$port" -H "Origin: http://127.0.0.1:$port" -H 'Content-Type: application/json' --data "{\"code\":\"$code\"}")
           echo "exchange HTTP $status (link port $port)"; [ "$status" = 200 ]
-          sudo loginctl terminate-user "$HIVE_USER" || true; sleep 10
+          U=$(id -u "$HIVE_USER")
+          # Logout: end the person's login sessions only (linger keeps their user manager).
+          for s in $(loginctl list-sessions --no-legend | awk -v u="$HIVE_USER" '$3==u {print $1}'); do sudo loginctl terminate-session "$s"; done
+          sleep 10
+          curl -s -o /dev/null -w 'hive after logout: HTTP %{http_code}\n' -H 'Host: 127.0.0.1:8700' http://127.0.0.1:8700/api/health || true
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
+          # Reboot stand-in: restart the user manager; the enabled service must come back by itself.
+          sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-enabled omegahive.service
+          sudo systemctl restart "user@$U.service"
+          for i in $(seq 1 60); do sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-active --quiet omegahive.service && break; sleep 1; done
+          sleep 5
           sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$U "/home/$HIVE_USER/.local/bin/omegahive" status --json
 
