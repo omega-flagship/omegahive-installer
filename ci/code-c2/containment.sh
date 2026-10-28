@@ -30,18 +30,31 @@ after c2-success ok "$(echo "$out" | grep -o '"ok": [a-z]*')"
 # 2 refusal before start (relative interpreter path is refused by R8)
 out=$(run_unit c2-refusal --wait --pipe -- "$PY" "$PROBE" --source-root "$SRC" --python runvenv/bin/python 2>&1 | tail -1)
 after c2-refusal refused "$(echo "$out" | cut -c1-120)"
-# 3 timeout: the probe is killed by its own outer deadline while the service is starting
-out=$(run_unit c2-timeout --wait --pipe -p RuntimeMaxSec=2 -- "$PY" "$PROBE" --source-root "$SRC" --python /tmp/runvenv/bin/python 2>&1 | tail -1)
-after c2-timeout killed_by_RuntimeMaxSec "exit:$(systemctl show -p Result --value c2-timeout.service 2>/dev/null)"
-# 4 termination: SIGTERM to the probe mid-run (graceful path)
+wait_service() {  # until the service process exists (max 15 s); prints its pids
+  for i in $(seq 1 150); do p=$(pgrep -f -- '-m omegacode --config' || true); [ -n "$p" ] && { echo "$p" | tr '\n' ,; return 0; }; sleep 0.1; done
+  return 1
+}
+main_pid() { systemctl show -p MainPID --value "$1.service"; }
+exercised() {  # name, pids-or-empty
+  if [ -z "$2" ]; then echo "  NOT EXERCISED ($1): the service never appeared"; fail=1; else echo "  $1: live service pids [$2]"; fi
+}
+# 3 timeout: the service is live and the probe is frozen, so only the unit's RuntimeMaxSec can end the case
+run_unit c2-timeout -p RuntimeMaxSec=8 -- "$PY" "$PROBE" --source-root "$SRC" --python /tmp/runvenv/bin/python
+pids=$(wait_service || true); exercised c2-timeout "$pids"
+[ -n "$pids" ] && sudo kill -STOP "$(main_pid c2-timeout)"
+for i in $(seq 1 40); do systemctl is-active --quiet c2-timeout.service || break; sleep 0.5; done
+after c2-timeout runtime_limit "result:$(systemctl show -p Result --value c2-timeout.service)"
+# 4 termination: SIGTERM to the probe while the service is live (graceful path)
 run_unit c2-term -- "$PY" "$PROBE" --source-root "$SRC" --python /tmp/runvenv/bin/python
-sleep 2; sudo systemctl kill --kill-whom=main --signal=TERM c2-term.service
-for i in $(seq 1 20); do systemctl is-active --quiet c2-term.service || break; sleep 0.5; done
+pids=$(wait_service || true); exercised c2-term "$pids"
+sudo systemctl kill --kill-whom=main --signal=TERM c2-term.service
+for i in $(seq 1 40); do systemctl is-active --quiet c2-term.service || break; sleep 0.5; done
 after c2-term sigterm_main "active_after=$(systemctl is-active c2-term.service)"
-# 5 forced cancellation: SIGKILL to the probe only (it cannot clean up), then the unit is stopped
+# 5 forced cancellation: freeze then SIGKILL the probe only (no cleanup possible): the service is orphaned inside the
+# unit's cgroup until the unit is stopped
 run_unit c2-kill -- "$PY" "$PROBE" --source-root "$SRC" --python /tmp/runvenv/bin/python
-sleep 2
-echo "  before kill: omegacode=[$(pgrep -f -- '-m omegacode --config' | tr '\n' ,)]"
+pids=$(wait_service || true); exercised c2-kill "$pids"
+m=$(main_pid c2-kill); [ -n "$pids" ] && sudo kill -STOP "$m"
 sudo systemctl kill --kill-whom=main --signal=KILL c2-kill.service; sleep 1
 echo "  after SIGKILL of probe, before stop: omegacode=[$(pgrep -f -- '-m omegacode --config' | tr '\n' ,)]"
 sudo systemctl stop c2-kill.service 2>/dev/null || true
