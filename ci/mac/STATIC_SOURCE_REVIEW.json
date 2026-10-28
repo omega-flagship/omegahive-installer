@@ -1,0 +1,71 @@
+{
+  "schema": "studio-Mac-CI-stage1-static-source-review/1",
+  "verdict": "PASS_SOURCE_ONLY",
+  "blocking_findings": [],
+  "reviewer": "MacBook-Hive primary independent source reviewer",
+  "source_owner": "Studio Root and MacBook-Hive native implementation team",
+  "origin_machine": "MacBook",
+  "subjects": {
+    "prep_entry": {
+      "path": "prep_entry.py",
+      "bytes": 22863,
+      "sha256": "214d57a3f9b55e55de5810c99ef3559872edb594e1a082d3f70e717f9d0f23a7"
+    },
+    "prep_parent_library": {
+      "path": "prep_parent_library.py",
+      "bytes": 29428,
+      "sha256": "1bbb0da1f89b6d0af32fedd68b21edc5127719e7d3b46ea40274ac893991ac34"
+    },
+    "prep_worker_enabled": {
+      "path": "prepare_ci_runtime_enabled.py",
+      "bytes": 30566,
+      "sha256": "3d095d31c80974ff33ffa1efa8c72cd2532a495446f151c03413d532a9825727"
+    },
+    "prep_prototype": {
+      "path": "prepare_ci_runtime_prototype.py",
+      "bytes": 30505,
+      "sha256": "a350127907f78776fb7352e4e2a794e66891fe851b64ae6fc6cd77280ccef4b2"
+    },
+    "public_inputs": {
+      "path": "PUBLIC_RUNTIME_INPUTS_R4.json",
+      "bytes": 63647,
+      "sha256": "68cba00c3851717fd82b59992939fba361b1bba2eab73b1d85a35a9193ae7842"
+    },
+    "resource_guide": {
+      "path": "project_graph/resources.py",
+      "bytes": 19590,
+      "sha256": "76d503d65fab968c6894f7ac5698178f8811f3aeb08cda2a3c0f9006a15b0fbb"
+    },
+    "resource_policy": {
+      "path": "project_graph/resource-policy.json",
+      "bytes": 375,
+      "sha256": "3add848d3756762ddffa9a817a3bebbf26b41674cb5ccf885028f499a627884f"
+    },
+    "native_entry": {
+      "path": "native_entry.py",
+      "bytes": 45103,
+      "sha256": "67b49abd8ec84c6798387823b2283af8be77d51a4f55c2e95bd38ad81302e28b"
+    },
+    "native_parent": {
+      "path": "ci_native_parent.py",
+      "bytes": 51553,
+      "sha256": "fa89bdfb0642d91d1510aa7e483ac7852a02c5c1a93f8caafa286ed33240688c"
+    },
+    "native_worker_enabled": {
+      "path": "ci_native_worker.py",
+      "bytes": 29154,
+      "sha256": "86f7ecc349cce6a61bd4c50b0c5922ed360a7e90a223cb191b658a6cedc21b6d"
+    },
+    "input_producer": {
+      "path": "provision_native_inputs.py",
+      "bytes": 15015,
+      "sha256": "bc00666a386b3268092796aa3340d30fb4e7ed52a3b599fddfbaf348ff5329c7"
+    }
+  },
+  "native_component_review": {
+    "path": "STATIC_NATIVE_SOURCE_REVIEW.json",
+    "bytes": 1061,
+    "sha256": "b0b485c32b6472ddfa351e1bf5f4d78fa9ff576df5d9ea97fffc1f8d2a3c9c60"
+  },
+  "scope": "Independent static review of these exact eleven fixed Source roles, their sealed ten public reference files and the genuine four-role native component review. Prep Entry R3 and Parent R8 guard fixes reviewed; actual58 mocked integration controls passed separately. Runtime owner facts, UID, source materialization, leases and resource decisions remain CI-owner admission; no per-run review generation, actual native build, CI, audit, relocation, installer or deployment qualification is granted."
+}

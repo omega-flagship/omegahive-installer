@@ -727,3 +727,59 @@ jobs:
         with:
           name: code-c2-x86-receipts
           path: c2-receipts/
+
+  mac-native:
+    # Mac DMG stage 1 (Studio's sealed runnable set, ci/mac): pinned public fetch + stage, then the native phases
+    # (tools, python, node, pcre, configure, build, install, deps, janus) on a fresh arm64 runner. Receipts are artifacts.
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      STUDIO_STAGE1_MANIFEST_SHA256: 972d012e9e3f1b02e881dde6fc8c7f52a6ed3f346d218c6260a862ffa1601ed9
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Facts (dedicated arm64 runner)
+        run: |
+          uname -a; sw_vers; sysctl -n hw.memsize hw.ncpu; df -h /private/tmp | tail -1
+          test "$(uname -m)" = arm64
+          test ! -e /private/tmp/omegahive-ci-r12 && echo "job root absent"
+          command -v python3.12 && python3.12 -VV
+      - name: Verify the sealed source set
+        working-directory: ci/mac
+        run: |
+          printf '%s  MANIFEST.sha256\n' "$STUDIO_STAGE1_MANIFEST_SHA256" | shasum -a 256 -c -
+          shasum -a 256 -c MANIFEST.sha256
+      - name: Public preparation (fetch + stage)
+        working-directory: ci/mac
+        run: |
+          python3.12 -I -B -S prep_entry.py \
+            --manifest "$PWD/MANIFEST.sha256" \
+            --manifest-sha256 "$STUDIO_STAGE1_MANIFEST_SHA256" \
+            --static-review "$PWD/STATIC_SOURCE_REVIEW.json" \
+            --owner dot-mac-ci \
+            --dedicated-ci-job --run
+      - name: Native phases
+        working-directory: ci/mac
+        run: |
+          env HOME=/private/tmp/omegahive-ci-r12/runtime-job/empty-home \
+            PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+            /private/tmp/omegahive-ci-r12/runtime-job/bootstrap/python/bin/python3.12 \
+            -I -B -S "$PWD/native_entry.py" \
+            --manifest "$PWD/MANIFEST.sha256" \
+            --manifest-sha256 "$STUDIO_STAGE1_MANIFEST_SHA256" \
+            --static-review "$PWD/STATIC_SOURCE_REVIEW.json" \
+            --owner dot-mac-ci \
+            --dedicated-ci-job --run
+      - name: Receipts (no secrets; logs and receipts only, no runtime bytes)
+        if: always()
+        run: |
+          R=/private/tmp/omegahive-ci-r12; mkdir -p mac-receipts
+          [ -d $R ] && (cd $R && find . -maxdepth 4 \( -name '*.json' -o -name '*.log' -o -name '*.txt' \) -size -5M -print0 | xargs -0 -I{} rsync -R {} "$GITHUB_WORKSPACE/mac-receipts/") || true
+          find mac-receipts -type f | head -50; du -sh mac-receipts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-native-stage1-receipts
+          path: mac-receipts/

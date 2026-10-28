@@ -1,0 +1,13 @@
+--- a/cmake/Install.cmake
++++ b/cmake/Install.cmake
+@@ -44,3 +44,10 @@
+       "@executable_path/../../../.."
+       "@executable_path/../Frameworks")
+ endif()
++
++# OmegaHive prototype build-only relocation override. No engine/runtime logic changes.
++if(APPLE AND OMEGA_RELOCATABLE_RPATH)
++  set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
++  set(CMAKE_INSTALL_RPATH "${OMEGA_RELOCATABLE_RPATH}")
++  set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
++endif()

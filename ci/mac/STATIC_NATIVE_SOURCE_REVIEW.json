@@ -1,0 +1,29 @@
+{
+  "schema": "studio-Mac-CI-native-parent-static-review/1",
+  "source_owner": "Studio Root independent native-component review; inherited worker/input-producer reviews retained separately",
+  "origin_machine": "MacBook",
+  "verdict": "PASS_SOURCE_ONLY",
+  "blocking_findings": [],
+  "subject": {
+    "parent": {
+      "path": "native-parent/ci_native_parent.py",
+      "bytes": 51553,
+      "sha256": "fa89bdfb0642d91d1510aa7e483ac7852a02c5c1a93f8caafa286ed33240688c"
+    },
+    "enabled_worker": {
+      "path": "native-source/ci_native_worker.py",
+      "bytes": 29154,
+      "sha256": "86f7ecc349cce6a61bd4c50b0c5922ed360a7e90a223cb191b658a6cedc21b6d"
+    },
+    "parent_entry_driver": {
+      "path": "native-source/ci_native_parent_driver.py",
+      "bytes": 45103,
+      "sha256": "67b49abd8ec84c6798387823b2283af8be77d51a4f55c2e95bd38ad81302e28b"
+    },
+    "input_producer": {
+      "path": "native-source/provision_native_inputs.py",
+      "bytes": 15015,
+      "sha256": "bc00666a386b3268092796aa3340d30fb4e7ed52a3b599fddfbaf348ff5329c7"
+    }
+  }
+}
