@@ -109,6 +109,10 @@ jobs:
           if [ $code -ne 0 ]; then
             L=$(sudo ls -t /home/$HIVE_USER/.local/share/omegahive/logs/ 2>/dev/null | head -1)
             [ -n "$L" ] && sudo tail -n 60 "/home/$HIVE_USER/.local/share/omegahive/logs/$L" | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'
+            echo "--- bootstrap failure notes (secret-free by design) ---"
+            sudo sh -c "cat /home/$HIVE_USER/.local/share/omegahive/logs/bootstrap-failure-*.json 2>/dev/null" || true
+            echo "--- hive service journal (redacted) ---"
+            sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$(id -u "$HIVE_USER") journalctl --user -u omegahive.service --no-pager -n 60 -o short-monotonic 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' || true
             echo "--- bootstrap diagnostic (traceback only) ---"
             sudo cp ci/linux-x86/diag_bootstrap.py /home/$HIVE_USER/diag_bootstrap.py && sudo chown $HIVE_USER /home/$HIVE_USER/diag_bootstrap.py
             U=$(id -u "$HIVE_USER")
@@ -219,6 +223,10 @@ jobs:
           if [ $code -ne 0 ]; then
             L=$(sudo ls -t /home/$HIVE_USER/.local/share/omegahive/logs/ 2>/dev/null | head -1)
             [ -n "$L" ] && sudo tail -n 60 "/home/$HIVE_USER/.local/share/omegahive/logs/$L" | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g'
+            echo "--- bootstrap failure notes (secret-free by design) ---"
+            sudo sh -c "cat /home/$HIVE_USER/.local/share/omegahive/logs/bootstrap-failure-*.json 2>/dev/null" || true
+            echo "--- hive service journal (redacted) ---"
+            sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR=/run/user/$(id -u "$HIVE_USER") journalctl --user -u omegahive.service --no-pager -n 60 -o short-monotonic 2>&1 | sed -E 's#(local-signin)\#[A-Za-z0-9_-]{43}#\1\#<redacted>#g' || true
             echo "--- bootstrap diagnostic (traceback only) ---"
             sudo cp ci/linux-x86/diag_bootstrap.py /home/$HIVE_USER/diag_bootstrap.py && sudo chown $HIVE_USER /home/$HIVE_USER/diag_bootstrap.py
             U=$(id -u "$HIVE_USER")
