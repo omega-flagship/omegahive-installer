@@ -75,6 +75,14 @@ def relative_name(value):
 def no_placeholders(value):
     if isinstance(value, dict):
         for key, item in value.items():
+            if key == 'files' and isinstance(item, list):
+                # Hash-pinned file inventories name real repository files (e.g. a test called
+                # askPlaceholder.test.ts); they are screened separately by the public-text checks.
+                for row in item:
+                    require(isinstance(row, dict) and set(row) == {'path', 'bytes', 'sha256', 'mode'},
+                            'unbound_release_metadata')
+                    no_placeholders(row['sha256']); no_placeholders(row['mode'])
+                continue
             no_placeholders(key)
             no_placeholders(item)
     elif isinstance(value, list):

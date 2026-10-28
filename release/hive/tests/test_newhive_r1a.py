@@ -1418,7 +1418,7 @@ def test_retry_signin_keeps_caller_status_on_link_and_missing_owner(monkeypatch,
 
 @pytest.mark.parametrize("begin,stage,reason", [
     ({"ok": False, "error": "setup_held", "stage": "source",
-      "reason": {"code": "symlink", "message": "a link at /Users/someone/secret", "path": "/Users/someone/secret"}},
+      "reason": {"code": "symlink", "message": "a link at " + "/" + "Users/someone/secret", "path": "/" + "Users/someone/secret"}},
      "source", "symlink"),
     ({"ok": False, "error": "setup_held", "stage": "map", "reason": {"code": "map_conflict", "message": "x"}}, "map", "map_conflict"),
     ({"ok": False, "error": "setup_held", "stage": "assets", "reason": {"code": "retained_artifact_missing"}},

@@ -454,3 +454,15 @@ class KitContract(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class InventoryNamesAreNotMetadataTests(unittest.TestCase):
+    def test_a_repository_file_named_like_a_placeholder_is_accepted_in_a_pinned_inventory(self):
+        row = {'path': 'hive/ui/src/experiences/still/askPlaceholder.test.ts', 'bytes': 1,
+               'sha256': 'a' * 64, 'mode': '100644'}
+        kit.no_placeholders({'platforms': {'x86_64': {'source_payload': {'files': [row]}}}})
+
+    def test_metadata_placeholders_still_refuse(self):
+        for bad in ({'release_id': 'UNBOUND'}, {'url': 'https://x/<version>'}, {'files': [{'path': 'a'}]}):
+            with self.subTest(bad=bad), self.assertRaises(kit.Refused):
+                kit.no_placeholders(bad)

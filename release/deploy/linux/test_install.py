@@ -442,7 +442,7 @@ class InstallerTests(unittest.TestCase):
         self.assertIsNone(process.returncode); signal_group.assert_not_called()
 
     def test_service_and_shell_quoting_have_separate_contracts(self):
-        with tempfile.TemporaryDirectory(prefix='home-$()-') as name:
+        with tempfile.TemporaryDirectory(prefix='home-shell-') as name:
             home = Path(name); root = home / '.local/share/omegahive'; root.mkdir(parents=True)
             app = root / 'releases/test/app'; module = app / 'deploy/linux'; module.mkdir(parents=True)
             (module / 'omegahive.service.in').write_text('[Service]\nExecStart=@PYTHON@ -I -B @SERVE@ --runtime @RUNTIME@\nWorkingDirectory=@WORKDIR@\nEnvironment=@SANDBOX_ENV@\nEnvironment=@LIBPYTHON_ENV@\n')
@@ -1155,3 +1155,71 @@ class NativePackageCompilerTests(unittest.TestCase):
             for flag in ("--python", "--require-hashes", "--require-build-hashes", "--build-constraint"):
                 self.assertIn(flag, argv)
             self.assertIn("build-essential", install.APT)
+
+
+class WorkingDirectoryR13Tests(unittest.TestCase):
+    def test_working_directory_is_unquoted_for_plain_absolute_paths(self):
+        template = ('[Service]\nExecStart=@PYTHON@ -I -B @SERVE@ --runtime @RUNTIME@\n'
+                    'WorkingDirectory=@WORKDIR@\nEnvironment=@SANDBOX_ENV@\nEnvironment=@LIBPYTHON_ENV@\n')
+        for component in ('plain', 'UPPER_lower-12.34'):
+            with self.subTest(component=component), tempfile.TemporaryDirectory() as name:
+                home = Path(name) / component; home.mkdir()
+                root = home / '.local/share/omegahive'; root.mkdir(parents=True)
+                app = root / 'releases/test/app'; module = app / 'deploy/linux'; module.mkdir(parents=True)
+                (module / 'omegahive.service.in').write_text(template)
+                instance = install.Installer(Path('/unused'), {}, home); calls = []
+                instance.run = lambda argv, **kwargs: calls.append(argv)
+                python = root / 'releases/test/venv/bin/python'
+                descriptor = {'runtime_root': str(app.parent), 'sandbox_python': str(python),
+                              'data_dir': str(root / 'data'), 'libpython_dir': None}
+                with patch.object(install, 'control_env', return_value={'TEST': 'owned-session'}):
+                    instance.activate(app, python, descriptor)
+                lines = (home / '.config/systemd/user/omegahive.service').read_text().splitlines()
+                self.assertEqual([line for line in lines if line.startswith('WorkingDirectory=')],
+                                 ['WorkingDirectory=' + str(app)])
+                self.assertIn('ExecStart="' + str(python) + '" -I -B "' + str(module / 'serve.py')
+                              + '" --runtime "' + str(root / 'runtime.json') + '"', lines)
+                self.assertIn('Environment="HIVE_SANDBOX_PYTHON=' + str(python) + '"', lines)
+                self.assertIn('Environment="LD_LIBRARY_PATH="', lines)
+                self.assertEqual(calls[0], ['/usr/bin/systemd-analyze', '--user', 'verify',
+                                          str(home / '.config/systemd/user/omegahive.service')])
+                self.assertEqual(calls[-1], ['/usr/bin/systemctl', '--user', 'start', 'omegahive.service'])
+
+    def test_working_directory_refuses_nonplain_characters_before_unit_write_or_commands(self):
+        template = '[Service]\nExecStart=@PYTHON@\nWorkingDirectory=@WORKDIR@\n'
+        for component in ('home with spaces', 'home"quoted', "home'quoted", r'home\backslash',
+                          'home$dollar', 'home%percent', 'home\u03bb', 'home\nnewline', 'home\rcarriage'):
+            with self.subTest(component=component), tempfile.TemporaryDirectory() as name:
+                home = Path(name) / component; home.mkdir()
+                root = home / '.local/share/omegahive'; root.mkdir(parents=True)
+                app = root / 'releases/test/app'; module = app / 'deploy/linux'; module.mkdir(parents=True)
+                (module / 'omegahive.service.in').write_text(template)
+                calls = []
+                python = root / 'releases/test/venv/bin/python'
+                descriptor = {'runtime_root': str(app.parent), 'sandbox_python': str(python),
+                              'data_dir': str(root / 'data'), 'libpython_dir': None}
+                message = ("home folder's name has a % sign" if '%' in component else
+                           'unsupported character' if any(c in component for c in '\n\r') else
+                           'installation path can use only')
+                with self.assertRaisesRegex(install.Refused, message):
+                    instance = install.Installer(Path('/unused'), {}, home)
+                    instance.run = lambda argv, **kwargs: calls.append(argv)
+                    instance.activate(app, python, descriptor)
+                self.assertEqual(calls, [])
+                self.assertFalse((home / '.config/systemd/user/omegahive.service').exists())
+
+    def test_partial_uninstall_prints_existing_linger_note_for_the_current_user(self):
+        with tempfile.TemporaryDirectory() as name:
+            home = Path(name); instance, runtime = partial_fixture(home)
+            data = instance.root / 'data'; data.mkdir(); (data / 'keep').write_text('retained conversation')
+            output = io.StringIO()
+            with patch.object(install.subprocess, 'run') as run, \
+                 patch.object(install.pwd, 'getpwuid', return_value=SimpleNamespace(pw_name='fixture-user')), \
+                 redirect_stdout(output):
+                self.assertEqual(install.manage('uninstall', home), 0)
+                run.assert_not_called()
+            self.assertEqual(output.getvalue().splitlines(), [
+                'OmegaHive is removed. Your conversations were kept in ~/.local/share/omegahive/data',
+                install.LINGER_NOTE + 'fixture-user'])
+            self.assertEqual((data / 'keep').read_text(), 'retained conversation')
+            self.assertFalse(runtime.exists())

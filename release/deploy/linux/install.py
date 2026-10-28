@@ -1061,7 +1061,11 @@ class Installer:
                   "LIBPYTHON_ENV": "LD_LIBRARY_PATH=" + (descriptor["libpython_dir"] or "")}
         for key, value in values.items():
             if key in {"PYTHON", "SERVE", "RUNTIME"}: value = value.replace("$", "$$")
-            body = body.replace("@" + key + "@", quote(value))
+            quoted = quote(value)
+            if key == "WORKDIR":
+                need(re.fullmatch(r"/[A-Za-z0-9._/-]+", value) is not None,
+                     "Your installation path can use only letters, numbers, dots, underscores, hyphens and slashes.")
+            body = body.replace("@" + key + "@", value if key == "WORKDIR" else quoted)
         need(not re.search("@[A-Z_]+@", body), "The service template is incomplete.")
         owned_file(self.home, "unit", body.encode())
         manager_env = control_env(self.home)
@@ -1094,6 +1098,7 @@ def manage_locked(command, home, json_output=False):
         need(command == "uninstall", "Setup is incomplete. Run the installer again, or use ~/.local/bin/omegahive uninstall to remove it and keep your data.")
         recover_partial(home)
         print("OmegaHive is removed. Your conversations were kept in ~/.local/share/omegahive/data")
+        print(LINGER_NOTE + pwd.getpwuid(os.getuid()).pw_name)
         return 0
     statepath = root / "installation-state.json"
     need(present(statepath), "There is no complete installation record. Unrecorded files were kept; please keep the logs for review.")

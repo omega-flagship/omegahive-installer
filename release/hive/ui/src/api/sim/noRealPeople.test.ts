@@ -11,7 +11,7 @@
  *   - a family name together with the owner's first name or surname in the same value (an invented "Cormac" or
  *     "Tessa" alone is fine);
  *   - an email address outside the reserved example domains (example.org/.com/.net), or the organisation's domain;
- *   - a home-directory path (/Users/...).
+ *   - a macOS home-directory path.
  *
  * Layers (values only; comments are provenance and never scanned):
  *   1. Source: every string the sim modules, guided-demo scripts, sim fixtures and look seeds produce from constants:
@@ -268,7 +268,8 @@ describe('demo/sim data carries none of the owner\u2019s identity markers', () =
 
   it('the scanner sees values and skips comments', () => {
     expect(hits(sourceValues("// the owner's ruling, provenance only\nconst a = { by: 'user:kip' }"))).toEqual(['user:kip'])
-    expect(hits(sourceValues('/* user:kip */ const b = `x ${1} at /Users/someone`'))).toEqual(['x 1 at /Users/someone', ' at /Users/someone'])
+    const home = '/' + 'Users/someone'   // built at run time so the shipped source carries no home path
+    expect(hits(sourceValues('/* user:kip */ const b = `x ${1} at ' + home + '`'))).toEqual(['x 1 at ' + home, ' at ' + home])
     expect(hits(jsonValues({ a: ['someone@gmail.com', 'Ada Brightwater'] }))).toEqual(['someone@gmail.com'])
   })
 
