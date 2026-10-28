@@ -198,7 +198,7 @@ def main():
             'user_unit_sandbox_interpreter_mismatch')
     # The unit's selected value is checked, then ALL inherited variables are dropped.
     env = {
-        'HOME': str(home), 'LANG': 'C.UTF-8', 'LC_ALL': 'C',
+        'HOME': str(home), 'LANG': 'C.UTF-8', 'LC_ALL': 'C.UTF-8',   # LC_ALL overrides LANG: UTF-8 MeTTa sources need it
         'PATH': str(Path(config['python']).parent) + ':' + str(Path(config['swipl_bin']).parent) + ':/usr/bin:/bin',
         'VIRTUAL_ENV': str(Path(config['python']).parent.parent),
         'PYTHONNOUSERSITE': '1', 'PYTHONDONTWRITEBYTECODE': '1',

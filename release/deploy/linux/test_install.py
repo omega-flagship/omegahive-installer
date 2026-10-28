@@ -1223,3 +1223,32 @@ class WorkingDirectoryR13Tests(unittest.TestCase):
                 install.LINGER_NOTE + 'fixture-user'])
             self.assertEqual((data / 'keep').read_text(), 'retained conversation')
             self.assertFalse(runtime.exists())
+
+
+class InheritedAclTests(unittest.TestCase):
+    """A parent's default ACL must not leak into the private release (seen on GitHub-hosted Ubuntu 22.04)."""
+    def test_private_dir_removes_both_posix_acls_from_its_own_folder(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as raw, \
+             patch.object(install.os, 'removexattr', create=True, side_effect=lambda p, n, follow_symlinks=True: calls.append((str(p), n, follow_symlinks))):
+            target = Path(raw).resolve() / 'release'
+            previous = install.os.umask(0o077)
+            try:
+                install.private_dir(target)
+            finally:
+                install.os.umask(previous)
+        self.assertEqual([c[1] for c in calls], ['system.posix_acl_default', 'system.posix_acl_access'])
+        self.assertTrue(all(c[0] == str(target) and c[2] is False for c in calls))
+
+    def test_missing_or_unsupported_acl_is_fine_but_other_errors_refuse(self):
+        import errno as _errno
+        for code, ok in ((_errno.ENODATA, True), (_errno.ENOTSUP, True), (_errno.EPERM, False), (_errno.EIO, False)):
+            def fail(p, n, follow_symlinks=True, code=code):
+                raise OSError(code, 'synthetic')
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as raw, \
+                 patch.object(install.os, 'removexattr', create=True, side_effect=fail):
+                if ok:
+                    install.strip_inherited_acl(Path(raw))
+                else:
+                    with self.assertRaises(install.Refused):
+                        install.strip_inherited_acl(Path(raw))

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import errno
 import fcntl
 import hashlib
 import json
@@ -245,9 +246,25 @@ def swipl_executable(prefix):
     return executable
 
 
+def strip_inherited_acl(path):
+    """Remove POSIX ACLs from a folder this installer owns. A default ACL on a parent (e.g. a home folder an admin
+    shared) is inherited by new folders and overrides umask 077, so tools such as uv would create group/other-
+    accessible folders inside the private release. Without ACLs, umask 077 decides again. Never follows links."""
+    if not hasattr(os, "removexattr"):
+        return
+    for name in ("system.posix_acl_default", "system.posix_acl_access"):
+        try:
+            os.removexattr(path, name, follow_symlinks=False)
+        except OSError as error:
+            need(error.errno in (errno.ENODATA, errno.ENOTSUP, errno.EOPNOTSUPP, getattr(errno, "ENOATTR", errno.ENODATA)),
+                 "An OmegaHive folder's sharing settings could not be made private.")
+
+
 def private_dir(path):
     if not path.exists():
         path.mkdir(mode=0o700)
+    if not path.is_symlink() and path.is_dir() and path.lstat().st_uid == os.getuid():
+        strip_inherited_acl(path)
     plain(path, directory=True)
     need(stat.S_IMODE(path.lstat().st_mode) == 0o700, "An OmegaHive folder must be private (mode 0700).")
 
@@ -913,7 +930,7 @@ class Installer:
         arch = preflight(self.home, self.catalogue["min_free_bytes"])
         print("Checking your computer… ✓", flush=True)
         for path in [self.home / ".local", self.home / ".local/share"]:
-            if not path.exists(): path.mkdir(mode=0o700)
+            if not path.exists(): path.mkdir(mode=0o700); strip_inherited_acl(path)
             plain(path, directory=True)
         private_dir(self.root); private_dir(self.root / "logs")
         private_dir(self.root / "releases")
