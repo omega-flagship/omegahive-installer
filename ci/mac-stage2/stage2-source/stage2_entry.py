@@ -69,6 +69,60 @@ PBS_EXTRA = {'pip': {'version': '26.2.1',
     'bytes': 4617, 'sha256': '3a561005822841f2c45f442f6c7a7505172c8c376c9fe274d876c8ac912968cb'}}
 
 
+# Terminal diagnostics are observational only. Never print arbitrary exception
+# bodies, argv, environment values or caller-supplied path strings.
+TERMINAL_DIAGNOSTIC_SCHEMA = 'studio-CI-stage2-terminal-diagnostic/1'
+TERMINAL_DIAGNOSTIC_MAX_BYTES = 2048
+TERMINAL_CONTEXT = {'attempt_id': None, 'phase': None}
+TERMINAL_FAILURE_STATUSES = frozenset({
+    'FAILED_RETAINED_NO_AUTOMATIC_RETRY', 'NOT_RUN_RESOURCE_WAIT',
+    'NOT_RUN_RESOURCE_UNKNOWN', 'NOT_RUN_RESOURCE_INVALID'})
+TERMINAL_ERROR_TYPES = frozenset(('AssertionError', 'AttributeError', 'AuditRefused', 'BlockingIOError', 'BrokenPipeError', 'CalledProcessError', 'ChildProcessError', 'EOFError', 'FileExistsError', 'FileNotFoundError', 'ImportError', 'IndexError', 'InputRefused', 'InterruptedError', 'IsADirectoryError', 'JSONDecodeError', 'KeyError', 'KeyboardInterrupt', 'MemoryError', 'ModuleNotFoundError', 'NameError', 'NotADirectoryError', 'OSError', 'OverflowError', 'PermissionError', 'ProcessLookupError', 'RecursionError', 'Refused', 'RunnerRefused', 'RuntimeError', 'RuntimeRefused', 'SyntaxError', 'SystemExit', 'TimeoutError', 'TimeoutExpired', 'TypeError', 'UnboundLocalError', 'UnicodeDecodeError', 'UnicodeEncodeError', 'UnicodeError', 'ValueError'))
+TERMINAL_REASON_LABELS = frozenset(('AssertionError', 'AttributeError', 'AuditRefused', 'BlockingIOError', 'BrokenPipeError', 'CI_parent_namespace_entry_bound', 'CalledProcessError', 'ChildProcessError', 'Darwin_positive_process_identity_required', 'EOFError', 'FileExistsError', 'FileNotFoundError', 'ImportError', 'IndexError', 'InputRefused', 'InterruptedError', 'IsADirectoryError', 'JSONDecodeError', 'JSON_object_required', 'JSON_output_byte_bound', 'KeyError', 'KeyboardInterrupt', 'MachO_header_changed_during_read', 'MemoryError', 'ModuleNotFoundError', 'NameError', 'NotADirectoryError', 'OSError', 'OverflowError', 'PermissionError', 'ProcessLookupError', 'RecursionError', 'Refused', 'RunnerRefused', 'RuntimeError', 'RuntimeRefused', 'SyntaxError', 'SystemExit', 'TimeoutError', 'TimeoutExpired', 'TypeError', 'UnboundLocalError', 'UnicodeDecodeError', 'UnicodeEncodeError', 'UnicodeError', 'ValueError', 'absolute_file_required', 'actual_arm64_Python_SWIPL_main_images_required', 'actual_bridge_child_of_phase_worker_required', 'actual_clean_copy_phase_and_relocation_content_required', 'actual_closed_runner_receipt_and_return_required', 'actual_command_birth_session_before_ACK_required', 'actual_completed_phase_observation_gap_or_deadline', 'actual_dynamic_loader_context_link_bound', 'actual_eight_audit_checks_required', 'actual_entry_must_be_sealed_subject', 'actual_finalization_required', 'actual_native_parent_receipt_link_required', 'actual_new_phase_worker_birth_required', 'actual_new_session_command_required', 'actual_owned_phase_startup_required', 'actual_owner_and_reservation_pin_links_required', 'actual_parent_census_required', 'actual_phase_GO_required', 'actual_phase_admission_context_required', 'actual_phase_session_handshake_required', 'actual_phase_worker_birth_required', 'actual_preparation_parent_phase_required', 'actual_private_phase_environment_required', 'actual_registered_phase_parent_session_required', 'actual_runner_resource_and_command_counts_required', 'actual_stage1_sealed_sources_required', 'actual_successful_runner_lifecycle_required', 'audit_or_runner_finish_failed_retained', 'bounded_command_registration_namespace_required', 'bounded_fat_architecture_table_required', 'bounded_fat_header_required', 'bounded_original_parent_release_required', 'bounded_output_bytes_required', 'bounded_owned_singlelink_regular_file_required', 'bounded_process_census_required', 'bounded_relative_path_required', 'cancelled_before_new_work_output', 'cancelled_before_phase_spawn', 'cancelled_before_stage2_materialization', 'cancelled_during_held_read', 'canonical_absolute_directory_required', 'canonical_owned_phase_context_required', 'canonical_relative_path_required', 'canonical_source_copy_changed', 'canonical_stage2_source_role_path_required', 'canonical_system_PATH_required_before_resource_probes', 'checksum_manifest_changed_or_not_LF', 'clean_actual_stage1_parent_required', 'clean_original_phase_completion_required', 'closed_complete_current_task_attestation_required', 'closed_current_phase_command_registration_required', 'closed_current_task_estimate_required', 'closed_kernel_command_birth_required', 'closed_owned_phase_CLI_required', 'closed_review_source_role_set_required', 'closed_stage2_phase_required', 'closed_unique_current_task_required', 'commands_only_in_actual_audit_phase', 'complete_MachO_header_required', 'complete_numeric_process_census_required', 'component_main_returned_failure', 'current_owned_kernel_process_birth_required', 'current_owner_host_phase_source_required', 'current_root_owned_ps_pin_required', 'current_task_pid_required', 'duplicate_JSON_key', 'duplicate_or_self_manifest_entry', 'every_actual_command_group_closed_cleanly_required', 'every_closed_command_kernel_birth_required', 'exact_isolated_PBS_macOS_arm64_owner_required', 'exact_phase_context_required', 'exact_resource_guide_policy_required', 'explicit_dedicated_GitHub_CI_owner_required', 'externally_pinned_source_manifest_required', 'fat_arm64_MachO_header_required', 'fat_slice_bounds_required', 'file_growth_bound', 'finalized_MachO_entry_identity_required', 'finite_current_task_peak_required', 'foreign_worker_descendant', 'fresh_actual_resource_policy_required', 'fresh_full_phase_resource_RUN_required', 'fresh_generated_cache_total_bound', 'fresh_generated_site_cache_shape_required', 'fresh_original_phase_controller_deadline_required', 'fresh_stage2_no_automatic_retry_required', 'full_phase_wall_envelope_remaining_required', 'full_worker_group_and_parent_RSS_guard', 'genuine_closed_source_review_required', 'genuine_source_review_must_be_sealed', 'held_file_identity_changed', 'held_file_pin_mismatch', 'immutable_empty_protocol_marker_required', 'immutable_existing_ack_must_match', 'kernel_process_birth_identity_unavailable', 'live_descendant_group_birth_required', 'new_genuinely_reviewed_stage1_wait_entries_required', 'nonfinite_JSON_number', 'one_exact_arm64_slice_required', 'one_fresh_actual_parent_attempt_required', 'original_group_birth_anchor_required', 'owned_log_file_required', 'owned_member_PID_birth_changed', 'owned_new_session_identity_required', 'phase_cancel_deadline_or_parent_log_guard', 'phase_cleanup_deadline', 'phase_context_metadata_bound', 'phase_original_work_deadline_required', 'phase_resource_admission_expired_before_GO', 'phase_result_metadata_bound', 'phase_terminal_parent_log_guard', 'plain_directory_required', 'plain_parent_attempt_required', 'preexisting_exact_stage2_source_required', 'private_current_owner_directory_required', 'resource_admission_not_run', 'runner_closure_actual_owner_admission_pin_required', 'sealed_stage2_sources_required', 'selected_phase_admission_pin_required', 'short_output_write', 'source_payload_checksum_mismatch', 'source_review_attribution_required', 'source_set_total_byte_bound', 'stage1_canonical_resource_sources_required', 'stage1_genuine_component_review_checksum_required', 'stage1_review_must_describe_actual_preparation', 'standard_bounded_checksum_manifest_required', 'supported_arm64_runtime_image_required', 'system_exit_nonzero', 'undeclared_dynamic_image_loader_policy', 'unique_census_PID_required', 'unregistered_or_foreign_worker_process_group', 'worker_descendant_new_session_ownership_required'))
+
+
+def terminal_result_paths(attempt_id, phase):
+    """Derive fixed reported targets only; no path input, resolution or reads."""
+    if type(attempt_id) is not str or re.fullmatch('attempt-[a-f0-9]{32}', attempt_id) is None:
+        return None, None
+    result = str(PARENT / attempt_id / 'STAGE2_RESULT.json')
+    phase_result = (str(PARENT / attempt_id / phase / 'PARENT_RESULT.json')
+                    if type(phase) is str and phase in PHASE_SECONDS else None)
+    return result, phase_result
+
+
+def emit_terminal_failure(status, error_type=None, reason=None, *, worker_started=None):
+    """One bounded stdout line; diagnostic failures never alter control outcome."""
+    try:
+        safe_status = (status if type(status) is str and status in TERMINAL_FAILURE_STATUSES
+                       else 'FAILED_RETAINED_NO_AUTOMATIC_RETRY')
+        safe_type = (error_type if type(error_type) is str and error_type in TERMINAL_ERROR_TYPES
+                     else None if error_type is None else 'OtherException')
+        safe_reason = (reason if type(reason) is str and reason in TERMINAL_REASON_LABELS
+                       else 'unrecognized_or_redacted_reason')
+        phase = TERMINAL_CONTEXT.get('phase')
+        phase = phase if type(phase) is str and phase in PHASE_SECONDS else None
+        result, phase_result = terminal_result_paths(TERMINAL_CONTEXT.get('attempt_id'), phase)
+        value = {'schema': TERMINAL_DIAGNOSTIC_SCHEMA, 'status': safe_status,
+            'error_type': safe_type, 'reason': safe_reason, 'result': result,
+            'phase_context': phase, 'phase_result': phase_result,
+            'path_scope': 'reported_fixed_targets_not_receipt_custody',
+            'worker_started': False if worker_started is False else None,
+            'worker_exit': None, 'worker_reaped': None, 'group_absent': None,
+            'signals': None, 'qualification': 'NONE'}
+        text = json.dumps(value, sort_keys=True, separators=(',', ':'),
+                          ensure_ascii=True, allow_nan=False)
+        if len(text.encode('ascii')) > TERMINAL_DIAGNOSTIC_MAX_BYTES:
+            value.update(error_type='OtherException', reason='terminal_diagnostic_bound',
+                         result=None, phase_context=None, phase_result=None)
+            text = json.dumps(value, sort_keys=True, separators=(',', ':'),
+                              ensure_ascii=True, allow_nan=False)
+        print(text, flush=True)
+    except BaseException:
+        # The original outcome/exception and receipt writes remain authoritative.
+        pass
+
+
 class Refused(RuntimeError):
     pass
 
@@ -1247,8 +1301,8 @@ def parent_entry(args, sources):
     tasks = current_tasks(args)
     initial = resource_admission(sources, tasks)
     if initial['advice']['decision'] != 'run':
-        print(json.dumps({'status': 'NOT_RUN_RESOURCE_' + initial['advice']['decision'].upper(),
-                          'worker_started': False}), flush=True)
+        emit_terminal_failure('NOT_RUN_RESOURCE_' + initial['advice']['decision'].upper(),
+                              reason='resource_admission_not_run', worker_started=False)
         return 75
     need(not STOP, 'cancelled_before_stage2_materialization')
     os.umask(0o077)
@@ -1256,6 +1310,7 @@ def parent_entry(args, sources):
     attempt_id = 'attempt-' + uuid.uuid4().hex
     attempt = PARENT / attempt_id
     attempt.mkdir(mode=0o700)
+    TERMINAL_CONTEXT['attempt_id'] = attempt_id
     ensure_private(ROOT / 'runtime-relocation-attempts')
     ensure_private(ROOT / 'native-audit-attempts')
     bindings = preparation_bindings(stage1)
@@ -1275,6 +1330,7 @@ def parent_entry(args, sources):
               'owner': owner, 'phase_results': {}, 'qualification': 'NONE'}
     try:
         for phase in PHASE_SECONDS:
+            TERMINAL_CONTEXT['phase'] = phase
             phase_facts = run_phase(sources, args, owner, phase, facts, started + WHOLE_SECONDS)
             result['phase_results'][phase] = phase_facts
             if phase == 'finalize':
@@ -1286,6 +1342,7 @@ def parent_entry(args, sources):
             elif phase == 'relocation':
                 evidence['relocation'] = phase_facts['audit_receipt']
             facts['evidence'] = evidence
+        TERMINAL_CONTEXT['phase'] = None
         result.update(status='SEALED_RUNTIME_INPUT_PRODUCED',
             sealed_runtime_input=result['phase_results']['seal']['sealed_runtime_input'],
             qualification='Same-job native/relocation-audited sealed runtime input only; UI/app/DMG/demo/deployment remain separate.')
@@ -1295,11 +1352,14 @@ def parent_entry(args, sources):
     finally:
         result['elapsed_seconds'] = time.monotonic() - started
         write_json(attempt / 'STAGE2_RESULT.json', result, completion_only=True)
-    print(json.dumps({'status': result['status'], 'result': str(attempt / 'STAGE2_RESULT.json')}), flush=True)
+    if result['status'] == 'SEALED_RUNTIME_INPUT_PRODUCED':
+        print(json.dumps({'status': result['status'], 'result': str(attempt / 'STAGE2_RESULT.json')}), flush=True)
+    else:
+        emit_terminal_failure(result['status'], result.get('error_type'), result.get('reason'))
     return 0 if result['status'] == 'SEALED_RUNTIME_INPUT_PRODUCED' else 1
 
 
-def main(argv=None):
+def _main(argv=None):
     parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument('--manifest')
     parser.add_argument('--manifest-sha256')
@@ -1317,6 +1377,7 @@ def main(argv=None):
     signal.signal(signal.SIGINT, cancelled)
     try:
         if args.owned_phase is not None:
+            TERMINAL_CONTEXT['phase'] = args.owned_phase
             need(not args.run and args.phase_context and args.phase_context_sha256,
                  'closed_owned_phase_CLI_required')
             return owned_phase(args)
@@ -1334,11 +1395,26 @@ def main(argv=None):
     except BaseException as error:
         if isinstance(error, SystemExit):
             raise
-        print(json.dumps({'status': 'FAILED_RETAINED_NO_AUTOMATIC_RETRY',
-            'error_type': type(error).__name__,
-            'reason': str(error) if isinstance(error, Refused) else type(error).__name__,
-            'qualification': 'NONE'}), flush=True)
+        emit_terminal_failure('FAILED_RETAINED_NO_AUTOMATIC_RETRY', type(error).__name__,
+            str(error) if isinstance(error, Refused) else type(error).__name__)
         return 1
+
+
+def main(argv=None):
+    """Preserve dispatch outcomes; also diagnose failures before its inner try."""
+    TERMINAL_CONTEXT.update(attempt_id=None, phase=None)
+    try:
+        return _main(argv)
+    except BaseException as error:
+        if isinstance(error, SystemExit):
+            code = error.code
+            if code is None or (type(code) in (int, bool) and code == 0):
+                raise
+            reason = 'system_exit_nonzero'
+        else:
+            reason = str(error) if isinstance(error, Refused) else type(error).__name__
+        emit_terminal_failure('FAILED_RETAINED_NO_AUTOMATIC_RETRY', type(error).__name__, reason)
+        raise
 
 
 if __name__ == '__main__':

@@ -1,131 +1,93 @@
-# Stage2 runtime-input source bundle
+# Stage2 diagnostic successor source bundle
 
-**Status: source review complete; actual pipeline qualification pending.**
-The independent `STATIC_STAGE2_SOURCE_REVIEW.json` covers the ten exact source
-roles and their interfaces. Separate admitted runs passed 30 mocked runner
-checks and 12 mocked controller checks. Use the final `MANIFEST.sha256` and its
-independently supplied external digest to verify the complete package before
-any entry executes. Actual owner admission and pipeline evidence remain
-required for a CI run.
+This is a Source envelope, not execution admission or runtime qualification.
+The ten staged roles preserve nine exact bodies from the original sealed Stage2
+bundle. Only `stage2-source/stage2_entry.py` changes: the frozen diagnostic
+successor is 83,586 bytes, SHA-256
+`21114bcff7f08b20bae043e853e44e41b5588cfc5ab360b183ee5347ba78f39d`.
+It adds bounded sanitized failure stdout while preserving success/source-plan
+output and the original receipt, admission, resource, launch, cleanup, clock and
+outcome behavior. It adds no CLI argument or environment read.
 
-Stage2 is intended to run only after the new wait-enabled Stage1 preparation,
-in the same fresh macOS arm64 GitHub Actions job, against the same private CI
-root. The old Stage1 run remains evidence for its earlier source and is not a
-substitute for the package whose final checksum will be supplied with the Stage1
-handoff. Stage2 does not build the UI, an app or DMG, demonstrate Assist, register
-a Hive host, or deploy a program.
+Use this envelope only after the genuine independent
+`STATIC_STAGE2_SOURCE_REVIEW.json` and final `MANIFEST.sha256` are present and
+Root independently supplies the final manifest digest. The review must cover
+all ten exact roles, including the replacement Entry. The old review is retained
+as provenance elsewhere; it is not the current review. No generated per-run PASS
+or author-created review is a substitute. The manifest seals exactly ten role
+files, this README and the raw genuine new review (12 payload files; 13 shipping
+files including the manifest). `SOURCE_INVENTORY_R1.json` and work/evidence records
+are separate unsealed coordination support and must not be mistaken for payload
+review subjects or copied as additional execution inputs.
 
-## Verify both packages before execution
+The predecessor envelope remains immutable: original manifest 1,162 bytes,
+SHA-256 `c96530bde3b024b2226b767075d4682d91c90448d610095bce548060f1aded8c`;
+original review 2,914 bytes, SHA-256
+`95d4a623e9c055e2256f5ae5c29ab753f42b04b06d2aa3ea9aa4855ad7eb7ae5`.
+Earlier failed, unrun and superseded Source/CI receipts remain preserved. The
+cause of the earlier actual Stage2 failure remains unknown; this packaging does
+not diagnose it or authorize a rerun. Earlier scoped controls do not establish
+this envelope's actual Stage2 outcome.
 
-Obtain each manifest digest from its independent sealed handoff. Do not derive a
-trusted digest from the manifest file being checked. After both packages have
-their final external digests, verify the Stage1 and Stage2 manifest files first,
-then verify each listed file:
+## Verification and invocation contract
 
-```sh
-STUDIO_STAGE1_SOURCE=/absolute/ci/source-stage1
-STUDIO_STAGE2_SOURCE=/absolute/ci/source-stage2
-STUDIO_STAGE1_MANIFEST_SHA256=<externally-supplied-stage1-seal>
-STUDIO_STAGE2_MANIFEST_SHA256=<externally-supplied-stage2-seal>
+Root supplies independently delivered Stage1 and Stage2 manifest digests. Verify
+the exact raw manifests against those external digests, then every standard
+checksum entry before invoking any entry. Never obtain the trusted digest from
+the manifest being checked. The Stage1 dependency is the wait-enabled sealed
+Stage1 envelope admitted for the same fresh macOS arm64 GitHub Actions job.
+Keep the original Stage1 files unchanged.
 
-(
-  cd "$STUDIO_STAGE1_SOURCE"
-  printf '%s  MANIFEST.sha256\n' "$STUDIO_STAGE1_MANIFEST_SHA256" | shasum -a 256 -c -
-  shasum -a 256 -c MANIFEST.sha256
-)
-(
-  cd "$STUDIO_STAGE2_SOURCE"
-  printf '%s  MANIFEST.sha256\n' "$STUDIO_STAGE2_MANIFEST_SHA256" | shasum -a 256 -c -
-  shasum -a 256 -c MANIFEST.sha256
-)
+The read-only Source plan CLI is:
+
+```text
+/absolute/trusted/python3.12 -I -B -S /absolute/stage2-source/stage2-source/stage2_entry.py --manifest /absolute/stage2-source/MANIFEST.sha256 --manifest-sha256 EXTERNALLY_SUPPLIED_STAGE2_SHA256
 ```
 
-The Stage2 checksum must identify the final reviewed ten-role package in the
-owner's source handoff. The Stage1 checksum must identify the
-wait-enabled Stage1 package delivered for the same owner and job.
+It is not run by this packet. The actual same-job Stage2 CLI, only after Root's
+separate workflow/resource/owner admission, is:
 
-The owner must review the actual CI workflow before launch. Invoke Stage1
-preparation with the absolute trusted setup-Python executable and the system
-PATH `/usr/bin:/bin:/usr/sbin:/sbin`; the setup interpreter may live outside
-those directories. Stage1 native and Stage2 use the exact prepared PBS
-interpreter and the same system PATH. This is a required workflow condition,
-pending actual workflow review. The sealed Stage1 files remain unchanged.
-
-## Source CLI and admitted run
-
-The source-only plan uses trusted Python 3.12 and performs no runtime probes:
-
-```sh
-STUDIO_TRUSTED_SETUP_PYTHON=/absolute/trusted/python3.12
-/usr/bin/env PATH=/usr/bin:/bin:/usr/sbin:/sbin \
-  "$STUDIO_TRUSTED_SETUP_PYTHON" -I -B -S "$STUDIO_STAGE2_SOURCE/stage2-source/stage2_entry.py" \
-  --manifest "$STUDIO_STAGE2_SOURCE/MANIFEST.sha256" \
-  --manifest-sha256 "$STUDIO_STAGE2_MANIFEST_SHA256"
+```text
+/private/tmp/omegahive-ci-r12/runtime-job/bootstrap/python/bin/python3.12 -I -B -S /absolute/stage2-source/stage2-source/stage2_entry.py --manifest /absolute/stage2-source/MANIFEST.sha256 --manifest-sha256 EXTERNALLY_SUPPLIED_STAGE2_SHA256 --stage1-manifest /absolute/stage1-source/MANIFEST.sha256 --stage1-manifest-sha256 EXTERNALLY_SUPPLIED_STAGE1_SHA256 --owner OWNER_APPROVED_LABEL --dedicated-ci-job --run
 ```
 
-Only after the package review, controls and separate owner admission authorize
-the real run, require both Stage1 and Stage2 exits to be zero and use this exact
-Stage1 dependency and Stage2 entry in the same job:
+Both invocations require the canonical system PATH `/usr/bin:/bin:/usr/sbin:/sbin`.
+Actual Stage2 requires the exact prepared PBS interpreter, isolated flags, real
+GitHub Actions environment, positive matching real/effective UID and the fresh
+same-job CI root. `--dedicated-ci-job` is the owner's completeness attestation;
+optional closed `--current-tasks` may carry other actual reservations. It is not
+a distributed membership or goal lease. Fresh pinned resource advice independently
+admits every phase; unknown or insufficient headroom prevents launch. No actual
+owner label, UID, process, reservation, lease or resource observation is invented
+by these placeholder invocation examples.
 
-```sh
-/usr/bin/env PATH=/usr/bin:/bin:/usr/sbin:/sbin \
-  /private/tmp/omegahive-ci-r12/runtime-job/bootstrap/python/bin/python3.12 \
-  -I -B -S "$STUDIO_STAGE2_SOURCE/stage2-source/stage2_entry.py" \
-  --manifest "$STUDIO_STAGE2_SOURCE/MANIFEST.sha256" \
-  --manifest-sha256 "$STUDIO_STAGE2_MANIFEST_SHA256" \
-  --stage1-manifest "$STUDIO_STAGE1_SOURCE/MANIFEST.sha256" \
-  --stage1-manifest-sha256 "$STUDIO_STAGE1_MANIFEST_SHA256" \
-  --owner dot-mac-ci --dedicated-ci-job --run
-```
+## Unchanged operational and evidence scope
 
-The entry requires the prepared PBS interpreter, positive matching real and
-effective UID, isolated flags, and the runner's genuine `GITHUB_ACTIONS`
-environment. Setting that environment variable manually does not establish an
-actual CI run. `--dedicated-ci-job` is the owner's explicit completeness
-attestation: no other Studio reservations exist unless supplied through the
-optional closed `--current-tasks` owner-attestation JSON. It is not
-authenticated Hive membership or a distributed lease. Fresh pinned resource
-advice independently admits each phase; unknown or insufficient headroom
-prevents launch.
+Five serial owned phase processes perform finalization, original-runtime audit,
+closed-inventory copy, relocation audit and data-only sealing. The declared
+reservation remains 3.125 GiB RAM, 2.25 CPU and 4 GiB additional scratch. Worker
+plus owned command groups remain under 3 GiB; parent allowance is 0.125 GiB.
+CPU and scratch are declared reservations, not kernel quotas. Each audit envelope
+is 1,800 seconds with at most 1,500 seconds work and 300 seconds reserve. Data
+phase envelopes are 935 seconds. Complete serial controller wall bound is 6,900
+seconds. Per-command output is 64 KiB, audit aggregate output 64 MiB and complete
+runner closure at most 8 MiB. Actual command registration/birth identity, parent
+ACK, cleanup, reap and group absence remain mandatory.
 
-The entry uses five separate owned phase processes: finalization,
-original-runtime audit, closed-inventory copy, relocated-runtime audit, and
-data-only sealing. Each process starts in its own session. Audit commands
-require the parent to acknowledge their actual registration and kernel birth
-identity before the held bridge can execute the pinned command. An audit receipt
-is emitted only after the runner sampler and all owned command groups close
-cleanly. Failed or partial attempts remain preserved; no phase or existing
-Stage2 launch is resumed.
+Final Stage2 results are reported under the fixed
+`/private/tmp/omegahive-ci-r12/stage2-parent/attempt-<32 lowercase hex>/` namespace;
+pre-parent terminal failures explicitly report null paths. Sanitized failure
+stdout is bounded by 2,048 ASCII bytes excluding newline. Reported fixed result
+and phase targets are not observed receipt custody. The Entry does not read
+receipts or guess worker exit/reap/group/signals for this diagnostic. Original
+argparse stderr is unchanged and is outside the terminal-stdout sanitization
+contract. Independent retained stdout wiring is a separate reviewed workflow
+change; this packet does not implement it.
 
-## Resource and evidence scope
-
-The serial reservation is 3.125 GiB RAM, 2.25 CPU cores and 4 GiB additional
-scratch. The worker and every owned command group are observed under 3 GiB; the
-external parent allowance is 0.125 GiB. CPU and scratch figures are declared
-reservations, not kernel quotas. Per-command output is at most 64 KiB; the audit
-aggregate limit is 64 MiB. A successful full runner-closure vector is at most
-8 MiB and includes every command group.
-
-Each audit has its own original 1,800-second controller envelope, including
-startup and cleanup, with at most 1,500 seconds for audit work and 300 seconds
-of controller reserve. Data phases have 935-second envelopes covering 15
-seconds of startup, the helper's full 900-second bound and 20 seconds of
-cleanup. The complete serial Stage2 controller has a 6,900-second wall bound.
-Configure the CI job timeout for Stage1 and Stage2 together; a shorter timeout
-does not establish that the phase bounds were met.
-
-The intended sealed runtime input is
-`/private/tmp/omegahive-ci-r12/runtime-job/receipts/sealed-runtime-input-r1.json`.
-The original Stage2 result and each phase result remain under
-`/private/tmp/omegahive-ci-r12/stage2-parent/attempt-<32 lowercase hex>/`.
-Retain failed and successful receipts, source reviews, checksum manifests,
-command registration/acknowledgement records and bounded logs. Receipt
-consistency is not current process liveness. Keep source bytes and large
-artifacts on this MacBook; use the allowlisted selective pull transport for
-owner-requested files. Do not publish credentials, private environment data or
-account records.
-
-UI, application/DMG, clean-user installer behavior, Assist demonstration and
-deployment still require separate actual evidence and owner gates. Source
-review and mocked controls grant no Stage2 run, runtime, product or deployment
-qualification.
+Retain named successful/failed receipts, genuine reviews, checksum manifests,
+bounded logs and command registration/ACK records through a separately approved
+custody mechanism. No broad runtime/private/home walk, secrets or account records
+belong in shipping evidence. Source review, synthetic controls and receipt
+consistency do not establish fresh liveness, restored runtime, native/product,
+UI/DMG/installer, Assist, membership or deployment qualification. Root alone owns
+publication/selective pull, consumer pin rebinding and actual admission.

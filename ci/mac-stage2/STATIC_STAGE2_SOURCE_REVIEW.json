@@ -2,8 +2,8 @@
   "schema": "studio-Mac-CI-stage2-static-source-review/1",
   "verdict": "PASS_SOURCE_ONLY",
   "blocking_findings": [],
-  "reviewer": "MacBook-Hive primary independent whole reviewer and independent source-body review lane",
-  "source_owner": "Studio Root and MacBook-Hive source implementation team",
+  "reviewer": "MacBook-Hive independent whole reviewer and Stage2 diagnostic successor reviewer",
+  "source_owner": "MacBook-Hive native_ci_entry_controls Source staging lane; unchanged roles retain prior source owners",
   "origin_machine": "MacBook",
   "subjects": {
     "audit_runtime": {
@@ -28,8 +28,8 @@
     },
     "stage2_entry": {
       "path": "stage2-source/stage2_entry.py",
-      "bytes": 72583,
-      "sha256": "f22696727a9d2de97f0444b10017d31b326c92d5349a0c73b745612b701e8618"
+      "bytes": 83586,
+      "sha256": "21114bcff7f08b20bae043e853e44e41b5588cfc5ab360b183ee5347ba78f39d"
     },
     "audit_process_runner": {
       "path": "stage2-parent/audit_process_runner.py",
@@ -57,5 +57,5 @@
       "sha256": "3add848d3756762ddffa9a817a3bebbf26b41674cb5ccf885028f499a627884f"
     }
   },
-  "scope": "Genuine independent static review of all ten exact Source bodies and their caller, admission, evidence and cleanup interfaces. The parent resource-probe PATH boundary found during whole-body review is closed by Entry R3 and required system-PATH invocation; Stage1 trusted absolute-interpreter/PATH workflow review remains an owner precondition. Actual source-body reviews and separate scoped controls are retained outside this static review. Runtime UID, tools, owner facts, resource observations and leases are separate CI-owner admission; no generated per-run PASS, actual kernel/Stage2/native audit, installer, product, Hive membership or deployment qualification is granted."
+  "scope": "Independent successor review of the exact ten-role source closure. I verified the raw byte count and SHA-256 for all ten staged subjects. The nine unchanged role bytes match the corresponding subjects in the original genuine review exactly; their semantic review is inherited from that retained review, not represented as a new body-by-body re-review here. I independently reviewed the replacement Entry at its exact R1 pin, including terminal_result_paths, emit_terminal_failure, parent_entry, _main/main and the actual differential proof: it adds a finite 14-field <=2048-byte diagnostic stdout only; keeps source-plan and successful output/receipt behavior; does not change CLI/environment, resource, admission, receipt construction, cleanup, clocks or control outcomes; only reports fixed candidate result/phase paths and leaves unobserved worker facts null. The old genuine review is provenance for the nine identical roles, not copied into this bundle as current review. The package inventory verifies ten roles, nine byte-identical predecessor subjects, one diagnostic Entry replacement, and 12 payload paths plus MANIFEST.sha256 as the proposed shipping closure. Stage2 dynamic owner facts, source publication, review sealing, resource/lease admission, actual runner/worker execution and all runtime/native/CI/product qualification remain separate and unclaimed. Original argparse stderr remains unchanged and outside the new stdout diagnostic sanitization scope. No runtime receipt/private tree was read."
 }

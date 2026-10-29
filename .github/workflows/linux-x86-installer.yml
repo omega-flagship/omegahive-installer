@@ -730,14 +730,16 @@ jobs:
 
   mac-native:
     # Mac DMG stages 1+2 in ONE fresh job (Studio sealed sets): ci/mac = wait-enabled Stage1 (seal 94b09845),
-    # ci/mac-stage2 = Stage2 finalize/native audit/relocation/seal (seal c96530bd). Exact system PATH, env -i, absolute pythons.
+    # ci/mac-stage2 = Stage2 finalize/native audit/relocation/seal (seal 1b62a67f). Exact system PATH, env -i, absolute pythons.
     runs-on: macos-15
     timeout-minutes: 300
     env:
       STUDIO_STAGE1_MANIFEST_SHA256: 94b09845d219fc05a36e9a2affb05a0827adabc2f6f1053eccc07399673ca07a
-      STUDIO_STAGE2_MANIFEST_SHA256: c96530bde3b024b2226b767075d4682d91c90448d610095bce548060f1aded8c
-      STUDIO_CUSTODY_MANIFEST_SHA256: d0c644a993c37e515ac7dad9f62557f396f06e996f6ea119314be06a6ccc4844
+      STUDIO_STAGE2_MANIFEST_SHA256: 1b62a67f57510a043038559d157be6349447e66b4d4cc188af5e3012e8939d14
+      STUDIO_CUSTODY_MANIFEST_SHA256: ed51866062a4c84221015427ee23bea3f30e8f9405a91fc1b4a7e89018af963d
       STUDIO_COLLECT_MANIFEST_SHA256: 45ca16e8ad1004e6b3e0e4d83161b4bd1b343924b2fee3f6d73050bd0f0bad98
+      STUDIO_DIAGNOSTICS_MANIFEST_SHA256: 40913b6f74b500440bfdcada9d0a5eed6e53dc209204e2a999b0d5868327b8c2
+      STUDIO_MINIMAL_EVIDENCE_SOURCE_SHA256: bf2b394355b9f9db863a253eb0494cb61c3658ae9ea0722cae51eeddd8e94c08
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -750,12 +752,15 @@ jobs:
           test "$(uname -m)" = arm64
           test ! -e /private/tmp/omegahive-ci-r12 && echo "job root absent"
           echo "trusted setup python: ${{ steps.py.outputs.python-path }}"; "${{ steps.py.outputs.python-path }}" -VV
-      - name: Verify both sealed source sets
+      - name: Verify five sealed source sets
+        shell: bash
         run: |
+          set -euo pipefail
           (cd ci/mac && printf '%s  MANIFEST.sha256\n' "$STUDIO_STAGE1_MANIFEST_SHA256" | shasum -a 256 -c - && shasum -a 256 -c MANIFEST.sha256)
           (cd ci/mac-stage2 && printf '%s  MANIFEST.sha256\n' "$STUDIO_STAGE2_MANIFEST_SHA256" | shasum -a 256 -c - && shasum -a 256 -c MANIFEST.sha256)
           (cd ci/mac-custody && printf '%s  MANIFEST.sha256\n' "$STUDIO_CUSTODY_MANIFEST_SHA256" | shasum -a 256 -c - && shasum -a 256 -c MANIFEST.sha256)
           (cd ci/mac-collect && printf '%s  MANIFEST.sha256\n' "$STUDIO_COLLECT_MANIFEST_SHA256" | shasum -a 256 -c - && shasum -a 256 -c MANIFEST.sha256)
+          (cd ci/mac-diagnostics && printf '%s  MANIFEST.sha256\n' "$STUDIO_DIAGNOSTICS_MANIFEST_SHA256" | shasum -a 256 -c - && shasum -a 256 -c MANIFEST.sha256)
           stat -f '%Sp %Su %N' "$RUNNER_TEMP"
       - name: Stage1 public preparation (fetch + stage)
         working-directory: ci/mac
@@ -788,9 +793,17 @@ jobs:
             --manifest-sha256 "$STUDIO_STAGE2_MANIFEST_SHA256"
       - name: Stage2 finalize / native audit / relocation / seal
         timeout-minutes: 120
+        shell: bash
         run: |
-          S1="$GITHUB_WORKSPACE/ci/mac"; S2="$GITHUB_WORKSPACE/ci/mac-stage2"
-          /usr/bin/env -i HOME=/private/tmp/omegahive-ci-r12/runtime-job/empty-home \
+          set -euo pipefail
+          umask 077
+          S1="$GITHUB_WORKSPACE/ci/mac"
+          S2="$GITHUB_WORKSPACE/ci/mac-stage2"
+          TERMINAL_DIR="$RUNNER_TEMP/omegahive-stage2-terminal-r1"
+          /bin/mkdir -m 700 "$TERMINAL_DIR"
+          set -o noclobber
+          stage2_status=0
+          if /usr/bin/env -i HOME=/private/tmp/omegahive-ci-r12/runtime-job/empty-home \
             PATH=/usr/bin:/bin:/usr/sbin:/sbin GITHUB_ACTIONS=true LANG=C LC_ALL=C \
             /private/tmp/omegahive-ci-r12/runtime-job/bootstrap/python/bin/python3.12 \
             -I -B -S "$S2/stage2-source/stage2_entry.py" \
@@ -798,7 +811,18 @@ jobs:
             --manifest-sha256 "$STUDIO_STAGE2_MANIFEST_SHA256" \
             --stage1-manifest "$S1/MANIFEST.sha256" \
             --stage1-manifest-sha256 "$STUDIO_STAGE1_MANIFEST_SHA256" \
-            --owner dot-mac-ci --dedicated-ci-job --run
+            --owner dot-mac-ci --dedicated-ci-job --run \
+            > "$TERMINAL_DIR/TERMINAL.jsonl"; then
+            :
+          else
+            stage2_status=$?
+          fi
+          retention_status=0
+          if /bin/chmod 400 "$TERMINAL_DIR/TERMINAL.jsonl"; then :; else retention_status=74; fi
+          if /bin/cat "$TERMINAL_DIR/TERMINAL.jsonl"; then :; else retention_status=74; fi
+          if [ "$stage2_status" -ne 0 ]; then exit "$stage2_status"; fi
+          exit "$retention_status"
+
       - name: Custody export of the sealed runtime (closed inventory only; after a successful Stage2)
         working-directory: /private/tmp/omegahive-ci-r12
         run: |
@@ -809,6 +833,45 @@ jobs:
             --source-manifest "$C/MANIFEST.sha256" \
             --expected-manifest-sha256 "$STUDIO_CUSTODY_MANIFEST_SHA256" \
             --owner dot-mac-ci --dedicated-ci-job --run
+
+      - name: Retain Stage2 terminal diagnostic independently
+        uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 5
+        with:
+          name: mac-stage2-terminal-diagnostic
+          path: ${{ runner.temp }}/omegahive-stage2-terminal-r1/TERMINAL.jsonl
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Minimal failure evidence (always; independent of the full collector)
+        if: always()
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          D="$GITHUB_WORKSPACE/ci/mac-diagnostics"
+          cd "$D"
+          printf '%s  MANIFEST.sha256\n' "$STUDIO_DIAGNOSTICS_MANIFEST_SHA256" \
+            | /usr/bin/shasum -a 256 -c -
+          /usr/bin/shasum -a 256 -c MANIFEST.sha256
+          printf '%s  minimal_failure_evidence.py\n' "$STUDIO_MINIMAL_EVIDENCE_SOURCE_SHA256" \
+            | /usr/bin/shasum -a 256 -c -
+          /usr/bin/env -i HOME="$RUNNER_TEMP" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+            GITHUB_ACTIONS=true LANG=C LC_ALL=C RUNNER_TEMP="$RUNNER_TEMP" \
+            "${{ steps.py.outputs.python-path }}" -I -B -S "$D/minimal_failure_evidence.py" \
+            --source-sha256 "$STUDIO_MINIMAL_EVIDENCE_SOURCE_SHA256" \
+            --owner dot-mac-ci --dedicated-ci-job --run
+
+      - name: Retain minimal failure evidence before the full collector
+        uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 5
+        with:
+          name: mac-minimal-failure-evidence
+          path: ${{ runner.temp }}/omegahive-control-receipts-r1/minimal-failure-evidence-*.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Collect control receipts (always; typed selectors; keeps a nonzero exit)
         id: collect
         if: always()
