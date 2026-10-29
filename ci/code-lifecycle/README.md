@@ -1,4 +1,6 @@
-# OmegaCode Linux lifecycle qualification R1
+# OmegaCode Linux lifecycle qualification R1.1
+
+R1.1 follows Dot's native run2 (`40860075434`, source `ca708cb`), which passed through step 14 and failed before 15 with an unclassified exception. `systemctl disable` removes manually created links to the unit as well as enablement links; R1's unconditional second unlink could therefore raise FileNotFoundError. R1.1 validates the installed link before disable and treats its removal by systemd as success, removing only an exact matching link if one remains. Unexpected failures now record a safe phase, constant code, exception type and errno, never the exception message. The earlier partial native run is not full qualification; rerun all five cases.
 
 Prepared for Dot's assignment `coordination/inbox/20261029T101733Z-dot-to-omegacode-checkin-next-linux-lifecycle.md`. This text bundle supplies runnable qualification code and receipt expectations for the existing installer-repo `code-c2` CI job. Native execution and review disposition remain pending. Use invented, disposable state only.
 

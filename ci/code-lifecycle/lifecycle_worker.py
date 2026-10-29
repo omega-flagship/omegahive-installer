@@ -42,6 +42,24 @@ class Refusal(RuntimeError):
     pass
 
 
+def failure_details(error, phase):
+    """Keep expected codes and phase, never an exception message containing paths/data."""
+    if isinstance(error, Refusal):
+        reason = str(error)
+        if not re.fullmatch(r"[a-z0-9_]{1,96}", reason):
+            reason = "worker_refusal"
+    elif isinstance(error, sqlite3.DatabaseError):
+        reason = "worker_sqlite_error"
+    elif isinstance(error, OSError):
+        reason = "worker_os_error"
+    else:
+        reason = "worker_unexpected_error"
+    details = {"reason": reason, "failure_stage": phase, "exception_type": type(error).__name__}
+    if isinstance(error, OSError) and type(error.errno) is int:
+        details["errno"] = error.errno
+    return details
+
+
 def require(condition, code):
     if not condition:
         raise Refusal(code)
@@ -246,10 +264,12 @@ class Worker:
         self.active_link = self.root / "active"
         self.token_path = self.home / "operator-token"
         self.current_identity = None
+        self.phase = "context_admitted"
 
     def receipt(self, step, **fields):
         write_json(self.receipts / (step + ".json"),
                    {"schema": "omegacode-linux-lifecycle-r1", "case": self.c["case"], "step": step, **fields})
+        self.phase = "after_" + step
 
     def command(self, argv, timeout=20, expected=(0,)):
         try:
@@ -495,6 +515,50 @@ WantedBy=default.target
         require(inventory(self.state) == before, "restored_integrity_mutated_state")
         return inventory_sha(before)
 
+    def check_unit_link(self, allow_missing=False):
+        try:
+            target = os.readlink(self.unit)
+        except FileNotFoundError:
+            require(allow_missing, "installed_unit_link_missing")
+            return False
+        except OSError:
+            raise Refusal("installed_unit_link_invalid") from None
+        require(target == str(self.active_link / UNIT), "installed_unit_link_mismatch")
+        return True
+
+    def uninstall(self):
+        self.phase = "uninstall_authority_check"
+        authority = zero_authority(self.state)
+        state_before = inventory(self.state)
+        self.receipt("14-uninstall-authority", ok=True, **authority,
+                     scope="unregistered_idle_synthetic_state_only")
+        self.phase = "uninstall_validate_installed_link"
+        self.check_unit_link()
+        self.phase = "uninstall_disable"
+        self.systemctl("disable", UNIT)
+        self.phase = "uninstall_remove_remaining_link"
+        # systemctl disable removes manually linked unit files too. Accept
+        # its removal; if retained, remove only the exact installed symlink.
+        if self.check_unit_link(allow_missing=True):
+            self.unit.unlink(missing_ok=True)
+        self.phase = "uninstall_daemon_reload"
+        self.systemctl("daemon-reload")
+        self.phase = "uninstall_unit_absence"
+        props = self.show()
+        require(props.get("LoadState") == "not-found" and props.get("MainPID") == "0", "unit_not_removed")
+        self.phase = "uninstall_process_and_port_check"
+        require(not listeners() and not uid_code_pids(self.uid), "uninstall_not_quiescent")
+        require_port_rebindable()
+        self.phase = "uninstall_state_inventory"
+        require(inventory(self.state) == state_before, "uninstall_state_changed")
+        self.phase = "uninstall_sqlite_integrity"
+        integrity(self.state)
+        self.phase = "uninstall_retained_inventory"
+        require(inventory(self.state) == state_before, "uninstall_integrity_changed_state")
+        self.receipt("15-uninstall", ok=True, unit_gone=True, code_processes=0, listener_count=0,
+                     process_group_clean=True, port_rebindable=True, state_retained=True,
+                     state_inventory_sha256=inventory_sha(state_before), sqlite_integrity=True)
+
     def run(self):
         self.prepare()
         self.activate("r14", "03a-install")
@@ -526,23 +590,7 @@ WantedBy=default.target
         self.activate("r14", "11a-rollback-install")
         self.start_health("r14", "12-rollback-health")
         self.stop("13-uninstall-quiesce")
-        authority = zero_authority(self.state)
-        state_before = inventory(self.state)
-        self.receipt("14-uninstall-authority", ok=True, **authority,
-                     scope="unregistered_idle_synthetic_state_only")
-        self.systemctl("disable", UNIT)
-        self.unit.unlink()
-        self.systemctl("daemon-reload")
-        props = self.show()
-        require(props.get("LoadState") == "not-found" and props.get("MainPID") == "0", "unit_not_removed")
-        require(not listeners() and not uid_code_pids(self.uid), "uninstall_not_quiescent")
-        require_port_rebindable()
-        require(inventory(self.state) == state_before, "uninstall_state_changed")
-        integrity(self.state)
-        require(inventory(self.state) == state_before, "uninstall_integrity_changed_state")
-        self.receipt("15-uninstall", ok=True, unit_gone=True, code_processes=0, listener_count=0,
-                     process_group_clean=True, port_rebindable=True, state_retained=True,
-                     state_inventory_sha256=inventory_sha(state_before), sqlite_integrity=True)
+        self.uninstall()
         self.receipt("result", ok=True, lifecycle="passed",
                      rollback_digest=PINS["r14"]["modules"],
                      pending=["actual_host_guard_relay_and_enrollment", "host_revoke_cancel_with_active_work",
@@ -554,19 +602,21 @@ def main():
     parser.add_argument("--context", type=Path, required=True)
     args = parser.parse_args()
     context = None
+    runner = None
     try:
         meta = args.context.lstat()
         require(stat.S_ISREG(meta.st_mode) and meta.st_uid == 0 and stat.S_IMODE(meta.st_mode) == 0o600,
                 "context_not_private_root_owned")
         context = json.loads(args.context.read_text())
-        Worker(context).run()
+        runner = Worker(context)
+        runner.run()
         return 0
     except Exception as error:
-        reason = str(error) if isinstance(error, Refusal) else "worker_failed"
+        details = failure_details(error, runner.phase if runner is not None else "context_admission")
         if context is not None:
             write_json(Path(context["receipts"]) / "result.json",
-                       {"ok": False, "reason": reason, "case": context["case"]})
-        print(json.dumps({"ok": False, "reason": reason}))
+                       {"ok": False, "case": context["case"], **details})
+        print(json.dumps({"ok": False, **details}))
         return 2
 
 

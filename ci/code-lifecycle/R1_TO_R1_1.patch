@@ -1,0 +1,247 @@
+--- a/CI_INTEGRATION.md
++++ b/CI_INTEGRATION.md
+@@ -42,6 +42,13 @@
+   -r ci/code-c2/CODE_R10_X86_RUNTIME_REQUIREMENTS_R1.lock
+ env -i HOME="$HOME" PATH=/usr/bin:/bin "$UV" --no-config pip check \
+   --python /tmp/lifecyclevenv/bin/python
++```
++
++After pip check, make the two disposable CI runtime trees and the standalone base parent immutable. This addresses native run1's `runtime_writable` refusal and retains all existing guard checks:
++
++```bash
++sudo chown -R root:root /tmp/py /tmp/lifecyclevenv
++sudo chmod -R a+rX,a-w /tmp/py /tmp/lifecyclevenv
+ ```
+ 
+ The runtime, its interpreter targets, installed packages, and parent directories must be readable/executable but not writable by the later fresh service account. The worker's runtime preflight enforces this and the exact distribution closure; no runtime dependency installation occurs during service startup.
+--- a/DESIGN_SOURCES.md
++++ b/DESIGN_SOURCES.md
+@@ -7,3 +7,5 @@
+ - [systemd v249 service implementation](https://github.com/systemd/systemd/blob/v249/src/core/service.c): an exited service does not retain its running-state timer. The supervisor therefore omits `RemainAfterExit`, permits immediate post-exit cleanup, and retains systemd's exit facts in the cleanup receipt instead of depending on a retained live unit.
+ 
+ These documented semantics motivate the supervisor design. Only native CI receipts can establish the exact invocation's behavior on the admitted runner. The existing installer `ci/code-c2/containment.sh` contains direct subprocesses; the new root cleanup explicitly covers the separate fresh user manager. Neither source documentation nor portable controls qualify native cleanup.
++
++R1.1 correction: [systemctl 249 disable](https://www.freedesktop.org/software/systemd/man/249/systemctl.html#disable%20UNIT%E2%80%A6) removes manually created links as well as links created by enable/link. Uninstall therefore validates its installed link first, then accepts its absence after disable and removes only an exact matching link if retained. Native run2's generic error does not identify the failing syscall; this documented behavior and the reproduced portable regression support the correction without claiming that the syscall was observed in CI.
+--- a/EXPECTED_RECEIPTS.json
++++ b/EXPECTED_RECEIPTS.json
+@@ -1,6 +1,12 @@
+ {
+   "schema": "omegacode-linux-lifecycle-expectations-r1",
+   "kind": "expectation_only_not_run_evidence",
++  "source_version": "r1.1",
++  "failure_result_fields": {
++    "required": ["ok=false", "case", "reason", "failure_stage", "exception_type"],
++    "optional": ["errno"],
++    "privacy": "fixed code and known phase only; exception message and operands are excluded"
++  },
+   "full_case_required": {
+     "01-package.json": ["ok", "releases.r14.module_digest", "releases.r152.module_digest"],
+     "02-runtime.json": ["ok", "evidence", "runtime_supply_chain"],
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,6 @@
+-# OmegaCode Linux lifecycle qualification R1
++# OmegaCode Linux lifecycle qualification R1.1
++
++R1.1 follows Dot's native run2 (`40860075434`, source `ca708cb`), which passed through step 14 and failed before 15 with an unclassified exception. `systemctl disable` removes manually created links to the unit as well as enablement links; R1's unconditional second unlink could therefore raise FileNotFoundError. R1.1 validates the installed link before disable and treats its removal by systemd as success, removing only an exact matching link if one remains. Unexpected failures now record a safe phase, constant code, exception type and errno, never the exception message. The earlier partial native run is not full qualification; rerun all five cases.
+ 
+ Prepared for Dot's assignment `coordination/inbox/20261029T101733Z-dot-to-omegacode-checkin-next-linux-lifecycle.md`. This text bundle supplies runnable qualification code and receipt expectations for the existing installer-repo `code-c2` CI job. Native execution and review disposition remain pending. Use invented, disposable state only.
+ 
+--- a/lifecycle_worker.py
++++ b/lifecycle_worker.py
+@@ -40,6 +40,24 @@
+ 
+ class Refusal(RuntimeError):
+     pass
++
++
++def failure_details(error, phase):
++    """Keep expected codes and phase, never an exception message containing paths/data."""
++    if isinstance(error, Refusal):
++        reason = str(error)
++        if not re.fullmatch(r"[a-z0-9_]{1,96}", reason):
++            reason = "worker_refusal"
++    elif isinstance(error, sqlite3.DatabaseError):
++        reason = "worker_sqlite_error"
++    elif isinstance(error, OSError):
++        reason = "worker_os_error"
++    else:
++        reason = "worker_unexpected_error"
++    details = {"reason": reason, "failure_stage": phase, "exception_type": type(error).__name__}
++    if isinstance(error, OSError) and type(error.errno) is int:
++        details["errno"] = error.errno
++    return details
+ 
+ 
+ def require(condition, code):
+@@ -246,10 +264,12 @@
+         self.active_link = self.root / "active"
+         self.token_path = self.home / "operator-token"
+         self.current_identity = None
++        self.phase = "context_admitted"
+ 
+     def receipt(self, step, **fields):
+         write_json(self.receipts / (step + ".json"),
+                    {"schema": "omegacode-linux-lifecycle-r1", "case": self.c["case"], "step": step, **fields})
++        self.phase = "after_" + step
+ 
+     def command(self, argv, timeout=20, expected=(0,)):
+         try:
+@@ -495,6 +515,50 @@
+         require(inventory(self.state) == before, "restored_integrity_mutated_state")
+         return inventory_sha(before)
+ 
++    def check_unit_link(self, allow_missing=False):
++        try:
++            target = os.readlink(self.unit)
++        except FileNotFoundError:
++            require(allow_missing, "installed_unit_link_missing")
++            return False
++        except OSError:
++            raise Refusal("installed_unit_link_invalid") from None
++        require(target == str(self.active_link / UNIT), "installed_unit_link_mismatch")
++        return True
++
++    def uninstall(self):
++        self.phase = "uninstall_authority_check"
++        authority = zero_authority(self.state)
++        state_before = inventory(self.state)
++        self.receipt("14-uninstall-authority", ok=True, **authority,
++                     scope="unregistered_idle_synthetic_state_only")
++        self.phase = "uninstall_validate_installed_link"
++        self.check_unit_link()
++        self.phase = "uninstall_disable"
++        self.systemctl("disable", UNIT)
++        self.phase = "uninstall_remove_remaining_link"
++        # systemctl disable removes manually linked unit files too. Accept
++        # its removal; if retained, remove only the exact installed symlink.
++        if self.check_unit_link(allow_missing=True):
++            self.unit.unlink(missing_ok=True)
++        self.phase = "uninstall_daemon_reload"
++        self.systemctl("daemon-reload")
++        self.phase = "uninstall_unit_absence"
++        props = self.show()
++        require(props.get("LoadState") == "not-found" and props.get("MainPID") == "0", "unit_not_removed")
++        self.phase = "uninstall_process_and_port_check"
++        require(not listeners() and not uid_code_pids(self.uid), "uninstall_not_quiescent")
++        require_port_rebindable()
++        self.phase = "uninstall_state_inventory"
++        require(inventory(self.state) == state_before, "uninstall_state_changed")
++        self.phase = "uninstall_sqlite_integrity"
++        integrity(self.state)
++        self.phase = "uninstall_retained_inventory"
++        require(inventory(self.state) == state_before, "uninstall_integrity_changed_state")
++        self.receipt("15-uninstall", ok=True, unit_gone=True, code_processes=0, listener_count=0,
++                     process_group_clean=True, port_rebindable=True, state_retained=True,
++                     state_inventory_sha256=inventory_sha(state_before), sqlite_integrity=True)
++
+     def run(self):
+         self.prepare()
+         self.activate("r14", "03a-install")
+@@ -526,23 +590,7 @@
+         self.activate("r14", "11a-rollback-install")
+         self.start_health("r14", "12-rollback-health")
+         self.stop("13-uninstall-quiesce")
+-        authority = zero_authority(self.state)
+-        state_before = inventory(self.state)
+-        self.receipt("14-uninstall-authority", ok=True, **authority,
+-                     scope="unregistered_idle_synthetic_state_only")
+-        self.systemctl("disable", UNIT)
+-        self.unit.unlink()
+-        self.systemctl("daemon-reload")
+-        props = self.show()
+-        require(props.get("LoadState") == "not-found" and props.get("MainPID") == "0", "unit_not_removed")
+-        require(not listeners() and not uid_code_pids(self.uid), "uninstall_not_quiescent")
+-        require_port_rebindable()
+-        require(inventory(self.state) == state_before, "uninstall_state_changed")
+-        integrity(self.state)
+-        require(inventory(self.state) == state_before, "uninstall_integrity_changed_state")
+-        self.receipt("15-uninstall", ok=True, unit_gone=True, code_processes=0, listener_count=0,
+-                     process_group_clean=True, port_rebindable=True, state_retained=True,
+-                     state_inventory_sha256=inventory_sha(state_before), sqlite_integrity=True)
++        self.uninstall()
+         self.receipt("result", ok=True, lifecycle="passed",
+                      rollback_digest=PINS["r14"]["modules"],
+                      pending=["actual_host_guard_relay_and_enrollment", "host_revoke_cancel_with_active_work",
+@@ -554,19 +602,21 @@
+     parser.add_argument("--context", type=Path, required=True)
+     args = parser.parse_args()
+     context = None
++    runner = None
+     try:
+         meta = args.context.lstat()
+         require(stat.S_ISREG(meta.st_mode) and meta.st_uid == 0 and stat.S_IMODE(meta.st_mode) == 0o600,
+                 "context_not_private_root_owned")
+         context = json.loads(args.context.read_text())
+-        Worker(context).run()
++        runner = Worker(context)
++        runner.run()
+         return 0
+     except Exception as error:
+-        reason = str(error) if isinstance(error, Refusal) else "worker_failed"
++        details = failure_details(error, runner.phase if runner is not None else "context_admission")
+         if context is not None:
+             write_json(Path(context["receipts"]) / "result.json",
+-                       {"ok": False, "reason": reason, "case": context["case"]})
+-        print(json.dumps({"ok": False, "reason": reason}))
++                       {"ok": False, "case": context["case"], **details})
++        print(json.dumps({"ok": False, **details}))
+         return 2
+ 
+ 
+--- a/test_bundle.py
++++ b/test_bundle.py
+@@ -154,6 +154,53 @@
+         with self.assertRaises(sqlite3.DatabaseError):
+             worker.integrity(self.instance.state)
+ 
++    def test_uninstall_preserves_state_whether_disable_removes_link_or_leaves_it(self):
++        instance = self.instance
++        instance.unit.parent.mkdir(parents=True)
++        before = worker.inventory(instance.state)
++        for disable_removes_link in (True, False):
++            with self.subTest(disable_removes_link=disable_removes_link):
++                instance.unit.symlink_to(instance.active_link / worker.UNIT)
++                def systemctl(*args):
++                    if args[0] == "disable" and disable_removes_link:
++                        instance.unit.unlink()
++                    return ""
++                with patch.object(instance, "systemctl", side_effect=systemctl), \
++                     patch.object(instance, "show", return_value={"LoadState": "not-found", "MainPID": "0"}), \
++                     patch.object(worker, "require_port_rebindable"):
++                    instance.uninstall()
++                self.assertFalse(instance.unit.is_symlink())
++                self.assertEqual(worker.inventory(instance.state), before)
++                self.assertTrue(json.loads((self.root / "15-uninstall.json").read_text())["state_retained"])
++
++    def test_uninstall_refuses_substituted_unit_link_without_touching_target(self):
++        instance = self.instance
++        instance.unit.parent.mkdir(parents=True)
++        outside = self.root / "invented-protected-file"
++        outside.write_text("invented retained bytes")
++        instance.unit.symlink_to(outside)
++        with patch.object(instance, "systemctl") as call:
++            with self.assertRaisesRegex(worker.Refusal, "installed_unit_link_mismatch"):
++                instance.uninstall()
++        call.assert_not_called()
++        self.assertEqual(outside.read_text(), "invented retained bytes")
++
++
++class FailureDiagnosticControls(unittest.TestCase):
++    def test_failure_diagnostics_keep_code_phase_type_errno_and_exclude_message(self):
++        secret = "invented-private-diagnostic-marker"
++        details = worker.failure_details(FileNotFoundError(2, secret), "uninstall_remove_remaining_link")
++        self.assertEqual(details, {"reason": "worker_os_error", "failure_stage": "uninstall_remove_remaining_link",
++                                   "exception_type": "FileNotFoundError", "errno": 2})
++        self.assertNotIn(secret, json.dumps(details))
++        self.assertEqual(worker.failure_details(worker.Refusal("unit_not_removed"), "uninstall_unit_absence")["reason"],
++                         "unit_not_removed")
++
++    def test_untrusted_refusal_message_is_replaced_with_safe_code(self):
++        details = worker.failure_details(worker.Refusal("invented private path /not/public"), "context_admission")
++        self.assertEqual(details["reason"], "worker_refusal")
++        self.assertNotIn("/not/public", json.dumps(details))
++
+ 
+ class UnitControls(unittest.TestCase):
+     def test_missing_unit_status_can_be_observed_without_becoming_command_failure(self):

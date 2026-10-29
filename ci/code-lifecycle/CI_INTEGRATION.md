@@ -44,6 +44,13 @@ env -i HOME="$HOME" PATH=/usr/bin:/bin "$UV" --no-config pip check \
   --python /tmp/lifecyclevenv/bin/python
 ```
 
+After pip check, make the two disposable CI runtime trees and the standalone base parent immutable. This addresses native run1's `runtime_writable` refusal and retains all existing guard checks:
+
+```bash
+sudo chown -R root:root /tmp/py /tmp/lifecyclevenv
+sudo chmod -R a+rX,a-w /tmp/py /tmp/lifecyclevenv
+```
+
 The runtime, its interpreter targets, installed packages, and parent directories must be readable/executable but not writable by the later fresh service account. The worker's runtime preflight enforces this and the exact distribution closure; no runtime dependency installation occurs during service startup.
 
 ## Native qualification command

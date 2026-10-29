@@ -1,6 +1,12 @@
 {
   "schema": "omegacode-linux-lifecycle-expectations-r1",
   "kind": "expectation_only_not_run_evidence",
+  "source_version": "r1.1",
+  "failure_result_fields": {
+    "required": ["ok=false", "case", "reason", "failure_stage", "exception_type"],
+    "optional": ["errno"],
+    "privacy": "fixed code and known phase only; exception message and operands are excluded"
+  },
   "full_case_required": {
     "01-package.json": ["ok", "releases.r14.module_digest", "releases.r152.module_digest"],
     "02-runtime.json": ["ok", "evidence", "runtime_supply_chain"],

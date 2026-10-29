@@ -154,6 +154,53 @@ class StateControls(unittest.TestCase):
         with self.assertRaises(sqlite3.DatabaseError):
             worker.integrity(self.instance.state)
 
+    def test_uninstall_preserves_state_whether_disable_removes_link_or_leaves_it(self):
+        instance = self.instance
+        instance.unit.parent.mkdir(parents=True)
+        before = worker.inventory(instance.state)
+        for disable_removes_link in (True, False):
+            with self.subTest(disable_removes_link=disable_removes_link):
+                instance.unit.symlink_to(instance.active_link / worker.UNIT)
+                def systemctl(*args):
+                    if args[0] == "disable" and disable_removes_link:
+                        instance.unit.unlink()
+                    return ""
+                with patch.object(instance, "systemctl", side_effect=systemctl), \
+                     patch.object(instance, "show", return_value={"LoadState": "not-found", "MainPID": "0"}), \
+                     patch.object(worker, "require_port_rebindable"):
+                    instance.uninstall()
+                self.assertFalse(instance.unit.is_symlink())
+                self.assertEqual(worker.inventory(instance.state), before)
+                self.assertTrue(json.loads((self.root / "15-uninstall.json").read_text())["state_retained"])
+
+    def test_uninstall_refuses_substituted_unit_link_without_touching_target(self):
+        instance = self.instance
+        instance.unit.parent.mkdir(parents=True)
+        outside = self.root / "invented-protected-file"
+        outside.write_text("invented retained bytes")
+        instance.unit.symlink_to(outside)
+        with patch.object(instance, "systemctl") as call:
+            with self.assertRaisesRegex(worker.Refusal, "installed_unit_link_mismatch"):
+                instance.uninstall()
+        call.assert_not_called()
+        self.assertEqual(outside.read_text(), "invented retained bytes")
+
+
+class FailureDiagnosticControls(unittest.TestCase):
+    def test_failure_diagnostics_keep_code_phase_type_errno_and_exclude_message(self):
+        secret = "invented-private-diagnostic-marker"
+        details = worker.failure_details(FileNotFoundError(2, secret), "uninstall_remove_remaining_link")
+        self.assertEqual(details, {"reason": "worker_os_error", "failure_stage": "uninstall_remove_remaining_link",
+                                   "exception_type": "FileNotFoundError", "errno": 2})
+        self.assertNotIn(secret, json.dumps(details))
+        self.assertEqual(worker.failure_details(worker.Refusal("unit_not_removed"), "uninstall_unit_absence")["reason"],
+                         "unit_not_removed")
+
+    def test_untrusted_refusal_message_is_replaced_with_safe_code(self):
+        details = worker.failure_details(worker.Refusal("invented private path /not/public"), "context_admission")
+        self.assertEqual(details["reason"], "worker_refusal")
+        self.assertNotIn("/not/public", json.dumps(details))
+
 
 class UnitControls(unittest.TestCase):
     def test_missing_unit_status_can_be_observed_without_becoming_command_failure(self):
