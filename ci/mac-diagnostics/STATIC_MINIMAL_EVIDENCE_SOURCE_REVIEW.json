@@ -1,64 +1,78 @@
 {
   "schema": "macbook-hive-minimal-evidence-source-review/1",
-  "reviewer": "MacBook-Hive independent Source reviewer",
-  "source_owner": "Studio Root author",
+  "review_id": "minimal-evidence-source-peer-review-r8",
+  "reviewer": "r64_ledger_schema_peer",
+  "source_owner": "Studio Root",
   "origin_machine": "MacBook",
   "source": {
-    "path": "coordination/studio/20261029/mac-ci-minimal-evidence-source-root-r3/minimal_failure_evidence.py",
-    "bytes": 22216,
-    "sha256": "bf2b394355b9f9db863a253eb0494cb61c3658ae9ea0722cae51eeddd8e94c08"
+    "path": "coordination/studio/20261029/mac-ci-minimal-evidence-source-root-r8/minimal_failure_evidence.py",
+    "bytes": 29545,
+    "sha256": "2fe5013733212bde65b6481779affab34d6520925b1011de84272b1d56041138"
+  },
+  "predecessor": {
+    "path": "coordination/studio/20261029/mac-ci-minimal-evidence-source-root-r7/minimal_failure_evidence.py",
+    "bytes": 29275,
+    "sha256": "152d577cc935bf94e3c9427e29b4695adeb3b4c8804a3736947986f560964c52"
   },
   "verdict": "PASS_SOURCE_ONLY",
-  "findings": [
+  "blocking_findings": [],
+  "accepted": [
+    "R8 adds a validated required_mode option to the held nofollow reader and applies exact 0400 mode to the fixed native attempt selector before bytes are read; file_key rechecks st_mode after reading.",
+    "The selector read is capped at 4096 bytes before and during the held read, and the reader rejects nested duplicate keys, NaN/Infinity constants, and exponent-overflow floats before schema checks.",
+    "The current native launch context and parent pins have exact three-field types and bounds, and the four-field selector is joined to those current pins and validated against separately read fixed result paths.",
+    "Stage2 and native reporting remain independent, and missing launch files use launch_or_binding_absent. Metadata remains bounded diagnostic reporting; PBS is observed with lstat and is not executed or admitted.",
+    "Original wall, self-RSS, aggregate input, report, held-file, and retained-output controls are unchanged from R7."
+  ],
+  "nonblocking_observations": [
     {
-      "id": "OBS1",
-      "severity": "nonblocking",
-      "finding": "SAFE_ERROR_TYPES is used when summarizing input fields, but caught exception class names in the errors list and outer failure summary are emitted directly. For example, malformed JSON may yield the fixed class name JSONDecodeError, which is outside SAFE_ERROR_TYPES. This does not echo the exception message or file contents, but the declared error-label domain is not applied consistently.",
+      "id": "R3-OBS1-RETAINED",
+      "severity": "low",
+      "finding": "Some error summaries emit the exception class name directly rather than mapping every path through SAFE_ERROR_TYPES. The emitted field contains no exception message or input body, and all source-controlled failure paths reviewed use bounded exception classes; this remains a label-closure observation, not a blocker to the R8 mode fix.",
       "anchors": [
         {
-          "line": 232,
-          "excerpt": "report['errors'].append({'role': role, 'error_type': type(error).__name__})"
-        },
-        {
-          "line": 254,
-          "excerpt": "except (OSError, ValueError, RecursionError, Refused) as error:"
-        },
-        {
-          "line": 371,
-          "excerpt": "'error_type': type(error).__name__"
+          "path": "coordination/studio/20261029/mac-ci-minimal-evidence-source-root-r8/minimal_failure_evidence.py",
+          "lines": "283, 297-298, 305-306, 315-316, 497-498",
+          "excerpt": "error_type: type(error).__name__"
         }
       ]
     }
   ],
-  "accepted": [
-    "R1 F1: input-derived schema/status/phase/reason/guard/resource labels are emitted only from finite sets or as UNCLASSIFIED_DIAGNOSTIC_LABEL; arbitrary input text is not forwarded.",
-    "R1 F2: launch.owner is required to be an object before attempt_id is read; the attempt path is regex constrained, and Refused is captured as bounded error metadata after executable facts are collected.",
-    "R1 F3: output ancestry is opened without following symlinks; leaf creation is O_EXCL/O_NOFOLLOW; write loop, fchmod 0400, fsync, held leaf/path identity, parent/output namespace identity re-open, and final identity checks precede success.",
-    "R1 N1: strict sys.executable resolution occurs inside its own role try; OSError/Refused are recorded per role so /bin/ps metadata collection can continue.",
-    "No subprocess, runtime/source execution, recursion, target receipt body output, or qualification inference is present in the reviewed source."
-  ],
   "reviewed_inputs": [
     {
-      "path": "coordination/studio/20261029/mac-ci-minimal-evidence-source-root-r3/SOURCE_MANIFEST_R3.json",
-      "bytes": 3342,
-      "sha256": "33f6d7f8c942925e7be2ed376b51ee265bb01c337c72ca888119b3a48fd9742f"
+      "path": "coordination/studio/20261029/mac-ci-minimal-evidence-source-root-r8/SOURCE_MANIFEST_R8.json",
+      "bytes": 971,
+      "sha256": "e0952adaf4fec803597f7f43dfdebbd04cc6d6541c27944ca2be9d014d7c7696"
     },
     {
-      "path": "coordination/studio/20261029/mac-ci-minimal-evidence-source-root-r3/FINITE_LABEL_DOMAINS_R3.json",
-      "bytes": 1893,
-      "sha256": "9bd279f990c800928539b232e9a1bb298b9a93071a1ade3a87a386ad5077b2f3"
+      "path": "coordination/remote-control/20261029/native-parent-attempt-selector-source-r2/SELECTOR_INTERFACE_R2.json",
+      "bytes": 4394,
+      "sha256": "8502aa042852ebecfc43da3fb5a81042e0561adc75c99544cf78a01ef43b45e3"
     },
     {
-      "path": "coordination/remote-control/20261029/minimal-evidence-source-peer-review-r1/SOURCE_REVIEW_R1.json",
-      "bytes": 4339,
-      "sha256": "ce389bd7afa01c1b6dd29505472ae1886c08301f4f94b558f42f3cb6e4e2be68"
+      "path": "coordination/remote-control/20261029/native-parent-attempt-selector-source-r2/ci_native_parent.py",
+      "bytes": 54391,
+      "sha256": "0853b2b6a121243c2fd69695f2ffcc0412a20c5b99b41c4852ff9a944203121d"
     },
     {
-      "path": "coordination/studio/20261029/mac-ci-minimal-evidence-source-root-r2/AUTHOR_FINDINGS_AND_CHANGE_R1.json",
-      "bytes": 1768,
-      "sha256": "8763bbebcfa7f46e2e3e3fa7f467032a454d6d804493649aca92b539c9442744"
+      "path": "coordination/remote-control/20261029/native-parent-attempt-selector-peer-review-r2/SOURCE_REVIEW_R2.json",
+      "bytes": 13328,
+      "sha256": "c7354e7f2066ac07283cd1d734d914dbe5420db0f8c031df9cbbe8a84c36a652"
+    },
+    {
+      "path": "coordination/remote-control/20261028/mac-ci-stage1-wait-source-bundle-r1/native_entry.py",
+      "bytes": 51152,
+      "sha256": "363864ae97f7cbcfdf6f7c9842f12dbc2fba7cb8a4acb3011d731e47710e7d70"
+    },
+    {
+      "path": "coordination/remote-control/20261029/minimal-evidence-source-peer-review-r7/SOURCE_REVIEW_R7.json",
+      "bytes": 4994,
+      "sha256": "4c70c549af80b200ef313dfc5c9330d1ee5231f6b7dd7a5779d73e7c5ee712c7"
     }
   ],
-  "coverage": "Static read of all 379 source lines and all top-level functions/entrypoint; finite label provenance and declared R1 findings/change record cross-checked as data.",
-  "qualification": "Source-only review. No import, compile, test, helper, CI, runtime, native, process, network, or metadata-reader execution. No actual diagnostic output or retained artifact verified."
+  "coverage": "Static review of the complete R8 source, verified R7-to-R8 delta, selector contract and producer mode behavior, prior R7 review, and Stage1 native launch writer. No actual launch, selector, attempt receipt, runtime/private tree, or CI/native output was read.",
+  "qualification": "Source-only review. No import, compilation, fixture, test, helper, process, network, CI, native action, owner admission, or actual runtime evidence verification.",
+  "limitations": [
+    "This accepts the source contract only; actual selector and launch records were not read.",
+    "No current Stage1 whole-bundle, CI, native, owner, relay, artifact-authentication, or producer-runtime qualification is inferred."
+  ]
 }

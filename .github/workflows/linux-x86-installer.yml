@@ -729,17 +729,18 @@ jobs:
           path: c2-receipts/
 
   mac-native:
-    # Mac DMG stages 1+2 in ONE fresh job (Studio sealed sets): ci/mac = wait-enabled Stage1 (seal 94b09845),
+    # Mac DMG stages 1+2 in ONE fresh job (Studio sealed sets): ci/mac = wait-enabled Stage1 (seal 83789b18),
     # ci/mac-stage2 = Stage2 finalize/native audit/relocation/seal (seal 1b62a67f). Exact system PATH, env -i, absolute pythons.
     runs-on: macos-15
     timeout-minutes: 300
     env:
-      STUDIO_STAGE1_MANIFEST_SHA256: 94b09845d219fc05a36e9a2affb05a0827adabc2f6f1053eccc07399673ca07a
+      STUDIO_STAGE1_MANIFEST_SHA256: 83789b181931cb7b03da170427a4f553d7b4b51f156ce959bf157373a36f2d89
       STUDIO_STAGE2_MANIFEST_SHA256: 1b62a67f57510a043038559d157be6349447e66b4d4cc188af5e3012e8939d14
       STUDIO_CUSTODY_MANIFEST_SHA256: ed51866062a4c84221015427ee23bea3f30e8f9405a91fc1b4a7e89018af963d
       STUDIO_COLLECT_MANIFEST_SHA256: 45ca16e8ad1004e6b3e0e4d83161b4bd1b343924b2fee3f6d73050bd0f0bad98
-      STUDIO_DIAGNOSTICS_MANIFEST_SHA256: 40913b6f74b500440bfdcada9d0a5eed6e53dc209204e2a999b0d5868327b8c2
-      STUDIO_MINIMAL_EVIDENCE_SOURCE_SHA256: bf2b394355b9f9db863a253eb0494cb61c3658ae9ea0722cae51eeddd8e94c08
+      STUDIO_DIAGNOSTICS_MANIFEST_SHA256: ee736e464b7f6fc6d3c2a2a8187220ad54e49930518838aa6357ea6e3613402a
+      STUDIO_MINIMAL_EVIDENCE_SOURCE_SHA256: 2fe5013733212bde65b6481779affab34d6520925b1011de84272b1d56041138
+      STUDIO_PREEXEC_PBS_SOURCE_SHA256: be9f210cee9ab645f7a8d0397dbde3f743d0311d744eb9018a1b785b47926bb1
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -872,17 +873,27 @@ jobs:
           path: ${{ runner.temp }}/omegahive-control-receipts-r1/minimal-failure-evidence-*.json
           if-no-files-found: warn
           retention-days: 14
-      - name: Collect control receipts (always; typed selectors; keeps a nonzero exit)
+      - name: Collect control receipts (always; verified prepared PBS; keeps a nonzero exit)
         id: collect
         if: always()
+        shell: bash
         run: |
+          set -euo pipefail
           K="$GITHUB_WORKSPACE/ci/mac-collect"
+          D="$GITHUB_WORKSPACE/ci/mac-diagnostics"
+          (
+            cd "$D"
+            printf '%s  MANIFEST.sha256\n' "$STUDIO_DIAGNOSTICS_MANIFEST_SHA256" \
+              | /usr/bin/shasum -a 256 -c -
+            /usr/bin/shasum -a 256 -c MANIFEST.sha256
+            printf '%s  exec_verified_pbs_collector.py\n' "$STUDIO_PREEXEC_PBS_SOURCE_SHA256" \
+              | /usr/bin/shasum -a 256 -c -
+          )
           /usr/bin/env -i HOME="$RUNNER_TEMP" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
             GITHUB_ACTIONS=true LANG=C LC_ALL=C RUNNER_TEMP="$RUNNER_TEMP" \
-            "${{ steps.py.outputs.python-path }}" -I -B -S "$K/collector_entry.py" \
-            --source-manifest "$K/MANIFEST.sha256" \
-            --expected-manifest-sha256 "$STUDIO_COLLECT_MANIFEST_SHA256" \
-            --owner dot-mac-ci --dedicated-ci-job --run
+            "${{ steps.py.outputs.python-path }}" -I -B -S "$D/exec_verified_pbs_collector.py" \
+            --collector-root "$K" \
+            --manifest-sha256 "$STUDIO_COLLECT_MANIFEST_SHA256"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -7,6 +7,7 @@ from pathlib import Path
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import resource
@@ -39,6 +40,17 @@ SAFE_RESOURCE_DECISIONS = frozenset(("run", "wait", "unknown"))
 
 class Refused(RuntimeError):
     pass
+
+
+SAFE_SCHEMAS = SAFE_SCHEMAS | frozenset((
+    'studio-CI-native-parent-attempt-selector/1',
+    'studio-Mac-CI-Root-native-parent/1',
+    'studio-Mac-CI-native-entry-launch/1',
+))
+SAFE_STATUSES = SAFE_STATUSES | frozenset((
+    'NOT_RUN_RESOURCE_RUN', 'NOT_RUN_RESOURCE_WAIT', 'NOT_RUN_RESOURCE_UNKNOWN',
+    'OWNER_ATTESTED_HANDOFF_ATTEMPT',
+))
 
 
 def need(value, reason):
@@ -90,9 +102,31 @@ def directory(path, *, private=False):
         raise
 
 
-def read_json(root_fd, relative):
+def unique_json_object(pairs):
+    value = {}
+    for key, item in pairs:
+        need(key not in value, 'duplicate_JSON_key')
+        value[key] = item
+    return value
+
+
+def finite_json_float(text):
+    value = float(text)
+    need(math.isfinite(value), 'nonfinite_JSON_number')
+    return value
+
+
+def reject_json_constant(_constant):
+    raise Refused('nonfinite_JSON_number')
+
+
+def read_json(root_fd, relative, *, maximum_bytes=MAX_FILE, required_mode=None):
     """Only caller-supplied fixed literal control paths, under a held root FD."""
     global READ_BYTES
+    need(type(maximum_bytes) is int and 0 < maximum_bytes <= MAX_FILE,
+         'bounded_control_read_limit_required')
+    need(required_mode is None or type(required_mode) is int and required_mode == 0o400,
+         'fixed_selector_mode_contract_required')
     parts = relative.split('/')
     need(parts and all(re.fullmatch('[A-Za-z0-9_.-]+', part) and part not in {'.', '..'}
                        for part in parts), 'literal_control_path_required')
@@ -109,22 +143,24 @@ def read_json(root_fd, relative):
         leaf = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
         before = os.fstat(leaf)
         need(stat.S_ISREG(before.st_mode) and before.st_uid == os.getuid()
-             and before.st_nlink == 1 and 0 < before.st_size <= MAX_FILE,
+             and before.st_nlink == 1 and 0 < before.st_size <= maximum_bytes
+             and (required_mode is None or stat.S_IMODE(before.st_mode) == required_mode),
              'owned_bounded_control_json_required')
         need(READ_BYTES + before.st_size <= MAX_TOTAL, 'aggregate_control_read_bound')
         raw = bytearray()
         while True:
             tick()
-            chunk = os.read(leaf, min(65536, MAX_FILE + 1 - len(raw)))
+            chunk = os.read(leaf, min(65536, maximum_bytes + 1 - len(raw)))
             if not chunk:
                 break
             raw.extend(chunk)
             READ_BYTES += len(chunk)
-            need(len(raw) <= MAX_FILE and READ_BYTES <= MAX_TOTAL, 'growing_control_read_bound')
+            need(len(raw) <= maximum_bytes and READ_BYTES <= MAX_TOTAL, 'growing_control_read_bound')
         need(len(raw) == before.st_size and file_key(before) == file_key(os.fstat(leaf))
              == file_key(os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)),
              'control_json_changed_during_read')
-        value = json.loads(raw)
+        value = json.loads(raw, object_pairs_hook=unique_json_object,
+                           parse_constant=reject_json_constant, parse_float=finite_json_float)
         need(type(value) is dict, 'control_json_object_required')
         return value, {'path': relative, 'bytes': len(raw),
                        'sha256': hashlib.sha256(raw).hexdigest()}
@@ -193,6 +229,21 @@ def summarize(value):
         if type(advice) is dict and type(advice.get('decision')) is str:
             label = advice['decision']
             result['resource_decision'] = label if label in SAFE_RESOURCE_DECISIONS else UNCLASSIFIED
+            headroom = advice.get('headroom')
+            estimate = advice.get('estimate')
+            if type(headroom) is dict:
+                result['headroom'] = {key: number for key, number in headroom.items()
+                    if key in {'ram_bytes', 'cpu_cores', 'disk_bytes'}
+                    and type(number) in (int, float) and -(2**50) <= number <= 2**50
+                    and math.isfinite(number)}
+            if type(estimate) is dict:
+                result['estimate'] = {key: number for key, number in estimate.items()
+                    if key in {'ram_gb', 'cpu_cores', 'disk_gb'}
+                    and type(number) in (int, float) and 0 <= number <= 2**30
+                    and math.isfinite(number)}
+    pressure = value.get('pressure')
+    if type(pressure) is str:
+        result['pressure'] = pressure if pressure in {'normal', 'warning', 'critical', 'unknown'} else UNCLASSIFIED
     return result
 
 
@@ -219,12 +270,14 @@ def executable_facts(role, path):
 
 
 def collect_metadata():
-    report = {'schema': 'studio-minimal-ci-failure-evidence/1',
+    report = {'schema': 'studio-minimal-ci-failure-evidence/2',
         'qualification': 'BOUNDED_DIAGNOSTIC_METADATA_ONLY_NOT_CONTROL_CUSTODY_OR_NATIVE_PASS',
         'origin_machine': bounded_text(os.uname().nodename, 128),
-        'records': [], 'errors': [], 'executables': [], 'root_state': 'unobserved'}
+        'records': [], 'errors': [], 'executables': [], 'root_state': 'unobserved',
+        'scope_states': {'stage2': 'unobserved', 'native': 'unobserved'}}
     for role, path in [('current_trusted_interpreter', Path(sys.executable)),
-                       ('system_ps', Path('/bin/ps'))]:
+                       ('system_ps', Path('/bin/ps')),
+                       ('prepared_PBS_interpreter', ROOT / 'runtime-job/bootstrap/python/bin/python3.12')]:
         try:
             if role == 'current_trusted_interpreter':
                 path = path.resolve(strict=True)
@@ -236,23 +289,23 @@ def collect_metadata():
         root_fd = directory(ROOT, private=True)
         initial_root = directory_key(os.fstat(root_fd))
         report['root_state'] = 'owned_private_root'
-        launch_path = 'stage2-parent/STAGE2_ENTRY_LAUNCH_R1.json'
-        launch, launch_pin = read_json(root_fd, launch_path)
-        report['records'].append({'pin': launch_pin, 'summary': summarize(launch)})
-        owner = launch.get('owner')
-        need(type(owner) is dict, 'reported_stage2_owner_object_required')
-        attempt = owner.get('attempt_id')
-        need(type(attempt) is str and re.fullmatch('attempt-[a-f0-9]{32}', attempt),
-             'one_reported_stage2_attempt_required')
-        paths = ['stage2-parent/' + attempt + '/STAGE2_RESULT.json']
-        paths += ['stage2-parent/' + attempt + '/' + phase + '/' + name
-                  for phase in PHASES for name in ('PARENT_RESULT.json', 'RESOURCE_ADMISSION.json')]
-        for relative in paths:
-            try:
-                value, observed = read_json(root_fd, relative)
-                report['records'].append({'pin': observed, 'summary': summarize(value)})
-            except (OSError, ValueError, RecursionError, Refused) as error:
-                report['errors'].append({'path': relative, 'error_type': type(error).__name__})
+        try:
+            stage2_metadata(root_fd, report)
+        except FileNotFoundError:
+            report['scope_states']['stage2'] = 'launch_or_binding_absent'
+            report['root_state'] = 'root_or_stage2_launch_absent'
+        except (OSError, ValueError, RecursionError, Refused) as error:
+            report['scope_states']['stage2'] = 'refused_or_incomplete'
+            report['root_state'] = 'metadata_refused_or_incomplete'
+            report['errors'].append({'scope': 'stage2_metadata', 'error_type': type(error).__name__})
+        try:
+            native_metadata(root_fd, report)
+            report['root_state'] = 'owned_private_root'
+        except FileNotFoundError:
+            report['scope_states']['native'] = 'launch_or_binding_absent'
+        except (OSError, ValueError, RecursionError, Refused) as error:
+            report['scope_states']['native'] = 'refused_or_incomplete'
+            report['errors'].append({'scope': 'native_metadata', 'error_type': type(error).__name__})
         check = directory(ROOT, private=True)
         try:
             need(directory_key(os.fstat(check)) == initial_root, 'CI_root_identity_changed')
@@ -268,6 +321,82 @@ def collect_metadata():
             os.close(root_fd)
     report['actual_control_bytes_read'] = READ_BYTES
     return report
+
+
+def stage2_metadata(root_fd, report):
+    launch, launch_pin = read_json(root_fd, 'stage2-parent/STAGE2_ENTRY_LAUNCH_R1.json')
+    report['records'].append({'family': 'stage2', 'pin': launch_pin, 'summary': summarize(launch)})
+    owner = launch.get('owner')
+    need(type(owner) is dict, 'reported_stage2_owner_object_required')
+    attempt = owner.get('attempt_id')
+    need(type(attempt) is str and re.fullmatch('attempt-[a-f0-9]{32}', attempt),
+         'one_reported_stage2_attempt_required')
+    paths = ['stage2-parent/' + attempt + '/STAGE2_RESULT.json']
+    paths += ['stage2-parent/' + attempt + '/' + phase + '/' + name
+              for phase in PHASES for name in ('PARENT_RESULT.json', 'RESOURCE_ADMISSION.json')]
+    for relative in paths:
+        try:
+            value, observed = read_json(root_fd, relative)
+            report['records'].append({'family': 'stage2', 'pin': observed, 'summary': summarize(value)})
+        except (OSError, ValueError, RecursionError, Refused) as error:
+            report['errors'].append({'path': relative, 'error_type': type(error).__name__})
+    report['scope_states']['stage2'] = 'selected_fixed_controls_observed'
+
+
+def native_metadata(root_fd, report):
+    # Proposed exact producer contract; runtime use requires matching reviewed
+    # Parent source. This candidate itself creates no selector or admission.
+    launch, launch_pin = read_json(root_fd, 'native-parent/NATIVE_ENTRY_LAUNCH_R1.json')
+    report['records'].append({'family': 'native', 'pin': launch_pin, 'summary': summarize(launch)})
+    need(set(launch) == {'schema', 'status', 'owner_context', 'inputs', 'parent',
+                         'component_review', 'scope'}
+         and launch['schema'] == 'studio-Mac-CI-native-entry-launch/1',
+         'closed_current_native_entry_launch_required')
+    current_context, current_parent = launch['owner_context'], launch['parent']
+    need(type(current_context) is dict and type(current_parent) is dict
+         and set(current_context) == {'path', 'bytes', 'sha256'}
+         and set(current_parent) == {'path', 'bytes', 'sha256'}
+         and type(current_context['bytes']) is int and 0 < current_context['bytes'] <= 256 * 1024
+         and type(current_parent['bytes']) is int and 0 < current_parent['bytes'] <= 1024**2
+         and type(current_context['sha256']) is str
+         and re.fullmatch('[a-f0-9]{64}', current_context['sha256'])
+         and type(current_parent['sha256']) is str
+         and re.fullmatch('[a-f0-9]{64}', current_parent['sha256']),
+         'current_native_entry_binding_objects_required')
+    selector, observed = read_json(root_fd, 'native-parent/NATIVE_PARENT_ATTEMPT_R1.json',
+                                   maximum_bytes=4096, required_mode=0o400)
+    report['records'].append({'family': 'native', 'pin': observed, 'summary': summarize(selector)})
+    need(set(selector) == {'schema', 'attempt_id', 'parent_source', 'owner_context_sha256'}
+         and selector['schema'] == 'studio-CI-native-parent-attempt-selector/1',
+         'closed_native_attempt_selector_required')
+    attempt, parent, context = selector['attempt_id'], selector['parent_source'], selector['owner_context_sha256']
+    need(type(attempt) is str and re.fullmatch('attempt-[a-f0-9]{32}', attempt),
+         'one_reported_native_attempt_required')
+    need(type(parent) is dict and set(parent) == {'bytes', 'sha256'}
+         and type(parent['bytes']) is int and 0 < parent['bytes'] <= 1024**2
+         and type(parent['sha256']) is str and re.fullmatch('[a-f0-9]{64}', parent['sha256'])
+         and type(context) is str and re.fullmatch('[a-f0-9]{64}', context),
+         'typed_native_selector_source_context_required')
+    need(current_context.get('path') == str(ROOT / 'native-parent/NATIVE_PARENT_CONTEXT_R1.json')
+         and current_context.get('sha256') == context
+         and current_parent.get('path') == str(ROOT / 'native-parent/ci_native_parent.py')
+         and current_parent.get('sha256') == parent['sha256']
+         and current_parent.get('bytes') == parent['bytes'],
+         'native_selector_current_entry_binding_mismatch')
+    for name in ('PARENT_RESULT.json', 'RESOURCE_ADMISSION.json'):
+        relative = 'native-parent/' + attempt + '/' + name
+        try:
+            value, pin = read_json(root_fd, relative)
+            if name == 'PARENT_RESULT.json':
+                need(value.get('parent_source_sha256') == parent['sha256'],
+                     'native_result_source_selector_mismatch')
+            actual_context = value.get('context_pin')
+            need(type(actual_context) is dict and actual_context.get('sha256') == context,
+                 'native_result_context_selector_mismatch')
+            report['records'].append({'family': 'native', 'pin': pin, 'summary': summarize(value)})
+        except (OSError, ValueError, RecursionError, Refused) as error:
+            report['errors'].append({'path': relative, 'error_type': type(error).__name__})
+    report['scope_states']['native'] = 'selected_fixed_controls_observed'
 
 
 def retain_report(temp, raw):

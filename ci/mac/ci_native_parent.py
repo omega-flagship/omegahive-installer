@@ -701,6 +701,65 @@ def linked_worker_completion(attempt, worker_pid):
             'executed_recipe': recipe_pin, 'canonical_recipe': receipt['canonical_recipe']}
 
 
+def retain_attempt_selector(attempt, args, owner_uid, here_identity):
+    """Best-effort four-field observation; no admission or outcome authority."""
+    parent_fd = fd = None
+    try:
+        if attempt.parent != HERE or not re.fullmatch('attempt-[a-f0-9]{32}', attempt.name):
+            return
+        selector = {
+            'schema': 'studio-CI-native-parent-attempt-selector/1',
+            'attempt_id': attempt.name,
+            'parent_source': {'bytes': args.source_bytes, 'sha256': args.source_sha256},
+            'owner_context_sha256': args.owner_context_sha256}
+        raw = (json.dumps(selector, indent=2, allow_nan=False) + '\n').encode('utf-8')
+        if len(raw) > 4096:
+            return
+        _value, name, parent_fd = _open_parent_dir(HERE / 'NATIVE_PARENT_ATTEMPT_R1.json')
+        directory = os.fstat(parent_fd)
+        if (not stat.S_ISDIR(directory.st_mode)
+                or [directory.st_dev, directory.st_ino, directory.st_uid,
+                    stat.S_IMODE(directory.st_mode)] != here_identity):
+            return
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+                     | os.O_NONBLOCK, 0o400, dir_fd=parent_fd)
+        created = os.fstat(fd)
+        if (not stat.S_ISREG(created.st_mode) or created.st_uid != owner_uid
+                or created.st_nlink != 1 or created.st_size != 0
+                or stat.S_IMODE(created.st_mode) != 0o400):
+            return
+        view = memoryview(raw)
+        while view:
+            count = os.write(fd, view)
+            if type(count) is not int or not 0 < count <= len(view):
+                return
+            view = view[count:]
+        os.fchmod(fd, 0o400)
+        os.fsync(fd)
+        os.fsync(parent_fd)
+        after = os.fstat(fd)
+        named = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        directory = os.fstat(parent_fd)
+        if (not stat.S_ISREG(after.st_mode) or after.st_uid != owner_uid
+                or after.st_nlink != 1 or stat.S_IMODE(after.st_mode) != 0o400
+                or after.st_size != len(raw)
+                or (after.st_dev, after.st_ino) != (created.st_dev, created.st_ino)
+                or _identity_key(after) != _identity_key(named)
+                or not stat.S_ISDIR(directory.st_mode)
+                or [directory.st_dev, directory.st_ino, directory.st_uid,
+                    stat.S_IMODE(directory.st_mode)] != here_identity):
+            return
+    except BaseException:
+        pass  # Retain absent/partial/preexisting bytes; never alter STOP or outcome.
+    finally:
+        for held in (fd, parent_fd):
+            if held is not None:
+                try:
+                    os.close(held)
+                except BaseException:
+                    pass
+
+
 def main():
     parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument('--source-bytes', required=True, type=int)
@@ -809,72 +868,149 @@ def main():
     argv = [PYTHON, '-I', '-B', '-S', WORKER['path'], '--inputs', INPUTS['path'],
             '--inputs-sha256', INPUTS['sha256'], '--source-sha256', WORKER['sha256']]
     try:
+        retain_attempt_selector(attempt, args, owner_uid, here_identity)
         with (attempt / 'WORKER_STDOUT.log').open('xb') as out, (attempt / 'WORKER_STDERR.log').open('xb') as err:
-            if private_home_snapshot() != home_identity:
-                raise RuntimeError('CI_private_directory_changed_before_worker')
-            resource_raw, resource_file_pin = _read_regular(
-                RESOURCE['path'], max_bytes=1024 * 1024, expected_uid=owner_uid,
-                expected_bytes=RESOURCE['bytes'], expected_sha256=RESOURCE['sha256'])
-            policy_raw, policy_file_pin = _read_regular(
-                POLICY['path'], max_bytes=POLICY['bytes'], expected_uid=owner_uid,
-                expected_bytes=POLICY['bytes'], expected_sha256=POLICY['sha256'])
-            namespace = {'__name__': 'Root_resource_gate', '__file__': RESOURCE['path']}
-            exec(compile(resource_raw, RESOURCE['path'], 'exec'), namespace)
-            resource_sample_started = time.monotonic()
-            snapshot = namespace['sample'](force=True)
-            disk = os.statvfs(ROOT)
-            snapshot['disk'] = {'total_bytes': disk.f_blocks * disk.f_frsize,
-                                'free_bytes': disk.f_bavail * disk.f_frsize}
-            advice = namespace['advise'](snapshot, ESTIMATE, CURRENT_TASKS)
-            _policy_check, policy_after_pin = _read_regular(
-                POLICY['path'], max_bytes=POLICY['bytes'], expected_uid=owner_uid,
-                expected_bytes=POLICY['bytes'], expected_sha256=POLICY['sha256'])
-            if (policy_after_pin != policy_file_pin
-                    or advice.get('policy', {}).get('sha256') != POLICY['sha256']):
-                raise RuntimeError('resource_policy_pin_mismatch')
-            resource_admission = {
-                'at': snapshot['checked_at'], 'pressure': snapshot['memory']['pressure'],
-                'advice': advice, 'current_tasks': CURRENT_TASKS,
-                'source_review': SOURCE_REVIEW, 'private_CI_directory_identity': home_identity,
-                'context_pin': context_file_pin, 'review_pin': review_file_pin,
-                'resource_pin': {'path': RESOURCE['path'], 'bytes': RESOURCE['bytes'], 'sha256': RESOURCE['sha256']},
-                'resource_policy_pin': policy_after_pin}
-            current_job_identity = read_job_identity(JOB, owner_uid)
-            if current_job_identity != job_identity:
-                raise RuntimeError('native_job_identity_changed_before_worker')
-            current_source_raw, current_source_pin = _read_regular(
-                SELF, max_bytes=1024 * 1024, expected_uid=owner_uid,
-                expected_bytes=args.source_bytes, expected_sha256=args.source_sha256)
-            if current_source_pin != source_file_pin:
-                raise RuntimeError('Root_parent_source_changed_before_worker')
-            _latest_review_raw, latest_review, latest_review_pin = read_bound_json(
-                REVIEW['path'], max_bytes=REVIEW_MAX_BYTES,
-                expected_bytes=args.static_review_bytes,
-                expected_sha256=args.static_review_sha256, expected_uid=owner_uid)
-            if latest_review_pin != review_file_pin:
-                raise RuntimeError('native_static_review_changed_before_worker')
-            validate_review(latest_review, source_path=STATIC_REVIEW_PATHS['parent'],
-                            source_sha256=args.source_sha256, source_bytes=args.source_bytes,
-                            owner_uid=owner_uid)
-            _latest_context_raw, latest_context, latest_context_pin = read_bound_json(
-                CONTEXT['path'], max_bytes=CONTEXT_MAX_BYTES,
-                expected_bytes=args.owner_context_bytes,
-                expected_sha256=args.owner_context_sha256, expected_uid=owner_uid)
-            if latest_context_pin != context_file_pin:
-                raise RuntimeError('native_owner_context_changed_before_worker')
-            validate_context(
-                latest_context, source_sha256=args.source_sha256, source_bytes=args.source_bytes,
-                static_review_pin=latest_review_pin, job_identity=current_job_identity,
-                inputs_pin=INPUTS, owner_uid=owner_uid, now_epoch=time.time())
-            current_inputs_raw = read_pin(INPUTS)
-            if current_inputs_raw != selected_raw:
-                raise RuntimeError('native_input_binding_changed_before_worker')
-            for role_name, role_pin in roles.items():
-                read_pin(role_pin, role=role_name)
-            if read_job_identity(HERE, owner_uid) != here_identity:
-                raise RuntimeError('native_parent_directory_identity_changed')
-            if private_home_snapshot() != home_identity:
-                raise RuntimeError('CI_private_directory_changed_before_worker')
+            # Cooperative eligibility only: a sampler may physically overshoot;
+            # its return is refused if it reaches this one immutable deadline.
+            eligibility_deadline = min(started + 1800, time.monotonic() + 30)
+            while True:
+                if STOP or (attempt / 'STOP').exists():
+                    raise RuntimeError(STOP or 'STOP_before_worker')
+                if time.monotonic() - started >= 1800:
+                    raise RuntimeError('work_deadline_before_worker')
+                validate_context(
+                    context, source_sha256=args.source_sha256, source_bytes=args.source_bytes,
+                    static_review_pin=review_file_pin, job_identity=job_identity,
+                    inputs_pin=INPUTS, owner_uid=owner_uid, now_epoch=time.time())
+                if time.monotonic() >= eligibility_deadline:
+                    raise RuntimeError('resource_eligibility_deadline_before_sample')
+                if private_home_snapshot() != home_identity:
+                    raise RuntimeError('CI_private_directory_changed_before_worker')
+                resource_raw, resource_file_pin = _read_regular(
+                    RESOURCE['path'], max_bytes=1024 * 1024, expected_uid=owner_uid,
+                    expected_bytes=RESOURCE['bytes'], expected_sha256=RESOURCE['sha256'])
+                policy_raw, policy_file_pin = _read_regular(
+                    POLICY['path'], max_bytes=POLICY['bytes'], expected_uid=owner_uid,
+                    expected_bytes=POLICY['bytes'], expected_sha256=POLICY['sha256'])
+                namespace = {'__name__': 'Root_resource_gate', '__file__': RESOURCE['path']}
+                exec(compile(resource_raw, RESOURCE['path'], 'exec'), namespace)
+                resource_sample_started = time.monotonic()
+                if resource_sample_started >= eligibility_deadline:
+                    raise RuntimeError('resource_eligibility_deadline_before_sample')
+                snapshot = namespace['sample'](force=True)
+                disk = os.statvfs(ROOT)
+                snapshot['disk'] = {'total_bytes': disk.f_blocks * disk.f_frsize,
+                                    'free_bytes': disk.f_bavail * disk.f_frsize}
+                advice = namespace['advise'](snapshot, ESTIMATE, CURRENT_TASKS)
+                if time.monotonic() >= eligibility_deadline:
+                    raise RuntimeError('resource_sample_finished_after_eligibility_deadline')
+                _policy_check, policy_after_pin = _read_regular(
+                    POLICY['path'], max_bytes=POLICY['bytes'], expected_uid=owner_uid,
+                    expected_bytes=POLICY['bytes'], expected_sha256=POLICY['sha256'])
+                if (policy_after_pin != policy_file_pin
+                        or advice.get('policy', {}).get('sha256') != POLICY['sha256']):
+                    raise RuntimeError('resource_policy_pin_mismatch')
+                resource_admission = {
+                    'at': snapshot['checked_at'], 'pressure': snapshot['memory']['pressure'],
+                    'advice': advice, 'current_tasks': CURRENT_TASKS,
+                    'source_review': SOURCE_REVIEW, 'private_CI_directory_identity': home_identity,
+                    'context_pin': context_file_pin, 'review_pin': review_file_pin,
+                    'resource_pin': {'path': RESOURCE['path'], 'bytes': RESOURCE['bytes'], 'sha256': RESOURCE['sha256']},
+                    'resource_policy_pin': policy_after_pin}
+                current_job_identity = read_job_identity(JOB, owner_uid)
+                if current_job_identity != job_identity:
+                    raise RuntimeError('native_job_identity_changed_before_worker')
+                current_source_raw, current_source_pin = _read_regular(
+                    SELF, max_bytes=1024 * 1024, expected_uid=owner_uid,
+                    expected_bytes=args.source_bytes, expected_sha256=args.source_sha256)
+                if current_source_pin != source_file_pin:
+                    raise RuntimeError('Root_parent_source_changed_before_worker')
+                _latest_review_raw, latest_review, latest_review_pin = read_bound_json(
+                    REVIEW['path'], max_bytes=REVIEW_MAX_BYTES,
+                    expected_bytes=args.static_review_bytes,
+                    expected_sha256=args.static_review_sha256, expected_uid=owner_uid)
+                if latest_review_pin != review_file_pin:
+                    raise RuntimeError('native_static_review_changed_before_worker')
+                validate_review(latest_review, source_path=STATIC_REVIEW_PATHS['parent'],
+                                source_sha256=args.source_sha256, source_bytes=args.source_bytes,
+                                owner_uid=owner_uid)
+                _latest_context_raw, latest_context, latest_context_pin = read_bound_json(
+                    CONTEXT['path'], max_bytes=CONTEXT_MAX_BYTES,
+                    expected_bytes=args.owner_context_bytes,
+                    expected_sha256=args.owner_context_sha256, expected_uid=owner_uid)
+                if latest_context_pin != context_file_pin:
+                    raise RuntimeError('native_owner_context_changed_before_worker')
+                validate_context(
+                    latest_context, source_sha256=args.source_sha256, source_bytes=args.source_bytes,
+                    static_review_pin=latest_review_pin, job_identity=current_job_identity,
+                    inputs_pin=INPUTS, owner_uid=owner_uid, now_epoch=time.time())
+                current_inputs_raw = read_pin(INPUTS)
+                if current_inputs_raw != selected_raw:
+                    raise RuntimeError('native_input_binding_changed_before_worker')
+                for role_name, role_pin in roles.items():
+                    read_pin(role_pin, role=role_name)
+                if read_job_identity(HERE, owner_uid) != here_identity:
+                    raise RuntimeError('native_parent_directory_identity_changed')
+                if private_home_snapshot() != home_identity:
+                    raise RuntimeError('CI_private_directory_changed_before_worker')
+                if STOP or (attempt / 'STOP').exists():
+                    raise RuntimeError(STOP or 'STOP_before_worker')
+                if time.monotonic() >= eligibility_deadline:
+                    raise RuntimeError('resource_round_finished_after_eligibility_deadline')
+                if advice.get('decision') != 'wait':
+                    break
+                # Only a valid WAIT retries. UNKNOWN/other nonrun retain their
+                # original classification without the additional WAIT-only age gate.
+                if STOP or (attempt / 'STOP').exists():
+                    raise RuntimeError(STOP or 'STOP_before_worker')
+                if time.monotonic() - started >= 1800:
+                    raise RuntimeError('work_deadline_before_worker')
+                validate_context(
+                    latest_context, source_sha256=args.source_sha256, source_bytes=args.source_bytes,
+                    static_review_pin=latest_review_pin, job_identity=current_job_identity,
+                    inputs_pin=INPUTS, owner_uid=owner_uid, now_epoch=time.time())
+                validate_resource_advice_age(
+                    checked_at=snapshot['checked_at'], now_epoch=time.time(),
+                    sample_started_monotonic=resource_sample_started,
+                    now_monotonic=time.monotonic())
+                round_finished = time.monotonic()
+                if round_finished >= eligibility_deadline:
+                    raise RuntimeError('resource_round_finished_after_eligibility_deadline')
+                # A full five-second cadence must leave another eligible sample
+                # start. No callback is begun when this valid WAIT exhausts it.
+                if round_finished + 5 >= eligibility_deadline:
+                    break
+                pause_until = round_finished + 5
+                while True:
+                    if STOP or (attempt / 'STOP').exists():
+                        raise RuntimeError(STOP or 'STOP_before_worker')
+                    if time.monotonic() - started >= 1800:
+                        raise RuntimeError('work_deadline_before_worker')
+                    validate_context(
+                        latest_context, source_sha256=args.source_sha256, source_bytes=args.source_bytes,
+                        static_review_pin=latest_review_pin, job_identity=current_job_identity,
+                        inputs_pin=INPUTS, owner_uid=owner_uid, now_epoch=time.time())
+                    pause_now = time.monotonic()
+                    if pause_now >= pause_until or pause_now >= eligibility_deadline:
+                        break
+                    time.sleep(min(.25, pause_until - pause_now,
+                                   eligibility_deadline - pause_now))
+                if time.monotonic() >= eligibility_deadline:
+                    # Pause-only overshoot may retain the prior valid WAIT, but
+                    # only while all original time/context/STOP and age guards hold.
+                    if STOP or (attempt / 'STOP').exists():
+                        raise RuntimeError(STOP or 'STOP_before_worker')
+                    if time.monotonic() - started >= 1800:
+                        raise RuntimeError('work_deadline_before_worker')
+                    validate_context(
+                        latest_context, source_sha256=args.source_sha256, source_bytes=args.source_bytes,
+                        static_review_pin=latest_review_pin, job_identity=current_job_identity,
+                        inputs_pin=INPUTS, owner_uid=owner_uid, now_epoch=time.time())
+                    validate_resource_advice_age(
+                        checked_at=snapshot['checked_at'], now_epoch=time.time(),
+                        sample_started_monotonic=resource_sample_started,
+                        now_monotonic=time.monotonic())
+                    break
             if advice.get('decision') != 'run':
                 result['status'] = 'NOT_RUN_RESOURCE_' + str(advice.get('decision', 'invalid')).upper()
                 return_code = 75
@@ -890,6 +1026,8 @@ def main():
                     checked_at=snapshot['checked_at'], now_epoch=time.time(),
                     sample_started_monotonic=resource_sample_started,
                     now_monotonic=time.monotonic())
+                if time.monotonic() >= eligibility_deadline:
+                    raise RuntimeError('resource_eligibility_deadline_before_worker')
                 process = subprocess.Popen(argv, cwd=ROOT, env={'PATH': '/usr/bin:/bin:/usr/sbin:/sbin',
                     'HOME': str(EXPECTED_HOME), 'LANG': 'C', 'LC_ALL': 'C'}, stdin=subprocess.DEVNULL,
                     stdout=out, stderr=err, close_fds=True, start_new_session=True)

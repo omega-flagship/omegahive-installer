@@ -2,8 +2,8 @@
   "schema": "studio-Mac-CI-stage1-static-source-review/1",
   "verdict": "PASS_SOURCE_ONLY",
   "blocking_findings": [],
-  "reviewer": "MacBook-Hive primary independent source reviewer",
-  "source_owner": "Studio Root and MacBook-Hive native implementation team",
+  "reviewer": "r64_ledger_schema_peer, independent MacBook static source reviewer",
+  "source_owner": "MacBook-Hive Stage1 cooperative-parent source builder and Studio Root",
   "origin_machine": "MacBook",
   "subjects": {
     "prep_entry": {
@@ -48,8 +48,8 @@
     },
     "native_parent": {
       "path": "ci_native_parent.py",
-      "bytes": 51553,
-      "sha256": "fa89bdfb0642d91d1510aa7e483ac7852a02c5c1a93f8caafa286ed33240688c"
+      "bytes": 59916,
+      "sha256": "0c515e0fedbdf577f03e0e8068f1635016b60c6fe8b56f4a7a5478dd54ef36ca"
     },
     "native_worker_enabled": {
       "path": "ci_native_worker.py",
@@ -64,8 +64,8 @@
   },
   "native_component_review": {
     "path": "STATIC_NATIVE_SOURCE_REVIEW.json",
-    "bytes": 1005,
-    "sha256": "f00f83ffe1519c3e4aff80436a29c33df7e1e8529a812dcf16e76255309f45f3"
+    "bytes": 1006,
+    "sha256": "050a3ed073a2ea0ffe0fd1a9e8ad196008ed89c5b2f48a915c137fd9d7e0fe6b"
   },
-  "scope": "Independent static review of these exact eleven Source roles, the ten unchanged sealed public reference files and the genuine four-role native component review. Exact predecessor role/reference bytes were verified; both admission-wait entry deltas and cross-component review/source bindings were inspected. Preparation shares one finite wait budget; native waits before owner facts and rechecks held inputs and identities. Runtime owner facts, leases, task/resource admission and all execution qualification remain separate. No generated per-run review, native build, CI, audit, relocation, installer or deployment pass is granted."
+  "scope": "Independent static review of all eleven exact logical Source roles. Each of the twenty unchanged body files (ten unchanged roles plus ten public references) was compared byte-for-byte with the predecessor bundle and matched its retained predecessor pin. Their existing genuine whole/component reviews are cited only as semantic provenance for those unchanged bytes; the current parent body was independently reviewed above and its prior exact R4 review was checked. The current parent adds an exclusive fixed 0400 selector and cooperative pre-Popen resource eligibility loop while retaining original work deadline, context/resource/policy checks, WAIT-only retries, stop handling, sole worker spawn, primary receipts, cleanup, and terminal status behavior. This is Source review only: no imports, compilation, fixtures, tests, helper execution, runtime/private/job reads, actual owner or resource admission, native build, CI run, artifact authentication, deployment, or product qualification is inferred."
 }

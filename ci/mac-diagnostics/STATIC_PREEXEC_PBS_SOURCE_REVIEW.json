@@ -1,0 +1,38 @@
+{
+  "at": "2026-10-29T03:53:30.873949+00:00",
+  "blocking_findings": [],
+  "delta_review": [
+    "New close_descriptors attempts every non-None FD after individual OSError, then preserves nonzero refusal if any close failed. held_file refusal uses it; main finally independently handles every acquired leaf/ancestor FD after refused or returned/failed exec. Successful exec retains CLOEXEC behavior.",
+    "Fixed PBS and collector byte/hash pins, held path/file identities, owner/mode/link policies, exact/private-tmp sticky allowance, original15s/128MiB/64KiB limits and one fixed exec argv are unchanged. No chmod/copy/sudo/guard exemption or new input/credential/transport.",
+    "R1 nonblocking normal descriptor-error cleanup observation is addressed for ordinary OSError; asynchronous signal/kernel-close interruption is not a hard all-descriptor-closed guarantee before process exit. No such guarantee is claimed here."
+  ],
+  "execution": "Source AST/text/hash only; no PBS/runtime/helper/fixture/test/source import, compile, process/resource/network/account/native/CI execution.",
+  "origin_machine": "MacBook",
+  "qualification": "NONE",
+  "references": {
+    "R1_review": {
+      "bytes": 3688,
+      "path": "coordination/remote-control/20261029/collector-preexec-pbs-peer-review-r1/SOURCE_REVIEW_R1.json",
+      "sha256": "bbe28e993e90e181831fd0189b60e1b3a0f7b9a372f7ecad51804e63c33b23b3"
+    },
+    "candidate": {
+      "bytes": 6355,
+      "path": "coordination/studio/20261029/collector-preexec-pbs-source-root-r2/exec_verified_pbs_collector.py",
+      "sha256": "be9f210cee9ab645f7a8d0397dbde3f743d0311d744eb9018a1b785b47926bb1"
+    },
+    "manifest": {
+      "bytes": 1233,
+      "path": "coordination/studio/20261029/collector-preexec-pbs-source-root-r2/SOURCE_MANIFEST_R2.json",
+      "sha256": "a779ce75c77d34688e1137f6a3850c3b2a0d3c7c9c2ce41b84865bb2dd47917e"
+    }
+  },
+  "remaining_requirements": [
+    "Focused admitted controls of positive exact single exec and all missing/partial/hash/identity/link/mode/owner/ancestor/refused-cleanup paths, including one-close-error remaining-close attempts.",
+    "Final workflow authentically pins this helper/source envelope and invokes it using selected trusted setup Python with all existing env/gates.",
+    "Actual runner ancestor compatibility and canonical path check-to-exec race remain explicitly unqualified; source guards must not be lowered speculatively.",
+    "Compose new genuine Source seals and full resource/wall review; Root actual admission and separate owner third-CI decision remain required."
+  ],
+  "schema": "omega-preexec-prepared-python-independent-source-review/2",
+  "source_owner": "MacBook-Hive independent Source reviewer",
+  "status": "PASS_SOURCE_ONLY"
+}
