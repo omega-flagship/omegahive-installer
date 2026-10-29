@@ -28,6 +28,7 @@ jobs:
           { uname -a; lsb_release -ds; systemctl --version | head -1; ps -p 1 -o comm=; stat -fc %T /sys/fs/cgroup; } | tee /tmp/lc-facts.txt
       - name: Pinned Python and uv (checked against the publisher)
         run: |
+          umask 022   # runner default is 0002; the lifecycle runtime preflight refuses group/other-writable runtime paths
           P=ci/linux-x86/x86_64-pins.json
           U=$(python3 -c "import json;print(json.load(open('$P'))['python_stripped']['url'])"); H=$(python3 -c "import json;print(json.load(open('$P'))['python_stripped']['sha256'])")
           curl -fsSL -o /tmp/pbs.tar.gz "$U" && echo "$H  /tmp/pbs.tar.gz" | sha256sum -c -
@@ -40,6 +41,7 @@ jobs:
       - name: Separate bare PBS venv with the exact 17-package runtime lock (CI_INTEGRATION.md)
         run: |
           set -euo pipefail
+          umask 022
           test ! -e /tmp/lifecyclevenv
           /tmp/py/python/bin/python3.12 -m venv --without-pip /tmp/lifecyclevenv
           printf '%s  %s\n' \
@@ -51,6 +53,10 @@ jobs:
             -r ci/code-c2/CODE_R10_X86_RUNTIME_REQUIREMENTS_R1.lock
           env -i HOME="$HOME" PATH=/usr/bin:/bin "$UV" --no-config pip check \
             --python /tmp/lifecyclevenv/bin/python
+          # No group/other write anywhere on the runtime trees (provisioning hygiene, not a guard change); show the result.
+          chmod -R go-w /tmp/py /tmp/lifecyclevenv
+          echo "group/other-writable entries left: $(find /tmp/py /tmp/lifecyclevenv -perm /022 ! -type l | wc -l)"
+          stat -c '%a %U %n' /tmp /tmp/py /tmp/py/python /tmp/lifecyclevenv /tmp/lifecyclevenv/bin
       - name: Native lifecycle qualification (full, refusal, timeout, sigterm, sigkill)
         run: |
           set -euo pipefail
