@@ -229,6 +229,60 @@ def resource_admission(guide_path, guide_raw, policy_path, estimate):
             'current_tasks_basis': 'CI owner explicitly attests this dedicated job has no other Studio reservation'}
 
 
+def wait_resource_admission(sample, budget, cancelled, phase):
+    """Retry admission only, sharing one finite wait budget; never retry work."""
+    need(type(budget) is dict and set(budget) == {'remaining_seconds'}
+         and type(budget['remaining_seconds']) in (int, float)
+         and 0 <= budget['remaining_seconds'] <= 600,
+         'bounded_admission_wait_budget_required')
+    started = time.monotonic()
+    available = budget['remaining_seconds']
+    deadline = started + available
+    waited, observations = False, []
+    for index in range(121):
+        need(not cancelled(), 'cancelled_before_resource_admission')
+        admission = sample()
+        need(not cancelled(), 'cancelled_during_resource_admission')
+        decision = admission['advice']['decision']
+        need(type(decision) is str and decision in {'run', 'wait', 'unknown'},
+             'closed_resource_decision_required')
+        now = time.monotonic()
+        need(now >= started, 'monotonic_resource_wait_clock_required')
+        observations.append({'sample': index + 1, 'decision': decision,
+                             'elapsed_seconds': now - started})
+        waited = waited or decision == 'wait'
+        expired = waited and now >= deadline
+        if decision != 'wait' or expired:
+            if waited:
+                budget['remaining_seconds'] = max(0, available - (now - started))
+            # An admission that arrives after its wait deadline grants no launch.
+            if expired:
+                admission = dict(admission)
+                admission['advice'] = dict(admission['advice'], decision='wait')
+            admission['admission_wait'] = {
+                'schema': 'studio-CI-before-work-admission-wait/1',
+                'phase': phase, 'waited': waited, 'expired': expired,
+                'remaining_seconds': budget['remaining_seconds'],
+                'observations': observations, 'worker_retries': 0}
+            return admission
+        print(json.dumps({'status': 'RESOURCE_WAIT_BEFORE_WORK', 'phase': phase,
+                          'sample': index + 1, 'elapsed_seconds': now - started,
+                          'remaining_seconds': max(0, deadline - now)}), flush=True)
+        pause_until = min(deadline, now + 5)
+        while time.monotonic() < pause_until:
+            need(not cancelled(), 'cancelled_while_waiting_for_resource_admission')
+            time.sleep(min(.25, max(0, pause_until - time.monotonic())))
+    raise RuntimeError('resource_wait_sample_cap_no_launch')
+
+
+ADMISSION_STOP = False
+
+
+def admission_cancelled(_signum, _frame):
+    global ADMISSION_STOP
+    ADMISSION_STOP = True
+
+
 def run_phase(namespace, phase, owner, sources_context, previous=None):
     need(not namespace['STOP'], 'cancelled_before_phase')
     root = CI_ROOT / 'preparation-parent' / phase
@@ -242,8 +296,11 @@ def run_phase(namespace, phase, owner, sources_context, previous=None):
                      CONTRACT=sources_context['contract'])
     attempt = root / ('attempt-' + uuid.uuid4().hex)
     attempt.mkdir(mode=0o700)
-    advice = resource_admission(sources_context['guide_path'], sources_context['guide_raw'],
-                                sources_context['policy_path'], ESTIMATE)
+    advice = wait_resource_admission(
+        lambda: resource_admission(sources_context['guide_path'], sources_context['guide_raw'],
+                                   sources_context['policy_path'], ESTIMATE),
+        sources_context['wait_budget'],
+        lambda: ADMISSION_STOP or namespace['STOP'] or os.path.lexists(attempt / 'STOP'), phase)
     write_json(attempt / 'RESOURCE_ADMISSION.json', advice)
     if advice['advice']['decision'] != 'run':
         write_json(attempt / 'PARENT_RESULT.json', {
@@ -351,6 +408,7 @@ def main():
     parser.add_argument('--static-review', required=True)
     parser.add_argument('--owner', required=True)
     parser.add_argument('--dedicated-ci-job', action='store_true')
+    parser.add_argument('--admission-wait-seconds', type=int, default=600)
     parser.add_argument('--run', action='store_true')
     args = parser.parse_args()
     need(args.run and args.dedicated_ci_job and re.fullmatch('[A-Za-z0-9_.-]{1,80}', args.owner)
@@ -362,15 +420,22 @@ def main():
          'explicit_dedicated_macOS_arm64_CI_owner_admission_required')
     bundle, rows, sources, review, contract = sealed_sources(
         args.manifest, args.manifest_sha256, args.static_review)
+    need(0 <= args.admission_wait_seconds <= 600, 'admission_wait_limit_0_to_600_required')
+    signal.signal(signal.SIGTERM, admission_cancelled)
+    signal.signal(signal.SIGINT, admission_cancelled)
+    wait_budget = {'remaining_seconds': args.admission_wait_seconds}
     subjects = review['subjects']
     guide_path = bundle / subjects['resource_guide']['path']
     policy_path = bundle / subjects['resource_policy']['path']
-    initial = resource_admission(guide_path, sources[subjects['resource_guide']['path']], policy_path, ESTIMATE)
+    initial = wait_resource_admission(
+        lambda: resource_admission(guide_path, sources[subjects['resource_guide']['path']], policy_path, ESTIMATE),
+        wait_budget, lambda: ADMISSION_STOP, 'initial')
     if initial['advice']['decision'] != 'run':
         print(json.dumps({'status': 'NOT_RUN_RESOURCE_' + initial['advice']['decision'].upper(),
                           'admission': initial, 'retry': False}), flush=True)
         return 75
-    need(not os.path.lexists(CI_ROOT), 'exclusive_fresh_CI_root_required_no_resume')
+    need(not ADMISSION_STOP and not os.path.lexists(CI_ROOT),
+         'uncancelled_exclusive_fresh_CI_root_required_no_resume')
     os.umask(0o077)
     CI_ROOT.mkdir(mode=0o700)
     source = CI_ROOT / 'runtime-source'
@@ -395,6 +460,7 @@ def main():
                'contract_data': contract,
                'worker': {'path': str(source / 'prepare_ci_runtime.py'),
                           **rows[subjects['prep_worker_enabled']['path']]},
+               'wait_budget': wait_budget,
                'guide_path': guide_path, 'guide_raw': sources[subjects['resource_guide']['path']],
                'policy_path': policy_path,
                'static_context': {'manifest_sha256': args.manifest_sha256,

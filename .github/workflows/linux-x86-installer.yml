@@ -729,15 +729,19 @@ jobs:
           path: c2-receipts/
 
   mac-native:
-    # Mac DMG stage 1 (Studio's sealed runnable set, ci/mac): pinned public fetch + stage, then the native phases
-    # (tools, python, node, pcre, configure, build, install, deps, janus) on a fresh arm64 runner. Receipts are artifacts.
+    # Mac DMG stages 1+2 in ONE fresh job (Studio sealed sets): ci/mac = wait-enabled Stage1 (seal 94b09845),
+    # ci/mac-stage2 = Stage2 finalize/native audit/relocation/seal (seal c96530bd). Exact system PATH, env -i, absolute pythons.
     runs-on: macos-15
-    timeout-minutes: 120
+    timeout-minutes: 300
     env:
-      STUDIO_STAGE1_MANIFEST_SHA256: 972d012e9e3f1b02e881dde6fc8c7f52a6ed3f346d218c6260a862ffa1601ed9
+      STUDIO_STAGE1_MANIFEST_SHA256: 94b09845d219fc05a36e9a2affb05a0827adabc2f6f1053eccc07399673ca07a
+      STUDIO_STAGE2_MANIFEST_SHA256: c96530bde3b024b2226b767075d4682d91c90448d610095bce548060f1aded8c
+      STUDIO_CUSTODY_MANIFEST_SHA256: d0c644a993c37e515ac7dad9f62557f396f06e996f6ea119314be06a6ccc4844
+      STUDIO_COLLECT_MANIFEST_SHA256: 45ca16e8ad1004e6b3e0e4d83161b4bd1b343924b2fee3f6d73050bd0f0bad98
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
+        id: py
         with:
           python-version: '3.12'
       - name: Facts (dedicated arm64 runner)
@@ -745,38 +749,29 @@ jobs:
           uname -a; sw_vers; sysctl -n hw.memsize hw.ncpu; df -h /private/tmp | tail -1
           test "$(uname -m)" = arm64
           test ! -e /private/tmp/omegahive-ci-r12 && echo "job root absent"
-          command -v python3.12 && python3.12 -VV
-      - name: Verify the sealed source set
+          echo "trusted setup python: ${{ steps.py.outputs.python-path }}"; "${{ steps.py.outputs.python-path }}" -VV
+      - name: Verify both sealed source sets
+        run: |
+          (cd ci/mac && printf '%s  MANIFEST.sha256\n' "$STUDIO_STAGE1_MANIFEST_SHA256" | shasum -a 256 -c - && shasum -a 256 -c MANIFEST.sha256)
+          (cd ci/mac-stage2 && printf '%s  MANIFEST.sha256\n' "$STUDIO_STAGE2_MANIFEST_SHA256" | shasum -a 256 -c - && shasum -a 256 -c MANIFEST.sha256)
+          (cd ci/mac-custody && printf '%s  MANIFEST.sha256\n' "$STUDIO_CUSTODY_MANIFEST_SHA256" | shasum -a 256 -c - && shasum -a 256 -c MANIFEST.sha256)
+          (cd ci/mac-collect && printf '%s  MANIFEST.sha256\n' "$STUDIO_COLLECT_MANIFEST_SHA256" | shasum -a 256 -c - && shasum -a 256 -c MANIFEST.sha256)
+          stat -f '%Sp %Su %N' "$RUNNER_TEMP"
+      - name: Stage1 public preparation (fetch + stage)
         working-directory: ci/mac
         run: |
-          printf '%s  MANIFEST.sha256\n' "$STUDIO_STAGE1_MANIFEST_SHA256" | shasum -a 256 -c -
-          shasum -a 256 -c MANIFEST.sha256
-      - name: Wait for the fresh runner to go quiet (Studio's admission refuses when CPU is busy; it cannot retry in-job)
-        run: |
-          # Post-boot indexing keeps the runner busy for a few minutes. Wait for idle CPU >= 70% on 3 consecutive 10 s samples.
-          ok=0
-          for i in $(seq 1 60); do
-            idle=$(top -l 2 -s 5 -n 0 | awk '/CPU usage/ {v=$7} END {sub("%","",v); print int(v)}')
-            echo "sample $i: idle ${idle}%"
-            if [ "${idle:-0}" -ge 70 ]; then ok=$((ok+1)); else ok=0; fi
-            [ $ok -ge 3 ] && break
-            sleep 5
-          done
-          sudo mdutil -a -i off >/dev/null 2>&1 || true
-      - name: Public preparation (fetch + stage)
-        working-directory: ci/mac
-        run: |
-          python3.12 -I -B -S prep_entry.py \
+          /usr/bin/env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin GITHUB_ACTIONS=true LANG=C LC_ALL=C \
+            "${{ steps.py.outputs.python-path }}" -I -B -S prep_entry.py \
             --manifest "$PWD/MANIFEST.sha256" \
             --manifest-sha256 "$STUDIO_STAGE1_MANIFEST_SHA256" \
             --static-review "$PWD/STATIC_SOURCE_REVIEW.json" \
             --owner dot-mac-ci \
             --dedicated-ci-job --run
-      - name: Native phases
+      - name: Stage1 native phases
         working-directory: ci/mac
         run: |
-          env HOME=/private/tmp/omegahive-ci-r12/runtime-job/empty-home \
-            PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+          /usr/bin/env -i HOME=/private/tmp/omegahive-ci-r12/runtime-job/empty-home \
+            PATH=/usr/bin:/bin:/usr/sbin:/sbin GITHUB_ACTIONS=true LANG=C LC_ALL=C \
             /private/tmp/omegahive-ci-r12/runtime-job/bootstrap/python/bin/python3.12 \
             -I -B -S "$PWD/native_entry.py" \
             --manifest "$PWD/MANIFEST.sha256" \
@@ -784,14 +779,57 @@ jobs:
             --static-review "$PWD/STATIC_SOURCE_REVIEW.json" \
             --owner dot-mac-ci \
             --dedicated-ci-job --run
-      - name: Receipts (no secrets; logs and receipts only, no runtime bytes)
+      - name: Stage2 source-only plan (no runtime probes)
+        run: |
+          S2="$GITHUB_WORKSPACE/ci/mac-stage2"
+          /usr/bin/env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin GITHUB_ACTIONS=true LANG=C LC_ALL=C \
+            "${{ steps.py.outputs.python-path }}" -I -B -S "$S2/stage2-source/stage2_entry.py" \
+            --manifest "$S2/MANIFEST.sha256" \
+            --manifest-sha256 "$STUDIO_STAGE2_MANIFEST_SHA256"
+      - name: Stage2 finalize / native audit / relocation / seal
+        timeout-minutes: 120
+        run: |
+          S1="$GITHUB_WORKSPACE/ci/mac"; S2="$GITHUB_WORKSPACE/ci/mac-stage2"
+          /usr/bin/env -i HOME=/private/tmp/omegahive-ci-r12/runtime-job/empty-home \
+            PATH=/usr/bin:/bin:/usr/sbin:/sbin GITHUB_ACTIONS=true LANG=C LC_ALL=C \
+            /private/tmp/omegahive-ci-r12/runtime-job/bootstrap/python/bin/python3.12 \
+            -I -B -S "$S2/stage2-source/stage2_entry.py" \
+            --manifest "$S2/MANIFEST.sha256" \
+            --manifest-sha256 "$STUDIO_STAGE2_MANIFEST_SHA256" \
+            --stage1-manifest "$S1/MANIFEST.sha256" \
+            --stage1-manifest-sha256 "$STUDIO_STAGE1_MANIFEST_SHA256" \
+            --owner dot-mac-ci --dedicated-ci-job --run
+      - name: Custody export of the sealed runtime (closed inventory only; after a successful Stage2)
+        working-directory: /private/tmp/omegahive-ci-r12
+        run: |
+          C="$GITHUB_WORKSPACE/ci/mac-custody"
+          /usr/bin/env -i HOME=/private/tmp/omegahive-ci-r12 PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+            GITHUB_ACTIONS=true LANG=C LC_ALL=C RUNNER_TEMP="$RUNNER_TEMP" \
+            /private/tmp/omegahive-ci-r12/runtime-job/bootstrap/python/bin/python3.12 -I -B -S "$C/custody_entry.py" \
+            --source-manifest "$C/MANIFEST.sha256" \
+            --expected-manifest-sha256 "$STUDIO_CUSTODY_MANIFEST_SHA256" \
+            --owner dot-mac-ci --dedicated-ci-job --run
+      - name: Collect control receipts (always; typed selectors; keeps a nonzero exit)
+        id: collect
         if: always()
         run: |
-          R=/private/tmp/omegahive-ci-r12; mkdir -p mac-receipts
-          [ -d $R ] && (cd $R && find . -maxdepth 4 \( -name '*.json' -o -name '*.log' -o -name '*.txt' \) -size -5M -print0 | xargs -0 -I{} rsync -R {} "$GITHUB_WORKSPACE/mac-receipts/") || true
-          find mac-receipts -type f | head -50; du -sh mac-receipts
+          K="$GITHUB_WORKSPACE/ci/mac-collect"
+          /usr/bin/env -i HOME="$RUNNER_TEMP" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+            GITHUB_ACTIONS=true LANG=C LC_ALL=C RUNNER_TEMP="$RUNNER_TEMP" \
+            "${{ steps.py.outputs.python-path }}" -I -B -S "$K/collector_entry.py" \
+            --source-manifest "$K/MANIFEST.sha256" \
+            --expected-manifest-sha256 "$STUDIO_COLLECT_MANIFEST_SHA256" \
+            --owner dot-mac-ci --dedicated-ci-job --run
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mac-native-stage1-receipts
-          path: mac-receipts/
+          name: mac-control-receipts
+          path: ${{ runner.temp }}/omegahive-control-receipts-r1/
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-runtime-custody
+          path: ${{ runner.temp }}/omegahive-runtime-custody-r1/
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "sample_cache_seconds": 5,
+  "max_metric_age_seconds": 15,
+  "memory_reserve_gb": 2,
+  "memory_reserve_fraction": 0.1,
+  "memory_warning_fraction": 0.15,
+  "memory_critical_fraction": 0.05,
+  "cpu_busy_limit_percent": 85,
+  "disk_reserve_gb": 5,
+  "disk_reserve_fraction": 0.05,
+  "heavy_ram_gb": 1,
+  "heavy_cpu_cores": 1,
+  "benchmark_isolation": true
+}

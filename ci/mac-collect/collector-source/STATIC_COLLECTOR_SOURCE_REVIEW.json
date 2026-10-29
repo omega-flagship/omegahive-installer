@@ -1,0 +1,31 @@
+{
+  "schema": "studio-Mac-CI-control-receipts-static-review/1",
+  "verdict": "PASS_SOURCE_ONLY",
+  "blocking_findings": [],
+  "reviewer": "r64_ledger_schema_peer",
+  "source_owner": "MacBook-Hive main author",
+  "origin_machine": "MacBook",
+  "subjects": {
+    "collector": {
+      "path": "collect_control_receipts.py",
+      "bytes": 32411,
+      "sha256": "5e941b88c8c9df176e9d6c2c211e984215331356e22f1b228a3651bd66a4e112"
+    },
+    "selectors": {
+      "path": "RECEIPT_SELECTORS_R1.json",
+      "bytes": 27003,
+      "sha256": "97bd359700a0282b296d8d084bb9a0f5f119983aba49ab627dea4d38272787ad"
+    },
+    "resource_guide": {
+      "path": "project_graph/resources.py",
+      "bytes": 19590,
+      "sha256": "76d503d65fab968c6894f7ac5698178f8811f3aeb08cda2a3c0f9006a15b0fbb"
+    },
+    "resource_policy": {
+      "path": "project_graph/resource-policy.json",
+      "bytes": 375,
+      "sha256": "3add848d3756762ddffa9a817a3bebbf26b41674cb5ccf885028f499a627884f"
+    }
+  },
+  "scope": "Independent static review of these exact source subjects and the named frozen receipt matrix, Stage1 roots/phases, and custody entry/exporter path interfaces. R1 blockers are closed in this candidate. Source-only and unrun: no runtime checksum or execution, tests, CI, native, application, deployment, or workflow qualification is asserted."
+}

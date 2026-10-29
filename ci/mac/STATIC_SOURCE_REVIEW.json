@@ -8,8 +8,8 @@
   "subjects": {
     "prep_entry": {
       "path": "prep_entry.py",
-      "bytes": 22863,
-      "sha256": "214d57a3f9b55e55de5810c99ef3559872edb594e1a082d3f70e717f9d0f23a7"
+      "bytes": 26212,
+      "sha256": "3f188e98270d9f0914a1734ba9af2b019d87314ffd265486cd1d1939087aaf3a"
     },
     "prep_parent_library": {
       "path": "prep_parent_library.py",
@@ -43,8 +43,8 @@
     },
     "native_entry": {
       "path": "native_entry.py",
-      "bytes": 45103,
-      "sha256": "67b49abd8ec84c6798387823b2283af8be77d51a4f55c2e95bd38ad81302e28b"
+      "bytes": 51152,
+      "sha256": "363864ae97f7cbcfdf6f7c9842f12dbc2fba7cb8a4acb3011d731e47710e7d70"
     },
     "native_parent": {
       "path": "ci_native_parent.py",
@@ -64,8 +64,8 @@
   },
   "native_component_review": {
     "path": "STATIC_NATIVE_SOURCE_REVIEW.json",
-    "bytes": 1061,
-    "sha256": "b0b485c32b6472ddfa351e1bf5f4d78fa9ff576df5d9ea97fffc1f8d2a3c9c60"
+    "bytes": 1005,
+    "sha256": "f00f83ffe1519c3e4aff80436a29c33df7e1e8529a812dcf16e76255309f45f3"
   },
-  "scope": "Independent static review of these exact eleven fixed Source roles, their sealed ten public reference files and the genuine four-role native component review. Prep Entry R3 and Parent R8 guard fixes reviewed; actual58 mocked integration controls passed separately. Runtime owner facts, UID, source materialization, leases and resource decisions remain CI-owner admission; no per-run review generation, actual native build, CI, audit, relocation, installer or deployment qualification is granted."
+  "scope": "Independent static review of these exact eleven Source roles, the ten unchanged sealed public reference files and the genuine four-role native component review. Exact predecessor role/reference bytes were verified; both admission-wait entry deltas and cross-component review/source bindings were inspected. Preparation shares one finite wait budget; native waits before owner facts and rechecks held inputs and identities. Runtime owner facts, leases, task/resource admission and all execution qualification remain separate. No generated per-run review, native build, CI, audit, relocation, installer or deployment pass is granted."
 }

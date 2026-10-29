@@ -1,9 +1,13 @@
 {
-  "schema": "studio-runnable-Mac-CI-stage1-text-source-set/1",
-  "group": "studio-Mac-CI-runnable-stage1-source-20261028-R1",
-  "source_owner": "Studio Root and MacBook-Hive team; independent raw reviews included",
+  "schema": "studio-explicit-reviewed-small-source-pull-manifest/1",
+  "source_owner": "Studio Root and MacBook-Hive independent Source reviewers",
   "origin_machine": "MacBook",
-  "status": "REVIEWED_SOURCE_ENTRYPOINTS_READY_FOR_OWNER_CI_ADMISSION_NO_NATIVE_CI_EXECUTION",
+  "group": "studio-Mac-CI-wait-stage1-source-20261028-R1",
+  "source_checksum_manifest": {
+    "path": "MANIFEST.sha256",
+    "bytes": 2260,
+    "sha256": "94b09845d219fc05a36e9a2affb05a0827adabc2f6f1053eccc07399673ca07a"
+  },
   "files": [
     {
       "path": "PUBLIC_RUNTIME_INPUTS_R4.json",
@@ -12,18 +16,18 @@
     },
     {
       "path": "README.md",
-      "bytes": 4767,
-      "sha256": "783817baff57d6fd6f8c33939a2acbd8a2e8567407d42ce179e43b130125fcdc"
+      "bytes": 6366,
+      "sha256": "ce2dfd447f55c240d2302dfaaabeaf8e93d44be0093ce1c3dc393aae3c1f4b60"
     },
     {
       "path": "STATIC_NATIVE_SOURCE_REVIEW.json",
-      "bytes": 1061,
-      "sha256": "b0b485c32b6472ddfa351e1bf5f4d78fa9ff576df5d9ea97fffc1f8d2a3c9c60"
+      "bytes": 1005,
+      "sha256": "f00f83ffe1519c3e4aff80436a29c33df7e1e8529a812dcf16e76255309f45f3"
     },
     {
       "path": "STATIC_SOURCE_REVIEW.json",
-      "bytes": 2975,
-      "sha256": "91fe05791125dd606457d45a4be3bf9658da8282956e4f6a6036a93db1a0982f"
+      "bytes": 3111,
+      "sha256": "b2debb0087ff1d0f58b3ef5ac3217c48943ff62d8ba982d24f77a3c0f5e5c6b4"
     },
     {
       "path": "ci_native_parent.py",
@@ -37,13 +41,13 @@
     },
     {
       "path": "native_entry.py",
-      "bytes": 45103,
-      "sha256": "67b49abd8ec84c6798387823b2283af8be77d51a4f55c2e95bd38ad81302e28b"
+      "bytes": 51152,
+      "sha256": "363864ae97f7cbcfdf6f7c9842f12dbc2fba7cb8a4acb3011d731e47710e7d70"
     },
     {
       "path": "prep_entry.py",
-      "bytes": 22863,
-      "sha256": "214d57a3f9b55e55de5810c99ef3559872edb594e1a082d3f70e717f9d0f23a7"
+      "bytes": 26212,
+      "sha256": "3f188e98270d9f0914a1734ba9af2b019d87314ffd265486cd1d1939087aaf3a"
     },
     {
       "path": "prep_parent_library.py",
@@ -128,13 +132,8 @@
     {
       "path": "MANIFEST.sha256",
       "bytes": 2260,
-      "sha256": "972d012e9e3f1b02e881dde6fc8c7f52a6ed3f346d218c6260a862ffa1601ed9"
+      "sha256": "94b09845d219fc05a36e9a2affb05a0827adabc2f6f1053eccc07399673ca07a"
     }
   ],
-  "stage1_checksum_manifest": {
-    "path": "MANIFEST.sha256",
-    "bytes": 2260,
-    "sha256": "972d012e9e3f1b02e881dde6fc8c7f52a6ed3f346d218c6260a862ffa1601ed9"
-  },
-  "scope": "Small explicit public source/locks/reviews/commands only. CI runner needs no MacBook relay/private runtime. Actual local public preparation and mocked controls separate; native/CI/app/audit/relocation/seal/DMG/journey/release pending."
+  "scope": "Reviewed new wait-enabled Stage1 source text only. Original green Stage1 source/run retained. No binaries, runtime payloads, credentials, account records or held inputs. Source retrieval is not CI/admission/product qualification."
 }

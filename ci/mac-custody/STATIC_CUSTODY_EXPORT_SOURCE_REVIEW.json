@@ -1,0 +1,16 @@
+{
+  "blocking_findings": [],
+  "origin_machine": "macbook-hive",
+  "reviewer": "MacBook-Hive independent frozen Source review lane",
+  "schema": "studio-Mac-CI-runtime-custody-export-source-review/1",
+  "scope": "Independent full exporter composition and exact R2-to-R3 delta review against nine finite requirements and fourteen synthetic fixture specifications. R3 resolves both remaining R2 blockers; no concrete Source blocker remains within this declared scope. This is Source-only: no candidate import, compilation, helper/test/API/archive/native/CI execution, owner run admission, actual byte custody, restored runtime or product/deployment qualification. Existing R2 context/review/task filenames, CLI, schemas and resource estimate remain unchanged.",
+  "source_owner": "StudioRoot candidate author, per immutable Source manifest",
+  "subjects": {
+    "custody_export": {
+      "bytes": 84366,
+      "path": "/private/tmp/omegahive-ci-r12/native-source/export_runtime_custody.py",
+      "sha256": "a66fd830865e82e45b7f39575ecce5fd60cee0a87a1c3de5c4eead2ce8a50e98"
+    }
+  },
+  "verdict": "PASS_SOURCE_ONLY"
+}

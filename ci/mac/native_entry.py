@@ -13,6 +13,7 @@ import math
 import os
 from pathlib import Path, PurePosixPath
 import re
+import signal
 import stat
 import sys
 import time
@@ -632,21 +633,121 @@ def verify_preparation(bundle, uid):
     return prep_pin, inventory_pin, tools
 
 
+def wait_resource_admission(sample, budget, cancelled, phase):
+    """Retry admission only, sharing one finite wait budget; never retry work."""
+    need(type(budget) is dict and set(budget) == {'remaining_seconds'}
+         and type(budget['remaining_seconds']) in (int, float)
+         and 0 <= budget['remaining_seconds'] <= 600,
+         'bounded_admission_wait_budget_required')
+    started = time.monotonic()
+    available = budget['remaining_seconds']
+    deadline = started + available
+    waited, observations = False, []
+    for index in range(121):
+        need(not cancelled(), 'cancelled_before_resource_admission')
+        admission = sample()
+        need(not cancelled(), 'cancelled_during_resource_admission')
+        decision = admission['advice']['decision']
+        need(type(decision) is str and decision in {'run', 'wait', 'unknown'},
+             'closed_resource_decision_required')
+        now = time.monotonic()
+        need(now >= started, 'monotonic_resource_wait_clock_required')
+        observations.append({'sample': index + 1, 'decision': decision,
+                             'elapsed_seconds': now - started})
+        waited = waited or decision == 'wait'
+        expired = waited and now >= deadline
+        if decision != 'wait' or expired:
+            if waited:
+                budget['remaining_seconds'] = max(0, available - (now - started))
+            # An admission that arrives after its wait deadline grants no launch.
+            if expired:
+                admission = dict(admission)
+                admission['advice'] = dict(admission['advice'], decision='wait')
+            admission['admission_wait'] = {
+                'schema': 'studio-CI-before-work-admission-wait/1',
+                'phase': phase, 'waited': waited, 'expired': expired,
+                'remaining_seconds': budget['remaining_seconds'],
+                'observations': observations, 'worker_retries': 0}
+            return admission
+        print(json.dumps({'status': 'RESOURCE_WAIT_BEFORE_WORK', 'phase': phase,
+                          'sample': index + 1, 'elapsed_seconds': now - started,
+                          'remaining_seconds': max(0, deadline - now)}), flush=True)
+        pause_until = min(deadline, now + 5)
+        while time.monotonic() < pause_until:
+            need(not cancelled(), 'cancelled_while_waiting_for_resource_admission')
+            time.sleep(min(.25, max(0, pause_until - time.monotonic())))
+    raise RuntimeError('resource_wait_sample_cap_no_launch')
+
+
+ADMISSION_STOP = False
+
+
+def admission_cancelled(_signum, _frame):
+    global ADMISSION_STOP
+    ADMISSION_STOP = True
+
+
+def current_task_attestation(args, uid):
+    if args.current_tasks is None:
+        return []
+    raw, _pin = read_regular(_absolute(args.current_tasks), maximum=256 * 1024,
+                             owner_uid=uid)
+    value = parse_object(raw, 'current_tasks_attestation_invalid')
+    need(set(value) == {'schema', 'complete', 'tasks'}
+         and value['schema'] == 'studio-Mac-CI-current-tasks-owner-attestation/1'
+         and value['complete'] is True, 'explicit_task_completeness_required')
+    return validate_tasks(value['tasks'])
+
+
+def before_native_admission(args, bundle, uid):
+    need(args.dedicated_ci_job is True and 0 <= args.admission_wait_seconds <= 600,
+         'explicit_dedicated_CI_bounded_wait_required')
+    guide_path = ROOT / 'project_graph/resources.py'
+    policy_path = ROOT / 'project_graph/resource-policy.json'
+    guide_pin = bundle['subjects']['resource_guide']
+    policy_pin = bundle['subjects']['resource_policy']
+    estimate = {'ram_gb': 3.125, 'cpu_cores': 2.25, 'disk_gb': 8, 'kind': 'task'}
+    def sample():
+        guide_raw, _pin = read_regular(guide_path, maximum=256 * 1024, owner_uid=uid,
+            expected_bytes=guide_pin['bytes'], expected_sha256=guide_pin['sha256'])
+        policy_raw, _pin = read_regular(policy_path, maximum=65536, owner_uid=uid,
+            expected_bytes=policy_pin['bytes'], expected_sha256=policy_pin['sha256'])
+        need(guide_raw == role_raw(bundle, 'resource_guide')
+             and policy_raw == role_raw(bundle, 'resource_policy'),
+             'canonical_resource_source_mismatch')
+        namespace = {'__name__': 'studio_CI_native_entry_resource', '__file__': str(guide_path)}
+        exec(compile(guide_raw, str(guide_path), 'exec'), namespace)
+        started = time.monotonic()
+        snapshot = namespace['sample'](force=True)
+        disk = os.statvfs(ROOT)
+        snapshot['disk'] = {'total_bytes': disk.f_blocks * disk.f_frsize,
+                            'free_bytes': disk.f_bavail * disk.f_frsize}
+        tasks = current_task_attestation(args, uid)
+        advice = namespace['advise'](snapshot, estimate, tasks)
+        need(time.monotonic() - started <= 15
+             and advice.get('policy', {}).get('sha256') == policy_pin['sha256'],
+             'fresh_actual_resource_policy_required')
+        return {'at': snapshot['checked_at'], 'pressure': snapshot['memory']['pressure'],
+                'advice': advice, 'estimate': estimate, 'current_tasks': tasks}
+    signal.signal(signal.SIGTERM, admission_cancelled)
+    signal.signal(signal.SIGINT, admission_cancelled)
+    advice = wait_resource_admission(sample,
+        {'remaining_seconds': args.admission_wait_seconds},
+        lambda: ADMISSION_STOP, 'native-before-owner-facts')
+    if advice['advice']['decision'] != 'run':
+        print(json.dumps({'status': 'NOT_RUN_RESOURCE_' + advice['advice']['decision'].upper(),
+                          'admission': advice, 'worker_retry': False}), flush=True)
+        return None
+    need(not ADMISSION_STOP, 'cancelled_before_native_owner_facts')
+    return advice
+
+
 def owner_facts(args, uid, job_identity, prep_pin, inventory_pin, bundle):
     # The dedicated-job switch is the operator's explicit completeness and
     # reservation attestation; it is not an independent source review or a
     # distributed Hive admission. Parent samples resources again before Popen.
     need(args.dedicated_ci_job is True, 'explicit_dedicated_CI_attestation_required')
-    tasks = []
-    if args.current_tasks is not None:
-        task_raw, _pin = read_regular(_absolute(args.current_tasks), maximum=256 * 1024,
-                                      owner_uid=uid)
-        value = parse_object(task_raw, 'current_tasks_attestation_invalid')
-        need(set(value) == {'schema', 'complete', 'tasks'}
-             and value['schema'] == 'studio-Mac-CI-current-tasks-owner-attestation/1'
-             and value['complete'] is True,
-             'explicit_task_completeness_required')
-        tasks = validate_tasks(value['tasks'])
+    tasks = current_task_attestation(args, uid)
     now = int(time.time())
     source_owner = bundle['common']['source_owner']
     origin = os.uname().nodename
@@ -728,6 +829,15 @@ def bind_and_exec(args, bundle, pins):
     need(not os.path.lexists(PARENT_DIR / 'NATIVE_ENTRY_LAUNCH_R1.json'),
          'prior_native_launch_retained_new_CI_job_required')
     prep_pin, inventory_pin, tools = verify_preparation(bundle, uid)
+    resource_admission = before_native_admission(args, bundle, uid)
+    if resource_admission is None:
+        return 75
+    # Preparation, fixed binaries and identities may have changed during a wait.
+    prep_pin, inventory_pin, tools = verify_preparation(bundle, uid)
+    for path, identity in identities.items():
+        need(directory_identity(Path(path), uid, private=True) == identity,
+             'CI_directory_identity_changed_during_admission_wait')
+    need(not ADMISSION_STOP, 'cancelled_before_native_owner_facts')
     owner = owner_facts(args, uid, identities[str(JOB)], prep_pin, inventory_pin, bundle)
     parent_pin, worker_pin, producer_pin = pins
     ensure_private(NATIVE, uid)
@@ -778,7 +888,8 @@ def bind_and_exec(args, bundle, pins):
     facts_raw = canonical_json({'schema': 'studio-Mac-CI-native-entry-owner-facts/1',
         'status': 'CI_OWNER_ATTESTED', 'owner': owner, 'producer_admission': admission,
         'whole_review': bundle['common_pin'], 'component_review': review_pin,
-        'manifest': bundle['checksum_pin'], 'inputs': inputs_pin}, 256 * 1024)
+        'manifest': bundle['checksum_pin'], 'inputs': inputs_pin,
+        'prelaunch_resource_admission': resource_admission}, 256 * 1024)
     facts_path = PARENT_DIR / ('OWNER_FACTS_' + hashlib.sha256(facts_raw).hexdigest() + '.json')
     _ensure_exact_or_write(facts_path, facts_raw, raw_pin(facts_path, facts_raw), uid)
     for path, identity in identities.items():
@@ -789,6 +900,7 @@ def bind_and_exec(args, bundle, pins):
     pinned_input(Path(PYTHON['path']), PYTHON, uid, 32 * 1024**2)
     for pin in (parent_pin, worker_pin, producer_pin, review_pin):
         pinned_input(Path(pin['path']), pin, uid, 256 * 1024)
+    need(not ADMISSION_STOP, 'cancelled_before_native_context_lease')
     context = make_context(owner, review_pin, parent_pin, worker_pin, inputs_pin, tools)
     context_pin = refresh_owner_context(canonical_json(context, 256 * 1024), uid)
     argv = [PYTHON['path'], '-I', '-B', '-S', str(PARENT_SOURCE),
@@ -805,6 +917,7 @@ def bind_and_exec(args, bundle, pins):
     env = {'HOME': str(JOB / 'empty-home'), 'PATH': '/usr/bin:/bin:/usr/sbin:/sbin',
            'LANG': 'C', 'LC_ALL': 'C'}
     os.chdir(ROOT)
+    need(not ADMISSION_STOP, 'cancelled_before_native_exec')
     os.execve(PYTHON['path'], argv, env)
     raise Refused('parent_exec_returned')
 
@@ -818,6 +931,7 @@ def main(argv=None):
     parser.add_argument('--owner', required=True)
     parser.add_argument('--dedicated-ci-job', action='store_true')
     parser.add_argument('--current-tasks', help='Optional closed owner task attestation JSON (absolute path).')
+    parser.add_argument('--admission-wait-seconds', type=int, default=600)
     parser.add_argument('--run', action='store_true')
     args = parser.parse_args(argv)
     try:
@@ -833,8 +947,8 @@ def main(argv=None):
                 'component_review_sha256': bundle['component_pin']['sha256'],
                 'next': 'Same public CLI plus --run after successful portable preparation.'}, sort_keys=True))
             return 0
-        bind_and_exec(args, bundle, pins)
-        return 0
+        result = bind_and_exec(args, bundle, pins)
+        return 75 if result == 75 else 0
     except (Refused, OSError, ValueError, TypeError, KeyError) as error:
         print(json.dumps({'status': 'REFUSED_NO_AUTOMATIC_RETRY',
                           'reason': str(error) if isinstance(error, Refused) else type(error).__name__,

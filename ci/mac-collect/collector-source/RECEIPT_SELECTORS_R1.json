@@ -1,0 +1,852 @@
+{
+  "schema": "studio-control-receipt-selectors/1",
+  "source_owner": "MacBook-Hive author from exact declared Source receipt matrix",
+  "origin_machine": "MacBook",
+  "matrix_pin": {
+    "path": "coordination/remote-control/20261029/ci-stage2-receipt-acceptance-source-r1/RECEIPT_ACCEPTANCE_MATRIX_R1.json",
+    "bytes": 96455,
+    "sha256": "90f1e76deca150f71ceddc6cf5f3aee16e18e9ff1ea995bb616cbab0e398b136"
+  },
+  "original_pattern_count": 121,
+  "expanded_template_count": 137,
+  "archive_header_expansion": "Five exact stage() roots from sealed prepare_ci_runtime_prototype.py260-279; no Node occurrence file is produced there.",
+  "native_phase_expansion": [
+    "tools",
+    "python",
+    "node",
+    "pcre",
+    "configure",
+    "build",
+    "install",
+    "deps",
+    "janus"
+  ],
+  "limits_note": "JSON64MiB conservative producer ceiling; linkage32MiB and prepared8MiB valid inputs fit. Prepared inventory producer32MiB and archive-header32MiB outputs retained, zero ready files and checksums explicit. Per-command64KiB; runner closure8MiB. Collector aggregate admission remains independent and fails with accounting instead of silently omitting files.",
+  "templates": [
+    {
+      "family": "stage1.preparation.owner",
+      "path": "PREPARATION_OWNER_CONTEXT_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.preparation.fetch",
+      "path": "preparation-parent/fetch/attempt-<32lowerhex>/RESOURCE_ADMISSION.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.preparation.fetch",
+      "path": "preparation-parent/fetch/attempt-<32lowerhex>/STARTED.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.preparation.fetch",
+      "path": "preparation-parent/fetch/attempt-<32lowerhex>/PARENT_RESULT.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.preparation.fetch",
+      "path": "preparation-parent/fetch/attempt-<32lowerhex>/WORKER_STDOUT.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.preparation.fetch",
+      "path": "preparation-parent/fetch/attempt-<32lowerhex>/WORKER_STDERR.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.preparation.stage",
+      "path": "preparation-parent/stage/attempt-<32lowerhex>/RESOURCE_ADMISSION.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.preparation.stage",
+      "path": "preparation-parent/stage/attempt-<32lowerhex>/STARTED.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.preparation.stage",
+      "path": "preparation-parent/stage/attempt-<32lowerhex>/PARENT_RESULT.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.preparation.stage",
+      "path": "preparation-parent/stage/attempt-<32lowerhex>/WORKER_STDOUT.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.preparation.stage",
+      "path": "preparation-parent/stage/attempt-<32lowerhex>/WORKER_STDERR.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.fetch.receipt",
+      "path": "runtime-job/FETCH_STARTED_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.fetch.receipt",
+      "path": "runtime-job/FETCH_RECEIPT_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.preparation.receipt",
+      "path": "runtime-job/STAGE_STARTED_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.preparation.receipt",
+      "path": "runtime-job/CI_PREPARATION_RECEIPT_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.preparation.receipt",
+      "path": "runtime-job/PREPARED_SOURCE_INVENTORIES_R1.json",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.archive.headers",
+      "path": "runtime-job/bootstrap_python_ARCHIVE_OCCURRENCES_R1.json",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.archive.headers",
+      "path": "runtime-job/sources_swipl-src_ARCHIVE_OCCURRENCES_R1.json",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.archive.headers",
+      "path": "runtime-job/OmegaHive.bundle_PeTTa_ARCHIVE_OCCURRENCES_R1.json",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.archive.headers",
+      "path": "runtime-job/OmegaHive.bundle_petta_lib_chromadb_ARCHIVE_OCCURRENCES_R1.json",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.archive.headers",
+      "path": "runtime-job/sources_pcre2-src_ARCHIVE_OCCURRENCES_R1.json",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.preparation.failure",
+      "path": "runtime-job/FETCH_FAILED_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.preparation.failure",
+      "path": "runtime-job/STAGE_FAILED_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.inputs",
+      "path": "native-source/NATIVE_BUILD_INPUTS_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.context",
+      "path": "native-parent/NATIVE_PARENT_CONTEXT_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.context",
+      "path": "native-parent/NATIVE_PARENT_SOURCE_REVIEW_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.context",
+      "path": "native-parent/NATIVE_ENTRY_LAUNCH_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.context.history",
+      "path": "native-parent/NATIVE_PARENT_CONTEXT_SUPERSEDED_<oldsha>.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.context.history",
+      "path": "native-parent/NATIVE_PARENT_CONTEXT_REFRESH_<newsha>.tmp",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.parent",
+      "path": "native-parent/attempt-<32lowerhex>/RESOURCE_ADMISSION.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.parent",
+      "path": "native-parent/attempt-<32lowerhex>/STARTED.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.parent",
+      "path": "native-parent/attempt-<32lowerhex>/PARENT_RESULT.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.parent",
+      "path": "native-parent/attempt-<32lowerhex>/WORKER_STDOUT.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.parent",
+      "path": "native-parent/attempt-<32lowerhex>/WORKER_STDERR.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.worker",
+      "path": "native-build-attempts/<YYYYmmddTHHMMSSZ>-<12lowerhex>/NATIVE_BUILD_RESULT_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.worker",
+      "path": "native-build-attempts/<YYYYmmddTHHMMSSZ>-<12lowerhex>/tools.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.worker",
+      "path": "native-build-attempts/<YYYYmmddTHHMMSSZ>-<12lowerhex>/python.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.worker",
+      "path": "native-build-attempts/<YYYYmmddTHHMMSSZ>-<12lowerhex>/node.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.worker",
+      "path": "native-build-attempts/<YYYYmmddTHHMMSSZ>-<12lowerhex>/pcre.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.worker",
+      "path": "native-build-attempts/<YYYYmmddTHHMMSSZ>-<12lowerhex>/configure.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.worker",
+      "path": "native-build-attempts/<YYYYmmddTHHMMSSZ>-<12lowerhex>/build.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.worker",
+      "path": "native-build-attempts/<YYYYmmddTHHMMSSZ>-<12lowerhex>/install.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.worker",
+      "path": "native-build-attempts/<YYYYmmddTHHMMSSZ>-<12lowerhex>/deps.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.worker",
+      "path": "native-build-attempts/<YYYYmmddTHHMMSSZ>-<12lowerhex>/janus.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage1.native.completion",
+      "path": "runtime-job/receipts/native-phases-r1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.source.custody",
+      "path": "stage2-source/STATIC_STAGE2_SOURCE_REVIEW.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.source.custody",
+      "path": "stage2-source/STAGE2_MANIFEST.sha256",
+      "max_bytes": 131072,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.stage1.custody",
+      "path": "runtime-job/receipts/stage1-MANIFEST.sha256",
+      "max_bytes": 131072,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.stage1.custody",
+      "path": "runtime-job/receipts/stage1-source-review-r1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.owner.launch",
+      "path": "stage2-parent/STAGE2_ENTRY_LAUNCH_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.finalize",
+      "path": "stage2-parent/attempt-<32lowerhex>/finalize/RESOURCE_ADMISSION.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.finalize",
+      "path": "stage2-parent/attempt-<32lowerhex>/finalize/PHASE_CONTEXT.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.finalize",
+      "path": "stage2-parent/attempt-<32lowerhex>/finalize/STARTED.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.finalize",
+      "path": "stage2-parent/attempt-<32lowerhex>/finalize/READY.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.finalize",
+      "path": "stage2-parent/attempt-<32lowerhex>/finalize/GO.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.finalize",
+      "path": "stage2-parent/attempt-<32lowerhex>/finalize/PHASE_FACTS.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.finalize",
+      "path": "stage2-parent/attempt-<32lowerhex>/finalize/PARENT_RESULT.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.finalize",
+      "path": "stage2-parent/attempt-<32lowerhex>/finalize/STDOUT.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.finalize",
+      "path": "stage2-parent/attempt-<32lowerhex>/finalize/STDERR.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.native_audit",
+      "path": "stage2-parent/attempt-<32lowerhex>/native_audit/RESOURCE_ADMISSION.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.native_audit",
+      "path": "stage2-parent/attempt-<32lowerhex>/native_audit/PHASE_CONTEXT.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.native_audit",
+      "path": "stage2-parent/attempt-<32lowerhex>/native_audit/STARTED.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.native_audit",
+      "path": "stage2-parent/attempt-<32lowerhex>/native_audit/READY.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.native_audit",
+      "path": "stage2-parent/attempt-<32lowerhex>/native_audit/GO.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.native_audit",
+      "path": "stage2-parent/attempt-<32lowerhex>/native_audit/PHASE_FACTS.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.native_audit",
+      "path": "stage2-parent/attempt-<32lowerhex>/native_audit/PARENT_RESULT.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.native_audit",
+      "path": "stage2-parent/attempt-<32lowerhex>/native_audit/STDOUT.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.native_audit",
+      "path": "stage2-parent/attempt-<32lowerhex>/native_audit/STDERR.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.copy",
+      "path": "stage2-parent/attempt-<32lowerhex>/copy/RESOURCE_ADMISSION.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.copy",
+      "path": "stage2-parent/attempt-<32lowerhex>/copy/PHASE_CONTEXT.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.copy",
+      "path": "stage2-parent/attempt-<32lowerhex>/copy/STARTED.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.copy",
+      "path": "stage2-parent/attempt-<32lowerhex>/copy/READY.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.copy",
+      "path": "stage2-parent/attempt-<32lowerhex>/copy/GO.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.copy",
+      "path": "stage2-parent/attempt-<32lowerhex>/copy/PHASE_FACTS.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.copy",
+      "path": "stage2-parent/attempt-<32lowerhex>/copy/PARENT_RESULT.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.copy",
+      "path": "stage2-parent/attempt-<32lowerhex>/copy/STDOUT.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.copy",
+      "path": "stage2-parent/attempt-<32lowerhex>/copy/STDERR.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.relocation",
+      "path": "stage2-parent/attempt-<32lowerhex>/relocation/RESOURCE_ADMISSION.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.relocation",
+      "path": "stage2-parent/attempt-<32lowerhex>/relocation/PHASE_CONTEXT.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.relocation",
+      "path": "stage2-parent/attempt-<32lowerhex>/relocation/STARTED.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.relocation",
+      "path": "stage2-parent/attempt-<32lowerhex>/relocation/READY.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.relocation",
+      "path": "stage2-parent/attempt-<32lowerhex>/relocation/GO.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.relocation",
+      "path": "stage2-parent/attempt-<32lowerhex>/relocation/PHASE_FACTS.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.relocation",
+      "path": "stage2-parent/attempt-<32lowerhex>/relocation/PARENT_RESULT.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.relocation",
+      "path": "stage2-parent/attempt-<32lowerhex>/relocation/STDOUT.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.relocation",
+      "path": "stage2-parent/attempt-<32lowerhex>/relocation/STDERR.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.seal",
+      "path": "stage2-parent/attempt-<32lowerhex>/seal/RESOURCE_ADMISSION.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.seal",
+      "path": "stage2-parent/attempt-<32lowerhex>/seal/PHASE_CONTEXT.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.seal",
+      "path": "stage2-parent/attempt-<32lowerhex>/seal/STARTED.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.seal",
+      "path": "stage2-parent/attempt-<32lowerhex>/seal/READY.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.seal",
+      "path": "stage2-parent/attempt-<32lowerhex>/seal/GO.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.seal",
+      "path": "stage2-parent/attempt-<32lowerhex>/seal/PHASE_FACTS.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.seal",
+      "path": "stage2-parent/attempt-<32lowerhex>/seal/PARENT_RESULT.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.seal",
+      "path": "stage2-parent/attempt-<32lowerhex>/seal/STDOUT.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.phase.seal",
+      "path": "stage2-parent/attempt-<32lowerhex>/seal/STDERR.log",
+      "max_bytes": 33554432,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.finalization.admission",
+      "path": "runtime-job/receipts/finalizer-admission-r1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.finalization.receipt",
+      "path": "runtime-job/receipts/finalization_r1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.finalization.failure",
+      "path": "runtime-job/receipts/finalization_failed_r1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.audit.admissions.native_audit",
+      "path": "native-source/NATIVE_AUDIT_ADMISSION_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.audit.admissions.native_audit",
+      "path": "native-source/NATIVE_AUDIT_TASK_ADMISSION_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.audit.admissions.native_audit",
+      "path": "native-source/NATIVE_AUDIT_RESOURCE_ADMISSION_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.runner.closure.native_audit",
+      "path": "stage2-parent/attempt-<32lowerhex>/native_audit/RUNNER_CLOSED.json",
+      "max_bytes": 8388608,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.command.registration.native_audit",
+      "path": "stage2-parent/attempt-<32lowerhex>/native_audit/command-groups/command-<6digits>.json",
+      "max_bytes": 65536,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.command.registration.native_audit",
+      "path": "stage2-parent/attempt-<32lowerhex>/native_audit/command-groups/command-<6digits>.ready",
+      "max_bytes": 0,
+      "zero_only": true
+    },
+    {
+      "family": "stage2.command.ack.native_audit",
+      "path": "stage2-parent/attempt-<32lowerhex>/native_audit/command-groups/command-<6digits>.ack.json",
+      "max_bytes": 65536,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.command.ack.native_audit",
+      "path": "stage2-parent/attempt-<32lowerhex>/native_audit/command-groups/command-<6digits>.ack.ready",
+      "max_bytes": 0,
+      "zero_only": true
+    },
+    {
+      "family": "stage2.command.outputs.native_audit",
+      "path": "stage2-parent/attempt-<32lowerhex>/native_audit/command-results/command-<6digits>.result.json",
+      "max_bytes": 65536,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.command.outputs.native_audit",
+      "path": "stage2-parent/attempt-<32lowerhex>/native_audit/command-results/command-<6digits>.stdout.log",
+      "max_bytes": 65536,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.command.outputs.native_audit",
+      "path": "stage2-parent/attempt-<32lowerhex>/native_audit/command-results/command-<6digits>.stderr.log",
+      "max_bytes": 65536,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.command.outputs.native_audit",
+      "path": "stage2-parent/attempt-<32lowerhex>/native_audit/command-results/command-<6digits>.rejected.json",
+      "max_bytes": 65536,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.audit.failure.native_audit",
+      "path": "stage2-parent/attempt-<32lowerhex>/native_audit/AUDIT_FAILURE.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.audit.admissions.relocation",
+      "path": "native-source/RELOCATION_AUDIT_ADMISSION_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.audit.admissions.relocation",
+      "path": "native-source/RELOCATION_AUDIT_TASK_ADMISSION_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.audit.admissions.relocation",
+      "path": "native-source/RELOCATION_AUDIT_RESOURCE_ADMISSION_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.runner.closure.relocation",
+      "path": "stage2-parent/attempt-<32lowerhex>/relocation/RUNNER_CLOSED.json",
+      "max_bytes": 8388608,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.command.registration.relocation",
+      "path": "stage2-parent/attempt-<32lowerhex>/relocation/command-groups/command-<6digits>.json",
+      "max_bytes": 65536,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.command.registration.relocation",
+      "path": "stage2-parent/attempt-<32lowerhex>/relocation/command-groups/command-<6digits>.ready",
+      "max_bytes": 0,
+      "zero_only": true
+    },
+    {
+      "family": "stage2.command.ack.relocation",
+      "path": "stage2-parent/attempt-<32lowerhex>/relocation/command-groups/command-<6digits>.ack.json",
+      "max_bytes": 65536,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.command.ack.relocation",
+      "path": "stage2-parent/attempt-<32lowerhex>/relocation/command-groups/command-<6digits>.ack.ready",
+      "max_bytes": 0,
+      "zero_only": true
+    },
+    {
+      "family": "stage2.command.outputs.relocation",
+      "path": "stage2-parent/attempt-<32lowerhex>/relocation/command-results/command-<6digits>.result.json",
+      "max_bytes": 65536,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.command.outputs.relocation",
+      "path": "stage2-parent/attempt-<32lowerhex>/relocation/command-results/command-<6digits>.stdout.log",
+      "max_bytes": 65536,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.command.outputs.relocation",
+      "path": "stage2-parent/attempt-<32lowerhex>/relocation/command-results/command-<6digits>.stderr.log",
+      "max_bytes": 65536,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.command.outputs.relocation",
+      "path": "stage2-parent/attempt-<32lowerhex>/relocation/command-results/command-<6digits>.rejected.json",
+      "max_bytes": 65536,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.audit.failure.relocation",
+      "path": "stage2-parent/attempt-<32lowerhex>/relocation/AUDIT_FAILURE.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.native.audit",
+      "path": "runtime-job/receipts/runtime-native-audit-r1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.copy.facts",
+      "path": "runtime-job/receipts/runtime-copy-facts-r1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.relocation.audit",
+      "path": "runtime-job/receipts/runtime-relocation-r1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.seal.inputs",
+      "path": "stage2-source/SEAL_INPUTS_R1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.seal.inputs",
+      "path": "runtime-job/receipts/runtime-seal-admission-r1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.seal.started",
+      "path": "runtime-job/receipts/runtime-seal-started-r1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.sealed.input",
+      "path": "runtime-job/receipts/sealed-runtime-input-r1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.seal.result",
+      "path": "runtime-job/receipts/runtime-seal-result-r1.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "stage2.terminal",
+      "path": "stage2-parent/attempt-<32lowerhex>/STAGE2_RESULT.json",
+      "max_bytes": 67108864,
+      "zero_only": false
+    },
+    {
+      "family": "aux.custody.admission",
+      "path": "native-source/CUSTODY_EXPORT_ADMISSION_R2.json",
+      "max_bytes": 65536,
+      "zero_only": false
+    },
+    {
+      "family": "aux.custody.source_review",
+      "path": "native-source/CUSTODY_EXPORT_SOURCE_REVIEW_R2.json",
+      "max_bytes": 262144,
+      "zero_only": false
+    },
+    {
+      "family": "aux.custody.current_tasks",
+      "path": "native-source/CUSTODY_EXPORT_CURRENT_TASKS_R1.json",
+      "max_bytes": 262144,
+      "zero_only": false
+    },
+    {
+      "family": "aux.custody.entry_launch",
+      "path": "native-source/CUSTODY_ENTRY_LAUNCH_R1.json",
+      "max_bytes": 524288,
+      "zero_only": false
+    }
+  ],
+  "matrix_expanded_template_count": 133,
+  "additional_typed_count": 4,
+  "additional_typed_source": "Studio Root explicit caller-control custody request; exact frozen custody-entry R2 Source. No generic native-source discovery."
+}
