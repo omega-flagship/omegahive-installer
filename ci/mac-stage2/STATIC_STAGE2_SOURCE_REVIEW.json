@@ -1,61 +1,61 @@
 {
-  "schema": "studio-Mac-CI-stage2-static-source-review/1",
-  "verdict": "PASS_SOURCE_ONLY",
   "blocking_findings": [],
-  "reviewer": "MacBook-Hive independent whole reviewer and Stage2 diagnostic successor reviewer",
-  "source_owner": "MacBook-Hive native_ci_entry_controls Source staging lane; unchanged roles retain prior source owners",
   "origin_machine": "MacBook",
+  "reviewer": "MacBook-Hive independent cohort reviewer; new Entry source was independently reviewed by r64_ledger_schema_peer",
+  "schema": "studio-Mac-CI-stage2-static-source-review/1",
+  "scope": "Successor closed ten-role source review for the exact Entry R2 candidate. All nine unchanged role paths, byte counts and SHA-256 values match the retained original bundle subjects and their current staged bytes exactly; semantic review for those nine roles is inherited from the old genuine whole review, not represented as a new body-by-body review. The new Entry subject is independently source-reviewed at its exact R2 pin by r64_ledger_schema_peer in the separately retained r5-typed-finalizer-entry-peer-review-r1/SOURCE_REVIEW_R1.json. That bounded review covers the exact finalizer typed-refusal bridge, 0400 sidecar read/write, source/class/domain/context/PID bindings, after-cleanup observation and preserved aggregate failure. The old review is provenance only and is not copied or treated as current review. This raw review binds the logical canonical ten role paths for the successor cohort; it does not create or seal a shipping bundle/manifest. It is source-only with qualification NONE: no import, compile, test, worker, runtime, CI or native action; no actual failure cause is asserted. Current actual 19 checks and all owner/resource/workflow gates remain separate and pending.",
+  "source_owner": "Studio Root typed Entry R2 candidate; unchanged roles retain their prior source owners",
   "subjects": {
-    "audit_runtime": {
-      "path": "stage2-source/audit_runtime.py",
-      "bytes": 101244,
-      "sha256": "e4796cb596eaa3a411eb1aa8e30af4bb921cdea9d3bf0ff149d104ddc0489aa9"
-    },
-    "finalize_runtime": {
-      "path": "stage2-source/finalize_runtime.py",
-      "bytes": 59844,
-      "sha256": "a9f9889f165f6f3f6fbc7dd30fd37c1bb5683f75554b265e181ea111b7c4e87b"
-    },
-    "copy_runtime": {
-      "path": "stage2-source/copy_runtime.py",
-      "bytes": 10231,
-      "sha256": "455f46df3bcbba160d34bc94e40062c232d04b7955657a0da49815898adecf56"
-    },
-    "seal_runtime": {
-      "path": "stage2-source/seal_runtime.py",
-      "bytes": 14263,
-      "sha256": "c17e55faeedbf37c98c3bdec3883179758400d7f7a8fd6bf723a3010101199a8"
-    },
-    "stage2_entry": {
-      "path": "stage2-source/stage2_entry.py",
-      "bytes": 83586,
-      "sha256": "21114bcff7f08b20bae043e853e44e41b5588cfc5ab360b183ee5347ba78f39d"
-    },
     "audit_process_runner": {
-      "path": "stage2-parent/audit_process_runner.py",
       "bytes": 68342,
+      "path": "stage2-parent/audit_process_runner.py",
       "sha256": "a2c1d01028290f68cf152b493fbdf2875e742e2bded711392c83d36827b987c1"
     },
+    "audit_runtime": {
+      "bytes": 101244,
+      "path": "stage2-source/audit_runtime.py",
+      "sha256": "e4796cb596eaa3a411eb1aa8e30af4bb921cdea9d3bf0ff149d104ddc0489aa9"
+    },
+    "copy_runtime": {
+      "bytes": 10231,
+      "path": "stage2-source/copy_runtime.py",
+      "sha256": "455f46df3bcbba160d34bc94e40062c232d04b7955657a0da49815898adecf56"
+    },
+    "finalize_runtime": {
+      "bytes": 59844,
+      "path": "stage2-source/finalize_runtime.py",
+      "sha256": "a9f9889f165f6f3f6fbc7dd30fd37c1bb5683f75554b265e181ea111b7c4e87b"
+    },
     "fresh_runtime_contract": {
-      "path": "stage2-source/fresh_runtime_contract.py",
       "bytes": 12637,
+      "path": "stage2-source/fresh_runtime_contract.py",
       "sha256": "2dade1e85f653b733f2a4111bd9428d79f8a86a1b352202671ec7dc6ee9dac5c"
     },
     "package_inputs": {
-      "path": "stage2-source/package_inputs.py",
       "bytes": 24785,
+      "path": "stage2-source/package_inputs.py",
       "sha256": "fd70211ac0ead5974ebc39e4be0c57a193eb770579eb0d88ca54f61d067ffe4d"
     },
     "resource_guide": {
-      "path": "project_graph/resources.py",
       "bytes": 19590,
+      "path": "project_graph/resources.py",
       "sha256": "76d503d65fab968c6894f7ac5698178f8811f3aeb08cda2a3c0f9006a15b0fbb"
     },
     "resource_policy": {
-      "path": "project_graph/resource-policy.json",
       "bytes": 375,
+      "path": "project_graph/resource-policy.json",
       "sha256": "3add848d3756762ddffa9a817a3bebbf26b41674cb5ccf885028f499a627884f"
+    },
+    "seal_runtime": {
+      "bytes": 14263,
+      "path": "stage2-source/seal_runtime.py",
+      "sha256": "c17e55faeedbf37c98c3bdec3883179758400d7f7a8fd6bf723a3010101199a8"
+    },
+    "stage2_entry": {
+      "bytes": 94609,
+      "path": "stage2-source/stage2_entry.py",
+      "sha256": "fa55a3b24b83e1520b443f1b42cd904d3821b7f6d17beea6549e99252f44e964"
     }
   },
-  "scope": "Independent successor review of the exact ten-role source closure. I verified the raw byte count and SHA-256 for all ten staged subjects. The nine unchanged role bytes match the corresponding subjects in the original genuine review exactly; their semantic review is inherited from that retained review, not represented as a new body-by-body re-review here. I independently reviewed the replacement Entry at its exact R1 pin, including terminal_result_paths, emit_terminal_failure, parent_entry, _main/main and the actual differential proof: it adds a finite 14-field <=2048-byte diagnostic stdout only; keeps source-plan and successful output/receipt behavior; does not change CLI/environment, resource, admission, receipt construction, cleanup, clocks or control outcomes; only reports fixed candidate result/phase paths and leaves unobserved worker facts null. The old genuine review is provenance for the nine identical roles, not copied into this bundle as current review. The package inventory verifies ten roles, nine byte-identical predecessor subjects, one diagnostic Entry replacement, and 12 payload paths plus MANIFEST.sha256 as the proposed shipping closure. Stage2 dynamic owner facts, source publication, review sealing, resource/lease admission, actual runner/worker execution and all runtime/native/CI/product qualification remain separate and unclaimed. Original argparse stderr remains unchanged and outside the new stdout diagnostic sanitization scope. No runtime receipt/private tree was read."
+  "verdict": "PASS_SOURCE_ONLY"
 }

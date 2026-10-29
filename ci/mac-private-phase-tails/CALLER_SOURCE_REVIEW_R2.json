@@ -1,0 +1,48 @@
+{
+  "schema": "studio-private-phase-tail-caller-source-review/2",
+  "status": "PASS_SOURCE_ONLY",
+  "source_owner": "Independent source reviewer",
+  "origin_machine": "MacBook",
+  "reviewed_subject": {
+    "path": "coordination/studio/20261029/private-phase-tail-caller-source-root-r2/capture_failed_phase.py",
+    "bytes": 28232,
+    "sha256": "95e19cd24e2c17462c966becbf10be410b6e6f4595ed05ca75133a1547f38511"
+  },
+  "reviewed_preparation": {
+    "path": "coordination/studio/20261029/private-phase-tail-caller-source-root-r2/SOURCE_PREPARATION_R2.json",
+    "bytes": 2148,
+    "sha256": "b55df58788f5b6689c40da4c8723b0e35f6665a0834b3cb35fdb86664319d567"
+  },
+  "reviewed_delta": {
+    "path": "coordination/studio/20261029/private-phase-tail-caller-source-root-r2/SOURCE_DELTA_R2.diff",
+    "bytes": 1943,
+    "sha256": "647cece8c95897709c4e47dfbee87c615ab3c23d591ff910d8eb60a9a09b7018"
+  },
+  "dependencies": [
+    {"path": "coordination/remote-control/20261029/r5-private-phase-tail-source-r4/retain_failed_phase_tails.py", "bytes": 47173, "sha256": "6b8e7badf5b2be1bc32bcd3ff7650ef12821271f46993187a3b2af8996a7b480"},
+    {"path": "coordination/remote-control/20261029/r5-private-phase-tail-source-r4/INTERFACE_R4.json", "bytes": 14777, "sha256": "bd1f8501a1be6df40659cb50f3e711e311585c955cb22b2b532a35d2ba0daee1"},
+    {"path": "coordination/remote-control/20261029/r5-private-phase-tail-source-r4/OWNER_METADATA_CALLER_CONTRACT_R4.json", "bytes": 8112, "sha256": "c7f249d4bd6c887abe9265345dc041024d8676e56fdab77ca28c71fb71d9889a"},
+    {"path": "coordination/studio/20261029/private-phase-tail-caller-source-root-r1/capture_failed_phase.py", "bytes": 27824, "sha256": "6f45eeaec8dfd3eaaf98f8fa9d0c82e91c92042c7e043918f3a3fe60ebe495c7"},
+    {"path": "coordination/remote-control/20261029/private-phase-tail-caller-peer-review-r1/SOURCE_REVIEW_CORRECTION_R1.json", "bytes": 3576, "sha256": "ad690e7d3704f59f10ec905082dd00ebe8baedb04aaa8652b556fdec07fcc846"}
+  ],
+  "review_scope": {
+    "coverage": "Full caller review retained from R1, plus exact R1-to-R2 diff and producer/helper Store and Guard accounting. Traced every caller Store construction and helper run Store construction; no monkeypatch or Store alias exists. The caller producer Store P and helper Store H have independent control_bytes counters and share only the original-clock/cancel/RSS Guard.",
+    "accounting": "P enforces SourceFiles bytes plus P.control_bytes <=3 MiB. H initializes its own Store and independently enforces H.control_bytes <=6 MiB. Therefore source+producer control plus helper control has the declared <=9 MiB cap; helper log-range reads have their separate <=160 KiB cap.",
+    "execution": "No import, compile, test, fixture, helper invocation, network, CI, or native action. Static source/data review only.",
+    "qualification": "NONE. Caller/helper runtime, owner workflow, hosted-runner compatibility, artifact upload, and private intake remain unverified."
+  },
+  "findings": [],
+  "historical_review_reconciliation": {
+    "path": "coordination/remote-control/20261029/private-phase-tail-caller-peer-review-r1/SOURCE_REVIEW_R1.json",
+    "bytes": 5185,
+    "sha256": "033c95a4ab08a84ee5466ccb7217b18575d9e2b3be716357556babaf7ab5c767",
+    "note": "Its sole read-budget finding was a false positive, retracted in SOURCE_REVIEW_CORRECTION_R1.json. That frozen report and correction are preserved; they do not describe the current R2 verdict."
+  },
+  "bounded_anchors": [
+    {"path": "coordination/studio/20261029/private-phase-tail-caller-source-root-r2/capture_failed_phase.py", "lines": "254-256, 343-345", "detail": "Producer budget and producer Store construction."},
+    {"path": "coordination/studio/20261029/private-phase-tail-caller-source-root-r2/capture_failed_phase.py", "lines": "397-404", "detail": "Only child args and shared Guard go to module.run; producer Store remains local."},
+    {"path": "coordination/studio/20261029/private-phase-tail-caller-source-root-r2/capture_failed_phase.py", "lines": "438-440", "detail": "R2 reports combined control/source cap and separate log-range read cap."},
+    {"path": "coordination/remote-control/20261029/r5-private-phase-tail-source-r4/retain_failed_phase_tails.py", "lines": "159-173, 305-318, 782-800", "detail": "Guard has deadline/cancel/RSS state only; helper Store creates independent control counter and enforces 6 MiB."}
+  ],
+  "overall_limit": "PASS applies only to this pinned caller source and stated source-review scope. It is not runtime, CI, workflow, intake, or product qualification."
+}

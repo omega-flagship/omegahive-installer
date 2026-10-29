@@ -81,6 +81,14 @@ TERMINAL_ERROR_TYPES = frozenset(('AssertionError', 'AttributeError', 'AuditRefu
 TERMINAL_REASON_LABELS = frozenset(('AssertionError', 'AttributeError', 'AuditRefused', 'BlockingIOError', 'BrokenPipeError', 'CI_parent_namespace_entry_bound', 'CalledProcessError', 'ChildProcessError', 'Darwin_positive_process_identity_required', 'EOFError', 'FileExistsError', 'FileNotFoundError', 'ImportError', 'IndexError', 'InputRefused', 'InterruptedError', 'IsADirectoryError', 'JSONDecodeError', 'JSON_object_required', 'JSON_output_byte_bound', 'KeyError', 'KeyboardInterrupt', 'MachO_header_changed_during_read', 'MemoryError', 'ModuleNotFoundError', 'NameError', 'NotADirectoryError', 'OSError', 'OverflowError', 'PermissionError', 'ProcessLookupError', 'RecursionError', 'Refused', 'RunnerRefused', 'RuntimeError', 'RuntimeRefused', 'SyntaxError', 'SystemExit', 'TimeoutError', 'TimeoutExpired', 'TypeError', 'UnboundLocalError', 'UnicodeDecodeError', 'UnicodeEncodeError', 'UnicodeError', 'ValueError', 'absolute_file_required', 'actual_arm64_Python_SWIPL_main_images_required', 'actual_bridge_child_of_phase_worker_required', 'actual_clean_copy_phase_and_relocation_content_required', 'actual_closed_runner_receipt_and_return_required', 'actual_command_birth_session_before_ACK_required', 'actual_completed_phase_observation_gap_or_deadline', 'actual_dynamic_loader_context_link_bound', 'actual_eight_audit_checks_required', 'actual_entry_must_be_sealed_subject', 'actual_finalization_required', 'actual_native_parent_receipt_link_required', 'actual_new_phase_worker_birth_required', 'actual_new_session_command_required', 'actual_owned_phase_startup_required', 'actual_owner_and_reservation_pin_links_required', 'actual_parent_census_required', 'actual_phase_GO_required', 'actual_phase_admission_context_required', 'actual_phase_session_handshake_required', 'actual_phase_worker_birth_required', 'actual_preparation_parent_phase_required', 'actual_private_phase_environment_required', 'actual_registered_phase_parent_session_required', 'actual_runner_resource_and_command_counts_required', 'actual_stage1_sealed_sources_required', 'actual_successful_runner_lifecycle_required', 'audit_or_runner_finish_failed_retained', 'bounded_command_registration_namespace_required', 'bounded_fat_architecture_table_required', 'bounded_fat_header_required', 'bounded_original_parent_release_required', 'bounded_output_bytes_required', 'bounded_owned_singlelink_regular_file_required', 'bounded_process_census_required', 'bounded_relative_path_required', 'cancelled_before_new_work_output', 'cancelled_before_phase_spawn', 'cancelled_before_stage2_materialization', 'cancelled_during_held_read', 'canonical_absolute_directory_required', 'canonical_owned_phase_context_required', 'canonical_relative_path_required', 'canonical_source_copy_changed', 'canonical_stage2_source_role_path_required', 'canonical_system_PATH_required_before_resource_probes', 'checksum_manifest_changed_or_not_LF', 'clean_actual_stage1_parent_required', 'clean_original_phase_completion_required', 'closed_complete_current_task_attestation_required', 'closed_current_phase_command_registration_required', 'closed_current_task_estimate_required', 'closed_kernel_command_birth_required', 'closed_owned_phase_CLI_required', 'closed_review_source_role_set_required', 'closed_stage2_phase_required', 'closed_unique_current_task_required', 'commands_only_in_actual_audit_phase', 'complete_MachO_header_required', 'complete_numeric_process_census_required', 'component_main_returned_failure', 'current_owned_kernel_process_birth_required', 'current_owner_host_phase_source_required', 'current_root_owned_ps_pin_required', 'current_task_pid_required', 'duplicate_JSON_key', 'duplicate_or_self_manifest_entry', 'every_actual_command_group_closed_cleanly_required', 'every_closed_command_kernel_birth_required', 'exact_isolated_PBS_macOS_arm64_owner_required', 'exact_phase_context_required', 'exact_resource_guide_policy_required', 'explicit_dedicated_GitHub_CI_owner_required', 'externally_pinned_source_manifest_required', 'fat_arm64_MachO_header_required', 'fat_slice_bounds_required', 'file_growth_bound', 'finalized_MachO_entry_identity_required', 'finite_current_task_peak_required', 'foreign_worker_descendant', 'fresh_actual_resource_policy_required', 'fresh_full_phase_resource_RUN_required', 'fresh_generated_cache_total_bound', 'fresh_generated_site_cache_shape_required', 'fresh_original_phase_controller_deadline_required', 'fresh_stage2_no_automatic_retry_required', 'full_phase_wall_envelope_remaining_required', 'full_worker_group_and_parent_RSS_guard', 'genuine_closed_source_review_required', 'genuine_source_review_must_be_sealed', 'held_file_identity_changed', 'held_file_pin_mismatch', 'immutable_empty_protocol_marker_required', 'immutable_existing_ack_must_match', 'kernel_process_birth_identity_unavailable', 'live_descendant_group_birth_required', 'new_genuinely_reviewed_stage1_wait_entries_required', 'nonfinite_JSON_number', 'one_exact_arm64_slice_required', 'one_fresh_actual_parent_attempt_required', 'original_group_birth_anchor_required', 'owned_log_file_required', 'owned_member_PID_birth_changed', 'owned_new_session_identity_required', 'phase_cancel_deadline_or_parent_log_guard', 'phase_cleanup_deadline', 'phase_context_metadata_bound', 'phase_original_work_deadline_required', 'phase_resource_admission_expired_before_GO', 'phase_result_metadata_bound', 'phase_terminal_parent_log_guard', 'plain_directory_required', 'plain_parent_attempt_required', 'preexisting_exact_stage2_source_required', 'private_current_owner_directory_required', 'resource_admission_not_run', 'runner_closure_actual_owner_admission_pin_required', 'sealed_stage2_sources_required', 'selected_phase_admission_pin_required', 'short_output_write', 'source_payload_checksum_mismatch', 'source_review_attribution_required', 'source_set_total_byte_bound', 'stage1_canonical_resource_sources_required', 'stage1_genuine_component_review_checksum_required', 'stage1_review_must_describe_actual_preparation', 'standard_bounded_checksum_manifest_required', 'supported_arm64_runtime_image_required', 'system_exit_nonzero', 'undeclared_dynamic_image_loader_policy', 'unique_census_PID_required', 'unregistered_or_foreign_worker_process_group', 'worker_descendant_new_session_ownership_required'))
 
 
+# Offline AST-derived finite domain, bound to the exact admitted finalizer bytes.
+FINALIZER_REFUSAL_SOURCE_PIN = {'bytes': 59844, 'sha256': 'a9f9889f165f6f3f6fbc7dd30fd37c1bb5683f75554b265e181ea111b7c4e87b'}
+FINALIZER_REFUSAL_CODES = frozenset(('DISABLED_source_review_and_owner_admission_required', 'PBS_extra_distribution_inventory_mismatch', 'PBS_extra_distribution_pins_unresolved', 'PBS_stock_tool_pin_mismatch', 'PBS_stock_tool_pin_set_mismatch', 'PBS_stock_tool_pins_unresolved', 'PBS_tooling_pins_unresolved', 'absolute_directory_anchor', 'actual_preparation_five_inventory_roles_required', 'actual_preparation_owner_origin_required', 'actual_preparation_stage1_source_context_required', 'actual_reviewed_preparer_revision_required', 'bounded_metadata_inventory', 'bounded_owned_regular_input', 'bundle_global_tree_entry_bound', 'bundle_owner_mismatch', 'bundle_total_byte_bound', 'candidate_source_sha256_mismatch', 'canonical_completed_preparation_parent_pin_required', 'canonical_portable_stage2_finalizer_source_required', 'clean_actual_preparation_stage_parent_required', 'closed_exact_provenance_pin_required', 'closed_seven_component_bundle_required', 'component_owner_mismatch', 'component_total_byte_bound', 'core50_contract_required', 'directory_basename_required', 'directory_changed_during_inventory', 'distribution_name_syntax', 'duplicate_installed_distribution', 'duplicate_provenance_JSON_key', 'entry_owner_mismatch', 'exact_core50_required', 'exact_janus_build_receipt_required', 'exact_seven_final_components_required', 'executed_preparer_worker_pin_mismatch', 'file_changed_during_inventory', 'final_runtime_lock_derivative_mismatch', 'finalization_receipt_byte_bound', 'finalizer_deadline', 'finalizer_must_run_as_pinned_CI_owner', 'fixed_CI_job_required', 'fixed_provenance_pin_path_required', 'fresh_six_component_bundle_required', 'genuine_closed_stage1_whole_review_required', 'input_byte_bound', 'input_changed_during_read', 'input_owner_mismatch', 'input_path_changed_during_hash', 'input_pin_mismatch', 'installed_core_distribution_mismatch', 'installed_janus_153_required', 'installed_metadata_snapshot_changed', 'internal_relative_symlink_required', 'janus_153_exact_lock_required', 'janus_lock_single_line', 'janus_wheel_basename', 'janus_wheel_lock_receipt_disagreement', 'job_changed_during_preparation_provenance', 'manifests_owner_mismatch', 'metadata_name_version_cardinality', 'metadata_total_byte_bound', 'native_phase_receipt_content', 'native_phase_receipt_pin_unresolved', 'nonfinite_provenance_JSON', 'output_identity_changed', 'output_owner_mismatch', 'oversized_or_unclassified_shebang_file', 'owned_generated_pycache_pins_required', 'owned_generated_pycache_pins_unresolved', 'owner_admission_content_or_identity', 'owner_admission_preparation_lineage_pin_mismatch', 'owner_source_and_admission_pins_required', 'pinned_PBS_interpreter_role_mismatch', 'pinned_core_parity_metadata_required', 'pinned_preparation_receipt_required', 'plain_directory_required', 'preparation_parent_receipt_link_required', 'private_CI_job_owner_mode', 'private_CI_root_owner_mode', 'provenance_JSON_object_required', 'provenance_private_base_owner_required', 'provenance_same_private_job_required', 'pycache_directory_preimage_changed', 'pycache_directory_type', 'pycache_file_preimage_changed', 'pycache_not_exact_generated_residue', 'pycache_preimage_pin_mismatch', 'pycache_preimage_pin_set_mismatch', 'receipts_owner_mode_mismatch', 'record_absolute_path_refused', 'record_relative_path_required', 'record_row_shape', 'record_sha256_length', 'record_sha256_required', 'regular_file_link_or_size_bound', 'relative_path_required', 'relative_path_type', 'replacement_identity_changed', 'replacement_preimage_changed', 'replacement_short_write', 'runtime_receipt_bindings_unresolved', 'runtime_version_duplicate', 'runtime_version_line', 'runtime_versions_core_parity_mismatch', 'short_output_write', 'six_pre_final_components_required', 'special_file_refused', 'stage1_checksum_LF_text_required', 'stage1_checksum_duplicate_self_or_bound', 'stage1_checksum_row_required', 'stage1_manifest_must_bind_actual_raw_review', 'stage1_native_review_filename_required', 'stage1_review_provenance_required', 'stage1_review_role_checksum_mismatch', 'stage1_review_scope_required', 'stage1_role_pin_required', 'symlink_chain_too_deep', 'symlink_target_missing_or_cycle', 'tree_entry_bound', 'unattributed_python_cli_wrapper', 'unsafe_directory_entry', 'wheel_wrapper_record_incomplete', 'wheel_wrapper_record_preimage_mismatch', 'wrapper_inventory_pin_changed', 'wrapper_prefix_changed', 'wrapper_prefix_identity', 'wrapper_record_ownership_ambiguous'))
+OWNED_FAILURE_SCHEMA = 'studio-CI-stage2-owned-phase-failure/1'
+OWNED_FAILURE_MAX_BYTES = 2048
+TERMINAL_REASON_LABELS = TERMINAL_REASON_LABELS | FINALIZER_REFUSAL_CODES
+
+
 def terminal_result_paths(attempt_id, phase):
     """Derive fixed reported targets only; no path input, resolution or reads."""
     if type(attempt_id) is not str or re.fullmatch('attempt-[a-f0-9]{32}', attempt_id) is None:
@@ -234,7 +242,7 @@ def file_key(info):
 
 
 def read_file(path, maximum, expected=None, *, owner=None, keep=True,
-              cancellation_independent=False):
+              cancellation_independent=False, required_mode=None):
     path = Path(path)
     need(path.is_absolute() and path.name not in {'', '.', '..'}, 'absolute_file_required')
     parent, _identity = directory(path.parent)
@@ -242,6 +250,8 @@ def read_file(path, maximum, expected=None, *, owner=None, keep=True,
     try:
         fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
         before = os.fstat(fd)
+        need(required_mode is None or stat.S_IMODE(before.st_mode) == required_mode,
+             'required_file_mode_mismatch')
         need(stat.S_ISREG(before.st_mode) and before.st_nlink == 1
              and 0 < before.st_size <= maximum
              and before.st_uid == (os.getuid() if owner is None else owner),
@@ -299,6 +309,99 @@ def write_new(path, raw, *, completion_only=False):
 
 def write_json(path, value, *, completion_only=False):
     return write_new(path, json_bytes(value), completion_only=completion_only)
+
+
+def typed_finalizer_reason(error, namespace, sources):
+    """Only an exact admitted foreign class and frozen literal can name a reason."""
+    subject = sources['review']['subjects']['finalize_runtime']
+    if (type(subject) is not dict or subject.get('path') != ROLES['finalize_runtime']
+            or type(subject.get('bytes')) is not int
+            or {k: subject.get(k) for k in ('bytes', 'sha256')} != FINALIZER_REFUSAL_SOURCE_PIN
+            or namespace.get('__name__') != 'owner_admitted_stage2_finalize_runtime'
+            or namespace.get('__file__') != str(ROOT / ROLES['finalize_runtime'])
+            or type(error) is not namespace.get('Refused')):
+        return None
+    arguments = error.args
+    if (type(arguments) is tuple and len(arguments) == 1
+            and type(arguments[0]) is str and arguments[0] in FINALIZER_REFUSAL_CODES):
+        return arguments[0]
+    return None
+
+
+def retain_finalizer_failure(error, namespace, sources, phase_context_pin):
+    """Completion-only metadata; every diagnostic failure preserves the original error."""
+    try:
+        label = typed_finalizer_reason(error, namespace, sources)
+        if label is None or type(phase_context_pin) is not dict:
+            return
+        if (set(phase_context_pin) != {'path', 'bytes', 'sha256'}
+                or type(phase_context_pin['path']) is not str
+                or type(phase_context_pin['bytes']) is not int
+                or not 0 < phase_context_pin['bytes'] <= 1024**2
+                or type(phase_context_pin['sha256']) is not str
+                or re.fullmatch('[a-f0-9]{64}', phase_context_pin['sha256']) is None):
+            return
+        context_path = Path(phase_context_pin['path'])
+        if (context_path != PARENT / context_path.parent.parent.name / 'finalize' / 'PHASE_CONTEXT.json'
+                or re.fullmatch('attempt-[a-f0-9]{32}', context_path.parent.parent.name) is None):
+            return
+        manifest_sha = sources['manifest']['sha256']
+        if type(manifest_sha) is not str or re.fullmatch('[a-f0-9]{64}', manifest_sha) is None:
+            return
+        record = {'schema': OWNED_FAILURE_SCHEMA, 'phase': 'finalize',
+            'worker_pid': os.getpid(), 'phase_context_sha256': phase_context_pin['sha256'],
+            'stage2_manifest_sha256': manifest_sha, 'source_role': 'finalize_runtime',
+            'source_sha256': FINALIZER_REFUSAL_SOURCE_PIN['sha256'],
+            'error_class': 'Refused', 'reason_code': label, 'qualification': 'NONE'}
+        if len(json_bytes(record)) > OWNED_FAILURE_MAX_BYTES:
+            return
+        write_json(context_path.parent / 'OWNED_PHASE_FAILURE.json', record,
+                   completion_only=True)
+    except BaseException:
+        # No stringification, secondary exception, retry, or change to the original outcome.
+        pass
+
+
+def observe_finalizer_failure(sources, phase, phase_dir, context_pin, result):
+    """Observe only the fixed sidecar after an actual failed worker's confirmed cleanup."""
+    if phase != 'finalize':
+        return {'state': 'NOT_APPLICABLE'}
+    if (type(result.get('worker_exit')) is not int or result['worker_exit'] == 0
+            or type(result.get('worker_pid')) is not int or result['worker_pid'] <= 0):
+        return {'state': 'NO_FAILED_WORKER'}
+    if result.get('worker_reaped') is not True or result.get('group_absent') is not True:
+        return {'state': 'FAILED_WORKER_CLEANUP_NOT_CONFIRMED'}
+    try:
+        raw, observed = read_file(phase_dir / 'OWNED_PHASE_FAILURE.json',
+            OWNED_FAILURE_MAX_BYTES, cancellation_independent=True, required_mode=0o400)
+    except FileNotFoundError:
+        return {'state': 'ABSENT'}
+    except BaseException:
+        return {'state': 'UNREADABLE_OR_UNSTABLE'}
+    try:
+        value = object_bytes(raw)
+        keys = {'schema', 'phase', 'worker_pid', 'phase_context_sha256',
+            'stage2_manifest_sha256', 'source_role', 'source_sha256',
+            'error_class', 'reason_code', 'qualification'}
+        subject = sources['review']['subjects']['finalize_runtime']
+        valid = (set(value) == keys and value['schema'] == OWNED_FAILURE_SCHEMA
+            and value['phase'] == 'finalize' and type(value['worker_pid']) is int
+            and value['worker_pid'] == result['worker_pid']
+            and value['phase_context_sha256'] == context_pin['sha256']
+            and value['stage2_manifest_sha256'] == sources['manifest']['sha256']
+            and type(subject.get('bytes')) is int
+            and subject.get('path') == ROLES['finalize_runtime']
+            and {k: subject.get(k) for k in ('bytes', 'sha256')} == FINALIZER_REFUSAL_SOURCE_PIN
+            and value['source_role'] == 'finalize_runtime'
+            and value['source_sha256'] == FINALIZER_REFUSAL_SOURCE_PIN['sha256']
+            and value['error_class'] == 'Refused'
+            and type(value['reason_code']) is str and value['reason_code'] in FINALIZER_REFUSAL_CODES
+            and value['qualification'] == 'NONE')
+        if not valid:
+            return {'state': 'INVALID_OR_CONTEXT_MISMATCH'}
+        return {'state': 'SOURCE_BOUND_TYPED_REFUSAL_OBSERVED', 'pin': observed, 'record': value}
+    except BaseException:
+        return {'state': 'INVALID_OR_CONTEXT_MISMATCH'}
 
 
 def load_sources(manifest, digest, *, stage1=False):
@@ -437,49 +540,53 @@ def preparation_bindings(stage1):
             'stage1_source_review': {k: review_pin[k] for k in ('bytes', 'sha256')}}
 
 
-def finalizer_phase(sources, owner):
+def finalizer_phase(sources, owner, *, phase_context_pin=None):
     finalizer = source_namespace(sources, 'finalize_runtime')
-    prep_raw, prep_pin = read_file(JOB / 'CI_PREPARATION_RECEIPT_R1.json', 2 * 1024**2)
-    native_raw, native_pin = read_file(RECEIPTS / 'native-phases-r1.json', 2 * 1024**2)
-    native = object_bytes(native_raw)
-    parent, parent_pin = one_parent(ROOT / 'native-parent')
-    need(parent['worker_receipt'] == native_pin and native.get('status') ==
-         'ALL_REQUIRED_NATIVE_PHASES_COMPLETE', 'actual_native_parent_receipt_link_required')
-    bindings = owner['preparation_bindings']
-    finalizer.update(FINALIZER_ENABLED=True, EXPECTED_OWNER_UID=os.getuid(),
-        PREPARATION_RECEIPT_PIN=pin(prep_raw),
-        NATIVE_PHASE_RECEIPT_PIN=dict(native_pin, path='receipts/native-phases-r1.json'),
-        PBS_STOCK_TOOL_PINS=PBS_STOCK, PBS_EXTRA_DISTRIBUTION_PINS=PBS_EXTRA,
-        PREPARATION_PARENT_PIN=bindings['preparation_parent'],
-        STAGE1_MANIFEST_PIN=bindings['stage1_manifest'],
-        STAGE1_SOURCE_REVIEW_PIN=bindings['stage1_source_review'])
-    bundle_fd = finalizer['open_directory_chain'](BUNDLE)
     try:
-        inventory = finalizer['inventory_bundle'](bundle_fd, os.getuid())
-    finally:
-        os.close(bundle_fd)
-    cache = {}
-    for name, row in inventory.items():
-        if name.startswith('python/lib/python3.12/site-packages/') and '/__pycache__/' in name:
-            need(row['kind'] == 'file' and name.endswith('.pyc'),
-                 'fresh_generated_site_cache_shape_required')
-            cache[name] = {k: row[k] for k in ('bytes', 'sha256')}
-    need(sum(row['bytes'] for row in cache.values()) <= 64 * 1024**2,
-         'fresh_generated_cache_total_bound')
-    finalizer['OWNED_PYCACHE_RESIDUE_PINS'] = cache
-    candidate = sources['review']['subjects']['finalize_runtime']['sha256']
-    admission = {'status': 'OWNER_ADMITTED_FINALIZATION', 'job_path': str(JOB),
-        'job_identity': identity(JOB), 'candidate_source_sha256': candidate,
-        'execution_owner': owner['execution_owner'], 'origin_machine': owner['origin_machine'],
-        **bindings}
-    admitted = write_json(RECEIPTS / 'finalizer-admission-r1.json', admission)
-    call_main(finalizer, ['--source-sha256', candidate, '--admission-bytes', str(admitted['bytes']),
-                         '--admission-sha256', admitted['sha256']])
-    final_raw, final_pin = read_file(RECEIPTS / 'finalization_r1.json', 32 * 1024**2)
-    final = object_bytes(final_raw)
-    need(final.get('status') == 'FINALIZED_BUNDLE_DERIVATIVE_ONLY', 'actual_finalization_required')
-    return {'finalization': final_pin, 'finalizer_admission': admitted,
-            'native_phases': native_pin, 'native_parent': parent_pin}
+        prep_raw, prep_pin = read_file(JOB / 'CI_PREPARATION_RECEIPT_R1.json', 2 * 1024**2)
+        native_raw, native_pin = read_file(RECEIPTS / 'native-phases-r1.json', 2 * 1024**2)
+        native = object_bytes(native_raw)
+        parent, parent_pin = one_parent(ROOT / 'native-parent')
+        need(parent['worker_receipt'] == native_pin and native.get('status') ==
+             'ALL_REQUIRED_NATIVE_PHASES_COMPLETE', 'actual_native_parent_receipt_link_required')
+        bindings = owner['preparation_bindings']
+        finalizer.update(FINALIZER_ENABLED=True, EXPECTED_OWNER_UID=os.getuid(),
+            PREPARATION_RECEIPT_PIN=pin(prep_raw),
+            NATIVE_PHASE_RECEIPT_PIN=dict(native_pin, path='receipts/native-phases-r1.json'),
+            PBS_STOCK_TOOL_PINS=PBS_STOCK, PBS_EXTRA_DISTRIBUTION_PINS=PBS_EXTRA,
+            PREPARATION_PARENT_PIN=bindings['preparation_parent'],
+            STAGE1_MANIFEST_PIN=bindings['stage1_manifest'],
+            STAGE1_SOURCE_REVIEW_PIN=bindings['stage1_source_review'])
+        bundle_fd = finalizer['open_directory_chain'](BUNDLE)
+        try:
+            inventory = finalizer['inventory_bundle'](bundle_fd, os.getuid())
+        finally:
+            os.close(bundle_fd)
+        cache = {}
+        for name, row in inventory.items():
+            if name.startswith('python/lib/python3.12/site-packages/') and '/__pycache__/' in name:
+                need(row['kind'] == 'file' and name.endswith('.pyc'),
+                     'fresh_generated_site_cache_shape_required')
+                cache[name] = {k: row[k] for k in ('bytes', 'sha256')}
+        need(sum(row['bytes'] for row in cache.values()) <= 64 * 1024**2,
+             'fresh_generated_cache_total_bound')
+        finalizer['OWNED_PYCACHE_RESIDUE_PINS'] = cache
+        candidate = sources['review']['subjects']['finalize_runtime']['sha256']
+        admission = {'status': 'OWNER_ADMITTED_FINALIZATION', 'job_path': str(JOB),
+            'job_identity': identity(JOB), 'candidate_source_sha256': candidate,
+            'execution_owner': owner['execution_owner'], 'origin_machine': owner['origin_machine'],
+            **bindings}
+        admitted = write_json(RECEIPTS / 'finalizer-admission-r1.json', admission)
+        call_main(finalizer, ['--source-sha256', candidate, '--admission-bytes', str(admitted['bytes']),
+                             '--admission-sha256', admitted['sha256']])
+        final_raw, final_pin = read_file(RECEIPTS / 'finalization_r1.json', 32 * 1024**2)
+        final = object_bytes(final_raw)
+        need(final.get('status') == 'FINALIZED_BUNDLE_DERIVATIVE_ONLY', 'actual_finalization_required')
+        return {'finalization': final_pin, 'finalizer_admission': admitted,
+                'native_phases': native_pin, 'native_parent': parent_pin}
+    except BaseException as error:
+        retain_finalizer_failure(error, finalizer, sources, phase_context_pin)
+        raise
 
 
 def copy_phase(sources, owner):
@@ -1200,7 +1307,13 @@ def run_phase(sources, args, owner, phase, facts, whole_deadline):
                     result['logs'][name] = {'metadata_error_type': type(error).__name__,
                                             'full_file_pin': None}
                     result['status'] = 'failed_log_observation_retained'
+            result['owned_phase_failure'] = observe_finalizer_failure(
+                sources, phase, phase_dir, context_pin, result)
             write_json(phase_dir / 'PARENT_RESULT.json', result, completion_only=True)
+    failure = result.get('owned_phase_failure', {})
+    if failure.get('state') == 'SOURCE_BOUND_TYPED_REFUSAL_OBSERVED':
+        emit_terminal_failure('FAILED_RETAINED_NO_AUTOMATIC_RETRY', 'Refused',
+                              failure['record']['reason_code'])
     need(result['status'] == 'worker_exit0' and result['worker_reaped']
          and result['group_absent'] and result['signals'] == [], 'clean_original_phase_completion_required')
     raw, _pin = read_file(phase_dir / 'PHASE_FACTS.json', 1024**2)
@@ -1264,7 +1377,7 @@ def owned_phase(args):
          and not STOP and os.getppid() == context['parent_pid'], 'actual_phase_GO_required')
     phase, facts = args.owned_phase, context['facts']
     if phase == 'finalize':
-        result = {'prerequisites': finalizer_phase(sources, owner),
+        result = {'prerequisites': finalizer_phase(sources, owner, phase_context_pin=context_pin),
                   'dynamic_image_contexts': dynamic_image_contexts(sources)}
     elif phase in {'native_audit', 'relocation'}:
         result = {'audit_receipt': audit_phase(sources, owner, phase, start, facts['prerequisites'])}

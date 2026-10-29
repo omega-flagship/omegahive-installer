@@ -1,0 +1,240 @@
+{
+  "accepted": [
+    {
+      "anchors": [
+        "retain_failed_phase_tails.py60-63,254-278,320-338",
+        "retain_failed_phase_tails.py417,430,456,458,462,798"
+      ],
+      "finding": "ReadPolicy exact Enum type is required before opening. PRIVATE remains default through HeldFile/Store.open/read. Only six syntactic self/catalog/canonical Source read sites select SOURCE_ONLY; these permit owned0644 as well as0400/0600. Private object() offers no policy override and owner metadata, launch/result/context/finalize facts, logs remain PRIVATE400/600.0664 is absent from both exact mode sets. Existing nofollow/nonblock/singlelink/UID/size/hash/held identity protections remain."
+    },
+    {
+      "anchors": [
+        "retain_failed_phase_tails.py153-174,838-880,907-953"
+      ],
+      "finding": "Original13s work/15s whole clock and2s cleanup reserve remain; successful final active check uses original13s guard, so slow finalization cannot renew success budget. Failure cleanup may freeze/close within original15s; close errors remain nonzero. Final write/close/success stdout/restoration cancellation/RSS now cannot retain0. Byte-commit receipt scope and actual exit distinction are explicit in README/caller contract."
+    },
+    {
+      "anchors": [
+        "retain_failed_phase_tails.py108-150,470-494,883-906"
+      ],
+      "finding": "Closed metadata13/schema2, strict owner-selected lower32hex captureID, typed closed pins, canonical run strings and same-job GHA env joins preserved. Default interface branch opens no input/output. Strict JSON rejects duplicates/nonfinite values/overflow; exact-type predicates reject bool integers. These are owner attestations, not authenticated account or livejob facts."
+    },
+    {
+      "anchors": [
+        "retain_failed_phase_tails.py185-352,413-467,495-659"
+      ],
+      "finding": "Full same-FD control/hash/source/context and held/named ancestor composition remains coherent. External sealed manifest and raw genuine8-field10role review bind current canonical source/review/manifest; only Source permissions differ. Actual producer joins retain immutable owner8, independently typed current tasks/resource join, one serial completed failed worker, preceding clean phases and successful finalize facts/dynamic contexts for later phases. No discovery, latest selection, arbitrary Source execution or fresh process-absence claim."
+    },
+    {
+      "anchors": [
+        "retain_failed_phase_tails.py662-700",
+        "declared sealed Entry1056-1082,1098-1123,1320-1344"
+      ],
+      "finding": "Actual Parent seven-field log metadata and serial Entry facts composition retained. Whole logs0..65536 fullyhash against Parentfullpin before last16KiB retention. Larger<=32MiB requires verified sameFD64KiB prefix and held final16KiB, nullfullpin and explicit weaker range scope; no fabricated historical-tail/full-file proof. Empty/missing/unbound/refused/partial differ. Source metadata<=6MiB, bounded log reads<=160KiB and retained<=32KiB unchanged."
+    },
+    {
+      "anchors": [
+        "retain_failed_phase_tails.py703-880,929-953",
+        "OWNER_METADATA_CALLER_CONTRACT_R4.json"
+      ],
+      "finding": "Known owner captureID derives exact private EXCL namespace and three fixed leaves. Partial/existing outputs retained without overwrite/delete or complete-pin fabrication; same held Source inputs checked through commit. Private raw bytes never enter public summary/graph/UI/Base64 or exception text; helper never consumes typed finalizer sidecar or guesses failurecause. Original Stage2 exit remains caller authority. Receipt/summary alone cannot grant helper success or upload admission."
+    },
+    {
+      "anchors": [
+        "OWNER_METADATA_CALLER_CONTRACT_R4.json",
+        "CONTROL_PLAN_R4.json",
+        "README.md"
+      ],
+      "finding": "Caller is honestly Source algorithm only here: future exact shared-clock/accounted producer, env-i, owner-supplied external seals, current held launch/result/metadata, new private upload/intake and finite control execution require separate review/admission. Control plan is not tests or run evidence. Root described a separate shared-start caller; that executable is outside this helper-only review."
+    }
+  ],
+  "blocking_findings": [],
+  "closed_findings": [
+    {
+      "anchors": [
+        "retain_failed_phase_tails.py862-880",
+        "retain_failed_phase_tails.py929-953"
+      ],
+      "id": "F1_LATE_ACTIVE_GUARD_NOT_RECHECKED_BEFORE_SUCCESS",
+      "prior_review": {
+        "bytes": 13549,
+        "path": "coordination/remote-control/20261029/r5-private-phase-tail-peer-review-r2/SOURCE_REVIEW_R2.json",
+        "sha256": "9a8803c850416eb00ef5c41997bca1ebbe7a9e5eb38dd00ca6810c88e5182f2c"
+      },
+      "resolution": "run actively checks original clock/cancel/selfRSS only after all output and store close attempts before returning0. Successful stdout writes/checks are active; failure summaries stay cleanup-only. A final active guard after timer/handler restoration prevents preexisting cancellation/RSS/deadline evidence from leaving status0. All checks use original Guard(started), no renewal. Frozen byte-commit receipt and earlier summary are not process-success authority; late failure returns1 without deleting or rewriting them."
+    }
+  ],
+  "delta_accounting": {
+    "R2_to_R3": {
+      "changed": [
+        "run",
+        "main"
+      ],
+      "method_aware_definitions": 51,
+      "unchanged": 49
+    },
+    "R3_to_R4": {
+      "changed": [
+        "HeldFile.__init__",
+        "Store.open",
+        "Store.read",
+        "source_catalog",
+        "run"
+      ],
+      "main_AST_identical": true,
+      "method_aware_definitions": 51,
+      "new_enum": "ReadPolicy.PRIVATE and ReadPolicy.SOURCE_ONLY",
+      "unchanged": 46
+    },
+    "scope": "Full prior R2 composition review retained; exact unchanged AST bodies plus complete R2\u2192R3\u2192R4 diffs and changed methods reconciled as Source data. No acceptance through normalized runtime output."
+  },
+  "limitations": [
+    "No imports, compilation, fixtures, helper/tests, actual log/private/runtime read, kernel/resource/probe/process/network/native/CI run. All correctness judgments are Source-only.",
+    "No owner metadata producer/workflow executable or private acquisition/reader accepted here; caller original-clock/whole-job admission and complete roster remain Root gates.",
+    "Planned controls must exercise real run/output/heldread behavior with synthetic authority boundaries, including final fsync/close cancel/RSS, policy/mode/source mutation and all5phase positives; no results exist in this review.",
+    "No new CI attempt, live relay/liveness observation, actual failurecause or production/runtime qualification. Main typed finalizer sidecar helper remains separate."
+  ],
+  "origin_machine": "MacBook",
+  "preservation": "R1/R2/R3, R2 CHANGES review, failed/unrun evidence and existing sealed bundles untouched. New independent Source review/work only; no mapper/baseline sync.",
+  "qualification": "NONE; frozen helper/plan UNRUN, no actual private capture, helper/owner admission, workflow, resource, native or CI qualification.",
+  "references": {
+    "Root_design_review": {
+      "bytes": 4049,
+      "path": "coordination/studio/20261029/r5-private-tail-design-root-review-r1/SOURCE_REVIEW_R2.json",
+      "sha256": "2de3611d26d2ab68afab3131537334dd2b5d4ff8030e9c0da7a515f3567ebfe7"
+    },
+    "contract": {
+      "bytes": 17304,
+      "path": "coordination/remote-control/20261029/r5-failed-phase-private-tail-design-r1/CONTRACT_R2.json",
+      "sha256": "d176aa5fd3d9922b248433d1e6d14d29572a03b3b0136eb497320ce2aa869106"
+    },
+    "entry": {
+      "bytes": 83586,
+      "path": "coordination/remote-control/20261029/mac-ci-stage2-diagnostics-source-bundle-r1/stage2-source/stage2_entry.py",
+      "sha256": "21114bcff7f08b20bae043e853e44e41b5588cfc5ab360b183ee5347ba78f39d"
+    },
+    "genuine_R2_peer_review": {
+      "bytes": 13549,
+      "path": "coordination/remote-control/20261029/r5-private-phase-tail-peer-review-r2/SOURCE_REVIEW_R2.json",
+      "sha256": "9a8803c850416eb00ef5c41997bca1ebbe7a9e5eb38dd00ca6810c88e5182f2c"
+    },
+    "genuine_stage2_review": {
+      "bytes": 3788,
+      "path": "coordination/remote-control/20261029/mac-ci-stage2-diagnostics-source-bundle-r1/STATIC_STAGE2_SOURCE_REVIEW.json",
+      "sha256": "fc79c6baec8c4675a62161e0adc6b5195f046d2d90d90e0e92c557a8e72c2296"
+    },
+    "prior_manifest_R1": {
+      "bytes": 2641,
+      "path": "coordination/remote-control/20261029/r5-private-phase-tail-source-r1/SOURCE_MANIFEST_R1.json",
+      "sha256": "023625fed1b33f1370b76e6af5816ce6314f0c52730cdd60bf41a4981688030a"
+    },
+    "prior_manifest_R2": {
+      "bytes": 3640,
+      "path": "coordination/remote-control/20261029/r5-private-phase-tail-source-r2/SOURCE_MANIFEST_R2.json",
+      "sha256": "fc1c47334eb823f788699a533337bbcb79948a1fa0fb6e0bd5bd57d44656ccd5"
+    },
+    "prior_manifest_R3": {
+      "bytes": 4161,
+      "path": "coordination/remote-control/20261029/r5-private-phase-tail-source-r3/SOURCE_MANIFEST_R3.json",
+      "sha256": "eb28c947953959cf9f092ae03ac48efd41d29a90f458f585e9724e79852d4ff4"
+    },
+    "prior_source_R1": {
+      "bytes": 45540,
+      "path": "coordination/remote-control/20261029/r5-private-phase-tail-source-r1/retain_failed_phase_tails.py",
+      "sha256": "5a07e5ea74ab314eb1708d3935ec95622a3fa6fea5d70cb2d55af103d04821e2"
+    },
+    "prior_source_R2": {
+      "bytes": 45828,
+      "path": "coordination/remote-control/20261029/r5-private-phase-tail-source-r2/retain_failed_phase_tails.py",
+      "sha256": "b48c69541fcefe2339b6da5b1c7bb23c08063a9727eda81ea06a1490a669f3ad"
+    },
+    "prior_source_R3": {
+      "bytes": 46566,
+      "path": "coordination/remote-control/20261029/r5-private-phase-tail-source-r3/retain_failed_phase_tails.py",
+      "sha256": "8150b50b5147c29e06e01c9a246dc96419e6530bfd402f5d9058d8ae242a598c"
+    },
+    "stage2_manifest": {
+      "bytes": 1162,
+      "path": "coordination/remote-control/20261029/mac-ci-stage2-diagnostics-source-bundle-r1/MANIFEST.sha256",
+      "sha256": "1b62a67f57510a043038559d157be6349447e66b4d4cc188af5e3012e8939d14"
+    }
+  },
+  "reviewed_at": "2026-10-29T05:29:21.455309+00:00",
+  "reviewer": "MacBook-Hive native_ci_entry_controls independent Source review lane",
+  "schema": "omega-private-phase-tail-independent-source-review/4",
+  "source_only_call_sites": [
+    {
+      "call": "store.read(manifest, expected, cap=128 * 1024, policy=ReadPolicy.SOURCE_ONLY)",
+      "line": 417
+    },
+    {
+      "call": "store.read(manifest.parent / name, cap=256 * 1024, policy=ReadPolicy.SOURCE_ONLY)",
+      "line": 430
+    },
+    {
+      "call": "store.read(ROOT / name, dict(p, path=str(ROOT / name)), cap=256 * 1024, private_anchor=ROOT, policy=ReadPolicy.SOURCE_ONLY)",
+      "line": 456
+    },
+    {
+      "call": "store.read(ROOT / 'stage2-source/STATIC_STAGE2_SOURCE_REVIEW.json', dict(review_pin, path=str(ROOT / 'stage2-source/STATIC_STAGE2_SOURCE_REVIEW.json')), cap=256 * 1024, private_anchor=ROOT, policy=ReadPolicy.SOURCE_ONLY)",
+      "line": 458
+    },
+    {
+      "call": "store.read(ROOT / 'stage2-source/STAGE2_MANIFEST.sha256', dict(observed, path=str(ROOT / 'stage2-source/STAGE2_MANIFEST.sha256')), cap=128 * 1024, private_anchor=ROOT, policy=ReadPolicy.SOURCE_ONLY)",
+      "line": 462
+    },
+    {
+      "call": "store.read(path(str(Path(__file__).absolute())), cap=256 * 1024, policy=ReadPolicy.SOURCE_ONLY)",
+      "line": 798
+    }
+  ],
+  "source_owner": "MacBook-Hive Source helper author",
+  "subjects": {
+    "CONTROL_PLAN_R4.json": {
+      "bytes": 3845,
+      "path": "coordination/remote-control/20261029/r5-private-phase-tail-source-r4/CONTROL_PLAN_R4.json",
+      "sha256": "682d8f8be68a2272283830d3d9529926d5b9154d0c9be3ea1d3c08f3afa8aa09"
+    },
+    "INTERFACE_R4.json": {
+      "bytes": 14777,
+      "path": "coordination/remote-control/20261029/r5-private-phase-tail-source-r4/INTERFACE_R4.json",
+      "sha256": "bd1f8501a1be6df40659cb50f3e711e311585c955cb22b2b532a35d2ba0daee1"
+    },
+    "OWNER_METADATA_CALLER_CONTRACT_R4.json": {
+      "bytes": 8112,
+      "path": "coordination/remote-control/20261029/r5-private-phase-tail-source-r4/OWNER_METADATA_CALLER_CONTRACT_R4.json",
+      "sha256": "c7f249d4bd6c887abe9265345dc041024d8676e56fdab77ca28c71fb71d9889a"
+    },
+    "README.md": {
+      "bytes": 8639,
+      "path": "coordination/remote-control/20261029/r5-private-phase-tail-source-r4/README.md",
+      "sha256": "aff1698f39d99084d9e3ce4cbbc372d2bfffb2738875039bb53a313f55322d13"
+    },
+    "SOURCE_DELTA_R4.diff": {
+      "bytes": 5954,
+      "path": "coordination/remote-control/20261029/r5-private-phase-tail-source-r4/SOURCE_DELTA_R4.diff",
+      "sha256": "838955cc3760553624346f833052364682b55b7d09bc8a11117ea4f005b899a5"
+    },
+    "STATIC_DELTA_PROOF_R4.json": {
+      "bytes": 1934,
+      "path": "coordination/remote-control/20261029/r5-private-phase-tail-source-r4/STATIC_DELTA_PROOF_R4.json",
+      "sha256": "cc8dade6bae7a952b763fe051ca6bf9e4cc3d9533ed95604f03871585775fd3e"
+    },
+    "WORK_ITEM_R4.json": {
+      "bytes": 5790,
+      "path": "coordination/remote-control/20261029/r5-private-phase-tail-source-r4/WORK_ITEM_R4.json",
+      "sha256": "3d72cee47508fb3cb9e68431d3de2f4de546aed26e790f5c93854d5630ba68ca"
+    },
+    "retain_failed_phase_tails.py": {
+      "bytes": 47173,
+      "path": "coordination/remote-control/20261029/r5-private-phase-tail-source-r4/retain_failed_phase_tails.py",
+      "sha256": "6b8e7badf5b2be1bc32bcd3ff7650ef12821271f46993187a3b2af8996a7b480"
+    },
+    "source_manifest": {
+      "bytes": 4661,
+      "path": "coordination/remote-control/20261029/r5-private-phase-tail-source-r4/SOURCE_MANIFEST_R4.json",
+      "sha256": "6b8e85908a84d9f29ab55d38aab933a1022fc0b2e245645e5615942d0ca4e95c"
+    }
+  },
+  "verdict": "PASS_SOURCE_ONLY"
+}

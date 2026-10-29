@@ -730,17 +730,22 @@ jobs:
 
   mac-native:
     # Mac DMG stages 1+2 in ONE fresh job (Studio sealed sets): ci/mac = wait-enabled Stage1 (seal 83789b18),
-    # ci/mac-stage2 = Stage2 finalize/native audit/relocation/seal (seal 1b62a67f). Exact system PATH, env -i, absolute pythons.
+    # ci/mac-stage2 = Stage2 finalize/native audit/relocation/seal (seal 366494ec). Exact system PATH, env -i, absolute pythons.
     runs-on: macos-15
     timeout-minutes: 300
     env:
       STUDIO_STAGE1_MANIFEST_SHA256: 83789b181931cb7b03da170427a4f553d7b4b51f156ce959bf157373a36f2d89
-      STUDIO_STAGE2_MANIFEST_SHA256: 1b62a67f57510a043038559d157be6349447e66b4d4cc188af5e3012e8939d14
-      STUDIO_CUSTODY_MANIFEST_SHA256: ed51866062a4c84221015427ee23bea3f30e8f9405a91fc1b4a7e89018af963d
+      STUDIO_STAGE2_MANIFEST_SHA256: 366494ecc785188d9bf3005c9630484ac11db0dabec315323e4e9440ed1dc8b7
+      STUDIO_CUSTODY_MANIFEST_SHA256: 3ea41db0c006ff7fcb05d9d50ee4bb94edf30f1dfc5dc6ccc59774223aa75128
       STUDIO_COLLECT_MANIFEST_SHA256: 45ca16e8ad1004e6b3e0e4d83161b4bd1b343924b2fee3f6d73050bd0f0bad98
       STUDIO_DIAGNOSTICS_MANIFEST_SHA256: ee736e464b7f6fc6d3c2a2a8187220ad54e49930518838aa6357ea6e3613402a
       STUDIO_MINIMAL_EVIDENCE_SOURCE_SHA256: 2fe5013733212bde65b6481779affab34d6520925b1011de84272b1d56041138
       STUDIO_PREEXEC_PBS_SOURCE_SHA256: be9f210cee9ab645f7a8d0397dbde3f743d0311d744eb9018a1b785b47926bb1
+      STUDIO_PRIVATE_CAPTURE_MANIFEST_SHA256: 6371eeecdbd07d5f98b25e8d34878bde90f74c37bc536f3d61a4d0c646d4ac96
+      STUDIO_PRIVATE_CALLER_SOURCE_SHA256: 95e19cd24e2c17462c966becbf10be410b6e6f4595ed05ca75133a1547f38511
+      STUDIO_PRIVATE_HELPER_SOURCE_SHA256: 6b8e7badf5b2be1bc32bcd3ff7650ef12821271f46993187a3b2af8996a7b480
+      STUDIO_STAGE2_REVIEW_SHA256: d66415b6eaf2bed2201c7cecdd6dbbb5e1a34395f746d2a3c1c78f0f9592aed6
+      STUDIO_STAGE2_REVIEW_BYTES: '3485'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -753,7 +758,7 @@ jobs:
           test "$(uname -m)" = arm64
           test ! -e /private/tmp/omegahive-ci-r12 && echo "job root absent"
           echo "trusted setup python: ${{ steps.py.outputs.python-path }}"; "${{ steps.py.outputs.python-path }}" -VV
-      - name: Verify five sealed source sets
+      - name: Verify six sealed source sets
         shell: bash
         run: |
           set -euo pipefail
@@ -762,6 +767,7 @@ jobs:
           (cd ci/mac-custody && printf '%s  MANIFEST.sha256\n' "$STUDIO_CUSTODY_MANIFEST_SHA256" | shasum -a 256 -c - && shasum -a 256 -c MANIFEST.sha256)
           (cd ci/mac-collect && printf '%s  MANIFEST.sha256\n' "$STUDIO_COLLECT_MANIFEST_SHA256" | shasum -a 256 -c - && shasum -a 256 -c MANIFEST.sha256)
           (cd ci/mac-diagnostics && printf '%s  MANIFEST.sha256\n' "$STUDIO_DIAGNOSTICS_MANIFEST_SHA256" | shasum -a 256 -c - && shasum -a 256 -c MANIFEST.sha256)
+          (cd ci/mac-private-phase-tails && printf '%s  MANIFEST.sha256\n' "$STUDIO_PRIVATE_CAPTURE_MANIFEST_SHA256" | shasum -a 256 -c - && shasum -a 256 -c MANIFEST.sha256)
           stat -f '%Sp %Su %N' "$RUNNER_TEMP"
       - name: Stage1 public preparation (fetch + stage)
         working-directory: ci/mac
@@ -793,6 +799,7 @@ jobs:
             --manifest "$S2/MANIFEST.sha256" \
             --manifest-sha256 "$STUDIO_STAGE2_MANIFEST_SHA256"
       - name: Stage2 finalize / native audit / relocation / seal
+        id: stage2_runtime
         timeout-minutes: 120
         shell: bash
         run: |
@@ -823,6 +830,56 @@ jobs:
           if /bin/cat "$TERMINAL_DIR/TERMINAL.jsonl"; then :; else retention_status=74; fi
           if [ "$stage2_status" -ne 0 ]; then exit "$stage2_status"; fi
           exit "$retention_status"
+
+      # Independent private diagnostics: one original 15s/128MiB caller/helper scope.
+      # The 1-minute step also reserves 45s for Source checks and interpreter startup.
+      - name: Capture bounded private tails after Stage2 failure
+        id: private_phase_tails_capture
+        if: always() && (steps.stage2_runtime.outcome == 'failure' || steps.stage2_runtime.outcome == 'cancelled')
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          P="$GITHUB_WORKSPACE/ci/mac-private-phase-tails"
+          (
+            cd "$P"
+            printf '%s  MANIFEST.sha256\n' "$STUDIO_PRIVATE_CAPTURE_MANIFEST_SHA256" \
+              | /usr/bin/shasum -a 256 -c -
+            /usr/bin/shasum -a 256 -c MANIFEST.sha256
+            printf '%s  capture_failed_phase.py\n' "$STUDIO_PRIVATE_CALLER_SOURCE_SHA256" \
+              | /usr/bin/shasum -a 256 -c -
+            printf '%s  retain_failed_phase_tails.py\n' "$STUDIO_PRIVATE_HELPER_SOURCE_SHA256" \
+              | /usr/bin/shasum -a 256 -c -
+          )
+          /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin LANG=C LC_ALL=C \
+            GITHUB_ACTIONS=true GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            GITHUB_JOB="$GITHUB_JOB" GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            RUNNER_TEMP="$RUNNER_TEMP" GITHUB_OUTPUT="$GITHUB_OUTPUT" \
+            "${{ steps.py.outputs.python-path }}" -I -B -S "$P/capture_failed_phase.py" \
+            --source-sha256 "$STUDIO_PRIVATE_CALLER_SOURCE_SHA256" \
+            --helper-source-sha256 "$STUDIO_PRIVATE_HELPER_SOURCE_SHA256" \
+            --stage2-manifest-sha256 "$STUDIO_STAGE2_MANIFEST_SHA256" \
+            --stage2-review-sha256 "$STUDIO_STAGE2_REVIEW_SHA256" \
+            --stage2-review-bytes "$STUDIO_STAGE2_REVIEW_BYTES" \
+            --python "${{ steps.py.outputs.python-path }}" \
+            --owner dot-mac-ci --dedicated-ci-job --run
+
+      # The pointer may name an absent/partial capture after a failure; upload is
+      # best effort and never establishes capture completeness or qualification.
+      - name: Retain private phase tails independently of the full collector
+        uses: actions/upload-artifact@v4
+        if: always() && steps.private_phase_tails_capture.outputs.capture_dir != ''
+        timeout-minutes: 5
+        with:
+          name: mac-private-phase-failure-tails
+          path: |
+            ${{ steps.private_phase_tails_capture.outputs.capture_dir }}/STDOUT.tail.bin
+            ${{ steps.private_phase_tails_capture.outputs.capture_dir }}/STDERR.tail.bin
+            ${{ steps.private_phase_tails_capture.outputs.capture_dir }}/PRIVATE_TAIL_RECEIPT_R1.json
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 14
 
       - name: Custody export of the sealed runtime (closed inventory only; after a successful Stage2)
         working-directory: /private/tmp/omegahive-ci-r12
