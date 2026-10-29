@@ -1,6 +1,6 @@
 name: code-hyperon (test only)
 
-# OmegaCode Hyperon Linux worker acceptance R1 (manifest 0bc54285) for selected R13 source R1.4 (c7478c1e / 4a5737b1),
+# OmegaCode Hyperon Linux worker acceptance R1.1 (manifest aa4f0a5c) for selected R13 source R1.4 (c7478c1e / 4a5737b1),
 # Hyperon 0.2.10 x86_64. Own branch pattern: never triggers the installer/mac-native or lifecycle workflows.
 
 on:
@@ -20,7 +20,7 @@ jobs:
       - name: Verify the sealed acceptance bundle and the R1.4 archive
         run: |
           set -euo pipefail
-          printf '%s  %s\n' 0bc54285bfde7a319b8ecc404340a50fd196b4673c4e5a7b0cf1b7e10b106d30 ci/code-hyperon/MANIFEST.sha256 | sha256sum -c -
+          printf '%s  %s\n' aa4f0a5cac80b88f2fa5a58f4497dfc5e1945b5d1f356a4a682651a489ccbfd4 ci/code-hyperon/MANIFEST.sha256 | sha256sum -c -
           (cd ci/code-hyperon && sha256sum --strict --check MANIFEST.sha256)
           printf '%s  %s\n' c7478c1e88ed5fd777890196d572cf347c3a38240810b3911836081c8674fea1 ci/code-hyperon/inputs/OMEGACODE_R13_SUCCESSOR_R1_4_P3_FOLLOWUP_REVIEW.zip | sha256sum -c -
           { uname -a; lsb_release -ds; systemctl --version | head -1; stat -fc %T /sys/fs/cgroup; } | tee /tmp/hy-facts.txt

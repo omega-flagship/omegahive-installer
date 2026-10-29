@@ -1,4 +1,8 @@
-# Selected R1.4 Linux Hyperon worker acceptance R1
+# Selected R1.4 Linux Hyperon worker acceptance R1.1
+
+R1.1 adds bounded worker-relative offending-path/class diagnostics to closure refusals. Native run `40866429734` reached `installed_unrecorded_file` after Dot moved the controller out of GitHub's writable `/opt`. The exact unrecorded site file was not retained, so this successor preserves the guard and supplies the missing evidence; it does not claim that the installed-file condition is repaired or that native acceptance passed.
+
+Policy is explicit: venv scaffolding such as `bin/activate`, interpreter links and `pyvenv.cfg` is outside the site-package RECORD census and is checked through runtime layout/protection. Recorded, hashed installer metadata `INSTALLER`, `REQUESTED`, `direct_url.json` and `uv_cache.json` is admitted only at its exact dist-info location. Unrecorded site files, unknown importable payloads and unpinned bytecode still refuse. Once the actual offender is identified, its evidence can support a precise installer/metadata rule; unknown files are not admitted speculatively. Diagnostics expose no file contents or absolute root paths.
 
 Source preparation for the open worker gate in the Code R13 Linux contract. This does not rerun the cancelled Mac resident-session smoke, change Code configuration, start a model worker, or enable a production action. Dot owns any architecture-specific native CI admission and deployment selection.
 

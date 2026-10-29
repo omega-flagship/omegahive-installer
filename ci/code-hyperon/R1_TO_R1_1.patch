@@ -1,0 +1,297 @@
+--- a/CI_INTEGRATION.md
++++ b/CI_INTEGRATION.md
+@@ -1,4 +1,6 @@
+ # Hyperon worker native CI admission
++
++R1.1 is a diagnostic successor after native guard refusals, not a successful native qualification. Dot established GitHub `/opt` as 0777/nonsticky and moved the controller to `/var/lib/code-hyperon-acceptance`; keep that protected prefix. Verify actual parent ownership/modes rather than inferring trust from a directory name. All guard acceptance rules remain intact.
+ 
+ Prepared controller/native-case code is a separate candidate. Verify the delivered external ZIP/manifest seals and all members before executing it. Do not invoke `native_cases.py` alone as acceptance: the parent performs the wheel/install/source admission checks.
+ 
+@@ -24,7 +26,7 @@
+ 
+ Use an empty wheel directory with only the verified architecture wheel. The driver rechecks actual wheel and installed METADATA/RECORD; no dev extras or HTTP service packages belong in this venv. If metadata introduces an active unpinned dependency, stop and prepare a new reviewed lock rather than adding an ambient package.
+ 
+-Copy the sealed controller packet to its own root-owned read-only location such as `/opt/code-hyperon-acceptance/`. Keep it separate from the writable checkout and from receipts. Supply the exact R1.4 ZIP as a read-only input. No config, key, token, host enrollment or provider credential is used.
++Copy the sealed controller packet to its own root-owned read-only location such as `/var/lib/code-hyperon-acceptance/`. Keep it separate from the writable checkout and from receipts. Supply the exact R1.4 ZIP as a read-only input. No config, key, token, host enrollment or provider credential is used.
+ 
+ ## Execute inside the existing outer containment authority
+ 
+@@ -32,11 +34,11 @@
+ 
+ The driver must refuse a missing/root/ambiguous cgroup instead of assuming ordinary process-group cleanup is the outer gate. A positive receipt can establish its completed checks and observed ordinary cleanup; qualify refusal, timeout and forced termination under the lane's external cgroup controls before relying on interrupted-run cleanup. Preserve those results separately from the parser/query receipt.
+ 
+-`outer_gate.py` supplies a bounded positive-run wrapper: it runs the parent inside a dedicated transient system unit, waits for termination, stops that exact unit and independently checks its cgroup is empty. Its companion outer receipt explicitly leaves forced-termination qualification false. Example for the admitted x86 lane after copying this reviewed packet to `/opt/code-hyperon-acceptance/` as root-owned read-only text:
++`outer_gate.py` supplies a bounded positive-run wrapper: it runs the parent inside a dedicated transient system unit, waits for termination, stops that exact unit and independently checks its cgroup is empty. Its companion outer receipt explicitly leaves forced-termination qualification false. Example for the admitted x86 lane after copying this reviewed packet to `/var/lib/code-hyperon-acceptance/` as root-owned read-only text:
+ 
+ ```bash
+ sudo install -d -m 0700 /var/tmp/code-hyperon-receipts
+-sudo /usr/bin/python3 -B /opt/code-hyperon-acceptance/outer_gate.py \
++sudo /usr/bin/python3 -B /var/lib/code-hyperon-acceptance/outer_gate.py \
+   --source-archive "$GITHUB_WORKSPACE/ci/code-hyperon/inputs/OMEGACODE_R13_SUCCESSOR_R1_4_P3_FOLLOWUP_REVIEW.zip" \
+   --wheel /tmp/hyperon-wheels/hyperon-0.2.10-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl \
+   --worker-python /tmp/hyperon-worker/bin/python \
+@@ -51,4 +53,4 @@
+ 
+ ## Collect
+ 
+-Collect only the explicit bounded JSON receipt, the selected source/worker pins, and sanitized outer cleanup evidence. Preserve failure codes/stages; do not upload ephemeral source maps, marker fixture paths, runtime trees, stderr dumps, wheel payloads, home directories or private stores. No production action is enabled solely because this component passes.
++Collect only the explicit bounded JSON receipt, the selected source/worker pins, and sanitized outer cleanup evidence. A closure refusal can now include `refusal_details.offending_relative_path` (canonical path relative to the worker root, bounded to512 printable characters) and `offending_artifact_class`. These are metadata only; contents and absolute paths are omitted. Preserve failure codes/stages; do not upload ephemeral source maps, marker fixture paths, runtime trees, stderr dumps, wheel payloads, home directories or private stores. No production action is enabled solely because this component passes.
+--- a/EXPECTED_RECEIPTS.json
++++ b/EXPECTED_RECEIPTS.json
+@@ -1,6 +1,8 @@
+ {
+   "schema": "omegacode-hyperon-linux-worker-receipt-expectations-r1",
+   "kind": "expectations_only_not_execution_evidence",
++  "source_version": "r1.1",
++  "optional_failure_details": ["offending_relative_path: worker-relative canonical printable path <=512 characters, no contents", "offending_artifact_class: closed metadata classification"],
+   "parent_receipt": {
+     "schema": "omegacode-hyperon-linux-worker-acceptance-r1",
+     "required_success": [
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,8 @@
+-# Selected R1.4 Linux Hyperon worker acceptance R1
++# Selected R1.4 Linux Hyperon worker acceptance R1.1
++
++R1.1 adds bounded worker-relative offending-path/class diagnostics to closure refusals. Native run `40866429734` reached `installed_unrecorded_file` after Dot moved the controller out of GitHub's writable `/opt`. The exact unrecorded site file was not retained, so this successor preserves the guard and supplies the missing evidence; it does not claim that the installed-file condition is repaired or that native acceptance passed.
++
++Policy is explicit: venv scaffolding such as `bin/activate`, interpreter links and `pyvenv.cfg` is outside the site-package RECORD census and is checked through runtime layout/protection. Recorded, hashed installer metadata `INSTALLER`, `REQUESTED`, `direct_url.json` and `uv_cache.json` is admitted only at its exact dist-info location. Unrecorded site files, unknown importable payloads and unpinned bytecode still refuse. Once the actual offender is identified, its evidence can support a precise installer/metadata rule; unknown files are not admitted speculatively. Diagnostics expose no file contents or absolute root paths.
+ 
+ Source preparation for the open worker gate in the Code R13 Linux contract. This does not rerun the cancelled Mac resident-session smoke, change Code configuration, start a model worker, or enable a production action. Dot owns any architecture-specific native CI admission and deployment selection.
+ 
+--- a/qualify_hyperon_worker.py
++++ b/qualify_hyperon_worker.py
+@@ -48,14 +48,50 @@
+ 
+ 
+ class Refusal(Exception):
+-    def __init__(self, code):
++    def __init__(self, code, *, relative_path=None, artifact_class=None):
+         super().__init__(code)
+         self.code = code
++        self.details = {}
++        if (type(relative_path) is str and 1 <= len(relative_path) <= 512
++                and relative_path not in (".", "..")
++                and re.fullmatch(r"[A-Za-z0-9._+/-]+", relative_path) is not None
++                and not PurePosixPath(relative_path).is_absolute()
++                and not {".", ".."}.intersection(PurePosixPath(relative_path).parts)
++                and str(PurePosixPath(relative_path)) == relative_path):
++            self.details["offending_relative_path"] = relative_path
++        if artifact_class in {"cached_bytecode", "installer_metadata", "distribution_metadata", "package_payload", "other"}:
++            self.details["offending_artifact_class"] = artifact_class
+ 
+ 
+ def need(condition, code):
+     if not condition:
+         raise Refusal(code)
++
++
++def closure_need(condition, code, path, root):
++    """Retain bounded public worker-relative metadata, never contents/absolute paths.
++
++    This changes diagnostics only: recorded inert installer metadata remains
++    allowed under R1's hash rules; every unrecorded site file still refuses.
++    """
++    if condition:
++        return
++    path, root = Path(path), Path(root)
++    try:
++        relative = path.relative_to(root).as_posix()
++    except ValueError:
++        relative = None
++    if "__pycache__" in path.parts or path.suffix == ".pyc":
++        kind = "cached_bytecode"
++    elif path.parent.name == DIST and path.name in {"INSTALLER", "REQUESTED", "direct_url.json", "uv_cache.json"}:
++        kind = "installer_metadata"
++    elif any(part.endswith(".dist-info") for part in path.parts):
++        kind = "distribution_metadata"
++    elif any(part.startswith("hyperon") for part in path.parts):
++        kind = "package_payload"
++    else:
++        kind = "other"
++    raise Refusal(code, relative_path=relative, artifact_class=kind)
+ 
+ 
+ def sha_file(path):
+@@ -223,24 +259,29 @@
+ def installed_closure(worker_root, wheel):
+     root = Path(worker_root)
+     site = root / "lib/python3.12/site-packages"
+-    need(site.is_dir() and not site.is_symlink(), "worker_site_missing")
++    closure_need(site.is_dir() and not site.is_symlink(), "worker_site_missing", site, root)
+     dists = [p.name for p in site.iterdir() if p.name.endswith((".dist-info", ".egg-info"))]
+-    need(dists == [DIST], "worker_distribution_closure")
++    unexpected = next((name for name in dists if name != DIST), None)
++    closure_need(dists == [DIST], "worker_distribution_closure", site / unexpected if unexpected else site, root)
+     installed_metadata = site / DIST / "METADATA"
+-    need(installed_metadata.is_file() and not installed_metadata.is_symlink()
+-         and installed_metadata.stat().st_size <= 256 * 1024, "installed_metadata_invalid")
+-    need(installed_metadata.read_bytes() == wheel["metadata_bytes"], "installed_metadata_mismatch")
++    closure_need(installed_metadata.is_file() and not installed_metadata.is_symlink()
++                 and installed_metadata.stat().st_size <= 256 * 1024, "installed_metadata_invalid", installed_metadata, root)
++    closure_need(installed_metadata.read_bytes() == wheel["metadata_bytes"], "installed_metadata_mismatch", installed_metadata, root)
+     metadata(installed_metadata.read_bytes())
+     record = site / DIST / "RECORD"
+-    need(record.is_file() and not record.is_symlink() and record.stat().st_size <= 8 * 1024 * 1024, "installed_record_missing")
++    closure_need(record.is_file() and not record.is_symlink() and record.stat().st_size <= 8 * 1024 * 1024,
++                 "installed_record_missing", record, root)
+     rows, seen, inventory = csv.reader(io.StringIO(record.read_text())), set(), []
+     for row in rows:
+-        need(len(row) == 3 and row[0] and "\\" not in row[0] and "\x00" not in row[0]
+-             and not PurePosixPath(row[0]).is_absolute(), "installed_record_invalid")
++        closure_need(len(row) == 3 and row[0] and "\\" not in row[0] and "\x00" not in row[0]
++                     and not PurePosixPath(row[0]).is_absolute(), "installed_record_invalid", record, root)
+         path = site / row[0]
+-        resolved = path.resolve(strict=True)
+-        need(root in resolved.parents and path.is_file() and not path.is_symlink() and resolved not in seen,
+-             "installed_record_escape_or_duplicate")
++        try:
++            resolved = path.resolve(strict=True)
++        except OSError:
++            closure_need(False, "installed_record_target_unavailable", path, root)
++        closure_need(root in resolved.parents and path.is_file() and not path.is_symlink() and resolved not in seen,
++                     "installed_record_escape_or_duplicate", path, root)
+         if site in resolved.parents:
+             relative_site = resolved.relative_to(site).as_posix()
+             # Explicit inert metadata profile for the independently hash-pinned
+@@ -248,40 +289,40 @@
+             # installed RECORD hash and the earlier frozen/root-owned tree.
+             generated_metadata = {DIST + "/INSTALLER", DIST + "/REQUESTED", DIST + "/direct_url.json",
+                                   DIST + "/uv_cache.json"}
+-            need(relative_site in wheel["members"] or relative_site in generated_metadata,
+-                 "installed_unpinned_payload")
++            closure_need(relative_site in wheel["members"] or relative_site in generated_metadata,
++                         "installed_unpinned_payload", path, root)
+         else:
+             # Installer-generated console wrappers are recorded for identity
+             # but never invoked; no ambient metta binary is an execution path.
+-            need(resolved.parent == root / "bin", "installed_record_escape_or_duplicate")
++            closure_need(resolved.parent == root / "bin", "installed_record_escape_or_duplicate", path, root)
+         seen.add(resolved)
+-        need(len(seen) <= 10000, "installed_record_limit")
++        closure_need(len(seen) <= 10000, "installed_record_limit", record, root)
+         raw_hash, size = row[1], row[2]
+         actual = sha_file(path)
+         if raw_hash:
+             algorithm, separator, encoded = raw_hash.partition("=")
+-            need(separator and algorithm in ("sha256", "sha384", "sha512"), "installed_record_hash_algorithm")
++            closure_need(separator and algorithm in ("sha256", "sha384", "sha512"), "installed_record_hash_algorithm", path, root)
+             measured = hashlib.new(algorithm, path.read_bytes()).digest()
+-            need(base64.urlsafe_b64encode(measured).rstrip(b"=").decode() == encoded,
+-                 "installed_record_hash_mismatch")
+-            need(size.isdecimal() and int(size) == path.stat().st_size, "installed_record_size")
++            closure_need(base64.urlsafe_b64encode(measured).rstrip(b"=").decode() == encoded,
++                         "installed_record_hash_mismatch", path, root)
++            closure_need(size.isdecimal() and int(size) == path.stat().st_size, "installed_record_size", path, root)
+         else:
+-            need(resolved == record.resolve() or path.suffix == ".pyc", "installed_record_hash_missing")
+-            need(not size or (size.isdecimal() and int(size) == path.stat().st_size), "installed_record_size")
++            closure_need(resolved == record.resolve() or path.suffix == ".pyc", "installed_record_hash_missing", path, root)
++            closure_need(not size or (size.isdecimal() and int(size) == path.stat().st_size), "installed_record_size", path, root)
+         inventory.append([path.relative_to(root).as_posix(), actual, path.stat().st_size])
+     for path in site.rglob("*"):
+-        need(not path.is_symlink(), "installed_symlink")
++        closure_need(not path.is_symlink(), "installed_symlink", path, root)
+         if path.is_file():
+-            need(path.resolve() in seen, "installed_unrecorded_file")
++            closure_need(path.resolve() in seen, "installed_unrecorded_file", path, root)
+     for name, expected in wheel["members"].items():
+         if name == DIST + "/RECORD":
+             continue
+         # This exact upstream wheel is expected to install into site-packages.
+         # Refuse an unqualified scheme rather than omit pinned payload checks.
+-        need(".data/" not in name, "wheel_install_scheme_unqualified")
++        closure_need(".data/" not in name, "wheel_install_scheme_unqualified", site / name, root)
+         path = site / name
+-        need(path.is_file() and not path.is_symlink() and sha_file(path) == expected["sha256"]
+-             and path.stat().st_size == expected["bytes"], "installed_wheel_payload_mismatch")
++        closure_need(path.is_file() and not path.is_symlink() and sha_file(path) == expected["sha256"]
++                     and path.stat().st_size == expected["bytes"], "installed_wheel_payload_mismatch", path, root)
+     return {"distribution": "hyperon", "version": "0.2.10", "distribution_count": 1,
+             "record_count": len(seen), "record_inventory_sha256": hashlib.sha256(canonical_json(sorted(inventory))).hexdigest(),
+             "metadata_sha256": hashlib.sha256(wheel["metadata_bytes"]).hexdigest(), "active_requires_dist": []}
+@@ -525,6 +566,8 @@
+                   "reason": error.code if isinstance(error, Refusal) else "qualification_failed",
+                   "architecture": args.architecture, "native_pass_claimed": False,
+                   "service_or_production_activation": False}
++        if isinstance(error, Refusal) and error.details:
++            result["refusal_details"] = error.details
+     written = False
+     try:
+         receipt_write(args.receipt, result)
+--- a/test_acceptance_portable.py
++++ b/test_acceptance_portable.py
+@@ -210,6 +210,40 @@
+         with self.assertRaises(q.Refusal) as raised:
+             q.installed_closure(root, wheel)
+         self.assertEqual(raised.exception.code, "installed_unrecorded_file")
++        self.assertEqual(raised.exception.details, {
++            "offending_relative_path": "lib/python3.12/site-packages/" + q.DIST + "/uv_cache.json",
++            "offending_artifact_class": "installer_metadata"})
++
++    def test_unrecorded_cached_bytecode_refused_with_relative_diagnostic(self):
++        root, wheel, site, _ = self.installed()
++        path = site / "hyperon/__pycache__/base.cpython-312.pyc"
++        path.parent.mkdir()
++        path.write_bytes(b"invented bytecode bytes; never executed")
++        with self.assertRaises(q.Refusal) as raised:
++            q.installed_closure(root, wheel)
++        self.assertEqual(raised.exception.code, "installed_unrecorded_file")
++        self.assertEqual(raised.exception.details, {
++            "offending_relative_path": "lib/python3.12/site-packages/hyperon/__pycache__/base.cpython-312.pyc",
++            "offending_artifact_class": "cached_bytecode"})
++
++    def test_recorded_but_unpinned_bytecode_still_refused(self):
++        root, wheel, site, files = self.installed()
++        relative = "hyperon/__pycache__/base.cpython-312.pyc"
++        files[relative] = b"invented bytecode bytes; never executed"
++        path = site / relative
++        path.parent.mkdir()
++        path.write_bytes(files[relative])
++        (site / q.DIST / "RECORD").write_bytes(record_bytes({k: v for k, v in files.items() if not k.endswith("/RECORD")}))
++        with self.assertRaises(q.Refusal) as raised:
++            q.installed_closure(root, wheel)
++        self.assertEqual(raised.exception.code, "installed_unpinned_payload")
++        self.assertEqual(raised.exception.details["offending_artifact_class"], "cached_bytecode")
++
++    def test_venv_scaffolding_outside_site_is_not_unrecorded_site_payload(self):
++        root, wheel, _, _ = self.installed()
++        (root / "bin/activate").write_text("invented activation scaffolding; not executed")
++        (root / "pyvenv.cfg").write_text("invented metadata; not used by this closure-only control")
++        self.assertEqual(q.installed_closure(root, wheel)["distribution_count"], 1)
+ 
+     def test_generated_uv_metadata_hash_drift_refused(self):
+         root, wheel, site, files = self.installed()
+@@ -396,6 +430,32 @@
+         result = json.loads((self.root / "receipt.json").read_text())
+         self.assertEqual(result["reason"], "qualification_failed")
+ 
++    def test_refusal_details_exclude_unsafe_or_unbounded_paths(self):
++        for relative in ("/invented/private", "../invented-private", "a/../private", "a/./b", ".", "x\nprivate", "x" * 513):
++            error = q.Refusal("invented_closed_refusal", relative_path=relative)
++            self.assertEqual(error.details, {})
++
++    def test_closure_error_does_not_disclose_outside_absolute_path(self):
++        outside = self.root.parent / "invented-private-not-opened"
++        with self.assertRaises(q.Refusal) as raised:
++            q.closure_need(False, "invented_closed_refusal", outside, self.root)
++        self.assertNotIn("offending_relative_path", raised.exception.details)
++        self.assertNotIn(str(outside), str(raised.exception.details))
++
++    def test_cli_closed_closure_path_reaches_receipt_without_contents(self):
++        argv = ["--source-archive", str(self.root / "invented.zip"), "--wheel", str(self.root / "invented.whl"),
++                "--worker-python", str(self.root / "worker/bin/python"), "--worker-root", str(self.root / "worker"),
++                "--architecture", "x86_64", "--receipt", str(self.root / "receipt.json")]
++        relative = "lib/python3.12/site-packages/" + q.DIST + "/uv_cache.json"
++        error = q.Refusal("installed_unrecorded_file", relative_path=relative, artifact_class="installer_metadata")
++        stream = io.StringIO()
++        with mock.patch.object(q, "qualify", side_effect=error), contextlib.redirect_stdout(stream):
++            self.assertEqual(q.main(argv), 1)
++        result = json.loads((self.root / "receipt.json").read_text())
++        self.assertEqual(result["refusal_details"]["offending_relative_path"], relative)
++        self.assertNotIn(str(self.root), json.dumps(result))
++        self.assertNotIn(relative, stream.getvalue())
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

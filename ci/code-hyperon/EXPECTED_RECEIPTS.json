@@ -1,6 +1,8 @@
 {
   "schema": "omegacode-hyperon-linux-worker-receipt-expectations-r1",
   "kind": "expectations_only_not_execution_evidence",
+  "source_version": "r1.1",
+  "optional_failure_details": ["offending_relative_path: worker-relative canonical printable path <=512 characters, no contents", "offending_artifact_class: closed metadata classification"],
   "parent_receipt": {
     "schema": "omegacode-hyperon-linux-worker-acceptance-r1",
     "required_success": [

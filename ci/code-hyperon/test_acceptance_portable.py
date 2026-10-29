@@ -210,6 +210,40 @@ class PortableAcceptanceTests(unittest.TestCase):
         with self.assertRaises(q.Refusal) as raised:
             q.installed_closure(root, wheel)
         self.assertEqual(raised.exception.code, "installed_unrecorded_file")
+        self.assertEqual(raised.exception.details, {
+            "offending_relative_path": "lib/python3.12/site-packages/" + q.DIST + "/uv_cache.json",
+            "offending_artifact_class": "installer_metadata"})
+
+    def test_unrecorded_cached_bytecode_refused_with_relative_diagnostic(self):
+        root, wheel, site, _ = self.installed()
+        path = site / "hyperon/__pycache__/base.cpython-312.pyc"
+        path.parent.mkdir()
+        path.write_bytes(b"invented bytecode bytes; never executed")
+        with self.assertRaises(q.Refusal) as raised:
+            q.installed_closure(root, wheel)
+        self.assertEqual(raised.exception.code, "installed_unrecorded_file")
+        self.assertEqual(raised.exception.details, {
+            "offending_relative_path": "lib/python3.12/site-packages/hyperon/__pycache__/base.cpython-312.pyc",
+            "offending_artifact_class": "cached_bytecode"})
+
+    def test_recorded_but_unpinned_bytecode_still_refused(self):
+        root, wheel, site, files = self.installed()
+        relative = "hyperon/__pycache__/base.cpython-312.pyc"
+        files[relative] = b"invented bytecode bytes; never executed"
+        path = site / relative
+        path.parent.mkdir()
+        path.write_bytes(files[relative])
+        (site / q.DIST / "RECORD").write_bytes(record_bytes({k: v for k, v in files.items() if not k.endswith("/RECORD")}))
+        with self.assertRaises(q.Refusal) as raised:
+            q.installed_closure(root, wheel)
+        self.assertEqual(raised.exception.code, "installed_unpinned_payload")
+        self.assertEqual(raised.exception.details["offending_artifact_class"], "cached_bytecode")
+
+    def test_venv_scaffolding_outside_site_is_not_unrecorded_site_payload(self):
+        root, wheel, _, _ = self.installed()
+        (root / "bin/activate").write_text("invented activation scaffolding; not executed")
+        (root / "pyvenv.cfg").write_text("invented metadata; not used by this closure-only control")
+        self.assertEqual(q.installed_closure(root, wheel)["distribution_count"], 1)
 
     def test_generated_uv_metadata_hash_drift_refused(self):
         root, wheel, site, files = self.installed()
@@ -395,6 +429,32 @@ class PortableAcceptanceTests(unittest.TestCase):
         self.assertNotIn("raw metadata", stream.getvalue())
         result = json.loads((self.root / "receipt.json").read_text())
         self.assertEqual(result["reason"], "qualification_failed")
+
+    def test_refusal_details_exclude_unsafe_or_unbounded_paths(self):
+        for relative in ("/invented/private", "../invented-private", "a/../private", "a/./b", ".", "x\nprivate", "x" * 513):
+            error = q.Refusal("invented_closed_refusal", relative_path=relative)
+            self.assertEqual(error.details, {})
+
+    def test_closure_error_does_not_disclose_outside_absolute_path(self):
+        outside = self.root.parent / "invented-private-not-opened"
+        with self.assertRaises(q.Refusal) as raised:
+            q.closure_need(False, "invented_closed_refusal", outside, self.root)
+        self.assertNotIn("offending_relative_path", raised.exception.details)
+        self.assertNotIn(str(outside), str(raised.exception.details))
+
+    def test_cli_closed_closure_path_reaches_receipt_without_contents(self):
+        argv = ["--source-archive", str(self.root / "invented.zip"), "--wheel", str(self.root / "invented.whl"),
+                "--worker-python", str(self.root / "worker/bin/python"), "--worker-root", str(self.root / "worker"),
+                "--architecture", "x86_64", "--receipt", str(self.root / "receipt.json")]
+        relative = "lib/python3.12/site-packages/" + q.DIST + "/uv_cache.json"
+        error = q.Refusal("installed_unrecorded_file", relative_path=relative, artifact_class="installer_metadata")
+        stream = io.StringIO()
+        with mock.patch.object(q, "qualify", side_effect=error), contextlib.redirect_stdout(stream):
+            self.assertEqual(q.main(argv), 1)
+        result = json.loads((self.root / "receipt.json").read_text())
+        self.assertEqual(result["refusal_details"]["offending_relative_path"], relative)
+        self.assertNotIn(str(self.root), json.dumps(result))
+        self.assertNotIn(relative, stream.getvalue())
 
 
 if __name__ == "__main__":

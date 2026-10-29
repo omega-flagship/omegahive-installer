@@ -48,14 +48,50 @@ DIST = "hyperon-0.2.10.dist-info"
 
 
 class Refusal(Exception):
-    def __init__(self, code):
+    def __init__(self, code, *, relative_path=None, artifact_class=None):
         super().__init__(code)
         self.code = code
+        self.details = {}
+        if (type(relative_path) is str and 1 <= len(relative_path) <= 512
+                and relative_path not in (".", "..")
+                and re.fullmatch(r"[A-Za-z0-9._+/-]+", relative_path) is not None
+                and not PurePosixPath(relative_path).is_absolute()
+                and not {".", ".."}.intersection(PurePosixPath(relative_path).parts)
+                and str(PurePosixPath(relative_path)) == relative_path):
+            self.details["offending_relative_path"] = relative_path
+        if artifact_class in {"cached_bytecode", "installer_metadata", "distribution_metadata", "package_payload", "other"}:
+            self.details["offending_artifact_class"] = artifact_class
 
 
 def need(condition, code):
     if not condition:
         raise Refusal(code)
+
+
+def closure_need(condition, code, path, root):
+    """Retain bounded public worker-relative metadata, never contents/absolute paths.
+
+    This changes diagnostics only: recorded inert installer metadata remains
+    allowed under R1's hash rules; every unrecorded site file still refuses.
+    """
+    if condition:
+        return
+    path, root = Path(path), Path(root)
+    try:
+        relative = path.relative_to(root).as_posix()
+    except ValueError:
+        relative = None
+    if "__pycache__" in path.parts or path.suffix == ".pyc":
+        kind = "cached_bytecode"
+    elif path.parent.name == DIST and path.name in {"INSTALLER", "REQUESTED", "direct_url.json", "uv_cache.json"}:
+        kind = "installer_metadata"
+    elif any(part.endswith(".dist-info") for part in path.parts):
+        kind = "distribution_metadata"
+    elif any(part.startswith("hyperon") for part in path.parts):
+        kind = "package_payload"
+    else:
+        kind = "other"
+    raise Refusal(code, relative_path=relative, artifact_class=kind)
 
 
 def sha_file(path):
@@ -223,24 +259,29 @@ def runtime_roots(worker_python, worker_root):
 def installed_closure(worker_root, wheel):
     root = Path(worker_root)
     site = root / "lib/python3.12/site-packages"
-    need(site.is_dir() and not site.is_symlink(), "worker_site_missing")
+    closure_need(site.is_dir() and not site.is_symlink(), "worker_site_missing", site, root)
     dists = [p.name for p in site.iterdir() if p.name.endswith((".dist-info", ".egg-info"))]
-    need(dists == [DIST], "worker_distribution_closure")
+    unexpected = next((name for name in dists if name != DIST), None)
+    closure_need(dists == [DIST], "worker_distribution_closure", site / unexpected if unexpected else site, root)
     installed_metadata = site / DIST / "METADATA"
-    need(installed_metadata.is_file() and not installed_metadata.is_symlink()
-         and installed_metadata.stat().st_size <= 256 * 1024, "installed_metadata_invalid")
-    need(installed_metadata.read_bytes() == wheel["metadata_bytes"], "installed_metadata_mismatch")
+    closure_need(installed_metadata.is_file() and not installed_metadata.is_symlink()
+                 and installed_metadata.stat().st_size <= 256 * 1024, "installed_metadata_invalid", installed_metadata, root)
+    closure_need(installed_metadata.read_bytes() == wheel["metadata_bytes"], "installed_metadata_mismatch", installed_metadata, root)
     metadata(installed_metadata.read_bytes())
     record = site / DIST / "RECORD"
-    need(record.is_file() and not record.is_symlink() and record.stat().st_size <= 8 * 1024 * 1024, "installed_record_missing")
+    closure_need(record.is_file() and not record.is_symlink() and record.stat().st_size <= 8 * 1024 * 1024,
+                 "installed_record_missing", record, root)
     rows, seen, inventory = csv.reader(io.StringIO(record.read_text())), set(), []
     for row in rows:
-        need(len(row) == 3 and row[0] and "\\" not in row[0] and "\x00" not in row[0]
-             and not PurePosixPath(row[0]).is_absolute(), "installed_record_invalid")
+        closure_need(len(row) == 3 and row[0] and "\\" not in row[0] and "\x00" not in row[0]
+                     and not PurePosixPath(row[0]).is_absolute(), "installed_record_invalid", record, root)
         path = site / row[0]
-        resolved = path.resolve(strict=True)
-        need(root in resolved.parents and path.is_file() and not path.is_symlink() and resolved not in seen,
-             "installed_record_escape_or_duplicate")
+        try:
+            resolved = path.resolve(strict=True)
+        except OSError:
+            closure_need(False, "installed_record_target_unavailable", path, root)
+        closure_need(root in resolved.parents and path.is_file() and not path.is_symlink() and resolved not in seen,
+                     "installed_record_escape_or_duplicate", path, root)
         if site in resolved.parents:
             relative_site = resolved.relative_to(site).as_posix()
             # Explicit inert metadata profile for the independently hash-pinned
@@ -248,40 +289,40 @@ def installed_closure(worker_root, wheel):
             # installed RECORD hash and the earlier frozen/root-owned tree.
             generated_metadata = {DIST + "/INSTALLER", DIST + "/REQUESTED", DIST + "/direct_url.json",
                                   DIST + "/uv_cache.json"}
-            need(relative_site in wheel["members"] or relative_site in generated_metadata,
-                 "installed_unpinned_payload")
+            closure_need(relative_site in wheel["members"] or relative_site in generated_metadata,
+                         "installed_unpinned_payload", path, root)
         else:
             # Installer-generated console wrappers are recorded for identity
             # but never invoked; no ambient metta binary is an execution path.
-            need(resolved.parent == root / "bin", "installed_record_escape_or_duplicate")
+            closure_need(resolved.parent == root / "bin", "installed_record_escape_or_duplicate", path, root)
         seen.add(resolved)
-        need(len(seen) <= 10000, "installed_record_limit")
+        closure_need(len(seen) <= 10000, "installed_record_limit", record, root)
         raw_hash, size = row[1], row[2]
         actual = sha_file(path)
         if raw_hash:
             algorithm, separator, encoded = raw_hash.partition("=")
-            need(separator and algorithm in ("sha256", "sha384", "sha512"), "installed_record_hash_algorithm")
+            closure_need(separator and algorithm in ("sha256", "sha384", "sha512"), "installed_record_hash_algorithm", path, root)
             measured = hashlib.new(algorithm, path.read_bytes()).digest()
-            need(base64.urlsafe_b64encode(measured).rstrip(b"=").decode() == encoded,
-                 "installed_record_hash_mismatch")
-            need(size.isdecimal() and int(size) == path.stat().st_size, "installed_record_size")
+            closure_need(base64.urlsafe_b64encode(measured).rstrip(b"=").decode() == encoded,
+                         "installed_record_hash_mismatch", path, root)
+            closure_need(size.isdecimal() and int(size) == path.stat().st_size, "installed_record_size", path, root)
         else:
-            need(resolved == record.resolve() or path.suffix == ".pyc", "installed_record_hash_missing")
-            need(not size or (size.isdecimal() and int(size) == path.stat().st_size), "installed_record_size")
+            closure_need(resolved == record.resolve() or path.suffix == ".pyc", "installed_record_hash_missing", path, root)
+            closure_need(not size or (size.isdecimal() and int(size) == path.stat().st_size), "installed_record_size", path, root)
         inventory.append([path.relative_to(root).as_posix(), actual, path.stat().st_size])
     for path in site.rglob("*"):
-        need(not path.is_symlink(), "installed_symlink")
+        closure_need(not path.is_symlink(), "installed_symlink", path, root)
         if path.is_file():
-            need(path.resolve() in seen, "installed_unrecorded_file")
+            closure_need(path.resolve() in seen, "installed_unrecorded_file", path, root)
     for name, expected in wheel["members"].items():
         if name == DIST + "/RECORD":
             continue
         # This exact upstream wheel is expected to install into site-packages.
         # Refuse an unqualified scheme rather than omit pinned payload checks.
-        need(".data/" not in name, "wheel_install_scheme_unqualified")
+        closure_need(".data/" not in name, "wheel_install_scheme_unqualified", site / name, root)
         path = site / name
-        need(path.is_file() and not path.is_symlink() and sha_file(path) == expected["sha256"]
-             and path.stat().st_size == expected["bytes"], "installed_wheel_payload_mismatch")
+        closure_need(path.is_file() and not path.is_symlink() and sha_file(path) == expected["sha256"]
+                     and path.stat().st_size == expected["bytes"], "installed_wheel_payload_mismatch", path, root)
     return {"distribution": "hyperon", "version": "0.2.10", "distribution_count": 1,
             "record_count": len(seen), "record_inventory_sha256": hashlib.sha256(canonical_json(sorted(inventory))).hexdigest(),
             "metadata_sha256": hashlib.sha256(wheel["metadata_bytes"]).hexdigest(), "active_requires_dist": []}
@@ -525,6 +566,8 @@ def main(argv=None):
                   "reason": error.code if isinstance(error, Refusal) else "qualification_failed",
                   "architecture": args.architecture, "native_pass_claimed": False,
                   "service_or_production_activation": False}
+        if isinstance(error, Refusal) and error.details:
+            result["refusal_details"] = error.details
     written = False
     try:
         receipt_write(args.receipt, result)
