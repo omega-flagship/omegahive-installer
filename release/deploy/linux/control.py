@@ -29,7 +29,7 @@ UNIT = 'omegahive.service'
 SYSTEMCTL = '/usr/bin/systemctl'
 OPENER = '/usr/bin/xdg-open'
 MAX_REPLY = 65536
-HELLO_READY_SECONDS = 15
+HELLO_READY_SECONDS = 180
 _HELLO_DEADLINE = contextvars.ContextVar('l0_hello_deadline', default=None)
 
 
@@ -290,8 +290,11 @@ def headless_guidance(config):
         target = '<you>@<this-server>'
         print('Replace <you> and <this-server> with your SSH user and this server address.')
     port, browser_port = str(config['port']), str(config['browser_port'])
-    print('On your own computer, keep this loopback-only SSH tunnel running:')
+    print('Before requesting a sign-in link, on your own computer keep this loopback-only SSH tunnel running:')
     print('ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:' + browser_port + ':127.0.0.1:' + port + ' ' + target)
+    print('Then run ~/.local/bin/omegahive open on the server. Open the full link, including its fragment, within 60 seconds.')
+    print('Keep 127.0.0.1 and port ' + browser_port + ' unchanged; localhost or another port has separate browser storage.')
+    print('If the link expires, request a new one. The generic Google invite screen is not this local-owner sign-in path.')
     return 0
 
 
@@ -349,21 +352,25 @@ def validated_hello(config, answer):
     return hello, pid
 
 
-def wait_for_hello(config, home):
+def wait_for_hello(config, home, previous_instance=None, cancelled=None):
     # Only hello can be retried. A foreign identity or malformed reply fails closed.
     deadline = time.monotonic() + HELLO_READY_SECONDS
     token = _HELLO_DEADLINE.set(deadline)
-    retryable = {'service_not_running', 'supervisor_not_available', 'supervisor_timeout',
+    retryable = {'supervisor_not_available', 'supervisor_timeout',
                  'control_reply_timeout', 'control_reply_incomplete'}
     try:
         while True:
+            require(cancelled is None or not cancelled(), 'readiness_cancelled')
             try:
-                return validated_hello(config, request(config, home, 'hello'))
+                answer = validated_hello(config, request(config, home, 'hello'))
+                if previous_instance is None or answer[0]['instance'] != previous_instance:
+                    return answer
             except Refused as error:
                 if str(error) not in retryable:
                     raise
             except (FileNotFoundError, ConnectionRefusedError, TimeoutError):
-                pass
+                # Missing socket is expected during startup, but a dead unit is not.
+                supervisor_pid(home)
             remaining = deadline - time.monotonic()
             require(remaining > 0, 'control_reply_timeout')
             time.sleep(min(0.25, remaining))
@@ -379,12 +386,14 @@ def main():
     parser.add_argument('--json', action='store_true', help='Machine-readable status only.')
     parser.add_argument('--defer-headless-signin', action='store_true',
                         help='Installer-only captured headless handoff: do not issue a sign-in code.')
-    parser.add_argument('operation', choices=('status', 'open'))
+    parser.add_argument('operation', choices=('status', 'open', 'tunnel'))
     args = parser.parse_args()
     require(not args.json or args.operation == 'status', 'json_requires_status')
     require(not args.defer_headless_signin or args.operation == 'open', 'defer_requires_open')
     config, home, fingerprint = runtime(args.runtime)
     loader_agreement(config)
+    if args.operation == 'tunnel':
+        return headless_guidance(config)
     if args.operation == 'open':
         hello, pid = wait_for_hello(config, home)
     else:
@@ -476,7 +485,7 @@ def refusal_message(reason):
         'local_graphical_session_required': forwarded if os.environ.get('DISPLAY', '')[:1] not in ('', ':') else screen,
         'remote_display_refused': forwarded,
         'wayland_name_refused': screen,
-        'control_reply_timeout': "Your hive didn't answer. Run omegahive open again in a minute.",
+        'control_reply_timeout': "Hive has not become ready within three minutes. Check omegahive status and journalctl --user -u omegahive.service; keep your data.",
         'service_not_running': "OmegaHive isn't running.",
         'supervisor_not_available': "OmegaHive isn't running.",
     }

@@ -41,7 +41,9 @@ stores only what its normal routes already store.
 After logout, the unchanged descriptor is atomically replaced with the returned
 template ID under an exclusive bootstrap lock. All other settings are retained.
 One fixed `systemctl --user restart omegahive.service` follows. The helper waits
-for a new local instance and rereads the descriptor. Failed/partial setup is not
+up to 180 seconds for a new local instance through the same validated hello path,
+then checks its listener and rereads the descriptor. The initial readiness wait
+has the same bound; the installer permits 480 seconds for the complete helper. Failed/partial setup is not
 reported as ready; there is no automatic reconnect/restart loop or rollback of
 unrelated owner state. No model/provider request or user consent is generated.
 

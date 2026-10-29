@@ -119,13 +119,18 @@ output securely and must not retain the real link in install logs or diagnostic
 receipts. If link printing fails, the fixed message is "Your sign-in link couldn't
 be shown. Run omegahive open again." No exception text or link is included. Printing a link proves neither a tunnel nor authenticated browser state.
 
-The installer's automatic final handoff uses `--defer-headless-signin` only when
-headless AND stdout is not a real TTY. It then prints nonsecret tunnel/rerun
-instructions, issues no sign-in code and exits0, allowing setup to finish under a
-capturing harness. Only stdout decides: terminal stdout with piped stdin, such as
-interactive curl|sh, keeps the ordinary handoff; desktop behavior is unchanged.
-`console=True` bypasses the install log but does not itself prevent parent capture.
-The defer flag is accepted before or after `open`; it is invalid with `status`.
+The installer's automatic headless handoff always uses `--defer-headless-signin`,
+regardless of stdout capture. It prints nonsecret tunnel/rerun instructions and
+issues no sign-in code. Desktop behavior and explicit non-TTY `open` remain
+unchanged. The additive `tunnel` operation prints forwarding/origin/expiry
+instructions without contacting the control socket or minting a code. The user
+can establish forwarding before `open` starts the one-minute lifetime.
+The defer flag is valid only for `open`.
+
+Both hello readiness waits are bounded to 180 seconds. Bootstrap's parent budget
+is 480 seconds; open's parent budget is 210 seconds. A stopped service, foreign
+identity, malformed hello, or cancellation fails closed. Bootstrap restart
+requires a new instance, using the same validated hello path and deadline.
 
 The service still listens only at127.0.0.1:8700. `serve.py` explicitly sets
 `HIVE_LOCAL_BROWSER_PORT=8701` from the closed descriptor after dropping inherited
