@@ -1,6 +1,6 @@
 name: code-lifecycle (test only)
 
-# OmegaCode Linux lifecycle qualification (sealed bundle R1, manifest 154b87bf) for the R13 Code package: fresh user unit,
+# OmegaCode Linux lifecycle qualification (sealed bundle R1.1, manifest 9ce1a894) for the R13 Code package: fresh user unit,
 # health, stop/start, R1.4 -> R1.5.2 -> R1.4 rollback, uninstall with state kept, plus refusal/timeout/SIGTERM/SIGKILL controls.
 # Own branch pattern so it never triggers the installer/mac-native workflow. Synthetic state only.
 
@@ -21,7 +21,7 @@ jobs:
       - name: Verify the sealed lifecycle bundle and the two exact package archives
         run: |
           set -euo pipefail
-          printf '%s  %s\n' 154b87bf789af16ca313101fed2c3be2ec5ba735cb214b3f5ece7dd80020e7e3 ci/code-lifecycle/MANIFEST.sha256 | sha256sum -c -
+          printf '%s  %s\n' 9ce1a894dc828c6597ad88a620c56f8f03fe7f35d6a361397fe924d37a9a9e59 ci/code-lifecycle/MANIFEST.sha256 | sha256sum -c -
           (cd ci/code-lifecycle && sha256sum --strict --check MANIFEST.sha256)
           printf '%s  %s\n' c7478c1e88ed5fd777890196d572cf347c3a38240810b3911836081c8674fea1 ci/code-lifecycle/inputs/OMEGACODE_R13_SUCCESSOR_R1_4_P3_FOLLOWUP_REVIEW.zip | sha256sum -c -
           printf '%s  %s\n' c6f0e7c2380fee230ee8081e097a231d7c7d731afec82ff24ae86041637638f1 ci/code-lifecycle/inputs/OMEGACODE_R13_SUCCESSOR_R1_5_2_TRACE_API_REVIEW.zip | sha256sum -c -
@@ -53,8 +53,9 @@ jobs:
             -r ci/code-c2/CODE_R10_X86_RUNTIME_REQUIREMENTS_R1.lock
           env -i HOME="$HOME" PATH=/usr/bin:/bin "$UV" --no-config pip check \
             --python /tmp/lifecyclevenv/bin/python
-          # No group/other write anywhere on the runtime trees (provisioning hygiene, not a guard change); show the result.
-          chmod -R go-w /tmp/py /tmp/lifecyclevenv
+          # CI_INTEGRATION.md R1.1: freeze the runtime — root-owned, read/execute only (provisioning, not a guard change).
+          sudo chown -R root:root /tmp/py /tmp/lifecyclevenv
+          sudo chmod -R a+rX,a-w /tmp/py /tmp/lifecyclevenv
           echo "group/other-writable entries left: $(find /tmp/py /tmp/lifecyclevenv -perm /022 ! -type l | wc -l)"
           stat -c '%a %U %n' /tmp /tmp/py /tmp/py/python /tmp/lifecyclevenv /tmp/lifecyclevenv/bin
       - name: Native lifecycle qualification (full, refusal, timeout, sigterm, sigkill)
