@@ -70,6 +70,14 @@ jobs:
             --worker-root /tmp/hyperon-worker \
             --architecture x86_64 \
             --receipt /var/tmp/code-hyperon-receipts/native-x86_64.json
+      - name: Writable-ancestor census on failure (metadata only)
+        if: failure()
+        run: |
+          for root in /tmp/py /tmp/hyperon-worker /tmp/hyperon-wheels /opt/code-hyperon-acceptance; do
+            p=$root; while [ "$p" != "/" ]; do stat -c '%a %U %F %n' "$p"; p=$(dirname "$p"); done; stat -c '%a %U %F %n' /
+            sudo find "$root" \( -perm -0002 -o -perm -0020 \) ! -type l -printf '%m %u %y %p\n' 2>/dev/null | head -20
+          done | sort -u
+          readlink -f /tmp/hyperon-worker/bin/python; sudo find /tmp/hyperon-worker -maxdepth 2 -type l -printf '%p -> %l\n'
       - name: Collect only the JSON receipts (always; keeps the step failure)
         if: always()
         run: |
