@@ -1,0 +1,32 @@
+{
+  "schema": "omegacode-linux-lifecycle-expectations-r1",
+  "kind": "expectation_only_not_run_evidence",
+  "full_case_required": {
+    "01-package.json": ["ok", "releases.r14.module_digest", "releases.r152.module_digest"],
+    "02-runtime.json": ["ok", "evidence", "runtime_supply_chain"],
+    "03-user-manager.json": ["ok", "uid", "linger", "bus_reachable"],
+    "03a-install.json": ["ok", "systemd_analyze_verified", "unit_enabled", "atomic_unit_pin_pointer", "module_digest=4a5737b1..."],
+    "04-first-start.json": ["ok", "anonymous_status=401", "owner_status=200", "module_digest=4a5737b1..."],
+    "05-stop.json": ["ok", "process_group_clean", "code_processes=0", "listener_count=0", "port_rebindable"],
+    "06-restart.json": ["ok", "new_process_identity", "module_digest=4a5737b1..."],
+    "07-quiesce-for-upgrade.json": ["ok", "process_group_clean"],
+    "08-pre-upgrade-snapshot.json": ["ok", "cold_copy", "snapshot_inventory_sha256", "sqlite_integrity", "host_registered=false"],
+    "08a-upgrade-install.json": ["ok", "systemd_analyze_verified", "unit_enabled", "module_digest=892f333e..."],
+    "09-upgrade.json": ["ok", "module_digest=892f333e...", "anonymous_status=401", "owner_status=200"],
+    "10-quiesce-for-rollback.json": ["ok", "process_group_clean"],
+    "11-restore-before-old-start.json": ["ok", "snapshot_inventory_sha256_matches_pre_upgrade", "newer_state_retained", "sqlite_integrity"],
+    "11a-rollback-install.json": ["ok", "systemd_analyze_verified", "unit_enabled", "module_digest=4a5737b1..."],
+    "12-rollback-health.json": ["ok", "module_digest=4a5737b1...", "anonymous_status=401", "owner_status=200"],
+    "13-uninstall-quiesce.json": ["ok", "process_group_clean"],
+    "14-uninstall-authority.json": ["ok", "host_registered=false", "local_grants=0", "owned_records=0", "host_revocation=not_exercised_unregistered_fixture"],
+    "15-uninstall.json": ["ok", "unit_gone", "state_retained", "process_group_clean", "port_rebindable", "sqlite_integrity"],
+    "result.json": ["ok", "lifecycle=passed", "rollback_digest=4a5737b1...", "pending"]
+  },
+  "each_case_cleanup": {
+    "cleanup.json": "root ExecStopPost must record fresh UID/process/listener/manager cleanup and systemd-supplied worker terminal facts; fallback cleanup cannot invent an expected terminal",
+    "containment.json": "parent must independently verify terminal outer cgroup empty/gone",
+    "summary": "case must satisfy both worker outcome and observed cleanup; no pre-readiness failure counts as containment qualification"
+  },
+  "cases": ["full", "refusal", "timeout", "sigterm", "sigkill"],
+  "pending_after_success": ["production_host_guard", "authenticated_enrollment_and_revocation", "live_proved_relay", "workbench_first_app", "independent_hive_restart", "hyperon_worker", "arm_linux"]
+}

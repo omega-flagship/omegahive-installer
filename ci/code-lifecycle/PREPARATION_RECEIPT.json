@@ -1,0 +1,36 @@
+{
+  "native_linux_run": false,
+  "pending": [
+    "Dot_review_and_vendoring",
+    "native_code-c2_lifecycle_and_all_failure_controls",
+    "actual_Hive_guard_enrollment_relay",
+    "Workbench_journey",
+    "host_revocation_cancel_with_active_work",
+    "Hyperon_worker"
+  ],
+  "portable_controls": {
+    "code_service_started": false,
+    "command": "/usr/bin/python3 -B test_bundle.py --r14-archive <exact R1.4 ZIP> --r152-archive <exact R1.5.2 ZIP> -v",
+    "count": 17,
+    "environment": "macOS arm64 /usr/bin/python3 3.9.6",
+    "exact_reviewed_packages_staged_offline": true,
+    "providers_called": false,
+    "result": "passed",
+    "sockets_opened": false,
+    "systemd_invoked": false
+  },
+  "production_pin_changed": false,
+  "production_staging_hold_retained": true,
+  "reviewed_script_sha256": {
+    "lifecycle_worker.py": "c169af644751f7070742ec8260eca354ed7663349d469f21ca5a8e97cc0d8a40",
+    "runtime_preflight.py": "e96ac1cf10499d889717becc2452dbf284ce2dfc829d10b79956c2d85547f54c",
+    "supervise.py": "fd529a108d70a93216003b478b971c718b1e4fde2a0852e84a8e1367e76159a5"
+  },
+  "schema": "omegacode-linux-lifecycle-source-preparation-r1",
+  "source_review": "PASS_SOURCE_ONLY",
+  "status": "prepared_for_Dot_review_and_admitted_native_CI",
+  "syntax_checks": {
+    "embedded_runtime_inspection": "compiled",
+    "python_files": 4
+  }
+}
