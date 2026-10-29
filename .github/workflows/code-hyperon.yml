@@ -54,16 +54,18 @@ jobs:
       - name: Root-owned read-only controller copy (separate from checkout and receipts)
         run: |
           set -euo pipefail
-          sudo install -d -o root -g root -m 0755 /opt/code-hyperon-acceptance
+          # /opt is 0777 (no sticky) on GitHub runners, which the controller guard rightly refuses as a writable ancestor.
+          for p in / /var /var/lib; do stat -c '%a %U %n' "$p"; test "$(stat -c %u "$p")" = 0; test $(( 0$(stat -c %a "$p") & 022 )) -eq 0; done
+          sudo install -d -o root -g root -m 0755 /var/lib/code-hyperon-acceptance
           for f in outer_gate.py qualify_hyperon_worker.py native_cases.py EXPECTED_RECEIPTS.json INPUT_PINS.json worker-x86_64.lock MANIFEST.sha256; do
-            sudo install -o root -g root -m 0444 "ci/code-hyperon/$f" "/opt/code-hyperon-acceptance/$f"
+            sudo install -o root -g root -m 0444 "ci/code-hyperon/$f" "/var/lib/code-hyperon-acceptance/$f"
           done
-          (cd /opt/code-hyperon-acceptance && sha256sum outer_gate.py qualify_hyperon_worker.py native_cases.py)
+          (cd /var/lib/code-hyperon-acceptance && sha256sum outer_gate.py qualify_hyperon_worker.py native_cases.py)
       - name: Native acceptance under the outer gate (x86_64)
         run: |
           set -euo pipefail
           sudo install -d -m 0700 /var/tmp/code-hyperon-receipts
-          sudo /usr/bin/python3 -B /opt/code-hyperon-acceptance/outer_gate.py \
+          sudo /usr/bin/python3 -B /var/lib/code-hyperon-acceptance/outer_gate.py \
             --source-archive "$GITHUB_WORKSPACE/ci/code-hyperon/inputs/OMEGACODE_R13_SUCCESSOR_R1_4_P3_FOLLOWUP_REVIEW.zip" \
             --wheel /tmp/hyperon-wheels/hyperon-0.2.10-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl \
             --worker-python /tmp/hyperon-worker/bin/python \
@@ -73,7 +75,7 @@ jobs:
       - name: Writable-ancestor census on failure (metadata only)
         if: failure()
         run: |
-          for root in /tmp/py /tmp/hyperon-worker /tmp/hyperon-wheels /opt/code-hyperon-acceptance; do
+          for root in /tmp/py /tmp/hyperon-worker /tmp/hyperon-wheels /var/lib/code-hyperon-acceptance; do
             p=$root; while [ "$p" != "/" ]; do stat -c '%a %U %F %n' "$p"; p=$(dirname "$p"); done; stat -c '%a %U %F %n' /
             sudo find "$root" \( -perm -0002 -o -perm -0020 \) ! -type l -printf '%m %u %y %p\n' 2>/dev/null | head -20
           done | sort -u
