@@ -12,7 +12,7 @@ import platform
 import sys
 import tempfile
 
-SOURCE_DIGEST = "4a5737b1296bcb49ff44a002684129c18e95a749d8ce3362cd97df18953b449d"
+SOURCE_DIGEST = "c63d17cb8886a119fd35358108b4fd5daeb16074cdf74de0a108f218a070d319"
 CHECK_IDS = ["unicode_source_ranges", "source_not_evaluated", "malformed_source_closed",
              "operator_enablement_exact", "closed_input_bounds", "runtime_drift_refused",
              "metadata_snapshot_currency", "parser_matcher_not_evaluator", "all_scratch_clean"]

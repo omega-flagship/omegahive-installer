@@ -1,0 +1,142 @@
+--- a/qualify_hyperon_worker.py
++++ b/qualify_hyperon_worker.py
+@@ -1,5 +1,5 @@
+ #!/usr/bin/env python3
+-"""R1.4.1-candidate Hyperon worker acceptance controller; native CI execution only.
++"""R1.4.2-candidate Hyperon worker acceptance controller; native CI execution only.
+ 
+ Standard library only. Imports no OmegaCode/Hyperon code in this controller.
+ Process-group cleanup is not a substitute for the external forced-stop gate.
+@@ -27,8 +27,8 @@
+ import zipfile
+ 
+ 
+-SOURCE_SHA = "01c44a4b1b1c2ea0e4074069432f495b6b5541bc093a74e2da32aa8f171aec4a"
+-MODULE_SHA = "9d903cad1847107f063481e49bb95cc0fbe6bf1033592af057ba63795fb1a8ce"
++SOURCE_SHA = "a6a3f4d0d735134c08a4e8e6d808dca216af5079cacbcfd8858484f95508f5bc"
++MODULE_SHA = "c63d17cb8886a119fd35358108b4fd5daeb16074cdf74de0a108f218a070d319"
+ WHEELS = {
+     "x86_64": {"filename": "hyperon-0.2.10-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+                "sha256": "12a0479df6afadda7562ffe10e7d63a6701aaec02f7177b91412bc05a09ed419"},
+@@ -555,7 +555,7 @@
+                 "checks": native["checks"], "evaluation_entrypoints_instrumented": native["evaluation_entrypoints_instrumented"],
+                 "observed_boundaries": native["observed_boundaries"],
+                 "native_helper_sha256": helper_sha, "cleanup": cleanup,
+-                "qualification_scope": "candidate_r141_worker_and_invented_source_cases",
++                "qualification_scope": "candidate_r142_worker_and_invented_source_cases",
+                 "effect_security_proof": False, "service_or_production_activation": False}
+     finally:
+         # Only this controller-created source scratch is removed; configured
+--- a/native_cases.py
++++ b/native_cases.py
+@@ -12,7 +12,7 @@
+ import sys
+ import tempfile
+ 
+-SOURCE_DIGEST = "9d903cad1847107f063481e49bb95cc0fbe6bf1033592af057ba63795fb1a8ce"
++SOURCE_DIGEST = "c63d17cb8886a119fd35358108b4fd5daeb16074cdf74de0a108f218a070d319"
+ CHECK_IDS = ["unicode_source_ranges", "source_not_evaluated", "malformed_source_closed",
+              "operator_enablement_exact", "closed_input_bounds", "runtime_drift_refused",
+              "metadata_snapshot_currency", "parser_matcher_not_evaluator", "all_scratch_clean"]
+--- a/INPUT_PINS.json
++++ b/INPUT_PINS.json
+@@ -16,12 +16,12 @@
+   },
+   "schema": "omegacode-hyperon-linux-worker-acceptance-input-pins-r1",
+   "scope": "non-evaluating source syntax facts and typed metadata query only; no local/native qualification from source preparation",
+-  "source_archive_filename": "OMEGACODE_R13_SUCCESSOR_R1_4_1_BYTECODE_REVIEW.zip",
++  "source_archive_filename": "OMEGACODE_R13_SUCCESSOR_R1_4_2_BYTECODE_R2_REVIEW.zip",
+   "source_archive_prefix": "src/omegacode/",
+-  "source_archive_sha256": "01c44a4b1b1c2ea0e4074069432f495b6b5541bc093a74e2da32aa8f171aec4a",
++  "source_archive_sha256": "a6a3f4d0d735134c08a4e8e6d808dca216af5079cacbcfd8858484f95508f5bc",
+   "source_module_count": 91,
+-  "source_module_digest": "9d903cad1847107f063481e49bb95cc0fbe6bf1033592af057ba63795fb1a8ce",
+-  "source_release": "R1.4.1 candidate",
++  "source_module_digest": "c63d17cb8886a119fd35358108b4fd5daeb16074cdf74de0a108f218a070d319",
++  "source_release": "R1.4.2 candidate",
+   "upstream_pin_file_sha256": "e56d29a998d41a3d63464e0f04e68e5da194a2f66db34f4e07b3e14e22035341",
+   "wheel_pins": {
+     "aarch64": {
+--- a/EXPECTED_RECEIPTS.json
++++ b/EXPECTED_RECEIPTS.json
+@@ -37,8 +37,8 @@
+     "required_success": [
+       "ok=true",
+       "architecture matches the independently admitted lane",
+-      "source_archive_sha256=01c44a4b1b1c2ea0e4074069432f495b6b5541bc093a74e2da32aa8f171aec4a",
+-      "source_module_digest=9d903cad1847107f063481e49bb95cc0fbe6bf1033592af057ba63795fb1a8ce",
++      "source_archive_sha256=a6a3f4d0d735134c08a4e8e6d808dca216af5079cacbcfd8858484f95508f5bc",
++      "source_module_digest=c63d17cb8886a119fd35358108b4fd5daeb16074cdf74de0a108f218a070d319",
+       "source_module_count=91",
+       "wheel_sha256 matches INPUT_PINS.json for this architecture",
+       "installed_closure is exactly hyperon0.2.10; active_requires_dist=[]",
+@@ -59,5 +59,5 @@
+     "registered runtime and action enablement",
+     "production activation"
+   ],
+-  "source_version": "r1.2"
++  "source_version": "r1.3"
+ }
+--- a/README.md
++++ b/README.md
+@@ -1,18 +1,18 @@
+-# R1.4.1 candidate Linux Hyperon worker acceptance R1.2
++# R1.4.2 candidate Linux Hyperon worker acceptance R1.3
+ 
+-R1.2 binds a new, separately reviewable Code source candidate. In native run4 `40868825917`, R1.1 refused unrecorded `hyperon/__pycache__/runner.cpython-312.pyc` with clean outer containment. Selected R1.4 launches a nested parser helper without `-B`; its parent's `-B` flag is not inherited, and the child's `-I` ignores Python environment settings. The R1.4.1 candidate adds explicit `-B` at that actual product launch. This fixture does not monkeypatch or wrap unchanged R1.4 while claiming its qualification.
++R1.3 binds the separately reviewable R1.4.2 candidate. R1.4.1 corrected only the nested parser helper; Dot's FIX-FIRST review found other owned Python child launch sites, including toolchain probes. R1.4.2 adds explicit -B to all ten product-owned Python interpreter argument builders, including the delegated DAP Python target, with a launch-site census regression. Generic operator/person command arguments are preserved. Runner -m/PYTHONPATH semantics are preserved. This fixture runs the exact newly pinned source and does not monkeypatch unchanged R1.4 or R1.4.1 while claiming their qualification.
+ 
+-Run4's receipt did not distinguish the initial versus final closure census, so it does not alone prove the time of contamination. R1.2 retains both checks and adds a fixed `refusal_details.closure_phase` of `before_native` or `after_native`. Strict RECORD/wheel-content predicates remain unchanged: every unrecorded site file, including bytecode, still refuses. Recreate a fresh isolated worker for rerun; do not delete or ignore an unexpected file to pass the guard.
++Run4's receipt did not distinguish the initial versus final closure census, so it does not alone prove the time of contamination. R1.3 retains both checks and adds a fixed `refusal_details.closure_phase` of `before_native` or `after_native`. Strict RECORD/wheel-content predicates remain unchanged: every unrecorded site file, including bytecode, still refuses. Recreate a fresh isolated worker for rerun; do not delete or ignore an unexpected file to pass the guard.
+ 
+ Recorded, hashed installer metadata remains allowed only under the existing exact location/content rules. No new dependency, runtime file class or bytecode allowance is introduced. Source review and portable synthetic regressions do not prove a native Hyperon fix.
+ 
+ Source preparation for the open worker gate in the Code R13 Linux contract. This does not rerun the cancelled Mac resident-session smoke, change Code configuration, start a model worker, or enable a production action. Dot owns any architecture-specific native CI admission and deployment selection.
+ 
+-The prior Linux Hyperon arithmetic result `[[3]]` is narrower than this source/parser/query profile. This packet binds the exact R1.4.1 candidate archive/module digest and the separately pinned Hyperon0.2.10 worker. Neither the HTTP service's 17-package lock nor its successful lifecycle run installs or qualifies this separate runtime.
++The prior Linux Hyperon arithmetic result `[[3]]` is narrower than this source/parser/query profile. This packet binds the exact R1.4.2 candidate archive/module digest and the separately pinned Hyperon0.2.10 worker. Neither the HTTP service's 17-package lock nor its successful lifecycle run installs or qualifies this separate runtime.
+ 
+ ## Inputs
+ 
+-`INPUT_PINS.json` binds R1.4.1 candidate ZIP `01c44a4b1b1c2ea0e4074069432f495b6b5541bc093a74e2da32aa8f171aec4a`, package digest `9d903cad1847107f063481e49bb95cc0fbe6bf1033592af057ba63795fb1a8ce` (91 Python modules), CPython3.12.16 and the existing per-architecture wheel pins. `worker-x86_64.lock` and `worker-aarch64.lock` pin only the appropriate Hyperon wheel.
++`INPUT_PINS.json` binds R1.4.2 candidate ZIP `a6a3f4d0d735134c08a4e8e6d808dca216af5079cacbcfd8858484f95508f5bc`, package digest `c63d17cb8886a119fd35358108b4fd5daeb16074cdf74de0a108f218a070d319` (91 Python modules), CPython3.12.16 and the existing per-architecture wheel pins. `worker-x86_64.lock` and `worker-aarch64.lock` pin only the appropriate Hyperon wheel.
+ 
+ [Official release metadata](https://pypi.org/pypi/hyperon/0.2.10/json), inspected October29, declares only build/pytest dependencies under the development extra. No development extra is selected here. The driver must inspect the actual exact wheel and installed metadata again and refuse any unpinned active runtime dependency. It also checks installed RECORD bytes and module/import/interpreter identities. Upstream metadata and wheel tags are preparation inputs, not execution evidence.
+ 
+@@ -20,7 +20,7 @@
+ 
+ ## Cases
+ 
+-The exact R1.4.1 candidate parser/matcher implementation is staged and verified before import. `native_cases.py` is inert on import and is invoked only by the admitted driver with the exact isolated worker Python.
++The exact R1.4.2 candidate parser/matcher implementation is staged and verified before import. `native_cases.py` is inert on import and is invoked only by the admitted driver with the exact isolated worker Python.
+ 
+ 1. Source/query/range digests and Unicode byte offsets from a real one-shot source search.
+ 2. Effect-looking invented source stays data: false evaluation/effect/publication flags and absent fixture marker.
+--- a/CI_INTEGRATION.md
++++ b/CI_INTEGRATION.md
+@@ -1,6 +1,6 @@
+ # Hyperon worker native CI admission
+ 
+-R1.2 binds the separately reviewed R1.4.1 source candidate with explicit `-B` on the nested parser helper, rather than unchanged R1.4. Verify the exact new source/acceptance seals before dispatch. Use a fresh worker: do not repair a refused installed tree by deleting or ignoring bytecode. The controller adds fixed before/after-native closure-phase metadata; all closure predicates remain strict. This is preparation, not successful native qualification. Keep Dot's protected `/var/lib/code-hyperon-acceptance` controller prefix and verify actual ownership/modes.
++R1.3 binds the separately reviewed R1.4.2 source candidate with explicit `-B` on the nested parser helper, rather than unchanged R1.4. Verify the exact new source/acceptance seals before dispatch. Use a fresh worker: do not repair a refused installed tree by deleting or ignoring bytecode. The controller adds fixed before/after-native closure-phase metadata; all closure predicates remain strict. This is preparation, not successful native qualification. Keep Dot's protected `/var/lib/code-hyperon-acceptance` controller prefix and verify actual ownership/modes.
+ 
+ Prepared controller/native-case code is a separate candidate. Verify the delivered external ZIP/manifest seals and all members before executing it. Do not invoke `native_cases.py` alone as acceptance: the parent performs the wheel/install/source admission checks.
+ 
+@@ -26,7 +26,7 @@
+ 
+ Use an empty wheel directory with only the verified architecture wheel. The driver rechecks actual wheel and installed METADATA/RECORD; no dev extras or HTTP service packages belong in this venv. If metadata introduces an active unpinned dependency, stop and prepare a new reviewed lock rather than adding an ambient package.
+ 
+-Copy the sealed controller packet to its own root-owned read-only location such as `/var/lib/code-hyperon-acceptance/`. Keep it separate from the writable checkout and from receipts. Supply the exact R1.4.1 candidate ZIP as a read-only input. No config, key, token, host enrollment or provider credential is used.
++Copy the sealed controller packet to its own root-owned read-only location such as `/var/lib/code-hyperon-acceptance/`. Keep it separate from the writable checkout and from receipts. Supply the exact R1.4.2 candidate ZIP as a read-only input. No config, key, token, host enrollment or provider credential is used.
+ 
+ ## Execute inside the existing outer containment authority
+ 
+@@ -39,7 +39,7 @@
+ ```bash
+ sudo install -d -m 0700 /var/tmp/code-hyperon-receipts
+ sudo /usr/bin/python3 -B /var/lib/code-hyperon-acceptance/outer_gate.py \
+-  --source-archive "$GITHUB_WORKSPACE/ci/code-hyperon/inputs/OMEGACODE_R13_SUCCESSOR_R1_4_1_BYTECODE_REVIEW.zip" \
++  --source-archive "$GITHUB_WORKSPACE/ci/code-hyperon/inputs/OMEGACODE_R13_SUCCESSOR_R1_4_2_BYTECODE_R2_REVIEW.zip" \
+   --wheel /tmp/hyperon-wheels/hyperon-0.2.10-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl \
+   --worker-python /tmp/hyperon-worker/bin/python \
+   --worker-root /tmp/hyperon-worker \

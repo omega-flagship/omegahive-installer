@@ -1,42 +1,41 @@
 {
+  "R1_5_2_staging_hold_retained": true,
   "guard_acceptance_widened": false,
   "live_configuration_changed": false,
-  "local_native_or_provider_calls": false,
-  "native_evidence": {
-    "API_conclusion": "failure",
-    "API_status": "completed",
-    "actual_offender": "unknown; next bounded diagnostic required",
-    "outer_cleanup": true,
-    "parent_reason": "installed_unrecorded_file",
-    "run": 40866429734,
-    "source": "d93cc35eec809dfd7b8a0530ac7b9834139af222"
+  "native_history": {
+    "offender": "lib/python3.12/site-packages/hyperon/__pycache__/runner.cpython-312.pyc",
+    "outer_cleanup_owner_reported": true,
+    "phase": "unknown in run4 receipt",
+    "reason": "installed_unrecorded_file",
+    "run4": 40868825917
   },
-  "parent_archive_sha256": "012f7fd36eab459106a201446732f3cb5f4bf37780d9367eb15bf3c2c9c1bedd",
+  "native_or_provider_calls_locally": false,
+  "parent_archive_sha256": "2c47e56ac8705293c175f424b4d686dc9312afa76d2e82c96ded434adcbfac88",
   "pending": [
-    "identify native site offender by returned relative-path diagnostic",
-    "review precise provisioning/metadata policy if needed",
-    "native parser/query cases and architecture-specific acceptance",
-    "forced termination controls"
+    "Dot exact source/pair review and required source suite",
+    "fresh-worker per-architecture native parser/query result",
+    "separate forced termination controls",
+    "installed Hive lifecycle/UI integration"
   ],
-  "portable_controls": {
-    "count": 49,
+  "portable_acceptance_controls": {
     "engine_imported_installed_or_executed": false,
-    "environment": "macOS /usr/bin/python3 3.9.6",
-    "result": "passed"
+    "passed": 52,
+    "runtime": "macOS system CPython3.9.6"
   },
-  "reviewed_delta_sha256": {
-    "qualify_hyperon_worker.py": "d24858c9459fe67dce2541a48b3579a617d454e4b52ed9e3712bd4a107d32664",
-    "test_acceptance_portable.py": "eeea842152b937cf1305d6106eface31db1c6b7a1eb9d4372bc0af10302c6678"
+  "portable_source_controls": {
+    "AST_mutations": 11,
+    "actual_invented_imports": 3,
+    "passed": 14,
+    "runtime": "existing bundled CPython3.12.14",
+    "skipped": 0
   },
-  "schema": "omegacode-hyperon-worker-source-preparation-r1.1",
+  "schema": "omegacode-hyperon-worker-source-preparation-r1.3",
+  "scope_changes_from_R1_2": "exact source archive/module pin and qualification label only; documentation updated",
+  "source_archive_filename": "OMEGACODE_R13_SUCCESSOR_R1_4_2_BYTECODE_R2_REVIEW.zip",
+  "source_archive_sha256": "a6a3f4d0d735134c08a4e8e6d808dca216af5079cacbcfd8858484f95508f5bc",
+  "source_module_count": 91,
+  "source_module_digest": "c63d17cb8886a119fd35358108b4fd5daeb16074cdf74de0a108f218a070d319",
   "source_review": "PASS_SOURCE_ONLY",
-  "status": "sealed_diagnostic_successor_for_Dot_native_evidence",
-  "unchanged_parent_files": [
-    "native_cases.py",
-    "outer_gate.py",
-    "test_outer_portable.py",
-    "worker-x86_64.lock",
-    "worker-aarch64.lock",
-    "INPUT_PINS.json"
-  ]
+  "source_selection_or_stage_change": false,
+  "status": "sealed_source_pair_for_Dot_review_and_native_admission"
 }

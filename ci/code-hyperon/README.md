@@ -1,16 +1,18 @@
-# Selected R1.4 Linux Hyperon worker acceptance R1.1
+# R1.4.2 candidate Linux Hyperon worker acceptance R1.3
 
-R1.1 adds bounded worker-relative offending-path/class diagnostics to closure refusals. Native run `40866429734` reached `installed_unrecorded_file` after Dot moved the controller out of GitHub's writable `/opt`. The exact unrecorded site file was not retained, so this successor preserves the guard and supplies the missing evidence; it does not claim that the installed-file condition is repaired or that native acceptance passed.
+R1.3 binds the separately reviewable R1.4.2 candidate. R1.4.1 corrected only the nested parser helper; Dot's FIX-FIRST review found other owned Python child launch sites, including toolchain probes. R1.4.2 adds explicit -B to all ten product-owned Python interpreter argument builders, including the delegated DAP Python target, with a launch-site census regression. Generic operator/person command arguments are preserved. Runner -m/PYTHONPATH semantics are preserved. This fixture runs the exact newly pinned source and does not monkeypatch unchanged R1.4 or R1.4.1 while claiming their qualification.
 
-Policy is explicit: venv scaffolding such as `bin/activate`, interpreter links and `pyvenv.cfg` is outside the site-package RECORD census and is checked through runtime layout/protection. Recorded, hashed installer metadata `INSTALLER`, `REQUESTED`, `direct_url.json` and `uv_cache.json` is admitted only at its exact dist-info location. Unrecorded site files, unknown importable payloads and unpinned bytecode still refuse. Once the actual offender is identified, its evidence can support a precise installer/metadata rule; unknown files are not admitted speculatively. Diagnostics expose no file contents or absolute root paths.
+Run4's receipt did not distinguish the initial versus final closure census, so it does not alone prove the time of contamination. R1.3 retains both checks and adds a fixed `refusal_details.closure_phase` of `before_native` or `after_native`. Strict RECORD/wheel-content predicates remain unchanged: every unrecorded site file, including bytecode, still refuses. Recreate a fresh isolated worker for rerun; do not delete or ignore an unexpected file to pass the guard.
+
+Recorded, hashed installer metadata remains allowed only under the existing exact location/content rules. No new dependency, runtime file class or bytecode allowance is introduced. Source review and portable synthetic regressions do not prove a native Hyperon fix.
 
 Source preparation for the open worker gate in the Code R13 Linux contract. This does not rerun the cancelled Mac resident-session smoke, change Code configuration, start a model worker, or enable a production action. Dot owns any architecture-specific native CI admission and deployment selection.
 
-The prior Linux Hyperon arithmetic result `[[3]]` is narrower than this source/parser/query profile. This packet binds the exact selected R1.4 archive/module digest and the separately pinned Hyperon0.2.10 worker. Neither the HTTP service's 17-package lock nor its successful lifecycle run installs or qualifies this separate runtime.
+The prior Linux Hyperon arithmetic result `[[3]]` is narrower than this source/parser/query profile. This packet binds the exact R1.4.2 candidate archive/module digest and the separately pinned Hyperon0.2.10 worker. Neither the HTTP service's 17-package lock nor its successful lifecycle run installs or qualifies this separate runtime.
 
 ## Inputs
 
-`INPUT_PINS.json` binds R1.4 ZIP `c7478c1e…`, package digest `4a5737b1…` (91 Python modules), CPython3.12.16 and the existing per-architecture wheel pins. `worker-x86_64.lock` and `worker-aarch64.lock` pin only the appropriate Hyperon wheel.
+`INPUT_PINS.json` binds R1.4.2 candidate ZIP `a6a3f4d0d735134c08a4e8e6d808dca216af5079cacbcfd8858484f95508f5bc`, package digest `c63d17cb8886a119fd35358108b4fd5daeb16074cdf74de0a108f218a070d319` (91 Python modules), CPython3.12.16 and the existing per-architecture wheel pins. `worker-x86_64.lock` and `worker-aarch64.lock` pin only the appropriate Hyperon wheel.
 
 [Official release metadata](https://pypi.org/pypi/hyperon/0.2.10/json), inspected October29, declares only build/pytest dependencies under the development extra. No development extra is selected here. The driver must inspect the actual exact wheel and installed metadata again and refuse any unpinned active runtime dependency. It also checks installed RECORD bytes and module/import/interpreter identities. Upstream metadata and wheel tags are preparation inputs, not execution evidence.
 
@@ -18,7 +20,7 @@ Use a separate bare CPython3.12.16 venv, exact wheel/hash, no user site/bootstra
 
 ## Cases
 
-The exact R1.4 parser/matcher implementation is staged and verified before import. `native_cases.py` is inert on import and is invoked only by the admitted driver with the exact isolated worker Python.
+The exact R1.4.2 candidate parser/matcher implementation is staged and verified before import. `native_cases.py` is inert on import and is invoked only by the admitted driver with the exact isolated worker Python.
 
 1. Source/query/range digests and Unicode byte offsets from a real one-shot source search.
 2. Effect-looking invented source stays data: false evaluation/effect/publication flags and absent fixture marker.

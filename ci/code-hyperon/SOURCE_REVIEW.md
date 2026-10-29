@@ -1,10 +1,9 @@
-# Hyperon R1.1 diagnostic delta review
+# Hyperon acceptance R1.3 source-pair review
 
-PASS_SOURCE_ONLY by a separate source reviewer on exact driver/test hashes:
+Disposition: PASS_SOURCE_ONLY. Independent source review verified R1.4.2 R2 ZIP SHA a6a3f4d0d735134c08a4e8e6d808dca216af5079cacbcfd8858484f95508f5bc (292,195 bytes; 110 members) and recomputed 91-module digest c63d17cb8886a119fd35358108b4fd5daeb16074cdf74de0a108f218a070d319. Driver, native helper and JSON inputs/expected receipts bind those exact values.
 
-- `qualify_hyperon_worker.py`: `d24858c9459fe67dce2541a48b3579a617d454e4b52ed9e3712bd4a107d32664`
-- `test_acceptance_portable.py`: `eeea842152b937cf1305d6106eface31db1c6b7a1eb9d4372bc0af10302c6678`
+Relative to frozen R1.2, executable changes are source pins and qualification label only. All closure predicates, both census/phase checks, native-case logic, evaluator boundaries and cleanup remain unchanged. Portable tests, outer gate/tests and both wheel locks are byte-identical to R1.2.
 
-Diagnostics contain bounded canonical ASCII worker-relative paths and one of five closed artifact classes. Contents, absolute diagnostic paths, unsafe path syntax and exception messages are excluded. Details enter only the JSON receipt; stdout stays minimal. Closure acceptance predicates remain unchanged: unrecorded site files still refuse. Native helper, outer gate/tests, locks and input pins are byte-identical to R1.
+52 portable acceptance controls pass using invented bytes/mocked native execution under existing macOS system CPython3.9.6. The separate source candidate has 14 passing portable controls, 0 skipped, under existing bundled CPython3.12.14 (11 AST mutation tests plus 3 actual invented-module import controls). These do not qualify native Hyperon or interrupted-run cleanup.
 
-Diagnostic readiness only. The actual native offender remains unidentified; no repaired installation, Hyperon execution or native acceptance is claimed. Existing successful runtime descriptors retain their prior synthetic absolute identity fields; the new relative-only privacy restriction applies to failure diagnostics.
+The product fix now covers all ten reviewed owned Python interpreter argv builders, including the DAP target. Generic person/operator command argv and runner -m/PYTHONPATH semantics remain intact. Native R1.3 rerun requires a fresh worker; do not delete or admit an unexpected installed file. No selection, staging or deployment is claimed.

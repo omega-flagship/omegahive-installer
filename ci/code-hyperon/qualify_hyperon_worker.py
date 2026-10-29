@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Selected-R1.4 Hyperon worker acceptance controller; native CI execution only.
+"""R1.4.2-candidate Hyperon worker acceptance controller; native CI execution only.
 
 Standard library only. Imports no OmegaCode/Hyperon code in this controller.
 Process-group cleanup is not a substitute for the external forced-stop gate.
@@ -27,8 +27,8 @@ import time
 import zipfile
 
 
-SOURCE_SHA = "c7478c1e88ed5fd777890196d572cf347c3a38240810b3911836081c8674fea1"
-MODULE_SHA = "4a5737b1296bcb49ff44a002684129c18e95a749d8ce3362cd97df18953b449d"
+SOURCE_SHA = "a6a3f4d0d735134c08a4e8e6d808dca216af5079cacbcfd8858484f95508f5bc"
+MODULE_SHA = "c63d17cb8886a119fd35358108b4fd5daeb16074cdf74de0a108f218a070d319"
 WHEELS = {
     "x86_64": {"filename": "hyperon-0.2.10-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
                "sha256": "12a0479df6afadda7562ffe10e7d63a6701aaec02f7177b91412bc05a09ed419"},
@@ -512,6 +512,16 @@ def receipt_write(path, value):
         stream.write(raw); stream.flush(); os.fsync(stream.fileno())
 
 
+def installed_closure_at_phase(root, wheel, phase):
+    """Identify input contamination versus post-native mutation without widening admission."""
+    need(type(phase) is str and phase in {"before_native", "after_native"}, "closure_phase_invalid")
+    try:
+        return installed_closure(root, wheel)
+    except Refusal as error:
+        error.details["closure_phase"] = phase
+        raise
+
+
 def qualify(args):
     architecture_check(args.architecture)
     for value in (args.source_archive, args.wheel, args.worker_python, args.worker_root, args.receipt):
@@ -523,7 +533,7 @@ def qualify(args):
     protected(helper, roots)
     helper_sha = sha_file(helper)
     wheel = inspect_wheel(args.wheel, args.architecture)
-    closure = installed_closure(args.worker_root, wheel)
+    closure = installed_closure_at_phase(args.worker_root, wheel, "before_native")
     before = static_descriptor(args.worker_python, args.worker_root)
     temporary = Path(tempfile.mkdtemp(prefix="omegacode-hyperon-source-"))
     try:
@@ -535,7 +545,7 @@ def qualify(args):
         native, cleanup = bounded_native(argv)
         native_report(native, args.architecture, before)
         need(static_descriptor(args.worker_python, args.worker_root) == before
-             and installed_closure(args.worker_root, wheel) == closure
+             and installed_closure_at_phase(args.worker_root, wheel, "after_native") == closure
              and package_digest(source / "omegacode") == (MODULE_SHA, 91) and sha_file(helper) == helper_sha,
              "qualification_identity_drift")
         return {"schema": "omegacode-hyperon-linux-worker-acceptance-r1", "ok": True, "architecture": args.architecture,
@@ -545,7 +555,7 @@ def qualify(args):
                 "checks": native["checks"], "evaluation_entrypoints_instrumented": native["evaluation_entrypoints_instrumented"],
                 "observed_boundaries": native["observed_boundaries"],
                 "native_helper_sha256": helper_sha, "cleanup": cleanup,
-                "qualification_scope": "selected_r14_worker_and_invented_source_cases",
+                "qualification_scope": "candidate_r142_worker_and_invented_source_cases",
                 "effect_security_proof": False, "service_or_production_activation": False}
     finally:
         # Only this controller-created source scratch is removed; configured

@@ -1,6 +1,6 @@
 name: code-hyperon (test only)
 
-# OmegaCode Hyperon Linux worker acceptance R1.1 (manifest aa4f0a5c) for selected R13 source R1.4 (c7478c1e / 4a5737b1),
+# OmegaCode Hyperon Linux worker acceptance R1.3 (manifest 4ab2f325) for candidate R13 source R1.4.2 R2 (a6a3f4d0 / c63d17cb),
 # Hyperon 0.2.10 x86_64. Own branch pattern: never triggers the installer/mac-native or lifecycle workflows.
 
 on:
@@ -17,12 +17,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Verify the sealed acceptance bundle and the R1.4 archive
+      - name: Verify the sealed acceptance bundle and the R1.4.2 R2 archive
         run: |
           set -euo pipefail
-          printf '%s  %s\n' aa4f0a5cac80b88f2fa5a58f4497dfc5e1945b5d1f356a4a682651a489ccbfd4 ci/code-hyperon/MANIFEST.sha256 | sha256sum -c -
+          printf '%s  %s\n' 4ab2f32556edf781a6dc191795fd063133ed7c2f8fbf894ec78a65237e61d321 ci/code-hyperon/MANIFEST.sha256 | sha256sum -c -
           (cd ci/code-hyperon && sha256sum --strict --check MANIFEST.sha256)
-          printf '%s  %s\n' c7478c1e88ed5fd777890196d572cf347c3a38240810b3911836081c8674fea1 ci/code-hyperon/inputs/OMEGACODE_R13_SUCCESSOR_R1_4_P3_FOLLOWUP_REVIEW.zip | sha256sum -c -
+          printf '%s  %s\n' a6a3f4d0d735134c08a4e8e6d808dca216af5079cacbcfd8858484f95508f5bc ci/code-hyperon/inputs/OMEGACODE_R13_SUCCESSOR_R1_4_2_BYTECODE_R2_REVIEW.zip | sha256sum -c -
           { uname -a; lsb_release -ds; systemctl --version | head -1; stat -fc %T /sys/fs/cgroup; } | tee /tmp/hy-facts.txt
       - name: Pinned Python and uv (checked against the publisher)
         run: |
@@ -66,7 +66,7 @@ jobs:
           set -euo pipefail
           sudo install -d -m 0700 /var/tmp/code-hyperon-receipts
           sudo /usr/bin/python3 -B /var/lib/code-hyperon-acceptance/outer_gate.py \
-            --source-archive "$GITHUB_WORKSPACE/ci/code-hyperon/inputs/OMEGACODE_R13_SUCCESSOR_R1_4_P3_FOLLOWUP_REVIEW.zip" \
+            --source-archive "$GITHUB_WORKSPACE/ci/code-hyperon/inputs/OMEGACODE_R13_SUCCESSOR_R1_4_2_BYTECODE_R2_REVIEW.zip" \
             --wheel /tmp/hyperon-wheels/hyperon-0.2.10-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl \
             --worker-python /tmp/hyperon-worker/bin/python \
             --worker-root /tmp/hyperon-worker \

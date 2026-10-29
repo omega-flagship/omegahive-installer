@@ -1,6 +1,7 @@
 """Invented byte fixtures and mocked subprocess controls; no Hyperon imports."""
 from __future__ import annotations
 
+import ast
 import base64
 import contextlib
 import copy
@@ -51,6 +52,17 @@ class FakeProcess:
 
 
 class PortableAcceptanceTests(unittest.TestCase):
+    def test_controller_helper_and_input_manifest_bind_same_source(self):
+        pins = json.loads(Path(q.__file__).with_name("INPUT_PINS.json").read_text())
+        self.assertEqual(pins["source_archive_sha256"], q.SOURCE_SHA)
+        self.assertEqual(pins["source_module_digest"], q.MODULE_SHA)
+        helper = ast.parse(Path(q.__file__).with_name("native_cases.py").read_text())
+        digests = [node.value.value for node in helper.body
+                   if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
+                   and target.id == "SOURCE_DIGEST" for target in node.targets)
+                   and isinstance(node.value, ast.Constant)]
+        self.assertEqual(digests, [q.MODULE_SHA])
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="invented-hyperon-acceptance-")
         self.root = Path(self.temporary.name).resolve()
@@ -157,7 +169,7 @@ class PortableAcceptanceTests(unittest.TestCase):
         self.assertEqual(q.package_digest(stage / "omegacode"), (digest, 1))
         self.assertEqual(stat.S_IMODE((stage / "omegacode/__init__.py").stat().st_mode), 0o444)
 
-    def test_fixture_cannot_match_selected_r14_archive(self):
+    def test_fixture_cannot_match_candidate_source_archive(self):
         archive = self.root / "invented-source.zip"
         archive.write_bytes(b"invented unpinned archive")
         with self.assertRaises(q.Refusal):
@@ -168,6 +180,31 @@ class PortableAcceptanceTests(unittest.TestCase):
         result = q.installed_closure(root, wheel)
         self.assertEqual(result["distribution_count"], 1)
         self.assertEqual(result["active_requires_dist"], [])
+
+    def test_closure_phase_distinguishes_existing_and_later_contamination(self):
+        root, wheel, site, _ = self.installed()
+        before = q.installed_closure_at_phase(root, wheel, "before_native")
+        self.assertEqual(q.installed_closure_at_phase(root, wheel, "after_native"), before)
+        cache = site / "hyperon/__pycache__/runner.cpython-312.pyc"
+        cache.parent.mkdir()
+        cache.write_bytes(b"invented unrecorded bytes, never imported")
+        for phase in ("before_native", "after_native"):
+            with self.subTest(phase=phase):
+                with self.assertRaises(q.Refusal) as raised:
+                    q.installed_closure_at_phase(root, wheel, phase)
+                self.assertEqual(raised.exception.code, "installed_unrecorded_file")
+                self.assertEqual(raised.exception.details, {
+                    "closure_phase": phase,
+                    "offending_relative_path": "lib/python3.12/site-packages/hyperon/__pycache__/runner.cpython-312.pyc",
+                    "offending_artifact_class": "cached_bytecode"})
+
+    def test_closure_phase_is_closed_metadata(self):
+        for phase in (None, True, [], "/private/location", "before_native\nsecret", "unknown"):
+            with self.subTest(phase=phase):
+                with self.assertRaises(q.Refusal) as raised:
+                    q.installed_closure_at_phase(self.root, {}, phase)
+                self.assertEqual(raised.exception.code, "closure_phase_invalid")
+                self.assertEqual(raised.exception.details, {})
 
     def test_installed_extra_distribution_refused(self):
         root, wheel, site, _ = self.installed()

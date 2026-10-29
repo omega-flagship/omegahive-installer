@@ -1,6 +1,6 @@
 # Hyperon worker native CI admission
 
-R1.1 is a diagnostic successor after native guard refusals, not a successful native qualification. Dot established GitHub `/opt` as 0777/nonsticky and moved the controller to `/var/lib/code-hyperon-acceptance`; keep that protected prefix. Verify actual parent ownership/modes rather than inferring trust from a directory name. All guard acceptance rules remain intact.
+R1.3 binds the separately reviewed R1.4.2 source candidate with explicit `-B` on the nested parser helper, rather than unchanged R1.4. Verify the exact new source/acceptance seals before dispatch. Use a fresh worker: do not repair a refused installed tree by deleting or ignoring bytecode. The controller adds fixed before/after-native closure-phase metadata; all closure predicates remain strict. This is preparation, not successful native qualification. Keep Dot's protected `/var/lib/code-hyperon-acceptance` controller prefix and verify actual ownership/modes.
 
 Prepared controller/native-case code is a separate candidate. Verify the delivered external ZIP/manifest seals and all members before executing it. Do not invoke `native_cases.py` alone as acceptance: the parent performs the wheel/install/source admission checks.
 
@@ -26,7 +26,7 @@ sudo chmod -R a+rX,a-w /tmp/py /tmp/hyperon-worker
 
 Use an empty wheel directory with only the verified architecture wheel. The driver rechecks actual wheel and installed METADATA/RECORD; no dev extras or HTTP service packages belong in this venv. If metadata introduces an active unpinned dependency, stop and prepare a new reviewed lock rather than adding an ambient package.
 
-Copy the sealed controller packet to its own root-owned read-only location such as `/var/lib/code-hyperon-acceptance/`. Keep it separate from the writable checkout and from receipts. Supply the exact R1.4 ZIP as a read-only input. No config, key, token, host enrollment or provider credential is used.
+Copy the sealed controller packet to its own root-owned read-only location such as `/var/lib/code-hyperon-acceptance/`. Keep it separate from the writable checkout and from receipts. Supply the exact R1.4.2 candidate ZIP as a read-only input. No config, key, token, host enrollment or provider credential is used.
 
 ## Execute inside the existing outer containment authority
 
@@ -39,7 +39,7 @@ The driver must refuse a missing/root/ambiguous cgroup instead of assuming ordin
 ```bash
 sudo install -d -m 0700 /var/tmp/code-hyperon-receipts
 sudo /usr/bin/python3 -B /var/lib/code-hyperon-acceptance/outer_gate.py \
-  --source-archive "$GITHUB_WORKSPACE/ci/code-hyperon/inputs/OMEGACODE_R13_SUCCESSOR_R1_4_P3_FOLLOWUP_REVIEW.zip" \
+  --source-archive "$GITHUB_WORKSPACE/ci/code-hyperon/inputs/OMEGACODE_R13_SUCCESSOR_R1_4_2_BYTECODE_R2_REVIEW.zip" \
   --wheel /tmp/hyperon-wheels/hyperon-0.2.10-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl \
   --worker-python /tmp/hyperon-worker/bin/python \
   --worker-root /tmp/hyperon-worker \
@@ -53,4 +53,4 @@ The exact default command and admitted cgroup/controller source must be recorded
 
 ## Collect
 
-Collect only the explicit bounded JSON receipt, the selected source/worker pins, and sanitized outer cleanup evidence. A closure refusal can now include `refusal_details.offending_relative_path` (canonical path relative to the worker root, bounded to512 printable characters) and `offending_artifact_class`. These are metadata only; contents and absolute paths are omitted. Preserve failure codes/stages; do not upload ephemeral source maps, marker fixture paths, runtime trees, stderr dumps, wheel payloads, home directories or private stores. No production action is enabled solely because this component passes.
+Collect only the explicit bounded JSON receipt, the selected source/worker pins, and sanitized outer cleanup evidence. A closure refusal can now include `refusal_details.offending_relative_path` (canonical path relative to the worker root, bounded to512 printable characters) and `offending_artifact_class`, plus fixed `closure_phase` (`before_native` or `after_native`). These are metadata only; contents and absolute paths are omitted. Preserve failure codes/stages; do not upload ephemeral source maps, marker fixture paths, runtime trees, stderr dumps, wheel payloads, home directories or private stores. No production action is enabled solely because this component passes.

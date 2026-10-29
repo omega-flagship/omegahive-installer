@@ -1,15 +1,44 @@
 {
-  "schema": "omegacode-hyperon-linux-worker-receipt-expectations-r1",
+  "closure_refusal_phase": "before_native or after_native (fixed metadata only)",
+  "failure_rule": "missing/refused/partial component receipts cannot pass from cleanup success alone",
+  "independent_binding_required": [
+    "exact CI run/job/commit",
+    "reviewed text-bundle manifest and source archive",
+    "admitted runtime download pins and wheel",
+    "native runner architecture and OS",
+    "positive component and outer receipts"
+  ],
   "kind": "expectations_only_not_execution_evidence",
-  "source_version": "r1.1",
-  "optional_failure_details": ["offending_relative_path: worker-relative canonical printable path <=512 characters, no contents", "offending_artifact_class: closed metadata classification"],
+  "optional_failure_details": [
+    "offending_relative_path: worker-relative canonical printable path <=512 characters, no contents",
+    "offending_artifact_class: closed metadata classification"
+  ],
+  "outer_companion": {
+    "filename_rule": "parent receipt basename plus -outer.json",
+    "limits": [
+      "forced_parent_termination_qualified=false",
+      "production_activation=false"
+    ],
+    "required_success": [
+      "ok=true",
+      "native_driver_exit_status=0",
+      "remaining_pids=[]",
+      "controller_inactive=true",
+      "outer_cgroup_clean=true"
+    ],
+    "schema": "omegacode-hyperon-linux-outer-cgroup-r1"
+  },
   "parent_receipt": {
-    "schema": "omegacode-hyperon-linux-worker-acceptance-r1",
+    "explicit_limits": [
+      "effect_security_proof=false",
+      "service_or_production_activation=false",
+      "outer_forced_termination_qualified=false"
+    ],
     "required_success": [
       "ok=true",
       "architecture matches the independently admitted lane",
-      "source_archive_sha256=c7478c1e88ed5fd777890196d572cf347c3a38240810b3911836081c8674fea1",
-      "source_module_digest=4a5737b1296bcb49ff44a002684129c18e95a749d8ce3362cd97df18953b449d",
+      "source_archive_sha256=a6a3f4d0d735134c08a4e8e6d808dca216af5079cacbcfd8858484f95508f5bc",
+      "source_module_digest=c63d17cb8886a119fd35358108b4fd5daeb16074cdf74de0a108f218a070d319",
       "source_module_count=91",
       "wheel_sha256 matches INPUT_PINS.json for this architecture",
       "installed_closure is exactly hyperon0.2.10; active_requires_dist=[]",
@@ -19,19 +48,16 @@
       "evaluator trap scope remains in-process hyperon.MeTTa.run only",
       "cleanup process_group_clean and outer_cgroup_returned_to_baseline are true"
     ],
-    "explicit_limits": [
-      "effect_security_proof=false",
-      "service_or_production_activation=false",
-      "outer_forced_termination_qualified=false"
-    ]
+    "schema": "omegacode-hyperon-linux-worker-acceptance-r1"
   },
-  "outer_companion": {
-    "filename_rule": "parent receipt basename plus -outer.json",
-    "schema": "omegacode-hyperon-linux-outer-cgroup-r1",
-    "required_success": ["ok=true", "native_driver_exit_status=0", "remaining_pids=[]", "controller_inactive=true", "outer_cgroup_clean=true"],
-    "limits": ["forced_parent_termination_qualified=false", "production_activation=false"]
-  },
-  "independent_binding_required": ["exact CI run/job/commit", "reviewed text-bundle manifest and source archive", "admitted runtime download pins and wheel", "native runner architecture and OS", "positive component and outer receipts"],
-  "separate_open_gates": ["forced-stop/cancellation controls for the admitted workload", "ARM qualification after x86 pass", "resident sessions/stepping", "actual Hive relay/UI", "registered runtime and action enablement", "production activation"],
-  "failure_rule": "missing/refused/partial component receipts cannot pass from cleanup success alone"
+  "schema": "omegacode-hyperon-linux-worker-receipt-expectations-r1",
+  "separate_open_gates": [
+    "forced-stop/cancellation controls for the admitted workload",
+    "ARM qualification after x86 pass",
+    "resident sessions/stepping",
+    "actual Hive relay/UI",
+    "registered runtime and action enablement",
+    "production activation"
+  ],
+  "source_version": "r1.3"
 }
