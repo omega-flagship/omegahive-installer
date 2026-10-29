@@ -1,0 +1,3 @@
+# Separate Hyperon worker only; no dev extras or service/test packages.
+hyperon==0.2.10 \
+    --hash=sha256:de1bb08ab3fb13445cc13f0d2f4b103d19cf2ddf2743094d780acfd99bad6f6c

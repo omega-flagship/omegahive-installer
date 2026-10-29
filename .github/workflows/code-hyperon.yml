@@ -1,0 +1,88 @@
+name: code-hyperon (test only)
+
+# OmegaCode Hyperon Linux worker acceptance R1 (manifest 0bc54285) for selected R13 source R1.4 (c7478c1e / 4a5737b1),
+# Hyperon 0.2.10 x86_64. Own branch pattern: never triggers the installer/mac-native or lifecycle workflows.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["ci/code-hyperon-*"]
+
+permissions:
+  contents: read
+
+jobs:
+  code-hyperon-x86:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the sealed acceptance bundle and the R1.4 archive
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 0bc54285bfde7a319b8ecc404340a50fd196b4673c4e5a7b0cf1b7e10b106d30 ci/code-hyperon/MANIFEST.sha256 | sha256sum -c -
+          (cd ci/code-hyperon && sha256sum --strict --check MANIFEST.sha256)
+          printf '%s  %s\n' c7478c1e88ed5fd777890196d572cf347c3a38240810b3911836081c8674fea1 ci/code-hyperon/inputs/OMEGACODE_R13_SUCCESSOR_R1_4_P3_FOLLOWUP_REVIEW.zip | sha256sum -c -
+          { uname -a; lsb_release -ds; systemctl --version | head -1; stat -fc %T /sys/fs/cgroup; } | tee /tmp/hy-facts.txt
+      - name: Pinned Python and uv (checked against the publisher)
+        run: |
+          umask 022
+          P=ci/linux-x86/x86_64-pins.json
+          U=$(python3 -c "import json;print(json.load(open('$P'))['python_stripped']['url'])"); H=$(python3 -c "import json;print(json.load(open('$P'))['python_stripped']['sha256'])")
+          curl -fsSL -o /tmp/pbs.tar.gz "$U" && echo "$H  /tmp/pbs.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/py && tar -xzf /tmp/pbs.tar.gz -C /tmp/py
+          U=$(python3 -c "import json;print(json.load(open('$P'))['uv']['url'])"); H=$(python3 -c "import json;print(json.load(open('$P'))['uv']['sha256'])")
+          curl -fsSL -o /tmp/uv.tgz "$U" && echo "$H  /tmp/uv.tgz" | sha256sum -c -
+          mkdir -p /tmp/uvx && tar -xzf /tmp/uv.tgz -C /tmp/uvx
+          echo "UV=$(find /tmp/uvx -name uv -type f | head -1)" >> "$GITHUB_ENV"
+          /tmp/py/python/bin/python3.12 -VV
+      - name: The one pinned x86_64 wheel, then the worker venv (CI_INTEGRATION.md), frozen read-only
+        run: |
+          set -euo pipefail
+          umask 022
+          mkdir /tmp/hyperon-wheels
+          W=hyperon-0.2.10-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          curl -fsSL -o /tmp/hyperon-wheels/$W "https://files.pythonhosted.org/packages/3a/dc/56194cd1e18924953dfb07187d39a076323e5782b59ab57f64c60e6d768d/$W"
+          echo "12a0479df6afadda7562ffe10e7d63a6701aaec02f7177b91412bc05a09ed419  /tmp/hyperon-wheels/$W" | sha256sum -c -
+          /tmp/py/python/bin/python3.12 -m venv --without-pip /tmp/hyperon-worker
+          env -i HOME="$HOME" PATH=/usr/bin:/bin "$UV" --no-config pip install \
+            --python /tmp/hyperon-worker/bin/python --no-index --find-links /tmp/hyperon-wheels \
+            --require-hashes --no-deps --only-binary=:all: -r ci/code-hyperon/worker-x86_64.lock
+          env -i HOME="$HOME" PATH=/usr/bin:/bin "$UV" --no-config pip check --python /tmp/hyperon-worker/bin/python
+          sudo chown -R root:root /tmp/py /tmp/hyperon-worker /tmp/hyperon-wheels
+          sudo chmod -R a+rX,a-w /tmp/py /tmp/hyperon-worker /tmp/hyperon-wheels
+      - name: Root-owned read-only controller copy (separate from checkout and receipts)
+        run: |
+          set -euo pipefail
+          sudo install -d -o root -g root -m 0755 /opt/code-hyperon-acceptance
+          for f in outer_gate.py qualify_hyperon_worker.py native_cases.py EXPECTED_RECEIPTS.json INPUT_PINS.json worker-x86_64.lock MANIFEST.sha256; do
+            sudo install -o root -g root -m 0444 "ci/code-hyperon/$f" "/opt/code-hyperon-acceptance/$f"
+          done
+          (cd /opt/code-hyperon-acceptance && sha256sum outer_gate.py qualify_hyperon_worker.py native_cases.py)
+      - name: Native acceptance under the outer gate (x86_64)
+        run: |
+          set -euo pipefail
+          sudo install -d -m 0700 /var/tmp/code-hyperon-receipts
+          sudo /usr/bin/python3 -B /opt/code-hyperon-acceptance/outer_gate.py \
+            --source-archive "$GITHUB_WORKSPACE/ci/code-hyperon/inputs/OMEGACODE_R13_SUCCESSOR_R1_4_P3_FOLLOWUP_REVIEW.zip" \
+            --wheel /tmp/hyperon-wheels/hyperon-0.2.10-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl \
+            --worker-python /tmp/hyperon-worker/bin/python \
+            --worker-root /tmp/hyperon-worker \
+            --architecture x86_64 \
+            --receipt /var/tmp/code-hyperon-receipts/native-x86_64.json
+      - name: Collect only the JSON receipts (always; keeps the step failure)
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p hyperon-receipts
+          if sudo test -d /var/tmp/code-hyperon-receipts; then
+            sudo find /var/tmp/code-hyperon-receipts -maxdepth 1 -type f -name '*.json' -exec cp {} hyperon-receipts/ \;
+            sudo chown -R "$(id -u):$(id -g)" hyperon-receipts; chmod 0600 hyperon-receipts/* 2>/dev/null || true
+          fi
+          cp /tmp/hy-facts.txt hyperon-receipts/ 2>/dev/null || true
+          ls -la hyperon-receipts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: code-hyperon-x86-receipts
+          path: hyperon-receipts/

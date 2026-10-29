@@ -1,0 +1,34 @@
+{
+  "data_boundary": "invented source fixtures only; no credentials, private histories or stores",
+  "engine_imported_locally": false,
+  "input_pins_sha256": "8d6cc9c4798a5e5593d275be9b9b25a4516ffcc28811bb2ca5f86c801b8b0d95",
+  "native_test_or_systemd_started": false,
+  "pending": [
+    "Dot source review/admission",
+    "native x86_64 selected-worker receipts plus source/run/job binding",
+    "separate native aarch64 receipts",
+    "external forced-termination controls",
+    "operator runtime registration and actual Hive integration"
+  ],
+  "portable_controls": {
+    "count": 43,
+    "environment": "macOS arm64 /usr/bin/python3 3.9.6",
+    "result": "passed",
+    "scope": "invented/mocked metadata, protocol, custody, diagnostics and outer source controls only"
+  },
+  "prior_pins_holds_and_cancelled_Mac_smoke_preserved": true,
+  "product_source_or_live_config_changed": false,
+  "provider_or_model_calls": false,
+  "reviewed_script_sha256": {
+    "native_cases.py": "281e36015b500b867ea0a087f4f2644ee22263772adb66a413b19d436bd19758",
+    "outer_gate.py": "f0ea389ed6e6f57dca5ff6fef1156ebda98312763758e403cc4ab63110f9cfae",
+    "qualify_hyperon_worker.py": "abf39c5368c67c12fb63b82dc09bb6cd675e4dd0d172b6a9ac55982a1536c9ba"
+  },
+  "runtime_installed_or_executed_locally": false,
+  "schema": "omegacode-hyperon-linux-worker-source-preparation-r1",
+  "source_release": "R1.4",
+  "source_review": "PASS_SOURCE_ONLY",
+  "status": "prepared_source_candidate_for_Dot_review_and_admitted_native_CI",
+  "syntax_files": 5,
+  "wheel_downloaded_locally": false
+}
