@@ -24,6 +24,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import shlex
 import termios
 import time
 import urllib.parse
@@ -229,9 +230,12 @@ def plain(path, owner=None, directory=False):
     info = path.lstat()
     need(not path.is_symlink() and (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)),
          "An installation path is not a plain file or folder.")
+    permission_hint = ""
+    if info.st_uid == os.getuid() and info.st_mode & 0o022:
+        permission_hint = " If this path is intended to be private, run: chmod go-w -- " + shlex.quote(str(path))
     need(info.st_uid == (os.getuid() if owner is None else owner) and not info.st_mode & 0o022,
          "An installation path has unsafe ownership or permissions: " + str(path) +
-         " (must belong to this user and not be group/world writable).")
+         " (must belong to this user and not be group/world writable)." + permission_hint)
     return info
 
 
@@ -924,13 +928,22 @@ class Installer:
                   "--output", str(partial), spec["url"]], timeout=310)
         pin_file(partial, spec); os.chmod(partial, 0o600); os.rename(partial, path); return path
 
-    def sudo(self, argv, *, timeout):
+    def sudo(self, argv, *, timeout, package_environment=False):
+        assignments = (["DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=l"]
+                       if package_environment else [])
+        need(not package_environment or argv == ["/usr/bin/apt-get", "install", "-y", "--no-install-recommends", *APT],
+             "Package environment is only allowed for the fixed package installation.")
         # The shell wrapper consumes stdin, and run() deliberately detaches each
         # child session. Give sudo its own terminal fd; never read the password.
         try:
             terminal = open("/dev/tty", "r+b", buffering=0)
         except OSError:
-            raise Refused("System setup needs an interactive terminal. Open a terminal or connect with ssh -t, then retry.") from None
+            # No authentication probe or retry: a failing command may have side effects.
+            # NOPASSWD works without a tty, including mixed sudo-group/cloud rules.
+            print("No terminal: using noninteractive sudo. If authentication is required, reconnect with ssh -t. "
+                  "Restricted apt rules must allow the documented package environment.", file=sys.stderr)
+            self.run(["/usr/bin/sudo", "-n", *assignments, *argv], timeout=timeout)
+            return
         with terminal:
             need(os.isatty(terminal.fileno()) and os.tcgetpgrp(terminal.fileno()) == os.getpgrp(),
                  "Run system setup in the foreground of your terminal.")
@@ -941,7 +954,7 @@ class Installer:
                 # Suppress echo before sudo starts, and restore it even on timeout
                 # or cancellation. No password enters Python, a pipe, or a log.
                 termios.tcsetattr(terminal, termios.TCSAFLUSH, hidden)
-                self.run(["/usr/bin/sudo", "-S", *argv], timeout=timeout, terminal=terminal)
+                self.run(["/usr/bin/sudo", "-S", *assignments, *argv], timeout=timeout, terminal=terminal)
             finally:
                 termios.tcsetattr(terminal, termios.TCSAFLUSH, saved)
 
@@ -953,8 +966,8 @@ class Installer:
         self.sudo(["/usr/bin/apt-get", "update"], timeout=600)
         # Package hooks must not ask hidden questions through logged stdout.
         # Report pending restarts; leave host service restarts to its operator.
-        self.sudo(["/usr/bin/env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=l",
-                   "/usr/bin/apt-get", "install", "-y", "--no-install-recommends", *APT], timeout=900)
+        self.sudo(["/usr/bin/apt-get", "install", "-y", "--no-install-recommends", *APT],
+                  timeout=900, package_environment=True)
         # Linger keeps this user's own service manager running after logout and at boot.
         self.sudo(["/usr/bin/loginctl", "enable-linger", linger_user()], timeout=60)
 

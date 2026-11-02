@@ -16,7 +16,7 @@ but described it as fragile.
 
 | Observed issue | Evidence and scope | Change |
 | --- | --- | --- |
-| Sudo could not read a password | Detached child sessions had no controlling terminal; the outer shell also consumed stdin. | Open the parent's foreground terminal explicitly and pass it directly to `sudo -S`; restore terminal settings on return/cancellation. No password enters Python, argv, or a log. Up to three prompts replace the unreliable single cached authentication. |
+| Sudo could not read a password | Detached child sessions had no controlling terminal; the outer shell also consumed stdin. | Open the parent's foreground terminal explicitly and pass it directly to `sudo -S`; restore terminal settings on return/cancellation. No password enters Python, argv, or a log. Up to three prompts replace the unreliable single cached authentication. Without a terminal, run each command once with `sudo -n`; never retry a possibly executed command. |
 | Retry rejected permissions | An existing `.config` directory was group-writable; late recovery checks discovered it after setup began. | Check existing launcher/service ancestors before setup effects and identify the rejected path. Keep ownership/symlink/write-permission checks; do not automatically chmod shared directories. |
 | Hidden package prompt | Package configuration reached needrestart's service-selection question while stdout was logged. | Set `DEBIAN_FRONTEND=noninteractive` and `NEEDRESTART_MODE=l` only for the fixed apt install command. No global configuration/sudoers edits and no needrestart-driven service restarts; ordinary package maintainer behavior remains unchanged. |
 | Cleanup failure | The installer reported that child processes could not be fully stopped. The exact cause was not established; subsequently listed sudo processes belonged to unrelated work. | Account for other process groups in the held session before declaring cleanup complete. Permission-denied cleanup identifies the held session and refuses; no name-based killing or post-reap signalling. Root-descendant cancellation still needs real-VM qualification. |
@@ -39,7 +39,7 @@ but described it as fragile.
   are not hot-patched by this PR.
 - The bundled prebuilt UI is separately pinned. This PR improves the installer
   handoff; it does not change that UI's generic Google-invite fallback.
-- No workflow, released binary, sudo policy, service restart policy, provider
+- No released binary, host sudo policy, service restart policy, provider
   credential or authentication lifetime is changed. Release builders must create
   a new artifact and regenerate its inventories; bootstrap's control pin is
   updated with its source.
@@ -52,7 +52,7 @@ Run from the installer repository root, as an ordinary Linux user:
 (umask 077; python3 -B -m unittest discover -s release/deploy/linux -p 'test_*.py')
 ```
 
-All 210 local tests pass. CLI help smoke checks, shell syntax and diff whitespace
+All 214 local tests pass. CLI help smoke checks, shell syntax and diff whitespace
 checks also pass; the bootstrap control-source pin matches the source bytes.
 The local suite covers installer/bootstrap/catalogue/front-door behavior and
 real unprivileged PTYs/detached children with fake sudo. New checks cover a
@@ -79,3 +79,27 @@ VM with password-protected sudo and needrestart installed:
 
 Two independent non-author reviews are required before merge by the repository's
 contribution rules. No live-release replacement or merge is part of this change.
+
+## CI follow-up
+
+The first PR run stopped at the release-tree integrity check: the source changes
+had not been reflected in `ci/RELEASE_TREE`. The prepared CI follow-up provenance files identify
+the commit containing this release subtree and its exact tree hash. The integrity
+check remains enabled. The prepared source-install job runs all installer tests as a
+required step and grants its disposable user only the exact apt
+command with a command-scoped allowance for the two fixed environment values and linger command. Historical binary-kit jobs are unchanged.
+
+## Review follow-up
+
+MesTTo's review identified a passwordless/no-terminal regression, restricted-sudo
+compatibility, a PTY baseline race, and the limits of the passing historical-kit
+jobs. The source changes support NOPASSWD without a terminal, remove the env
+wrapper, document the restricted-policy prerequisite, and synchronize the test
+child before capturing terminal attributes. Permission refusals now include a
+specific manual remedy without relaxing the security boundary.
+
+The release-tree check must remain enabled. Moving the source provenance records
+is a proposed CI candidate update, not a release declaration; Jon must confirm
+that provenance approach or build a successor artifact before merge. The old kit
+jobs do not qualify this code. The workflow follow-up may require the App's
+Workflows write permission before it can be pushed.

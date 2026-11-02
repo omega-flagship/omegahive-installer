@@ -201,3 +201,34 @@ release/source identity, not an in-place upgrade across releases.
 
 Regression evidence and the remaining real-VM qualification are recorded in
 `docs/trials/2026-10-29-installer-reliability.md` at the installer repository root.
+
+## Sudo compatibility and directory permissions
+
+With a foreground terminal, sudo reads directly from that terminal using `-S`;
+NOPASSWD rules do not prompt. Without a controlling terminal, the same fixed
+command runs once with `sudo -n` and stdin closed. No `sudo -v` probe is used and
+no failed command is retried: sudo and its target can share exit codes, and the
+target may already have made changes. A password-requiring install needs a
+foreground terminal (`ssh -t`); cloud-init and mixed sudo-group/NOPASSWD rules
+remain usable when the fixed commands are authorized without a password.
+
+The package command uses sudo's environment assignments followed by the actual
+`/usr/bin/apt-get` executable, not an `/usr/bin/env` or shell wrapper. Standard
+sudo `ALL` policies normally allow these assignments. A restricted policy must
+explicitly permit the two fixed values; an administrator can use this
+command-scoped sudoers default alongside the existing apt command authorization:
+
+```sudoers
+Defaults!/usr/bin/apt-get env_keep += "DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l"
+```
+
+Validate policy edits with `visudo`. This does not authorize apt by itself and
+needs neither unrestricted `env` execution nor a broad `SETENV` grant. The installer
+never edits sudoers or silently drops the noninteractive package settings when a
+restricted policy refuses them. CI uses exact apt and linger argument lists.
+
+Group/world-writable paths remain refused, including Ubuntu's commonly created
+0775 `~/.config`. For user-owned paths the error prints a shell-quoted
+`chmod go-w -- PATH` suggestion, conditional on that path being intended private.
+It does not automatically change shared-directory permissions or assume that a
+private group will remain private.

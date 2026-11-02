@@ -40,9 +40,13 @@ class TerminalTests(unittest.TestCase):
     def exercise(self, mode):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
+            ready_read, ready_write = os.pipe()
             pid, master = pty.fork()
             if pid == 0:
                 try:
+                    os.close(ready_write)
+                    assert os.read(ready_read, 1) == b"1"
+                    os.close(ready_read)
                     install.STOP = False
                     signal.signal(signal.SIGINT, install.stop_requested)
                     # Reproduce the shell wrapper's consumed/non-terminal stdin.
@@ -73,7 +77,10 @@ class TerminalTests(unittest.TestCase):
                     import traceback
                     traceback.print_exc()
                     os._exit(2)
+            os.close(ready_read)
             before = termios.tcgetattr(master)
+            os.write(ready_write, b"1")
+            os.close(ready_write)
             data = bytearray(); answered = 0; status = None
             try:
                 end = time.monotonic() + 15
@@ -128,12 +135,41 @@ class TerminalTests(unittest.TestCase):
     def test_ctrl_c_cleans_child_and_restores_terminal(self): self.exercise('cancel')
     def test_eof_restores_terminal(self): self.exercise('eof')
 
-    def test_no_terminal_fails_before_launch(self):
+    def test_passwordless_without_terminal_executes_once(self):
         instance = install.Installer(Path('/unused'), {}, Path('/unused'))
-        with patch('builtins.open', side_effect=OSError('no controlling tty')), patch.object(instance, 'run') as run:
-            with self.assertRaisesRegex(install.Refused, 'interactive terminal'):
-                instance.sudo(['/usr/bin/true'], timeout=1)
+        with patch('builtins.open', side_effect=OSError('no tty')), patch.object(instance, 'run') as run:
+            instance.sudo(['/usr/bin/apt-get', 'update'], timeout=600)
+        run.assert_called_once_with(['/usr/bin/sudo', '-n', '/usr/bin/apt-get', 'update'], timeout=600)
+
+    def test_no_terminal_failure_does_not_retry_or_authenticate(self):
+        instance = install.Installer(Path('/unused'), {}, Path('/unused'))
+        with patch('builtins.open', side_effect=OSError('no tty')), patch.object(instance, 'run', side_effect=install.Refused('failed')) as run:
+            with self.assertRaisesRegex(install.Refused, 'failed'):
+                instance.sudo(['/usr/bin/apt-get', 'update'], timeout=600)
+        self.assertEqual(run.call_count, 1)
+
+    def test_package_environment_keeps_apt_as_sudo_command(self):
+        instance = install.Installer(Path('/unused'), {}, Path('/unused'))
+        argv = ['/usr/bin/apt-get', 'install', '-y', '--no-install-recommends', *install.APT]
+        with patch('builtins.open', side_effect=OSError('no tty')), patch.object(instance, 'run') as run:
+            instance.sudo(argv, timeout=900, package_environment=True)
+        run.assert_called_once_with(['/usr/bin/sudo', '-n', 'DEBIAN_FRONTEND=noninteractive', 'NEEDRESTART_MODE=l', *argv], timeout=900)
+
+    def test_package_environment_refuses_another_command(self):
+        instance = install.Installer(Path('/unused'), {}, Path('/unused'))
+        with patch.object(instance, 'run') as run:
+            with self.assertRaises(install.Refused):
+                instance.sudo(['/usr/bin/true'], timeout=1, package_environment=True)
         run.assert_not_called()
+
+    def test_permission_guidance_is_specific_and_does_not_chmod(self):
+        with tempfile.TemporaryDirectory() as name:
+            path = Path(name) / "user's config"
+            path.mkdir(mode=0o700); path.chmod(0o775)
+            with self.assertRaisesRegex(install.Refused, 'chmod go-w --') as error:
+                install.plain(path, directory=True)
+            self.assertIn(install.shlex.quote(str(path)), str(error.exception))
+            self.assertEqual(path.stat().st_mode & 0o777, 0o775)
 
     def test_background_terminal_fails_before_launch(self):
         master, slave = pty.openpty()

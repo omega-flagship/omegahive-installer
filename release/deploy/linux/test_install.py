@@ -319,8 +319,8 @@ class InstallerTests(unittest.TestCase):
         with patch.object(install, 'linger_user', return_value='fresh-user'):
             instance.apt()
         self.assertEqual(commands[0], (['/usr/bin/apt-get', 'update'], {'timeout': 600}))
-        self.assertEqual(commands[1][0], ['/usr/bin/env', 'DEBIAN_FRONTEND=noninteractive', 'NEEDRESTART_MODE=l', '/usr/bin/apt-get', 'install', '-y', '--no-install-recommends', *install.APT])
-        self.assertEqual(commands[1][1], {'timeout': 900})
+        self.assertEqual(commands[1][1], {'timeout': 900, 'package_environment': True})
+        self.assertEqual(commands[1][0], ['/usr/bin/apt-get', 'install', '-y', '--no-install-recommends', *install.APT])
         self.assertEqual(commands[2], (['/usr/bin/loginctl', 'enable-linger', 'fresh-user'], {'timeout': 60}))
         self.assertEqual(len(commands), 3)
 
@@ -747,7 +747,7 @@ class InstallerTests(unittest.TestCase):
                 stack.enter_context(patch.object(install.Installer, 'local', return_value=payload))
                 stack.enter_context(patch.object(install.Installer, 'fetch', return_value=payload))
                 stack.enter_context(patch.object(install.Installer, 'run', run))
-                stack.enter_context(patch.object(install.Installer, "sudo", lambda obj, argv, **kw: run(obj, ["/usr/bin/sudo", "-S", *argv], **kw)))
+                stack.enter_context(patch.object(install.Installer, "sudo", lambda obj, argv, package_environment=False, **kw: run(obj, ["/usr/bin/sudo", "-S", *argv], **kw)))
                 stack.enter_context(patch.object(install, 'extract_source', side_effect=source))
                 stack.enter_context(patch.object(install, 'extract_tool', side_effect=tool))
                 stack.enter_context(patch.object(install, 'extract_prebuilt_ui', side_effect=ui))
@@ -1134,7 +1134,7 @@ class NativePackageCompilerTests(unittest.TestCase):
                 stack.enter_context(patch.object(install.Installer, "local", return_value=payload))
                 stack.enter_context(patch.object(install.Installer, "fetch", return_value=payload))
                 stack.enter_context(patch.object(install.Installer, "run", run))
-                stack.enter_context(patch.object(install.Installer, "sudo", lambda obj, argv, **kw: run(obj, ["/usr/bin/sudo", "-S", *argv], **kw)))
+                stack.enter_context(patch.object(install.Installer, "sudo", lambda obj, argv, package_environment=False, **kw: run(obj, ["/usr/bin/sudo", "-S", *argv], **kw)))
                 stack.enter_context(patch.object(install, "extract_source", side_effect=source))
                 stack.enter_context(patch.object(install, "extract_tool", side_effect=tool))
                 stack.enter_context(patch.object(install, "extract_prebuilt_ui", side_effect=ui))
