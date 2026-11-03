@@ -312,18 +312,17 @@ class InstallerTests(unittest.TestCase):
             root = Path(name); file = root / 'payload'; file.write_bytes(b'changed')
             with self.assertRaises(install.Refused): install.pin_file(file, row('payload', b'original'))
 
-    def test_only_apt_phase_requests_privilege_once(self):
+    def test_apt_uses_only_three_fixed_privileged_commands(self):
         commands = []
         instance = install.Installer(Path('/unused'), {}, Path('/unused-home'))
-        instance.run = lambda argv, **kwargs: commands.append((argv, kwargs))
+        instance.sudo = lambda argv, **kwargs: commands.append((argv, kwargs))
         with patch.object(install, 'linger_user', return_value='fresh-user'):
             instance.apt()
-        self.assertEqual(commands[0], (['/usr/bin/sudo', '-v'], {'console': True, 'timeout': 120}))
-        self.assertEqual(commands[1][0], ['/usr/bin/sudo', '-n', '/usr/bin/apt-get', 'update'])
-        self.assertEqual(commands[2][0][:6], ['/usr/bin/sudo', '-n', '/usr/bin/apt-get', 'install', '-y', '--no-install-recommends'])
-        self.assertEqual(tuple(commands[2][0][6:]), install.APT)
-        self.assertEqual(commands[3][0], ['/usr/bin/sudo', '-n', '/usr/bin/loginctl', 'enable-linger', 'fresh-user'])
-        self.assertEqual(len(commands), 4)
+        self.assertEqual(commands[0], (['/usr/bin/apt-get', 'update'], {'timeout': 600}))
+        self.assertEqual(commands[1][1], {'timeout': 900, 'package_environment': True})
+        self.assertEqual(commands[1][0], ['/usr/bin/apt-get', 'install', '-y', '--no-install-recommends', *install.APT])
+        self.assertEqual(commands[2], (['/usr/bin/loginctl', 'enable-linger', 'fresh-user'], {'timeout': 60}))
+        self.assertEqual(len(commands), 3)
 
     def test_linger_user_comes_from_the_uid_and_refuses_odd_names(self):
         for name, ok in (('ann', True), ('l0r7demo', True), ('_svc-1', True), ('Ann', False), ('a b', False), ('-x', False), ('', False)):
@@ -611,7 +610,7 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(calls[1].args[0], ['/usr/bin/systemctl', '--user', 'start', 'omegahive.service'])
             self.assertEqual(calls[1].kwargs['timeout'], 90)
             self.assertEqual(calls[2].args[0][-1], 'open')
-            self.assertEqual(calls[2].kwargs['timeout'], 45)
+            self.assertEqual(calls[2].kwargs['timeout'], install.OPEN_TIMEOUT)
             self.assertTrue(paths['data'].exists())
 
     def test_status_json_is_explicit_and_does_not_start_the_service(self):
@@ -748,6 +747,7 @@ class InstallerTests(unittest.TestCase):
                 stack.enter_context(patch.object(install.Installer, 'local', return_value=payload))
                 stack.enter_context(patch.object(install.Installer, 'fetch', return_value=payload))
                 stack.enter_context(patch.object(install.Installer, 'run', run))
+                stack.enter_context(patch.object(install.Installer, "sudo", lambda obj, argv, package_environment=False, **kw: run(obj, ["/usr/bin/sudo", "-S", *argv], **kw)))
                 stack.enter_context(patch.object(install, 'extract_source', side_effect=source))
                 stack.enter_context(patch.object(install, 'extract_tool', side_effect=tool))
                 stack.enter_context(patch.object(install, 'extract_prebuilt_ui', side_effect=ui))
@@ -805,10 +805,10 @@ class InstallerTests(unittest.TestCase):
 
     def test_password_explanation_safe_failure_copy_and_full_path_return_advice(self):
         instance = install.Installer(Path('/unused'), {}, Path('/unused-home'))
-        instance.run = lambda *_args, **_kwargs: None
+        instance.sudo = lambda *_args, **_kwargs: None
         output = io.StringIO()
         with redirect_stdout(output): instance.apt()
-        self.assertIn('needs your password once', output.getvalue())
+        self.assertIn('each of the three system setup steps', output.getvalue())
         source = Path(install.__file__).read_text()
         self.assertIn('Next time, open it with:  ~/.local/bin/omegahive open', source)
         self.assertIn('open a new terminal after signing out and in', source)
@@ -1016,7 +1016,7 @@ class SwiplLauncherTests(unittest.TestCase):
         for mode in (0o720, 0o702):
             with self.subTest(mode=mode):
                 target.chmod(mode)
-                with self.assertRaisesRegex(install.Refused, r'^An installation path has unsafe ownership or permissions\.$'):
+                with self.assertRaisesRegex(install.Refused, r'^An installation path has unsafe ownership or permissions:'):
                     install.swipl_executable(self.prefix)
 
     def test_foreign_owned_target_still_refuses(self):
@@ -1029,7 +1029,7 @@ class SwiplLauncherTests(unittest.TestCase):
                 return install.os.stat_result(values)
             return info
         with patch.object(Path, 'lstat', foreign):
-            with self.assertRaisesRegex(install.Refused, r'^An installation path has unsafe ownership or permissions\.$'):
+            with self.assertRaisesRegex(install.Refused, r'^An installation path has unsafe ownership or permissions:'):
                 install.swipl_executable(self.prefix)
 
     def test_symlink_prefix_is_not_an_allowed_generic_link(self):
@@ -1054,12 +1054,12 @@ class HeadlessFinalOpenTests(unittest.TestCase):
         argv = run.call_args.args[0]
         self.assertEqual(argv, [str(python), '-I', '-B', str(app / 'deploy/linux/control.py'),
             '--runtime', str(instance.root / 'runtime.json'), 'open', '--defer-headless-signin'])
-        self.assertEqual(run.call_args.kwargs, {'timeout': 45, 'console': True, 'env': {}})
+        self.assertEqual(run.call_args.kwargs, {'timeout': install.OPEN_TIMEOUT, 'console': True, 'env': {}})
         env.assert_called_once_with(instance.home, str(lib), browser=True)
         self.assertEqual(instance.log.getvalue(), b'')
         self.assertNotIn('/local-signin#', ' '.join(argv))
 
-    def test_stdout_tty_with_piped_stdin_keeps_normal_automatic_open(self):
+    def test_headless_auto_open_defers_even_with_terminal_stdout(self):
         instance, app, python, lib = self.context()
         out = SimpleNamespace(fileno=lambda: 71)
         stdin = SimpleNamespace(isatty=lambda: False)
@@ -1068,10 +1068,9 @@ class HeadlessFinalOpenTests(unittest.TestCase):
                 patch.object(install.os, 'isatty', side_effect=lambda fd: fd == 71) as tty, \
                 patch.object(instance, 'run') as run:
             instance.open_after_install(app, python, lib)
-        self.assertNotIn('--defer-headless-signin', run.call_args.args[0])
-        self.assertEqual(run.call_args.args[0][-1], 'open')
+        self.assertIn('--defer-headless-signin', run.call_args.args[0])
         self.assertTrue(run.call_args.kwargs['console'])
-        tty.assert_called_once_with(71)
+        tty.assert_not_called()
 
     def test_desktop_auto_open_is_not_deferred_even_when_stdout_is_captured(self):
         instance, app, python, lib = self.context()
@@ -1135,6 +1134,7 @@ class NativePackageCompilerTests(unittest.TestCase):
                 stack.enter_context(patch.object(install.Installer, "local", return_value=payload))
                 stack.enter_context(patch.object(install.Installer, "fetch", return_value=payload))
                 stack.enter_context(patch.object(install.Installer, "run", run))
+                stack.enter_context(patch.object(install.Installer, "sudo", lambda obj, argv, package_environment=False, **kw: run(obj, ["/usr/bin/sudo", "-S", *argv], **kw)))
                 stack.enter_context(patch.object(install, "extract_source", side_effect=source))
                 stack.enter_context(patch.object(install, "extract_tool", side_effect=tool))
                 stack.enter_context(patch.object(install, "extract_prebuilt_ui", side_effect=ui))

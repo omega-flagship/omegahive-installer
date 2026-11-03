@@ -35,7 +35,7 @@ The final r3 archive still needs its own exact inventory before release. Require
 must match that tree; missing/different modules refuse. Nothing is injected into
 or substituted for the selected release tree to make this condition pass.
 
-Only apt is elevated, using one sudo authentication prompt. There are no root
+Only the fixed package and linger commands are elevated. Each may prompt through the controlling terminal; passwords never enter Python or the install log. Package configuration is noninteractive and needrestart is list-only for that command, without changing system policy. There are no root
 application folders, builder accounts, global pip changes, global loader edits
 or privileged service files. Runtime archives are SHA256 checked before use;
 CPython's exact python-build-standalone archive is pinned separately from uv.
@@ -63,14 +63,13 @@ and checks the final pinned bytes before use.
 Directories, descriptor, lock and logs are private. Child output goes to the
 private install log, which is never dumped on failure. Progress is a few friendly
 lines. Linux waitid(WNOWAIT) retains each original session leader until a bounded
-numeric ps snapshot shows it is the sole zombie in its owned process group.
+numeric ps snapshot shows it is the sole zombie in its owned session, including descendant process groups.
 Failed/timed-out steps clean that held group before reaping; cancellation does
 not interrupt cleanup. No post-reap numeric signalling is permitted. Numeric
 snapshots stay in memory and export no process table. Failed cleanup remains
 unresolved; no OS containment or escaped-process guarantee is made. Privileged
 apt and descendant cleanup require actual disposable-VM checks. Failed logs and
-attempt records are retained. An R8 rerun removes only the exact recorded partial
-release and pinned command/service files before starting a fresh attempt.
+attempt records are retained. A rerun resumes final configuration of an activated, verified release. Only earlier partial builds follow the existing recorded cleanup/rebuild path.
 
 The descriptor has the exact 17-key product-R2 runtime shape. Data is always the
 real account's `~/.local/share/omegahive/data`. No ambient provider key, default
@@ -145,21 +144,26 @@ The final lines show `~/.local/bin/omegahive open`, which works in the current
 terminal even before `~/.local/bin` is on PATH. After signing out and in, a new
 terminal can use `omegahive open`. `status` is plain text by default;
 `omegahive status --json` is the explicit safe machine-readable form. Open's
-control invocation is bounded to45seconds; the control client separately owns
+control invocation is bounded to210seconds; the control client separately owns
 its bounded hello-only readiness wait and single sign-in request.
 
 Before release extraction, `install-progress.json` records one exact release
 identity/inode and fixed artifact kinds with permitted content hashes. A small
 recovery command uses Ubuntu's system Python until the private interpreter is
-ready. After an interrupted R8 setup, running the complete installer again
-validates the record, stops/disables only its pinned unit if present, retains the
-failed attempt record and log, and removes only its partial release and exact
-pinned command/state files. `~/.local/bin/omegahive uninstall` also removes that
+ready. After interruption, rerun the exact same complete installer. If activation wrote
+its installation state, the installer verifies the release identity/inode, fixed
+owned-file pins, runtime paths and complete source inventory before resuming bootstrap.
+It keeps the runtime, venv, data and caches; changed files fail closed. Earlier
+partial builds without activation state retain the recorded cleanup/rebuild path. `~/.local/bin/omegahive uninstall` also removes that
 recorded partial setup and always keeps data, caches, logs and unrelated releases.
 Unknown legacy folders or changed records/files are kept and reported for review;
 there is no inferred ownership or arbitrary path deletion. The record stays
-uncommitted through bootstrap and browser handoff; success retains a completed
-record and retires the recovery marker.
+uncommitted through bootstrap and the final control check; success retains a completed
+record and retires the recovery marker before browser handoff. A browser failure
+therefore does not turn a configured runtime into an incomplete installation.
+`status`, `stop`, and `tunnel` remain available after activation while setup is
+incomplete; `open` asks the user to finish configuration first. Runtime and
+installation-state schemas remain unchanged.
 
 The unit keeps `Restart=no`: login enablement and explicit open recovery address
 B1 without adding automatic crash loops. No unattended boot-before-login promise
@@ -173,3 +177,70 @@ explicit status JSON, full mocked failure→rerun lifecycle, partial uninstall,
 foreign/replaced/symlink targets, changed pins, retained data/cache/logs/releases,
 disk-number copy and password/return advice. These are authored Source only; no
 new tests or Linux install have run for R8.
+
+## SSH sign-in and slow startup
+
+Initial and post-bootstrap restart readiness each allow 180 seconds. Parent
+bootstrap and open budgets cover their child waits. A dead unit or foreign
+identity fails closed; only transient hello failures retry. Readiness does not
+mean sandbox qualification or successful browser authentication.
+
+On a headless installation the automatic handoff never mints a short-lived link.
+Run `~/.local/bin/omegahive tunnel` to print the loopback-only forwarding command,
+start that tunnel on your own computer, then run `~/.local/bin/omegahive open` on
+the server. Open the complete link immediately, retaining `127.0.0.1`, port 8701,
+and its fragment. Codes still expire after 60 seconds and remain single-use.
+Do not switch to `localhost` or another port: browser storage is origin-specific.
+The generic Google-invite fallback is not the local-owner sign-in flow.
+
+Existing commands, explicit non-TTY `open`, desktop handoff, and old completed
+installation-state formats remain supported. These source changes require a new
+reviewed bundle and regenerated pins; do not edit an installed pinned release
+or overwrite a previously published asset. Resumption is limited to matching
+release/source identity, not an in-place upgrade across releases.
+
+Regression evidence and the remaining real-VM qualification are recorded in
+`docs/trials/2026-10-29-installer-reliability.md` at the installer repository root.
+
+## Sudo compatibility and directory permissions
+
+With a foreground terminal, sudo reads directly from that terminal using `-S`;
+NOPASSWD rules do not prompt. Without a controlling terminal, the same fixed
+command runs once with `sudo -n` and stdin closed. No `sudo -v` probe is used and
+no failed command is retried: sudo and its target can share exit codes, and the
+target may already have made changes. A password-requiring install needs a
+foreground terminal (`ssh -t`); cloud-init and mixed sudo-group/NOPASSWD rules
+remain usable when the fixed commands are authorized without a password.
+
+The package command uses sudo's environment assignments followed by the actual
+`/usr/bin/apt-get` executable, not an `/usr/bin/env` or shell wrapper. Standard
+sudo `ALL` policies normally allow these assignments. A restricted policy must
+explicitly permit the two fixed values; an administrator can use this
+command-scoped sudoers default alongside the existing apt command authorization:
+
+```sudoers
+Defaults!/usr/bin/apt-get env_keep += "DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l"
+```
+
+Validate policy edits with `visudo`. This does not authorize apt by itself and
+needs neither unrestricted `env` execution nor a broad `SETENV` grant. The installer
+never edits sudoers or silently drops the noninteractive package settings when a
+restricted policy refuses them. CI uses exact apt and linger argument lists.
+
+Group/world-writable paths remain refused, including Ubuntu's commonly created
+0775 `~/.config`. For user-owned paths the error prints a shell-quoted
+`chmod go-w -- PATH` suggestion, conditional on that path being intended private.
+It does not automatically change shared-directory permissions or assume that a
+private group will remain private.
+
+## Failure diagnostics
+
+For terminal-authenticated system steps, child stderr (including sudo errors) is
+copied to both the terminal and the private setup log. Password input still goes
+directly from the terminal to sudo and is never read or logged by Python. Prompts
+may appear in the log; no terminal-input capture or shell tracing is enabled.
+Process snapshots allow up to 10 seconds, within a separate 30-second cleanup
+budget. A failed command is recorded before process verification; a subsequent
+snapshot or cleanup failure is reported as secondary and never implies that all
+children stopped. Bootstrap names a control-readiness timeout explicitly in its
+stderr diagnostic, alongside its existing structured failure receipt.

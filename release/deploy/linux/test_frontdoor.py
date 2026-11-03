@@ -222,6 +222,7 @@ class BoundaryTests(unittest.TestCase):
                 return_value=(cfg, Path('/home/test'), 'pin')))
             stack.enter_context(mock.patch.dict(control.os.environ, display or {}, clear=True))
             calls = stack.enter_context(mock.patch.object(control, 'request', side_effect=request))
+            stack.enter_context(mock.patch.object(control, 'supervisor_pid', return_value=4000))
             stack.enter_context(mock.patch.object(control, 'desktop_environment', return_value={}))
             stack.enter_context(mock.patch.object(control, 'root_program'))
             opener = stack.enter_context(mock.patch.object(control.subprocess, 'run',
@@ -280,7 +281,7 @@ class BoundaryTests(unittest.TestCase):
         def unavailable(*args):
             raise FileNotFoundError('synthetic absent socket')
         with self.control_context('open', unavailable, display={'DISPLAY': ':0'}) as (cfg, _, calls, opener, _), \
-             mock.patch.object(control.time, 'monotonic', side_effect=[0.0, 16.0]):
+             mock.patch.object(control.time, 'monotonic', side_effect=[0.0, control.HELLO_READY_SECONDS + 1.0]):
             with self.assertRaisesRegex(control.Refused, '^control_reply_timeout$'):
                 control.main()
             calls.assert_called_once_with(cfg, Path('/home/test'), 'hello')
@@ -322,7 +323,7 @@ class BoundaryTests(unittest.TestCase):
     def test_friendly_cli_messages_never_expose_raw_reasons(self):
         expected = {
             'browser_handoff_failed_open_again': "Your browser didn't open in time. Run omegahive open again.",
-            'control_reply_timeout': "Your hive didn't answer. Run omegahive open again in a minute.",
+            'control_reply_timeout': "Hive has not become ready within three minutes. Check omegahive status and journalctl --user -u omegahive.service; keep your data.",
             'remote_display_refused': "This window forwards a screen (ssh -X or -Y), which OmegaHive doesn't use. Sign in with plain ssh (without -X or -Y), then run omegahive open again.",
         }
         for reason, sentence in expected.items():

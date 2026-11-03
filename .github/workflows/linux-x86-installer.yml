@@ -54,16 +54,17 @@ jobs:
         with:
           python-version: "3.12"
       - name: Linux installer unit tests (on x86_64, before any install)
-        continue-on-error: true
         run: |
-          cd release/deploy/linux
+          set -o pipefail
+          umask 077
           python3 --version
-          python3 -m unittest -v test_install test_frontdoor test_bootstrap test_build_kit test_kit_installer_prefix 2>&1 | tail -40
+          python3 -B -m unittest discover -v -s release/deploy/linux -p 'test_*.py' 2>&1 | tail -40
 
       - name: Fresh user with test-only sudo (apt-get and linger only)
         run: |
           sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
-          printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
+          printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get update, /usr/bin/apt-get install -y --no-install-recommends ca-certificates curl git build-essential cmake ninja-build pkg-config libssl-dev libgmp-dev libedit-dev libpcre2-dev libyaml-dev zlib1g-dev libarchive-dev sqlite3 xz-utils acl util-linux dbus-user-session xdg-utils procps, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
+          printf 'Defaults!/usr/bin/apt-get env_keep += "DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l"\n' | sudo tee -a /etc/sudoers.d/90-omegahive-ci >/dev/null
           sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
           sudo apt-get install -y acl >/dev/null 2>&1 || true
           loginctl show-user "$HIVE_USER" -p Linger 2>/dev/null || echo "Linger not set (expected)"

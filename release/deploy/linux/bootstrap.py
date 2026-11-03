@@ -24,7 +24,7 @@ import types
 import uuid
 
 SEED_PIN = (1627, "917fc8c77357ef076712e867e0f1026e8910fc0683b017f824111b2b5c62f0ee")
-CONTROL_PIN = (23156, 'f33777c18ccb656f07f6a8c5bc7fa93509b8193b0d70d9fe0549df47c891dabc')
+CONTROL_PIN = (24048, 'a3bf9aae0c66a0f4c9811a69299f5fdd9116aff512a5779808b4a83f62a19ce1')
 APPS = ("omegaassist", "omegadesign")
 MAX_BODY = 256 * 1024
 STOP = False
@@ -346,7 +346,7 @@ def bootstrap(runtime, seed_path):
         require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and info.st_nlink == 1 and stat.S_IMODE(info.st_mode) == 0o600)
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         # The service was only just started; wait (bounded) for its control socket like `open` does.
-        hello, pid = control.wait_for_hello(config, home)
+        hello, pid = control.wait_for_hello(config, home, cancelled=lambda: STOP)
         require(type(hello) is dict and hello.get("ok") is True and hello.get("local_owner") is True
                 and hello.get("pid") == pid and hello.get("port") == config["port"]
                 and type(hello.get("instance")) is str and type(hello.get("owner")) is str
@@ -369,29 +369,22 @@ def bootstrap(runtime, seed_path):
         # Exactly one fixed user-service restart; no start/wake/model request is issued.
         result = subprocess.run(["/usr/bin/systemctl", "--user", "restart", "omegahive.service"],
             env=control.desktop_environment(home), stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25, check=False, close_fds=True)
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=45, check=False, close_fds=True)
         require(result.returncode == 0 and not STOP)
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:
-            require(not STOP)
-            try:
-                fresh, _pid = control.request(config, home, "hello")
-                if (type(fresh) is dict and fresh.get("ok") is True and fresh.get("local_owner") is True
-                        and fresh.get("instance") != hello["instance"] and control.exe_matches(config, fresh)):
-                    current, _ = read_owned(runtime, private=True)
-                    require(strict_json(current).get("studio_maker_template") == template)
-                    print("OmegaHive apps and the sleeping Studio template are configured.")
-                    return
-            except (OSError, control.Refused):
-                pass
-            time.sleep(0.1)
-        raise Refused("The service did not confirm its restart. Your data was kept; setup was not declared complete.")
+        fresh, _pid = control.wait_for_hello(config, home, previous_instance=hello["instance"], cancelled=lambda: STOP)
+        require(not STOP and control.listener_matches(config, fresh))
+        current, _ = read_owned(runtime, private=True)
+        require(strict_json(current).get("studio_maker_template") == template)
+        print("OmegaHive apps and the sleeping Studio template are configured.")
+        return
     finally:
         os.close(lock)
 
 
-def failure_message():
-    return "The last setup step didn't finish. The details are in ~/.local/share/omegahive/logs"
+def failure_message(error=None):
+    if error is not None and type(error).__name__ == "Refused" and str(error) == "control_reply_timeout":
+        return "Final setup failed: Hive readiness timed out after three minutes. Check bootstrap-failure-*.json in ~/.local/share/omegahive/logs and journalctl --user -u omegahive.service. Keep your data and rerun the same installer once the service is healthy."
+    return "Final setup did not finish. Check bootstrap-failure-*.json in ~/.local/share/omegahive/logs and the user-service journal. Rerun the same installer to resume; keep your data."
 
 
 def main():
@@ -452,5 +445,5 @@ if __name__ == "__main__":
     try: main()
     except Exception as error:
         record_failure(error)
-        print(failure_message(), file=sys.stderr)
+        print(failure_message(error), file=sys.stderr)
         raise SystemExit(1)

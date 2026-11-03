@@ -187,7 +187,7 @@ class BootstrapTests(unittest.TestCase):
         # Type=simple start: data/run may not exist yet, so the first hello must be the bounded retry.
         source = Path(bootstrap.__file__).read_text()
         body = source[source.index("def bootstrap("):source.index("def failure_message(")]
-        wait = body.index("control.wait_for_hello(config, home)")
+        wait = body.index("control.wait_for_hello(config, home,")
         # Any direct request (either quote style) for hello or signin must come after the bounded wait.
         for match in re.finditer(r"control\.request\(config, home, ['\"](hello|signin)['\"]", body):
             self.assertLess(wait, match.start(), match.group(0))
@@ -291,7 +291,8 @@ class BootstrapTests(unittest.TestCase):
 
     def test_failure_message_is_plain_and_does_not_promise_data_safety(self):
         message = bootstrap.failure_message()
-        self.assertEqual(message, "The last setup step didn't finish. The details are in ~/.local/share/omegahive/logs")
+        self.assertIn("bootstrap-failure-*.json", message)
+        self.assertIn("Rerun the same installer to resume", message)
         self.assertNotIn('Your data is safe', message)
         self.assertNotIn('session', message)
         self.assertNotIn('sign-in secret', message)

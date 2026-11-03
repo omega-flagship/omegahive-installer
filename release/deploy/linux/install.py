@@ -24,6 +24,8 @@ import stat
 import subprocess
 import sys
 import tarfile
+import shlex
+import termios
 import time
 import urllib.parse
 import uuid
@@ -39,6 +41,10 @@ HOSTS = {"github.com", "nodejs.org", "files.pythonhosted.org", "www.swi-prolog.o
          "download.swi-prolog.org", "astral.sh", "releases.astral.sh"}
 UNIT = "omegahive.service"
 STOP = False
+BOOTSTRAP_TIMEOUT = 480  # two 180s readiness waits, 50s API work, restart and overhead
+OPEN_TIMEOUT = 210
+PROCESS_SNAPSHOT_TIMEOUT = 10
+PROCESS_CLEANUP_TIMEOUT = 30
 
 
 class Refused(Exception):
@@ -226,8 +232,12 @@ def plain(path, owner=None, directory=False):
     info = path.lstat()
     need(not path.is_symlink() and (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)),
          "An installation path is not a plain file or folder.")
+    permission_hint = ""
+    if info.st_uid == os.getuid() and info.st_mode & 0o022:
+        permission_hint = " If this path is intended to be private, run: chmod go-w -- " + shlex.quote(str(path))
     need(info.st_uid == (os.getuid() if owner is None else owner) and not info.st_mode & 0o022,
-         "An installation path has unsafe ownership or permissions.")
+         "An installation path has unsafe ownership or permissions: " + str(path) +
+         " (must belong to this user and not be group/world writable)." + permission_hint)
     return info
 
 
@@ -813,7 +823,7 @@ class Installer:
         """Numeric Linux snapshot only, filtered in memory to the held session."""
         need(process.returncode is None and signal.getsignal(signal.SIGCHLD) == signal.SIG_DFL,
              "The setup process ownership anchor was lost.")
-        end = min(deadline, time.monotonic() + 2)
+        end = min(deadline, time.monotonic() + PROCESS_SNAPSHOT_TIMEOUT)
         need(end > time.monotonic(), "The setup cleanup deadline expired.")
         monitor = subprocess.Popen(["/usr/bin/ps", "-e", "-o", "pid=,ppid=,pgid=,sid=,ruid=,stat="],
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=self.log,
@@ -840,13 +850,13 @@ class Installer:
             need(len(fields) == 6 and all(re.fullmatch(r"[0-9]+", value) for value in fields[:5])
                  and re.fullmatch(r"[A-Za-z+<NLsl]*", fields[5]), "The numeric setup monitor returned invalid data.")
             row = tuple(int(value) for value in fields[:5]) + (fields[5],)
-            if row[0] == process.pid or row[2] == process.pid: rows.append(row)
+            if row[0] == process.pid or row[2] == process.pid or row[3] == process.pid: rows.append(row)
         anchors = [row for row in rows if row[0] == process.pid]
         allowed = {os.getuid(), 0} if privileged else {os.getuid()}
         need(process.returncode is None and signal.getsignal(signal.SIGCHLD) == signal.SIG_DFL
              and len(anchors) == 1 and anchors[0][1] == os.getpid()
              and anchors[0][2] == anchors[0][3] == process.pid
-             and all(row[2] == row[3] == process.pid and row[4] in allowed for row in rows),
+             and all(row[3] == process.pid and row[4] in allowed for row in rows),
              "The held setup session identity could not be verified.")
         return rows
 
@@ -856,7 +866,7 @@ class Installer:
 
     def cleanup_group(self, process, privileged=False):
         # Cancellation is deferred during cleanup. Repeated catchable signals only set STOP.
-        deadline = time.monotonic() + 8
+        deadline = time.monotonic() + PROCESS_CLEANUP_TIMEOUT
         for number, grace in ((signal.SIGTERM, 3), (signal.SIGKILL, 2)):
             if process.returncode is not None: return
             rows = self.group_rows(process, deadline, privileged)
@@ -864,7 +874,11 @@ class Installer:
                 process.wait(timeout=1); return
             # The original leader remains unreaped. No post-reap numeric signal is allowed.
             need(process.returncode is None, "The setup process was already reaped.")
-            os.killpg(process.pid, number)
+            try:
+                os.killpg(process.pid, number)
+            except PermissionError:
+                raise Refused("A privileged setup process could not be stopped. Do not retry or remove package locks; "
+                              "ask the operator to inspect the held setup session " + str(process.pid) + ".") from None
             until = min(deadline, time.monotonic() + grace)
             while time.monotonic() < until:
                 rows = self.group_rows(process, deadline, privileged)
@@ -873,33 +887,61 @@ class Installer:
                 time.sleep(min(0.1, max(0, until - time.monotonic())))
         raise Refused("A setup process could not be fully stopped. Keep the private log; do not retry yet.")
 
-    def run(self, argv, *, cwd=None, timeout=300, console=False, env=None):
+    def run(self, argv, *, cwd=None, timeout=300, console=False, env=None, terminal=None):
         need(type(argv) is list and argv and all(type(v) is str for v in argv), "Invalid installer command.")
         need(not STOP, "Installation was cancelled.")
         need(hasattr(os, "waitid") and hasattr(os, "WNOWAIT")
              and signal.getsignal(signal.SIGCHLD) == signal.SIG_DFL,
              "This Ubuntu Python lacks the required held-child cleanup protocol.")
         privileged = argv[0] == "/usr/bin/sudo"
-        process = subprocess.Popen(argv, cwd=cwd, env=env or self.env, stdin=None if console else subprocess.DEVNULL,
+        process = subprocess.Popen(argv, cwd=cwd, env=env or self.env, stdin=terminal if terminal is not None else (None if console else subprocess.DEVNULL),
                                    stdout=None if console else self.log,
-                                   stderr=None if console else self.log,
+                                   stderr=subprocess.PIPE if terminal is not None else (None if console else self.log),
                                    start_new_session=True, close_fds=True)
         deadline = time.monotonic() + timeout
+        command_failure = None
+        if terminal is not None:
+            os.set_blocking(process.stderr.fileno(), False)
+        def drain_stderr():
+            if terminal is None: return
+            try: block = os.read(process.stderr.fileno(), 65536)
+            except BlockingIOError: return
+            if block:
+                # Only child stderr is copied. Password stdin is never read here.
+                if self.log is not None: self.log.write(block)
+                terminal.write(block)
         try:
             while True:
+                drain_stderr()
                 if STOP or time.monotonic() >= deadline:
                     raise Refused("Setup stopped: it was cancelled, or one step took too long.")
-                terminal = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
-                if terminal is not None:
-                    rows = self.group_rows(process, min(deadline, time.monotonic() + 2), privileged)
+                exited = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                if exited is not None:
+                    if getattr(exited, "si_status", 0):
+                        command_failure = "Setup command failed (status " + str(exited.si_status) + "). See the setup log for its diagnostic."
+                        if self.log is not None: self.log.write((command_failure + "\n").encode())
+                    rows = self.group_rows(process, time.monotonic() + PROCESS_SNAPSHOT_TIMEOUT, privileged)
                     need(self.sole_zombie(process, rows), "A setup step left running descendants; cleanup is required.")
                     code = process.wait(timeout=1)
-                    need(code == 0 and not STOP, "A setup step could not finish or was cancelled.")
+                    drain_stderr()
+                    need(code == 0 and not STOP, command_failure or "A setup step could not finish or was cancelled.")
                     break
                 time.sleep(0.1)
+        except BaseException as error:
+            primary = str(error)
+            if command_failure and command_failure not in primary:
+                primary = command_failure + " Process verification: " + primary
+            try:
+                if process.returncode is None: self.cleanup_group(process, privileged)
+            except Exception as cleanup_error:
+                raise Refused(primary + " Cleanup incomplete: " + str(cleanup_error) +
+                              " Do not retry until the held setup session is checked.") from error
+            if primary != str(error): raise Refused(primary) from error
+            raise
         finally:
-            if process.returncode is None:
-                self.cleanup_group(process, privileged)
+            if terminal is not None:
+                try: drain_stderr()
+                finally: process.stderr.close()
 
     def local(self, spec):
         path = self.bundle / str(relative(spec["path"])); pin_file(path, spec); return path
@@ -916,17 +958,54 @@ class Installer:
                   "--output", str(partial), spec["url"]], timeout=310)
         pin_file(partial, spec); os.chmod(partial, 0o600); os.rename(partial, path); return path
 
+    def sudo(self, argv, *, timeout, package_environment=False):
+        assignments = (["DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=l"]
+                       if package_environment else [])
+        need(not package_environment or argv == ["/usr/bin/apt-get", "install", "-y", "--no-install-recommends", *APT],
+             "Package environment is only allowed for the fixed package installation.")
+        # The shell wrapper consumes stdin, and run() deliberately detaches each
+        # child session. Give sudo its own terminal fd; never read the password.
+        try:
+            terminal = open("/dev/tty", "r+b", buffering=0)
+        except OSError:
+            # No authentication probe or retry: a failing command may have side effects.
+            # NOPASSWD works without a tty, including mixed sudo-group/cloud rules.
+            print("No terminal: using noninteractive sudo. If authentication is required, reconnect with ssh -t. "
+                  "Restricted apt rules must allow the documented package environment.", file=sys.stderr)
+            self.run(["/usr/bin/sudo", "-n", *assignments, *argv], timeout=timeout)
+            return
+        with terminal:
+            need(os.isatty(terminal.fileno()) and os.tcgetpgrp(terminal.fileno()) == os.getpgrp(),
+                 "Run system setup in the foreground of your terminal.")
+            saved = termios.tcgetattr(terminal)
+            hidden = saved[:]
+            hidden[3] &= ~(termios.ECHO | termios.ECHONL)
+            try:
+                # Suppress echo before sudo starts, and restore it even on timeout
+                # or cancellation. No password enters Python, a pipe, or a log.
+                termios.tcsetattr(terminal, termios.TCSAFLUSH, hidden)
+                self.run(["/usr/bin/sudo", "-S", *assignments, *argv], timeout=timeout, terminal=terminal)
+            finally:
+                termios.tcsetattr(terminal, termios.TCSAFLUSH, saved)
+
     def apt(self):
-        # One password prompt. Every subsequent elevated command is a closed apt argv with -n (never prompts again).
-        print("OmegaHive needs your password once, to add some standard Ubuntu packages and let your hive keep running when you log out.", flush=True)
-        self.run(["/usr/bin/sudo", "-v"], console=True, timeout=120)
-        self.run(["/usr/bin/sudo", "-n", "/usr/bin/apt-get", "update"], timeout=600)
-        self.run(["/usr/bin/sudo", "-n", "/usr/bin/apt-get", "install", "-y", "--no-install-recommends", *APT], timeout=900)
-        # Linger keeps this user's own service manager (and so the hive) running after the last login ends and starts it
-        # at boot. The user name comes from the kernel uid, never from the environment.
-        self.run(["/usr/bin/sudo", "-n", "/usr/bin/loginctl", "enable-linger", linger_user()], timeout=60)
+        # Detached sudo sessions cannot reliably share cached authentication.
+        # Each fixed command may prompt; do not weaken sudo policy to avoid it.
+        print("OmegaHive needs permission to add standard Ubuntu packages and keep running when you log out. "
+              "You may be asked for your password for each of the three system setup steps.", flush=True)
+        self.sudo(["/usr/bin/apt-get", "update"], timeout=600)
+        # Package hooks must not ask hidden questions through logged stdout.
+        # Report pending restarts; leave host service restarts to its operator.
+        self.sudo(["/usr/bin/apt-get", "install", "-y", "--no-install-recommends", *APT],
+                  timeout=900, package_environment=True)
+        # Linger keeps this user's own service manager running after logout and at boot.
+        self.sudo(["/usr/bin/loginctl", "enable-linger", linger_user()], timeout=60)
 
     def install(self):
+        # Check existing launch/service ancestors before creating progress or using sudo.
+        for name in (".local", ".local/bin", ".local/share", ".config", ".config/systemd", ".config/systemd/user"):
+            path = self.home / name
+            if present(path): plain(path, directory=True)
         arch = preflight(self.home, self.catalogue["min_free_bytes"])
         print("Checking your computer… ✓", flush=True)
         for path in [self.home / ".local", self.home / ".local/share"]:
@@ -947,6 +1026,9 @@ class Installer:
         try:
             self.log = open(logpath, "xb", buffering=0); os.chmod(logpath, 0o600)
             if present(self.root / "install-progress.json"):
+                if present(self.root / "installation-state.json"):
+                    self.resume_setup()
+                    return
                 recover_partial(self.home, self.catalogue["release_id"])
             need(not present(self.root / "installation-state.json"),
                  "OmegaHive is already installed. To open it: omegahive open")
@@ -1033,34 +1115,82 @@ class Installer:
             for row in self.catalogue["module_files"]:
                 pin_file(app / str(relative(row["path"])), row)
             self.activate(app, venv, descriptor)
-            helper = self.local(self.catalogue["bootstrap"]["helper"]); seed = self.local(self.catalogue["bootstrap"]["seed"])
-            # This separately reviewed module uses existing owner/admin routes and memory-only auth; never fake Hive imports.
-            self.run([str(venv), "-I", "-B", str(helper), "--runtime", str(self.root / "runtime.json"), "--seed", str(seed)], timeout=120)
-            # Bootstrap owns its atomic descriptor update and one restart, including authoritative live-service app admission checks.
-            self.run([str(venv), "-I", "-B", str(app / "deploy/linux/control.py"), "--runtime", str(self.root / "runtime.json"), "status", "--json"], timeout=15)
-            print("Getting OmegaHive ready… ✓", flush=True)
-            print("Preparing your sign-in…", flush=True)
-            self.open_after_install(app, venv, libpython)
-            self.finish_progress()
-            print("Next time, open it with:  ~/.local/bin/omegahive open")
-            print("(Or open a new terminal after signing out and in, then use: omegahive open)")
+            self.complete_setup(app, venv, libpython)
         except BaseException:
-            print("OmegaHive couldn't finish setting up. The details are in: " + str(logpath), file=sys.stderr)
+            if present(self.root / "installation-state.json") and not present(self.root / "install-progress.json"):
+                print("OmegaHive is installed. To retry browser sign-in, run ~/.local/bin/omegahive open. Details: " + str(logpath), file=sys.stderr)
+            else:
+                print("OmegaHive couldn't finish setting up. The details are in: " + str(logpath), file=sys.stderr)
             if present(self.home / ".local/bin/omegahive"):
-                print("To remove the incomplete setup and keep your data: ~/.local/bin/omegahive uninstall", file=sys.stderr)
+                if present(self.root / "installation-state.json") and present(self.root / "install-progress.json"):
+                    print("The runtime is installed, but final setup or sign-in did not finish. Check ~/.local/bin/omegahive status "
+                          "and journalctl --user -u omegahive.service. Rerun this same installer to resume without rebuilding.", file=sys.stderr)
+                elif present(self.root / "install-progress.json"):
+                    print("To remove the incomplete setup and keep your data: ~/.local/bin/omegahive uninstall", file=sys.stderr)
             raise
         finally:
             if self.log is not None: self.log.close()
             os.close(lockfd)
 
+    def resume_setup(self):
+        progress = progress_record(self.home, self.catalogue["release_id"])
+        need(all(progress[k] == self.catalogue[k] for k in ("source_revision", "source_tree")),
+             "The interrupted setup belongs to different source bytes; its files were kept.")
+        for kind, path in progress_paths(self.home).items():
+            need(matches_owned_pin(path, progress["owned_files"].get(kind, [])),
+                 "An interrupted setup file changed; its files were kept for review.")
+        runtime = self.root / "releases" / self.catalogue["release_id"]
+        info = plain(runtime, directory=True)
+        need(progress["runtime_identity"] == {"device": info.st_dev, "inode": info.st_ino},
+             "The interrupted release directory was replaced; its files were kept.")
+        config = owned_json(self.root / "runtime.json")
+        state = owned_json(self.root / "installation-state.json")
+        app = runtime / "app"; python = runtime / "venv/bin/python"
+        need(runtime == runtime.resolve() and app == app.resolve() and python == python.resolve(),
+             "The interrupted runtime contains a redirected path; its files were kept.")
+        need(config.get("runtime_root") == str(runtime) and config.get("release_root") == str(app)
+             and config.get("python") == str(python) and state.get("python") == str(python)
+             and config.get("data_dir") == str(self.root / "data")
+             and config.get("source_revision") == self.catalogue["source_revision"],
+             "The interrupted runtime does not match this installer; its files were kept.")
+        plain(python)
+        # A retry may reuse only the same reviewed source, never a new runtime in place.
+        selected = self.catalogue["platforms"][platform.machine()]
+        for row in selected["source_payload"]["files"]:
+            pin_file(app / str(relative(row["path"])), row)
+        libpython = runtime / "runtime/python/lib"
+        need(config.get("libpython_dir") == str(libpython), "The interrupted loader path changed.")
+        plain(libpython, directory=True)
+        self.env = dict(clean_env(self.home, "/usr/bin:/bin"), LD_LIBRARY_PATH=str(libpython))
+        print("Keeping the installed runtime and data; resuming final setup…", flush=True)
+        for operation in ("daemon-reload", "enable", "start"):
+            argv = ["/usr/bin/systemctl", "--user", operation] + ([] if operation == "daemon-reload" else [UNIT])
+            self.run(argv, timeout=90, env=control_env(self.home))
+        self.complete_setup(app, python, libpython)
+
+    def complete_setup(self, app, python, libpython):
+        helper = self.local(self.catalogue["bootstrap"]["helper"])
+        seed = self.local(self.catalogue["bootstrap"]["seed"])
+        self.run([str(python), "-I", "-B", str(helper), "--runtime", str(self.root / "runtime.json"), "--seed", str(seed)],
+                 timeout=BOOTSTRAP_TIMEOUT)
+        self.run([str(python), "-I", "-B", str(app / "deploy/linux/control.py"), "--runtime", str(self.root / "runtime.json"),
+                  "status", "--json"], timeout=15)
+        # Browser/link failure does not make a successfully configured runtime incomplete.
+        self.finish_progress()
+        print("Getting OmegaHive ready… ✓", flush=True)
+        print("Preparing your sign-in…", flush=True)
+        self.open_after_install(app, python, libpython)
+        print("Next time, open it with:  ~/.local/bin/omegahive open")
+        print("(Or open a new terminal after signing out and in, then use: omegahive open)")
+
     def open_after_install(self, app, python, libpython):
         env = control_env(self.home, str(libpython), browser=True)
         argv = [str(python), "-I", "-B", str(app / "deploy/linux/control.py"),
                 "--runtime", str(self.root / "runtime.json"), "open"]
-        if not env.get("DISPLAY") and not env.get("WAYLAND_DISPLAY") and not stdout_is_terminal():
+        if not env.get("DISPLAY") and not env.get("WAYLAND_DISPLAY"):
             # console=True bypasses our private log but can still inherit a harness PIPE.
             argv.append("--defer-headless-signin")
-        self.run(argv, timeout=45, console=True, env=env)
+        self.run(argv, timeout=OPEN_TIMEOUT, console=True, env=env)
 
     def activate(self, app, python, descriptor):
         config = self.home / ".config"
@@ -1111,12 +1241,16 @@ class Installer:
 
 def manage_locked(command, home, json_output=False):
     root = home / ".local/share/omegahive"; plain(root, directory=True)
-    if present(root / "install-progress.json"):
-        need(command == "uninstall", "Setup is incomplete. Run the installer again, or use ~/.local/bin/omegahive uninstall to remove it and keep your data.")
+    incomplete = present(root / "install-progress.json")
+    if incomplete and command == "uninstall":
         recover_partial(home)
         print("OmegaHive is removed. Your conversations were kept in ~/.local/share/omegahive/data")
         print(LINGER_NOTE + pwd.getpwuid(os.getuid()).pw_name)
         return 0
+    if incomplete:
+        need(command in {"status", "stop", "tunnel"} and present(root / "installation-state.json"),
+             "Setup is incomplete. Rerun the same installer to finish; an activated runtime will be kept.")
+        print("Setup is incomplete; rerun the same installer to finish configuration.", file=sys.stderr)
     statepath = root / "installation-state.json"
     need(present(statepath), "There is no complete installation record. Unrecorded files were kept; please keep the logs for review.")
     state = owned_json(statepath)
@@ -1148,12 +1282,12 @@ def manage_locked(command, home, json_output=False):
             plain(manager.parent, directory=True)
             need(matches_owned_pin(manager, [state["manager_pin"]]), "The installed command changed; it was kept for review.")
     env = control_env(home)
-    if command in {"open", "status"}:
+    if command in {"open", "status", "tunnel"}:
         if command == "open":
             subprocess.run(["/usr/bin/systemctl", "--user", "start", UNIT], env=env, check=True, timeout=90)
         argv = [state["python"], "-I", "-B", state["control"], "--runtime", str(root / "runtime.json"), command]
         if json_output: argv.append("--json")
-        return subprocess.run(argv, timeout=45 if command == "open" else 15,
+        return subprocess.run(argv, timeout=OPEN_TIMEOUT if command == "open" else 15,
                               env=control_env(home, state["libpython_dir"], browser=command == "open")).returncode
     subprocess.run(["/usr/bin/systemctl", "--user", "stop", UNIT], env=env, check=True, timeout=35)
     if command == "stop":
@@ -1211,7 +1345,7 @@ def manage(command, home, json_output=False):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", nargs="?", choices=("install", "open", "status", "stop", "uninstall"), default="install")
+    parser.add_argument("command", nargs="?", choices=("install", "open", "status", "stop", "uninstall", "tunnel"), default="install")
     parser.add_argument("--bundle", type=P)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
