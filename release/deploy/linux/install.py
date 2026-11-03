@@ -43,6 +43,8 @@ UNIT = "omegahive.service"
 STOP = False
 BOOTSTRAP_TIMEOUT = 480  # two 180s readiness waits, 50s API work, restart and overhead
 OPEN_TIMEOUT = 210
+PROCESS_SNAPSHOT_TIMEOUT = 10
+PROCESS_CLEANUP_TIMEOUT = 30
 
 
 class Refused(Exception):
@@ -821,7 +823,7 @@ class Installer:
         """Numeric Linux snapshot only, filtered in memory to the held session."""
         need(process.returncode is None and signal.getsignal(signal.SIGCHLD) == signal.SIG_DFL,
              "The setup process ownership anchor was lost.")
-        end = min(deadline, time.monotonic() + 2)
+        end = min(deadline, time.monotonic() + PROCESS_SNAPSHOT_TIMEOUT)
         need(end > time.monotonic(), "The setup cleanup deadline expired.")
         monitor = subprocess.Popen(["/usr/bin/ps", "-e", "-o", "pid=,ppid=,pgid=,sid=,ruid=,stat="],
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=self.log,
@@ -864,7 +866,7 @@ class Installer:
 
     def cleanup_group(self, process, privileged=False):
         # Cancellation is deferred during cleanup. Repeated catchable signals only set STOP.
-        deadline = time.monotonic() + 8
+        deadline = time.monotonic() + PROCESS_CLEANUP_TIMEOUT
         for number, grace in ((signal.SIGTERM, 3), (signal.SIGKILL, 2)):
             if process.returncode is not None: return
             rows = self.group_rows(process, deadline, privileged)
@@ -894,24 +896,52 @@ class Installer:
         privileged = argv[0] == "/usr/bin/sudo"
         process = subprocess.Popen(argv, cwd=cwd, env=env or self.env, stdin=terminal if terminal is not None else (None if console else subprocess.DEVNULL),
                                    stdout=None if console else self.log,
-                                   stderr=terminal if terminal is not None else (None if console else self.log),
+                                   stderr=subprocess.PIPE if terminal is not None else (None if console else self.log),
                                    start_new_session=True, close_fds=True)
         deadline = time.monotonic() + timeout
+        command_failure = None
+        if terminal is not None:
+            os.set_blocking(process.stderr.fileno(), False)
+        def drain_stderr():
+            if terminal is None: return
+            try: block = os.read(process.stderr.fileno(), 65536)
+            except BlockingIOError: return
+            if block:
+                # Only child stderr is copied. Password stdin is never read here.
+                if self.log is not None: self.log.write(block)
+                terminal.write(block)
         try:
             while True:
+                drain_stderr()
                 if STOP or time.monotonic() >= deadline:
                     raise Refused("Setup stopped: it was cancelled, or one step took too long.")
                 exited = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
                 if exited is not None:
-                    rows = self.group_rows(process, min(deadline, time.monotonic() + 2), privileged)
+                    if getattr(exited, "si_status", 0):
+                        command_failure = "Setup command failed (status " + str(exited.si_status) + "). See the setup log for its diagnostic."
+                        if self.log is not None: self.log.write((command_failure + "\n").encode())
+                    rows = self.group_rows(process, time.monotonic() + PROCESS_SNAPSHOT_TIMEOUT, privileged)
                     need(self.sole_zombie(process, rows), "A setup step left running descendants; cleanup is required.")
                     code = process.wait(timeout=1)
-                    need(code == 0 and not STOP, "A setup step could not finish or was cancelled.")
+                    drain_stderr()
+                    need(code == 0 and not STOP, command_failure or "A setup step could not finish or was cancelled.")
                     break
                 time.sleep(0.1)
+        except BaseException as error:
+            primary = str(error)
+            if command_failure and command_failure not in primary:
+                primary = command_failure + " Process verification: " + primary
+            try:
+                if process.returncode is None: self.cleanup_group(process, privileged)
+            except Exception as cleanup_error:
+                raise Refused(primary + " Cleanup incomplete: " + str(cleanup_error) +
+                              " Do not retry until the held setup session is checked.") from error
+            if primary != str(error): raise Refused(primary) from error
+            raise
         finally:
-            if process.returncode is None:
-                self.cleanup_group(process, privileged)
+            if terminal is not None:
+                try: drain_stderr()
+                finally: process.stderr.close()
 
     def local(self, spec):
         path = self.bundle / str(relative(spec["path"])); pin_file(path, spec); return path

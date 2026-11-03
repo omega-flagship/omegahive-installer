@@ -381,7 +381,9 @@ def bootstrap(runtime, seed_path):
         os.close(lock)
 
 
-def failure_message():
+def failure_message(error=None):
+    if error is not None and type(error).__name__ == "Refused" and str(error) == "control_reply_timeout":
+        return "Final setup failed: Hive readiness timed out after three minutes. Check bootstrap-failure-*.json in ~/.local/share/omegahive/logs and journalctl --user -u omegahive.service. Keep your data and rerun the same installer once the service is healthy."
     return "Final setup did not finish. Check bootstrap-failure-*.json in ~/.local/share/omegahive/logs and the user-service journal. Rerun the same installer to resume; keep your data."
 
 
@@ -443,5 +445,5 @@ if __name__ == "__main__":
     try: main()
     except Exception as error:
         record_failure(error)
-        print(failure_message(), file=sys.stderr)
+        print(failure_message(error), file=sys.stderr)
         raise SystemExit(1)

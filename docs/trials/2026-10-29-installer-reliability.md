@@ -52,7 +52,7 @@ Run from the installer repository root, as an ordinary Linux user:
 (umask 077; python3 -B -m unittest discover -s release/deploy/linux -p 'test_*.py')
 ```
 
-All 214 local tests pass. CLI help smoke checks, shell syntax and diff whitespace
+All 218 local tests pass. CLI help smoke checks, shell syntax and diff whitespace
 checks also pass; the bootstrap control-source pin matches the source bytes.
 The local suite covers installer/bootstrap/catalogue/front-door behavior and
 real unprivileged PTYs/detached children with fake sudo. New checks cover a
@@ -103,3 +103,17 @@ is a proposed CI candidate update, not a release declaration; Jon must confirm
 that provenance approach or build a successor artifact before merge. The old kit
 jobs do not qualify this code. The workflow follow-up may require the App's
 Workflows write permission before it can be pushed.
+
+## Follow-up diagnostic issues #8 and #9
+
+Terminal sudo stderr is now copied to the private log while remaining visible at
+the terminal. Password stdin is never captured; prompts may be logged. The PTY
+regression verifies the same synthetic sudo error appears in both outputs and
+that synthetic password input appears in neither.
+
+Process snapshots now allow 10 seconds, with a separate bounded 30-second cleanup
+budget. Command failure is recorded before the snapshot, and cleanup failures
+are secondary diagnostics with an explicit unresolved-cleanup warning. Bootstrap
+prints its readiness timeout by name while preserving the structured failure
+receipt. Regressions cover a real snapshot delayed beyond two seconds, primary
+failure preservation, cleanup failure, and secret-safe bootstrap messages.

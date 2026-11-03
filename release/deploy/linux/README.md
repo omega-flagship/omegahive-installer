@@ -232,3 +232,15 @@ Group/world-writable paths remain refused, including Ubuntu's commonly created
 `chmod go-w -- PATH` suggestion, conditional on that path being intended private.
 It does not automatically change shared-directory permissions or assume that a
 private group will remain private.
+
+## Failure diagnostics
+
+For terminal-authenticated system steps, child stderr (including sudo errors) is
+copied to both the terminal and the private setup log. Password input still goes
+directly from the terminal to sudo and is never read or logged by Python. Prompts
+may appear in the log; no terminal-input capture or shell tracing is enabled.
+Process snapshots allow up to 10 seconds, within a separate 30-second cleanup
+budget. A failed command is recorded before process verification; a subsequent
+snapshot or cleanup failure is reported as secondary and never implies that all
+children stopped. Bootstrap names a control-readiness timeout explicitly in its
+stderr diagnostic, alongside its existing structured failure receipt.

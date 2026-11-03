@@ -22,7 +22,7 @@ spec.loader.exec_module(install)
 FAKE = r'''
 import os, sys, termios, time
 assert os.getsid(0) == os.getpid() == os.getpgrp()
-assert os.isatty(0) and os.isatty(2)
+assert os.isatty(0) and not os.isatty(2)
 assert not termios.tcgetattr(0)[3] & (termios.ECHO | termios.ECHONL)
 os.write(2, b'PASSWORD-PROMPT\n')
 value = sys.stdin.readline()
@@ -32,6 +32,7 @@ assert value == 'synthetic-test-input\n'
 if sys.argv[1] == 'timeout':
     time.sleep(30)
 if sys.argv[1] == 'failure':
+    os.write(2, b'sudo: synthetic authorization denied\n')
     sys.exit(7)
 print('STEP-OK', flush=True)
 '''
@@ -112,7 +113,10 @@ class TerminalTests(unittest.TestCase):
                 self.assertNotIn(b'synthetic-test-input', data)
                 log = (root/'step.log').read_bytes()
                 self.assertNotIn(b'synthetic-test-input', log)
-                self.assertNotIn(b'PASSWORD-PROMPT', log)
+                self.assertIn(b'PASSWORD-PROMPT', log)
+                if mode == 'failure':
+                    self.assertIn(b'sudo: synthetic authorization denied', log)
+                    self.assertIn(b'sudo: synthetic authorization denied', data)
                 result = json.loads((root/'result.json').read_text())
                 for child in result['children']:
                     with self.assertRaises(ProcessLookupError):
