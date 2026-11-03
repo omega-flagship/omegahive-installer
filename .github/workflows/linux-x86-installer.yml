@@ -55,6 +55,7 @@ jobs:
           python-version: "3.12"
       - name: Linux installer unit tests (on x86_64, before any install)
         run: |
+          set -o pipefail
           umask 077
           python3 --version
           python3 -B -m unittest discover -v -s release/deploy/linux -p 'test_*.py' 2>&1 | tail -40
