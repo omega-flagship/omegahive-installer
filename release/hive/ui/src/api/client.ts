@@ -56,20 +56,25 @@ export type ConnectionListener = (state: ConnectionState) => void
  * interchangeable.
  */
 export interface HiveClient {
+  /** Page-owned identity-bound gateway; no session credential reaches the worker. */
+  browserMindGateway?(): import('../features/browserIter/gateway').BrowserMindGateway
   board?(scope: Scope, entityId?: string): Promise<Board>
   matchServices?(need: string, kind?: 'mind' | 'swarm'): Promise<Matches>
   flowStudioUrl?(): string
   flowRequest?(operation: import('../features/flow/operations').FlowOperation, params: Record<string, unknown>): Promise<unknown>
   tools?(): Promise<import('./types').ToolsCatalogue>
+  /** Screen blocks a screen asked for that nothing draws yet (screens/buildTasks.ts): the hive files one task each. */
+  reportMissingBlocks?(items: { ui_release: string; screen: string; wanted: string; drawn_as: string | null }[]): Promise<unknown>
   readonly mode: 'live' | 'sim'
   /** True when the client needs an operator login before it can do anything. */
   needsAuth(): boolean
-  login(password: string): Promise<void>
+  /** With `email`, a member's sign-in with the password an admin made for them (T-101); without, the operator's. */
+  login(password: string, email?: string): Promise<void>
   /** Ends the session; the live client waits briefly for the hive to end it server-side. */
   logout(): void | Promise<void>
   /** How this browser may sign in here: the password only from the hive's own machine; Google from outside. */
   authMethods?(): Promise<AuthMethods>
-  /** Exchange a webhost sign-in for a hive session. Resolves false when the person is not signed in or not allowed. */
+  /** Exchange a family sign-in for a hive session. Resolves false when the person is not signed in or not allowed. */
   trySso?(): Promise<boolean>
   /** Spending limits at every level (hive/core/budgets.py). */
   listBudgets?(): Promise<import('../features/usage/Limits').BudgetRow[]>
@@ -79,9 +84,14 @@ export interface HiveClient {
   me?(): Promise<Me>
   /** Local invalidation handle only; never a person session or permission. */
   authContext?(): object
+  /** Local retained-write reconciliation scope from existing public base + authenticated me principal.
+   * Not a session, permission, Host payload field or a new network read. */
+  retainedMutationScope?(): { host: string; principal: string } | null
   onAuthChange?(listener: () => void): () => void
   /** Your look and layout (Surface v1, /api/me/ui). Without these the Change UI entry stays hidden. */
   uiPrefs?(): Promise<import('../shell/uiVariant').UiPrefsResponse>
+  /** The apps this person can open, for every look's awake state (GET /api/me/apps; Ask-and-apps contract R1.1 §3). */
+  myApps?(): Promise<{ apps: import('../features/apps/myApps').MyAppRow[] }>
   /** `opts.baseRev`: compare-and-set against the host's `rev`, sent as X-UI-Base-Rev (409 stale_ui_prefs when it moved on) */
   setUiPrefs?(prefs: import('../shell/uiVariant').UiPrefs, opts?: import('../shell/uiVariant').UiPrefsWriteOptions): Promise<import('../shell/uiVariant').UiPrefsResponse>
   resetUiPrefs?(opts?: import('../shell/uiVariant').UiPrefsWriteOptions): Promise<import('../shell/uiVariant').UiPrefsResponse>
@@ -108,7 +118,7 @@ export interface HiveClient {
   releaseHold?(id: string): Promise<{ id: string }>
   /** Admins: refuse a platform restart, every update, or one app's reload until released (or `until`, an ISO time). */
   placeHold?(body: import('./types').PlaceHoldBody): Promise<import('./types').UpdateHold>
-  listPeople?(): Promise<{ people: Person[]; invites: Invite[]; google_ready: boolean }>
+  listPeople?(): Promise<{ people: Person[]; invites: Invite[]; google_ready: boolean; member_passwords?: boolean }>
   // R15 rooms
   rooms?(): Promise<import('./types').Room[]>
   /** One room by id or alias (GET /api/rooms/coffee loads the Coffee Room). */
@@ -150,6 +160,12 @@ export interface HiveClient {
   invite?(body: { email: string; name?: string; role?: string; days?: number }): Promise<Invite & { link: string }>
   revokeInvite?(id: string): Promise<Invite>
   updatePerson?(id: string, body: { role?: string; disabled?: boolean }): Promise<Person>
+  /** POST /api/people/members {email, name} (admins): a member who signs in with a password the hive makes, shown once. */
+  addMember?(body: { email: string; name?: string }): Promise<MemberPassword>
+  /** POST /api/people/{id}/password (admins): a new password, shown once; the member's password sessions end. */
+  resetMemberPassword?(id: string): Promise<MemberPassword>
+  /** DELETE /api/people/{id}/password (admins): no password sign-in any more; the member's password sessions end. */
+  removeMemberPassword?(id: string): Promise<{ person: Person; ended_sessions: number }>
   /** Unlinks the person's Google identity and signs them out everywhere (admins): PATCH {"clear_google_identity": true}. */
   clearGoogleIdentity?(id: string): Promise<Person>
   /** R2: everything running in the hive and its code (admins). */
@@ -182,6 +198,41 @@ export interface HiveClient {
   listRequests?(): Promise<import('./types').CollabRequest[]>
   /** The request's new state arrives as request.updated. */
   cancelRequest?(id: string): Promise<{ cancelled: unknown; by: string }>
+  /**
+   * The Code controller's own view of one request (host hive/core/code_controller_engine.py view(); 404 when the person
+   * can't see it or it has no controller run). Untrusted: features/code/canvas/work/controllerState parses it strictly.
+   */
+  requestController?(requestId: string): Promise<unknown>
+  /**
+   * The person's three decisions on a request the controller drives (host commit 826b23a0): POST
+   * /api/requests/{id}/controller/apply {}, …/changes {text: 1–4000 chars}, …/discard {}; each answers 200 with the same
+   * view as requestController (untrusted; parsed by controllerState). Only the request's own person, in their session.
+   */
+  requestApply?(requestId: string): Promise<unknown>
+  requestChanges?(requestId: string, text: string): Promise<unknown>
+  requestDiscard?(requestId: string): Promise<unknown>
+  /**
+   * The signed-in person's own Code controller setting (host hive/core/app.py GET/PUT /api/me/code-controller, engine
+   * round 12f4292f): { review_policy: "review-required" (the default) | "review-waivable", applies_to }. It applies to new
+   * Code requests. 404 on an older host. Untrusted: features/code/canvas/work/reviewPolicy parses it.
+   */
+  codeControllerPrefs?(): Promise<unknown>
+  setCodeControllerPrefs?(body: { review_policy: 'review-required' | 'review-waivable' }): Promise<unknown>
+  /**
+   * Create's plan (features/createPlan/contract.ts; the host's plan engine, create_plan_engine.py): POST
+   * /api/create/plans {sentence}, GET /api/create/plans (the person's plans), GET …/{id}, GET …/{id}/preview (the
+   * current preview's verified files {ref, ckpt, files}), POST …/{id}/answers {q, text}, POST …/{id}/deploy {}, POST
+   * …/{id}/stop {}, GET …/{id}/files?path=&ckpt= ({ckpt, path, content}). The acts answer the PlanView.
+   * Untrusted: features/createPlan/planModel parses it. A hive without them never shows the plan view.
+   */
+  createPlanStart?(sentence: string): Promise<unknown>
+  createPlans?(): Promise<unknown>
+  createPlan?(planId: string): Promise<unknown>
+  createPlanPreview?(planId: string): Promise<unknown>
+  createPlanAnswer?(planId: string, q: string, text: string): Promise<unknown>
+  createPlanDeploy?(planId: string): Promise<unknown>
+  createPlanStop?(planId: string): Promise<unknown>
+  createPlanFile?(planId: string, path: string, ckpt: string): Promise<unknown>
   codeTargets?(): Promise<import('../features/code/CodePage').Target[]>
   codeAttach?(task: string, workspace: string, repository: string): Promise<import('../features/code/CodePage').Opened>
   codeTree?(target: string): Promise<{ target: string; commit: string; subdir: string; files: string[]; truncated: boolean }>
@@ -191,7 +242,7 @@ export interface HiveClient {
   codeProxy?<T>(method: 'GET' | 'POST', path: string, ctx: Record<string, string>, body?: unknown): Promise<T>
   /**
    * Retained scoped suggestions (WorkbenchSuggestionPanel), relayed through the same authenticated codeProxy path.
-   * Contract: coordination/omegacode/SCOPED_SUGGESTIONS_IMPLEMENTATION.md + SUGGESTION_HISTORY_IMPLEMENTATION.md.
+   * Contract: SCOPED_SUGGESTIONS_IMPLEMENTATION.md + SUGGESTION_HISTORY_IMPLEMENTATION.md.
    * Relayed live since next7 (60fa650): hive/core/code.py PROXY_ROUTES lists the nine Workbench routes (the four
    * run-result routes are held). The panel decides availability from the real answer: a hive that does not relay a
    * route answers 404 not_relayed and the panel says so. Responses are parsed strictly by the panel.
@@ -212,6 +263,8 @@ export interface HiveClient {
    * suggest-only child → retained proposal). Answers are untrusted here and read strictly by api/askIntents.
    */
   askRecordIntent?(operationId: string, body: import('./askIntents').IntentRecordBody): Promise<unknown>
+  /** Original person-owned retained proposal; dispatch remains under its original controller/lease. */
+  askRecordCodeTestIntent?(operationId: string, body: import('../features/code/testIntent').CodeTestIntentBody): Promise<unknown>
   askSubmitIntent?(intentId: string): Promise<unknown>
   // ---- J3 r4.3 O3: Platform's PROPOSED live Studio session routes (host plan §3.2–§3.3). NOT ON LIVE YET; the page uses
   // them only when the host says `capabilities.studio_sessions` (features/studioLive/api.ts studioCapable).
@@ -505,7 +558,9 @@ export interface HiveClient {
   openrouterEndpoints(modelId: string): Promise<ModelEndpoint[]>
   /** The keyring: many keys per provider, each paying for the minds assigned to it. */
   listKeys(): Promise<KeyInfo[]>
-  addKey(body: { provider: string; key: string; label?: string; default?: boolean }): Promise<KeyInfo>
+  /** month_usd: the person's ONE monthly total, written in the same call only by a host that says so in the answer
+   *  (monthly_total_applied); any other host ignores it (features/ownKey/addOwnKey.ts detects which) */
+  addKey(body: { provider: string; key: string; label?: string; default?: boolean; month_usd?: number }): Promise<KeyInfo & { monthly_total_applied?: boolean; monthly_total_usd?: number | null }>
   updateKey(id: string, body: { label?: string; default?: boolean }): Promise<KeyInfo>
   refreshKey(id: string): Promise<KeyInfo>
   /** Minds assigned to it fall back to the provider default. */
@@ -519,6 +574,8 @@ export interface HiveClient {
   askTurn?(operationId: string, after?: number): Promise<import('./ask').AskTurnState>
   /** POST /api/ask/{operation_id}/stop: close the turn (the mind's later reply stays in the room). */
   askStop?(operationId: string): Promise<unknown>
+  /** Close this person's existing browser-owned operation; no new admission or automatic retry. */
+  askBrowserDone?(operationId: string, outcome: import('./ask').BrowserOutcome): Promise<import('./ask').BrowserAskClosed>
   /** POST /api/ask/{operation_id}/proposals/{proposal_id}/confirm {digest}: the person confirmed exactly what was shown. */
   askConfirm?(operationId: string, proposalId: string, digest: string): Promise<{ ok: boolean; outcome?: string }>
   /** GET/PUT /api/me/ask: the default swarm (its coordinator answers), a new thread's limit and the eligible swarms. */
@@ -545,10 +602,10 @@ export interface HiveClient {
   personalMindHello?(wake: boolean): Promise<unknown>
   /** "New thread": the Ask thread is a Session, so it ends like one (POST /api/sessions/{id}/end). */
   askEndThread?(threadId: string): Promise<unknown>
-  /** "Delete this thread" (the owner, 2026-10-05: kept like rooms, with a person-visible delete): DELETE /api/ask/threads/{id},
+  /** "Delete this thread" (Jon, 2026-10-05: kept like rooms, with a person-visible delete): DELETE /api/ask/threads/{id},
    *  owner only (built in platform/ask-p1 6100794; the text is stripped, the turn rows stay for the audit). */
   askDeleteThread?(threadId: string): Promise<unknown>
-  /** The person took over the page mid-turn (the owner, 2026-10-05): POST /api/ask/{operation_id}/takeover
+  /** The person took over the page mid-turn (Jon, 2026-10-05): POST /api/ask/{operation_id}/takeover
    *  {reason: "user_took_over"}; the host ends the conductor turn at once, so no further act or spend follows. */
   askTakeover?(operationId: string): Promise<import('./ask').AskTakeover>
   /** POST /api/ask/{operation_id}/steer {steer_id, text, at_seq} (Platform phase 1.1): words mid-turn. A closed turn
@@ -626,13 +683,16 @@ export interface AuthMethods {
   sso: { enabled: boolean; provider: string; login_url: string | null; invite_login_url?: string | null; invites?: boolean }
   /** J1b: a local-owner hive (the installer's): its events socket signs in with its first frame, never ?token= */
   local_owner?: boolean
+  /** T-101: members may sign in here with their email and the password an admin gave them (absent on older hives). */
+  member_password?: boolean
 }
 
 export interface Me {
   /** Proposed host attribution reference; absence closes session-bound readers. Not authority. */
   auth_session_ref?: string
   principal: string
-  kind: 'password' | 'sso'
+  /** 'member_password': a member signed in with the password an admin made for them (T-101); never an admin. */
+  kind: 'password' | 'sso' | 'member_password'
   role: 'admin' | 'member' | null
   expires_at: number | null
   person: { id: string; email: string | null; name: string } | null
@@ -695,6 +755,15 @@ export interface Person {
   disabled: boolean
   /** Platform's sign-in hardening: a Google identity is linked to this person (absent on older hives). */
   google_bound?: boolean
+  /** T-101: the member has a hive-made password (never the password itself; absent on older hives). */
+  password_set?: boolean
+}
+/** A hive-made member password, in the one answer that carries it (add or reset). The hive cannot show it again. */
+export interface MemberPassword {
+  person: Person
+  password: string
+  note: string
+  ended_sessions?: number
 }
 export interface Invite {
   id: string
@@ -841,6 +910,12 @@ async function pcExtraApps(search: string): Promise<{ extraApps?: (() => import(
 
 /** Lazily constructs the right client so the unused implementation is never downloaded. */
 export async function createClient(): Promise<HiveClient> {
+  // Peter on omegahive#50: the client never rewrites what the hive answers; the hive's message_view projection
+  // (health.people_message) hands people Health's question untagged and marked health_check
+  return createRawClient()
+}
+
+async function createRawClient(): Promise<HiveClient> {
   if (wantsSim()) {
     const [{ SimClient }, { DEMO_REFUSE, isDemoMode }] = await Promise.all([import('./sim/SimClient'), import('./sim/demo')])
     const q = new URLSearchParams(window.location.search)

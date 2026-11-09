@@ -2,7 +2,7 @@
  * PORTED UTILITY (exact semantic port, TypeScript).
  * Source:  the OmegaCode proof of concept (savedSelection.mjs) (Code-owned component utility)
  * sha256:  87d2a9c706c7b552bb0efeaa41a9d0052451529fd64dfcdda379ca809931e44e
- * Handoff: coordination/omegacode/SAVED_SELECTION_ADAPTER_HANDOFF.md
+ * Handoff: SAVED_SELECTION_ADAPTER_HANDOFF.md
  *
  * Saved UTF-8 bytes <-> editor (CodeMirror) UTF-16 offsets. No scope, edit or network authority: conversion success
  * is never edit authority. The only changes from the original are types and the error class; behaviour, messages and

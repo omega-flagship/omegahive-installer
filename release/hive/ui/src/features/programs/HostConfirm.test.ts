@@ -365,7 +365,7 @@ describe('B1 through the assembled hooks (mount, identity change, unmount)', () 
     const act = vi.spyOn(a, 'programAct')
     // ProgramForm renders its ready body (Design parent r2); the stand-in renders both, in order, each pass
     const h = render(() => {
-      const ready = ProgramForm({ form: 'commons', program, swarmId: 's_lyra', grammar: 'classic' }) as ReactElement<Record<string, unknown>>
+      const ready = ProgramForm({ form: 'case-file', program, swarmId: 's_lyra', grammar: 'classic' }) as ReactElement<Record<string, unknown>>
       return (ready.type as (p: Record<string, unknown>) => unknown)(ready.props)
     })
     const tree = h.current as ReactElement<{ children: ReactElement<{ children: ReactElement<{ act: (...x: unknown[]) => Promise<{ status: string; message?: string }> }> }>[] }>
@@ -455,7 +455,7 @@ describe('r4 (Design source-reference r1, done in place): a source change retire
     useHive.setState((x) => ({ programDetails: { ...x.programDetails, 'ledger-fixture': { ...(x.programDetails['ledger-fixture'] ?? {}), describe: d } as never } }))
     const state = { source: start, keys: [] as unknown[] }
     const h = render(() => {
-      const ready = ProgramForm({ form: 'commons', program, swarmId: 's_lyra', grammar: 'classic', source: state.source as never }) as ReactElement<Record<string, unknown>>
+      const ready = ProgramForm({ form: 'case-file', program, swarmId: 's_lyra', grammar: 'classic', source: state.source as never }) as ReactElement<Record<string, unknown>>
       state.keys.push(ready.key)
       return (ready.type as (p: Record<string, unknown>) => unknown)(ready.props)
     })

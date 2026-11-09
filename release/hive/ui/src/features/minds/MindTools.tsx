@@ -11,7 +11,7 @@ import { ModeChip, Segmented, Skeleton } from '../../ui/primitives'
 import { availabilityWords, countSkills, filterSkills, SKILL_STATUS_WORDS, type SkillView } from './logic'
 import type { InventorySkill, MindActivity, MindInventory } from './types'
 
-const TONE = { good: 'border-good/30 bg-good/[0.06] text-good', warn: 'border-warn/35 bg-warn/[0.07] text-warn', muted: 'border-line bg-white/[0.03] text-ink-3' }
+const TONE = { good: 'border-good/30 bg-good/[0.06] text-good', warn: 'border-warn/35 bg-warn/[0.07] text-warn', muted: 'border-line bg-tint/[0.03] text-ink-3' }
 const HEALTH_TONE: Record<string, string> = { high: 'text-bad', medium: 'text-warn', low: 'text-ink-2', ok: 'text-good' }
 const HEALTH_WORD: Record<string, string> = { high: 'needs attention', medium: 'has errors', low: 'has minor issues', ok: 'is healthy' }
 
@@ -93,13 +93,13 @@ function Inventory({ inv, name }: { inv: MindInventory; name: string }) {
                 { value: 'all', label: `All ${inv.skills.length}` },
               ]}
             />
-            <label className="flex min-h-9 min-w-[140px] flex-1 items-center gap-1.5 rounded-lg border border-line bg-black/25 px-2.5 focus-within:border-line-2">
+            <label className="flex min-h-9 min-w-[140px] flex-1 items-center gap-1.5 rounded-lg border border-line bg-shade/25 px-2.5 focus-within:border-line-2">
               <Icon name="search" size={14} className="text-ink-4" />
               <span className="sr-only">Find a tool</span>
               <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a tool" className="w-full bg-transparent text-[12.5px] text-ink outline-none" />
             </label>
           </div>
-          <ul className="overflow-hidden rounded-xl border border-line bg-black/20">
+          <ul className="overflow-hidden rounded-xl border border-line bg-shade/20">
             {list.length === 0 && <li className="px-3 py-3 text-center text-[12.5px] text-ink-4">No tools match.</li>}
             {list.map((s, i) => (
               <SkillRow key={`${s.module}:${s.id}`} skill={s} first={i === 0} />
@@ -184,7 +184,7 @@ function Activity({ agent }: { agent: Agent }) {
   const a = res.data
   if (!a.cycles_observed) return <p className="mt-2 text-meta text-ink-4">No thinking cycles recorded yet, so there is nothing to count.</p>
   return (
-    <div className="mt-3 rounded-xl border border-line bg-white/[0.02] px-3 py-2">
+    <div className="mt-3 rounded-xl border border-line bg-tint/[0.02] px-3 py-2">
       <div className="flex items-baseline justify-between gap-2 text-[12px]">
         <span className="font-medium text-ink-2">Last {a.cycles_observed} thinking cycles</span>
         {a.dormant && <span className="text-warn">reasoned nothing</span>}

@@ -153,6 +153,9 @@ def connect(x, agent_id, token=None):
         return None
     x.hubs[agent_id] = hub
     hive.studio.connected(agent, hub)
+    # the channel's first frame on every connect is its resume (hive_channel.py); the hub sends nothing live before it
+    # is answered (port of upstream omegahive#21), so a helper standing in for the channel sends it too
+    on_loop(x, hive.replay, agent_id, 0)
     return hub
 
 
@@ -795,7 +798,7 @@ def test_studio_step_events_reach_the_person_and_not_another_member_and_the_audi
     steps = [f for f in mine if f.get("type") == "studio.step"]
     assert [(f["step"], f["phase"], f["stream_id"]) for f in steps] == [(1, "admitted", session["stream_id"])]
     assert "body" not in steps[0] and not [f for f in theirs if f.get("type") == "studio.step"]
-    audit = c.get(f"/api/studio-sessions/{sid}/audit", headers=r3.quinn)
+    audit = c.get(f"/api/studio-sessions/{sid}/audit", headers=r3.jon)
     assert audit.status_code == 200 and audit.json()["steps"][0]["execution_id"] == step_row(r3, sid, 1)["execution_id"]
     assert audit.json()["handoffs"]["rows"][0]["state"] == "done" and "classes" in audit.json()["worker"]
     assert "body" not in json.dumps(audit.json()["piece"]) or audit.json()["piece"]["latest"].get("body") is None

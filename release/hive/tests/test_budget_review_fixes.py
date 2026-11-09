@@ -244,7 +244,7 @@ def test_a_late_answer_after_release_is_recorded_not_lost(tmp_path):
     r = Reservations(db)
     r.reserve("k1", {"p": 1}, 0.05, lambda: [("agent:a:total", 1.0, 0.0)], metadata={"agent": "a"}, dispatched=True)
     db.execute("UPDATE cost_reservations SET dispatched_at = dispatched_at - ? WHERE id='k1'", (STALE_SECONDS + 5,))
-    resolve(r, "k1", "release", "provider looked dead", "user:quinn")
+    resolve(r, "k1", "release", "provider looked dead", "user:jon")
     recorded = []
     assert r.settle("k1", 0.03, lambda: recorded.append(0.03)) is True
     assert recorded == [0.03] and r.get("k1")["state"] == "settled"

@@ -1,11 +1,22 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { experienceById } from '../../experiences/registry'
+import { has } from '../../lib/useResource'
+import { Screen } from '../../screens/Screen'
+import { useCompose } from '../../screens/useCompose'
+import { useLook } from '../../shell/uiVariant'
 import { useHive } from '../../store/store'
 import { Page } from '../../ui/Page'
 import { isFlowMessage } from './operations'
 import { FlowAdoptions } from './Adoptions'
 import { isStudioSender, studioDocument, type StudioDocument } from './studioDocument'
+import { flowScreen } from './data'
 
-export default function FlowPage() {
+/**
+ * The Flow studio itself: the Flow page's content, and Create's Flow bench (Flow is a bench kind of Create). What shows
+ * (adopted revisions, loading, no live connection, a failed load, the studio) is atoms (flow.metta) that MeTTa composes
+ * for the look being worn; this component loads the studio, talks to it, and offers it and the adoptions as islands.
+ */
+export function FlowStudio() {
   const frame = useRef<HTMLIFrameElement>(null)
   const client = useHive(s => s.client)
   const swarms = useHive(s => s.swarms)
@@ -51,11 +62,26 @@ export default function FlowPage() {
     window.addEventListener('message', receive)
     return () => { disposed = true; window.removeEventListener('message', receive) }
   }, [client, enabled, swarms, document])
-  return <Page title="Flow" eyebrow="Build connected work" label="Flow">
-    <FlowAdoptions />
-    {enabled ? error ? <p role="alert" className="px-6 py-8 text-ink-3">{error}</p>
-      : document ? <iframe key={document.channel} ref={frame} srcDoc={document.html} title="Flow studio" className="h-full min-h-[720px] w-full border-0" sandbox="allow-scripts allow-downloads" referrerPolicy="no-referrer" />
-      : <p role="status" className="px-6 py-8 text-ink-3">Loading Flow studio…</p>
-      : <p className="px-6 py-8 text-ink-3">Flow studio requires a live Hive connection. The local authoring preview remains available separately.</p>}
-  </Page>
+  const look = experienceById(useLook().current?.experience).id
+  const compose = useCompose(look)
+  const canAdopt = has(client, 'flowList') && has(client, 'flowRevision')
+  const { plan, data } = useMemo(() => {
+    const { data, facts } = flowScreen({ enabled: !!enabled, ready: document !== null, error }, canAdopt)
+    return { plan: compose('flow', facts), data }
+  }, [enabled, document, error, canAdopt, compose])
+  return (
+    <div className="flex h-full min-h-0 flex-col px-3 py-2 md:px-6">
+      <Screen plan={plan} className="min-h-0 flex-1" host={{
+        data,
+        islands: {
+          'flow-adoptions': <FlowAdoptions />,
+          'flow-studio': document ? <iframe key={document.channel} ref={frame} srcDoc={document.html} title="Flow studio" className="h-full min-h-[720px] w-full rounded-xl border-0" sandbox="allow-scripts allow-downloads" referrerPolicy="no-referrer" /> : null,
+        },
+      }} />
+    </div>
+  )
+}
+
+export default function FlowPage() {
+  return <Page title="Flow" eyebrow="Build connected work" label="Flow"><FlowStudio /></Page>
 }

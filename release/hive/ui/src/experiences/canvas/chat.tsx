@@ -1,3 +1,6 @@
+import { useCanvasCurrent } from './actionAuthority'
+import { healthCheck } from '../../lib/healthQuestion'
+import { HealthCheckLabel } from '../../ui/HealthCheckLabel'
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { useDraft } from '../drafts'
 import { m } from 'framer-motion'
@@ -14,6 +17,7 @@ const EMPTY: Message[] = []
 
 /** `onCloseX`: the visible X (home, closeToHome). `onDismiss`: Esc, closing just this conversation. */
 export function ChatCard({ r, agent, phase, now, reduced, onCloseX, onDismiss }: { r: Rect; agent: Agent; phase: string | undefined; now: number; reduced: boolean; onCloseX: () => void; onDismiss: () => void }) {
+  const current = useCanvasCurrent()
   const messages = useHive((s) => s.messages[agent.id] ?? EMPTY)
   const pending = useHive((s) => s.pending[agent.id])
   const agents = useHive((s) => s.agents)
@@ -38,6 +42,7 @@ export function ChatCard({ r, agent, phase, now, reduced, onCloseX, onDismiss }:
   }, [count, thinking])
 
   const send = () => {
+    if (!current()) return
     const t = text.trim()
     if (!t) return
     setError(null)
@@ -50,14 +55,17 @@ export function ChatCard({ r, agent, phase, now, reduced, onCloseX, onDismiss }:
       .getState()
       .sendMessage(agent.id, t)
       .catch(() => {
+        if (!current()) return
         setText((cur) => (cur ? cur : t))
         setError('Not sent. Your message is back in the box.')
       })
   }
   const toggle = async () => {
+    if (!current()) return
     setError(null)
     // busy always clears, whatever the hive answers (the store reports refusals as a toast)
     const r = await withBusy(setWaking, () => useHive.getState().agentAction(agent.id, awake ? 'sleep' : 'wake'))
+    if (!current()) return
     if (!r.ok) setError(`Could not ${awake ? 'put it to sleep' : 'wake it'}: ${r.error}`)
     else if (!r.value) setError(`The hive did not ${awake ? 'put it to sleep' : 'wake it'}. Nothing changed.`)
   }
@@ -102,7 +110,7 @@ export function ChatCard({ r, agent, phase, now, reduced, onCloseX, onDismiss }:
         >
           {waking ? '…' : awake ? 'Sleep' : 'Wake'}
         </button>
-        <button aria-label="Open the full page for this mind" title="Open full page" onClick={() => openClassic({ name: 'dot', id: agent.id })} className="grid size-8 place-items-center rounded-full hover:bg-[var(--accent-soft)]" style={{ color: 'var(--ink-2)' }}>
+        <button aria-label="Open the full page for this mind" title="Open full page" onClick={() => { if (current()) openClassic({ name: 'dot', id: agent.id }) }} className="grid size-8 place-items-center rounded-full hover:bg-[var(--accent-soft)]" style={{ color: 'var(--ink-2)' }}>
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M9 3h4v4M13 3 7.5 8.5M12 9.5V13H3V4h3.5" /></svg>
         </button>
         <button aria-label="Close the conversation" title="Close (Esc)" onClick={onCloseX} className="grid size-8 place-items-center rounded-full hover:bg-[var(--accent-soft)]" style={{ color: 'var(--ink-2)' }}>
@@ -122,12 +130,14 @@ export function ChatCard({ r, agent, phase, now, reduced, onCloseX, onDismiss }:
           <div className="flex flex-col gap-1.5">
             {shownMsgs.map((m, i) => {
               const fromPeer = m.direction === 'in' && m.sender.startsWith('agent:')
-              const mine = m.direction === 'in' && !fromPeer
+              const mine = m.direction === 'in' && !fromPeer && !healthCheck(m)
               const peer = fromPeer ? agents[agentIdOf(m.sender) ?? ''] : null
               const prev = shownMsgs[i - 1]
-              const grouped = prev && prev.sender === m.sender && prev.direction === m.direction
+              // Health's question starts its own group, so its label shows after an ordinary Health alert (Copilot on omegahive#50)
+              const grouped = prev && prev.sender === m.sender && prev.direction === m.direction && healthCheck(prev) === healthCheck(m)
               return (
                 <div key={m.id} className={`flex flex-col ${mine ? 'items-end' : 'items-start'} ${grouped ? '' : 'mt-1.5'}`}>
+                  {!grouped && healthCheck(m) && <div className="mb-0.5 text-[11.5px] font-medium" style={{ color: 'var(--ink-3)' }}><HealthCheckLabel className="" /></div>}
                   {!grouped && fromPeer && (
                     <div className="mb-0.5 flex items-center gap-1 text-[11.5px] font-medium" style={{ color: 'var(--ink-3)' }}>
                       {peer && <Avatar name={peer.name} hue={peer.hue} size={14} radius={4} />}
@@ -156,7 +166,7 @@ export function ChatCard({ r, agent, phase, now, reduced, onCloseX, onDismiss }:
                 </div>
                 <div className="mt-0.5 text-[11.5px]" style={{ color: p.status === 'failed' ? 'var(--bad)' : 'var(--ink-3)' }}>
                   {p.status === 'failed' ? (
-                    <button className="underline" onClick={() => void useHive.getState().retryMessage(agent.id, p.tempId)}>
+                    <button className="underline" onClick={() => { if (current()) void useHive.getState().retryMessage(agent.id, p.tempId) }}>
                       Not sent. Retry
                     </button>
                   ) : (

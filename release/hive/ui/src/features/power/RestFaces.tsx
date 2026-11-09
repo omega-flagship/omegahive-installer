@@ -4,7 +4,7 @@ import { blockDigits, handAngles, sketchCircle, timeInWords } from './restClocks
 import { hasScene, RestScene, type SceneData } from './RestScene'
 
 /**
- * Each experience's rest, in its own grammar (the owner: "each UI will need a different stylised version"):
+ * Each experience's rest, in its own grammar (Jon: "each UI will need a different stylised version"):
  *   Classic   the hive's orbs drifting slowly in the dark, a large thin clock
  *   Still     paper: the time written out as a sentence
  *   Canvas    a pencil-sketched clock face on the board, alerts as sticky notes

@@ -1,5 +1,5 @@
 /**
- * The personal mind's memory, as three linked parts (the owner, 2026-10-09: "chroma + AtomSpace + history is the magic of
+ * The personal mind's memory, as three linked parts (Jon, 2026-10-09: "chroma + AtomSpace + history is the magic of
  * memory when linking is done well"):
  *  - the AtomSpace (MeTTaScript): beliefs `(Current (Belief id) ...)` and remembered exchanges and episodes
  *    `(Current (Memory id) ...)` (Platform's minds' carrier), with (stv f c) truth values and evidential stamps, both

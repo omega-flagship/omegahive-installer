@@ -8,14 +8,31 @@ import type { EpochBinding } from '../../lib/identityEpoch'
 import { isCurrent, releasePersons, signInAs, switchPerson, testPerson } from '../../lib/identityEpoch.testkit'
 import { UnsupportedError } from '../../lib/useResource'
 import { clearGoogleQuestion, clearGoogleSignIn, signInWords } from './clearGoogle'
-import { Row } from './PeoplePage'
+import type { Person } from '../../api/client'
+import { Screen } from '../../screens/Screen'
+import { ScreensSpace } from '../../screens/screenSpace'
+import { peopleScreen, type Can, type StackItem } from './data'
+
+vi.setConfig({ testTimeout: 20_000 })
 
 /** Surface: google_bound in plain words, and the admins' "Clear Google identity". Invented data only. */
 
 const tomas = { id: 'p_tomas', name: 'Tomás Reyes', email: 'tomas@example.org' }
 
+// metta-screens-people: the row is composed by MeTTa now (people.metta: people-person), so these draw that screen where
+// they drew Row before; what they assert is unchanged
+const space = ScreensSpace.open()
+const ALL: Can = { invite: true, addMember: true, revokeInvite: true, updatePerson: true, clearGoogle: true, resetPassword: true, removePassword: true }
+function personRow(google: boolean | undefined, { self = false, can = ALL, admin = true }: { self?: boolean; can?: Can; admin?: boolean } = {}) {
+  const p: Person = { id: 'p_tomas', name: 'Tomás Reyes', email: 'tomas@example.org', role: 'member', invited_by: null, created_at: '', last_seen_at: null, disabled: false, google_bound: google }
+  const { data } = peopleScreen({ status: 'ready', data: { people: [p], invites: [], google_ready: true }, error: undefined, refreshing: false },
+    { admin, selfId: self ? p.id : null }, can, { invite: null, password: null }, {}, (screen, facts) => space.compose(screen, 'classic', facts))
+  const item = (data['people.rows'] as StackItem[])[1]
+  return renderToStaticMarkup(createElement(Screen, { plan: item.plan, host: { data: item.data, onAction: () => undefined } }))
+}
+
 describe('google_bound in the person view', () => {
-  const row = (google?: boolean) => renderToStaticMarkup(createElement(Row, { name: 'Tomás Reyes', sub: 'tomas@example.org', hue: 1, role: 'member', google }))
+  const row = (google?: boolean) => personRow(google)
   it('says "Signs in with Google" when bound', () => {
     expect(signInWords(true)).toBe('Signs in with Google')
     expect(row(true)).toContain('Signs in with Google')
@@ -27,10 +44,11 @@ describe('google_bound in the person view', () => {
     expect(row(undefined)).not.toContain('Google')
   })
   it('shows "Clear Google sign-in" only when the page offers it, never on your own row', () => {
-    const offered = (self: boolean) => renderToStaticMarkup(createElement(Row, { name: 'T', sub: 's', hue: 1, role: 'member', google: true, self, onClearGoogle: () => undefined }))
+    const offered = (self: boolean) => personRow(true, { self })
     expect(offered(false)).toContain('Clear Google sign-in')
     expect(offered(true)).not.toContain('Clear Google sign-in')
-    expect(renderToStaticMarkup(createElement(Row, { name: 'T', sub: 's', hue: 1, role: 'member', google: true }))).not.toContain('Clear Google sign-in')
+    expect(personRow(true, { can: { ...ALL, clearGoogle: false } })).not.toContain('Clear Google sign-in')
+    expect(personRow(true, { admin: false })).not.toContain('Clear Google sign-in')
   })
 })
 

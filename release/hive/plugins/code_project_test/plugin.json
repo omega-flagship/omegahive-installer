@@ -1,0 +1,13 @@
+{
+  "id": "code-project-test",
+  "name": "Code project test launcher",
+  "version": "0.1.0",
+  "contract": "0.1",
+  "description": "Host-owned pinned Python test launcher, with no public actions; operator registers/pins it without activating a person/swarm UI.",
+  "module": "program.py",
+  "capabilities": [
+    "sandbox:run"
+  ],
+  "icon": "flask",
+  "placement": "swarm"
+}

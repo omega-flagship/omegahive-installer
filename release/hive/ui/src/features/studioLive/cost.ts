@@ -1,6 +1,6 @@
 /**
- * J3 r4.3 O3: the cost readout. Monthly headroom FIRST (the owner 10-17 2250: the person's one total monthly limit governs),
- * then this session's spend against its cap, then the step backstops (contract :162, :175–:183). Defaults the owner confirmed:
+ * J3 r4.3 O3: the cost readout. Monthly headroom FIRST (Jon 10-17 2250: the person's one total monthly limit governs),
+ * then this session's spend against its cap, then the step backstops (contract :162, :175–:183). Defaults Jon confirmed:
  * $2 per session, $0.25 per step, 180 s per step. Unknown figures read "unknown", never a guess; held and unknown billing
  * are named separately from what is spent.
  */
@@ -66,5 +66,5 @@ export function costReadout(b: LedgerBudget | null, opts: { drift?: boolean } = 
   }
 }
 
-/** Setup-time defaults the owner confirmed (shown only before admission, never filled into a ledger). */
+/** Setup-time defaults Jon confirmed (shown only before admission, never filled into a ledger). */
 export const SETUP_DEFAULTS = { cap: DEFAULT_SESSION_CAP, step_cap: DEFAULT_STEP_CAP, step_seconds: DEFAULT_STEP_SECONDS }

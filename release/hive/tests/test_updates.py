@@ -66,9 +66,9 @@ def test_holds_block_everyone_and_only_a_person_admin_may_override(client, monke
     assert refused.status_code == 409 and "Truth phase running" in refused.json()["error"]["message"]
     # the hive password is not a person: it cannot override
     assert client.post("/api/updates/apply", json={"target": "program:demo-app", "override": True, "confirm": "program:demo-app"}).status_code == 409
-    quinn = person(client, "u_quinn", role="admin")
-    assert client.post("/api/updates/apply", headers=quinn, json={"target": "program:demo-app", "override": True, "confirm": "wrong"}).status_code == 409
-    ok = client.post("/api/updates/apply", headers=quinn, json={"target": "program:demo-app", "override": True, "confirm": "program:demo-app"}).json()
+    jon = person(client, "u_jon", role="admin")
+    assert client.post("/api/updates/apply", headers=jon, json={"target": "program:demo-app", "override": True, "confirm": "wrong"}).status_code == 409
+    ok = client.post("/api/updates/apply", headers=jon, json={"target": "program:demo-app", "override": True, "confirm": "program:demo-app"}).json()
     assert ok["ok"] and client.get("/api/updates").json()["history"][0]["overrode"] == [hold["id"]]
     client.delete(f"/api/updates/holds/{hold['id']}")
     assert client.get("/api/updates").json()["holds"] == []

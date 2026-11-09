@@ -4,7 +4,7 @@
  * (v1: LEXICAL, see embed.ts) and attention = confidence × recency × use. A belief that is mostly not true, or that
  * names a private app, is never sent.
  *
- * r2 (the owner, 2026-10-09: "it should be used when talking to me - it should get to know me"): the person's swarm
+ * r2 (Jon, 2026-10-09: "it should be used when talking to me - it should get to know me"): the person's swarm
  * conversations are a second recall source, ranked the same way under the same caps. Each is its own note ("you
  * asked …; the answer was …", trimmed) with a fixed, modest truth (TALK_TRUTH). It is never sent when it names a
  * private app, when everything was forgotten since it was held (the watermark, R2), or when its words were forgotten
@@ -25,7 +25,7 @@ export const W_ATTENTION = 0.4
 
 const KIND_WORD: Record<MemoryKind, string> = { preference: 'preference', name: 'name', place: 'place', person: 'person', project: 'project', correction: 'correction' }
 
-/** The note's words as the model reads them: "name: Call them the owner". */
+/** The note's words as the model reads them: "name: Call them Jon". */
 export const noteText = (b: Pick<Belief, 'kind' | 'statement'>): string => `${KIND_WORD[b.kind]}: ${b.statement}`
 
 /**

@@ -79,7 +79,7 @@ html[data-xc-active][data-xc-material='terminal'] {
     padding: 2px;
     border: 1px solid var(--coffee-edge);
     border-radius: 12px;
-    background: var(--xc-surface, rgb(11 11 33 / 0.96));
+    background: var(--xc-surface, color-mix(in oklab, var(--color-abyss) 96%, transparent));
     box-shadow: 0 6px 18px -8px rgb(0 0 0 / 0.6);
     opacity: 0;
     pointer-events: none;

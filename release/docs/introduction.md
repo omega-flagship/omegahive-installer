@@ -1,16 +1,12 @@
-> **Legacy / reference.** Inherited from OmegaClaw Core or an earlier session; outdated compared with the current hive and apps. See `LEGACY.md` at the repo root.
-
 # Introduction
 
-OmegaClaw is a **hybrid agentic AI framework** implemented in MeTTa, running on **PeTTa** (MeTTa on SWI-Prolog, pinned at commit `ae66fa8`) within the OpenCog Hyperon ecosystem. A large language model (LLM) works together with formal logic engines — **NAL** and **PLN** — to reason about the world, track uncertainty, combine evidence, and produce conclusions that are mathematically grounded rather than just plausible-sounding.
-
-> **What is real today.** The hybrid design below is the architecture. In OmegaHive's current release the LLM drives each mind's loop and calls NAL/PLN as skills; automatic reasoning from the loop is deliberately not wired in yet. See the root `README.md` ("What it is, and what is real today") and [`EARLIER_EXPERIMENTS.md`](./EARLIER_EXPERIMENTS.md).
+OmegaClaw is a **hybrid agentic AI framework** implemented in MeTTa on OpenCog Hyperon. A large language model (LLM) works together with formal logic engines — **NAL** and **PLN** — to reason about the world, track uncertainty, combine evidence, and produce conclusions that are mathematically grounded rather than just plausible-sounding.
 
 The core agent loop is approximately **200 lines of MeTTa**.
 
 > Most AI assistants generate answers that sound right. OmegaClaw-hosted agents generate answers that come with a **mathematical receipt** showing exactly how confident each conclusion is and what evidence supports it. When the agent says it is 72% confident, that number comes from formal inference — not a feeling.
 
-This page is the conceptual introduction: what OmegaClaw is, why the hybrid architecture exists, how the pieces connect at runtime, the vocabulary used throughout the rest of the docs, and the honest limits of the current system. For getting a running instance, see [installation instruction](/docs/omegaclaw-core.md#installation). For hands-on walkthroughs, see the tutorials listed at the end.
+This page is the conceptual introduction: what OmegaClaw is, why the hybrid architecture exists, how the pieces connect at runtime, the vocabulary used throughout the rest of the docs, and the honest limits of the current system. For getting a running instance, see [installation instruction](/README.md#installation). For hands-on walkthroughs, see the tutorials listed at the end.
 
 ---
 
@@ -72,7 +68,7 @@ Each reasoning hop is a synchronous five-step dance:
    and decides the next move.
 ```
 
-Step 3 is **opaque to the LLM in a useful way** — the LLM cannot tamper with the truth-value math once the premises are given. The LLM does choose the premises and their truth values, and the skill path carries no evidence stamps, so repeating a premise can raise confidence; the swarm commons checks stamps and does not have this problem (see [reasoning-deviations.md](./reasoning-deviations.md)).
+Step 3 is **opaque to the LLM in a useful way** — the LLM cannot tamper with the truth-value math. Confidence cannot be inflated by rhetoric.
 
 ---
 
@@ -232,7 +228,7 @@ Vocabulary used throughout the rest of the documentation. Skim once; come back w
 
 ### AtomSpace
 
-The knowledge substrate provided by Hyperon / MeTTa. Facts, runtime spaces (`&beliefs`, `&world`, `&agenda`, `&events`) and program fragments live in MeTTa spaces, so they are directly interrogable by other Hyperon components. Long-term vector recall is ChromaDB, beside the AtomSpace rather than in it.
+The knowledge substrate provided by Hyperon / MeTTa. Every fact, memory item, and program fragment in OmegaClaw lives in the same AtomSpace, so memory is directly interrogable by other Hyperon components.
 
 ### Atomization
 
@@ -344,10 +340,10 @@ A skill whose implementation is a remote agent reached through the Agentverse br
 
 ### Design goals
 
-- **Transparency by design, not by post-hoc explanation.** Every inference result shows its premises, rule and truth-value math when it is returned. (On the skill path these results are not yet stored as stamped atoms; that is part of the planned reasoning rollout.)
+- **Transparency by design, not by post-hoc explanation.** Every conclusion can be traced to its premises, rule, and truth-value math.
 - **Simplicity.** A small core that is readable end-to-end.
 - **Extensibility.** New skills, channels, tools, and engines are short additions — see [reference-internals-extension-points.md](./reference-internals-extension-points.md).
-- **Flexibility in memory representation.** Symbolic memory lives in MeTTa spaces alongside other Hyperon components, and vector recall sits beside them; no single representation is hardcoded.
+- **Flexibility in memory representation.** Memory items coexist with other Hyperon components in the same AtomSpace; no single representation is hardcoded.
 
 ### When to use OmegaClaw
 
@@ -362,7 +358,7 @@ The hybrid design moves the failure mode — it does not eliminate it. Known iss
 
 - LLM premise formulation errors (up to ~16.6% on asymmetric relations).
 - LLM confidence overestimation (~15 percentage points on self-assigned truth values).
-- Confidence decays with every inference hop. With every premise at `(stv 1.0 0.9)`, chained deduction gives c = 0.81, 0.73, 0.66 and 0.59 after one to four hops; with frequencies below 1 it falls much faster (two `(stv 0.5 0.9)` premises already give c = 0.20). See [reference-lib-nal.md](./reference-lib-nal.md).
+- Confidence decays ~10% per inference hop; by the third hop, `c` typically drops below 0.5.
 
 **Garbage In, Garbage Out** applies with a twist: the formal engine does not merely pass through garbage, it **amplifies** it by lending mathematical authority to conclusions derived from flawed premises.
 

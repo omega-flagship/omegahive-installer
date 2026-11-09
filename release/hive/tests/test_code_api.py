@@ -27,6 +27,10 @@ class FakeSupervisor:
 
 @pytest.fixture()
 def c(monkeypatch, tmp_path):
+    # These tests check route/grant semantics against an in-process fake Code service; the same-connection relay proof
+    # transport (on for the pinned R1.4) is covered against real listeners in test_relay_proof / the interop tests.
+    import hive.core.code as code_module
+    monkeypatch.setattr(code_module, "RELAY_PROOF_RELEASES", frozenset())
     monkeypatch.setenv("HIVE_CODE_OWNERS", json.dumps([{"prefix": "/nowhere/private", "owner": "Someone", "private": True}]))
     tmp = tmp_path / "hive-code"
     tmp.mkdir()
@@ -274,7 +278,7 @@ def test_retrieval_and_proof_proxy_routes_are_narrow_and_revoke(c):
 
 
 def test_a_target_the_service_cannot_edit_is_not_offered_and_never_half_opens(c):
-    """the owner 2026-10-05: 'I've NEVER seen workspace'. The hive offered targets the service has no editable copy of; opening
+    """Jon 2026-10-05: 'I've NEVER seen workspace'. The hive offered targets the service has no editable copy of; opening
     one created a task and grant, then the service refused with 403 repository_unregistered."""
     code = c.app.state.hive.code
     code.repos = {"platform": {"path": str(code.platform_root)}}                 # only the platform copy is registered

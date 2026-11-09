@@ -16,7 +16,7 @@ import type { CanvasState } from './useCanvas'
 import { saveSentence, SUGGESTIONS } from './words'
 
 // The Design living canvas against the simulator's stand-in for Design (INVENTED designs; api/sim/omegadesign.ts).
-// "Mounted" here is the repo's server-render pattern (react-dom/server, as the other form tests): the states and
+// "Mounted" here is the repo's server-render pattern (react-dom/server, as caseFile/oneDialog.test.ts): the states and
 // parts are rendered as markup and checked for what a person and a screen reader get. Nothing leaves the test.
 
 const flush = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0)) }

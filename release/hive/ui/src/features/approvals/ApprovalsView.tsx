@@ -112,7 +112,7 @@ function Pending({ focus }: { focus?: string }) {
         ))}
       </AnimatePresence>
       {list.length === 0 && (
-        <m.li initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="rounded-[22px] border border-line bg-white/[0.02]">
+        <m.li initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="rounded-[22px] border border-line bg-tint/[0.02]">
           <EmptyState icon="shield" title="Nothing is waiting" body="When a mind reaches for a skill that needs a human, it lands here and the mind pauses on that command." />
         </m.li>
       )}
@@ -123,7 +123,7 @@ function Pending({ focus }: { focus?: string }) {
     <div className="grid grid-cols-[1fr_300px] gap-6">
       {cards}
       <aside className="sticky top-16 space-y-3 self-start">
-        <div className="rounded-[20px] border border-line bg-white/[0.025] p-4">
+        <div className="rounded-[20px] border border-line bg-tint/[0.025] p-4">
           <div className="eyebrow mb-3">Waiting by risk</div>
           {(['high', 'medium', 'low'] as const).map((r) => (
             <div key={r} className="flex min-h-9 items-center justify-between">
@@ -132,11 +132,11 @@ function Pending({ focus }: { focus?: string }) {
             </div>
           ))}
         </div>
-        <div className="rounded-[20px] border border-line bg-white/[0.025] p-4 text-[13px] leading-relaxed text-ink-3">
+        <div className="rounded-[20px] border border-line bg-tint/[0.025] p-4 text-[13px] leading-relaxed text-ink-3">
           <div className="eyebrow mb-2">What happens next</div>
           <p>
             <b className="font-medium text-ink-2">Approve</b> lets the mind run that exact command once. It hears{' '}
-            <code className="rounded bg-black/30 px-1 font-mono text-meta text-ink-2">[APPROVED p_…]</code> on its next loop.
+            <code className="rounded bg-shade/30 px-1 font-mono text-meta text-ink-2">[APPROVED p_…]</code> on its next loop.
           </p>
           <p className="mt-2">
             <b className="font-medium text-ink-2">Create a rule…</b> shows the exact <span className="text-good">allow</span> rule first, then approves and saves it. It is
@@ -152,11 +152,11 @@ function Pending({ focus }: { focus?: string }) {
 }
 
 const DECISION: Record<Decision, { label: string; color: string; icon: 'check' | 'x' }> = {
-  approve: { label: 'Approved once', color: '#4ade80', icon: 'check' },
-  for: { label: 'Approved for a time', color: '#4ade80', icon: 'check' },
-  remember: { label: 'Approved · always', color: '#4ade80', icon: 'check' },
-  deny: { label: 'Denied', color: '#fb7185', icon: 'x' },
-  never: { label: 'Denied · never', color: '#fb7185', icon: 'x' },
+  approve: { label: 'Approved once', color: 'var(--color-good)', icon: 'check' },
+  for: { label: 'Approved for a time', color: 'var(--color-good)', icon: 'check' },
+  remember: { label: 'Approved · always', color: 'var(--color-good)', icon: 'check' },
+  deny: { label: 'Denied', color: 'var(--color-bad)', icon: 'x' },
+  never: { label: 'Denied · never', color: 'var(--color-bad)', icon: 'x' },
 }
 
 /** "For a time": how long the mind may run this skill without asking again. */
@@ -225,10 +225,10 @@ function ApprovalCard({
       <article
         aria-label={`${name} asks to run ${a.skill}`}
         data-tour="approval-card"
-        className={cx('relative overflow-hidden rounded-[22px] border bg-white/[0.025] transition-[border-color,box-shadow] duration-300', focused ? 'border-warn/50' : 'border-line')}
+        className={cx('relative overflow-hidden rounded-[22px] border bg-tint/[0.025] transition-[border-color,box-shadow] duration-300', focused ? 'border-warn/50' : 'border-line')}
         style={{
           borderColor: shown ? `${DECISION[shown].color}88` : undefined,
-          boxShadow: focused && !shown ? '0 0 0 4px rgb(251 191 36 / 0.12), 0 0 40px -10px rgb(251 191 36 / 0.5)' : undefined,
+          boxShadow: focused && !shown ? '0 0 0 4px color-mix(in oklab, var(--color-warn) 12%, transparent), 0 0 40px -10px color-mix(in oklab, var(--color-warn) 50%, transparent)' : undefined,
         }}
       >
         <div className="pointer-events-none absolute -top-16 -left-10 size-56 rounded-full opacity-70" style={{ background: `radial-gradient(circle, ${hsl(hue, 90, 55, 0.22)}, transparent 70%)` }} />
@@ -241,7 +241,7 @@ function ApprovalCard({
               <div className="flex flex-wrap items-baseline gap-x-2">
                 <span className="font-display text-[16px] font-semibold">{name}</span>
                 <span className="text-[13px] text-ink-3">wants to run</span>
-                <span className="rounded-md border border-line-2 bg-white/[0.05] px-1.5 py-px font-mono text-[12px] text-ink">{a.skill}</span>
+                <span className="rounded-md border border-line-2 bg-tint/[0.05] px-1.5 py-px font-mono text-[12px] text-ink">{a.skill}</span>
               </div>
               <div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden text-[12px] whitespace-nowrap text-ink-4">
                 {swarm && (
@@ -261,7 +261,7 @@ function ApprovalCard({
             <RiskChip risk={a.risk} compact={!desktop} />
           </header>
 
-          <div className="group relative mt-3.5 overflow-hidden rounded-xl border border-line bg-black/35">
+          <div className="group relative mt-3.5 overflow-hidden rounded-xl border border-line bg-shade/35">
             <span className="absolute inset-y-0 left-0 w-[3px]" style={{ background: `linear-gradient(${hsl(hue, 100, 72)}, ${hsl(hue, 90, 55, 0.3)})` }} />
             <div className="thin-scroll max-h-40 overflow-y-auto py-3 pr-11 pl-4 text-[13px]">
               <MeTTa src={a.command} />
@@ -381,7 +381,7 @@ function RuleStep({
       exit={{ height: 0, opacity: 0 }}
       className="overflow-hidden"
     >
-      <div className="mt-3 rounded-xl border border-line-2 bg-black/25 p-3.5">
+      <div className="mt-3 rounded-xl border border-line-2 bg-shade/25 p-3.5">
         <h3 className="text-small font-semibold text-ink">This rule will be saved</h3>
         <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-small">
           <dt className="text-ink-3">Decision</dt>
@@ -392,7 +392,7 @@ function RuleStep({
           </dd>
           <dt className="text-ink-3">Skill</dt>
           <dd className="min-w-0">
-            <code className="rounded-md border border-line-2 bg-white/[0.05] px-1.5 py-px font-mono text-meta text-ink">{rule.skill}</code>
+            <code className="rounded-md border border-line-2 bg-tint/[0.05] px-1.5 py-px font-mono text-meta text-ink">{rule.skill}</code>
             <span className="ml-1.5 text-ink-3">exact name, no wildcard</span>
           </dd>
         </dl>
@@ -423,7 +423,7 @@ function Stamp({ decision }: { decision: Decision }) {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.18 }}
-      style={{ background: `color-mix(in srgb, ${d.color} 10%, rgb(8 8 26 / 0.9))` }}
+      style={{ background: `color-mix(in srgb, ${d.color} 10%, color-mix(in oklab, var(--color-abyss) 90%, transparent))` }}
       role="status"
     >
       <m.span className="rounded-full" initial={{ scale: 0.6 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 520, damping: 18 }} style={{ boxShadow: `0 0 26px -2px ${d.color}88` }}>
@@ -452,10 +452,10 @@ function Stamp({ decision }: { decision: Decision }) {
 // ---------------------------------------------------------------- history
 
 const STATUS: Record<Exclude<ApprovalStatus, 'pending'>, { label: string; color: string; icon: IconName }> = {
-  approved: { label: 'Approved', color: '#4ade80', icon: 'check' },
+  approved: { label: 'Approved', color: 'var(--color-good)', icon: 'check' },
   used: { label: 'Used', color: '#5eead4', icon: 'bolt' },
-  denied: { label: 'Denied', color: '#fb7185', icon: 'x' },
-  expired: { label: 'Expired', color: '#8a89b3', icon: 'clock' },
+  denied: { label: 'Denied', color: 'var(--color-bad)', icon: 'x' },
+  expired: { label: 'Expired', color: 'var(--color-ink-3)', icon: 'clock' },
 }
 
 function dayLabel(iso: string, now: number) {
@@ -510,14 +510,14 @@ function History() {
       {groups.map((g) => (
         <section key={g.day} className="mb-5" aria-label={g.day}>
           <h2 className="eyebrow mb-2 px-1">{g.day}</h2>
-          <ul className="overflow-hidden rounded-[18px] border border-line bg-white/[0.02]">
+          <ul className="overflow-hidden rounded-[18px] border border-line bg-tint/[0.02]">
             {g.items.map((a, i) => {
               const agent = agents[a.agent_id]
               const st = STATUS[a.status as Exclude<ApprovalStatus, 'pending'>]
               const isOpen = open === a.id
               return (
                 <li key={a.id} className={cx(i > 0 && 'border-t border-line')}>
-                  <button onClick={() => setOpen(isOpen ? null : a.id)} aria-expanded={isOpen} className="flex min-h-14 w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-white/[0.03] md:px-4">
+                  <button onClick={() => setOpen(isOpen ? null : a.id)} aria-expanded={isOpen} className="flex min-h-14 w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-tint/[0.03] md:px-4">
                     <Orb hue={agent?.hue ?? 252} status={agent?.status ?? 'awake'} size={24} />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-baseline gap-2">
@@ -540,7 +540,7 @@ function History() {
                     {isOpen && (
                       <m.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
                         <div className="space-y-2 px-4 pb-4 text-[13px]">
-                          <div className="rounded-xl border border-line bg-black/30 px-3 py-2.5">
+                          <div className="rounded-xl border border-line bg-shade/30 px-3 py-2.5">
                             <MeTTa src={a.command} />
                           </div>
                           <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-ink-3">

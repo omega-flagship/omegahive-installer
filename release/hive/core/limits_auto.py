@@ -10,7 +10,7 @@ has no stored rule. A stored rule always replaces the auto value at its own key 
 the limits above it; the hive total is itself a stored rule, so it is checked on every paid call whatever the derived
 values add up to.
 
-Ratios (the owner approved the plan 2026-10-07):
+Ratios (Jon approved the plan 2026-10-07):
 - team month   = clamp(P x min(1, 2/N), floor = min($1, T), ceiling = T): twice an equal share of the pool P (the total
                  less the teams' own month limits, each capped at T) over the N active teams without one;
 - team day     = the team's month (held to T) / 10;

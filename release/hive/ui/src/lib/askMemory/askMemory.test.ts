@@ -93,7 +93,7 @@ describe('learning: remember merges by NAL revision; revise targets by id', () =
   it('names the private apps however they are written', () => {
     for (const s of ['my Atlas sleep score', 'OmegaTruth labels', 'TRUTH app', '%61tlas notes']) expect(namesPrivate(s), s).toBe(true)
     expect(namesPrivate('Prefers short answers')).toBe(false)
-    expect(sameStatement('Call them Quinn', 'call them quinn!')).toBe(true)
+    expect(sameStatement('Call them Jon', 'call them jon!')).toBe(true)
   })
 })
 
@@ -113,8 +113,8 @@ describe('recall: similarity and attention, within the host caps', () => {
     const size = r.notes.reduce((n, x) => n + new TextEncoder().encode(x.id).length + new TextEncoder().encode(x.text).length, 0)
     expect(size).toBeLessThanOrEqual(8192)
     expect(r.notes.length).toBeGreaterThan(10)
-    const odd = recall([belief({ id: 'b_p', statement: 'Atlas sleep' }), belief({ id: 'b_f', truth: { frequency: 0.2, confidence: 0.9 } }), belief({ id: 'b_ok', kind: 'name', statement: 'Call them Quinn' })], 'hello', { now: T0 })
-    expect(odd.notes).toEqual([{ id: 'b_ok', text: noteText({ kind: 'name', statement: 'Call them Quinn' }) }])
+    const odd = recall([belief({ id: 'b_p', statement: 'Atlas sleep' }), belief({ id: 'b_f', truth: { frequency: 0.2, confidence: 0.9 } }), belief({ id: 'b_ok', kind: 'name', statement: 'Call them Jon' })], 'hello', { now: T0 })
+    expect(odd.notes).toEqual([{ id: 'b_ok', text: noteText({ kind: 'name', statement: 'Call them Jon' }) }])
   })
 })
 
@@ -154,9 +154,9 @@ describe('the store: per person per hive, persisted at once, lost stubs, forgett
     const h = harness()
     const s = h.make()
     s.use(ADA)
-    s.receive(live(2, 'Call them Quinn', 'name'), { privatePage: false, since: s.turnMark() })
+    s.receive(live(2, 'Call them Jon', 'name'), { privatePage: false, since: s.turnMark() })
     await s.whenReady()
-    expect(s.getView().beliefs.map((b) => b.statement)).toEqual(['Call them Quinn'])
+    expect(s.getView().beliefs.map((b) => b.statement)).toEqual(['Call them Jon'])
   })
   it('never keeps from a private page, naming a private app, or past 8 from one turn', async () => {
     const s = harness().make()
@@ -211,12 +211,12 @@ describe('the store: per person per hive, persisted at once, lost stubs, forgett
     s.use(ADA)
     await s.whenReady()
     const b = s.receive(live(2, 'Prefers short answers'), { privatePage: false, since: s.turnMark() }).kept!
-    s.receive(live(3, 'Call them Quinn', 'name'), { privatePage: false, since: s.turnMark() })
+    s.receive(live(3, 'Call them Jon', 'name'), { privatePage: false, since: s.turnMark() })
     expect(s.edit(b.id, 'Prefers very short answers')).toBe(true)
     expect(s.getView().trace.at(-1)).toMatchObject({ kind: 'edit', summary: 'Prefers very short answers', belief_id: b.id })
     expect(s.forget(b.id)).toBe(true)
     const v = s.getView()
-    expect(v.beliefs.map((x) => x.statement)).toEqual(['Call them Quinn'])
+    expect(v.beliefs.map((x) => x.statement)).toEqual(['Call them Jon'])
     expect(JSON.stringify(v.trace)).not.toMatch(/short answers/)
     expect(v.trace.at(-1)?.kind).toBe('forget')
     s.forgetAll()
@@ -245,7 +245,7 @@ describe('stand-in r1 P1: forgetting is authoritative across tabs (two stores ov
     a.use(ADA)
     await a.whenReady()
     const kept = a.receive(live(2, 'Prefers short answers'), { privatePage: false, since: a.turnMark() }).kept!
-    a.receive(live(3, 'Call them Quinn', 'name'), { privatePage: false, since: a.turnMark() })
+    a.receive(live(3, 'Call them Jon', 'name'), { privatePage: false, since: a.turnMark() })
     await a.flushed()
     const b = h.make() // another tab, loaded while the belief was there: its cache keeps it
     b.use(ADA)
@@ -261,10 +261,10 @@ describe('stand-in r1 P1: forgetting is authoritative across tabs (two stores ov
     b.markUsed([kept.id])
     await idle(a, b)
     const snap = await stored(h)
-    expect(snap.beliefs.map((x) => x.statement)).toEqual(['Call them Quinn'])
+    expect(snap.beliefs.map((x) => x.statement)).toEqual(['Call them Jon'])
     expect(JSON.stringify(snap)).not.toMatch(/short answers/)
     // the stale tab now shows what storage holds
-    expect(b.getView().beliefs.map((x) => x.statement)).toEqual(['Call them Quinn'])
+    expect(b.getView().beliefs.map((x) => x.statement)).toEqual(['Call them Jon'])
   })
   it('a stale tab editing a forgotten belief writes nothing back', async () => {
     const { h, a, b, kept } = await twoTabs()
@@ -286,9 +286,9 @@ describe('stand-in r1 P1: forgetting is authoritative across tabs (two stores ov
     b.receive(live(9, 'prefers short answers.', 'preference', { turn_id: 'turn_2' }), { privatePage: false, since })
     await idle(a, b)
     const snap = await stored(h)
-    expect(snap.beliefs.map((x) => x.statement)).toEqual(['Call them Quinn'])
+    expect(snap.beliefs.map((x) => x.statement)).toEqual(['Call them Jon'])
     expect(JSON.stringify(snap)).not.toMatch(/short answers/i)
-    expect(b.getView().beliefs.map((x) => x.statement)).toEqual(['Call them Quinn'])
+    expect(b.getView().beliefs.map((x) => x.statement)).toEqual(['Call them Jon'])
     expect(JSON.stringify(b.getView().trace)).not.toMatch(/short answers/i)
   })
   it('a use counted in another tab never undoes an edit, and touches only the use count', async () => {
@@ -307,7 +307,7 @@ describe('stand-in r1 P1: forgetting is authoritative across tabs (two stores ov
     await a.flushed()
     h.tick(1000)
     b.markUsed([kept.id])
-    b.edit(b.getView().beliefs.find((x) => x.kind === 'name')!.id, 'Call them Quincy')
+    b.edit(b.getView().beliefs.find((x) => x.kind === 'name')!.id, 'Call them Jonathan')
     await b.stub({ turn_id: 'turn_1', seq: 7, op: 'remember' })
     await idle(a, b)
     const snap = await stored(h)

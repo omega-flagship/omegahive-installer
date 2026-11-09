@@ -36,6 +36,7 @@ import ctypes
 import errno
 import fcntl
 import json
+import math
 import os
 import platform
 import select
@@ -44,6 +45,7 @@ import socket
 import struct
 import sys
 import threading
+import time
 
 # Landlock system calls share one number on every architecture that uses the generic syscall table,
 # which includes x86_64 and aarch64.
@@ -83,6 +85,9 @@ class _RulesetAttr(ctypes.Structure):
 
 
 class _PathBeneath(ctypes.Structure):
+    # The kernel's landlock_path_beneath_attr is packed: 12 bytes, parent_fd at offset 8. Python 3.14 warns on every
+    # launch when _pack_ comes without _layout_; "ms" is the layout _pack_ already gives, and 3.12 ignores the name.
+    _layout_ = "ms"
     _pack_ = 1
     _fields_ = [("allowed_access", ctypes.c_uint64), ("parent_fd", ctypes.c_int32)]
 
@@ -197,6 +202,9 @@ def restrict_files(prof, abi=None):
         for path in prof.get("dev_rw", ()):
             allow(path, FS_READ_FILE | FS_WRITE_FILE | FS_IOCTL_DEV)
         allow(prof["mind_dir"], fs_all)
+        if prof.get("_workspace") is not None:
+            # This /tmp is on the SAME bounded private root filesystem.
+            allow("/tmp", fs_all)
         if net:
             for port in prof.get("connect_ports", ()):
                 rule = _NetPort(NET_CONNECT_TCP, int(port))
@@ -559,6 +567,8 @@ def _devices(prof):
 def _private_root(prof):
     """A filesystem view containing ONLY the runtime (read-only), the mind's folder (read-write) and a few devices.
     Every other host path - other folders, files to truncate, pathname unix sockets - simply does not exist inside."""
+    if prof.get("_workspace") is not None:
+        return _quota_private_root(prof)
     _mount(None, "/", None, MS_REC | MS_PRIVATE)
     root = prof["_root"]
     _mount("tmpfs", root, "tmpfs", MS_NOSUID | MS_NODEV, "mode=0755")
@@ -592,6 +602,63 @@ def _private_root(prof):
     return has_proc
 
 
+def _quota_private_root(prof):
+    """Placed B: one bounded root includes metadata, job and /tmp; no host RW bind."""
+    session = prof["_workspace"]
+    session.raise_first()
+    session.guard()
+    root = session.path
+    held, current = os.fstat(session.mountpoint.value), os.stat(root, follow_symlinks=False)
+    if (held.st_dev, held.st_ino) != (current.st_dev, current.st_ino):
+        raise OSError("original workspace mount coordinate changed")
+    _mount(None, "/", None, MS_REC | MS_PRIVATE)
+    # Resolve through this mount namespace: the inherited FD can retain an
+    # old mount reference even when its directory identity is unchanged.
+    os.chdir(root)
+    cwd = os.stat(".", follow_symlinks=False)
+    if (held.st_dev, held.st_ino) != (cwd.st_dev, cwd.st_ino):
+        raise OSError("original workspace cwd changed")
+    session.guard()
+    _mount("tmpfs", ".", "tmpfs", MS_NOSUID | MS_NODEV,
+           "mode=0755,size=268435456,nr_inodes=8192")
+    os.chdir(root)
+    _mkdirs(root + "/tmp")
+    os.chmod(root + "/tmp", 0o1777)
+    prof["_allowed"] = allowed_roots(prof["read"])
+    prof["read"] = effective_read(prof["read"])
+    for path in prof["read"]:
+        session.guard()
+        if path != "/proc" and os.path.exists(path):
+            _mirror(root, path, prof)
+    if prof.get("_exe"):
+        _mirror(root, prof["_exe"], prof)
+    for program in prof.get("_programs") or ():
+        session.guard()
+        _mirror(root, program, prof)
+    for path, writable in _devices(prof):
+        if os.path.exists(path):
+            _bind(root, path, writable=writable)
+    _mkdirs(root + prof["mind_dir"])
+    os.chmod(root + prof["mind_dir"], 0o700)
+    _mkdirs(root + "/proc")
+    try:
+        _mount("proc", root + "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC)
+        has_proc = True
+    except OSError:
+        has_proc = False
+    old = root + "/.oldroot"
+    os.makedirs(old, exist_ok=True)
+    session.guard()
+    _check(_libc().syscall(155 if platform.machine() == "x86_64" else 41, root.encode(), old.encode()), "pivot_root")
+    os.chdir("/")
+    _check(_libc().umount2(b"/.oldroot", MNT_DETACH), "umount old root")
+    os.rmdir("/.oldroot")
+    session.mounted_root(prof["mind_dir"])
+    if not session.ready or not session.closed:
+        raise OSError("workspace controls not known closed before project fork")
+    return has_proc
+
+
 def _status(code):
     if os.WIFEXITED(code):
         return os.WEXITSTATUS(code)
@@ -613,8 +680,11 @@ def _pid1(prof, argv):
     if not _private_root(prof):
         prof = dict(prof, read=[p for p in prof["read"] if p != "/proc"])
     _loopback_up()
-    os.chdir(_relay_dir(prof))
-    inner = _inner_relays(prof)
+    if prof.get("_workspace") is None:
+        os.chdir(_relay_dir(prof))
+        inner = _inner_relays(prof)
+    else:
+        inner = []  # Resource workspaces have no relay ports or host relay directory.
     restrict_files(prof)
     mind = os.fork()
     if mind == 0:
@@ -660,48 +730,110 @@ def _setup_failed(exc, root, listeners):
     return 78
 
 
-def launch(prof, argv):
+def launch(prof, argv, *, _runner_until=None, _runner_workspace=None):
     import shutil
     import tempfile
+    if (_runner_until is not None
+            and (type(_runner_until) is not float or not math.isfinite(_runner_until) or _runner_until <= 0)):
+        return _setup_failed(OSError("invalid original runner deadline"), None, [])
     uid, gid = os.getuid(), os.getgid()
     root = None
     try:   # r14.4: P's own setup fails closed with 78 too (never a traceback exit), before anything is forked
+        if _runner_workspace is not None:
+            _runner_workspace.raise_first()
+            if prof.get("connect_ports", []) != []:
+                raise ValueError("resource workspace requires no network ports")
         host_netns = _netns_id()
-        root = tempfile.mkdtemp(prefix="hive-mind-root-")   # an empty mountpoint; the private view is built on it
+        if _runner_workspace is None:
+            root = tempfile.mkdtemp(prefix="hive-mind-root-")   # an empty mountpoint; the private view is built on it
+        else:
+            _runner_workspace.raise_first()
+            root = _runner_workspace.path  # original parent-created coordinate, bound to its actual FD
         prof = dict(prof, _cwd=os.getcwd(), _root=root, _exe=shutil.which(argv[0]) or "",
                     _programs=programs_to_mirror(os.environ, prof))
-        listeners = _host_relays(prof)
+        if _runner_workspace is not None:
+            prof["_workspace"] = _runner_workspace
+        listeners = _host_relays(prof) if _runner_workspace is None else []
     except Exception as e:
-        return _setup_failed(e, root, [])
+        if _runner_workspace is not None:
+            _runner_workspace.close()
+        return _setup_failed(e, root if _runner_workspace is None else None, [])
+    if _runner_until is not None:
+        try:
+            if not time.monotonic() < _runner_until:
+                raise TimeoutError("original runner placement deadline expired before fork")
+        except BaseException as e:
+            if _runner_workspace is not None:
+                _runner_workspace.close()
+            return _setup_failed(e, root if _runner_workspace is None else None, listeners)
+    first_role = None
+    if _runner_workspace is not None:
+        try:
+            first_role = _runner_workspace.role_barrier(0)
+        except BaseException:
+            _runner_workspace.close()
+            return _setup_failed(OSError("workspace role barrier refused"), None, listeners)
     try:
         a = os.fork()
     except OSError as e:   # r14.4 stand-in: a failed first fork (EAGAIN, ENOMEM) is a setup failure too: 78
-        return _setup_failed(e, root, listeners)
+        if _runner_workspace is not None:
+            _runner_workspace.close()
+        return _setup_failed(e, root if _runner_workspace is None else None, listeners)
     if a == 0:
         try:
+            if first_role is not None:
+                first_role.child_wait()
             for s, _ in listeners:
                 s.close()
             _enter_namespaces(uid, gid)
             _verify_fresh_netns(host_netns)
+            second_role = None if _runner_workspace is None else _runner_workspace.role_barrier(1)
             b = os.fork()   # the first child after unshare(CLONE_NEWPID) is pid 1 of the new namespace
             if b == 0:
                 try:
+                    if second_role is not None:
+                        second_role.child_wait()
                     _pid1(prof, argv)
                 except BaseException as e:   # never fall through to an unisolated mind
                     sys.stderr.write(f"mind isolation failed, not starting: {e}\n")
                     os._exit(78)
+            if second_role is not None:
+                second_role.parent_closed()
             os._exit(_wait(b))
         except BaseException as e:
             sys.stderr.write(f"mind isolation failed, not starting: {e}\n")
             os._exit(78)
+    if first_role is not None:
+        try:
+            first_role.parent_closed()
+        except BaseException:
+            # Actual original unreaped direct child; never a posted/reaped PID.
+            try:
+                os.kill(a, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            _wait(a)
+            return _setup_failed(OSError("workspace parent close refused"), None, listeners)
     _serve_host(listeners)   # threads only after the fork: the namespace children start single-threaded
 
     def cleanup():
+        if _runner_workspace is not None:
+            return  # original parent retains/removes its mountpoint after namespace termination
         try:
             os.rmdir(root)
         except OSError:
             pass
-    signal.signal(signal.SIGTERM, lambda *_: (os.kill(a, signal.SIGKILL), cleanup(), os._exit(143)))
+    def end(*_):
+        # The hive ends a launcher's whole process group with SIGTERM (sandbox_run's _end_group), so the namespace's
+        # first process may already be dead and reaped by _wait when this runs: the kill then finds no process, and
+        # the root must still go and the exit still be 143 (seen on the CI runner for omegahive #8).
+        try:
+            os.kill(a, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        cleanup()
+        os._exit(143)
+    signal.signal(signal.SIGTERM, end)
     code = _wait(a)
     cleanup()
     return code
@@ -739,9 +871,242 @@ def _bounded(programs):
     return programs
 
 
+_RUNNER_PLACEMENT_FLAG = "--hive-runner-placement-v1"
+_RUNNER_WORKSPACE_FLAG = "--hive-runner-workspace-v1"
+_WORKSPACE_MODULE = None
+
+
+def _workspace_module():
+    """One reviewed sibling Source; -I/-S never falls back to installed Hive."""
+    global _WORKSPACE_MODULE
+    if _WORKSPACE_MODULE is None:
+        import importlib.util
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "core", "sandbox_workspace.py")
+        spec = importlib.util.spec_from_file_location("_hive_runner_workspace_v1", path)
+        if spec is None or spec.loader is None:
+            raise OSError("original workspace Source unavailable")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _WORKSPACE_MODULE = module
+    return _WORKSPACE_MODULE
+
+
+class _RunnerPlacementFailure(Exception):
+    """Actual private gate observations, not an authority or admission receipt."""
+    def __init__(self, state):
+        super().__init__("runner placement refused before fork")
+        self.state = state
+
+
+def _runner_descriptor_words(words):
+    if len(words) != 3 or any(type(word) is not str or not word.isascii() or not word.isdecimal()
+                              or str(int(word)) != word for word in words):
+        raise ValueError("invalid runner descriptor spelling")
+    values = tuple(int(word) for word in words)
+    if any(not 3 <= fd <= 2**31 - 1 for fd in values) or len(set(values)) != 3:
+        raise ValueError("invalid runner descriptors")
+    return values
+
+
+def _runner_placement_gate(descriptors, until_hex):
+    """P migrates itself and closes all controls before launch's first fork.
+
+    This original inherited channel is runner-owned. A placed byte is only a
+    phase observation; the parent must independently check its original live P,
+    the issued lease and actual held-leaf membership/limits before releasing it.
+    """
+    if (type(descriptors) is not tuple or len(descriptors) != 3
+            or any(type(fd) is not int or not 3 <= fd <= 2**31 - 1 for fd in descriptors)
+            or len(set(descriptors)) != 3):
+        raise ValueError("invalid private descriptor tuple")
+    controls = [{"fd": fd, "close_attempted": False, "closed": False,
+                 "close_return": None, "close_error": None} for fd in descriptors]
+    state = {"phase": "deadline", "controls": controls, "pid": None, "until": None,
+             "migration_attempted": False, "migration_return": None,
+             "status_attempted": False, "status_return": None, "release": b"",
+             "release_attempted": False, "release_return": None,
+             "release_reads": [], "nonblocking_returns": [],
+             "poll_register_return": None, "poll_return": None, "poll_returns": [],
+             "primary": None, "secondary": [], "recording_error": None,
+             "secondary_fallback": None, "observation_incomplete": False}
+    def remember(error):
+        if state["primary"] is None:
+            state["primary"] = error
+        else:
+            try:
+                state["secondary"].append(error)
+            except BaseException as recording:
+                # Every close already retains its own raw error before this
+                # bookkeeping. Keep a fixed fallback; never let allocation or
+                # reporting failure skip another independent close attempt.
+                if state["recording_error"] is None:
+                    state["recording_error"] = recording
+                if state["secondary_fallback"] is None:
+                    state["secondary_fallback"] = error
+                state["observation_incomplete"] = True
+    def close_control(index):
+        owned = controls[index]
+        if owned["close_attempted"]:
+            return
+        owned["close_attempted"] = True
+        try:
+            result = os.close(owned["fd"])
+            owned["close_return"] = result
+            if result is not None:
+                raise OSError("unknown control close return")
+            owned["closed"] = True
+        except BaseException as error:
+            owned["close_error"] = error
+            remember(error)
+    def remaining():
+        left = until - time.monotonic()
+        if left <= 0:
+            raise TimeoutError("original runner placement deadline expired")
+        return left
+    def wait_control(fd, wanted):
+        # poll has no FD_SETSIZE restriction and creates no additional control
+        # descriptor to leak into A/B/C. Only this original inherited FD is
+        # registered; ERR/NVAL and write-side HUP are never readiness proof.
+        poller = select.poll()
+        result = poller.register(fd, wanted)
+        state["poll_register_return"] = result
+        if result is not None:
+            raise OSError("unknown control poll registration return")
+        left = remaining()
+        if not math.isfinite(left):
+            raise ValueError("finite original poll interval required")
+        maximum = 2**31 - 1
+        timeout_ms = maximum if left >= maximum / 1000 else max(1, math.ceil(left * 1000))
+        events = poller.poll(timeout_ms)
+        state["poll_return"] = events  # raw return BEFORE list/clock/shape checks
+        state["poll_returns"].append(events)
+        remaining()  # millisecond rounding never grants extra time
+        if not events:
+            raise TimeoutError("runner control deadline expired")
+        if len(events) != 1:
+            raise OSError("unexpected runner control poll events")
+        observed, flags = events[0]
+        if (type(observed) is not int or observed != fd or type(flags) is not int
+                or flags & (select.POLLERR | select.POLLNVAL)
+                or flags & ~(wanted | select.POLLHUP)):
+            raise OSError("runner control poll failure")
+        if wanted == select.POLLOUT:
+            if flags != select.POLLOUT:
+                raise OSError("runner status channel unavailable")
+        elif not flags & (select.POLLIN | select.POLLHUP):
+            raise OSError("runner release channel unavailable")
+    try:
+        until = float.fromhex(until_hex)
+        if (type(until_hex) is not str or not math.isfinite(until) or until <= 0
+                or until.hex() != until_hex):
+            raise ValueError("invalid absolute runner deadline")
+        state["until"] = until
+        remaining()
+        state["phase"] = "migration"
+        pid = os.getpid()
+        state["pid"] = pid
+        if type(pid) is not int or pid <= 0:
+            raise ValueError("invalid original process identity")
+        migration = (str(pid) + "\n").encode("ascii")
+        state["migration_attempted"] = True
+        written = os.write(descriptors[0], migration)
+        state["migration_return"] = written
+        if type(written) is not int or written != len(migration):
+            raise OSError("incomplete original self-placement write")
+        remaining()
+        close_control(0)
+        if state["primary"] is not None:
+            raise _RunnerPlacementFailure(state)
+        state["phase"] = "placed"
+        for fd in descriptors[1:]:
+            result = os.set_blocking(fd, False)
+            state["nonblocking_returns"].append(result)
+            if result is not None:
+                raise OSError("unknown control nonblocking return")
+        wait_control(descriptors[1], select.POLLOUT)
+        state["status_attempted"] = True
+        written = os.write(descriptors[1], b"P")
+        state["status_return"] = written
+        if type(written) is not int or written != 1:
+            raise OSError("incomplete placement status write")
+        remaining()
+        close_control(1)
+        if state["primary"] is not None:
+            raise _RunnerPlacementFailure(state)
+        state["phase"] = "release"
+        while True:
+            wait_control(descriptors[2], select.POLLIN)
+            state["release_attempted"] = True
+            data = os.read(descriptors[2], 2 - len(state["release"]))
+            state["release_return"] = data
+            state["release_reads"].append(data)
+            remaining()
+            if not data:
+                break
+            state["release"] += data
+            if state["release"] != b"R":
+                raise ValueError("invalid runner release frame")
+        if state["release"] != b"R":
+            raise ValueError("runner release refused or incomplete")
+        close_control(2)
+        if state["primary"] is not None:
+            raise _RunnerPlacementFailure(state)
+        remaining()
+        state["phase"] = "closed_before_fork"
+    except BaseException as error:
+        if not (type(error) is _RunnerPlacementFailure and error.state is state):
+            remember(error)
+    finally:
+        # Independent all-outcome close attempts; an UNKNOWN close is never retried.
+        for index in range(3):
+            close_control(index)
+    if (state["primary"] is not None or state["observation_incomplete"]
+            or not all(owned["closed"] for owned in controls)):
+        raise _RunnerPlacementFailure(state) from None
+    return state
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    placement_state = None
+    workspace = None
+    workspace_fd = None
+    if len(argv) >= 2 and argv[1] == _RUNNER_PLACEMENT_FLAG:
+        # No valid legacy invocation uses this second argument (legacy requires --).
+        # Gate before even opening the profile, availability probes or launch setup.
+        try:
+            command_index = 7
+            if len(argv) >= 9 and argv[6] == _RUNNER_WORKSPACE_FLAG:
+                words = _runner_descriptor_words([argv[2], argv[3], argv[4]])
+                if (not argv[7].isascii() or not argv[7].isdigit()
+                        or str(int(argv[7])) != argv[7] or int(argv[7]) in words
+                        or not 3 <= int(argv[7]) <= 2**31 - 1 or argv[8] != "--"):
+                    raise ValueError("invalid fourth workspace descriptor")
+                workspace_fd = int(argv[7])
+                command_index = 9
+            elif len(argv) < 8 or argv[6] != "--":
+                raise ValueError("invalid runner placement invocation")
+            descriptors = _runner_descriptor_words(argv[2:5])
+            placement_state = _runner_placement_gate(descriptors, argv[5])
+            if workspace_fd is not None:
+                workspace = _workspace_module().child_prepare(workspace_fd, placement_state["until"])
+                workspace.raise_first()
+                workspace.adjust_oom_score()
+        except BaseException:
+            if workspace is not None:
+                workspace.close()
+            elif workspace_fd is not None:
+                try:
+                    os.close(workspace_fd)
+                except BaseException:
+                    pass
+            sys.stderr.write("mind isolation failed, not starting: runner placement refused before fork\n")
+            return 78
+        argv = [argv[0], "--", *argv[command_index:]]
     if len(argv) < 3 or argv[1] != "--":
+        if workspace is not None:
+            workspace.close()
         sys.stderr.write("usage: landlock.py <profile.json> -- <command...>\n")
         return 2
     try:
@@ -749,11 +1114,25 @@ def main(argv=None):
             prof = json.load(f)
         prof = _check_profile(prof)
     except (OSError, ValueError, UnicodeError, TypeError) as exc:   # unreadable or malformed: fail closed, like the rest
+        if workspace is not None:
+            workspace.close()
         sys.stderr.write(f"mind isolation failed, not starting: bad profile ({exc})\n")
         return 78
     if not available():
+        if workspace is not None:
+            workspace.close()
         sys.stderr.write("mind isolation failed, not starting: Landlock or unprivileged namespaces unavailable\n")
         return 78
+    if placement_state is not None:
+        try:
+            if not time.monotonic() < placement_state["until"]:
+                raise TimeoutError("original runner placement deadline expired before launch")
+        except BaseException:
+            if workspace is not None:
+                workspace.close()
+            sys.stderr.write("mind isolation failed, not starting: runner deadline expired before launch\n")
+            return 78
+        return launch(prof, argv[2:], _runner_until=placement_state["until"], _runner_workspace=workspace)
     return launch(prof, argv[2:])
 
 

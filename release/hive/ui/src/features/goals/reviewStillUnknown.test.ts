@@ -5,7 +5,7 @@ import { seenOf } from '../../lib/goalDecision'
 import { changeGoal } from '../../experiences/still/goalChange'
 import sheetsSource from '../../experiences/still/Sheets.tsx?raw'
 
-// Ported from OmegaReview's probe (coordination/receipts-local/omegareview-735d9a9/reviewStillUnknown.test.ts). The
+// Ported from OmegaReview's probe (reviewStillUnknown.test.ts). The
 // original read Still's sentence out of Sheets.tsx by regex; Still now words the outcome through goalChange, so the
 // probe drives that consumer and also checks Sheets.tsx keeps no "did not take / Nothing changed" sentence. INVENTED DATA.
 it('Still must not assure no change when commit happened and re-read fails', async () => {

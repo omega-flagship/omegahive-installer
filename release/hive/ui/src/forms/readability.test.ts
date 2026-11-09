@@ -62,7 +62,7 @@ const CHROMES: Record<string, ExperienceChrome[]> = {
 }
 const ALL = Object.entries(CHROMES).flatMap(([g, cs]) => cs.map((c) => [`${g}/${c.scheme}`, g as Grammar, c] as const))
 const INDEX = parseCss(indexCss)
-const FORM_CSS: Partial<Record<FormId, string>> = { commons: './commons/commons.css' }
+const FORM_CSS: Partial<Record<FormId, string>> = { commons: './commons/commons.css', 'case-file': './caseFile/caseFile.css' }
 
 let a: SimClient
 beforeAll(async () => {
@@ -205,12 +205,13 @@ describe('MeTTa syntax, rendered, at the opacity it is drawn with (finding 2)', 
 })
 
 /**
- * ProgramForm hosting each fallback form (this release ships Commons; closed-source apps ship their own forms). The forms are lazy; a first prerender loads them, after which a plain server
+ * ProgramForm hosting each fallback form (this release ships Commons and the case file). The forms are lazy; a first prerender loads them, after which a plain server
  * render returns the whole form inside the host's [data-app-form].
  */
 type FormCase = { form: FormId; program: string; root: string; required: string[] }
 const FORM_CASES: FormCase[] = [
   { form: 'commons', program: 'commons-explorer', root: 'cm', required: ['cm-title', 'cm-eyebrow', 'cm-lede'] },
+  { form: 'case-file', program: 'contract-fixture', root: 'cf', required: ['cfc-eyebrow'] },
 ]
 describe('ProgramForm hosting each fallback form in an experience it has no rendering for', () => {
   const html = async (el: ReactElement) => {

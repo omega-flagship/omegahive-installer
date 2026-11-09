@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
-import { renderToStaticMarkup } from 'react-dom/server'
+import { MiniDocument } from '../ui/miniDom.testkit'
 import type { Approval } from '../api/types'
 
 /**
@@ -21,6 +21,27 @@ vi.mock('../ui/DecisionDialog', () => ({
   },
 }))
 
+// A decision must be visibly mounted to acquire authority; server markup cannot authorize an answer.
+const globals = globalThis as Record<string, unknown>
+const saved: Record<string, unknown> = {}
+const doc = new MiniDocument()
+const roots: { unmount(): void }[] = []
+beforeAll(() => {
+  for (const key of ['window', 'document', 'HTMLIFrameElement', 'IS_REACT_ACT_ENVIRONMENT']) saved[key] = globals[key]
+  const win = { document: doc, location: { hash: '#/', search: '', pathname: '/' }, addEventListener() {}, removeEventListener() {}, dispatchEvent() {}, HTMLIFrameElement: class {} };doc.defaultView=win
+  Object.assign(globals, { window: win, document: doc, HTMLIFrameElement: win.HTMLIFrameElement, IS_REACT_ACT_ENVIRONMENT: true })
+})
+afterAll(async () => { await new Promise(r => setTimeout(r,50));for(const [key,value] of Object.entries(saved)) globals[key]=value })
+async function mountApproval(session: string) {
+  roots.splice(0).forEach(root=>root.unmount())
+  const { ApprovalDecision } = await import('./ApprovalDecision')
+  const { act } = await import('react')
+  const { createRoot } = await import('react-dom/client')
+  const root = createRoot(doc.body.appendChild(doc.createElement('div')) as unknown as Element)
+  roots.push({unmount:()=>act(()=>root.unmount())})
+  await act(async()=>root.render(createElement(ApprovalDecision,{current:()=>true,seen:ask(),session,onClose:()=>undefined})))
+}
+
 const ask = (over: Partial<Approval> = {}): Approval => ({
   id: 'ap_1', agent_id: 'a_vega01', skill: 'shell', command: '(shell-confirm "ls /srv/scratch")', reason: 'shell always needs a person',
   risk: 'high', status: 'pending', decided_by: null, created_at: '2026-10-05T09:00:00Z', decided_at: null, ...over,
@@ -36,7 +57,7 @@ async function buildAs(mode: string) {
   vi.stubEnv('PROD', true)
   vi.stubEnv('DEV', false)
   vi.stubEnv('MODE', mode)
-  vi.stubGlobal('window', { location: { hash: '#/', search: '', pathname: '/' }, addEventListener() {}, removeEventListener() {}, dispatchEvent() {} })
+  const win = { document: doc, HTMLIFrameElement: globals.HTMLIFrameElement, location: { hash: '#/', search: '', pathname: '/' }, addEventListener() {}, removeEventListener() {}, dispatchEvent() {} };doc.defaultView=win;vi.stubGlobal('window',win)
   const sdk = await import('./sdk')
   const { useHive: store } = await import('../store/store')
   store.setState({ client: client() as never, approvals: { ap_1: ask() }, agents: {}, swarms: {}, deciding: {}, toasts: [] })
@@ -50,6 +71,7 @@ beforeEach(() => {
   vi.spyOn(performance, 'now').mockImplementation(() => clock)
 })
 afterEach(() => {
+  roots.splice(0).forEach(root=>root.unmount())
   vi.restoreAllMocks()
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
@@ -72,11 +94,11 @@ describe('S5: the surface-preview approval hold is said honestly, never as a fai
 
   it('Professional, Cosmos, Flux (the shared dialog): Approve once closes the dialog; never "Not confirmed as approved"', async () => {
     const { store } = await buildAs('surface-preview')
-    const { ApprovalDecision } = await import('./ApprovalDecision')
     const { decisionShown } = await import('../lib/decisionGate')
     const { APPROVAL_UNCONFIRMED } = await import('../lib/approvalDecision')
-    renderToStaticMarkup(createElement(ApprovalDecision, { seen: ask(), session: store.getState().session, onClose: () => undefined }))
     for (const label of ['Approve once', 'Deny']) {
+      window.location.hash='#/'
+      await mountApproval(store.getState().session)
       const r = await dialog!.actions.find((a) => a.label === label)!.run()
       expect(r).not.toEqual({ failed: APPROVAL_UNCONFIRMED })
       expect(decisionShown(r as never).kind).toBe('close')
@@ -102,8 +124,7 @@ describe('S5: the surface-preview approval hold is said honestly, never as a fai
   it('a release build does not hold: the SDK answers through the store, and the dialog approves', async () => {
     const { sdk, store } = await buildAs('production')
     expect(sdk.useHive.getState().decide).toBe(store.getState().decide)
-    const { ApprovalDecision } = await import('./ApprovalDecision')
-    renderToStaticMarkup(createElement(ApprovalDecision, { seen: ask(), session: store.getState().session, onClose: () => undefined }))
+    await mountApproval(store.getState().session)
     expect(await dialog!.actions.find((a) => a.label === 'Approve once')!.run()).toBe(true)
     expect(answers).toEqual(['ap_1'])
     expect(window.location.hash).toBe('#/')

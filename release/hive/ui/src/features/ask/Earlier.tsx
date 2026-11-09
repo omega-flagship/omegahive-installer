@@ -180,7 +180,7 @@ function EarlierFor({ onClose }: { onClose: () => void }) {
           {rows.map((t) => {
             const w = keptWords(t)
             return (
-              <li key={t.turn_id} style={{ padding: '6px 0', borderTop: '1px solid rgb(255 255 255 / 0.06)' }}>
+              <li key={t.turn_id} style={{ padding: '6px 0', borderTop: '1px solid color-mix(in oklab, var(--color-ink) 6%, transparent)' }}>
                 <div className="ask-row-text" style={w.removed ? { opacity: 0.7, fontStyle: 'italic' } : undefined}>{w.text}</div>
                 <div className="ask-row-note">
                   {ago(t.created_at)}

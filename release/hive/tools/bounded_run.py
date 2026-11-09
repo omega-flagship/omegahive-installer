@@ -1,8 +1,8 @@
 """Bounded run: start named minds for named goals, watch, and stop them all on the first end condition.
 
-    python -m hive.tools.bounded_run \
-        --minds a_00000001,a_00000002 --goals g_…,g_… --ceiling-usd 1.0 --timeout-min 20 \
-        --out receipts/<name>.json [--restart-after g_…:a_…]
+    .runtime/venv312/bin/python -m hive.tools.bounded_run \
+        --minds a_a19be7ca,a_b07e2425 --goals g_…,g_… --ceiling-usd 1.0 --timeout-min 20 \
+        --out <receipts-dir>/<name>.json [--restart-after g_…:a_…]
 
 Refuses to start unless every mind is stopped, every goal is open (or already claimed by one of the minds),
 and every mind carries its own hard 'total' spending rule with the rules summing to at most the ceiling

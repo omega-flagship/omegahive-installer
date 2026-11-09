@@ -25,7 +25,7 @@ export interface FormProps {
   /** Tell the host which item the person is looking at (null: none). */
   focus: (itemId: string | null) => void
   busy?: boolean
-  /** Who is looking (a form may show the owner their own record and anyone else an empty view or an explicit sample). */
+  /** Who is looking (Atlas: the owner sees their own record; anyone else an empty Atlas or an explicit sample). */
   viewer?: { isOwner: boolean }
   /**
    * The program's view() for another focus and stage, bound by the host to this program and swarm. A read only: it
@@ -71,32 +71,37 @@ export interface ActContext {
 export const baseRevisionOf = (ctx: ActContext | undefined, sessionRevision: string | null | undefined): string | null =>
   ctx && ctx.baseRevision !== undefined ? ctx.baseRevision : (sessionRevision ?? null)
 
-/**
- * Forms that belong to closed-source apps (for example the case file and the body map) ship with those apps, in their
- * own repositories; such a program opens on the generic host stage or in its own pinned frame here.
- */
-export type FormId = 'commons' | 'design-canvas'
+export type FormId = 'case-file' | 'life-map' | 'commons' | 'design-canvas'
 
 /** Programs that always open as a given form. */
-const BY_PROGRAM: Record<string, FormId> = { 'commons-explorer': 'commons', omegadesign: 'design-canvas' }
+const BY_PROGRAM: Record<string, FormId> = { omegatruth: 'case-file', atlas: 'life-map', 'commons-explorer': 'commons', omegadesign: 'design-canvas' }
 
 /**
  * Programs that ship their own interface (a pinned frame) AND have a Surface form over the same data contract: the
- * form opens first, the app's own interface stays one choice away (Ω → View). Design's living canvas (the owner,
+ * form opens first, the app's own interface stays one choice away (Ω → View). Design's living canvas (Jon,
  * 2026-10-05: "one huge living canvas"); Design's engine, contract and custody are unchanged.
  */
 export const FORM_OVER_FRAME = new Set<string>(['omegadesign'])
 
-/** The form for a program, or null for the generic host stage. `describe` is reserved for forms chosen by shape. */
-export function formFor(programId: string, _describe: ProgramDescription | null): FormId | null {
-  return BY_PROGRAM[programId] ?? null
+/**
+ * The form for a program, or null for the generic host stage. A program whose kinds cover the question, claim
+ * and evidence roles is an argument about a question, so it gets the case file.
+ */
+export function formFor(programId: string, describe: ProgramDescription | null): FormId | null {
+  const fixed = BY_PROGRAM[programId]
+  if (fixed) return fixed
+  const roles = new Set((describe?.kinds ?? []).map((k) => k.role))
+  if (roles.has('question') && roles.has('claim') && roles.has('evidence')) return 'case-file'
+  return null
 }
 
 /** Grammars a form has its own rendering for; the others use its classic rendering for now. */
-export const NATIVE_GRAMMARS: Record<FormId, Grammar[]> = { commons: ['classic', 'still', 'canvas'], 'design-canvas': ['classic'] }
+export const NATIVE_GRAMMARS: Record<FormId, Grammar[]> = { 'case-file': ['classic', 'still', 'construct'], 'life-map': ['classic', 'still', 'cosmos'], commons: ['classic', 'still', 'canvas'], 'design-canvas': ['classic'] }
 
 /** Form components, loaded on first use so the forms never weigh on the app's first paint. */
 export const FORMS: Record<FormId, LazyExoticComponent<ComponentType<FormProps>>> = {
+  'case-file': lazy(() => import('./caseFile/CaseFile')),
+  'life-map': lazy(() => import('./lifeMap/LifeMap')),
   commons: lazy(() => import('./commons/Commons')),
   'design-canvas': lazy(() => import('./designCanvas/DesignCanvas')),
 }

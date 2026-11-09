@@ -216,10 +216,11 @@ describe.skipIf(!fs.existsSync(executablePath))('app frame in a real browser (r1
   })
 
   describe('existing apps still run (read from disk when present; nothing is copied)', () => {
+    const home = env.HOME ?? '/nonexistent' // the local checkouts live under the user's home; absent elsewhere, so skipped
     const apps: { name: string; dir: string; scripts?: string[]; readyMessage: boolean }[] = [
-      { name: 'Private app', dir: '/home/user/private-app/ui', readyMessage: true },
-      { name: 'Design Studio', dir: '/home/user/OmegaDot/omegadesign/program/ui', readyMessage: true },
-      { name: 'Design r3 parts proof', dir: '/home/user/OmegaDot/omegadesign/poc/studio_model_parts_root_cloud_r3_20261007/proof',
+      { name: 'Atlas', dir: `${home}/atlas/local-imports/atlas-native-qualification/programs/atlas/ui`, readyMessage: true },
+      { name: 'Design Studio', dir: `${home}/OmegaDot/omegadesign/program/ui`, readyMessage: true },
+      { name: 'Design r3 parts proof', dir: `${home}/OmegaDot/omegadesign/poc/studio_model_parts_root_cloud_r3_20261007/proof`,
         scripts: ['native-three.js', 'native-three-addons.js', 'app.js'], readyMessage: false },
     ]
     const ready = (m: Msg[]) => m.some((x) => (x.data as { type?: string } | null)?.type === 'app-ready')

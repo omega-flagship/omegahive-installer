@@ -11,12 +11,12 @@ vi.mock('../tour/introStore', () => ({ useIntro: { getState: () => ({ setHelp: (
 /** No candidate is pending (professional-release-r1 released the last one). A new candidate is listed here. */
 const CANDIDATES: string[] = []
 /**
- * Released after their whole-experience SHIPs: offered, chromed, covered and skinned in every build. OmegaTown: the owner
+ * Released after their whole-experience SHIPs: offered, chromed, covered and skinned in every build. OmegaTown: Jon
  * 2026-10-08. Professional: professional-release-r1 (SURFACE_PROFESSIONAL_RELEASE_R1_STANDIN_VERDICT.md and
  * SURFACE_PROFESSIONAL_RELEASE_R1_KIMI_VERDICT.md).
  */
-const RELEASED = ['omegatown', 'professional']
-const SKIN_OF: Record<string, string> = { omegatown: 'town-capsule', professional: 'professional' }
+const RELEASED = ['professional']   // OmegaTown removed everywhere (Jon 2026-11-02)
+const SKIN_OF: Record<string, string> = { professional: 'professional' }
 const ids = (l: { id: string }[]) => l.map((e) => e.id)
 
 async function buildAs(mode: string, extra: Record<string, string> = {}) {
@@ -109,7 +109,7 @@ describe('the registry gate in production builds', () => {
     expect(b.marker).toBeNull()
   }, 35_000)
 
-  it('a default production build offers OmegaTown and Professional, each with its own chrome, coverage row and Ask skin', async () => {
+  it('a default production build offers Professional with its own chrome, coverage row and Ask skin, and never OmegaTown', async () => {
     for (const mode of ['production', 'demo']) {
       const b = await buildAs(mode)
       expect(b.registry.UNREVIEWED_ALLOWED).toBe(false)
@@ -121,6 +121,8 @@ describe('the registry gate in production builds', () => {
         expect(b.NATIVE[id]).toBeDefined()
         expect(b.ASK_SKINS[id]).toBe(SKIN_OF[id])
       }
+      expect(ids(b.registry.EXPERIENCES)).not.toContain('omegatown')
+      expect(b.registry.experienceById('omegatown').id).toBe('classic')   // a saved OmegaTown opens the Classic hive
       expect(b.NATIVE.professional).toEqual(['minds.see', 'minds.talk', 'minds.wake', 'swarms.see', 'work.motivations', 'work.goals', 'decide.approvals', 'apps.list', 'watch.activity', 'hive.search', 'hive.changeui', 'hive.help'])
     }
   }, 35_000)

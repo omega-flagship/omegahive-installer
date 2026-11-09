@@ -124,6 +124,7 @@ const RAW: [string, RegExp][] = [
 /** Exact file:line, the line's text, and why it is not a belief shown to people. */
 const ALLOW: { at: string; has: string; why: string }[] = [
   { at: 'features/keys/AskMemorySection.tsx:76', has: '{b.statement}', why: 'the Ask\'s own memories: sentences the person wrote, not notation' },
+  { at: 'features/programs/AppMemory.tsx:125', has: '{b.statement}', why: 'an app\'s kept notes, shown in the words they were written in (the person corrects them as words), not notation' },
 ]
 
 describe('standing guard: no belief reaches the screen as notation (uifix-r3)', () => {

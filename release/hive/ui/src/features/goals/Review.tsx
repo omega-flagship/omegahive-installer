@@ -53,7 +53,7 @@ export function ReviewDialog({ seen, decision, onClose }: { seen: Goal; decision
     >
       <label className="block">
         <span className="text-[12px] text-ink-3">{accept ? 'Notes (optional), recorded with the review' : 'What should change? The mind gets these notes.'}</span>
-        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className="mt-1 w-full resize-y rounded-xl border border-line bg-black/30 px-3 py-2 text-[13px] text-ink outline-none focus:border-line-2" />
+        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className="mt-1 w-full resize-y rounded-xl border border-line bg-shade/30 px-3 py-2 text-[13px] text-ink outline-none focus:border-line-2" />
       </label>
       <p className="text-meta leading-snug text-ink-4">{accept ? 'Accepting makes the task done and records you as its reviewer.' : 'Returning sends it back to the same mind with your notes; after repeated returns the hive fails the task.'}</p>
     </DecisionDialog>
@@ -69,7 +69,7 @@ export function ReviewHistory({ goal }: { goal: Goal }) {
   const res = useResource(() => need(client, 'goalReviews', 'Review history')(goal.id), { context: goal.id, key: goal.updated_at })
   if (!has(client, 'goalReviews') || res.status === 'unsupported') return null
   return (
-    <div className="rounded-lg border border-line bg-black/20 px-2.5 py-1.5 text-[11.5px]" data-review-history>
+    <div className="rounded-lg border border-line bg-shade/20 px-2.5 py-1.5 text-[11.5px]" data-review-history>
       <div className="mb-0.5 text-ink-4">Review history</div>
       {res.status === 'loading' ? (
         <span className="text-ink-4">Loading…</span>

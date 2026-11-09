@@ -60,7 +60,7 @@ export function AppInstall({ programId, name, admin }: { programId: string; name
       {admin && has(client, 'installProgram') && status.release_digest && (
         <>
           {person ? (
-            <fieldset className="rounded-xl border border-line bg-black/20 p-3">
+            <fieldset className="rounded-xl border border-line bg-shade/20 p-3">
               <legend className="px-1 text-ink-3">Who can use it</legend>
               <label className="flex min-h-9 items-center gap-2"><input type="radio" checked={everyone} onChange={() => setEveryone(true)} /> {status.person_allow === 'all' ? 'Everyone in this hive' : 'Everyone the app allows'}</label>
               <label className="flex min-h-9 items-center gap-2"><input type="radio" checked={!everyone} onChange={() => setEveryone(false)} /> Only these people</label>
@@ -73,7 +73,7 @@ export function AppInstall({ programId, name, admin }: { programId: string; name
               )}
             </fieldset>
           ) : (
-            <fieldset className="rounded-xl border border-line bg-black/20 p-3">
+            <fieldset className="rounded-xl border border-line bg-shade/20 p-3">
               <legend className="px-1 text-ink-3">Use in</legend>
               <ul className="max-h-48 space-y-1 overflow-y-auto">
                 {Object.values(swarms).map((s) => (

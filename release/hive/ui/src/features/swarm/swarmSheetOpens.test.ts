@@ -48,6 +48,7 @@ describe('item 5: the swarm sheet while its view loads', () => {
     expect(app).toMatch(/<Lazy key=\{`swarm-\$\{route\.id\}`\} fallback=\{<SwarmSheetSkeleton id=\{route\.id\} \/>\}>/)
     const index = src('./SwarmsIndex.tsx')
     expect(index).toMatch(/useEffect\(\(\) => warmSwarmView\(\), \[\]\)/)
-    expect(index).toMatch(/onPointerEnter=\{warmSwarmView\} onFocus=\{warmSwarmView\}/)
+    // the cards are composed by MeTTa now: the frame around them warms the sheet when a card is hovered or focused
+    expect(index).toMatch(/onPointerOver=\{warmSwarmView\} onFocus=\{warmSwarmView\}/)
   })
 })

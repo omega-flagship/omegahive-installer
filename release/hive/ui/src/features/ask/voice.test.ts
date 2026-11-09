@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
- * Voice for the universal Ask (Phase 3, browser on-device speech first; the owner's ruling relayed by Platform 2026-10-06).
+ * Voice for the universal Ask (Phase 3, browser on-device speech first; Jon's ruling relayed by Platform 2026-10-06).
  * A fake SpeechRecognition stands in for the browser's: it records what the page set and started, and plays interim
  * and final results, errors and the end of a session. Invented people and words only; no microphone, no network, no
  * model. The words leave only through the field's own path (askMind: a request, or a steer while it works).
@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const loc = { hash: '#/', search: '', pathname: '/' }
 const kv = new Map<string, string>()
 const storage = { getItem: (k: string) => kv.get(k) ?? null, setItem: (k: string, v: string) => void kv.set(k, v), removeItem: (k: string) => void kv.delete(k) }
-vi.stubGlobal('window', { location: loc, matchMedia: () => ({ matches: false }), localStorage: storage })
+vi.stubGlobal('window', Object.assign(new EventTarget(), { location: loc, matchMedia: () => ({ matches: false }), localStorage: storage }))
 vi.stubGlobal('localStorage', storage)
 vi.mock('../../lib/router', async (orig) => {
   const real = await orig<typeof import('../../lib/router')>()

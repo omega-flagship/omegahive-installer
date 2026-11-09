@@ -39,7 +39,7 @@ def not_yours(response, key=None):
     """Refused exactly as a key that does not exist: same status, code and wording (no probing of key ids)."""
     err = response.json().get("error", {}) if response.status_code >= 400 else {}
     return (response.status_code == 404 and err.get("code") == "unknown_key"
-            and (key is None or err.get("message") == f"no key {key}"))
+            and (key is None or err.get("message") == "no such key") and (key is None or key not in response.text))
 
 
 def stored_key(hive, agent_id):
@@ -202,13 +202,13 @@ def bundle(agent_id, options):
 def test_member_import_with_someone_elses_key_is_refused(w):
     c, hive = w.client, w.hive
     r = c.post(f"/api/agents/import?swarm_id={w.bob_swarm['id']}", headers=w.bob,
-               content=bundle("a_oi13aaaa", {"key": K_ANN}))
+               content=bundle("a_0013aaaa", {"key": K_ANN}))
     assert not_yours(r, K_ANN), r.text
-    assert hive.db.one("SELECT 1 FROM agents WHERE id = ?", ("a_oi13aaaa",)) is None
+    assert hive.db.one("SELECT 1 FROM agents WHERE id = ?", ("a_0013aaaa",)) is None
     r = c.post(f"/api/agents/import?swarm_id={w.bob_swarm['id']}", headers=w.bob,
-               content=bundle("a_oi13bbbb", {"key": K_BOB}))
+               content=bundle("a_0013bbbb", {"key": K_BOB}))
     assert r.status_code == 200, r.text
-    assert stored_key(hive, "a_oi13bbbb") == K_BOB
+    assert stored_key(hive, "a_0013bbbb") == K_BOB
 
 
 def test_import_with_an_unknown_key_is_refused_like_create(w):
@@ -216,29 +216,29 @@ def test_import_with_an_unknown_key_is_refused_like_create(w):
     c, hive = w.client, w.hive
     for headers in (w.bob, w.ann):
         r = c.post(f"/api/agents/import?swarm_id={w.bob_swarm['id']}", headers=headers,
-                   content=bundle("a_oi13cccc", {"key": "k_0ddba11f"}))
+                   content=bundle("a_0013cccc", {"key": "k_0ddba11f"}))
         assert not_yours(r, "k_0ddba11f"), r.text
-    assert hive.db.one("SELECT 1 FROM agents WHERE id = ?", ("a_oi13cccc",)) is None
+    assert hive.db.one("SELECT 1 FROM agents WHERE id = ?", ("a_0013cccc",)) is None
 
 
 def test_import_keeps_tools_admin_only(w):
     """Stand-in P1 2: a member's bundle may not carry options.tools (create and PATCH reserve them to admins)."""
     c, hive = w.client, w.hive
     tools = {"tools": ["omegahive.tools.attention@0.1.0"]}
-    r = c.post(f"/api/agents/import?swarm_id={w.bob_swarm['id']}", headers=w.bob, content=bundle("a_oi13dddd", tools))
+    r = c.post(f"/api/agents/import?swarm_id={w.bob_swarm['id']}", headers=w.bob, content=bundle("a_0013dddd", tools))
     assert r.status_code == 403 and code(r) == "admin_only", r.text
-    assert hive.db.one("SELECT 1 FROM agents WHERE id = ?", ("a_oi13dddd",)) is None
+    assert hive.db.one("SELECT 1 FROM agents WHERE id = ?", ("a_0013dddd",)) is None
     r = c.post(f"/api/agents/import?swarm_id={w.bob_swarm['id']}", headers=w.bob,
-               content=bundle("a_oi13eeee", {"tools": "not a list"}))
+               content=bundle("a_0013eeee", {"tools": "not a list"}))
     assert r.status_code == 400 and code(r) == "bad_options", r.text
 
 
 def test_imported_options_are_stored_clean(w):
     c, hive = w.client, w.hive
     r = c.post(f"/api/agents/import?swarm_id={w.bob_swarm['id']}", headers=w.bob,
-               content=bundle("a_oi13ffff", {"key": K_BOB, "junk": 1}))
+               content=bundle("a_0013ffff", {"key": K_BOB, "junk": 1}))
     assert r.status_code == 200, r.text
-    assert json.loads(hive.db.one("SELECT options FROM agents WHERE id = ?", ("a_oi13ffff",))["options"]) == {"key": K_BOB}
+    assert json.loads(hive.db.one("SELECT options FROM agents WHERE id = ?", ("a_0013ffff",))["options"]) == {"key": K_BOB}
 
 
 def test_key_listing_offers_a_member_only_what_they_may_assign(w):

@@ -30,17 +30,17 @@
     },
     {
       "source": "sha256:0fd0efe3972f34a3717886435e7b6123d22d657757911c59cdf127dd96a4005a",
-      "locator": "workspace:coordination/omegacode/intake/predictive-coding/observatory-r11/CODE_R11_CUSTODY_RECEIPT_R1.json",
+      "locator": "workspace:omegacode/intake/predictive-coding/observatory-r11/CODE_R11_CUSTODY_RECEIPT_R1.json",
       "origin": "local-retained-artifact-validation"
     },
     {
       "source": "sha256:ee30820144cd466aa355169b6592504a40c5c3ce3c0dc9167add4ba322df2840",
-      "locator": "workspace:coordination/omegacode/intake/predictive-coding/observatory-r11/CODE_R11_RETAINED_RESULTS_BINDING_R1.json",
+      "locator": "workspace:omegacode/intake/predictive-coding/observatory-r11/CODE_R11_RETAINED_RESULTS_BINDING_R1.json",
       "origin": "local-retained-artifact-validation"
     },
     {
       "source": "sha256:979ea664f602a4acb0f84303d07bec60bcd9c1c32429945524d0690ebe62c1b6",
-      "locator": "workspace:coordination/omegacode/intake/predictive-coding/observatory-r11/CODE_R11_FIT_DECLARATIONS_BINDING_R1.json",
+      "locator": "workspace:omegacode/intake/predictive-coding/observatory-r11/CODE_R11_FIT_DECLARATIONS_BINDING_R1.json",
       "origin": "local-retained-artifact-validation"
     }
   ],

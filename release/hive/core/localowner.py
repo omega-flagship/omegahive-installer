@@ -1,13 +1,14 @@
 """The local-owner hive (J1 installers, round J1b): a hive installed on one person's own computer.
 
 Everything here is inert unless HIVE_LOCAL_OWNER=1 (set only by the J1 launchers). Design: PLATFORM_J1_INSTALLER_DESIGN
-r2 A/B/C/F, r3 N, r4 KM3, r4.1 K-3 (coordination/omegareview/).
+r2 A/B/C/F, r3 N, r4 KM3, r4.1 K-3 (internal review notes).
 
 - The owner (r2 A, r3 K1, r4 KM3): on first boot one ``people`` row (admin, ``owner@local.invalid``, invited_by
   ``local-install``) is created and stored as the hive owner (``hive_owner.via = 'local-install'``, plus a log row).
 - The control socket (r2 A): ``<data>/run/control.sock`` in a 0700 folder; a connection is served only when the peer's
   uid is this process's uid (LOCAL_PEERCRED on macOS, SO_PEERCRED on Linux). It reports the port and issues sign-in
-  codes. No reusable credential exists anywhere.
+  codes; on Linux its hello also states the executable's device/inode and its listener's inode (self_identity), which
+  a non-dumpable process cannot have read from outside. No reusable credential exists anywhere.
 - The sign-in code (r2 A): 256 random bits, valid 60 s, tied to this process's instance id, stored hashed, consumed
   atomically once (``UPDATE ... WHERE used = 0``), exchanged for a session of kind ``sso`` with the owner's principal.
 - The browser boundary (r2 B, r3 K3/N): LocalBoundary is the outermost middleware: an exact Host allowlist (421),
@@ -205,6 +206,8 @@ def prepare_process():
         import resource
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     if sys.platform.startswith("linux"):
+        global _EXE_AT_START
+        _EXE_AT_START = _exe_identity_now()   # read before the process stops being dumpable (self_identity)
         with contextlib.suppress(Exception):
             import ctypes
             ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0)   # PR_SET_DUMPABLE = 4, value 0
@@ -214,6 +217,95 @@ def prepare_process():
         sys.stdout = redact.ScrubbingStream(sys.stdout)
     if not isinstance(sys.stderr, redact.ScrubbingStream):
         sys.stderr = redact.ScrubbingStream(sys.stderr)
+
+
+# ---- self identity (Linux) -------------------------------------------------------------------------------------------
+#
+# The process is not dumpable (prepare_process), so no other process, not even the installer running as the same
+# account, can read /proc/<pid>/exe or /proc/<pid>/fd. The hive therefore states, in its control hello, the two facts
+# the installer's front door needs to tie its executable and its loopback listener to this process:
+#
+#   "exe":            {"dev": int, "ino": int}  the device and inode of /proc/self/exe (no path, nothing else)
+#   "listener_inode": "<decimal>"               the inode of the one LISTEN socket on 127.0.0.1:<port> held by this process
+#
+# On Linux both keys are always present; a value the hive cannot establish is null, never a guess, so a checker that
+# sees null refuses. On other platforms there is no /proc and no consumer: the keys are absent.
+
+SELF_TCP_MAX = 4 * 1024 ** 2
+_EXE_AT_START = None   # set by prepare_process before PR_SET_DUMPABLE; the executable cannot change without exec
+
+
+def _exe_identity_now():
+    try:
+        st = os.stat("/proc/self/exe")
+    except OSError:
+        return None
+    return {"dev": int(st.st_dev), "ino": int(st.st_ino)}
+
+
+def listen_inodes(raw, port, uid):
+    """Inodes of LISTEN sockets on 127.0.0.1:<port> owned by uid, from the text of /proc/<pid>/net/tcp."""
+    local = "0100007F:" + format(int(port), "04X")
+    out = set()
+    for line in raw.splitlines()[1:]:
+        fields = line.split()
+        if (len(fields) >= 10 and fields[1] == local and fields[3] == "0A" and fields[7] == str(uid)
+                and fields[9].isdecimal() and int(fields[9]) > 0):
+            out.add(fields[9])
+    return out
+
+
+def socket_inodes(targets):
+    """Socket inodes from fd link targets ("socket:[123]")."""
+    out = set()
+    for target in targets:
+        if target.startswith("socket:[") and target.endswith("]") and target[8:-1].isdecimal():
+            out.add(target[8:-1])
+    return out
+
+
+def _read_self_tcp():
+    fd = os.open("/proc/self/net/tcp", os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        raw = b""
+        while len(raw) <= SELF_TCP_MAX:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            raw += chunk
+    finally:
+        os.close(fd)
+    if len(raw) > SELF_TCP_MAX:
+        return None
+    return raw.decode("ascii", "replace")
+
+
+def _own_fd_targets():
+    targets = []
+    for name in os.listdir("/proc/self/fd"):
+        with contextlib.suppress(OSError):
+            targets.append(os.readlink("/proc/self/fd/" + name))
+    return targets
+
+
+def _listener_inode_now(port):
+    try:
+        raw = _read_self_tcp()
+        if raw is None:
+            return None
+        held = listen_inodes(raw, port, os.getuid()) & socket_inodes(_own_fd_targets())
+    except OSError:
+        return None
+    return next(iter(held)) if len(held) == 1 else None
+
+
+def self_identity(port, platform=None):
+    """The hello's self-identity fields: {"exe": ..., "listener_inode": ...} on Linux, {} elsewhere (see above)."""
+    platform = sys.platform if platform is None else platform
+    if not platform.startswith("linux"):
+        return {}
+    exe = _EXE_AT_START if _EXE_AT_START is not None else _exe_identity_now()
+    return {"exe": dict(exe) if exe is not None else None, "listener_inode": _listener_inode_now(port)}
 
 
 # ---- peer credentials ------------------------------------------------------------------------------------------------
@@ -345,29 +437,6 @@ class LocalOwner:
         from .hive import token_hash
         return bool(token) and self.hive.db.one("SELECT 1 AS one FROM sessions WHERE token_hash = ?", (token_hash(token),)) is not None
 
-    def self_identity(self):
-        """What a client cannot read about this process once it is not dumpable (prepare_process): its executable's
-        identity and the inode of its loopback listener. Only the process itself may read /proc/self/fd and exe."""
-        if not sys.platform.startswith("linux"):
-            return {}
-        exe = os.stat("/proc/self/exe")
-        local = "0100007F:" + format(self.port, "04X")
-        listening = set()
-        with open("/proc/self/net/tcp", "rb") as stream:
-            for line in stream.read(4 * 1024 ** 2).decode("ascii", "replace").splitlines()[1:]:
-                fields = line.split()
-                if len(fields) >= 10 and fields[1] == local and fields[3] == "0A" and fields[7] == str(os.getuid()):
-                    listening.add(fields[9])
-        mine = set()
-        for name in os.listdir("/proc/self/fd"):
-            with contextlib.suppress(OSError):
-                target = os.readlink("/proc/self/fd/" + name)
-                if target.startswith("socket:[") and target.endswith("]"):
-                    mine.add(target[8:-1])
-        held = sorted(listening & mine)
-        return {"exe": {"dev": exe.st_dev, "ino": exe.st_ino},
-                "listener_inode": held[0] if len(held) == 1 else None}
-
     def status(self):
         return {"local_owner": True, "instance": self.instance, "port": self.port, "pid": os.getpid(),
                 "owner": self.principal, "preflight": self.preflight}
@@ -412,7 +481,7 @@ class LocalOwner:
         """One control request (a JSON object with "op") -> one JSON answer. The caller already passed the uid check."""
         op = request.get("op") if isinstance(request, dict) else None
         if op == "hello":
-            return dict(self.status(), ok=True, **self.self_identity())
+            return dict(self.status(), ok=True, **self_identity(self.port))
         if op == "signin":
             if self.principal is None:
                 return {"ok": False, "error": "no_owner"}

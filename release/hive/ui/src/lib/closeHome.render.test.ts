@@ -11,7 +11,7 @@ import { fakeBrowser } from './closeHome.testkit'
  */
 
 // ---- a minimal hook runtime: one component render at a time; state survives re-renders until `unmount()` ----
-const rt = { slots: new Map<string, unknown[]>(), cur: [] as unknown[], i: 0 }
+const rt = { slots: new Map<string, unknown[]>(), cur: [] as unknown[], i: 0, dirty: false, pending: [] as (() => void)[] }
 let escape: (() => void) | null = null
 let desktop = true
 vi.mock('react', async (orig) => {
@@ -25,13 +25,17 @@ vi.mock('react', async (orig) => {
     ...real,
     useState: <T,>(init: T | (() => T)) => {
       const s = slot(() => (typeof init === 'function' ? (init as () => T)() : init))
-      return [s.v, (v: T | ((p: T) => T)) => (s.v = typeof v === 'function' ? (v as (p: T) => T)(s.v) : v)]
+      return [s.v, (v: T | ((p: T) => T)) => { const next=typeof v === 'function' ? (v as (p: T) => T)(s.v) : v; if(!Object.is(next,s.v)){s.v=next;rt.dirty=true} }]
     },
     useRef: <T,>(init: T) => slot(() => ({ current: init })).v,
     useMemo: <T,>(f: () => T) => f(),
     useCallback: <T,>(f: T) => f,
     useEffect: () => undefined,
-    useLayoutEffect: () => undefined,
+    useLayoutEffect: (fn:()=>void|(()=>void),deps?:unknown[]) => {
+      const state=slot(()=>({effect:true,deps:undefined as unknown[]|undefined,cleanup:undefined as void|(()=>void),fresh:true})).v
+      if(state.fresh||!deps||!state.deps||deps.length!==state.deps.length||deps.some((v,i)=>!Object.is(v,state.deps![i])))rt.pending.push(()=>{state.cleanup?.();state.deps=deps;state.fresh=false;state.cleanup=fn()})
+    },
+    useContext: (context: { _currentValue?: unknown }) => context._currentValue,
     useId: () => 'id',
     useSyncExternalStore: <T,>(_s: unknown, get: () => T) => get(),
   }
@@ -69,11 +73,16 @@ function all(node: unknown, out: El[] = []): El[] {
 /** Render one component (its own hooks only; child components stay elements until `expand`). */
 function render<P>(key: string, C: (p: P) => unknown, props: P): ReactElement {
   if (!rt.slots.has(key)) rt.slots.set(key, [])
-  rt.cur = rt.slots.get(key)!
-  rt.i = 0
-  return C(props) as ReactElement
+  let tree:ReactElement
+  for(let n=0;n<20;n++){
+    rt.cur=rt.slots.get(key)!;rt.i=0;rt.dirty=false;rt.pending=[]
+    tree=C(props) as ReactElement
+    rt.pending.forEach(effect=>effect())
+    if(!rt.dirty)return tree
+  }
+  throw new Error('controlled layout effects did not settle')
 }
-const unmount = (key: string) => rt.slots.delete(key)
+const unmount = (key: string) => {for(const entry of rt.slots.get(key)??[]){const state=(entry as {v?:{effect?:boolean;cleanup?:()=>void}}).v;if(state?.effect)state.cleanup?.()}rt.slots.delete(key)}
 const find = (el: unknown, pick: (e: El) => boolean): El => {
   const hit = all(el).find(pick)
   if (!hit) throw new Error('not rendered')
@@ -87,6 +96,7 @@ let heard: number
 async function boot(first: string) {
   vi.resetModules()
   b = fakeBrowser(first)
+  vi.stubGlobal('document', { hidden: false, documentElement: { lang: 'en-GB', style: { setProperty() {}, removeProperty() {} }, dataset: {} }, body: {}, activeElement: null, querySelector: () => null, querySelectorAll: () => [], addEventListener() {}, removeEventListener() {}, createElement: () => ({ style: {}, setAttribute() {} }) })
   r = await import('./router')
   heard = 0
   r.onHomeRequested(() => heard++)
@@ -94,7 +104,7 @@ async function boot(first: string) {
   rt.slots.clear()
 }
 beforeEach(() => vi.unstubAllGlobals())
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {for(const key of [...rt.slots.keys()])unmount(key);vi.unstubAllGlobals()})
 
 describe('the shared page, rendered', { timeout: 30_000 }, () => {
   it('its X goes home and sends home:requested; its Esc steps back and sends nothing', async () => {
@@ -165,13 +175,20 @@ describe('the mind panel and Create a mind, rendered', { timeout: 30_000 }, () =
 describe('Canvas conversation, rendered', { timeout: 30_000 }, () => {
   const agent = { id: 'a1', name: 'Juniper', hue: 200, model: 'synthetic/model', status: 'awake', kind: 'omega', swarm_id: null, created_at: '2026-10-08T00:00:00Z' }
   const rect = { x: 0, y: 0, w: 100, h: 100 }
+  async function conversation(props: Parameters<typeof import('../experiences/canvas/chat').ChatCard>[0]) {
+    const {CanvasActionBoundary}=await import('../experiences/canvas/actionAuthority')
+    const owner=render('canvas-owner',CanvasActionBoundary,{children:null})
+    ;(owner.type as unknown as {_currentValue:unknown})._currentValue=(owner.props as {value:unknown}).value
+    const {ChatCard}=await import('../experiences/canvas/chat')
+    return render('chat',ChatCard,props)
+  }
+
 
   it('Esc closes just the conversation; the X goes home with home:requested', async () => {
     await boot('#/')
-    const { ChatCard } = await import('../experiences/canvas/chat')
     let dismissed = 0
     const props = { r: rect, agent: agent as never, phase: undefined, now: 0, reduced: true, onCloseX: r.closeToHome, onDismiss: () => dismissed++ }
-    const el = render('chat', ChatCard, props)
+    const el = await conversation(props)
     const root = find(el, (e) => e.props?.role === 'dialog')
     ;(root.props!.onKeyDown as (e: unknown) => void)({ key: 'Escape', preventDefault: () => undefined, stopPropagation: () => undefined })
     expect([dismissed, heard, b.location.hash]).toEqual([1, 0, '#/'])
@@ -182,13 +199,12 @@ describe('Canvas conversation, rendered', { timeout: 30_000 }, () => {
 
   it('a typed draft survives: type, Open full page, the page’s X (home:requested closes the card), reopen: intact', async () => {
     await boot('#/')
-    const { ChatCard } = await import('../experiences/canvas/chat')
     const { Page } = await import('../ui/Page')
     const props = { r: rect, agent: agent as never, phase: undefined, now: 0, reduced: true, onCloseX: r.closeToHome, onDismiss: () => undefined }
-    let el = render('chat', ChatCard, props)
+    let el = await conversation(props)
     const box = () => find(el, (e) => e.type === 'textarea')
     ;(box().props!.onChange as (e: unknown) => void)({ target: { value: 'half a thought' } })
-    el = render('chat', ChatCard, props)
+    el = await conversation(props)
     expect(box().props!.value).toBe('half a thought')
     ;(find(el, byLabel('Open the full page for this mind')).props!.onClick as () => void)()
     expect(b.location.hash).toBe('#/dot/a1')
@@ -196,7 +212,7 @@ describe('Canvas conversation, rendered', { timeout: 30_000 }, () => {
     const page = render('page', Page, { title: 'Juniper', label: 'Mind', children: null })
     ;(find(page, byLabel('Close')).props!.onClick as () => void)()
     expect([b.location.hash, heard]).toEqual(['#/', 1])
-    el = render('chat', ChatCard, props) // reopened
+    el = await conversation(props) // reopened
     expect(box().props!.value).toBe('half a thought')
   })
 })

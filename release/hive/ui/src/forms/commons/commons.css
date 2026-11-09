@@ -687,12 +687,12 @@
   inset: 0;
   pointer-events: none;
   background-image:
-    radial-gradient(1px 1px at 12% 18%, rgb(255 255 255 / 0.5), transparent 60%),
-    radial-gradient(1px 1px at 72% 12%, rgb(255 255 255 / 0.35), transparent 60%),
-    radial-gradient(1px 1px at 40% 64%, rgb(255 255 255 / 0.3), transparent 60%),
-    radial-gradient(1px 1px at 88% 52%, rgb(255 255 255 / 0.4), transparent 60%),
-    radial-gradient(1px 1px at 22% 86%, rgb(255 255 255 / 0.3), transparent 60%),
-    radial-gradient(1px 1px at 58% 34%, rgb(255 255 255 / 0.25), transparent 60%);
+    radial-gradient(1px 1px at 12% 18%, color-mix(in oklab, var(--color-ink) 50%, transparent), transparent 60%),
+    radial-gradient(1px 1px at 72% 12%, color-mix(in oklab, var(--color-ink) 35%, transparent), transparent 60%),
+    radial-gradient(1px 1px at 40% 64%, color-mix(in oklab, var(--color-ink) 30%, transparent), transparent 60%),
+    radial-gradient(1px 1px at 88% 52%, color-mix(in oklab, var(--color-ink) 40%, transparent), transparent 60%),
+    radial-gradient(1px 1px at 22% 86%, color-mix(in oklab, var(--color-ink) 30%, transparent), transparent 60%),
+    radial-gradient(1px 1px at 58% 34%, color-mix(in oklab, var(--color-ink) 25%, transparent), transparent 60%);
   background-size: 420px 380px;
 }
 .cm[data-grammar='classic'] > * {

@@ -1,4 +1,4 @@
-"""Archiving a swarm with history (the owner, 2026-10-05: retire the old Apps local swarm)."""
+"""Archiving a swarm with history (Jon 2026-10-05: retire the old Apps local swarm)."""
 import threading
 
 from hive.tests.test_core_api import client  # noqa: F401  (fixture: local operator, admin)

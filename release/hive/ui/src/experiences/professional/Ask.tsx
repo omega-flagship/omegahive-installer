@@ -51,7 +51,7 @@ export function ProfessionalAsk({ ctx, inputRef }: { ctx: string; inputRef: RefO
             own guarded key, and the Ask button sends only on its own click */}
         <form onSubmit={(e) => e.preventDefault()}>
           <div className="pr-ask-line">
-            <input ref={input} value={f.value} onChange={(e) => f.change(e.target.value)} onKeyDown={(e) => {
+            <input ref={input} data-ask-input="" value={f.value} onChange={(e) => f.change(e.target.value)} onKeyDown={(e) => {
               if (guardComposing(e) || !current(ctx) || e.defaultPrevented) return
               if (v.onFieldKey(e)) return
               f.onKeyDown(e)
@@ -69,8 +69,8 @@ export function ProfessionalAsk({ ctx, inputRef }: { ctx: string; inputRef: RefO
           </li>)}
         </ul>}
         <PanelView f={f} />
-        <AnswererInline chip={f.chip} answering={f.answering} may={() => current(ctx)} />
-        {f.answering && <p className="pr-muted" role="status">{f.answerer ?? 'The orchestrator'} is answering… <button type="button" className="pr-link" onClick={() => { if (current(ctx)) void useAskStore.getState().stop() }}>Stop</button></p>}
+        <AnswererInline look="professional" chip={f.chip ?? (f.answerer ? { kind: 'planned', name: f.answerer } : null)} answering={f.answering} may={() => current(ctx)} />
+        {f.answering && !f.preparing && <p className="pr-muted" role={f.waking ? undefined : 'status'} aria-live={f.waking ? 'off' : undefined}>{f.waking ? `Waking ${f.answerer ?? 'the orchestrator'}…` : `${f.answerer ?? 'The orchestrator'} is answering…`} <button type="button" className="pr-link" onClick={() => { if (current(ctx)) void useAskStore.getState().stop() }}>Stop</button></p>}
         {/* J3 r4.3 O3: the Studio setup card / Directing Studio shows even before the thread has rows */}
         {!(rows > 0 && threadOpen) && <DirectingStudio />}
         {rows > 0 && threadOpen && <div className="pr-ask-thread"><ThreadHead variant="letter" onClose={() => { if (current(ctx)) useAskStore.getState().setThreadOpen(false) }} /><Thread variant="letter" /></div>}

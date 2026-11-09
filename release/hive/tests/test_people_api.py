@@ -94,12 +94,12 @@ def domain_env(monkeypatch):
     yield from _env(monkeypatch)
 
 
-def _env(monkeypatch, webhost=False):
+def _env(monkeypatch, family=False):
     monkeypatch.setenv("HIVE_GOOGLE_CLIENT_ID", "cid")
     monkeypatch.setenv("HIVE_GOOGLE_CLIENT_SECRET", "shh")
     monkeypatch.setenv("HIVE_GOOGLE_REDIRECT_URI", "https://hive.example/omegahive/api/auth/google/callback")
     monkeypatch.setenv("HIVE_PUBLIC_BASE", "https://hive.example")
-    if not webhost:
+    if not family:
         monkeypatch.setenv("HIVE_SSO_USERS", "")
     tmp = tempfile.mkdtemp(prefix="hive-people-")
     settings = load_settings(data_dir=pathlib.Path(tmp), admin_password="pw", petta_path=PETTA, offline=True, base_path="/omegahive")
@@ -461,7 +461,7 @@ def test_two_domains_give_no_hint(monkeypatch):
 # ---- identity binding to Google's sub (FIX-FIRST 1) ----------------------------------------------------------------
 
 def _admin_env(monkeypatch, domains=""):
-    monkeypatch.setenv("HIVE_ADMIN_EMAILS", "owner@singularitynet.io")
+    monkeypatch.setenv("HIVE_ADMIN_EMAILS", "jon@singularitynet.io")
     monkeypatch.setenv("HIVE_SIGNIN_DOMAINS", domains)
     return _env(monkeypatch)
 
@@ -472,19 +472,19 @@ def test_standin_repro_consumer_account_never_gets_the_bound_admin(monkeypatch, 
     gen = _admin_env(monkeypatch, domains)
     c, google, admin = next(gen)
     try:
-        google.account = {"email": "owner@singularitynet.io", "email_verified": True, "hd": "singularitynet.io", "sub": "g-real"}
+        google.account = {"email": "jon@singularitynet.io", "email_verified": True, "hd": "singularitynet.io", "sub": "g-real"}
         r, _ = sign_in(c)
         assert r.headers["location"] == "/omegahive/"
-        quinn = _people(c, admin)["owner@singularitynet.io"]
-        assert quinn["role"] == "admin" and quinn["google_bound"] is True
-        google.account = {"email": "owner@singularitynet.io", "email_verified": True, "sub": "g-consumer"}
+        jon = _people(c, admin)["jon@singularitynet.io"]
+        assert jon["role"] == "admin" and jon["google_bound"] is True
+        google.account = {"email": "jon@singularitynet.io", "email_verified": True, "sub": "g-consumer"}
         r, _ = sign_in(c)
         assert _err(r) == "identity_mismatch" and not r.cookies.get("hive_signin")
         # even with an hd claim, a different subject is refused: no silent rebind
-        google.account = {"email": "owner@singularitynet.io", "email_verified": True, "hd": "singularitynet.io", "sub": "g-other"}
+        google.account = {"email": "jon@singularitynet.io", "email_verified": True, "hd": "singularitynet.io", "sub": "g-other"}
         r, _ = sign_in(c)
         assert _err(r) == "identity_mismatch"
-        assert c.app.state.hive.db.one("SELECT google_sub FROM people WHERE email = 'owner@singularitynet.io'")["google_sub"] == "g-real"
+        assert c.app.state.hive.db.one("SELECT google_sub FROM people WHERE email = 'jon@singularitynet.io'")["google_sub"] == "g-real"
     finally:
         gen.close()
 
@@ -494,10 +494,10 @@ def test_unbound_listed_domain_admin_needs_hd_before_first_binding(monkeypatch):
     gen = _admin_env(monkeypatch, "singularitynet.io")
     c, google, admin = next(gen)
     try:
-        google.account = {"email": "owner@singularitynet.io", "email_verified": True, "sub": "g-consumer"}
+        google.account = {"email": "jon@singularitynet.io", "email_verified": True, "sub": "g-consumer"}
         r, _ = sign_in(c)
         assert _err(r) == "domain_unverified" and not r.cookies.get("hive_signin")
-        assert _people(c, admin)["owner@singularitynet.io"]["google_bound"] is False
+        assert _people(c, admin)["jon@singularitynet.io"]["google_bound"] is False
     finally:
         gen.close()
 
@@ -623,10 +623,10 @@ def test_id_token_required_and_valid_shapes_pass(env):
     assert r.headers["location"] == "/omegahive/"
 
 
-# ---- webhost sign-in and the offered sign-in (FIX-FIRST 3) ----------------------------------------------------------
+# ---- family sign-in and the offered sign-in (FIX-FIRST 3) ----------------------------------------------------------
 
-def _webhost(monkeypatch, tmp, email):
-    """A companion webhost session file pair whose user has linked this Google email."""
+def _family(monkeypatch, tmp, email):
+    """A family webhost session file pair whose user has linked this Google email."""
     tmp.mkdir(parents=True, exist_ok=True)
     (tmp / "sessions.json").write_text(json.dumps({"fam-tok": {"username": "dee", "expires": int(time.time()) + 3600}}))
     (tmp / "users.json").write_text(json.dumps({"dee": {"name": "Dee", "google_email": email, "google_linked_at": 1}}))
@@ -634,11 +634,11 @@ def _webhost(monkeypatch, tmp, email):
     monkeypatch.setenv("HIVE_SSO_USERS", "someone-else")
 
 
-def test_webhost_signin_refuses_domain_people_and_google_is_offered(monkeypatch):
-    tmp = pathlib.Path(tempfile.mkdtemp(prefix="hive-webhost-"))
-    _webhost(monkeypatch, tmp, "dee@singularitynet.io")
+def test_family_signin_refuses_domain_people_and_google_is_offered(monkeypatch):
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="hive-family-"))
+    _family(monkeypatch, tmp, "dee@singularitynet.io")
     monkeypatch.setenv("HIVE_SIGNIN_DOMAINS", "singularitynet.io")
-    gen = _env(monkeypatch, webhost=True)
+    gen = _env(monkeypatch, family=True)
     c, google, admin = next(gen)
     try:
         methods = c.get("/omegahive/api/auth/methods").json()
@@ -649,7 +649,7 @@ def test_webhost_signin_refuses_domain_people_and_google_is_offered(monkeypatch)
         c.cookies.clear()
         r = c.post("/omegahive/api/auth/sso", cookies={"omega_session": "fam-tok"})
         assert r.status_code == 403 and r.json()["error"]["code"] == "google_signin_required"
-        # a live invitation for a listed-domain address is not consumed through the webhost path either
+        # a live invitation for a listed-domain address is not consumed through the family path either
         hive = c.app.state.hive
         hive.db.execute("DELETE FROM people WHERE email = 'dee@singularitynet.io'")
         c.post("/api/invites", json={"email": "dee@singularitynet.io"}, headers=admin)
@@ -660,13 +660,13 @@ def test_webhost_signin_refuses_domain_people_and_google_is_offered(monkeypatch)
         gen.close()
 
 
-def test_webhost_signin_unchanged_without_domains(monkeypatch):
-    tmp = pathlib.Path(tempfile.mkdtemp(prefix="hive-webhost-"))
-    _webhost(monkeypatch, tmp, "ana@example.com")
-    gen = _env(monkeypatch, webhost=True)
+def test_family_signin_unchanged_without_domains(monkeypatch):
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="hive-family-"))
+    _family(monkeypatch, tmp, "ana@example.com")
+    gen = _env(monkeypatch, family=True)
     c, google, admin = next(gen)
     try:
-        # the hive's own Google flow is offered whenever it is set up (bound people can only use it); a webhost session
+        # the hive's own Google flow is offered whenever it is set up (bound people can only use it); a family session
         # already in the browser is still exchanged by POST /api/auth/sso
         methods = c.get("/omegahive/api/auth/methods").json()
         assert methods["sso"]["login_url"] == "/omegahive/api/auth/google/start"
@@ -677,24 +677,24 @@ def test_webhost_signin_unchanged_without_domains(monkeypatch):
         gen.close()
 
 
-# ---- round 3: webhost path vs Google binding, azp/exp, atomic binding, every outcome clears (f947b22 FIX-FIRST) -----
+# ---- round 3: family path vs Google binding, azp/exp, atomic binding, every outcome clears (f947b22 FIX-FIRST) -----
 
 @pytest.mark.parametrize("allowed", [False, True])
-def test_standin_repro_webhost_path_refuses_a_bound_admin_outside_the_allowlist(monkeypatch, allowed):
-    tmp = pathlib.Path(tempfile.mkdtemp(prefix="hive-webhost-"))
-    _webhost(monkeypatch, tmp, "quinn@example.com")
+def test_standin_repro_family_path_refuses_a_bound_admin_outside_the_allowlist(monkeypatch, allowed):
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="hive-family-"))
+    _family(monkeypatch, tmp, "jon@example.com")
     if allowed:
-        monkeypatch.setenv("HIVE_SSO_USERS", "dee")      # the webhost user is a listed webhost admin
-    monkeypatch.setenv("HIVE_ADMIN_EMAILS", "quinn@example.com")
+        monkeypatch.setenv("HIVE_SSO_USERS", "dee")      # the family user is a listed family admin
+    monkeypatch.setenv("HIVE_ADMIN_EMAILS", "jon@example.com")
     monkeypatch.setenv("HIVE_SIGNIN_DOMAINS", "singularitynet.io")
-    gen = _env(monkeypatch, webhost=True)
+    gen = _env(monkeypatch, family=True)
     c, google, admin = next(gen)
     try:
-        assert c.app.state.hive.people.required_domain("quinn@example.com") is None   # outside the allowlist
-        google.account = {"email": "quinn@example.com", "email_verified": True, "sub": "g-quinn"}
+        assert c.app.state.hive.people.required_domain("jon@example.com") is None   # outside the allowlist
+        google.account = {"email": "jon@example.com", "email_verified": True, "sub": "g-jon"}
         r, _ = sign_in(c)
         assert r.headers["location"] == "/omegahive/"
-        assert _people(c, admin)["quinn@example.com"]["google_bound"] is True
+        assert _people(c, admin)["jon@example.com"]["google_bound"] is True
         hive = c.app.state.hive
         before = hive.db.one("SELECT COUNT(*) AS n FROM sessions")["n"]
         c.cookies.clear()
@@ -811,44 +811,44 @@ def test_unexpected_callback_errors_still_clear_the_cookie(env):
     assert any(h.lower().startswith("hive_oauth=") for h in r.headers.get_list("set-cookie"))
 
 
-# ---- round 4: the webhost path decides before it writes (049a9ff FIX-FIRST) ----------------------------------------
+# ---- round 4: the family path decides before it writes (049a9ff FIX-FIRST) ----------------------------------------
 
 @pytest.mark.parametrize("allowed", [False, True])
-def test_webhost_path_refuses_a_disabled_bound_admin_without_restoring_or_consuming(monkeypatch, allowed):
-    tmp = pathlib.Path(tempfile.mkdtemp(prefix="hive-webhost-"))
-    _webhost(monkeypatch, tmp, "quinn@example.com")
+def test_family_path_refuses_a_disabled_bound_admin_without_restoring_or_consuming(monkeypatch, allowed):
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="hive-family-"))
+    _family(monkeypatch, tmp, "jon@example.com")
     if allowed:
         monkeypatch.setenv("HIVE_SSO_USERS", "dee")
-    monkeypatch.setenv("HIVE_ADMIN_EMAILS", "quinn@example.com")
+    monkeypatch.setenv("HIVE_ADMIN_EMAILS", "jon@example.com")
     monkeypatch.setenv("HIVE_SIGNIN_DOMAINS", "singularitynet.io")
-    gen = _env(monkeypatch, webhost=True)
+    gen = _env(monkeypatch, family=True)
     c, google, admin = next(gen)
     try:
         hive = c.app.state.hive
-        assert hive.people.required_domain("quinn@example.com") is None              # outside the allowlist
-        google.account = {"email": "quinn@example.com", "email_verified": True, "sub": "g-quinn"}
+        assert hive.people.required_domain("jon@example.com") is None              # outside the allowlist
+        google.account = {"email": "jon@example.com", "email_verified": True, "sub": "g-jon"}
         assert sign_in(c)[0].headers["location"] == "/omegahive/"
-        quinn = _people(c, admin)["quinn@example.com"]
-        assert quinn["role"] == "admin" and quinn["google_bound"] is True
-        c.patch(f"/api/people/{quinn['id']}", json={"disabled": True}, headers=admin)
-        c.post("/api/invites", json={"email": "quinn@example.com", "role": "admin"}, headers=admin)
+        jon = _people(c, admin)["jon@example.com"]
+        assert jon["role"] == "admin" and jon["google_bound"] is True
+        c.patch(f"/api/people/{jon['id']}", json={"disabled": True}, headers=admin)
+        c.post("/api/invites", json={"email": "jon@example.com", "role": "admin"}, headers=admin)
         sessions = hive.db.one("SELECT COUNT(*) AS n FROM sessions")["n"]
         c.cookies.clear()
         r = c.post("/omegahive/api/auth/sso", cookies={"omega_session": "fam-tok"})
         assert r.status_code == 403 and r.json()["error"]["code"] == "google_signin_required"
         assert r.json()["error"]["login_url"] == "/omegahive/api/auth/google/start"
-        row = hive.db.one("SELECT * FROM people WHERE id = ?", (quinn["id"],))
-        assert row["disabled"] == 1 and row["google_sub"] == "g-quinn"
+        row = hive.db.one("SELECT * FROM people WHERE id = ?", (jon["id"],))
+        assert row["disabled"] == 1 and row["google_sub"] == "g-jon"
         assert c.get("/api/people", headers=admin).json()["invites"][0]["status"] == "pending"
         assert hive.db.one("SELECT COUNT(*) AS n FROM sessions")["n"] == sessions
     finally:
         gen.close()
 
 
-def test_webhost_path_still_restores_an_unbound_disabled_person_by_invitation(monkeypatch):
-    tmp = pathlib.Path(tempfile.mkdtemp(prefix="hive-webhost-"))
-    _webhost(monkeypatch, tmp, "ana@example.com")
-    gen = _env(monkeypatch, webhost=True)
+def test_family_path_still_restores_an_unbound_disabled_person_by_invitation(monkeypatch):
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="hive-family-"))
+    _family(monkeypatch, tmp, "ana@example.com")
+    gen = _env(monkeypatch, family=True)
     c, google, admin = next(gen)
     try:
         hive = c.app.state.hive
@@ -866,11 +866,11 @@ def test_webhost_path_still_restores_an_unbound_disabled_person_by_invitation(mo
         gen.close()
 
 
-def test_webhost_decision_rolls_back_with_its_session(monkeypatch):
-    """If the session cannot be written, the invitation the webhost path accepted is not consumed either."""
-    tmp = pathlib.Path(tempfile.mkdtemp(prefix="hive-webhost-"))
-    _webhost(monkeypatch, tmp, "ana@example.com")
-    gen = _env(monkeypatch, webhost=True)
+def test_family_decision_rolls_back_with_its_session(monkeypatch):
+    """If the session cannot be written, the invitation the family path accepted is not consumed either."""
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="hive-family-"))
+    _family(monkeypatch, tmp, "ana@example.com")
+    gen = _env(monkeypatch, family=True)
     c, google, admin = next(gen)
     try:
         hive = c.app.state.hive
@@ -908,7 +908,7 @@ def _row(c, email):
 
 
 def test_admin_emails_upgrade_a_domain_member_at_startup_with_audit(domain_env, monkeypatch, caplog):
-    """The cloud lockout: Quinn's SNET address came in by the domain allowlist as a member, then was listed."""
+    """The cloud lockout: Jon's SNET address came in by the domain allowlist as a member, then was listed."""
     c, google, admin = domain_env
     google.account = dict(SNET)
     assert sign_in(c)[0].headers["location"] == "/omegahive/"
@@ -930,12 +930,12 @@ def test_admin_emails_upgrade_at_signin_and_publish(monkeypatch, caplog):
     gen = _admin_env(monkeypatch)
     c, google, admin = next(gen)
     try:
-        google.account = {"email": "owner@singularitynet.io", "email_verified": True, "sub": "g-quinn"}
+        google.account = {"email": "jon@singularitynet.io", "email_verified": True, "sub": "g-jon"}
         assert sign_in(c)[0].headers["location"] == "/omegahive/"
-        quinn = _people(c, admin)["owner@singularitynet.io"]
-        assert quinn["role"] == "admin" and quinn["promoted_by"] is None    # created as admin: no upgrade happened
-        c.patch(f"/api/people/{quinn['id']}", json={"role": "member"}, headers=admin)
-        assert _row(c, "owner@singularitynet.io")["role"] == "member"
+        jon = _people(c, admin)["jon@singularitynet.io"]
+        assert jon["role"] == "admin" and jon["promoted_by"] is None    # created as admin: no upgrade happened
+        c.patch(f"/api/people/{jon['id']}", json={"role": "member"}, headers=admin)
+        assert _row(c, "jon@singularitynet.io")["role"] == "member"
         published = []
         events = c.app.state.hive.events
         original = events.publish
@@ -946,7 +946,7 @@ def test_admin_emails_upgrade_at_signin_and_publish(monkeypatch, caplog):
         finally:
             events.publish = original
         assert r.headers["location"] == "/omegahive/"
-        row = _row(c, "owner@singularitynet.io")
+        row = _row(c, "jon@singularitynet.io")
         assert row["role"] == "admin" and row["promoted_by"] == "config:HIVE_ADMIN_EMAILS" and row["promoted_at"]
         assert any("promoted" in m.getMessage() and "signin" in m.getMessage() for m in caplog.records)
         notices = [p for k, p in published if k == "people.updated" and p.get("change") == "promoted"]
@@ -961,23 +961,23 @@ def test_admin_emails_upgrade_at_signin_and_publish(monkeypatch, caplog):
         finally:
             events.publish = original
         assert not [p for k, p in published if p.get("change") == "promoted"]
-        assert _row(c, "owner@singularitynet.io")["promoted_at"] == stamp
+        assert _row(c, "jon@singularitynet.io")["promoted_at"] == stamp
     finally:
         gen.close()
 
 
-def test_admin_emails_upgrade_on_the_webhost_path(monkeypatch):
-    tmp = pathlib.Path(tempfile.mkdtemp(prefix="hive-webhost-"))
-    _webhost(monkeypatch, tmp, "quinn@example.com")
-    monkeypatch.setenv("HIVE_ADMIN_EMAILS", "quinn@example.com")
-    gen = _env(monkeypatch, webhost=True)
+def test_admin_emails_upgrade_on_the_family_path(monkeypatch):
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="hive-family-"))
+    _family(monkeypatch, tmp, "jon@example.com")
+    monkeypatch.setenv("HIVE_ADMIN_EMAILS", "jon@example.com")
+    gen = _env(monkeypatch, family=True)
     c, google, admin = next(gen)
     try:
-        quinn = _row(c, "quinn@example.com")
-        c.patch(f"/api/people/{quinn['id']}", json={"role": "member"}, headers=admin)
+        jon = _row(c, "jon@example.com")
+        c.patch(f"/api/people/{jon['id']}", json={"role": "member"}, headers=admin)
         r = c.post("/omegahive/api/auth/sso", cookies={"omega_session": "fam-tok"})
         assert r.status_code == 200 and r.json()["user"]["role"] == "admin"
-        assert _row(c, "quinn@example.com")["promoted_by"] == "config:HIVE_ADMIN_EMAILS"
+        assert _row(c, "jon@example.com")["promoted_by"] == "config:HIVE_ADMIN_EMAILS"
     finally:
         gen.close()
 

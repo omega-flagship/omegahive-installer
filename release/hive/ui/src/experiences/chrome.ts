@@ -1,7 +1,7 @@
 /**
  * Window chrome per experience. Every shared window (Ω menu, Everything directory, decision dialogs, confirms, sheets,
  * toasts, the command palette, Change UI, classic pages opened inside an experience) dresses in the chrome of the
- * experience the person is in, so no window ever looks like a leftover from another UI (the owner, 2026-10-05).
+ * experience the person is in, so no window ever looks like a leftover from another UI (Jon, 2026-10-05).
  *
  * Each experience exports `chrome` from `experiences/<id>/chrome.ts`. The host writes it to CSS variables on <html>;
  * shared windows read only these variables (classes in index.css: .xc-window, .xc-menu, .xc-item, .xc-button, …).
@@ -87,13 +87,34 @@ const VARS: Record<keyof Omit<ExperienceChrome, 'material' | 'scheme'>, string> 
  * turns on the dress for classic windows and pages (index.css `.xc-dress`, `.xc-frame`, `.xc-page`, `.xc-backdrop`),
  * so a classic page opened inside an experience wears that experience; with null the classic UI is untouched.
  */
+/**
+ * In the Classic hive the person's own look IS the world, so its window chrome follows the worn look's tokens (light-token
+ * round R1): the default look resolves to the classic glass above, Paper or any other look dresses every shared window
+ * (the Ask's chip and cards, dialogs, sheets) in its own colours. Experiences keep their own chrome.
+ */
+export const CLASSIC_FOLLOWS_LOOK: ExperienceChrome = {
+  ...CLASSIC_CHROME,
+  surface: 'color-mix(in oklab, var(--color-abyss) 96%, transparent)',
+  raised: 'color-mix(in oklab, color-mix(in oklab, var(--color-ink) 8%, var(--color-abyss)) 96%, transparent)',
+  ink: 'var(--color-ink)',
+  ink2: 'var(--color-ink-2)',
+  ink3: 'var(--color-ink-3)',
+  line: 'var(--color-line-2)',
+  edge: 'var(--color-control)',
+  accent: 'var(--color-accent)',
+  onAccent: 'var(--color-primary-ink)',
+  danger: 'var(--color-bad)',
+  font: 'var(--font-sans)',
+  display: 'var(--font-display)',
+}
+
 export function applyChrome(c: ExperienceChrome | null): void {
   if (typeof document === 'undefined') return
-  const chrome = c ?? CLASSIC_CHROME
+  const chrome = c ?? CLASSIC_FOLLOWS_LOOK
   const root = document.documentElement
   for (const [k, v] of Object.entries(VARS)) root.style.setProperty(v, chrome[k as keyof typeof VARS])
   root.dataset.xcMaterial = chrome.material
-  root.dataset.xcScheme = chrome.scheme
+  root.dataset.xcScheme = c ? chrome.scheme : root.dataset.uiScheme ?? chrome.scheme   // Classic: the worn look's scheme
   if (c) root.dataset.xcActive = ''
   else delete root.dataset.xcActive
 }

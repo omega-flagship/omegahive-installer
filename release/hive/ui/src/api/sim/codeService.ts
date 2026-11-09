@@ -20,6 +20,7 @@
  */
 import { ApiError, type SimCodeFixture } from '../client'
 import { canonical, isWorkbenchRoute, sha256Text, type SuggestionBinding } from '../../features/code/suggestions/contract'
+import { SimProjectTests, type SimTestStart, type SimTestSource } from './projectTests'
 
 /**
  * SIM ONLY (smoke and qualification): `?simbinding=none` retains no request provenance for the invented team's proposals
@@ -69,7 +70,7 @@ const FILES: Record<string, string> = {
   'src/units.py': '# Invented fixture: Ω units with non-ASCII text 😀\nOHM = "Ω"\n\n\ndef describe(value):\n    return str(value) + " " + OHM\n',
   'tests/test_greeting.py': 'from src.greeting import greet\n\n\ndef test_greet():\n    assert greet("Ada") == "Hello, Ada!"\n',
   // Same bytes as calculator.py in the live disposable repo:synthetic (sha256 e1a89402…7edc8), so the person-authored
-  // rehearsal uses exactly the ranges of the owner's live step script (bytes 4–7 `add`, 28–29 `-`). Invented here, not read live.
+  // rehearsal uses exactly the ranges of Jon's live step script (bytes 4–7 `add`, 28–29 `-`). Invented here, not read live.
   'calculator.py': 'def add(a, b):\n    return a - b\n',
 }
 
@@ -255,6 +256,11 @@ export class SimCodeService {
       }
       return r
     }
+    const tests = /^\/suggestions\/(suggestion_[a-f0-9]{32})\/project-tests$/.exec(rest)
+    if (method === 'GET' && tests) {
+      if (!this.suggestions.has(tests[1])) throw err(404, 'not_found', 'proposal not found')
+      return this.projectTests.page(tests[1], ws, query)
+    }
     if (method === 'POST' && rest === '/suggestion-decisions') return this.decide(ws, b)
     if (rest.startsWith('/language')) return this.language(ws, method, rest, b)
     if (rest.startsWith('/proposal-applications')) return this.applicationRoute(ws, method, rest, b)
@@ -283,6 +289,31 @@ export class SimCodeService {
       this.provenance.set(record.id, { digest: await sha256Text(canonical(content)), content })
     }
     return record
+  }
+
+  // --------------------------------------------------------------------------------------------- project tests (invented)
+  // INVENTED, after hive/core/code_test_intents.py _source_refs: a test is only of a retained proposal of THIS request,
+  // current on the person's copy and with no decision yet; the evidence route is api/sim/projectTests.ts.
+
+  private projectTests = new SimProjectTests()
+
+  /** The host's code_test_source check, in miniature: the proposal's sha256:-prefixed binding, or 409 code_test_source. */
+  projectTestSource(proposalId: string, requestId: string): SimTestSource {
+    const ws = this.ws
+    const s = this.suggestions.get(proposalId)
+    const prov = this.provenance.get(proposalId)?.content as { delegated?: { request_id?: unknown } } | undefined
+    const b = s?.content.binding
+    if (!ws || !s || !b || prov?.delegated?.request_id !== requestId || this.decisions.some((d) => d.suggestion_id === proposalId) || b.generation !== ws.generation || b.tree_digest !== ws.tree_digest)
+      throw err(409, 'code_test_source', 'the retained proposal is not current for this original request')
+    return {
+      request_id: requestId, repository_id: ws.repository_id,
+      proposal: { proposal_id: s.record.id, proposal_digest: `sha256:${s.record.digest}`, normalized_hunks_digest: `sha256:${s.content.digest}` },
+      parent: { workspace_id: ws.id, generation: b.generation, tree_digest: `sha256:${b.tree_digest}` },
+    }
+  }
+  /** SIM ONLY: the controller runs the proposal's tests on a fork (after the person's code.test intent is queued). */
+  startProjectTest(source: SimTestSource, start: SimTestStart): void {
+    this.projectTests.start(source, start)
   }
 
   // --------------------------------------------------------------------------------------------- copy-apply (invented)

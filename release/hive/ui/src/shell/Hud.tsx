@@ -1,5 +1,5 @@
 import { animate, AnimatePresence, m, useMotionValue, useTransform } from 'framer-motion'
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { hsl } from '../lib/color'
 import { compact, money } from '../lib/format'
 import { useEscape, useIsDesktop } from '../lib/hooks'
@@ -12,12 +12,14 @@ import { cx } from '../lib/cx'
 import { LabBadge } from './LabBadge'
 import { openGallery, useLook } from './uiVariant'
 import { OmegaMark } from '../ui/OmegaMark'
+import { LiveOmega } from '../brand/LiveOmega'
 import { SimChip } from '../ui/SimChip'
 import { useIntro } from '../tour/introStore'
 import { useAppStage, type AppStage } from './appStage'
 import type { Toast } from '../store/store'
 import { powerMenuItems } from '../features/power/menu'
 import { brandStatus, type SigninReach } from './brandStatus'
+import { usePhase } from './phase'
 
 function AnimatedNumber({ value, format }: { value: number; format: (n: number) => string }) {
   const mv = useMotionValue(value)
@@ -36,7 +38,7 @@ export function Brand({ compactMode = false, signin }: { compactMode?: boolean; 
   const status = brandStatus(mode, connection, signin)
   return (
     <div className="flex items-center gap-2.5">
-      <OmegaMark className="size-9 shrink-0 text-ink" />
+      <LiveOmega look="classic" size="corner" className="size-9 shrink-0" fallback={<OmegaMark className="size-full text-ink" />} />
       {!compactMode && (
         <div className="leading-none">
           <div className="font-display text-[15px] font-semibold tracking-tight">
@@ -58,6 +60,8 @@ export function Brand({ compactMode = false, signin }: { compactMode?: boolean; 
 }
 
 export function Stats() {
+  const route = useRoute()
+  const phasedHome = usePhase((s) => s.phased && s.phase !== 'pro') && route.name === 'hive'
   const agents = useHive((s) => s.agents)
   const beliefs = useHive((s) => s.beliefs)
   const hive = useHive((s) => s.hive)
@@ -80,7 +84,7 @@ export function Stats() {
             {it.label === 'Spend' && <SimChip className="tracking-[0.06em]" />}
           </div>
           <div className="mt-0.5 font-display text-[17px] leading-tight font-semibold md:text-lg">
-            <AnimatedNumber value={it.value} format={it.fmt} />
+            {phasedHome ? <span>{it.fmt(it.value)}</span> : <AnimatedNumber value={it.value} format={it.fmt} />}
           </div>
         </div>
       ))}
@@ -185,7 +189,7 @@ function ToastPill({ t, more, dismiss }: { t: Toast; more: number; dismiss: (id:
       {more > 0 && <span className="shrink-0 text-[11.5px] text-ink-3 tabular-nums">+{more}<span className="sr-only"> more</span></span>}
       {t.action && (
         <button
-          className="shrink-0 rounded-full px-2 py-1 text-[12px] font-semibold text-warn hover:bg-white/[0.06] pointer-coarse:min-h-11 pointer-coarse:px-3"
+          className="shrink-0 rounded-full px-2 py-1 text-[12px] font-semibold text-warn hover:bg-tint/[0.06] pointer-coarse:min-h-11 pointer-coarse:px-3"
           onClick={() => {
             t.action!.run()
             dismiss(t.id)
@@ -201,10 +205,21 @@ function ToastPill({ t, more, dismiss }: { t: Toast; more: number; dismiss: (id:
   )
 }
 
+/** Quiet home notices keep their actions/live region, without starting a spring or layout clock. */
+function ToastFrame({ quiet, ...props }: { quiet: boolean; className: string; role: 'alert' | 'status'; children: ReactNode }) {
+  return quiet ? <div {...props} /> : <m.div layout initial={{ opacity: 0, y: 16, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.98 }} transition={{ type: 'spring', stiffness: 500, damping: 34 }} {...props} />
+}
+
 export function Toasts() {
   const toasts = useHive((s) => s.toasts)
   const dismiss = useHive((s) => s.dismissToast)
   const stage = useAppStage()
+  const route = useRoute()
+  const phase = usePhase((s) => s.phased ? s.phase : 'pro')
+  const quiet = !stage && route.name === 'hive' && phase !== 'pro'
+  // The chosen rest draws only the invitation. Notices remain in their existing store; the native urgent owner
+  // wakes an idle-begun rest before presenting them, and keeps chosen rests quiet.
+  if (quiet && phase === 'rest') return null
   if (stage) {
     // an app's own interface is mounted: the notices move out of its way (the same live region, the same inert-behind-modals rule)
     const place = stagePlace(stage)
@@ -215,64 +230,59 @@ export function Toasts() {
       </div>
     )
   }
+  const items = toasts.map((t) => (
+    <ToastFrame
+      key={t.id}
+      quiet={quiet}
+      className="xc-frame glass-strong pointer-events-auto relative flex w-full max-w-sm items-start gap-3 overflow-hidden rounded-2xl px-4 py-3"
+      role={t.tone === 'error' ? 'alert' : 'status'}
+    >
+      {t.hue !== undefined && (
+        <span className="pointer-events-none absolute inset-y-0 left-0 w-24" style={{ background: `radial-gradient(80% 90% at 0% 50%, ${hsl(t.hue, 90, 60, 0.22)}, transparent)` }} />
+      )}
+      <span className={cx('relative mt-0.5', t.tone === 'error' ? 'text-bad' : t.tone === 'success' ? 'text-good' : 'text-accent')}>
+        {t.hue !== undefined ? (
+          <span className="relative block">
+            <Orb hue={t.hue} size={22} />
+            {t.icon && (
+              <span className="absolute -right-1.5 -bottom-1 flex size-4 items-center justify-center rounded-full bg-[#1b1406] text-warn ring-1 ring-warn/40">
+                <Icon name={t.icon} size={10} strokeWidth={2.4} />
+              </span>
+            )}
+          </span>
+        ) : (
+          <Icon name={t.icon ?? (t.tone === 'error' ? 'alert' : t.tone === 'success' ? 'check' : 'info')} size={18} />
+        )}
+      </span>
+      {t.action ? (
+        <button
+          className="relative min-w-0 flex-1 text-left"
+          onClick={() => {
+            t.action!.run()
+            dismiss(t.id)
+          }}
+        >
+          <span className="block text-sm font-medium">{t.title}</span>
+          {t.body && <span className="mt-0.5 block truncate font-mono text-[12px] text-ink-3">{t.body}</span>}
+          <span className="mt-1.5 inline-flex items-center gap-1 text-[12px] font-semibold text-warn">
+            {t.action.label} <Icon name="chevron" size={13} strokeWidth={2.2} />
+          </span>
+        </button>
+      ) : (
+        <div className="relative min-w-0 flex-1">
+          <div className="text-sm font-medium">{t.title}</div>
+          {t.body && <div className="mt-0.5 text-[13px] text-ink-3">{t.body}</div>}
+        </div>
+      )}
+      <button onClick={() => dismiss(t.id)} className="-m-2 flex size-9 items-center justify-center text-ink-3 hover:text-ink" aria-label="Dismiss">
+        <Icon name="x" size={16} />
+      </button>
+    </ToastFrame>
+  ))
   return (
-    // Bottom, never over a page's header or controls: right-hand corner on desktop, just above the tab bar on phones.
+    // Bottom, never over a page's header or controls: right-hand corner on desktop, above the tab bar on phones.
     <div className="toast-stack pointer-events-none fixed inset-x-0 bottom-0 z-[70] flex flex-col-reverse items-center gap-2 p-3 md:left-auto md:items-end md:p-4" aria-live="polite">
-      <AnimatePresence>
-        {toasts.map((t) => (
-          <m.div
-            key={t.id}
-            layout
-            initial={{ opacity: 0, y: 16, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 10, scale: 0.98 }}
-            transition={{ type: 'spring', stiffness: 500, damping: 34 }}
-            className="xc-frame glass-strong pointer-events-auto relative flex w-full max-w-sm items-start gap-3 overflow-hidden rounded-2xl px-4 py-3"
-            role={t.tone === 'error' ? 'alert' : 'status'}
-          >
-            {t.hue !== undefined && (
-              <span className="pointer-events-none absolute inset-y-0 left-0 w-24" style={{ background: `radial-gradient(80% 90% at 0% 50%, ${hsl(t.hue, 90, 60, 0.22)}, transparent)` }} />
-            )}
-            <span className={cx('relative mt-0.5', t.tone === 'error' ? 'text-bad' : t.tone === 'success' ? 'text-good' : 'text-accent')}>
-              {t.hue !== undefined ? (
-                <span className="relative block">
-                  <Orb hue={t.hue} size={22} />
-                  {t.icon && (
-                    <span className="absolute -right-1.5 -bottom-1 flex size-4 items-center justify-center rounded-full bg-[#1b1406] text-warn ring-1 ring-warn/40">
-                      <Icon name={t.icon} size={10} strokeWidth={2.4} />
-                    </span>
-                  )}
-                </span>
-              ) : (
-                <Icon name={t.icon ?? (t.tone === 'error' ? 'alert' : t.tone === 'success' ? 'check' : 'info')} size={18} />
-              )}
-            </span>
-            {t.action ? (
-              <button
-                className="relative min-w-0 flex-1 text-left"
-                onClick={() => {
-                  t.action!.run()
-                  dismiss(t.id)
-                }}
-              >
-                <span className="block text-sm font-medium">{t.title}</span>
-                {t.body && <span className="mt-0.5 block truncate font-mono text-[12px] text-ink-3">{t.body}</span>}
-                <span className="mt-1.5 inline-flex items-center gap-1 text-[12px] font-semibold text-warn">
-                  {t.action.label} <Icon name="chevron" size={13} strokeWidth={2.2} />
-                </span>
-              </button>
-            ) : (
-              <div className="relative min-w-0 flex-1">
-                <div className="text-sm font-medium">{t.title}</div>
-                {t.body && <div className="mt-0.5 text-[13px] text-ink-3">{t.body}</div>}
-              </div>
-            )}
-            <button onClick={() => dismiss(t.id)} className="-m-2 flex size-9 items-center justify-center text-ink-3 hover:text-ink" aria-label="Dismiss">
-              <Icon name="x" size={16} />
-            </button>
-          </m.div>
-        ))}
-      </AnimatePresence>
+      {quiet ? items : <AnimatePresence>{items}</AnimatePresence>}
     </div>
   )
 }
@@ -292,7 +302,7 @@ function InboxButton({ compactMode }: { compactMode?: boolean }) {
             className="glass relative flex h-11 items-center gap-1.5 rounded-2xl pr-3 pl-2.5 text-[13px] font-semibold text-warn"
             aria-label={`Inbox, ${pending} waiting`}
           >
-            <span className="absolute inset-0 rounded-2xl border border-warn/30" style={{ boxShadow: '0 0 18px -4px rgb(251 191 36 / 0.55)' }} aria-hidden="true" />
+            <span className="absolute inset-0 rounded-2xl border border-warn/30" style={{ boxShadow: '0 0 18px -4px color-mix(in oklab, var(--color-warn) 55%, transparent)' }} aria-hidden="true" />
             <Icon name="inbox" size={17} />
             <span className="tabular-nums">{pending}</span>
           </m.button>
@@ -307,7 +317,7 @@ function InboxButton({ compactMode }: { compactMode?: boolean }) {
       aria-label={pending ? `Inbox, ${pending} waiting` : 'Inbox'}
       title="Inbox (G I)"
     >
-      {pending > 0 && <span className="absolute inset-0 rounded-2xl border border-warn/30" style={{ boxShadow: '0 0 18px -4px rgb(251 191 36 / 0.55)' }} aria-hidden="true" />}
+      {pending > 0 && <span className="absolute inset-0 rounded-2xl border border-warn/30" style={{ boxShadow: '0 0 18px -4px color-mix(in oklab, var(--color-warn) 55%, transparent)' }} aria-hidden="true" />}
       <Icon name="inbox" size={19} />
       <CountBadge n={pending} className="absolute -top-1 -right-1" />
     </button>
@@ -357,7 +367,7 @@ function OverflowMenu() {
     { label: 'Tasks', icon: 'columns', run: go(() => navigate({ name: 'tasks' })) },
     { label: 'Lab · tests & benchmarks', icon: 'flask', run: go(() => navigate({ name: 'lab' })) },
     null,
-    ...(lookAvailable ? [{ label: 'Change UI', icon: 'sparkles' as const, run: go(() => openGallery(true)), tour: 'menu-change-ui' }] : []),
+    ...(lookAvailable ? [{ label: 'Change experience', icon: 'sparkles' as const, run: go(() => openGallery(true)), tour: 'menu-change-ui' }] : []),
     { label: 'Replay the tour', icon: 'compass', run: go(() => useIntro.getState().startTour({})), hint: '2 min', tour: 'menu-tour' },
     { label: 'Help & shortcuts', icon: 'question', run: go(() => useIntro.getState().setHelp(true)), hint: '?', tour: 'menu-help' },
     null,
@@ -396,7 +406,7 @@ function OverflowMenu() {
                   onClick={it.run}
                   className={cx(
                     'flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-left text-[14px] transition-colors',
-                    it.danger ? 'text-bad hover:bg-bad/10' : 'text-ink-2 hover:bg-white/[0.06] hover:text-ink',
+                    it.danger ? 'text-bad hover:bg-bad/10' : 'text-ink-2 hover:bg-tint/[0.06] hover:text-ink',
                   )}
                 >
                   <Icon name={it.icon} size={18} />

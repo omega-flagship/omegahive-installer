@@ -60,7 +60,7 @@ def test_a_hive_mind_gets_the_hive_base_with_its_role_and_no_personal_sections(t
 
 def test_the_personal_base_is_unchanged_and_used_when_the_hive_base_is_absent(tmp_path, monkeypatch):
     w = _workspace(tmp_path)
-    personal = (w.settings.core_root / "src" / "base_prompt.txt").read_text(encoding="utf-8")
+    personal = (w.settings.core_root / "memory" / "prompt.txt").read_text(encoding="utf-8")
     assert w.base_prompt() == personal and "WhatsApp" in personal
     monkeypatch.setattr(ws, "HIVE_BASE_PROMPT", tmp_path / "missing.txt")
     assert w.mind_base_prompt({"name": "Orion"}) == personal.replace("Omega", "Orion")

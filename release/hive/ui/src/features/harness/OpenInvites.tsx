@@ -80,7 +80,7 @@ function InviteList() {
       <h2 id="invites-h" className="eyebrow">Invitations{res.data ? ` · ${waiting} open` : ''}</h2>
       <ResourceView res={res} errorTitle="Could not list invitations" empty={{ title: 'No invitations yet', body: 'Invitations you make appear here until they are used, expire or are withdrawn.' }}>
         {(rows) => (
-          <ul className="divide-y divide-line rounded-2xl border border-line bg-white/[0.02]">
+          <ul className="divide-y divide-line rounded-2xl border border-line bg-tint/[0.02]">
             {sortInvites(rows).map((r) => (
               <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 text-[13px]">
                 <div className="min-w-0 flex-1">

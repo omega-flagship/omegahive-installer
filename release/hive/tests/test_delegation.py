@@ -23,8 +23,8 @@ def world(client, monkeypatch):
     monkeypatch.setenv("HIVE_MIND_SANDBOX", "1")
     monkeypatch.setattr("hive.supervisor.sandbox.available", lambda: True)
     token = secrets.token_urlsafe(24)
-    hive.db.insert("people", {"id": "u_quinn", "email": "quinn@example.test", "name": "Quinn", "role": "admin", "created_at": now()})
-    hive.db.insert("sessions", {"token_hash": token_hash(token), "created_at": now(), "kind": "sso", "principal": "user:u_quinn"})
+    hive.db.insert("people", {"id": "u_jon", "email": "jon@example.test", "name": "Jon", "role": "admin", "created_at": now()})
+    hive.db.insert("sessions", {"token_hash": token_hash(token), "created_at": now(), "kind": "sso", "principal": "user:u_jon"})
     monkeypatch.setattr(hive.health, "mind_id", lambda: None)
     swarm = client.post("/api/swarms", json={"name": "Purple"}).json()
     coord = client.post("/api/agents", json={"name": "Lead", "kind": "omega", "swarm_id": swarm["id"], "budget_usd": 1}).json()
@@ -120,12 +120,12 @@ def test_current_person_authority_revocation_closes_run(client,world,authority,c
     lease=client.post('/api/lifecycle/leases',headers={'Authorization':'Bearer '+token},json={'coordinator':coord['id'],'specialist':spec['id'],'task':goal['id'],'seconds':120,'budget_usd':.1}).json()['lease']
     def act(verb):return client.post('/api/agent/lifecycle/'+verb,headers=agent_headers(coord),json={'lease':lease})
     if started:assert act('start').status_code==200
-    hive.db.update('people','u_quinn' if authority=='delegator' else 'u_issuer',change)
+    hive.db.update('people','u_jon' if authority=='delegator' else 'u_issuer',change)
     assert act('status').json()['lease_valid'] is False
     assert act('start').status_code==403
     assert asyncio.run(hive.delegation.reconcile())[0]['stop_observed']
     assert spec['id'] not in running
-    hive.db.update('people','u_quinn' if authority=='delegator' else 'u_issuer',{'disabled':0,'role':'admin'})
+    hive.db.update('people','u_jon' if authority=='delegator' else 'u_issuer',{'disabled':0,'role':'admin'})
     assert act('start').status_code==403  # restoring the person cannot resurrect a consumed run
 
 
@@ -134,9 +134,9 @@ def test_detected_issuer_revocation_persists_before_cleanup(client,world):
     client.put(f"/api/lifecycle/delegations/{coord['id']}",headers=person,json={'specialist_ids':[spec['id']]})
     goal=asyncio.run(hive.goals.create(swarm['id'],'Invented restoration task',assignee=spec['id']))
     lease=client.post('/api/lifecycle/leases',headers=person,json={'coordinator':coord['id'],'specialist':spec['id'],'task':goal['id'],'seconds':120,'budget_usd':.1}).json()['lease']
-    hive.db.update('people','u_quinn',{'disabled':1})
+    hive.db.update('people','u_jon',{'disabled':1})
     assert client.post('/api/agent/lifecycle/status',headers=agent_headers(coord),json={'lease':lease}).json()['lease_valid'] is False
-    hive.db.update('people','u_quinn',{'disabled':0})
+    hive.db.update('people','u_jon',{'disabled':0})
     from hive.core.delegation import Delegation
     hive.delegation=Delegation(hive)  # persisted revocation survives adapter reconstruction
     assert client.post('/api/agent/lifecycle/start',headers=agent_headers(coord),json={'lease':lease}).status_code==403

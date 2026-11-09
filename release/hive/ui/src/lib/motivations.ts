@@ -1,6 +1,6 @@
 /**
  * Motivations above Tasks, the shared part every experience uses (host phase 1: hive/API.md "Motivations and the
- * Tasks query"; the owner's Q1–Q7, coordination/omegaui/MOTIVATIONS_TASKS_HOST_DESIGN_20261005.md).
+ * Tasks query"; Jon's Q1–Q7, MOTIVATIONS_TASKS_HOST_DESIGN_20261005.md).
  *
  * - A **motivation** is the why: a long-lived aim owned by a person, a team (swarm) or the mind that named it.
  * - A **task** is today's goal, unchanged underneath: every goal route, decision (GoalDecision) and event stays as it is.
@@ -372,7 +372,7 @@ function lostAnswer(err: unknown): boolean {
   return !(err instanceof ApiError) || err.status === 0 || err.status >= 500
 }
 
-/** Create a motivation. The hive decides who may (owner Q6: a person their own; a team's owner or an admin a team's). */
+/** Create a motivation. The hive decides who may (Jon Q6: a person their own; a team's owner or an admin a team's). */
 export async function createMotivation(body: CreateMotivationBody): Promise<Outcome<Motivation>> {
   const live = bound()
   const client = live.client
@@ -538,7 +538,7 @@ export function ownerLine(m: Pick<Motivation, 'owner' | 'swarm_id'>, ctx: Parame
   return `${name}, in ${principalName(`swarm:${m.swarm_id}`, ctx)}`
 }
 
-/** owner Q2: people see who created it, a person or a mind. */
+/** Jon Q2: people see who created it, a person or a mind. */
 export function creatorLine(m: Pick<Motivation, 'created_by'>, ctx: Parameters<typeof principalName>[1]): string {
   const who = principalName(m.created_by, ctx)
   return m.created_by.startsWith('agent:') ? `named by ${who}, a mind` : `created by ${who}`
@@ -588,7 +588,7 @@ export function useCountsPartial(): boolean {
 /** A count, marked as a floor when the read behind it was partial ("3+"). */
 export const atLeast = (n: number, partial: boolean): string => (partial ? `${n}+` : String(n))
 
-// ---------------------------------------------------------------- who may create (owner Q6)
+// ---------------------------------------------------------------- who may create (Jon Q6)
 
 export interface CreateRights {
   /** A person may have their own; the hive password (the operator) is not a person. */
@@ -651,38 +651,5 @@ export function sortMotivations(list: Motivation[]): Motivation[] {
   return [...list].sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) || b.created_at.localeCompare(a.created_at))
 }
 
-// ---------------------------------------------------------------- radio groups (stand-in P2-4 on 61936cb)
-
-/** The value an arrow, Home or End key moves a radio group to (wrapping), or null for any other key. */
-export function nextRadio<T>(key: string, values: readonly T[], current: T): T | null {
-  const i = Math.max(0, values.indexOf(current))
-  if (key === 'ArrowRight' || key === 'ArrowDown') return values[(i + 1) % values.length]
-  if (key === 'ArrowLeft' || key === 'ArrowUp') return values[(i - 1 + values.length) % values.length]
-  if (key === 'Home') return values[0]
-  if (key === 'End') return values[values.length - 1]
-  return null
-}
-
-/**
- * Props for one radio in a group (WAI-ARIA radio group): only the checked one is a tab stop (the first when none is),
- * and the arrow keys, Home and End move to the next. `choose` runs the same path a click does. In 'select' mode (a view
- * or a form draft) the arrows also choose; in 'focus' mode (a choice the hive acts on: status, who can see it) they only
- * move focus, and Space or Enter chooses, so nothing changes on the hive by moving through the options.
- */
-export function radioProps<T>(value: T, values: readonly T[], current: T | undefined, choose: (v: T) => void, mode: 'select' | 'focus' = 'select') {
-  const checked = value === current
-  const stop = current === undefined || !values.includes(current) ? value === values[0] : checked
-  return {
-    role: 'radio' as const,
-    'aria-checked': checked,
-    tabIndex: stop ? 0 : -1,
-    'data-radio-value': String(value),
-    onKeyDown: (e: { key: string; preventDefault(): void; currentTarget: { parentElement: { querySelector(sel: string): { focus(): void } | null } | null } }) => {
-      const to = nextRadio(e.key, values, value)
-      if (to === null) return
-      e.preventDefault()
-      if (mode === 'select') choose(to)
-      e.currentTarget.parentElement?.querySelector(`[data-radio-value="${typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(String(to)) : String(to)}"]`)?.focus()
-    },
-  }
-}
+// radio groups live in lib/radio.ts (no store), re-exported here for the pages that already import them
+export { nextRadio, radioProps } from './radio'

@@ -12,7 +12,7 @@ export const EMPTY_TEXT = 'Nothing held right now'
 
 /**
  * Every host string a person sees (labels, plain explanations, qualifications) is said through this filter: the
- * retired goal/board names are said as tasks and task lists (the owner's wording rule; the static wordingGuard test covers
+ * retired goal/board names are said as tasks and task lists (Jon's wording rule; the static wordingGuard test covers
  * the UI's own strings, this covers what the host sends). A leading capital is kept.
  */
 export function plainWords(text: string): string {

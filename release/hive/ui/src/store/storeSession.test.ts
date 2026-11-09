@@ -37,7 +37,7 @@ afterEach(() => {
 })
 
 describe('store session binding (O-B1)', () => {
-  // OmegaReview's reproducible probe (coordination/receipts-local/omegareview-surface-o-9a84130/identity-probe.test.ts), ported as written
+  // OmegaReview's reproducible probe (identity-probe.test.ts), ported as written
   it('rejects an approval snapshot from the previous client after a real init switch', async () => {
     vi.stubGlobal('window', { location: { search: '' } })
     const a = new SimClient({ seed: 11, latency: false, autoStart: false, historyDays: 1 })
@@ -252,7 +252,7 @@ describe('store session binding (O-B1)', () => {
     useHive.setState({ deciding: {} })
   })
 
-  // OmegaReview R-B1 probe (coordination/receipts-local/omegareview-surface-r/storeSession-with-toast-probe.test.ts), ported as written
+  // OmegaReview R-B1 probe (storeSession-with-toast-probe.test.ts), ported as written
   it('Review R-B1: clears client-derived toast contents on switching session', async () => {
     const { a, b } = pair()
     await useHive.getState().init(a)

@@ -25,11 +25,8 @@ PLATFORM = f"{platform.system()} {platform.release()} {platform.machine()}"
 SHA_A, SHA_B = "a" * 40, "b" * 40
 STAMP = "2026-10-17T00:00:00Z"   # Code R1a binding: an explicit UTC release timestamp, passed verbatim
 SECRET = "sk-NEWHIVE-SENTINEL-do-not-leak"
-_PACKET_REL = pathlib.Path("coordination/omegacode/poc/j1_extractor_dependency_r1_3_20261018/j1-extractor-r13.tar.gz")
-PACKET = next((p for p in ([pathlib.Path(os.environ["NEWHIVE_J1_EXTRACTOR_PACKET"])]
-                           if os.environ.get("NEWHIVE_J1_EXTRACTOR_PACKET") else []) +
-               [anc / _PACKET_REL for anc in pathlib.Path(__file__).resolve().parents] +
-               [pathlib.Path.home() / "OmegaDot" / _PACKET_REL] if p.exists()), pathlib.Path("/nonexistent"))
+# The J1 extractor packet is supplied explicitly (NEWHIVE_J1_EXTRACTOR_PACKET); without it these tests skip.
+PACKET = pathlib.Path(os.environ.get("NEWHIVE_J1_EXTRACTOR_PACKET") or "/nonexistent")
 PACKET_SHA256 = "b7337f6976c94319c5314bb8944c0ae006805e2d4a581433b657ac4417494af1"   # r1.3 J1 package, SHIP x2
 PINNED = {"__init__.py": "360ec865d9031ed8f5a9bd3d06ae168e784932ff419284213fc7d503e22aff76",
           "repository_facts.py": "edd9465e942d2f737eb2467170864c8c5fb30e66d137523ccb309088cb351f50",

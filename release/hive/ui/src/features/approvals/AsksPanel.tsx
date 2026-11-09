@@ -7,7 +7,7 @@ import { Icon } from '../../ui/Icon'
 import { Button } from '../../ui/primitives'
 
 /** People's requests to the hive's admins: a mind, more allowance, access to a swarm (hive/core/person_requests.py).
- *  An admin answers each with the owner's five: Once, For a time, Always, No, Never. A member asks here and sees their own. */
+ *  An admin answers each with Jon's five: Once, For a time, Always, No, Never. A member asks here and sees their own. */
 
 type Answer = 'once' | 'for' | 'always' | 'no' | 'never'
 const FOR_TIMES = [{ minutes: 60, label: '1 hour' }, { minutes: 24 * 60, label: '1 day' }, { minutes: 7 * 24 * 60, label: '7 days' }, { minutes: 30 * 24 * 60, label: '30 days' }]
@@ -55,7 +55,7 @@ export function AsksPanel() {
   }
 
   return (
-    <section className="mb-4 space-y-2 rounded-[22px] border border-line bg-white/[0.02] p-4" aria-label="Requests from people">
+    <section className="mb-4 space-y-2 rounded-[22px] border border-line bg-tint/[0.02] p-4" aria-label="Requests from people">
       <div className="flex items-center gap-2">
         <Icon name="people" size={16} className="text-ink-3" />
         <h2 className="flex-1 font-display text-[15px] font-semibold">{admin ? 'Requests from people' : 'Your requests'}</h2>
@@ -134,7 +134,7 @@ function AskForm({ onDone }: { onDone: () => void }) {
       toast({ tone: 'error', title: 'Not sent', body: e instanceof Error ? e.message : String(e) })
     } finally { setSending(false) }
   }
-  const input = 'min-h-10 rounded-xl border border-line bg-black/25 px-3 text-[13.5px] text-ink outline-none focus:border-line-2'
+  const input = 'min-h-10 rounded-xl border border-line bg-shade/25 px-3 text-[13.5px] text-ink outline-none focus:border-line-2'
   return (
     <div className="space-y-2 rounded-xl border border-line p-3">
       <label className="flex flex-wrap items-center gap-2 text-[13px]">

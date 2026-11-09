@@ -1,6 +1,6 @@
 id = "omegahive.code"
 kind = "coding-organ"
-version = "0.1.0"
+version = "0.2.0"
 entrypoint = "entry.metta"
 catalog = "catalog.metta"
 signatures = "signatures.metta"
@@ -8,6 +8,23 @@ optional = true
 default_enabled = true
 
 provides = [
+  "skill:code-mind-work",
+  "skill:code-mind-request",
+  "skill:code-mind-retry",
+  "skill:code-mind-templates",
+  "skill:code-mind-spawn",
+  "skill:code-mind-prompt",
+  "skill:code-mind-control",
+  "skill:code-mind-status",
+  "skill:code-mind-scan",
+
+  "skill:code-test-prepare",
+  "skill:code-test-run",
+  "skill:code-test-result",
+  "skill:code-proposal-context",
+  "skill:code-helper-instruction",
+  "skill:code-proposal-read",
+  "skill:code-propose",
   "skill:code-retrieve",
   "skill:code-proof-result",
   "skill:code-proof-check",

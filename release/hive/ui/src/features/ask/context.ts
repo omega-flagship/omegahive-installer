@@ -1,6 +1,6 @@
 /**
  * What the Ask knows about where it is: the fast path's world (minds, swarms, apps, looks, the offered experiences),
- * the page context sent with each mind turn (Host §1.1 `context`, with `view`), and who will answer (the owner's ruling: the
+ * the page context sent with each mind turn (Host §1.1 `context`, with `view`), and who will answer (Jon's ruling: the
  * orchestrator of the addressed mind's swarm, else the page's swarm, else the person's default swarm).
  */
 import { plural } from '../../lib/plural'

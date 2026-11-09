@@ -1,3 +1,4 @@
+import { useVisibleState } from '../../lib/useVisibleAuthority'
 /**
  * Flux: the hive as living liquid. Swarms are bodies of fluid whose colour is the mix of their minds; minds are
  * droplets inside them; decisions gather as drips on the top edge. Touch a body and it pours into a glass panel;
@@ -5,7 +6,7 @@
  */
 import { AnimatePresence, m } from 'framer-motion'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { beliefText, countPending, openClassic, plainText, openPalette, shown, useHive, useHomeRequested, useResting, useRoomyLayout, useReducedMotion, useRoute, type Agent } from '../sdk'
+import { beliefText, countPending, openClassic, plainText, openPalette, shown, useHive, useHomeRequested, useResting, useRoomyLayout, useReducedMotion, useRoute, type Agent, type Swarm } from '../sdk'
 import { FluxCtx, FONT, INK, INK2, rgbCss, useFlux, useNode, type FluxApi, type Origin, type SheetState } from './ctx'
 import { GooDefs, Glyph, Orb } from './kit'
 import { DecisionCard, MindPanel, NothingCard, SwarmPanel } from './panels'
@@ -15,8 +16,28 @@ import { HiveDirectory } from '../HiveDirectory'
 import { usePickSwarm } from './nav'
 import { FluxWorld, hslRgb, type FluxView, type Snapshot } from './world'
 import { registerAskBridge } from '../../features/ask/bridge'
+import { groupHelpers, helperGroupWords, type HelperGroup } from '../../scene/helperGroups'
+import { useHelperGroups } from '../../scene/helperGroupsStore'
 
-const snap = (s: Snapshot): Snapshot => ({ agents: s.agents, swarms: s.swarms, thinking: s.thinking, approvals: s.approvals })
+/**
+ * The minds the liquid draws: finished request helpers fold into one quiet drop per team (scene/helperGroups, the rule
+ * every map look shares), a stand-in mind with the group's id; open groups show their helpers as drops of their own.
+ */
+function foldedAgents(agents: Record<string, Agent>, swarms: Record<string, Swarm>, expanded: ReadonlySet<string>): { agents: Record<string, Agent>; groups: Map<string, HelperGroup> } {
+  const f = groupHelpers(Object.values(agents), Date.now(), { expanded })
+  const out: Record<string, Agent> = {}
+  for (const a of f.shown) out[a.id] = a
+  const groups = new Map<string, HelperGroup>()
+  for (const g of f.groups) {
+    const team = swarms[g.teamId]
+    if (!team) continue
+    groups.set(g.id, g)
+    // dim and still, like a stopped mind; born after every mind so it sorts last
+    out[g.id] = { id: g.id, name: helperGroupWords(g, shown(team.name)).label, kind: 'module', swarm_id: g.teamId, model: '', persona: '', hue: team.hue, status: 'stopped', driver: '', budget_usd: 0, spent_usd: 0, connected: false, last_active_at: null, created_at: '9999' }
+  }
+  return { agents: out, groups }
+}
+const snap = (s: Snapshot): Snapshot => ({ agents: foldedAgents(s.agents, s.swarms, useHelperGroups.getState().expanded).agents, swarms: s.swarms, thinking: s.thinking, approvals: s.approvals })
 
 interface Whisper {
   id: number
@@ -40,9 +61,9 @@ export default function Experience() {
   const picking = usePickSwarm((s) => s.picking)
   const coveredRef = useRef(covered)
   const [nav, setNav] = useState<{ view: FluxView; origin?: Origin }>({ view: { kind: 'home' } })
-  const [decision, setDecision] = useState<DecisionState>(null)
+  const [decision, setDecision, decisionOwner] = useVisibleState<DecisionState>(null)
   const [whispers, setWhispers] = useState<Whisper[]>([])
-  const [sheet, setSheet] = useState<SheetState | null>(null)
+  const [sheet, setSheet, sheetOwner] = useVisibleState<SheetState | null>(null)
 
   // the liquid: engine, size, visibility
   useEffect(() => {
@@ -110,7 +131,10 @@ export default function Experience() {
     let lastAct = useHive.getState().activitySeq
     const seen = new Set<string>()
     for (const list of Object.values(useHive.getState().messages)) for (const msg of list) seen.add(msg.id)
-    return useHive.subscribe((s, p) => {
+    const offGroups = useHelperGroups.subscribe((g, pg) => {
+      if (g.expanded !== pg.expanded) world.sync(snap(useHive.getState()))
+    })
+    const offHive = useHive.subscribe((s, p) => {
       if (s.agents !== p.agents || s.swarms !== p.swarms || s.thinking !== p.thinking || s.approvals !== p.approvals) world.sync(snap(s))
       if (s.messages !== p.messages) {
         for (const id in s.messages) {
@@ -141,6 +165,10 @@ export default function Experience() {
         if (add.length) setWhispers((w) => [...w.filter((x) => !add.some((y) => y.agent === x.agent)), ...add].slice(-4))
       }
     })
+    return () => {
+      offGroups()
+      offHive()
+    }
   }, [world])
 
   // whispers fade out by themselves
@@ -192,6 +220,8 @@ export default function Experience() {
     closeDecision: () => setDecision(null),
     home: () => setNav((n) => ({ view: { kind: 'home' }, origin: n.origin })),
     sheet,
+    sheetOwner,
+    decisionOwner,
     openSheet: (s) => {
       // on a phone the sheet takes the screen: the open panel drains first
       if (s && !desktop) setNav((n) => (n.view.kind === 'home' ? n : { view: { kind: 'home' }, origin: n.origin }))
@@ -267,6 +297,9 @@ function Overlay({ whispers, quiet }: { whispers: Whisper[]; quiet: boolean }) {
   const [hot, setHot] = useState<string | null>(null)
   const swarmList = useMemo(() => Object.values(swarms).sort((a, b) => a.created_at.localeCompare(b.created_at)), [swarms])
   const agentList = useMemo(() => Object.values(agents), [agents])
+  // the drops drawn: finished request helpers folded into one per team (foldedAgents)
+  const expandedHelpers = useHelperGroups((s) => s.expanded)
+  const drawn = useMemo(() => foldedAgents(agents, swarms, expandedHelpers), [agents, swarms, expandedHelpers])
   const pending = useMemo(() => Object.values(approvals).filter((a) => a.status === 'pending').sort((a, b) => a.created_at.localeCompare(b.created_at)).slice(0, 7), [approvals])
   const awake = agentList.filter((a) => a.status === 'awake').length
   const busy = agentList.filter((a) => a.status === 'awake' && (thinking[a.id] === 'llm' || thinking[a.id] === 'skills')).length
@@ -314,7 +347,9 @@ function Overlay({ whispers, quiet }: { whispers: Whisper[]; quiet: boolean }) {
         )
       })}
 
-      {agentList.map((a) => {
+      {Object.values(drawn.agents).map((a) => {
+        const group = drawn.groups.get(a.id)
+        if (group) return <HelperGroupDrop key={a.id} group={group} team={swarms[group.teamId] ? shown(swarms[group.teamId].name) : 'its swarm'} hidden={view.kind === 'swarm' && view.id === group.teamId} />
         const inPanel = (view.kind === 'swarm' && a.swarm_id === view.id) || (view.kind === 'mind' && view.id === a.id)
         return <DropNode key={a.id} agent={a} thinking={thinking[a.id]} hidden={inPanel} named={(hot === a.swarm_id && !!a.swarm_id) || (!a.swarm_id && home)} onHot={setHot} />
       })}
@@ -416,6 +451,32 @@ function DropNode({ agent: a, thinking, hidden, named, onHot }: { agent: Agent; 
             )}
           </AnimatePresence>
         </>
+      )}
+    </div>
+  )
+}
+
+/** A team's folded request helpers as one quiet drop: a button that opens the group and closes it again. */
+function HelperGroupDrop({ group, team, hidden }: { group: HelperGroup; team: string; hidden: boolean }) {
+  const ref = useNode(`drop:${group.id}`)
+  const toggle = useHelperGroups((s) => s.toggle)
+  const words = helperGroupWords(group, team)
+  return (
+    <div ref={ref} className="absolute top-0 left-0" style={{ width: 0, height: 0 }}>
+      {!hidden && (
+        <button
+          type="button"
+          data-helper-group={group.id}
+          aria-label={words.aria}
+          aria-expanded={group.expanded}
+          onClick={() => toggle(group.id)}
+          className="flux-focus flux-hit pointer-events-auto absolute rounded-full"
+          style={{ width: 'max(42px, calc(var(--r) * 2.1))', height: 'max(42px, calc(var(--r) * 2.1))', left: 'min(-21px, calc(var(--r) * -1.05))', top: 'min(-21px, calc(var(--r) * -1.05))', touchAction: 'none' }}
+        >
+          <span className="absolute left-1/2 -translate-x-1/2 rounded-full px-2 py-0.5 text-[11px] whitespace-nowrap" style={{ top: 'calc(100% + 2px)', background: 'rgb(14 6 26 / 0.6)', color: INK2 }}>
+            {words.label}
+          </span>
+        </button>
       )}
     </div>
   )

@@ -1,6 +1,6 @@
 """Private, shared or public minds and swarms (R13).
 
-Own hive H1 (the owner 2026-10-13: public or private, with access granted within both): ``shared`` is private with access
+Own hive H1 (Jon 2026-10-13: public or private, with access granted within both): ``shared`` is private with access
 grants (shared_with); grants can be added to a public thing too. A public mind or swarm also says who pays (``pays``:
 own-key or hive-key, ownhive.py); the hive itself is private (invite only) or public (ownhive.py, people.py).
 
@@ -260,7 +260,7 @@ EVENT_RULES = {
     # judged against the stored motivation by Motivations.readable; links also need the swarm and every goal in it
     "motivation.updated": "motivation", "motivation.links": "motivation_links",
     # Universal Ask (ask.py): frames go to the asker only, checked in event_visible before the admin bypass. Admins are NOT
-    # sent other people's (the owner has not ruled on live admin sight); they read every turn in /api/ask/audit. The thread's
+    # sent other people's (Jon has not ruled on live admin sight); they read every turn in /api/ask/audit. The thread's
     # ordinary room/message/goal/trace events still follow their own rules, which admins do receive.
     "ask": "asker",
     # J3 host R2 (studio_sessions.py): a person's Studio session notice (ids and state, no body) reaches that person, judged
@@ -322,7 +322,11 @@ class Visibility:
         room callers supply it from the stored c_<mind> alias, never client data. Old room mirrors lost the sender,
         so system:hive [WAKE ...] notes in those rooms are conservatively protected without changing their bytes.
         Internal delivery, persistence, model inputs and owner-authorized exports do not call this projection.
+        Also the one people projection of Health's question (sol and Kimi on 7cf0ca57): a verified one (marked
+        health_check by Hive.message_view or the DM room copy) reaches people untagged (health.people_message).
         """
+        from .health import people_message   # health imports rooms; read here, when called, never at import
+        message = people_message(message)
         historical = agent_id is not None and message.get("sender") == "system:hive" and str(message.get("text") or "").startswith("[WAKE ")
         if message.get("sender") != "hive:schedule" and not historical:
             return message
@@ -368,7 +372,7 @@ class Visibility:
 
     def hidden_personal(self, viewer, table):
         """Ids in `table` (agents or swarms) that are another person's personal mind or swarm (personal_of, set by
-        personal.ensure) which this viewer could not see as a member (the owner 2026-10-09: "I should only see my own user
+        personal.ensure) which this viewer could not see as a member (Jon 2026-10-09: "I should only see my own user
         unless others give me permission to see")."""
         try:
             rows = self.hive.db.all(f"SELECT id, owner, visibility, shared_with, personal_of FROM {table} "
@@ -478,7 +482,7 @@ class Visibility:
         return bool(share) and shares is not None and shares.visible(viewer, share)
 
     def _ask_content(self, viewer, text):
-        """Ask-derived content goes to its asker only, admins included (the owner 2026-10-05: asker-only live, admins audit).
+        """Ask-derived content goes to its asker only, admins included (Jon 2026-10-05: asker-only live, admins audit).
         Checked before the admin bypass. None when the frame is not Ask content:
         - 'ask' frames, by their principal;
         - 'message' frames in an ask:<turn> conversation (the request and the mind's replies), by that turn's asker;
@@ -650,7 +654,7 @@ class Visibility:
             from .ownhive import PAYS
             if pays not in PAYS:
                 raise self.hive.error(400, "bad_pays", "pays is own-key or hive-key")
-            if pays == "hive-key" and not self.hive.ownhive.is_owner(viewer.principal):   # H1.1: the owner's money
+            if pays == "hive-key" and not self.hive.ownhive.acts_as_owner(viewer):   # H1.1: the owner's money
                 raise self.hive.error(403, "owner_only", "Only this hive's owner can let the hive's key pay.")
             values["pays"], values["pays_by"] = pays, viewer.principal
         if visibility:

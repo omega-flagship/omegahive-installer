@@ -60,6 +60,7 @@
           (change-state! &nextWakeAt (+ (get_time) (get-state &wakeupInterval)))
           ; Clean boot should initialize memory/channels, then listen.
           ; Human input and scheduled wakeups grant LLM turns explicitly.
+          (change-state! &formatRetries 0)
           (change-state! &loops 0)))
 
 (= (initRuntimeOrgans)
@@ -131,19 +132,21 @@
              (cons (COMMAND_RETURN: ($cmd $result))
                    (command-results $rest)))))
 
-; A response that is nothing but `wait` is the mind choosing to wait: its remaining turns end here, so it makes no
-; model call until new input arrives (any hub message resets &loops: a person's or mind's message, and the hive's
-; goal, claim, approval and schedule notes) or its wait expires
-; (&nextWakeAt: "wait 900" asks for 900 seconds; a bare reason keeps its own wake interval; the runtime's own
-; provider-error wait, wait "LLM-PROVIDER-...", retries after 60 seconds). Any other response, or
-; no response, leaves the loop as it was. Efficiency inside the mind's own loop, never a limit: the mind chooses.
+; A chosen wait uses the existing wake schedule. Runtime format failures may retry after2s at most three times
+; across wake cycles; the fourth and later failures rest until the normal wake. A successful response or new input
+; starts a fresh stretch. Model-authored marker text has ordinary wait semantics, never the runtime's retry credit.
 (= (honor-chosen-wait $sexpr)
-   (let $seconds (py-call (helper.chosen_wait_seconds (repr $sexpr)))
-        (if (< $seconds 0)
-            wait-not-chosen
-            (progn (change-state! &loops 0)
-                   (if (> $seconds 0) (change-state! &nextWakeAt (+ (get_time) $seconds)) _)
-                   (wait-chosen $seconds)))))
+   (honor-chosen-wait $sexpr normal))
+
+(= (honor-chosen-wait $sexpr $retryKind)
+   (let* (($attempts (py-call (helper.next_format_retry_count $retryKind (get-state &formatRetries))))
+          ($_ (change-state! &formatRetries $attempts))
+          ($seconds (py-call (helper.chosen_wait_seconds (repr $sexpr) $retryKind $attempts))))
+         (if (< $seconds 0)
+             wait-not-chosen
+             (progn (change-state! &loops 0)
+                    (if (> $seconds 0) (change-state! &nextWakeAt (+ (get_time) $seconds)) _)
+                    (wait-chosen $seconds)))))
 
 (= (omegaclaw)
    (omegaclaw 1))
@@ -166,7 +169,8 @@
                                         (if (> (string_length $msgrcv) 0) (change-state! &prevmsg $msgrcv) _)))
                         ($msg (get-state &prevmsg))
                         ($_ (if $msgnew
-                                (change-state! &loops (get-state &maxNewInputLoops)) _))
+                                (progn (change-state! &formatRetries 0)
+                                       (change-state! &loops (get-state &maxNewInputLoops))) _))
                         ($inputctx (input-recall $msgnew $msg))
                         ($skillctx (skill-recall $msgnew $msg))
                         ($lastmessage (if $msgnew (HUMAN-MSG: $msg) (if (spamShield) " DO NOT RE-SEND OR SPAM!" "")))
@@ -176,10 +180,11 @@
 	                                       ($_ (println! $lastmessage))
 	                                       ($send $prompt)
                                        ($_ (println! (CHARS_SENT: (string_length $send))))
-                                       ($respi (if (== (provider) OpenAI)
-                                                   (useGPT (LLM) (maxOutputToken) (reasoningMode) $send)
-                                                   (py-call (lib_llm_ext.callProvider (provider) $send (maxOutputToken)))))
-                                       ($resp (py-call (helper.signature_balance_parentheses $respi)))
+                                       ($prepared (if (== (provider) OpenAI)
+                                                      (py-call (helper.prepare_model_response (useGPT (LLM) (maxOutputToken) (reasoningMode) $send)))
+                                                      (py-call (lib_llm_ext.callProviderCommands (provider) $send (maxOutputToken)))))
+                                       ($resp (py-call (helper.prepared_response_commands $prepared)))
+                                       ($retryKind (py-call (helper.prepared_response_kind $prepared)))
                                        ($response $resp)
                                        ($sexpr (catch (sread $response)))
                                        ($_ (change-state! &error ()))
@@ -192,7 +197,7 @@
                                        ($_ (change-state! &lastResponseText $response))
                                        ($_ (change-state! &lastResponseResults $results))
                                        ($_ (run-runtime-hooks response))
-                                       ($_ (honor-chosen-wait $sexpr)))
+                                       ($_ (honor-chosen-wait $sexpr $retryKind)))
                                       (progn (if (or $msgnew  (not (== $sexpr ()))) (addToHistory $msg $response $sexpr $msgnew $results) _)
                                              (change-state! &lastresults (string-safe (repr $results)))))
                                 (if (> (get_time) (get-state &nextWakeAt))

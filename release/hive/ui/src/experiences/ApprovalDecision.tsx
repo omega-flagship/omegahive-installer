@@ -1,3 +1,6 @@
+import { STALE } from '../lib/identityEpoch'
+import { useIsPresent } from 'framer-motion'
+import { useVisibleAuthority } from '../lib/useVisibleAuthority'
 import { useMemo, useState } from 'react'
 import { shown } from '../lib/displayName'
 import { APPROVAL_REFUSAL_UNCONFIRMED, APPROVAL_UNCONFIRMED, approvalBound, approvalSeenOf, askedAt } from '../lib/approvalDecision'
@@ -17,13 +20,15 @@ import { takeRefusal } from '../lib/approvalRefusal'
  * Answers go through the experience SDK's store, so the Surface preview build's hold (answers open the classic
  * approvals page) still applies here.
  */
-export function ApprovalDecision({ seen: request, session, onClose, restoreFocus }: {
+export function ApprovalDecision({ seen: request, session, onClose, restoreFocus, current }: {
+  current: () => boolean
   seen: Approval
   /** Surface R (Kimi follow-up): the store session `seen` was read under, stamped by the opener; omitted, the session when the dialog opens. */
   session?: string
   onClose: () => void
   restoreFocus?: (opener: HTMLElement | null) => HTMLElement | null | undefined
 }) {
+  const canAct = useVisibleAuthority('dialog', useIsPresent(), request.id, current)
   const seen = useMemo(() => (session === undefined ? approvalSeenOf(request) : { ...approvalSeenOf(request), session }), [request, session])
   const live = useStore((s) => s.approvals[seen.id])
   const agent = useStore((s) => s.agents[seen.agent_id])
@@ -43,6 +48,7 @@ export function ApprovalDecision({ seen: request, session, onClose, restoreFocus
     busyLabel: d === 'deny' || d === 'never' ? 'Refusing' : 'Approving',
     tone,
     run: async () => {
+      if (!canAct()) return STALE
       // the same binding, read again at the moment of dispatch
       const now = approvalBound(seen, useStore.getState().approvals[seen.id])
       if (now.kind !== 'ready') return now.kind === 'gone' ? 'This request is no longer on the hive.' : now.kind === 'closed' ? now.why : `This request changed while it was open (${now.fields.join(', ')}). Close and open it again.`
@@ -50,6 +56,7 @@ export function ApprovalDecision({ seen: request, session, onClose, restoreFocus
       const r = await useHive.getState().decide(seen.id, d, minutes, seen.session, instance)
       // UI review S5: a surface-preview build hands the answer to the Inbox and says so; the dialog closes, claiming nothing
       if (heldForInbox(r)) return true
+      if (!canAct()) { setSending(false); return STALE }
       if (r) return true
       setSending(false)
       // host-identity r1: the host refused this answer (403 owner_only, or 404 not_found): say so plainly, never a generic failure
@@ -57,12 +64,17 @@ export function ApprovalDecision({ seen: request, session, onClose, restoreFocus
       if (refused) return { failed: refused }
       // Review B1 (commons f0818d8): the store says only that no answer was confirmed (its toast names why); a lost
       // answer is among the reasons, so this never says "Nothing changed": the person checks the request first
+      // Unlike goals, approval answers currently have no per-request unsure lock or automatic read-back/recheck.
+      // decide() keeps the request and emits its own error notice; this dialog adds the unconfirmed wording while
+      // open. After Close only that store notice remains: inspect the current Inbox before another answer. Do not
+      // promise the goal dialog's portable Check again flow here without an approval reconciliation contract.
       return { failed: d === 'deny' || d === 'never' ? APPROVAL_REFUSAL_UNCONFIRMED : APPROVAL_UNCONFIRMED }
     },
   })
 
   return (
     <DecisionDialog
+      canAct={canAct}
       icon="shield"
       eyebrow={`${seen.risk} risk · asks for you`}
       title={

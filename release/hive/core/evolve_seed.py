@@ -39,14 +39,14 @@ def inspect_pair(swarm_id, agents, budget_rules, source_pins):
     This is not a runtime isolation or source-custody proof. The operator must
     observe the sandbox and own candidate areas before starting the pair.
     """
-    if not isinstance(swarm_id, str) or not re.fullmatch(r"s_[0-9a-f]{8}", swarm_id):
+    if not isinstance(swarm_id, str) or not re.fullmatch(r"s_(?:[0-9a-f]{8}|[0-9a-f]{32})", swarm_id):
         raise ValueError("invalid research swarm id")
     errors = []
     members = [a for a in agents if a.get("swarm_id") == swarm_id]
     if len(members) != 2 or sorted(a.get("kind", "") for a in members) != ["iter", "omega"]:
         errors.append("research swarm requires exactly one Omega and one Iter")
     ids = [a.get("id") for a in members]
-    if len(set(ids)) != len(ids) or any(not isinstance(i, str) or not re.fullmatch(r"a_[0-9a-f]{8}", i) for i in ids):
+    if len(set(ids)) != len(ids) or any(not isinstance(i, str) or not re.fullmatch(r"a_(?:[0-9a-f]{8}|[0-9a-f]{32})", i) for i in ids):
         errors.append("seed identities must be distinct native agent ids")
     for agent in members:
         if agent.get("status") not in {"created", "stopped"}:

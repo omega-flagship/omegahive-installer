@@ -22,9 +22,9 @@ def _letters(n=12):
 
 
 def _reads(client, w, turn_id, room):
-    quinn = w["quinn"]
-    return [client.get("/api/ask/audit", headers=quinn), client.get("/api/ask/audit", headers=quinn, params={"principal": "user:u_ann"}),
-            client.get(f"/api/ask/audit/{turn_id}", headers=quinn), client.get(f"/api/rooms/{room}/messages", headers=quinn),
+    jon = w["jon"]
+    return [client.get("/api/ask/audit", headers=jon), client.get("/api/ask/audit", headers=jon, params={"principal": "user:u_ann"}),
+            client.get(f"/api/ask/audit/{turn_id}", headers=jon), client.get(f"/api/rooms/{room}/messages", headers=jon),
             client.get(f"/api/ask/audit/{turn_id}")]
 
 

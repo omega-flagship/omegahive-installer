@@ -510,7 +510,7 @@ function ReportsBand({ reports, notes, open, failures, onToggle, identity, fetch
 
 function Chip({ children, tone, attr }: { children: ReactNode; tone?: 'warn'; attr?: string }) {
   return (
-    <span data-pc-chip={attr} className={cx('inline-flex shrink-0 items-center rounded-md border px-1.5 py-px text-[11px] whitespace-nowrap', tone === 'warn' ? 'border-warn/30 bg-warn/10 text-warn' : 'border-line-2 bg-white/[0.04] text-ink-3')}>
+    <span data-pc-chip={attr} className={cx('inline-flex shrink-0 items-center rounded-md border px-1.5 py-px text-[11px] whitespace-nowrap', tone === 'warn' ? 'border-warn/30 bg-warn/10 text-warn' : 'border-line-2 bg-tint/[0.04] text-ink-3')}>
       {children}
     </span>
   )

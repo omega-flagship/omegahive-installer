@@ -20,7 +20,8 @@ from .db import new_id, now
 from .services import CODE_MUTATING, parse_binding
 
 # Skills only an exact allow rule for that very skill can permit: no default, no glob, no swarm or hive rule.
-EXPLICIT_ONLY = frozenset({"hive-update-apply", "hive-flow-publish"})
+EXPLICIT_ONLY = frozenset({"hive-update-apply", "hive-flow-publish",
+    "code-mind-spawn", "code-mind-prompt", "code-mind-control", "code-mind-retry"})
 
 # Every hive skill that exists and was reviewed when added. The "hive-*" default allow covers ONLY these; a new hive skill
 # defaults to "ask" until it is reviewed and listed here (Kimi 2026-10-05: the glob silently allowed anything named hive-*).
@@ -74,7 +75,83 @@ DEFAULT_ALLOW = ["send", "wait", "pin", "hive-*", "query", "remember", "episodes
                  "read-file", "space-find", "space-count", "space-examples", "space-pressure", "skill-*",
                  "beliefs-*", "agenda-*", "events-*", "energy-status", "channel-status",
                  # OmegaCode reads (hive/core/services.py): no change outside the workspace
-                 "code-read", "code-search", "code-diff", "code-events", "code-artifact", "code-cancel"]
+                 "code-read", "code-search", "code-diff", "code-events", "code-artifact", "code-cancel",
+                 # Existing6606 parser/module export heads that previously fell through to allow. Keep this finite:
+                 # new names require review; all explicit rules and the earlier deny/ask boundaries still decide.
+                 "activity-traces", "add-skill-alias", "add-skill-trigger", "agentverse-ask", "agentverse-call",
+                 "agentverse-discover", "agentverse-inbox", "agentverse-listener-start",
+                 "agentverse-listener-status", "agentverse-listener-stop", "agentverse-register-agent",
+                 "agentverse-remote-agents", "agentverse-status", "agentverse-trace", "artifact-id",
+                 "assimilate-belief", "assimilate-event", "assimilate-persistent", "assimilate-world",
+                 "assume-accept-adjustment", "assume-accept-growth", "assume-add-action",
+                 "assume-add-context-feature", "assume-add-feature-edge", "assume-adjustment-pressure",
+                 "assume-apply-writeback", "assume-audit", "assume-clear-work", "assume-demo-audit",
+                 "assume-demo-learn", "assume-demo-list", "assume-demo-load", "assume-demo-predict",
+                 "assume-demo-writeback", "assume-error", "assume-evidence-summary", "assume-growth-pressure",
+                 "assume-growth-proposals", "assume-import-demo", "assume-init-situation", "assume-learn",
+                 "assume-learn-from-atoms", "assume-load", "assume-observe-adjustment-pressure",
+                 "assume-observe-audit", "assume-observe-evidence-summary", "assume-observe-growth-pressure",
+                 "assume-observe-growth-proposals", "assume-observe-growth-review", "assume-observe-predict",
+                 "assume-observe-writeback", "assume-outcome", "assume-predict", "assume-reload",
+                 "assume-reload-situation", "assume-review", "assume-review-adjustment",
+                 "assume-review-adjustment-detail", "assume-review-growth", "assume-review-mutation",
+                 "assume-situation-status", "assume-state", "assume-status", "assume-trace", "assume-work",
+                 "assume-writeback", "attention-focus", "attention-ledger-status",
+                 "attention-native-candidates", "attention-reload", "attention-rent",
+                 "attention-retire-candidate", "attention-review", "attention-scan-persistent",
+                 "attention-status", "attention-wage", "audio-observation-log", "belief-claim",
+                 "belief-derived", "belief-revision-candidate", "body-container-last-trace",
+                 "body-container-launcher", "body-container-self", "body-container-status", "body-status",
+                 "calendar-read", "capture-webcam", "choose-skill-for", "cleanup-proposals",
+                 "clear-glucose-watch", "code-changes", "code-check", "code-create", "code-diagnostics",
+                 "code-exec", "code-git", "code-git-export-state", "code-git-patch", "code-hunk-bytes",
+                 "code-hunks", "code-merge-bytes", "code-merge-files", "code-merge-preview", "code-move",
+                 "code-open", "code-output", "code-proof-check", "code-proof-result", "code-proposal-context",
+                 "code-proposal-read", "code-propose", "code-remove", "code-replace", "code-repos",
+                 "code-retrieve", "code-review", "code-runs", "code-status", "code-test-prepare",
+                 "code-test-result", "code-test-run", "code-tools", "code-verifications",
+                 "complete-reboot-check", "context-organ-status", "cost-last-call", "current-swipl-pid",
+                 "cycle-status", "delete-whatsapp-message", "demote", "ecan-pass", "edit-whatsapp-message",
+                 "edit-whatsapp-message-base64", "episodes-at", "event-note", "explain-skill", "gb-last-trace",
+                 "gb-load", "gb-load-state", "gb-observe", "gb-save-state", "gb-screenshot", "gb-status",
+                 "gb-step", "gb-stop", "generate-image", "generate-image-quality", "generate-video",
+                 "glucose-app-status", "glucose-history", "glucose-rings", "glucose-watch-status",
+                 "house-action-log", "immune-candidates", "initChannels", "inspect-audio", "inspect-image",
+                 "inspect-webcam", "list-inbox", "list-published-artifacts", "list-web-pages",
+                 "load-runtime-space", "mark-whatsapp-read", "mark-whatsapp-unread", "media-observation-log",
+                 "nal-step", "nars-derive", "nars-query", "observe", "observe-audio", "observe-device",
+                 "observe-glucose", "observe-house", "observe-house-affordances", "observe-house-full",
+                 "observe-image", "observe-room", "persistent-atoms", "persistent-cleanup-candidates",
+                 "persistent-cleanup-propose", "persistent-expression", "persistent-fact",
+                 "persistent-merge-atoms", "persistent-note", "persistent-review", "persistent-rule",
+                 "pln-step", "prepare-reboot", "promote", "promote-scratch", "promote-skill-alias",
+                 "promote-skill-trigger", "public-web-url", "publish-artifact", "query-skill-space",
+                 "react-whatsapp-message", "read-whatsapp-chat", "read-whatsapp-chat-full",
+                 "read-whatsapp-chat-recent", "reboot-self", "receive", "record-house-outcome", "reminder-add",
+                 "reminder-cancel", "reminder-due", "reminder-list", "reply-whatsapp-file-caption-to",
+                 "reply-whatsapp-file-to", "reply-whatsapp-to", "reply-whatsapp-to-base64",
+                 "reply-whatsapp-to-message", "reply-whatsapp-to-message-base64", "repo-query", "restart-self",
+                 "retire-persistent-expression", "run-metta-file", "save-runtime-space", "scratch-add",
+                 "scratch-all-with-ttl", "scratch-count", "scratch-examples", "scratch-find", "scratch-gc",
+                 "scratch-pressure", "scratch-promote", "scratch-remove", "scratch-status", "scratch-touch",
+                 "send-control", "send-control-base64", "send-family", "send-family-file", "send-hive-to",
+                 "send-primary-operator", "send-primary-operator-base64", "send-telegram",
+                 "send-telegram-base64", "send-web-control", "send-web-control-base64", "send-whatsapp",
+                 "send-whatsapp-base64", "send-whatsapp-file", "send-whatsapp-file-caption",
+                 "send-whatsapp-file-caption-to", "send-whatsapp-file-to", "send-whatsapp-mention",
+                 "send-whatsapp-mention-to", "send-whatsapp-to", "send-whatsapp-to-base64", "set-energy-budget",
+                 "set-energy-mode", "set-energy-targets", "set-glucose-watch", "set-loop-energy",
+                 "set-whatsapp-primary", "sleep-for", "space-atoms", "space-examples-default",
+                 "space-merge-atoms", "space-persistence", "space-registry", "start-cycle-practice",
+                 "suggest-skill-alias", "suggest-skill-trigger", "telegram-status", "test-metta",
+                 "truth-expectation", "unpublish-artifact", "unreact-whatsapp-message", "use-house-affordance",
+                 "video-config-status", "vm-boot", "vm-last-trace", "vm-policy-atoms", "vm-policy-audit",
+                 "vm-policy-connections", "vm-policy-enforcement-plan", "vm-policy-exit-history",
+                 "vm-policy-exit-summary", "vm-policy-exits", "vm-policy-last-trace",
+                 "vm-policy-maintenance-window", "vm-policy-metrics", "vm-policy-record-exit",
+                 "vm-policy-status", "vm-shell", "vm-status", "wake-for", "webcam-observation-log",
+                 "webcam-status", "webhost-status", "whatsapp-chats", "whatsapp-inbox", "whatsapp-status",
+                 "world-fact", "world-person", "world-room", "write-web-page"]
 DEFAULT_ASK = ["shell", "shell-confirm", "metta", "write-file*", "append-file*", "send-file*", "codex-*",
                "space-transform", "remove-atom", "*-commit", "restart-omega",
                # OmegaCode changes: each one approved for its exact binding, redeemed once by the service
@@ -149,9 +226,51 @@ class Policy:
 
     # ---- rules ----------------------------------------------------------------------
 
-    def rules(self):
-        """Rules in force: a rule given "for a time" stops applying when it expires."""
+    def all_rules(self):
+        """All rules in force, including host infrastructure; enforcement never uses a listing filter."""
         return self.db.all("SELECT * FROM policy_rules WHERE expires_at IS NULL OR expires_at > ? ORDER BY created_at", (time.time(),))
+
+    def rule_views(self):
+        """Ordinary rules and explicit, provenance-bearing host infrastructure from one read snapshot."""
+        classify = getattr(self.hive, "foundation_infrastructure_bindings", None)
+        if classify is None:
+            # Older synthetic policy counterparts have no host-purpose classifier.
+            # Hiding nothing is conservative; enforcement always uses all_rules.
+            return {"rules": self.all_rules(), "infrastructure_rules": []}
+        from .foundation import CODE, NATIVE_SKILLS, RULE_ORIGIN
+        with self.db.transaction():
+            rows = self.all_rules()
+            bindings = [dict(row) for row in classify() if row["purpose"] == CODE]
+            binding = bindings[0] if len(bindings) == 1 else None
+            foundation = getattr(self.hive, "foundation", None)
+            current_owner = foundation._owner_read() if binding and foundation is not None else None
+            ordinary, infrastructure = [], []
+            for row in rows:
+                if (binding is None or row.get("origin") != RULE_ORIGIN
+                        or row["mode"] != "allow" or row["skill"] not in NATIVE_SKILLS
+                        or row["scope"] != "agent:" + binding["agent_id"]):
+                    ordinary.append(row)
+                    continue
+                projected = dict(row)
+                projected["infrastructure"] = {
+                    "kind": "foundation_controller", "purpose": binding["purpose"],
+                    "binding_principal": binding["principal"], "agent_id": binding["agent_id"],
+                    "swarm_id": binding["swarm_id"], "rule_origin": RULE_ORIGIN,
+                    "historical_granted_by": row.get("granted_by"),
+                    "current_hive_owner": current_owner,
+                    "owner_drift": None if current_owner is None else current_owner != binding["principal"],
+                    "execution_admission_verified": False,
+                }
+                infrastructure.append(projected)
+            return {"rules": ordinary, "infrastructure_rules": infrastructure}
+
+    def rules(self):
+        """Ordinary policy listing; infrastructure stays visible through its explicit projection."""
+        return self.rule_views()["rules"]
+
+    def infrastructure_rules(self):
+        """Complete active infrastructure rule fields plus their authenticated binding provenance."""
+        return self.rule_views()["infrastructure_rules"]
 
     def add_rule(self, scope, skill, mode, note="", expires_at=None, origin="", publish=True, granted_by=None):
         if mode not in ("allow", "ask", "deny"):
@@ -168,19 +287,19 @@ class Policy:
             row["granted_by"] = str(granted_by)
         self.db.insert("policy_rules", row)
         if publish:   # inside a caller's transaction, the caller publishes once after its commit
-            self.hive.events.publish("policy.updated", rules=self.rules())
+            self.hive.events.publish("policy.updated", **self.rule_views())
         return row
 
     def _supersede(self, agent_id, skill):
         """A person's new answer for (mind, skill) replaces their earlier answers: those rules stop applying now.
         They are expired, not deleted, so the record of what was answered stays."""
-        for rule in self.rules():
+        for rule in self.all_rules():
             if rule["scope"] == f"agent:{agent_id}" and rule["skill"] == skill and rule.get("origin") == ORIGIN_ANSWER:
                 self.db.execute("UPDATE policy_rules SET expires_at = ? WHERE id = ?", (time.time() - 0.001, rule["id"]))
 
     def delete_rule(self, rule_id):
         self.db.execute("DELETE FROM policy_rules WHERE id = ?", (rule_id,))
-        self.hive.events.publish("policy.updated", rules=self.rules())
+        self.hive.events.publish("policy.updated", **self.rule_views())
         return {"ok": True}
 
     def _member_person(self, authenticate, expected=None):
@@ -232,7 +351,7 @@ class Policy:
             self._member_person(authenticate, expected=principal)
             self._member_owned_mind(agent_id, principal)
             row = self.add_rule(scope, skill, mode, note, origin=ORIGIN_MEMBER, publish=False, granted_by=principal)
-            self.db.after_commit(lambda: self.hive.events.publish("policy.updated", rules=self.rules()))
+            self.db.after_commit(lambda: self.hive.events.publish("policy.updated", **self.rule_views()))
         return row
 
     def member_delete_rule(self, rule_id, *, authenticate):
@@ -258,7 +377,7 @@ class Policy:
             self._member_owned_mind(agent_id, principal)
             if self.db.execute("DELETE FROM policy_rules WHERE id = ?", (rule_id,)).rowcount != 1:
                 raise self.hive.error(409, "rule_changed", "this rule changed meanwhile; reload and try again")
-            self.db.after_commit(lambda: self.hive.events.publish("policy.updated", rules=self.rules()))
+            self.db.after_commit(lambda: self.hive.events.publish("policy.updated", **self.rule_views()))
         return {"ok": True}
 
     def _outside_folder(self, agent, command):
@@ -329,7 +448,7 @@ class Policy:
         if any(_matches(p, skill) for p in HUMAN_ONLY):
             return "deny", "human-only action"
         if skill in EXPLICIT_ONLY:
-            exact = [r for r in self.rules() if r["scope"] == f"agent:{agent['id']}" and r["skill"] == skill]
+            exact = [r for r in self.all_rules() if r["scope"] == f"agent:{agent['id']}" and r["skill"] == skill]
             if exact and exact[-1]["mode"] == "allow":
                 return "allow", exact[-1]["note"] or "explicit rule"
             return "deny", f"{skill} needs an exact allow rule for this mind (an admin grants it)"
@@ -343,7 +462,7 @@ class Policy:
         studio_media = skill in STUDIO_MEDIA_SKILLS and self._live_personal_maker(agent)   # R8
         studio_open = studio_step or studio_media
         candidates = []
-        for rule in self.rules():
+        for rule in self.all_rules():
             if rule["scope"] in scopes and _matches(rule["skill"], skill):
                 exact = 0 if rule["skill"] == skill else 1
                 if unreviewed and exact and rule["mode"] == "allow":
@@ -371,7 +490,7 @@ class Policy:
             return "allow", "default"
         if any(_matches(p, skill) for p in DEFAULT_ASK):
             return "ask", "side effects outside the agent need a human"
-        return "allow", "default"
+        return "ask", "not yet reviewed: a person decides"
 
     MAX_DECISIONS = 400
 
@@ -475,6 +594,17 @@ class Policy:
                                   f"{skill} needs a person's approval ({decision['approval_id']}); send the same "
                                   "request again once it is approved", {"approval_id": decision["approval_id"]})
         raise self.hive.error(403, "policy_denied", decision.get("message", f"{skill} is denied"))
+
+    def enforce_read_only(self, agent, skill):
+        """Session onboarding R2.7 §V: the non-filing path for a mixed-context bridge's reads. allow runs; deny refuses;
+        ask refuses too, storing nothing: no approvals row, no event, no recent-cache entry, and no caller text in the
+        refusal (only a generic code)."""
+        mode, _ = self.decide(agent, skill)
+        if mode == "allow":
+            return
+        if mode == "deny":
+            raise self.hive.error(403, "policy_denied", "that read is not allowed for this session")
+        raise self.hive.error(403, "approval_unavailable", "that read needs a person's approval, which this session cannot ask for")
 
     def _file(self, agent, skill, command, reason, binding=None):
         row = {"id": new_id("p"), "agent_id": agent["id"], "skill": skill, "command": command,
@@ -588,7 +718,7 @@ class Policy:
                 policy_changed = True
             updated = self.approval(approval_id)
         if policy_changed:
-            self.hive.events.publish("policy.updated", rules=self.rules())
+            self.hive.events.publish("policy.updated", **self.rule_views())
         from .governance_evidence import approval_statement
         self.hive.governance.record(approval_id, approval_statement(row["agent_id"], row["skill"]), approve)
         self.hive.events.publish("approval.updated", approval=updated)

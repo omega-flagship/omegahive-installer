@@ -17,10 +17,10 @@ from hive.tests.test_visibility import person
 
 
 def world(client):
-    """A swarm shared with Ann (a participant), a coordinator and a worker; Bob is a member who is not in it; Quinn is an
+    """A swarm shared with Ann (a participant), a coordinator and a worker; Bob is a member who is not in it; Jon is an
     admin person. Everything Ask-visible is shared with Ann; the coordinator is awake."""
     hive = client.app.state.hive
-    ann, bob, quinn = person(client, "u_ann"), person(client, "u_bob"), person(client, "u_quinn", "admin")
+    ann, bob, jon = person(client, "u_ann"), person(client, "u_bob"), person(client, "u_jon", "admin")
     sw = client.post("/api/swarms", json={"name": "Home", "visibility": "shared", "shared_with": ["user:u_ann"]}).json()
     client.put(f"/api/swarms/{sw['id']}/visibility", json={"visibility": "shared", "shared_with": ["user:u_ann"]})
     coord = client.post("/api/agents", json={"name": "Orchestra", "swarm_id": sw["id"]}).json()
@@ -30,7 +30,7 @@ def world(client):
     assert client.patch(f"/api/swarms/{sw['id']}", json={"coordinator_id": coord["id"]}).status_code == 200
     # awake and meant to be: the hub registers a hive-run mind only while desired is awake (lifecycle 8833a3d fence)
     hive.db.execute("UPDATE agents SET status = 'awake', desired = 'awake' WHERE id = ?", (coord["id"],))
-    return {"hive": hive, "ann": ann, "bob": bob, "quinn": quinn, "swarm": sw, "coord": coord, "worker": worker}
+    return {"hive": hive, "ann": ann, "bob": bob, "jon": jon, "swarm": sw, "coord": coord, "worker": worker}
 
 
 def ask(client, headers, op, text="what changed today?", **extra):
@@ -84,7 +84,7 @@ def test_a_member_and_an_admin_ask_but_not_a_mind_token_or_the_local_password(cl
     r = ask(client, w["ann"], "op-member-1", context={"swarm_id": w["swarm"]["id"]})
     assert r.status_code == 202 and r.json()["state"] == "accepted" and r.json()["thread"]["mind"]["id"] == w["coord"]["id"]
     client.post("/api/ask/op-member-1/stop", headers=w["ann"])
-    assert ask(client, w["quinn"], "op-admin-01", context={"swarm_id": w["swarm"]["id"]}).status_code == 202
+    assert ask(client, w["jon"], "op-admin-01", context={"swarm_id": w["swarm"]["id"]}).status_code == 202
     mind = ask(client, agent_headers(w["coord"]), "op-mind-001", context={"swarm_id": w["swarm"]["id"]})
     assert mind.status_code == 401
     local = ask(client, {}, "op-local-01", context={"swarm_id": w["swarm"]["id"]})       # the fixture's operator password
@@ -112,7 +112,7 @@ def test_seeing_a_public_swarm_is_not_authority_to_ask_its_coordinator(client):
     assert r.status_code == 403 and r.json()["error"]["code"] == "not_allowed"
 
 
-# ---- routing: the coordinator answers (the owner, 2026-10-05) ------------------------------------------------------------------
+# ---- routing: the coordinator answers (Jon 2026-10-05) ------------------------------------------------------------------
 
 def test_the_addressed_minds_coordinator_answers_with_the_target_as_context(client):
     w = world(client)
@@ -149,7 +149,7 @@ def test_the_page_swarm_then_the_default_swarm_and_never_a_fallback_mind(client)
 
 
 def test_no_coordinator_the_addressed_mind_answers_through_under_the_coordinators_checks(client):
-    """the owner 2026-10-09: "Any hive I have permission for, should be able to answer through some way"."""
+    """Jon 2026-10-09: "Any hive I have permission for, should be able to answer through some way"."""
     w = world(client)
     hive, sid, worker = w["hive"], w["swarm"]["id"], w["worker"]
     client.patch(f"/api/swarms/{sid}", json={"coordinator_id": None})
@@ -233,7 +233,7 @@ def test_default_swarm_rules_on_me_ask(client):
     assert client.put("/api/me/ask", headers=w["ann"], json={"thread_budget_usd": 6}).json()["error"]["code"] == "invalid"
     assert client.put("/api/me/ask", headers=w["ann"], json={"model": "x"}).json()["error"]["code"] == "invalid"
     assert client.put("/api/me/ask", headers=w["bob"], json={"swarm_id": w["swarm"]["id"]}).status_code == 404   # Bob can't see it
-    assert client.put("/api/me/ask", headers=w["quinn"], json={"swarm_id": w["swarm"]["id"]}).status_code == 200   # an admin can
+    assert client.put("/api/me/ask", headers=w["jon"], json={"swarm_id": w["swarm"]["id"]}).status_code == 200   # an admin can
 
 
 # ---- admission: idempotency, limits, forbidden fields, wrong route ------------------------------------------------------
@@ -252,7 +252,7 @@ def test_idempotency_replays_the_original_turn_and_a_different_body_conflicts(cl
     assert ask(client, w["ann"], "op-idem-001", context={"swarm_id": w["swarm"]["id"]}).json()["state"] == "done"   # recovered
     assert counts(hive)["ask_turns"] == 1
     # the same id from another person is a different turn (operation ids are per person; turn ids are global)
-    other = ask(client, w["quinn"], "op-idem-001", context={"swarm_id": w["swarm"]["id"]}).json()
+    other = ask(client, w["jon"], "op-idem-001", context={"swarm_id": w["swarm"]["id"]}).json()
     assert other["turn_id"] != first.json()["turn_id"]
 
 
@@ -280,7 +280,7 @@ def test_browser_supplied_authority_model_budget_and_tokens_are_refused(client):
     hive = w["hive"]
     before = counts(hive)
     ctx = {"swarm_id": w["swarm"]["id"]}
-    for field, value in (("model", "openai/gpt"), ("provider", "x"), ("budget_usd", 0.1), ("principal", "user:u_quinn"),
+    for field, value in (("model", "openai/gpt"), ("provider", "x"), ("budget_usd", 0.1), ("principal", "user:u_jon"),
                          ("agent_id", w["coord"]["id"]), ("confirm_token", "t"), ("access_token", "t"), ("api_key", "k"),
                          ("to", w["coord"]["id"]), ("coordinator_id", w["coord"]["id"])):
         r = ask(client, w["ann"], "op-forbid-01", context=ctx, **{field: value})
@@ -310,10 +310,10 @@ def test_a_turn_reaches_the_coordinator_and_the_answer_goes_to_the_asker_only(cl
     sockets = {}
     with client.websocket_connect(f"/api/events?token={token_of(w['ann'])}") as ann_ws, \
             client.websocket_connect(f"/api/events?token={token_of(w['bob'])}") as bob_ws, \
-            client.websocket_connect(f"/api/events?token={token_of(w['quinn'])}") as quinn_ws, \
+            client.websocket_connect(f"/api/events?token={token_of(w['jon'])}") as jon_ws, \
             client.websocket_connect(f"/api/events?token={client.operator_token}") as op_ws, \
             client.websocket_connect("/agent-hub", headers=agent_headers(w["coord"])) as mind:
-        sockets = {"ann": ann_ws, "bob": bob_ws, "quinn": quinn_ws, "op": op_ws}
+        sockets = {"ann": ann_ws, "bob": bob_ws, "jon": jon_ws, "op": op_ws}
         for ws in sockets.values():
             assert ws.receive_json()["type"] == "hello"
         mind.send_text(json.dumps({"type": "resume", "last_seen_seq": None}))
@@ -331,7 +331,7 @@ def test_a_turn_reaches_the_coordinator_and_the_answer_goes_to_the_asker_only(cl
     assert [f["seq"] for f in got["ann"]] == [1, 2, 3, 4]
     assert all(f["turn_id"] == r["turn_id"] and f["principal"] == "user:u_ann" for f in got["ann"])
     assert got["ann"][2]["text"] == "Nothing urgent."
-    assert got["bob"] == [] and got["quinn"] == [] and got["op"] == []          # not another person, not an admin
+    assert got["bob"] == [] and got["jon"] == [] and got["op"] == []          # not another person, not an admin
     rec = client.get("/api/ask/op-e2e-0001", headers=w["ann"]).json()
     assert rec["state"] == "done" and [(e["seq"], e["phase"]) for e in rec["events"]] == [(f["seq"], f["phase"]) for f in got["ann"]]
     page = client.get("/api/ask/op-e2e-0001?after=2&limit=1", headers=w["ann"]).json()
@@ -533,8 +533,8 @@ def test_ten_a_minute_and_three_hundred_a_day(client):
     _past_turns(hive, "user:u_ann", 10, 5)
     r = ask(client, w["ann"], "op-rate-0001", context=ctx)
     assert r.status_code == 429 and r.json()["error"]["code"] == "rate_limited"
-    assert ask(client, w["quinn"], "op-rate-0002", context=ctx).status_code == 202               # per person
-    client.post("/api/ask/op-rate-0002/stop", headers=w["quinn"])
+    assert ask(client, w["jon"], "op-rate-0002", context=ctx).status_code == 202               # per person
+    client.post("/api/ask/op-rate-0002/stop", headers=w["jon"])
     hive.db.execute("DELETE FROM ask_turns WHERE principal = 'user:u_ann'")
     _past_turns(hive, "user:u_ann", 300, 3600)
     assert ask(client, w["ann"], "op-rate-0003", context=ctx).json()["error"]["code"] == "rate_limited"
@@ -580,12 +580,12 @@ def test_the_audit_list_is_admin_only(client):
     r = ask(client, w["ann"], "op-audit-001", text="audit me", context={"swarm_id": w["swarm"]["id"]}).json()
     assert client.get("/api/ask/audit", headers=w["ann"]).status_code == 403
     assert client.get(f"/api/ask/audit/{r['turn_id']}", headers=w["bob"]).status_code == 403
-    rows = client.get("/api/ask/audit", headers=w["quinn"]).json()
+    rows = client.get("/api/ask/audit", headers=w["jon"]).json()
     assert [(x["principal"], x["text"]) for x in rows] == [("user:u_ann", "audit me")]
-    one = client.get(f"/api/ask/audit/{r['turn_id']}", headers=w["quinn"]).json()
+    one = client.get(f"/api/ask/audit/{r['turn_id']}", headers=w["jon"]).json()
     assert one["events"][0]["phase"] == "accepted"
-    assert client.get("/api/ask/audit?principal=user:u_bob", headers=w["quinn"]).json() == []
-    assert client.get("/api/ask", headers=w["quinn"]).json() == []                               # an admin's own list is their own
+    assert client.get("/api/ask/audit?principal=user:u_bob", headers=w["jon"]).json() == []
+    assert client.get("/api/ask", headers=w["jon"]).json() == []                               # an admin's own list is their own
     assert [x["operation_id"] for x in client.get("/api/ask", headers=w["ann"]).json()] == ["op-audit-001"]
 
 
@@ -601,19 +601,19 @@ def test_an_ask_conversation_cannot_be_addressed_from_outside(client):
 def test_a_thread_cap_only_tightens_and_two_people_compose_in_either_end_order(client):
     w = world(client)
     hive = w["hive"]
-    quinn_share = client.put(f"/api/swarms/{w['swarm']['id']}/visibility", json={"visibility": "shared", "shared_with": ["user:u_ann"]})
-    assert quinn_share.status_code == 200
+    jon_share = client.put(f"/api/swarms/{w['swarm']['id']}/visibility", json={"visibility": "shared", "shared_with": ["user:u_ann"]})
+    assert jon_share.status_code == 200
     ctx = {"swarm_id": w["swarm"]["id"]}
-    for first, second in (("ann", "quinn"), ("quinn", "ann")):
+    for first, second in (("ann", "jon"), ("jon", "ann")):
         assert cap(hive, w["coord"]) is None
-        client.put("/api/me/ask", headers=w["quinn"], json={"thread_budget_usd": 0.1})
+        client.put("/api/me/ask", headers=w["jon"], json={"thread_budget_usd": 0.1})
         a = ask(client, w["ann"], f"op-cap-{first}-a", context=ctx).json()
         ta = a["thread"]
         assert cap(hive, w["coord"]) == 0.25                                                    # spent 0 + the $0.25 default
         reply(hive, w["coord"], a["turn_id"])                                                   # one open turn per coordinator
-        tj = ask(client, w["quinn"], f"op-cap-{first}-j", context=ctx).json()["thread"]
+        tj = ask(client, w["jon"], f"op-cap-{first}-j", context=ctx).json()["thread"]
         assert cap(hive, w["coord"]) == 0.1                                                     # the tighter one holds
-        threads = {"ann": ta, "quinn": tj}
+        threads = {"ann": ta, "jon": tj}
         client.post(f"/api/sessions/{threads[first]['id']}/end", headers=w[first])
         assert cap(hive, w["coord"]) == (0.1 if first == "ann" else 0.25)                    # the other's cap still holds
         client.post(f"/api/sessions/{threads[second]['id']}/end", headers=w[second])
@@ -692,7 +692,7 @@ def test_a_person_deletes_their_own_thread_and_its_text(client):
     t = r["thread"]["id"]
     room = hive.db.one("SELECT room_id FROM work_sessions WHERE id = ?", (t,))["room_id"]
     assert client.delete(f"/api/ask/threads/{t}", headers=w["bob"]).status_code == 404
-    assert client.delete(f"/api/ask/threads/{t}", headers=w["quinn"]).status_code == 404        # the owner's alone
+    assert client.delete(f"/api/ask/threads/{t}", headers=w["jon"]).status_code == 404        # the owner's alone
     assert client.delete(f"/api/ask/threads/{t}", headers=w["ann"]).json() == {"deleted": t, "turns": 1}
     assert hive.db.one("SELECT status FROM work_sessions WHERE id = ?", (t,))["status"] == "ended"
     assert cap(hive, w["coord"]) is None
@@ -702,7 +702,7 @@ def test_a_person_deletes_their_own_thread_and_its_text(client):
                        hive.db.all("SELECT * FROM messages"), hive.db.all("SELECT * FROM room_messages")])
     assert "please forget" not in blob and "forgotten soon" not in blob
     assert client.get(f"/api/rooms/{room}/messages", headers=w["ann"]).status_code == 404
-    assert client.get("/api/ask/audit", headers=w["quinn"]).json()[0]["text"] == ""              # the turn is still audited
+    assert client.get("/api/ask/audit", headers=w["jon"]).json()[0]["text"] == ""              # the turn is still audited
 
 
 def test_every_refusal_reason_is_in_the_closed_set():
@@ -719,22 +719,22 @@ def test_thinking_never_reaches_another_person_on_a_shared_coordinator(client):
     w = world(client)
     hive = w["hive"]
     ctx = {"swarm_id": w["swarm"]["id"]}
-    b0 = ask(client, w["quinn"], "op-think-b0", context=ctx).json()                               # Quinn has a thread too
+    b0 = ask(client, w["jon"], "op-think-b0", context=ctx).json()                               # Jon has a thread too
     reply(hive, w["coord"], b0["turn_id"])
     with client.websocket_connect(f"/api/events?token={token_of(w['ann'])}") as ann_ws, \
-            client.websocket_connect(f"/api/events?token={token_of(w['quinn'])}") as quinn_ws:
-        for ws in (ann_ws, quinn_ws):
+            client.websocket_connect(f"/api/events?token={token_of(w['jon'])}") as jon_ws:
+        for ws in (ann_ws, jon_ws):
             assert ws.receive_json()["type"] == "hello"
         a = ask(client, w["ann"], "op-think-a1", context=ctx).json()
         hive.thinking(w["coord"]["id"], "llm", "user:u_ann")
-        hive.thinking(w["coord"]["id"], "llm", "user:u_quinn")                                   # not this turn's payer
+        hive.thinking(w["coord"]["id"], "llm", "user:u_jon")                                   # not this turn's payer
         hive.thinking(w["coord"]["id"], "llm", None)
-        busy = ask(client, w["quinn"], "op-think-b1", context=ctx)
+        busy = ask(client, w["jon"], "op-think-b1", context=ctx)
         assert busy.status_code == 409 and busy.json()["error"]["code"] == "coordinator_busy"
         reply(hive, w["coord"], a["turn_id"])
-        quinn = [f for f in drain(quinn_ws) if f.get("type") == "ask"]
+        jon = [f for f in drain(jon_ws) if f.get("type") == "ask"]
         ann = [f for f in drain(ann_ws) if f.get("type") == "ask"]
-    assert quinn == []
+    assert jon == []
     assert [f["phase"] for f in ann] == ["accepted", "thinking", "answer", "done"]
 
 
@@ -785,9 +785,9 @@ def test_an_empty_thread_is_adopted_raced_duplicates_end_and_old_empty_threads_a
     assert r["thread"]["id"] == first["id"]                                                     # adopted, not a third thread
     assert hive.db.one("SELECT status FROM work_sessions WHERE id = ?", (dup["id"],))["status"] == "ended"
     assert hive.db.one("SELECT COUNT(*) AS n FROM work_sessions WHERE purpose = 'ask'")["n"] == 2
-    quinn = Viewer("user:u_quinn", True)
+    jon = Viewer("user:u_jon", True)
     reply(hive, w["coord"], r["turn_id"])
-    stale = client.portal.call(lambda: hive.sessions.create(quinn, {"mind": w["coord"]["id"], "title": "Ask thread", "budget_usd": 0.1}, purpose="ask"))
+    stale = client.portal.call(lambda: hive.sessions.create(jon, {"mind": w["coord"]["id"], "title": "Ask thread", "budget_usd": 0.1}, purpose="ask"))
     assert cap(hive, w["coord"]) == 0.1
     hive.ask.expire()
     assert hive.db.one("SELECT status FROM work_sessions WHERE id = ?", (stale["id"],))["status"] == "active"   # young: kept
@@ -837,7 +837,7 @@ def test_one_payer_person_at_a_time_on_a_coordinator_in_either_admission_order(c
     hive = w["hive"]
     ctx = {"swarm_id": w["swarm"]["id"]}
     coord = lambda: hive.agent(w["coord"]["id"])
-    for first, second in (("ann", "quinn"), ("quinn", "ann")):
+    for first, second in (("ann", "jon"), ("jon", "ann")):
         old = ask(client, w[second], f"op-pay-{first}-0", context=ctx).json()                 # the second person's idle thread...
         reply(hive, w["coord"], old["turn_id"])
         t = ask(client, w[first], f"op-pay-{first}-1", context=ctx).json()                     # ...is older than the first's turn
@@ -851,13 +851,13 @@ def test_one_payer_person_at_a_time_on_a_coordinator_in_either_admission_order(c
         for p in (first, second):
             for s in hive.db.all("SELECT id FROM work_sessions WHERE owner = ? AND status = 'active'", (f"user:u_{p}",)):
                 client.post(f"/api/sessions/{s['id']}/end", headers=w[p])
-    s = client.post("/api/sessions", headers=w["quinn"], json={"mind": w["coord"]["id"], "title": "ordinary", "budget_usd": 1}).json()
-    assert hive.payer_for(coord())[0] == "user:u_quinn"
+    s = client.post("/api/sessions", headers=w["jon"], json={"mind": w["coord"]["id"], "title": "ordinary", "budget_usd": 1}).json()
+    assert hive.payer_for(coord())[0] == "user:u_jon"
     r = ask(client, w["ann"], "op-pay-ord-1", context=ctx)
     assert r.status_code == 409 and r.json()["error"]["code"] == "coordinator_busy"
     before = counts(hive)
     assert ask(client, w["ann"], "op-pay-ord-2", context=ctx).status_code == 409 and counts(hive) == before
-    client.post(f"/api/sessions/{s['id']}/end", headers=w["quinn"])
+    client.post(f"/api/sessions/{s['id']}/end", headers=w["jon"])
     assert ask(client, w["ann"], "op-pay-ord-3", context=ctx).status_code == 202
 
 
@@ -870,7 +870,7 @@ def test_a_paid_call_reserves_and_settles_to_the_asker(client):
     ctx = {"swarm_id": w["swarm"]["id"]}
     a = ask(client, w["ann"], "op-paid-a01", context=ctx).json()
     reply(hive, w["coord"], a["turn_id"])
-    j = ask(client, w["quinn"], "op-paid-j01", context=ctx).json()                              # Quinn's thread is the newest...
+    j = ask(client, w["jon"], "op-paid-j01", context=ctx).json()                              # Jon's thread is the newest...
     reply(hive, w["coord"], j["turn_id"])
     a2 = ask(client, w["ann"], "op-paid-a02", context=ctx).json()                             # ...Ann's turn is the open one
     assert a2["thread"]["id"] == a["thread"]["id"]
@@ -882,7 +882,7 @@ def test_a_paid_call_reserves_and_settles_to_the_asker(client):
     held = hive.db.all("SELECT * FROM cost_reservations")
     assert [u["payer"] for u in usage] == ["user:u_ann"] and usage[0]["cost_usd"] > 0
     meta = json.dumps(hive.db.all("SELECT * FROM cost_reservation_details")) + json.dumps(held)
-    assert held and held[0]["state"] == "settled" and "user:u_ann" in meta and "user:u_quinn" not in meta
+    assert held and held[0]["state"] == "settled" and "user:u_ann" in meta and "user:u_jon" not in meta
 
 
 def test_open_turn_payer_survives_a_restart(client):
@@ -902,22 +902,22 @@ def test_ask_content_never_streams_to_admins_on_any_channel(client):
     hive = w["hive"]
     secret, answer, step = "ANN-PRIVATE-REQUEST", "ANN-PRIVATE-ANSWER", "ANN-PRIVATE-TRACE"
     with client.websocket_connect(f"/api/events?token={token_of(w['ann'])}") as ann_ws, \
-            client.websocket_connect(f"/api/events?token={token_of(w['quinn'])}") as quinn_ws, \
+            client.websocket_connect(f"/api/events?token={token_of(w['jon'])}") as jon_ws, \
             client.websocket_connect(f"/api/events?token={client.operator_token}") as op_ws:
-        for ws in (ann_ws, quinn_ws, op_ws):
+        for ws in (ann_ws, jon_ws, op_ws):
             assert ws.receive_json()["type"] == "hello"
         r = ask(client, w["ann"], "op-b2-00001", text=secret, context={"swarm_id": w["swarm"]["id"]}).json()
         client.post("/api/agent/trace", headers=agent_headers(w["coord"]),
                     json={"iteration": 1, "response": step, "commands": [{"command": f"(think \"{step}\")", "result": step}]})
         hive.record_agent_message(w["coord"]["id"], {"text": answer, "conversation_id": f"ask:{r['turn_id']}"})
-        frames = {k: drain(ws) for k, ws in (("ann", ann_ws), ("quinn", quinn_ws), ("op", op_ws))}
-    for k in ("quinn", "op"):
+        frames = {k: drain(ws) for k, ws in (("ann", ann_ws), ("jon", jon_ws), ("op", op_ws))}
+    for k in ("jon", "op"):
         blob = json.dumps(frames[k])
         assert secret not in blob and answer not in blob and step not in blob, k
         assert any(f.get("type") == "room" for f in frames[k])                                 # contentless notices still flow
     ann = json.dumps(frames["ann"])
     assert secret in ann and answer in ann and step in ann
-    assert client.get("/api/ask/audit", headers=w["quinn"]).json()[0]["text"] == secret          # admins audit
+    assert client.get("/api/ask/audit", headers=w["jon"]).json()[0]["text"] == secret          # admins audit
 
 
 def test_a_deleted_threads_late_reply_keeps_no_content_even_after_a_restart(client):
@@ -998,9 +998,9 @@ def _late_trace_case(client, w, close):
     """Ann's turn; the coordinator works on it (a gateway call); the turn closes by `close`; a late trace arrives."""
     hive = w["hive"]
     secret = f"ANN-LATE-TRACE-{close}"
-    ann_cm, quinn_cm, op_cm = _sockets(client, w, "ann", "quinn", "op")
-    with ann_cm as ann_ws, quinn_cm as quinn_ws, op_cm as op_ws:
-        for ws in (ann_ws, quinn_ws, op_ws):
+    ann_cm, jon_cm, op_cm = _sockets(client, w, "ann", "jon", "op")
+    with ann_cm as ann_ws, jon_cm as jon_ws, op_cm as op_ws:
+        for ws in (ann_ws, jon_ws, op_ws):
             assert ws.receive_json()["type"] == "hello"
         r = ask(client, w["ann"], f"op-late-{close}", context={"swarm_id": w["swarm"]["id"]}).json()
         _gateway_call(client, w)
@@ -1012,8 +1012,8 @@ def _late_trace_case(client, w, close):
             reply(hive, w["coord"], r["turn_id"])
         assert client.get(f"/api/ask/op-late-{close}", headers=w["ann"]).json()["state"] in ("refused", "done")
         _trace(client, w, secret)
-        frames = {k: drain(ws) for k, ws in (("ann", ann_ws), ("quinn", quinn_ws), ("op", op_ws))}
-    assert secret not in json.dumps(frames["quinn"]) and secret not in json.dumps(frames["op"])
+        frames = {k: drain(ws) for k, ws in (("ann", ann_ws), ("jon", jon_ws), ("op", op_ws))}
+    assert secret not in json.dumps(frames["jon"]) and secret not in json.dumps(frames["op"])
     assert secret in json.dumps(frames["ann"])                                                  # the asker still sees it
 
 
@@ -1047,33 +1047,33 @@ def test_a_queued_trace_frame_is_judged_by_its_creation_scope_not_the_current_tu
     finally:
         hive.events.publish = original
     client.post("/api/ask/op-queued-01/stop", headers=w["ann"])
-    ann_cm, quinn_cm = _sockets(client, w, "ann", "quinn")
-    with ann_cm as ann_ws, quinn_cm as quinn_ws:
-        for ws in (ann_ws, quinn_ws):
+    ann_cm, jon_cm = _sockets(client, w, "ann", "jon")
+    with ann_cm as ann_ws, jon_cm as jon_ws:
+        for ws in (ann_ws, jon_ws):
             assert ws.receive_json()["type"] == "hello"
         client.portal.call(lambda: hive.events.publish("agent.trace", **captured[0]))   # delivered now, after the stop
-        quinn, ann = drain(quinn_ws), drain(ann_ws)
-    assert "ANN-QUEUED-TRACE" not in json.dumps(quinn) and "ANN-QUEUED-TRACE" in json.dumps(ann)
+        jon, ann = drain(jon_ws), drain(ann_ws)
+    assert "ANN-QUEUED-TRACE" not in json.dumps(jon) and "ANN-QUEUED-TRACE" in json.dumps(ann)
 
 
 def test_an_a_to_b_handoff_never_gives_b_the_first_askers_trace(client):
     w = world(client)
     hive = w["hive"]
     ctx = {"swarm_id": w["swarm"]["id"]}
-    ann_cm, quinn_cm, op_cm = _sockets(client, w, "ann", "quinn", "op")
-    with ann_cm as ann_ws, quinn_cm as quinn_ws, op_cm as op_ws:
-        for ws in (ann_ws, quinn_ws, op_ws):
+    ann_cm, jon_cm, op_cm = _sockets(client, w, "ann", "jon", "op")
+    with ann_cm as ann_ws, jon_cm as jon_ws, op_cm as op_ws:
+        for ws in (ann_ws, jon_ws, op_ws):
             assert ws.receive_json()["type"] == "hello"
         a = ask(client, w["ann"], "op-handoff-a", context=ctx).json()
         _gateway_call(client, w)
         reply(hive, w["coord"], a["turn_id"])
-        b = ask(client, w["quinn"], "op-handoff-b", context=ctx).json()                           # B's turn opens
+        b = ask(client, w["jon"], "op-handoff-b", context=ctx).json()                           # B's turn opens
         _trace(client, w, "ANN-HANDOFF-TRACE")                                                  # Ann's late work arrives
         _gateway_call(client, w)                                                                # a call for B's turn
         _trace(client, w, "AFTER-B-CALL-TRACE")                                                 # may still hold Ann's work
         reply(hive, w["coord"], b["turn_id"])
-        frames = {k: drain(ws) for k, ws in (("ann", ann_ws), ("quinn", quinn_ws), ("op", op_ws))}
-    for k in ("quinn", "op"):
+        frames = {k: drain(ws) for k, ws in (("ann", ann_ws), ("jon", jon_ws), ("op", op_ws))}
+    for k in ("jon", "op"):
         assert "ANN-HANDOFF-TRACE" not in json.dumps(frames[k]), k
     blob = json.dumps(frames)
     assert "AFTER-B-CALL-TRACE" not in blob                                                    # two possible askers: nobody live
@@ -1146,13 +1146,13 @@ def test_an_unrelated_coordinator_trace_keeps_its_ordinary_audience(client):
     reply(hive, w["coord"], r["turn_id"])
     _restart(client, w)
     _gateway_call(client, w)
-    ann_cm, quinn_cm, bob_cm = _sockets(client, w, "ann", "quinn", "bob")
-    with ann_cm as ann_ws, quinn_cm as quinn_ws, bob_cm as bob_ws:
-        for ws in (ann_ws, quinn_ws, bob_ws):
+    ann_cm, jon_cm, bob_cm = _sockets(client, w, "ann", "jon", "bob")
+    with ann_cm as ann_ws, jon_cm as jon_ws, bob_cm as bob_ws:
+        for ws in (ann_ws, jon_ws, bob_ws):
             assert ws.receive_json()["type"] == "hello"
         _trace(client, w, "ORDINARY-TRACE")
-        ann, quinn, bob = drain(ann_ws), drain(quinn_ws), drain(bob_ws)
-    assert "ORDINARY-TRACE" in json.dumps(ann) and "ORDINARY-TRACE" in json.dumps(quinn)       # admin and a viewer, as before
+        ann, jon, bob = drain(ann_ws), drain(jon_ws), drain(bob_ws)
+    assert "ORDINARY-TRACE" in json.dumps(ann) and "ORDINARY-TRACE" in json.dumps(jon)       # admin and a viewer, as before
     assert "ORDINARY-TRACE" not in json.dumps(bob)                                              # Bob cannot see the mind, as before
     assert hive.db.one("SELECT COUNT(*) AS n FROM ask_trace_scopes")["n"] == 0
 
@@ -1161,12 +1161,12 @@ def test_a_trace_scope_that_cannot_be_decided_is_withheld(client, monkeypatch):
     w = world(client)
     hive = w["hive"]
     monkeypatch.setattr(hive.ask, "trace_scope", lambda agent_id: 1 / 0)
-    quinn_cm, = _sockets(client, w, "quinn")
-    with quinn_cm as quinn_ws:
-        assert quinn_ws.receive_json()["type"] == "hello"
+    jon_cm, = _sockets(client, w, "jon")
+    with jon_cm as jon_ws:
+        assert jon_ws.receive_json()["type"] == "hello"
         _trace(client, w, "UNDECIDED-TRACE")
-        quinn = drain(quinn_ws)
-    assert "UNDECIDED-TRACE" not in json.dumps(quinn)
+        jon = drain(jon_ws)
+    assert "UNDECIDED-TRACE" not in json.dumps(jon)
 
 
 def test_turn_and_thread_views_carry_the_addressed_mind(client):
@@ -1185,15 +1185,15 @@ def test_turn_and_thread_views_carry_the_addressed_mind(client):
 
 # ---- correction 3: elapsed time is not provenance; only a context boundary clears an Ask (OmegaReview cdcd26b B1) --------
 
-def _quinn_sees(client, w, text, also=("op",)):
-    cms = _sockets(client, w, "quinn", "ann", *also)
+def _jon_sees(client, w, text, also=("op",)):
+    cms = _sockets(client, w, "jon", "ann", *also)
     with contextlib.ExitStack() as stack:
         socks = [stack.enter_context(cm) for cm in cms]
         for ws in socks:
             assert ws.receive_json()["type"] == "hello"
         _trace(client, w, text)
         frames = [drain(ws) for ws in socks]
-    return [text in json.dumps(f) for f in frames]                                            # [quinn, ann, op...]
+    return [text in json.dumps(f) for f in frames]                                            # [jon, ann, op...]
 
 
 def test_work_long_after_the_turn_with_unbound_calls_stays_the_askers(client):
@@ -1205,9 +1205,9 @@ def test_work_long_after_the_turn_with_unbound_calls_stays_the_askers(client):
     hive.db.execute("UPDATE ask_turns SET closed_at = '2000-01-01T00:00:00.000Z', created_at = '2000-01-01T00:00:00.000Z'")
     for _ in range(3):
         _gateway_call(client, w)                                                                # intervening unbound calls
-    assert _quinn_sees(client, w, "ANN-RETAINED-1") == [False, True, False]
+    assert _jon_sees(client, w, "ANN-RETAINED-1") == [False, True, False]
     hive.ask.expire(time.time() + 10 ** 7)                                                      # any amount of time
-    assert _quinn_sees(client, w, "ANN-RETAINED-2") == [False, True, False]
+    assert _jon_sees(client, w, "ANN-RETAINED-2") == [False, True, False]
 
 
 def test_a_restart_while_the_turn_is_open_does_not_clear_it(client):
@@ -1218,9 +1218,9 @@ def test_a_restart_while_the_turn_is_open_does_not_clear_it(client):
     _restart(client, w)
     reply(hive, w["coord"], r["turn_id"])                                                      # closes after the boundary
     _gateway_call(client, w)
-    assert _quinn_sees(client, w, "ANN-AFTER-OPEN-RESTART") == [False, True, False]
+    assert _jon_sees(client, w, "ANN-AFTER-OPEN-RESTART") == [False, True, False]
     _restart(client, w)                                                                         # a fresh start after it closed
-    assert _quinn_sees(client, w, "ORDINARY-AFTER-BOUNDARY") == [True, True, True]
+    assert _jon_sees(client, w, "ORDINARY-AFTER-BOUNDARY") == [True, True, True]
 
 
 def test_a_to_b_to_unbound_stays_withheld_until_a_boundary(client):
@@ -1230,14 +1230,14 @@ def test_a_to_b_to_unbound_stays_withheld_until_a_boundary(client):
     a = ask(client, w["ann"], "op-c3-ab-a", context=ctx).json()
     _gateway_call(client, w)
     reply(hive, w["coord"], a["turn_id"])
-    b = ask(client, w["quinn"], "op-c3-ab-b", context=ctx).json()
+    b = ask(client, w["jon"], "op-c3-ab-b", context=ctx).json()
     _gateway_call(client, w)
     reply(hive, w["coord"], b["turn_id"])
     hive.db.execute("UPDATE ask_turns SET closed_at = '2000-01-01T00:00:00.000Z'")
     _gateway_call(client, w)                                                                    # unbound
-    assert _quinn_sees(client, w, "MIXED-RETAINED") == [False, False, False]                     # two askers: nobody live
+    assert _jon_sees(client, w, "MIXED-RETAINED") == [False, False, False]                     # two askers: nobody live
     _restart(client, w)
-    assert _quinn_sees(client, w, "ORDINARY-AGAIN") == [True, True, True]
+    assert _jon_sees(client, w, "ORDINARY-AGAIN") == [True, True, True]
 
 
 def test_a_stop_or_sleep_alone_is_not_a_boundary(client):
@@ -1247,7 +1247,7 @@ def test_a_stop_or_sleep_alone_is_not_a_boundary(client):
     reply(hive, w["coord"], r["turn_id"])
     client.post(f"/api/agents/{w['coord']['id']}/sleep")
     hive.db.execute("UPDATE agents SET status = 'awake' WHERE id = ?", (w["coord"]["id"],))   # reconnected, not started by the hive
-    assert _quinn_sees(client, w, "ANN-AFTER-SLEEP") == [False, True, False]
+    assert _jon_sees(client, w, "ANN-AFTER-SLEEP") == [False, True, False]
 
 
 def test_the_boundary_survives_a_hive_restart(client):
@@ -1284,7 +1284,7 @@ def test_a_noop_start_or_wake_of_a_running_mind_keeps_the_audience(client):
         hive.lifecycle(w["coord"]["id"], action)
         assert hive.ask.trace_scope(w["coord"]["id"])["principal"] == "user:u_ann", action
     assert hive.db.one("SELECT COUNT(*) AS n FROM ask_boundaries")["n"] == 0
-    assert _quinn_sees(client, w, "ANN-AFTER-NOOP-START") == [False, True, False]
+    assert _jon_sees(client, w, "ANN-AFTER-NOOP-START") == [False, True, False]
 
 
 def test_a_failed_start_keeps_the_audience(client):
@@ -1310,7 +1310,7 @@ def test_a_fresh_start_after_the_turn_closed_is_the_boundary_and_is_recorded_wit
     assert hive.ask.trace_scope(w["coord"]["id"]) is None
     assert hive.db.one("SELECT execution FROM ask_boundaries WHERE agent_id = ?", (w["coord"]["id"],))["execution"] == "stub:%s:1" % w["coord"]["id"]
     hive.db.execute("UPDATE agents SET status = 'awake' WHERE id = ?", (w["coord"]["id"],))
-    assert _quinn_sees(client, w, "ORDINARY-AFTER-FRESH-START") == [True, True, True]
+    assert _jon_sees(client, w, "ORDINARY-AFTER-FRESH-START") == [True, True, True]
 
 
 def test_a_reconcile_restart_of_a_crashed_mind_is_a_boundary_but_a_running_one_is_left_alone(client):
@@ -1407,31 +1407,31 @@ def test_an_old_executions_in_flight_trace_never_takes_the_new_audience(client, 
     w = world(client)
     _member_viewer(client, w)
     _ann_turn_closed(client, w)
-    quinn_cm, cat_cm, ann_cm = _sockets(client, w, "quinn", "cat", "ann")
-    with quinn_cm as quinn_ws, cat_cm as cat_ws, ann_cm as ann_ws:
-        for ws in (quinn_ws, cat_ws, ann_ws):
+    jon_cm, cat_cm, ann_cm = _sockets(client, w, "jon", "cat", "ann")
+    with jon_cm as jon_ws, cat_cm as cat_ws, ann_cm as ann_ws:
+        for ws in (jon_ws, cat_ws, ann_ws):
             assert ws.receive_json()["type"] == "hello"
         _paused_trace(client, w, monkeypatch, "OLD-EXECUTION-PRIVATE-TRACE", lambda: _fresh_start(client, w))
-        quinn, cat, ann = drain(quinn_ws), drain(cat_ws), drain(ann_ws)
-    assert "OLD-EXECUTION-PRIVATE-TRACE" not in json.dumps(quinn) and "OLD-EXECUTION-PRIVATE-TRACE" not in json.dumps(cat)
+        jon, cat, ann = drain(jon_ws), drain(cat_ws), drain(ann_ws)
+    assert "OLD-EXECUTION-PRIVATE-TRACE" not in json.dumps(jon) and "OLD-EXECUTION-PRIVATE-TRACE" not in json.dumps(cat)
     assert "OLD-EXECUTION-PRIVATE-TRACE" in json.dumps(ann)
     scope = w["hive"].db.all("SELECT scope, principal FROM ask_trace_scopes")
     assert scope == [{"scope": "asker", "principal": "user:u_ann"}]
-    assert _quinn_sees(client, w, "NEW-EXECUTION-TRACE") == [True, True, True]                  # entered after: ordinary
+    assert _jon_sees(client, w, "NEW-EXECUTION-TRACE") == [True, True, True]                  # entered after: ordinary
 
 
 def test_a_request_admitted_before_a_new_ask_is_judged_with_that_ask(client, monkeypatch):
     """A trace request that entered while the coordinator had no Ask, stored after Ann's turn opened: Ann's, not public."""
     w = world(client)
     _member_viewer(client, w)
-    quinn_cm, cat_cm = _sockets(client, w, "quinn", "cat")
-    with quinn_cm as quinn_ws, cat_cm as cat_ws:
-        for ws in (quinn_ws, cat_ws):
+    jon_cm, cat_cm = _sockets(client, w, "jon", "cat")
+    with jon_cm as jon_ws, cat_cm as cat_ws:
+        for ws in (jon_ws, cat_ws):
             assert ws.receive_json()["type"] == "hello"
         _paused_trace(client, w, monkeypatch, "ENTERED-BEFORE-ASK",
                       lambda: ask(client, w["ann"], "op-c5-before1", context={"swarm_id": w["swarm"]["id"]}))
-        quinn, cat = drain(quinn_ws), drain(cat_ws)
-    assert "ENTERED-BEFORE-ASK" not in json.dumps(quinn) and "ENTERED-BEFORE-ASK" not in json.dumps(cat)
+        jon, cat = drain(jon_ws), drain(cat_ws)
+    assert "ENTERED-BEFORE-ASK" not in json.dumps(jon) and "ENTERED-BEFORE-ASK" not in json.dumps(cat)
 
 
 def test_an_old_execution_trace_published_late_is_still_judged_by_its_stored_audience(client, monkeypatch):
@@ -1448,13 +1448,13 @@ def test_an_old_execution_trace_published_late_is_still_judged_by_its_stored_aud
     monkeypatch.setattr(hive.events, "publish", keep)
     _paused_trace(client, w, monkeypatch, "OLD-QUEUED-TRACE", lambda: _fresh_start(client, w))
     monkeypatch.setattr(hive.events, "publish", original)
-    quinn_cm, cat_cm = _sockets(client, w, "quinn", "cat")
-    with quinn_cm as quinn_ws, cat_cm as cat_ws:
-        for ws in (quinn_ws, cat_ws):
+    jon_cm, cat_cm = _sockets(client, w, "jon", "cat")
+    with jon_cm as jon_ws, cat_cm as cat_ws:
+        for ws in (jon_ws, cat_ws):
             assert ws.receive_json()["type"] == "hello"
         client.portal.call(lambda: hive.events.publish("agent.trace", **captured[0]))           # delivered after the boundary
-        quinn, cat = drain(quinn_ws), drain(cat_ws)
-    assert "OLD-QUEUED-TRACE" not in json.dumps(quinn) and "OLD-QUEUED-TRACE" not in json.dumps(cat)
+        jon, cat = drain(jon_ws), drain(cat_ws)
+    assert "OLD-QUEUED-TRACE" not in json.dumps(jon) and "OLD-QUEUED-TRACE" not in json.dumps(cat)
 
 
 def test_the_entry_pin_is_set_by_the_route_and_never_from_the_body(client):
@@ -1648,7 +1648,7 @@ def test_a_post_boundary_pin_is_compared_against_the_boundary_rows_execution(cli
     assert (row["seq"], row["execution"]) == (1, driver.running)
     pins, original = [], hive.ask.pin
     monkeypatch.setattr(hive.ask, "pin", lambda agent_id: pins.append(original(agent_id)) or pins[-1])
-    assert _quinn_sees(client, w, "AFTER-BOUNDARY-ORDINARY") == [True, True, True]               # pin matches: ordinary
+    assert _jon_sees(client, w, "AFTER-BOUNDARY-ORDINARY") == [True, True, True]               # pin matches: ordinary
     assert pins[-1] == (cid, 1, driver.running)
     _paused_trace(client, w, monkeypatch, "EVIDENCE-MISMATCH",
                   lambda: hive.db.execute("UPDATE ask_boundaries SET execution = 'stub:not-the-pinned-one' WHERE agent_id = ?", (cid,)))

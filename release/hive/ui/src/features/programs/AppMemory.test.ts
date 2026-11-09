@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// The repository's tests run in Node. As in HostConfirm.test.ts, this React hook double
+// The repository's tests run in Node. As in HostConfirm.test.ts, this stand-in
 // retains real hook state/effect cleanup while running the actual component and
 // its event handlers. Browser focus, pixels and native download delivery remain
 // separate browser checks; these tests do not claim them.

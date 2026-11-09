@@ -18,14 +18,14 @@ export const ROLE: Record<ProgramRole, { label: string; color: string; icon: Ico
 
 export const POL: Record<Polarity, { label: string; color: string }> = {
   support: { label: 'supports', color: '#34d399' },
-  oppose: { label: 'opposes', color: '#fb7185' },
-  qualify: { label: 'qualifies', color: '#fbbf24' },
-  neutral: { label: 'related', color: '#8a89b3' },
+  oppose: { label: 'opposes', color: 'var(--color-bad)' },
+  qualify: { label: 'qualifies', color: 'var(--color-warn)' },
+  neutral: { label: 'related', color: 'var(--color-ink-3)' },
 }
 
-export const SURFACE = 'linear-gradient(180deg, rgb(255 255 255 / 0.035), rgb(255 255 255 / 0.012)), var(--look-panel, rgb(13 13 38 / 0.72))'
+export const SURFACE = 'linear-gradient(180deg, color-mix(in oklab, var(--color-ink) 3.5%, transparent), color-mix(in oklab, var(--color-ink) 1.2%, transparent)), var(--look-panel, color-mix(in oklab, var(--color-abyss) 72%, transparent))'
 /** Cards on the stage are opaque so links pass behind them cleanly. */
-export const CARD = 'linear-gradient(180deg, rgb(255 255 255 / 0.045), rgb(255 255 255 / 0.015)), var(--look-card, rgb(14 14 40))'
+export const CARD = 'linear-gradient(180deg, color-mix(in oklab, var(--color-ink) 4.5%, transparent), color-mix(in oklab, var(--color-ink) 1.5%, transparent)), var(--look-card, var(--color-abyss))'
 
 /**
  * A role or status colour as text. The colours are pastels measured on the dark classic stage; a light chrome
@@ -69,7 +69,7 @@ export const SOURCE_STATUS: Record<string, { label: string; color: string }> = {
   inspected: { label: 'Inspected', color: '#34d399' },
   retrieved: { label: 'Retrieved', color: '#7dd3fc' },
   cited: { label: 'Cited', color: '#b4a6ff' },
-  unavailable: { label: 'Unavailable', color: '#fb7185' },
+  unavailable: { label: 'Unavailable', color: 'var(--color-bad)' },
 }
 
 export const SPRING = { type: 'spring' as const, stiffness: 170, damping: 26, mass: 0.9 }

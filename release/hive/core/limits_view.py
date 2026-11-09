@@ -1,6 +1,6 @@
 """The Limits page's read model (GET /api/budgets/limits): every limit in force, where it comes from, and what each mind
 is checked against, from the same Budgets calls admission and reservations use, so what the page shows is what is
-enforced (the owner 2026-10-07: "surely they should match the number I set in the admin panel").
+enforced (Jon 2026-10-07: "surely they should match the number I set in the admin panel").
 
 ``source`` on every row:
 - ``set``: a stored rule (or a mind's own budget_usd): someone chose it on the panel or a form. "Reset to auto" deletes
@@ -12,7 +12,7 @@ enforced (the owner 2026-10-07: "surely they should match the number I set in th
 - ``default``: the built-in value in force because the hive has no total and the environment does not set one.
 - ``minds[].ask_threads`` (ask-limits r1): each active Ask thread on the mind held by its own cap (key askthread:<id>):
   its budget and its own spend, never folded into the mind's rows.
-- ``owner-ruling``: a fixed figure the owner decided (the Ask thread, the conductor turn, the member allowance).
+- ``jon-ruling``: a fixed figure Jon decided (the Ask thread, the conductor turn, the member allowance).
 
 ``key`` on every row is the exact label a paid call's reservation is checked under; ``minds[].checked`` lists the keys
 for one mind's paid calls, so ``{key: lowest limit_usd}`` over those rows equals the reservation snapshot (a mind's own
@@ -58,6 +58,9 @@ def limits(budgets, viewer=None):
     env = settings.budget_env or {}
     rules = budgets.rules()
     derived = budgets.derive(rules)
+    foundation_swarms, foundation_minds = budgets._foundation_ids()
+    auto_swarms, _ = budgets._auto_subjects()
+    auto_counts = {s["id"]: s["minds"] for s in auto_swarms}
     total = derived["total"]
     stored = {(r["scope"], r["period"]): r for r in rules}
     session_rules = budgets.session_cap_rules()
@@ -88,16 +91,20 @@ def limits(budgets, viewer=None):
                     "a.deleted = 0) AS minds FROM swarms s ORDER BY s.created_at"):
         scope = f"swarm:{s['id']}"
         month, day, lifetime = at(scope, "month"), at(scope, "day"), at(scope, "total")
-        if month is None and fallback:
+        if month is None and fallback and s["id"] not in foundation_swarms:
             month = _row(budgets, scope, "month", fallback[1], fallback[0], setting="HIVE_SWARM_MONTHLY_USD")
         ceiling, ceiling_source = budgets.request_ceiling(s["id"])
         team_rows[s["id"]] = [x for x in (month, day, lifetime) if x]
         teams.append({"swarm_id": s["id"], "name": s["name"], "archived": bool(s["archived_at"]), "minds": s["minds"],
-                      "active": not s["archived_at"] and s["minds"] > 0 and (scope, "month") not in stored,
+                      "active": not s["archived_at"] and auto_counts.get(s["id"], 0) > 0 and (scope, "month") not in stored,
                       "month": month, "day": day, "total": lifetime,
                       "request_ceiling": {"limit_usd": _floor(ceiling), "source": ceiling_source}})
 
     teams = [t for t in teams if scope_visible(hive, viewer, "swarm:" + t["swarm_id"])]
+    # Retain every visible host-purpose row and its actual rules/spend. The
+    # existing ordinary sequence remains first, rather than being displaced
+    # by Foundation records provisioned before a person's first swarm.
+    teams.sort(key=lambda team: team["swarm_id"] in foundation_swarms)
     hive_keys = {r["key"]: r for r in hive_rows}
     minds = []
     for m in db.all("SELECT * FROM agents WHERE deleted = 0 ORDER BY created_at"):
@@ -117,7 +124,12 @@ def limits(budgets, viewer=None):
             lifetime["spent_usd"] = round(float(m["spent_usd"] or 0), 6)
             rows.insert(0, lifetime)
         checked = [r["key"] for r in rows] + list(hive_keys)
-        checked += [r["key"] for r in team_rows.get(m["swarm_id"], [])]
+        member_rows = team_rows.get(m["swarm_id"], [])
+        if m["id"] in foundation_minds or m["swarm_id"] in foundation_swarms:
+            # An exact bound actor moved to another swarm still keeps stored
+            # rules, but does not acquire that swarm's automatic/default share.
+            member_rows = [r for r in member_rows if r["source"] in ("set", "session")]
+        checked += [r["key"] for r in member_rows]
         headroom = budgets.headroom(agent)
         session_default = budgets.session_default(agent)
         minds.append({"agent_id": m["id"], "name": m["name"], "swarm_id": m["swarm_id"], "kind": m["kind"],
@@ -132,6 +144,7 @@ def limits(budgets, viewer=None):
                       "session_default_usd": 1.0 if session_default is None else session_default,
                       "lease_default_usd": _floor(min(budgets.remaining_for(agent),
                                                       1.0 if session_default is None else session_default))})
+    minds.sort(key=lambda mind: mind["agent_id"] in foundation_minds or mind["swarm_id"] in foundation_swarms)
 
     every = stored.get(("every-mind", "month"))
     others = [_row(budgets, r["scope"], r["period"], r["limit_usd"], "set", rule_id=r["id"], note=r["note"] or None)
@@ -153,12 +166,12 @@ def limits(budgets, viewer=None):
                             "limit_usd": None if total is not None else float(settings.person_request_ceiling_usd or 0),
                             "basis": "each receiving swarm's day limit" if total is not None else "one figure for every swarm"},
         "rulings": [
-            {"name": "ask_thread", "limit_usd": DEFAULT_BUDGET, "max_usd": MAX_BUDGET, "source": "owner-ruling"},
+            {"name": "ask_thread", "limit_usd": DEFAULT_BUDGET, "max_usd": MAX_BUDGET, "source": "jon-ruling"},
             {"name": "conductor_turn", "limit_usd": named["HIVE_ASK_CONDUCTOR_TURN_USD"]["value"],
-             "source": "server-settings" if named["HIVE_ASK_CONDUCTOR_TURN_USD"]["set"] else "owner-ruling",
+             "source": "server-settings" if named["HIVE_ASK_CONDUCTOR_TURN_USD"]["set"] else "jon-ruling",
              "setting": "HIVE_ASK_CONDUCTOR_TURN_USD"},
             {"name": "member_month", "limit_usd": named["HIVE_MEMBER_MONTHLY_USD"]["value"],
-             "source": "server-settings" if named["HIVE_MEMBER_MONTHLY_USD"]["set"] else "owner-ruling",
+             "source": "server-settings" if named["HIVE_MEMBER_MONTHLY_USD"]["set"] else "jon-ruling",
              "setting": "HIVE_MEMBER_MONTHLY_USD"},
         ],
         "server_settings": list(named.values()),
@@ -181,6 +194,7 @@ def auto_candidates(budgets, viewer=None):
     db = budgets.db
     rules = budgets.rules()
     derived = budgets.derive(rules)
+    foundation_swarms, foundation_minds = budgets._foundation_ids()
     has_total = derived["total"] is not None
     session_rules = budgets.session_cap_rules()
     machinery = {r["id"] for r in rules if r["id"] in session_rules or r["note"] in MACHINERY_NOTES}
@@ -193,6 +207,8 @@ def auto_candidates(budgets, viewer=None):
     cols = {c["name"] for c in db.all("PRAGMA table_info(agents)")}
     out = []
     for m in db.all("SELECT * FROM agents WHERE deleted = 0 AND budget_usd > 0 ORDER BY created_at"):
+        if m["id"] in foundation_minds or m["swarm_id"] in foundation_swarms:
+            continue  # explicit host-purpose caps are not an old form default
         budget = float(m["budget_usd"])
         role = roles.get(m["role_id"]) if "role_id" in cols and m["role_id"] else None
         reasons = []
@@ -204,10 +220,9 @@ def auto_candidates(budgets, viewer=None):
             continue
         auto = None
         if has_total and m["id"] not in own_rules:
-            minds = [{"id": a["id"], "swarm_id": a["swarm_id"], "budget_usd": 0 if a["id"] == m["id"] else a["budget_usd"],
-                      "explicit": a["id"] in own_rules} for a in db.all("SELECT id, swarm_id, budget_usd FROM agents WHERE deleted = 0")]
-            swarms = [{"id": s["id"], "archived": bool(s["archived_at"]), "minds": s["minds"]} for s in db.all(
-                "SELECT s.id, s.archived_at, (SELECT COUNT(*) FROM agents a WHERE a.swarm_id = s.id AND a.deleted = 0) AS minds FROM swarms s")]
+            swarms, participants = budgets._auto_subjects()
+            minds = [dict(a, budget_usd=0 if a["id"] == m["id"] else a["budget_usd"],
+                          explicit=a["id"] in own_rules) for a in participants]
             from . import limits_auto
             value = limits_auto.derive(rules, swarms, minds)["limits"].get((f"agent:{m['id']}", "month"))
             auto = value["limit_usd"] if value else None
@@ -225,6 +240,8 @@ def auto_candidates(budgets, viewer=None):
                 and abs(float(r["limit_usd"]) - OLD_TEAM_DEFAULT) < 1e-9):
             continue
         sid = r["scope"][6:]
+        if sid in foundation_swarms:
+            continue  # never offer to turn an explicit Foundation rule into auto
         auto = None
         if has_total:
             value = budgets.derive([x for x in rules if x["id"] != r["id"]])["limits"].get((r["scope"], "month"))

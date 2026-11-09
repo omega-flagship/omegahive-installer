@@ -264,3 +264,34 @@ def test_comment_opener_inside_a_part_is_422(client, tmp_path):
     files["native-three.js"] = 'const s = "<!--<script>"'
     install(client, tmp_path, files)
     refused(client, "native-three.js contains <!--")
+
+
+
+def test_declared_assets_are_served_beside_the_frame_files(client, tmp_path):
+    """Opt-in "assets" (a Create app's icon.svg): pinned, served for appDocument to inline. Without the key, the old
+    answer stands (test_no_scripts_list_keeps_the_old_answer_for_an_extra_pinned_file)."""
+    icon = '<svg xmlns="http://www.w3.org/2000/svg"/>'
+    install(client, tmp_path, dict(FILES, **{"icon.svg": icon, "moon.svg": icon}), scripts=None,
+            extra_lock={"assets": ["icon.svg", "moon.svg"]})
+    out = client.get("/api/programs/demo/ui").json()
+    assert out["files"] == dict(FILES, **{"icon.svg": icon, "moon.svg": icon})
+
+
+@pytest.mark.parametrize("assets, needle", [
+    ("icon.svg", "list"),
+    (["missing.svg"], "not a pinned asset"),
+    (["../icon.svg"], "not a pinned asset"),
+    (["app.js"], "not a pinned asset"),
+    (["bundle.lock.json"], "not a pinned asset"),
+    (["icon.svg", "icon.svg"], "distinct"),
+])
+def test_bad_asset_lists_are_refused(client, tmp_path, assets, needle):
+    install(client, tmp_path, dict(FILES, **{"icon.svg": "<svg/>"}), scripts=None, extra_lock={"assets": assets})
+    refused(client, needle)
+
+
+def test_an_asset_must_be_pinned(client, tmp_path):
+    install(client, tmp_path, dict(FILES, **{"icon.svg": "<svg/>"}), scripts=None, pin=set(FILES),
+            extra_lock={"assets": ["icon.svg"]})
+    r = client.get("/api/programs/demo/ui")
+    assert r.status_code in (404, 422), r.text                  # verify_bundle refuses the unpinned file first

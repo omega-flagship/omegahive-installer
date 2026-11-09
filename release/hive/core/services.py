@@ -51,6 +51,12 @@ def scope_allows(scope, actions):
     return set(actions) <= GRANT_SCOPE_ACTIONS.get(scope, frozenset())
 CODE_MUTATING = {"code-workspace", "code-edit", "code-run", "code-verify", "code-checkpoint"}
 LOOPBACK = re.compile(r"^http://127\.0\.0\.1:(\d{2,5})$")
+LOCAL_CODE_ISSUER = "local-owner:omegacode:"
+LOCAL_CODE_REGISTRATION = {
+    "name": "omegacode", "version": "0.1.0", "address": "http://127.0.0.1:8724",
+    "contract": "omegacode/1", "surfaces": ["diff", "log", "editor"],
+    "capabilities": ["workspaces", "runs", "changesets", "verifications", "events"],
+}
 BINDING = re.compile(r"^\((code-[a-z]+) task=(\S+) swarm=(\S+) workspace=(\S+) op=(\S+) generation=(\d+) digest=(sha256:[0-9a-f]{64})\)$")
 
 SCHEMA = """
@@ -63,6 +69,10 @@ CREATE TABLE IF NOT EXISTS services (
 CREATE TABLE IF NOT EXISTS service_enrolments (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, expires_at REAL NOT NULL,
   used_at TEXT, service_id TEXT, created_by TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS service_operations (
+  operation_id TEXT PRIMARY KEY, enrolment_id TEXT NOT NULL UNIQUE, request_digest TEXT NOT NULL,
+  service_id TEXT NOT NULL, pending_token TEXT, created_at TEXT NOT NULL, acked_at TEXT
 );
 CREATE TABLE IF NOT EXISTS capabilities (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL, claims TEXT NOT NULL, issued_by TEXT NOT NULL,
@@ -77,6 +87,11 @@ CREATE TABLE IF NOT EXISTS goal_grants (
 
 def _hash(value):
     return hashlib.sha256(str(value).encode()).hexdigest()
+
+
+def _local_code_operation(enrolment):
+    issuer = enrolment["created_by"] if enrolment is not None else ""
+    return issuer.removeprefix(LOCAL_CODE_ISSUER) if issuer.startswith(LOCAL_CODE_ISSUER) else None
 
 
 def canonical(value):
@@ -116,22 +131,61 @@ class Services:
 
     # ---- enrolment and registration ----------------------------------------------------------
 
-    def enrol(self, name, by, ttl_minutes=15):
+    def enrol(self, name, by, ttl_minutes=15, *, local_token=None):
         name = str(name or "").strip().lower()
         if not re.fullmatch(r"[a-z][a-z0-9-]{1,30}", name):
             raise ServiceError(400, "bad_name", "a service name is 2-31 lowercase letters, digits or dashes")
-        token = secrets.token_urlsafe(32)
+        if local_token is not None:
+            if name != LOCAL_CODE_REGISTRATION["name"] or not re.fullmatch(
+                    LOCAL_CODE_ISSUER + r"[A-Za-z0-9_-]{16,128}", by) or not re.fullmatch(
+                        r"[A-Za-z0-9_-]{43}", local_token):
+                raise ServiceError(403, "local_code_enrolment", "invalid local Code enrolment")
+        token = local_token if local_token is not None else secrets.token_urlsafe(32)
         row = {"id": new_id("se"), "name": name, "token_hash": _hash(token), "expires_at": time.time() + max(1.0, min(float(ttl_minutes or 15), 24 * 60)) * 60,
                "created_by": by}
         self.db.insert("service_enrolments", row)
         return {"enrolment_id": row["id"], "name": name, "enrol_token": token, "expires_at": row["expires_at"]}
 
-    def register(self, enrol_token, body, client_host):
+    def register(self, enrol_token, body, client_host, *, local_code=False):
         if client_host not in ("127.0.0.1", "::1"):
             raise ServiceError(403, "local_only", "services register from this machine only")
         row = self.db.one("SELECT * FROM service_enrolments WHERE token_hash = ?", (_hash(enrol_token),))
-        if row is None or row["used_at"] or row["expires_at"] <= time.time():
-            raise ServiceError(403, "enrolment_invalid", "the enrolment token is invalid, used or expired")
+        operation_id = body.get("operation_id")
+        local_operation = _local_code_operation(row)
+        if local_code:
+            if local_operation is None or body != LOCAL_CODE_REGISTRATION | {"operation_id": local_operation}:
+                raise ServiceError(403, "local_code_enrolment", "local Code registration does not match the reserved operation")
+        elif local_operation is not None:
+            raise ServiceError(403, "local_only", "local Code registration requires the owner control socket")
+        if operation_id is not None:
+            return self._register_operation(row, operation_id, body)
+        with self.db.transaction():
+            row = self.db.one("SELECT * FROM service_enrolments WHERE token_hash = ?", (_hash(enrol_token),))
+            if row is None or row["used_at"] or row["expires_at"] <= time.time():
+                raise ServiceError(403, "enrolment_invalid", "the enrolment token is invalid, used or expired")
+            if _local_code_operation(row) is not None:
+                raise ServiceError(403, "local_only", "local Code registration requires the owner control socket")
+            self._require_code_slot(row, body)
+            return self._insert_service(row, body, enabled=1)
+
+    def _require_code_slot(self, enrolment, body):
+        # Serialize initial inserts for this address/name against the owner's
+        # outstanding automatic enrolment. Ordinary service replay is unaffected.
+        name, address = LOCAL_CODE_REGISTRATION["name"], LOCAL_CODE_REGISTRATION["address"]
+        if enrolment["name"] != name and body.get("address") != address:
+            return
+        if _local_code_operation(enrolment) is not None:
+            conflict = self.db.one("SELECT id FROM services WHERE name = ? OR address = ?", (name, address))
+        else:
+            conflict = self.db.one(
+                "SELECT e.id FROM service_enrolments e LEFT JOIN service_operations o ON o.enrolment_id = e.id "
+                "WHERE e.name = ? AND e.created_by LIKE ? AND e.expires_at > ? "
+                "AND (e.used_at IS NULL OR (o.operation_id IS NOT NULL AND o.acked_at IS NULL AND o.pending_token IS NOT NULL))",
+                (name, LOCAL_CODE_ISSUER + "%", time.time()))
+        if conflict:
+            raise ServiceError(409, "local_code_enrolment", "Code registration is reserved by another enrolment")
+
+    def _insert_service(self, row, body, enabled):
         if str(body.get("name", "")) != row["name"]:
             raise ServiceError(403, "enrolment_name", f"this enrolment is for {row['name']!r}")
         address = str(body.get("address", ""))
@@ -142,13 +196,109 @@ class Services:
         capabilities = [c for c in body.get("capabilities") or [] if isinstance(c, str) and re.fullmatch(r"[a-z]{2,30}", c)]
         service_id = new_id("svc")
         token, secret = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+        registered = now()
         self.db.insert("services", {"id": service_id, "name": row["name"], "version": str(body.get("version", ""))[:40],
                                     "address": address, "contract": str(body.get("contract", ""))[:40],
                                     "surfaces": json.dumps(surfaces), "capabilities": json.dumps(capabilities),
-                                    "token_hash": _hash(token), "capability_secret": secret, "registered_at": now()})
+                                    "token_hash": _hash(token), "capability_secret": secret, "enabled": enabled,
+                                    "registered_at": registered})
         self.db.execute("UPDATE service_enrolments SET used_at = ?, service_id = ? WHERE id = ?", (now(), service_id, row["id"]))
         return {"service_id": service_id, "service_token": token, "capability_secret": secret, "address": address,
-                "registered_at": now()}
+                "registered_at": registered}
+
+    # ---- crash-safe registration (Code enrolment seam R1): one operation, one identity, replayable until ack ----
+
+    @staticmethod
+    def _request_digest(body):
+        # over the fields as they will be stored (normalised), so a harmless re-encoding is not a conflict
+        fields = {"name": str(body.get("name", "")), "version": str(body.get("version", ""))[:40],
+                  "address": str(body.get("address", "")), "contract": str(body.get("contract", ""))[:40],
+                  "surfaces": [x for x in body.get("surfaces") or [] if isinstance(x, str) and re.fullmatch(r"[a-z]{2,20}", x)],
+                  "capabilities": [x for x in body.get("capabilities") or []
+                                   if isinstance(x, str) and re.fullmatch(r"[a-z]{2,30}", x)]}
+        return hashlib.sha256(json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    def _operation_receipt(self, op):
+        return {"operation_id": op["operation_id"], "request_digest": op["request_digest"],
+                "service_id": op["service_id"], "status": "active" if op["acked_at"] else "pending"}
+
+    def _register_operation(self, enrolment, operation_id, body):
+        """The same operation, token and request replay the same pending identity and credentials until the service
+        acknowledges them; a changed request is a conflict; nothing makes a second identity for one enrolment."""
+        if type(operation_id) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", operation_id):
+            raise ServiceError(400, "bad_operation", "operation_id is 16-128 URL-safe characters")
+        if enrolment is None:
+            raise ServiceError(403, "enrolment_invalid", "the enrolment token is invalid, used or expired")
+        digest = self._request_digest(body)
+        expired = False
+        with self.db.transaction():                                    # one atomic step: enrolment, identity, operation
+            enrolment = self.db.one("SELECT * FROM service_enrolments WHERE id = ?", (enrolment["id"],))
+            op = self.db.one("SELECT * FROM service_operations WHERE operation_id = ?", (operation_id,))
+            if op is not None:
+                if op["enrolment_id"] != enrolment["id"] or op["request_digest"] != digest:
+                    raise ServiceError(409, "operation_conflict", "this operation was made with another request")
+                if op["acked_at"] or not op["pending_token"]:
+                    raise ServiceError(409, "operation_complete", "this registration is already acknowledged")
+                svc = self.db.one("SELECT * FROM services WHERE id = ?", (op["service_id"],))
+                if svc is None:
+                    raise ServiceError(409, "operation_revoked", "this pending registration was revoked")
+                # an unacknowledged registration lives only as long as its enrolment: then it is revoked
+                if enrolment["expires_at"] <= time.time():
+                    self._revoke_pending(svc["id"], operation_id)
+                    expired = True
+                else:
+                    return {"service_id": svc["id"], "service_token": op["pending_token"],
+                            "capability_secret": svc["capability_secret"], "address": svc["address"],
+                            "registered_at": svc["registered_at"], "receipt": self._operation_receipt(op)}
+            if not expired:
+                if enrolment["used_at"] or enrolment["expires_at"] <= time.time():
+                    raise ServiceError(403, "enrolment_invalid", "the enrolment token is invalid, used or expired")
+                self._require_code_slot(enrolment, body)
+                result = self._insert_service(enrolment, body, enabled=0)
+                self.db.insert("service_operations", {"operation_id": operation_id, "enrolment_id": enrolment["id"],
+                                                      "request_digest": digest, "service_id": result["service_id"],
+                                                      "pending_token": result["service_token"], "created_at": now()})
+                op = self.db.one("SELECT * FROM service_operations WHERE operation_id = ?", (operation_id,))
+                return result | {"receipt": self._operation_receipt(op)}
+        # the revocation above is committed before the refusal is reported
+        raise ServiceError(409, "operation_expired", "this pending registration expired; enrol again")
+
+    def _pending_service(self, operation_id, token):
+        op = self.db.one("SELECT * FROM service_operations WHERE operation_id = ?", (operation_id,))
+        svc = self.db.one("SELECT * FROM services WHERE id = ?", (op["service_id"],)) if op else None
+        if op is None or svc is None or not token or not hmac.compare_digest(svc["token_hash"], _hash(token)):
+            raise ServiceError(404, "not_found", "no such operation for this service")
+        return op, svc
+
+    def _revoke_pending(self, service_id, operation_id):
+        self.db.execute("DELETE FROM services WHERE id = ?", (service_id,))
+        self.db.execute("UPDATE service_operations SET pending_token = NULL WHERE operation_id = ?", (operation_id,))
+
+    def acknowledge(self, operation_id, token, *, local_code=False):
+        """The service saved its credentials: the identity becomes live and the held copy of the token is dropped.
+        Idempotent. A registration not acknowledged before its enrolment expired is revoked instead."""
+        with self.db.transaction():                                    # enable and drop the held token together
+            op, svc = self._pending_service(operation_id, token)
+            enrolment = self.db.one("SELECT * FROM service_enrolments WHERE id = ?", (op["enrolment_id"],))
+            if (_local_code_operation(enrolment) is not None) != local_code:
+                raise ServiceError(403, "local_only", "local Code acknowledgement requires the owner control socket")
+            if op["acked_at"]:
+                return self._operation_receipt(op)
+            expired = enrolment is None or enrolment["expires_at"] <= time.time()
+            if expired:
+                self._revoke_pending(svc["id"], operation_id)
+            else:
+                self.db.execute("UPDATE services SET enabled = 1 WHERE id = ?", (svc["id"],))
+                self.db.execute("UPDATE service_operations SET acked_at = ?, pending_token = NULL WHERE operation_id = ?",
+                                (now(), operation_id))
+                return self._operation_receipt(self.db.one("SELECT * FROM service_operations WHERE operation_id = ?",
+                                                           (operation_id,)))
+        # the revocation above is committed before the refusal is reported
+        raise ServiceError(409, "operation_expired", "this pending registration expired; enrol again")
+
+    def operation(self, operation_id, token):
+        op, _svc = self._pending_service(operation_id, token)
+        return self._operation_receipt(op)
 
     def view(self, row):
         return {"id": row["id"], "name": row["name"], "version": row["version"], "address": row["address"],
@@ -331,6 +481,10 @@ class Services:
             goal = self.db.one("SELECT status FROM goals WHERE id = ?", (claims["task_id"],))
             if goal is None or goal["status"] in ("cancelled", "failed", "done"):
                 reason = "task_closed"
+        if reason is None and not result_stage and service.get("name") == LOCAL_CODE_REGISTRATION["name"]:
+            available = getattr(getattr(self.hive, "code", None), "local_enrolment_available", None)
+            if available is not None and not available():
+                reason = "code_enrolment_unavailable"
         if reason is None and "delegated" in claims:
             reason = self.hive.minds.delegated_reason(claims)   # r2.13.1: child, request, lease, origin grant, origin task
         out = {"id": capability_id, "active": reason is None, "reason": reason, "claims": claims}

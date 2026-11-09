@@ -23,12 +23,12 @@ export const IDLE_SECTION_ID = 'idle-minds'
 const TONE: Record<IdleStatus, string> = {
   asked: 'border-warn/40 bg-warn/[0.08] text-warn',
   noticed: 'border-warn/30 bg-warn/[0.05] text-warn',
-  replied: 'border-line-2 bg-white/[0.04] text-ink-2',
+  replied: 'border-line-2 bg-tint/[0.04] text-ink-2',
   resolved: 'border-good/30 bg-good/[0.06] text-good',
-  slept: 'border-line bg-white/[0.02] text-ink-3',
-  superseded: 'border-line bg-white/[0.02] text-ink-3',
+  slept: 'border-line bg-tint/[0.02] text-ink-3',
+  superseded: 'border-line bg-tint/[0.02] text-ink-3',
   unsent: 'border-bad/40 bg-bad/[0.08] text-bad',
-  quiet: 'border-line bg-white/[0.02] text-ink-3',
+  quiet: 'border-line bg-tint/[0.02] text-ink-3',
 }
 
 /**
@@ -47,7 +47,7 @@ export function IdleMinds() {
   const res = useResource(() => need(client, 'idleMinds', 'Idle minds')({ includePersonal: auditing }), { poll: 30_000, isEmpty: () => false, context: { who: me?.principal ?? null, auditing } })
 
   return (
-    <section id={IDLE_SECTION_ID} aria-labelledby="idle-h" className="scroll-mt-4 space-y-3 rounded-2xl border border-line bg-white/[0.03] p-4" data-tour="health-idle">
+    <section id={IDLE_SECTION_ID} aria-labelledby="idle-h" className="scroll-mt-4 space-y-3 rounded-2xl border border-line bg-tint/[0.03] p-4" data-tour="health-idle">
       <ConfirmHost />
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h2 id="idle-h" className="eyebrow">Idle minds</h2>
@@ -146,7 +146,7 @@ export function IdleCard({ mind: row, rowAt, viewer, swarmName, onChanged }: Idl
   }
 
   return (
-    <li className="rounded-xl border border-line bg-black/20 p-3" data-idle-mind={mind.id}>
+    <li className="rounded-xl border border-line bg-shade/20 p-3" data-idle-mind={mind.id}>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <button className="text-left text-[14px] font-medium text-ink hover:underline" onClick={() => navigate({ name: 'dot', id: mind.id })}>{name}</button>
         <span className="text-[11.5px] text-ink-4">
@@ -225,7 +225,7 @@ function IdleHistory({ id, auditing, who }: { id: string; auditing: boolean; who
 function HistoryRow({ r, now, who }: { r: IdleRecord; now: number; who: string | null }) {
   const reply = replyWords(r)
   return (
-    <li className="rounded-lg border border-line bg-black/20 px-3 py-2 text-[12.5px] leading-snug">
+    <li className="rounded-lg border border-line bg-shade/20 px-3 py-2 text-[12.5px] leading-snug">
       <div className="flex flex-wrap items-center gap-2 text-ink-4">
         <span>{r.question_at ? ago(r.question_at, now) : ''} · asked by {askedBy(r.question_by, who)}</span>
         <span className={cx('ml-auto rounded-full border px-2 py-0.5 text-[10.5px]', TONE[r.status])}>{STATUS_LABEL[r.status]}</span>

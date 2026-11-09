@@ -127,7 +127,7 @@ def latest_stamp(*values):
 
 
 def new_id(prefix):
-    return f"{prefix}_{secrets.token_hex(4)}"
+    return f"{prefix}_{secrets.token_hex(16)}"
 
 
 class Database:
@@ -138,6 +138,7 @@ class Database:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._lock = threading.RLock()
+        self._agent_namespace_epoch = 0
         if not hive_schema:
             return
         with self._lock:
@@ -195,13 +196,35 @@ class Database:
                 self._conn.execute("ALTER TABLE usage ADD COLUMN resolved_model TEXT")
             if "payer" not in usage_columns:            # who pays: a person (user:u_...) or the hive
                 self._conn.execute("ALTER TABLE usage ADD COLUMN payer TEXT")
+            if "payer_mode" not in usage_columns:       # 'plan': the owner's subscription (subscription_cli.py); else NULL
+                self._conn.execute("ALTER TABLE usage ADD COLUMN payer_mode TEXT")
             message_columns = {r[1] for r in self._conn.execute("PRAGMA table_info(messages)")}
             if "extra" not in message_columns:
                 self._conn.execute("ALTER TABLE messages ADD COLUMN extra TEXT")
+        # Connection-local derived-cache invalidation, including raw/executemany identity writes. No persistent table.
+        self._conn.create_function("hive_agent_names_changed", 0, self._invalidate_agent_namespace)
+        for event, name in (("INSERT", "insert"), ("DELETE", "delete"), ("UPDATE OF id", "update")):
+            self._conn.execute(f"CREATE TEMP TRIGGER hive_agent_names_{name} AFTER {event} ON main.agents "
+                               "BEGIN SELECT hive_agent_names_changed(); END")
+
+    def _invalidate_agent_namespace(self):
+        self._agent_namespace_epoch += 1
+        return 0
+
+    def agent_namespace_revision(self):
+        """Identity writes on this connection plus commits from other connections. Read under the DB guard."""
+        with self._lock:
+            return self._agent_namespace_epoch, self._conn.execute("PRAGMA data_version").fetchone()[0]
 
     def execute(self, sql, params=()):
         with self._lock:
-            return self._conn.execute(sql, params)
+            try:
+                return self._conn.execute(sql, params)
+            finally:
+                # Include raw ROLLBACK / ROLLBACK TO, even after leading comments or statement-cache reuse.
+                # A harmless literal/comment containing the word causes only a conservative cold-cache fallback.
+                if isinstance(sql, str) and "ROLLBACK" in sql.upper():
+                    self._invalidate_agent_namespace()
 
     def one(self, sql, params=()):
         with self._lock:
@@ -222,21 +245,27 @@ class Database:
             self._conn.execute(f"SAVEPOINT {name}" if nested else "BEGIN IMMEDIATE")
             try:
                 yield self
-            except BaseException:
-                if nested:
-                    self._conn.execute(f"ROLLBACK TO {name}")
-                    self._conn.execute(f"RELEASE {name}")
-                    del self._after_commit[mark:]          # what this savepoint queued never happened
-                else:
-                    self._conn.rollback()
-                    self._after_commit.clear()
-                raise
-            else:
+                # Commit/release can fail too. They belong to the same rollback and notice-clearing path as the body.
                 if nested:
                     self._conn.execute(f"RELEASE {name}")
                 else:
                     self._conn.commit()
                     pending, self._after_commit = self._after_commit, []
+            except BaseException:
+                try:
+                    if nested:
+                        self._conn.execute(f"ROLLBACK TO {name}")
+                        self._conn.execute(f"RELEASE {name}")
+                    else:
+                        self._conn.rollback()
+                finally:
+                    # A cached view may have seen uncommitted identities, including within a nested savepoint.
+                    self._invalidate_agent_namespace()
+                    if nested:
+                        del self._after_commit[mark:]      # what this savepoint queued never happened
+                    else:
+                        self._after_commit.clear()
+                raise
         for fn in pending:   # only after the outermost commit is durable, and outside the connection lock (a remote call may wait)
             try:
                 fn()

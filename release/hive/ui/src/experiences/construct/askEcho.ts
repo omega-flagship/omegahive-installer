@@ -4,7 +4,7 @@ import { useAskStore } from '../../store/ask'
 import { useC } from './state'
 
 /**
- * Watching the orchestrator work (the owner, 2026-10-05; UNIVERSAL_ASK_DESIGN §9): in the construct its presence is echoed in
+ * Watching the orchestrator work (Jon, 2026-10-05; UNIVERSAL_ASK_DESIGN §9): in the construct its presence is echoed in
  * the console as typed lines, as if a second operator were at the prompt. Presentation only, from the shared Ask store;
  * captions are plain text. Each echo is a copy of the Ask (echoAsk): it leaves the console with the Ask's thread, and
  * every identity change clears the console (state.ts). Returns the unsubscribe (Construct holds it while mounted).

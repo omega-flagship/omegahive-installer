@@ -3,15 +3,18 @@
  * Choosing a swarm saves it as the person's default Ask swarm (PUT /api/me/ask); from a refused request, its same
  * words are then sent once more. Plain words only: a swarm's coordinator answers; models are never mentioned here.
  */
-import { useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import type { AskWho } from '../../api/ask'
 import { useAdminView } from '../../lib/useAdmin'
 import { bindEpoch } from '../../lib/identityEpoch'
 import { href } from '../../lib/router'
-import { useAskStore, type AskRow } from '../../store/ask'
+import { askOrigin, useAskStore, type AskRow } from '../../store/ask'
 import { useHive } from '../../store/store'
-import { ADMIN_CHOOSES, CHANGE_WHO, CHOOSE_WHO, chipWords, HOST_SAY, MIND_RESTING, type AnswererChip } from './answerer'
+import { ADMIN_CHOOSES, CHANGE_WHO, CHOOSE_WHO, chipWords, HOST_SAY, MIND_RESTING, type AnswererChip, nativeAnswererWords, type NativeAnswererLook } from './answerer'
 import { shownMind } from './words'
+import { answererChoice, type AnswererTarget } from './answererChoice'
+import { isPrivateHash } from './view'
+import { usePopDismiss } from './popDismiss'
 
 /** The swarms one may pick: the host's list (GET /api/me/ask eligible); without it, swarms with a coordinator in view. */
 function useAnswerChoices(): { id: string; name: string; who?: string }[] {
@@ -27,13 +30,14 @@ function useAnswerChoices(): { id: string; name: string; who?: string }[] {
 }
 
 /** The picker itself. `op`: the refused request to send once more after the choice (none from the bar's chip). */
-export function AnswererPicker({ op, onDone, btnClass = 'ask-btn' }: { op?: string; onDone?: () => void; btnClass?: string }) {
+function SavedAnswererPicker({ op, onDone, btnClass = 'ask-btn' }: { op?: string; onDone?: () => void; btnClass?: string }) {
+  const displayed = useRef(askOrigin())
   const choices = useAnswerChoices()
   const current = useAskStore((s) => s.settings?.swarm_id)
   const [said, setSaid] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const choose = (x: { id: string; name: string; who?: string }) => {
-    if (busy) return
+    if (busy || !displayed.current.ok()) return
     setBusy(true)
     // after the await, only for the same person and sign-in it was chosen under (identity epoch and the Ask's own)
     const bind = bindEpoch()
@@ -46,7 +50,7 @@ export function AnswererPicker({ op, onDone, btnClass = 'ask-btn' }: { op?: stri
           if (useAskStore.getState().epoch !== epoch) return
           setBusy(false)
           if (r === 'failed') return setSaid('That could not be saved. Nothing changed.')
-          setSaid(r === 'resent' ? `${x.name} answers you now; your words were sent again.` : `${x.name} answers you now.`)
+          setSaid(r === 'resent' ? `Saved as your default. Your words were sent again.` : r === 'saved-not-sent' ? 'Saved as your default. Your request wasn’t sent; your words are kept.' : `Saved as your default: ${x.name}.`)
           onDone?.()
         }),
       )
@@ -70,6 +74,100 @@ export function AnswererPicker({ op, onDone, btnClass = 'ask-btn' }: { op?: stri
       )}
     </span>
   )
+}
+
+/** Legacy refusal/private choices explicitly save the host preference. The bar
+ * opts into the scoped chooser through `chip`, without changing retry semantics. */
+export function AnswererPicker(props: { op?: string; onDone?: () => void; btnClass?: string; chip?: AnswererChip | null; may?: () => boolean; answering?: boolean }) {
+  const epoch = useAskStore((s) => s.epoch)
+  return props.chip !== undefined ? <ScopedAnswererChip key={epoch} chip={props.chip} may={props.may} answering={props.answering} /> : <SavedAnswererPicker key={epoch} {...props} />
+}
+
+function ScopedAnswererChip({ chip, answering, may = () => true, look }: { chip: AnswererChip | null; answering?: boolean; may?: () => boolean; look?: NativeAnswererLook }) {
+  const displayed = useRef(askOrigin())
+  const own = useAskStore((s) => s.personal)
+  const eligible = useAskStore((s) => s.settings?.eligible)
+  const defaultSwarm = useAskStore((s) => s.settings?.swarm_id)
+  const thread = useAskStore((s) => s.thread)
+  const [open, setOpen] = useState(false)
+  const [active, setActive] = useState(0)
+  const [scope, setScope] = useState<'thread' | 'default'>('thread')
+  const [busy, setBusy] = useState(false)
+  const [said, setSaid] = useState<string | null>(null)
+  const owner = useRef<HTMLSpanElement>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const list = useRef<HTMLDivElement>(null)
+  const origin = useRef<ReturnType<typeof askOrigin> | null>(null)
+  const id = useId()
+  const privatePage = typeof window !== 'undefined' && isPrivateHash(window.location.hash || '')
+  const choices: AnswererTarget[] = [
+    ...(own?.swarm_id ? [{ kind: 'own' as const, mind: own.id, swarm: own.swarm_id, name: own.name }] : []),
+    ...(eligible ?? []).map((s) => ({ kind: 'swarm' as const, swarm: s.id, name: s.name })),
+    ...(thread ? [{ kind: 'thread' as const, mind: thread.mind.id, ...(thread.swarm ? { swarm: thread.swarm.id } : {}), name: thread.mind.name }] : []),
+  ]
+  const close = () => { setOpen(false); trigger.current?.focus() }
+  usePopDismiss(open, (event) => {
+    setOpen(false)
+    if (event?.type === 'keydown') trigger.current?.focus()
+  }, owner)
+  const choose = async (target: AnswererTarget) => {
+    const bound = origin.current
+    if (busy || !may() || !displayed.current.ok() || !bound?.ok()) return
+    const binding = bindEpoch(), epoch = useAskStore.getState().epoch
+    if (scope === 'default' && target.kind === 'thread') { setSaid('Choose your mind or a swarm to make a default.'); return }
+    setBusy(true)
+    if (scope === 'default') {
+      const state = useAskStore.getState(), latest = [...state.log].reverse().find((row) => row.kind === 'turn')
+      const op = latest?.kind === 'turn' ? latest.op : undefined
+      const result = await state.chooseAnswerer(target.kind === 'own' ? null : target.swarm!, op)
+      binding.commit(() => {
+        if (useAskStore.getState().epoch !== epoch || !bound.ok()) return
+        setBusy(false)
+        if (result === 'failed') { setSaid('That could not be saved. Nothing changed.'); return }
+        const accepted = op ? useAskStore.getState().turns[op]?.resentMind?.name : null
+        useHive.getState().toast({ tone: 'info', icon: 'check', title: 'Saved as your default', body: result === 'resent' ? accepted ? `${accepted} answers from ${target.name}; your words were sent again.` : 'Your words were sent again.' : result === 'saved-not-sent' ? 'Your request wasn’t sent. Your words are kept.' : target.name, ttl: 5000 })
+        close()
+      })
+      return
+    }
+    binding.commit(() => {
+      if (useAskStore.getState().epoch !== epoch || !bound.ok()) return
+      if (!answererChoice.select(target, bound.ok)) { setBusy(false); return }
+      setBusy(false)
+      close()
+    })
+  }
+  const shownChip = chip
+  if (!shownChip || answering) return null
+  return <span ref={owner} className="ask-scoped-answerer" data-native-answerer={look}>
+    <span ref={(node) => { trigger.current = node?.querySelector('button') ?? null }}>
+      <AnswererChipButton chip={shownChip} open={open} className={look ? "ask-native-answerer-trigger" : undefined} text={look ? nativeAnswererWords(shownChip, look) : undefined} showArrow={look !== 'still'} onToggle={() => {
+        if (!may() || !displayed.current.ok()) return
+        if (open) return close()
+        origin.current = askOrigin(); setActive(0); setSaid(null); setScope('thread'); setOpen(true)
+        requestAnimationFrame(() => { if (may() && displayed.current.ok() && origin.current?.ok()) list.current?.focus() })
+      }} />
+    </span>
+    {open && <span className="ask-answerer-pop">
+      {privatePage ? <SavedAnswererPicker onDone={close} /> : <>
+        <div ref={list} role="listbox" aria-label="Who answers" tabIndex={0} aria-activedescendant={choices.length ? `${id}-${active}` : undefined} onKeyDown={(e) => {
+          if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+            e.preventDefault(); setActive((n) => e.key === 'Home' ? 0 : e.key === 'End' ? Math.max(0, choices.length - 1) : choices.length ? (n + (e.key === 'ArrowDown' ? 1 : -1) + choices.length) % choices.length : 0)
+          } else if (e.key === 'Enter' && choices[active]) { e.preventDefault(); void choose(choices[active]) }
+        }}>
+          {choices.map((target, i) => <div key={`${target.kind}-${target.kind === 'swarm' ? target.swarm : target.mind}`} id={`${id}-${i}`} role="option" aria-selected={i === active} aria-disabled={busy || undefined} onMouseMove={() => setActive(i)} onClick={() => void choose(target)}>
+            {target.name}{target.kind === 'own' ? ` · your mind${!defaultSwarm ? ' (default)' : ''}` : target.kind === 'thread' ? ' · current thread' : ''}
+          </div>)}
+          {!choices.length && <span>No answerers are available yet.</span>}
+        </div>
+        <span role="group" aria-label="Choice applies to">
+          <button type="button" className="ask-btn" aria-pressed={scope === 'thread'} disabled={busy} onClick={() => setScope('thread')}>Just for this thread</button>
+          <button type="button" className="ask-btn" aria-pressed={scope === 'default'} disabled={busy} onClick={() => setScope('default')}>Make default</button>
+        </span>
+      </>}
+      {said && <span role="status">{said}</span>}
+    </span>}
+  </span>
 }
 
 /**
@@ -153,37 +251,22 @@ function WakeOwn({ mind }: { mind: AskWho }) {
 }
 
 /**
- * The bar's chip: "Choose who answers", "Answering: <swarm> · change" or "Answering: you (<mind>)". The person's own
- * mind's chip is a link to it (#/me/mind), so they can see the mind that answers them, with a small "Change" beside it
- * that opens the same picker.
+ * The bar's chip: "Choose who answers", "Answering: <swarm> · change" or "Answering: <mind>". The person's own
+ * mind’s chip opens the same answerer picker. Resting is accessible state, never a wake gate in the chip.
  */
-export function AnswererChipButton({ chip, open, onToggle, className = 'ask-chip ask-chip-answerer' }: { chip: AnswererChip; open: boolean; onToggle: () => void; className?: string }) {
-  if (chip.kind === 'personal')
-    return (
-      <>
-        <a className={className} data-answerer-chip={chip.kind} href={href({ name: 'me', view: 'mind' })} aria-label={`${chipWords(chip)}: open your mind`} title="Your personal mind answers: open it">
-          {chipWords(chip)}
-        </a>
-        <button type="button" className={className} data-answerer-change="" aria-label={CHANGE_WHO} aria-expanded={open} onClick={onToggle} title={CHANGE_WHO}>
-          Change
-        </button>
-      </>
-    )
+export function AnswererChipButton({ chip, open, onToggle, className = 'ask-chip ask-chip-answerer', text, showArrow = true }: { chip: AnswererChip; open: boolean; onToggle: () => void; className?: string; text?: string; showArrow?: boolean }) {
+  const state = chip.kind === 'personal' ? chip.resting ? 'resting. Asking wakes it.' : chip.status === 'awake' ? 'awake.' : chip.status === 'starting' ? 'waking.' : '' : ''
+  const label = chip.kind === 'loading' ? chipWords(chip) : chip.kind === 'personal' ? `${chipWords(chip)}, your mind${state ? `, ${state}` : '.'} ${CHANGE_WHO}` : `${chipWords(chip)}. ${CHANGE_WHO}`
   return (
-    <button type="button" className={className} data-answerer-chip={chip.kind} aria-expanded={open} onClick={onToggle} title="Who answers what you ask">
-      {chipWords(chip)}
+    <button type="button" className={className} data-answerer-chip={chip.kind} disabled={chip.kind === 'loading'} aria-busy={chip.kind === 'loading' || undefined} aria-label={label} aria-expanded={open} onClick={onToggle} title="Who answers what you ask">
+      {chip.kind === 'personal' && <span className="ask-answerer-dot" data-awake={chip.status === 'awake'} aria-hidden="true" />}
+      {text ? <span className="ask-native-answerer-label">{text}</span> : chipWords(chip)} {showArrow && chip.kind !== 'loading' && <span aria-hidden="true">▾</span>}
     </button>
   )
 }
 
 /** The chip and its picker inline, for the skins that draw their own bar (Professional, Still). `may`: the skin's gate. */
-export function AnswererInline({ chip, answering, may = () => true }: { chip: AnswererChip | null; answering: boolean; may?: () => boolean }) {
-  const [open, setOpen] = useState(false)
-  if (!chip || answering) return null
-  return (
-    <div className="ask-answerer-inline">
-      <AnswererChipButton chip={chip} open={open} onToggle={() => { if (may()) setOpen((o) => !o) }} />
-      {open && <AnswererPicker onDone={() => setOpen(false)} />}
-    </div>
-  )
+export function AnswererInline({ chip, answering, may = () => true, look }: { chip: AnswererChip | null; answering: boolean; may?: () => boolean; look?: NativeAnswererLook }) {
+  const epoch = useAskStore((s) => s.epoch)
+  return <ScopedAnswererChip key={epoch} chip={chip} answering={answering} may={may} look={look} />
 }

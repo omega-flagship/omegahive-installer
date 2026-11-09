@@ -3,7 +3,7 @@ import { decisionShown, NOTHING_CHANGED } from '../../lib/decisionGate'
 import type { Ask } from './gate'
 import { decideAsk, runAct } from './useCommons'
 
-// Review's probe (coordination/receipts-local/omegareview-commons-f0818d8/reviewOutcome.test.ts), ported to the
+// Review's probe (reviewOutcome.test.ts), ported to the
 // current dialog contract. The original extracted DecisionDialog's `else setError(...)` expression; the dialog now
 // renders a result through lib/decisionGate.decisionShown, so the probe asks that, over Commons' own decision
 // (useCommons.decideAsk, which useCommons.decide is) instead of re-composing outcomeWords by hand.

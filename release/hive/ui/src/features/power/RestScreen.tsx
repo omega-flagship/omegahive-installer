@@ -19,6 +19,7 @@ import {
   scrollIsPresence,
   chipDestination,
   isUrgent,
+  nativeWakeFor,
   restAlertFor,
   restBlocked,
   restChips,
@@ -36,6 +37,7 @@ import { clockParts, localeHour12 } from './restClocks'
 import { RestFace } from './RestFaces'
 import { useRestPrefs } from './menu'
 import { embodimentOf } from './OffScreen'
+import { idleCheckRuns } from './idleCheck'
 import './power.css'
 
 /** The minute clock: the only timer a rest keeps for its words (the scene, where there is one, draws itself). */
@@ -90,7 +92,7 @@ function typeTarget(): HTMLElement | null {
 }
 
 /**
- * Resting (the owner, 2026-10-05: "when no user input for some time it just goes into a resting animation while it works
+ * Resting (Jon, 2026-10-05: "when no user input for some time it just goes into a resting animation while it works
  * quietly in the background and subtle alerts are displayed along with a clock"). Per page, per person: after their
  * idle time the experience settles into its own rest while the hive keeps working. The hive's power wins: while it is
  * off (or lighting up) this page never rests, and a rest ends at once when it goes off.
@@ -104,7 +106,15 @@ function typeTarget(): HTMLElement | null {
  *  - entering it announces nothing (no focus move; the live line starts empty); its alerts are buttons, reachable;
  *  - costs little: the minute clock, and a scene drawn slowly only while visible (none under reduced motion).
  */
-export function RestHost({ experience, allowed, reduced, onResting, admin = false }: { experience: string; allowed: boolean; reduced: boolean; onResting: (r: boolean) => void; admin?: boolean }) {
+/** An experience's own rest (shell/phase), standing in for this page's: when to rest it, wake it, and whether it rests. */
+export interface NativeRest {
+  rest(): void
+  wake(): void
+  resting(): boolean
+}
+
+/** `phaseRest`: a phased experience is at rest (shell/phase restHolds), given by PowerHost; the idle check is off then. */
+export function RestHost({ experience, allowed, reduced, onResting, admin = false, native, phaseRest = false }: { experience: string; allowed: boolean; reduced: boolean; onResting: (r: boolean) => void; admin?: boolean; native?: NativeRest; phaseRest?: boolean }) {
   // ---- the sign-in this rest belongs to: the store's session primitive plus the client's credential handle. useAuthContext
   // re-renders on a credential change (re-login without a logout, another tab), and readContext reads the handle itself.
   const client = useHive((s) => s.client)
@@ -134,7 +144,20 @@ export function RestHost({ experience, allowed, reduced, onResting, admin = fals
   const kind = embodimentOf(experience)
   const now = useMinuteClock(v.resting)
 
+  // CANDIDATE (one-experience r1): an experience that draws its own rest (shell/phase) gets the rest instead. The same
+  // idle rules and the same timer decide when; this page then never draws the legacy rest or raises its resting flag.
+  const nativeRef = useRef(native)
+  const allowed_ = useRef(allowed)
   useEffect(() => {
+    nativeRef.current = native
+    allowed_.current = allowed
+  }, [native, allowed])
+  useEffect(() => {
+    if (v.resting && nativeRef.current) {
+      nativeRef.current.rest()
+      dispatch({ type: 'input', at: Date.now() })
+      return
+    }
     resting.current = v.resting
     setResting(v.resting)
     onResting(v.resting)
@@ -214,16 +237,15 @@ export function RestHost({ experience, allowed, reduced, onResting, admin = fals
     return () => clearTimeout(t)
   }, [shield])
 
-  // the idle check runs only while awake: at rest the minute clock is the only timer
   useEffect(() => {
-    if (!allowed || !minutes || v.resting) return
+    if (!idleCheckRuns({ allowed, minutes, resting: v.resting, phaseRest })) return
     const t = setInterval(() => {
       const at = Date.now()
       const probe: RestProbe = { hidden: document.hidden, modal: modalOpen(), pointerDown: pressHeld(pressedAt.current, at), composing: composing.current, draft: hasDraft(document.activeElement) }
       dispatch({ type: 'tick', at, idleMs: minutes * 60_000, lastInput: last.current, blocked: restBlocked(probe) })
     }, IDLE_CHECK_MS)
     return () => clearInterval(t)
-  }, [allowed, minutes, v.resting])
+  }, [allowed, minutes, v.resting, phaseRest])
 
   // a dialog that opens anyway (a mind's proposal, a confirm) ends the rest: a rest never covers one
   useEffect(() => {
@@ -243,6 +265,12 @@ export function RestHost({ experience, allowed, reduced, onResting, admin = fals
   useEffect(
     () =>
       hiveBus.on((e) => {
+        // the experience's own rest wakes on the same urgent events (a pending decision, a budget refusal)
+        const n = nativeRef.current
+        if (n && nativeWakeFor(e, allowed_.current && n.resting())) {
+          n.wake()
+          return
+        }
         if (!resting.current) return
         if (isUrgent(e)) dispatch({ type: 'urgent', at: Date.now() })
         else {
@@ -331,7 +359,7 @@ export function RestHost({ experience, allowed, reduced, onResting, admin = fals
 
   return (
     <>
-      {v.resting && (
+      {v.resting && !native && (
         // not a dialog and not focused: the page behind stays as it was, and entering announces nothing
         <div className={`pw-rest pw-rest-${kind}${reduced ? ' pw-reduced' : ''}`} data-rest={kind} onClick={wake}>
           <RestFace

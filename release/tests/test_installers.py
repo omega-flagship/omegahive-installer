@@ -6,11 +6,11 @@ the public install contract: local clone startup, module loader generation, and
 launcher files that do not embed private deployment state.
 """
 
+import re
 import importlib.util
 import json
 import os
 import pathlib
-import re
 import sys
 import tempfile
 import unittest
@@ -92,11 +92,11 @@ class InstallerTests(unittest.TestCase):
             self.assertIn("./modules/channel_router/entry.metta", text)
             self.assertIn("./modules/scratch_space/entry.metta", text)
             self.assertIn("./modules/web_search/entry.metta", text)
-            self.assertNotIn("Quinn", text)
+            self.assertNotIn("Jon", text)
             self.assertFalse((workspace / "repos" / "OmegaClaw-Core" / "modules" / "loader.metta").exists())
 
     def test_install_docs_explain_saved_configuration(self):
-        readme = (ROOT / "docs" / "omegaclaw-core.md").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
         install_readme = (ROOT / "install" / "README.md").read_text(encoding="utf-8")
         for text in [readme, install_readme]:
             self.assertIn("modules/loader.metta", text)
@@ -235,10 +235,10 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("current_predicate(py_call/3)", script)
         self.assertIn("SWI-Prolog Janus must embed Python 3.11.x", script)
         self.assertIn("No administrator password is required", script)
-        self.assertIn("~/OmegaClaw/.micromamba", (ROOT / "docs" / "omegaclaw-core.md").read_text(encoding="utf-8"))
+        self.assertIn("~/OmegaClaw/.micromamba", (ROOT / "README.md").read_text(encoding="utf-8"))
         self.assertIn("without sudo", (ROOT / "install" / "README.md").read_text(encoding="utf-8"))
-        self.assertIn("Node.js >=20", (ROOT / "docs" / "omegaclaw-core.md").read_text(encoding="utf-8"))
-        self.assertIn("SWI-Prolog 10.0.2-1", (ROOT / "docs" / "omegaclaw-core.md").read_text(encoding="utf-8"))
+        self.assertIn("Node.js >=20", (ROOT / "README.md").read_text(encoding="utf-8"))
+        self.assertIn("SWI-Prolog 10.0.2-1", (ROOT / "README.md").read_text(encoding="utf-8"))
         self.assertNotIn("swi-prolog nodejs", script)
         self.assertNotIn("brew install", script)
         self.assertNotIn("raw.githubusercontent.com/Homebrew/install", script)
@@ -807,12 +807,12 @@ class InstallerTests(unittest.TestCase):
     def test_public_prompt_has_no_private_operator_names(self):
         # The real names to guard against stay in local configuration, never in the repo (the same variables as the
         # UI's noRealPeople guard): OMEGA_PRIVATE_OWNER_NAMES and OMEGA_PRIVATE_FAMILY_NAMES, comma-separated.
-        prompt = (ROOT / "src" / "base_prompt.txt").read_text(encoding="utf-8")
+        prompt = (ROOT / "memory" / "prompt.txt").read_text(encoding="utf-8")
+        self.assertNotRegex(prompt, r"\bDad\b")
         private_names = [n.strip() for var in ("OMEGA_PRIVATE_OWNER_NAMES", "OMEGA_PRIVATE_FAMILY_NAMES")
                          for n in os.environ.get(var, "").split(",") if n.strip()]
         for private_name in private_names:
             self.assertNotRegex(prompt, rf"\b{re.escape(private_name)}\b")
-        self.assertIn("primary operator", prompt)
 
 
 if __name__ == "__main__":

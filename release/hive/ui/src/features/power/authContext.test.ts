@@ -193,7 +193,7 @@ describe('power: the generation follows the credential observer', () => {
 })
 
 describe('next28 4e745a7 Review B1: same-client credential replacement', () => {
-  // Review's portable probe (coordination/receipts-local/omegareview-next28-4e745a7/identity-probe.txt), verbatim but for
+  // Review's portable probe (identity-probe.txt), verbatim but for
   // types: the authContext stamp is cast, and this file's fake() stands for identity.test.ts's.
   it('Review: same-client credential replacement invalidates the old admin read without unauthorized', async () => {
     const f = fake()

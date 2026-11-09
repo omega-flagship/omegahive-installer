@@ -44,7 +44,7 @@ class ChannelSyntaxSmokeTests(unittest.TestCase):
             "web-search OpenCog Hyperon": '((web-search "OpenCog Hyperon"))',
             "web-search OpenCog Hyperon\nsend done": '((web-search "OpenCog Hyperon") (send "done"))',
             "send-whatsapp-to 123@lid Done: tracker rebuilt\nremember privacy lesson: General only contains non-private items": '((send-whatsapp-to "123@lid" "Done: tracker rebuilt") (remember "privacy lesson: General only contains non-private items"))',
-            "Hey Quinn!\n\nThis is a clean primary-channel reply.\n\n1. It can breathe.\n2. It stays one send.": '((send-control-base64 "SGV5IFF1aW5uIQoKVGhpcyBpcyBhIGNsZWFuIHByaW1hcnktY2hhbm5lbCByZXBseS4KCjEuIEl0IGNhbiBicmVhdGhlLgoyLiBJdCBzdGF5cyBvbmUgc2VuZC4="))',
+            "Hey Jon!\n\nThis is a clean primary-channel reply.\n\n1. It can breathe.\n2. It stays one send.": '((send-control-base64 "SGV5IEpvbiEKClRoaXMgaXMgYSBjbGVhbiBwcmltYXJ5LWNoYW5uZWwgcmVwbHkuCgoxLiBJdCBjYW4gYnJlYXRoZS4KMi4gSXQgc3RheXMgb25lIHNlbmQu"))',
             '(send-whatsapp "hello: there")': '((send-whatsapp "hello: there"))',
             'send-whatsapp """\nDinner is ready:\n- plates out\n- glucose checked\n"""': '((send-whatsapp-base64 "RGlubmVyIGlzIHJlYWR5OgotIHBsYXRlcyBvdXQKLSBnbHVjb3NlIGNoZWNrZWQ="))',
         }
@@ -60,7 +60,7 @@ class ChannelSyntaxSmokeTests(unittest.TestCase):
                     self.assert_parse(raw, expected)
 
     def test_split_base64_channel_payload_rejoins_and_invalid_utf8_fails_closed(self):
-        raw_payload = "Thank you, Quinn. 🛉\n\nSecond paragraph."
+        raw_payload = "Thank you, Jon. 🛉\n\nSecond paragraph."
         payload = base64.b64encode(raw_payload.encode("utf-8")).decode("ascii")
         split_payload = payload[:20] + "\n" + payload[20:]
 

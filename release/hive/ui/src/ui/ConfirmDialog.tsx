@@ -93,7 +93,7 @@ export function ConfirmDialog({
         </div>
         <label className="relative mt-4 block">
           <span className="text-[12px] text-ink-3">
-            Type <span className="rounded-md border border-line-2 bg-white/[0.05] px-1.5 py-px font-mono text-ink">{phrase}</span> to confirm
+            Type <span className="rounded-md border border-line-2 bg-tint/[0.05] px-1.5 py-px font-mono text-ink">{phrase}</span> to confirm
           </span>
           <input
             ref={inputRef}
@@ -102,8 +102,8 @@ export function ConfirmDialog({
             autoComplete="off"
             autoCapitalize="off"
             spellCheck={false}
-            className="mt-2 min-h-12 w-full rounded-xl border bg-black/30 px-3.5 font-mono text-ink transition-colors outline-none placeholder:text-ink-4"
-            style={{ borderColor: armed ? 'rgb(251 113 133 / 0.6)' : 'var(--color-line)' }}
+            className="mt-2 min-h-12 w-full rounded-xl border bg-shade/30 px-3.5 font-mono text-ink transition-colors outline-none placeholder:text-ink-4"
+            style={{ borderColor: armed ? 'color-mix(in oklab, var(--color-bad) 60%, transparent)' : 'var(--color-line)' }}
             placeholder={phrase}
             aria-invalid={text.length > 0 && !armed}
           />

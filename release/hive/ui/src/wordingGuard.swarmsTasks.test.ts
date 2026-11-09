@@ -7,7 +7,7 @@ import { SIM_SUITES } from './api/sim/lab'
 import record from './api/sim/fixtures/lab-record.json'
 
 /**
- * uifix-r1 wording sweep (UI review 2026-10-12: S1, S2, C13). the owner's owner words: a swarm is a swarm, never a team; work
+ * uifix-r1 wording sweep (UI review 2026-10-12: S1, S2, C13). Jon's owner words: a swarm is a swarm, never a team; work
  * is Motivations and Tasks (no goals, subgoals or boards); agents are minds. The older guard (wordingGuard.test.ts)
  * covers "goal", "board" and "dot" and a list of team phrases; this one bans "team" outright in shown text, adds
  * "subgoal", checks the Lab's host words and checks shown counts take the plural helper.
@@ -38,7 +38,6 @@ const ALLOWED_TEAM: Allow[] = [
   { at: 'api/sim/intents.ts:templates not registered for that team', why: HOST_INTENTS },
   // keys and search words the scanner reads because they sit inside shown JSX or a shown object (never on screen)
   { at: 'experiences/omegatown/index.tsx:teams', why: "the tab key ('teams' view); its shown label is Swarms" },
-  { at: 'features/tasks/MotivationsPage.tsx:team', why: "a VISIBILITY_WORDS key (owner kind 'team' = swarm-owned); the words shown say swarm" },
   { at: 'features/palette/navCommands.ts:team swarm groups commons beliefs archived archive restore lifecycle vocabulary connections', why: 'search words, never shown: the old name still finds Swarms' },
   { at: 'features/palette/navCommands.ts:invite colleague team member admin email google access remove', why: 'search words, never shown: people search for their team when inviting people (people, not a swarm)' },
   { at: 'lib/intent/features.ts:team motivations', why: 'words people may type, never shown: the old name still reaches Motivations' },
@@ -167,10 +166,12 @@ describe('shown counts agree with their number (uifix-r1, C13)', () => {
   const COUNT_ALLOWED: Allow[] = [
     { at: 'features/programs/Rail.tsx:${subjects.length} items', why: 'the many branch: one subject is named by its label instead' },
     { at: 'features/programs/Rail.tsx:${items.length} items', why: 'the many branch: one item reads "Actions for <label>"' },
+    { at: 'forms/lifeMap/panels.tsx:{events.length} events', why: "an app's own form (its owner's lane), left for the app owner" },
+    { at: 'forms/lifeMap/Still.tsx:${pts.length} readings', why: "an app's own form (its owner's lane), left for the app owner" },
+    { at: 'forms/lifeMap/parts.tsx:{scope.ids.size} records', why: "an app's own form (its owner's lane), left for the app owner" },
     { at: 'experiences/canvas/HivePanel.tsx:${pending.length} invitations', why: 'the many branch: one reads "One invitation is"' },
     { at: 'experiences/canvas/index.tsx:${refs.length} motivations', why: 'the many branch (two places): one motivation is named by its title' },
     { at: 'experiences/canvas/motives.ts:${refs.length} motivations', why: 'the many branch: one reads "the motivation"' },
-    { at: 'features/updates/UpdatesPage.tsx:${data.apps.length} apps', why: 'the many branch: one reads "The one app is"' },
     { at: 'features/code/map/MapView.tsx:${byPrefix.length} revisions', why: 'only when more than one revision matches' },
     { at: 'features/code/suggestions/WorkbenchSuggestionPanel.tsx:${picked.length} ranges', why: 'only when more than one range is picked' },
     { at: 'features/dot/SpendingPause.tsx:${refusal.count} calls', why: 'only when more than one call was refused' },

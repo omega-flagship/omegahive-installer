@@ -5,6 +5,7 @@ import { Icon } from '../../ui/Icon'
 import { SeriesChart, type ChartSeries } from './charts'
 import { BAD, caseKey, codedLabels, GOOD, findMetric, findSeries, fmtValue, labText, parseEvents, SLOTS, STATUS } from './labUtil'
 import { Card, StatusIcon } from './parts'
+import { scrubbed } from '../../brand/timeJump'
 
 interface Readout {
   label: string
@@ -129,7 +130,7 @@ const DRIFT: Record<string, Spec> = {
       const cap = findMetric(c, 'calls served')?.target
       if (!s?.points.length) return null
       const last = s.points[s.points.length - 1][0]
-      const ceiling: ChartSeries | null = cap != null ? { name: `ceiling (${cap} a minute)`, unit: '', kind: 'line', x: s.x, points: [[s.points[0][0], cap], [last, cap]], dashed: true, color: '#b9b8dc' } : null
+      const ceiling: ChartSeries | null = cap != null ? { name: `ceiling (${cap} a minute)`, unit: '', kind: 'line', x: s.x, points: [[s.points[0][0], cap], [last, cap]], dashed: true, color: 'var(--color-ink-2)' } : null
       return {
         series: [s, ...(ceiling ? [ceiling] : [])],
         primary: s,
@@ -158,7 +159,7 @@ const DRIFT: Record<string, Spec> = {
       const first = v(c, 'first refusal at call')
       if (!s?.points.length) return null
       return {
-        series: [s, ...(b ? [{ ...b, dashed: true, color: '#b9b8dc' }] : [])],
+        series: [s, ...(b ? [{ ...b, dashed: true, color: 'var(--color-ink-2)' }] : [])],
         primary: s,
         marker: first ? { x: first, label: 'refused from here' } : undefined,
         readout: (i) => {
@@ -251,12 +252,12 @@ export function DriftBoard({ cases, running, expected, onOpenCase }: { cases: La
   return (
     <div className="space-y-3">
       <Card className="overflow-hidden" tone={cases.length ? color : undefined} tour="drift-leaks">
-        <div className="pointer-events-none absolute -top-24 -left-16 size-72 rounded-full opacity-60" style={{ background: `radial-gradient(circle, ${cases.length ? (zero ? 'rgb(74 222 128 / 0.16)' : 'rgb(251 113 133 / 0.2)') : 'transparent'}, transparent 70%)` }} />
+        <div className="pointer-events-none absolute -top-24 -left-16 size-72 rounded-full opacity-60" style={{ background: `radial-gradient(circle, ${cases.length ? (zero ? 'color-mix(in oklab, var(--color-good) 16%, transparent)' : 'color-mix(in oklab, var(--color-bad) 20%, transparent)') : 'transparent'}, transparent 70%)` }} />
         <div className="relative flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="flex items-center gap-4">
             <div
               className="font-display text-[56px] leading-none font-semibold tracking-tight tabular-nums md:text-[64px]"
-              style={{ color: cases.length ? color : 'var(--color-ink-4)', textShadow: cases.length ? `0 0 32px ${zero ? 'rgb(74 222 128 / 0.45)' : 'rgb(251 113 133 / 0.5)'}` : undefined }}
+              style={{ color: cases.length ? color : 'var(--color-ink-4)', textShadow: cases.length ? `0 0 32px ${zero ? 'color-mix(in oklab, var(--color-good) 45%, transparent)' : 'color-mix(in oklab, var(--color-bad) 50%, transparent)'}` : undefined }}
               aria-label={`${breached} leaks`}
             >
               {cases.length ? breached : '–'}
@@ -298,7 +299,7 @@ export function DriftBoard({ cases, running, expected, onOpenCase }: { cases: La
                 e.preventDefault()
                 document.getElementById(`drift-${caseKey(c)}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
               }}
-              className="inline-flex min-h-8 items-center gap-1.5 rounded-full border border-line bg-white/[0.03] py-0.5 pr-2.5 pl-1 text-[12px] text-ink-2 transition-colors hover:border-line-2 hover:text-ink"
+              className="inline-flex min-h-8 items-center gap-1.5 rounded-full border border-line bg-tint/[0.03] py-0.5 pr-2.5 pl-1 text-[12px] text-ink-2 transition-colors hover:border-line-2 hover:text-ink"
             >
               <StatusIcon status={c.status} size={18} />
               {labText(c.name)}
@@ -337,7 +338,7 @@ function Scenario({ c, onOpen }: { c: LabCase; onOpen: () => void }) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
             <h3 className="font-display text-[16px] font-semibold tracking-tight">{labText(c.name)}</h3>
-            <span className="rounded-md border border-line bg-white/[0.03] px-1.5 py-px text-[10.5px] font-semibold tracking-wide text-ink-3 uppercase">{labText(c.group)}</span>
+            <span className="rounded-md border border-line bg-tint/[0.03] px-1.5 py-px text-[10.5px] font-semibold tracking-wide text-ink-3 uppercase">{labText(c.group)}</span>
             {spec?.control && (
               <span className="rounded-md border border-[#7dd3fc]/30 bg-[#7dd3fc]/10 px-1.5 py-px text-[10.5px] font-semibold tracking-wide text-[#7dd3fc] uppercase" title="A control: the guards must not block real evidence">
                 control
@@ -359,7 +360,7 @@ function Scenario({ c, onOpen }: { c: LabCase; onOpen: () => void }) {
         ) : c.metrics.length ? (
           <ul className="space-y-1.5">
             {c.metrics.map((m) => (
-              <li key={m.name} className="flex min-h-9 items-center gap-2.5 rounded-xl border border-line bg-black/20 px-3 text-[13px]">
+              <li key={m.name} className="flex min-h-9 items-center gap-2.5 rounded-xl border border-line bg-shade/20 px-3 text-[13px]">
                 <Icon name={m.ok === false ? 'x' : 'check'} size={15} strokeWidth={2.6} className={m.ok === false ? 'text-bad' : 'text-good'} />
                 <span className="flex-1 text-ink-2">{labText(m.name)}</span>
                 <span className={cx('text-[12px] font-semibold', m.ok === false ? 'text-bad' : 'text-good')}>{m.ok === false ? 'not refused' : 'refused'}</span>
@@ -382,7 +383,7 @@ function NoPicture({ reason }: { reason: string }) {
   return (
     <div
       className="flex min-h-24 items-center justify-center rounded-xl border border-dashed border-line px-4 text-center text-[12.5px] text-ink-4"
-      style={{ backgroundImage: 'repeating-linear-gradient(135deg, rgb(255 255 255 / 0.025) 0 6px, transparent 6px 12px)' }}
+      style={{ backgroundImage: 'repeating-linear-gradient(135deg, color-mix(in oklab, var(--color-ink) 2.5%, transparent) 0 6px, transparent 6px 12px)' }}
     >
       {reason}
     </div>
@@ -402,7 +403,7 @@ function CapGauge({ g }: { g: Gauge }) {
           <span className="text-ink-3"> accepted of {g.tried} tried</span>
         </span>
       </div>
-      <div className="relative h-3 rounded-full" style={{ background: 'repeating-linear-gradient(135deg, rgb(255 255 255 / 0.07) 0 4px, rgb(255 255 255 / 0.03) 4px 8px)' }} role="img" aria-label={`${g.got} accepted of ${g.tried} attempts, cap ${g.cap}`}>
+      <div className="relative h-3 rounded-full" style={{ background: 'repeating-linear-gradient(135deg, color-mix(in oklab, var(--color-ink) 7%, transparent) 0 4px, color-mix(in oklab, var(--color-ink) 3%, transparent) 4px 8px)' }} role="img" aria-label={`${g.got} accepted of ${g.tried} attempts, cap ${g.cap}`}>
         <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: pct(g.got), background: over ? '#fb7185' : SLOTS[0] }} />
         <div className="absolute -inset-y-1 w-0.5 rounded-full bg-ink" style={{ left: pct(g.cap) }} />
       </div>
@@ -468,7 +469,7 @@ function Replay({ chart, name }: { chart: ChartSpec; name: string }) {
             if (atEnd) setI(0)
             setPlaying(!playing)
           }}
-          className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-line bg-white/[0.04] text-ink-2 hover:text-ink"
+          className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-line bg-tint/[0.04] text-ink-2 hover:text-ink"
           aria-label={playing ? 'Pause the replay' : 'Replay the scenario step by step'}
         >
           <Icon name={playing ? 'pause' : 'play'} size={15} />
@@ -481,6 +482,7 @@ function Replay({ chart, name }: { chart: ChartSpec; name: string }) {
           value={idx}
           onChange={(e) => {
             setPlaying(false)
+            scrubbed(idx, Number(e.target.value), `step ${Number(e.target.value) + 1}`)
             setI(Number(e.target.value))
           }}
           aria-label={`As of step (${labText(chart.primary.x)})`}
@@ -492,7 +494,7 @@ function Replay({ chart, name }: { chart: ChartSpec; name: string }) {
         {reads.map((r) => (
           <div
             key={r.label}
-            className={cx('flex min-h-8 items-center gap-1.5 rounded-lg border px-2 text-[12px]', r.leak ? (r.bad ? 'border-bad/40 bg-bad/10' : 'border-good/25 bg-good/[0.06]') : 'border-line bg-black/20')}
+            className={cx('flex min-h-8 items-center gap-1.5 rounded-lg border px-2 text-[12px]', r.leak ? (r.bad ? 'border-bad/40 bg-bad/10' : 'border-good/25 bg-good/[0.06]') : 'border-line bg-shade/20')}
           >
             <dt className="text-ink-3">{r.label}</dt>
             <dd className={cx('font-semibold tabular-nums', r.leak ? (r.bad ? 'text-bad' : 'text-good') : r.bad ? 'text-bad' : 'text-ink')}>{r.value}</dd>
@@ -502,7 +504,7 @@ function Replay({ chart, name }: { chart: ChartSpec; name: string }) {
       {chart.events && (
         <ol className="mt-2 grid gap-x-3 gap-y-0.5 text-[12px] sm:grid-cols-2">
           {chart.events.map((e, k) => (
-            <li key={k} className={cx('flex items-baseline gap-1.5 rounded px-1 transition-colors', k === idx ? 'bg-white/[0.06] text-ink' : k > idx ? 'text-ink-4' : 'text-ink-3')}>
+            <li key={k} className={cx('flex items-baseline gap-1.5 rounded px-1 transition-colors', k === idx ? 'bg-tint/[0.06] text-ink' : k > idx ? 'text-ink-4' : 'text-ink-3')}>
               <span className="w-4 shrink-0 text-right font-mono text-[10.5px] text-ink-4">{k + 1}</span>
               {e}
             </li>

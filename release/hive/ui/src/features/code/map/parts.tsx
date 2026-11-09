@@ -203,7 +203,7 @@ export function Overview({ header, v, nodes, truncated, scope, onScope, onMore, 
               <ul className="space-y-0.5">
                 {groups.map((g) => (
                   <li key={g.module}>
-                    <button type="button" className={cx('flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-white/5', scope === g.module && 'text-ink')} style={scope === g.module ? { boxShadow: 'inset 0 0 0 1px var(--color-accent)' } : undefined} onClick={() => onScope(scope === g.module ? null : g.module)} aria-pressed={scope === g.module}>
+                    <button type="button" className={cx('flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-tint/5', scope === g.module && 'text-ink')} style={scope === g.module ? { boxShadow: 'inset 0 0 0 1px var(--color-accent)' } : undefined} onClick={() => onScope(scope === g.module ? null : g.module)} aria-pressed={scope === g.module}>
                       <span className="min-w-0 flex-1 truncate font-mono text-[12px]">{g.module}</span>
                       <span className="text-ink-3">{scopedCount(g.items.length).replace(' in this view', '')}</span>
                     </button>

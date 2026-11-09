@@ -61,7 +61,8 @@ describe('fixtures: Code’s payloads, byte-identical, recorded as the host reco
   it('R10 and R7 payloads hash to Code’s published sha256', async () => {
     expect(await sha256(PC_FIXTURE_RAW.r10)).toBe('ddd3ab93e2676cff185c03999c59a0c1bf57b5c2c57174e3a799eebb56c0cb0a')
     expect(await sha256(PC_FIXTURE_RAW.r7)).toBe('ad67a5845dca76609d4fce0a04bdf6b27c55d8365c1f2684b24f1d031249ec31')
-    expect(await sha256(PC_FIXTURE_RAW.r11)).toBe('7c64a4550a8f5cdbd342e805f3f110f0f0d66272e1ddd83816bea23b35f39e72')
+    // R11 as published (7c64a455…) but for its three workspace locators, shortened to drop an internal-notes path
+    expect(await sha256(PC_FIXTURE_RAW.r11)).toBe('c7e7c961cb8d32badf4fec370b84b5f018db9e7afdef3c51e7233b43e614fd15')
   })
   it('the sim view passes the host-shape validation and carries both contributions as recorded claims', () => {
     const g = graph()

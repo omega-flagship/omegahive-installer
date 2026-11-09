@@ -2,7 +2,7 @@ import { toViewer } from '../banked'
 import type { GuideScript } from '../types'
 
 /**
- * Brain modules with no demo to play yet (requested from Codex, coordination/inbox/20261007T0545Z-…; Root's replies
+ * Brain modules with no demo to play yet (requested from Codex in an inbox note of 2026-10-07; Root's replies
  * 20261006-231924Z-… and 20261006-235125Z-…). Each is a stub: the Ask answers honestly ("being built"), offers the
  * nearest real demos, and can show what exists today. Temporal's demos (temporal-demo-sequence/anticipation) are
  * explicitly UNAVAILABLE in Root's catalogue, pending their Reason/Atom owners; Assume's hooks are proposed only. None

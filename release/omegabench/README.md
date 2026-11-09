@@ -18,7 +18,7 @@ Evidence-bounded benchmarking for OmegaHive and OmegaEvolve. Extends Hive Lab; i
 
 The isolated host candidate vendors this package and registers `tests-omegabench` (protocol qualification) and `bench-omega-development` (synthetic fixtures) in the existing Lab UI/API/history. Evolve's protocol-receipt path accepts the qualification suite and continues to record `candidate_evaluated=false`. An imported comparison must not be sent through that path as capability proof.
 
-See [the theory review](../coordination/omegabench/THEORY_REVIEW.md) and [Opus's response](../coordination/omegabench/OPUS_RESPONSE.md) for lineage, comparison design and remaining host work. No public publication, dataset redistribution or paid experiment is performed.
+See the theory review and Opus's response (internal notes) for lineage, comparison design and remaining host work. No public publication, dataset redistribution or paid experiment is performed.
 
 ## Semantic measurement and report adapters
 

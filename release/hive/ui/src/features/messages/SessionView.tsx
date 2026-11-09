@@ -88,7 +88,7 @@ export function SessionView({ sessionId, roomId }: { sessionId: string; roomId: 
             <span className="text-ink-3">Code:</span>
             {workspaces.map((w) => (
               <button key={w.id} onClick={() => navigate({ name: 'code', target: `repo:${w.repository_id}`, task: session.goal!.id, workspace: w.id, repository: w.repository_id })}
-                className="inline-flex items-center gap-1 rounded-lg border border-line px-2 py-0.5 text-ink-2 hover:bg-white/[0.06] hover:text-ink">
+                className="inline-flex items-center gap-1 rounded-lg border border-line px-2 py-0.5 text-ink-2 hover:bg-tint/[0.06] hover:text-ink">
                 <Icon name="terminal" size={12} /> {w.repository_id} · open in Workbench
               </button>
             ))}
@@ -107,7 +107,7 @@ export function SessionView({ sessionId, roomId }: { sessionId: string; roomId: 
             <textarea value={text} onChange={(e) => setText(e.target.value)} rows={1} aria-label="Message"
               onKeyDown={(e) => { if (guardComposing(e)) return; if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send() } }}
               placeholder={`Tell ${shown(session.mind.name)} what to do…`}
-              className="max-h-40 min-h-11 min-w-0 flex-1 resize-none rounded-xl border border-line bg-black/25 px-3 py-2.5 text-[14px] text-ink outline-none focus:border-line-2" />
+              className="max-h-40 min-h-11 min-w-0 flex-1 resize-none rounded-xl border border-line bg-shade/25 px-3 py-2.5 text-[14px] text-ink outline-none focus:border-line-2" />
             <IconButton icon="send" label="Send" onClick={() => void send()} disabled={sending || !text.trim()} className="bg-accent/30" />
           </div>
         ) : (
@@ -125,20 +125,20 @@ function Item({ it, mindName, hue, onDecide }: { it: SessionItem; mindName: stri
     return (
       <div className={cx('flex flex-col', mind ? 'items-start' : 'items-end')}>
         <span className="mb-0.5 text-[11.5px] text-ink-3" style={mind ? { color: `hsl(${hue} 90% 72%)` } : undefined}>{mind ? mindName : shown(it.name)}</span>
-        <p className={cx('max-w-[85%] rounded-2xl px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap', mind ? 'border border-line bg-white/[0.04]' : 'bg-accent/25')}><PlainText text={it.text} /></p>
+        <p className={cx('max-w-[85%] rounded-2xl px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap', mind ? 'border border-line bg-tint/[0.04]' : 'bg-accent/25')}><PlainText text={it.text} /></p>
       </div>
     )
   }
   if (it.type === 'approval') {
     const pending = it.status === 'pending'
     return (
-      <div className={cx('rounded-xl border px-3 py-2.5', pending ? 'border-warn/40 bg-warn/[0.06]' : 'border-line bg-white/[0.02]')}>
+      <div className={cx('rounded-xl border px-3 py-2.5', pending ? 'border-warn/40 bg-warn/[0.06]' : 'border-line bg-tint/[0.02]')}>
         <div className="flex items-center gap-2 text-[12.5px]">
           <Icon name="shield" size={14} className={pending ? 'text-warn' : 'text-ink-3'} />
           <span className="flex-1 text-ink-2">{mindName} asks to run <span className="font-mono text-ink">{it.skill}</span> ({it.risk} risk)</span>
           <span className="text-[11.5px] text-ink-4">{it.status}</span>
         </div>
-        <pre className="mt-1.5 max-h-32 overflow-auto rounded-lg bg-black/30 p-2 font-mono text-[11.5px] whitespace-pre-wrap text-ink-2">{it.command}</pre>
+        <pre className="mt-1.5 max-h-32 overflow-auto rounded-lg bg-shade/30 p-2 font-mono text-[11.5px] whitespace-pre-wrap text-ink-2">{it.command}</pre>
         {it.reason && <p className="mt-1 text-[11.5px] text-ink-4">{it.reason}</p>}
         {pending && (
           <div className="mt-2 flex gap-2">
@@ -153,7 +153,7 @@ function Item({ it, mindName, hue, onDecide }: { it: SessionItem; mindName: stri
   }
   const first = it.steps[0]
   return (
-    <div className="rounded-xl border border-line bg-white/[0.02]">
+    <div className="rounded-xl border border-line bg-tint/[0.02]">
       <button onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] text-ink-3 hover:text-ink-2">
         <Icon name={open ? 'chevronDown' : 'chevron'} size={13} />
         <span className="min-w-0 flex-1 truncate font-mono">{first.command}</span>
@@ -165,7 +165,7 @@ function Item({ it, mindName, hue, onDecide }: { it: SessionItem; mindName: stri
           {it.steps.map((s, i) => (
             <div key={i} className="space-y-1">
               <p className="font-mono text-[11.5px] text-ink">{s.command}</p>
-              <pre className="max-h-48 overflow-auto rounded-lg bg-black/30 p-2 font-mono text-[11px] whitespace-pre-wrap text-ink-3">{s.result || '(no result)'}</pre>
+              <pre className="max-h-48 overflow-auto rounded-lg bg-shade/30 p-2 font-mono text-[11px] whitespace-pre-wrap text-ink-3">{s.result || '(no result)'}</pre>
             </div>
           ))}
         </div>

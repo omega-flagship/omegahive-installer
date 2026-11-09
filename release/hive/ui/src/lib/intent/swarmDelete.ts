@@ -1,5 +1,5 @@
 /**
- * "delete the Forge swarm" in the shared fast path (the owner 2026-10-07): it only OPENS the swarm-delete warning (effect
+ * "delete the Forge swarm" in the shared fast path (Jon 2026-10-07): it only OPENS the swarm-delete warning (effect
  * 'open-decision'), which shows what goes and needs the exact name typed. The Ask never deletes anything itself.
  * Several swarms with the name: "which one?" with chips.
  */

@@ -18,7 +18,7 @@ describe('the classic navigation (redesign 2026-10-06)', () => {
   it('orders the rail Home, People & minds, Work, Apps, Watch, Admin, at most seven entries a section', () => {
     expect(labels(ADMIN)).toEqual([
       ['Home', ['Hive', 'Inbox', 'Messages', 'Recent conversations']],
-      ['People & minds', ['Swarms', 'Explore', 'Roles', 'Models', 'People', 'Add an outside agent']],
+      ['People & minds', ['Swarms', 'Explore', 'Roles', 'Models', 'Tools', 'People', 'Add an outside agent']],
       ['Work', [TERMS.motivations, TERMS.tasks, 'Flow', 'Code', 'Files', 'Artifacts']],
       ['Apps', ['Atlas', 'Omegatruth', 'All apps']],
       ['Watch', ['Health', 'Usage', 'Lab']],
@@ -29,7 +29,7 @@ describe('the classic navigation (redesign 2026-10-06)', () => {
   it('a member sees no admin-only entry and no Admin section; everything else is the same', () => {
     expect(labels(MEMBER)).toEqual([
       ['Home', ['Hive', 'Inbox', 'Messages', 'Recent conversations']],
-      ['People & minds', ['Swarms', 'Explore', 'Roles', 'Models']],
+      ['People & minds', ['Swarms', 'Explore', 'Roles', 'Models', 'Tools']],
       ['Work', [TERMS.motivations, TERMS.tasks, 'Flow', 'Code', 'Files', 'Artifacts']],
       ['Apps', ['Atlas', 'Omegatruth', 'All apps']],
       ['Watch', ['Health', 'Usage', 'Lab']],

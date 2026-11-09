@@ -1,6 +1,6 @@
 /**
  * Workbench Map in the simulator (?sim=1): Code's synthetic repo-map/1 fixture (fixtures/repo-map-1.synthetic.json,
- * byte-identical to coordination/omegacode/intake/repo-map/FIXTURE_repo-map-1.synthetic.json) served through the SAME
+ * byte-identical to FIXTURE_repo-map-1.synthetic.json) served through the SAME
  * routes, errors, ACL and cursor policy as Platform's Slice A contract §3, so the page reads it exactly as it would
  * read a hive. SYNTHETIC: a shape fixture only (placeholder digests); revision 0…02 is INVENTED here from it, so drift
  * has a pair to compare. Nothing here is a real repository.
@@ -21,7 +21,7 @@ const VARIANTS: readonly SimRepoMapVariant[] = ['default', 'ready', 'stale', 'un
 /**
  * ?repomap=real: Code's REAL map of PhysixSNET omegahive@c8a9aed (REAL_repo-map-1.c8a9aed.json, 20.8 MB) served through
  * the same routes. It is NOT part of this source tree or any bundle: it is fetched, only for this option, from
- * `repo-map.real.json` beside the page, where a local smoke places it (from coordination/omegacode/intake/repo-map/).
+ * `repo-map.real.json` beside the page, where a local smoke places it (from Code's repo-map intake).
  * Absent there, the sim answers as a hive without the routes (bare 404): nothing is invented in its place.
  */
 export const REAL_MAP_FILE = 'repo-map.real.json'

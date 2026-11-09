@@ -276,7 +276,7 @@ function Host({ programId, swarmId, variant, onExit, width }: HostProps & { widt
   )
 
   const stage = (
-    <div className={cx('relative min-h-0 flex-1 overflow-hidden', !narrow && 'rounded-[20px] border border-line')} data-tour="program-stage-view" style={{ background: 'radial-gradient(80% 70% at 50% 40%, rgb(70 60 160 / 0.14), rgb(4 4 16 / 0.35))' }}>
+    <div className={cx('relative min-h-0 flex-1 overflow-hidden', !narrow && 'rounded-[20px] border border-line')} data-tour="program-stage-view" style={{ background: 'radial-gradient(80% 70% at 50% 40%, rgb(70 60 160 / 0.14), color-mix(in oklab, var(--color-void) 35%, transparent))' }}>
       {graph.items.length === 0 ? (
         <EmptyState icon="sparkles" title="Nothing here yet" body={graph.notes[0] ?? 'The program returned an empty view.'} />
       ) : step.stage === 'detail' && step.focus ? (
@@ -304,7 +304,7 @@ function Host({ programId, swarmId, variant, onExit, width }: HostProps & { widt
       {overlays}
       {!narrow && step.stage !== 'detail' && !session.notice && !session.input && !result && <Legend />}
       {!narrow && step.stage !== 'detail' && !selection.length && !reduced && !session.notice && !session.input && !result && (
-        <div className="pointer-events-none absolute right-3 bottom-3 rounded-lg bg-black/30 px-2 py-1 text-[11px] text-ink-4">{narrow ? 'Tap to select · tap again to open' : 'Click to select · shift-click to add · double-click to open'}</div>
+        <div className="pointer-events-none absolute right-3 bottom-3 rounded-lg bg-shade/30 px-2 py-1 text-[11px] text-ink-4">{narrow ? 'Tap to select · tap again to open' : 'Click to select · shift-click to add · double-click to open'}</div>
       )}
     </div>
   )
@@ -423,7 +423,7 @@ function TrailCrumbs({ trail, gi, programId, narrow, onJump }: { trail: TrailSte
               onClick={() => onJump(i)}
               disabled={last}
               aria-current={last ? 'step' : undefined}
-              className={cx('inline-flex min-h-8 items-center', narrow ? 'max-w-[190px]' : 'max-w-[220px]', ' gap-1.5 rounded-lg px-2 text-[12px] whitespace-nowrap transition-colors', last ? 'border border-line-2 bg-white/[0.07] text-ink' : 'text-ink-3 hover:bg-white/[0.05] hover:text-ink')}
+              className={cx('inline-flex min-h-8 items-center', narrow ? 'max-w-[190px]' : 'max-w-[220px]', ' gap-1.5 rounded-lg px-2 text-[12px] whitespace-nowrap transition-colors', last ? 'border border-line-2 bg-tint/[0.07] text-ink' : 'text-ink-3 hover:bg-tint/[0.05] hover:text-ink')}
               title={`${STAGE_WORDS[t.stage]} · ${t.focus ? (gi.items.get(t.focus)?.label ?? t.focus) : 'start'}`}
             >
               <Icon name={STAGE_ICON[t.stage]} size={13} className="shrink-0" />

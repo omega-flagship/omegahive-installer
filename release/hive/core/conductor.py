@@ -1,13 +1,13 @@
 """The Ask conductor (host side): one model loop that steers the person's screen with typed acts.
 
-Plan: coordination/omegaui/ASK_CONDUCTOR_HARNESS_PLAN_20261007.md (the owner approved; Platform owns steps 2 and 3).
-Contract: coordination/omegaui/ASK_CONDUCTOR_ACTION_VOCABULARY_v1_20261007.md, with "Platform's answers".
+Plan: ASK_CONDUCTOR_HARNESS_PLAN_20261007.md (Jon approved; Platform owns steps 2 and 3).
+Contract: ASK_CONDUCTOR_ACTION_VOCABULARY_v1_20261007.md, with "Platform's answers".
 
-- Off unless HIVE_ASK_CONDUCTOR=1. Off, the Ask is exactly phase 1 (the swarm's coordinator answers).
+- On by default, including a fresh install. HIVE_ASK_CONDUCTOR=0 keeps phase 1 (the swarm's coordinator answers).
 - On, an admitted Ask turn (same routing, thread, admission transaction and frames as phase 1) is not delivered to the
   coordinator. The host runs one model (HIVE_ASK_CONDUCTOR_MODEL) with a tool schema that is vocabulary v1: navigate,
   open, look, point, highlight, fill, scroll, tour.step (tool name tour_step: provider tool names allow no dot),
-  dispatch and say. The hive keeps no conductor memory (the owner's memory ruling: the person's memory is kept by their own
+  dispatch and say. The hive keeps no conductor memory (Jon's memory ruling: the person's memory is kept by their own
   browser; cloud-hosted memory is "coming soon"). The page may send up to 20 memory_notes (<= 8 KB) with any Ask; they
   are always shape-checked, and only while HIVE_ASK_MEMORY=on reach that turn's model context (never stored or logged).
 - With HIVE_ASK_MEMORY=on (off by default), the model also gets a `remember` tool (capped per turn). It stores nothing on
@@ -32,7 +32,7 @@ Contract: coordination/omegaui/ASK_CONDUCTOR_ACTION_VOCABULARY_v1_20261007.md, w
   default swarm), the conductor runs as that mind: its model (unless an admin's A/B pick), its usage rows, its swarm's
   limits, and its $0 own cap replaced by the person's month allowance (budgets.allowance_pays); the turn view and the
   accepted frame say acting_as {mind_id, name}. Otherwise the turn's mind is the routed swarm's coordinator.
-  A personal turn controls the hive as any turn does (the owner 2026-10-09): its dispatch records an intent like any other,
+  A personal turn controls the hive as any turn does (Jon 2026-10-09): its dispatch records an intent like any other,
   and the work it hands over is a normal work item in the receiving swarm; only its conversation stays off the host.
 - Acts naming a private app (Atlas, Truth) are dropped before any frame (defence in depth beside the page's fence).
 - dispatch goes through Conductor.dispatch, wired to linkage slice 2's Intents (hive.ask.intents): it RECORDS one pending
@@ -57,9 +57,10 @@ import uuid
 
 from starlette.concurrency import run_in_threadpool
 
-from .cost_reservations import BudgetExhausted, host_subjects
+from .cost_reservations import BudgetExhausted, host_subjects, host_use_check
 from .db import now
-from .gateway import SEND_GATE, GatewayError, split_model
+from .config import is_subscription
+from .gateway import SEND_GATE, GatewayError, billable, split_model
 from .ask import refusal
 from .hive import HiveError
 from .sessions import own_scope, thread_scope
@@ -68,29 +69,29 @@ log = logging.getLogger("hive")
 
 # ---- settings -------------------------------------------------------------------------------------------------------
 
-DEFAULT_MODEL = "openrouter/anthropic/claude-sonnet-5.5"
-DEFAULT_AB_MODELS = ("openrouter/anthropic/claude-sonnet-5.5", "openrouter/openai/gpt-6.1-sol")
+# the reviewed roster lives in the hive's one model-choice entry (model_route.py, D18's stand-in); names kept here
+from .model_route import ROSTER_DEFAULT as DEFAULT_MODEL, ROSTER_AB as DEFAULT_AB_MODELS, choose as _choose, roster as _roster
 DEFAULT_TURN_USD = 0.25
 
 
 def enabled():
-    return os.environ.get("HIVE_ASK_CONDUCTOR", "") == "1"
+    return os.environ.get("HIVE_ASK_CONDUCTOR", "1") == "1"
 
 
 def default_model():
-    return os.environ.get("HIVE_ASK_CONDUCTOR_MODEL", "").strip() or DEFAULT_MODEL
+    """The Ask conductor's route, from the hive's one decision call (model_route.choose, policy 'configured'): the
+    operator's pin, else the roster's head. Its price is checked at each turn (Conductor.priced)."""
+    return _choose("ask-conductor")["route"]
 
 
 def ab_models():
     """The models an admin may pick for one turn (A/B): the default model, DEFAULT_AB_MODELS, and any added in
     HIVE_ASK_CONDUCTOR_AB_MODELS (comma list). The environment adds to the fixed list; it never replaces it."""
-    raw = os.environ.get("HIVE_ASK_CONDUCTOR_AB_MODELS", "")
-    extra = [m.strip() for m in raw.split(",") if m.strip()]
-    return list(dict.fromkeys([default_model(), *DEFAULT_AB_MODELS, *extra]))
+    return _roster()
 
 
 def memory_enabled():
-    """The remember tool and its memory frames (the owner 2026-10-07: memory is kept by the person's browser). Off by default,
+    """The remember tool and its memory frames (Jon 2026-10-07: memory is kept by the person's browser). Off by default,
     and effective only when the conductor is on (the tool exists only on a conductor turn)."""
     return os.environ.get("HIVE_ASK_MEMORY", "").strip().lower() == "on"
 
@@ -117,7 +118,8 @@ LATE_SHUTDOWN_GRACE = 10.0    # at shutdown, cut-off calls still out get this lo
 EXPIRY_SLACK = 30.0       # ask.expire closes a conductor turn whose task died (restart) this long after its own limit
 
 # done.outcome is this fixed enum (the contract given to Surface); done and refused frames carry no free text
-OUTCOMES = ("complete", "act_cap", "call_cap", "time_cap", "spend_cap", "cancelled", "error")
+# gateway r1b: incomplete, a browser turn its person's browser ended without a whole answer (POST /api/ask/{op}/done)
+OUTCOMES = ("complete", "act_cap", "call_cap", "time_cap", "spend_cap", "cancelled", "error", "incomplete")
 LIMIT_SAY = {
     "act_cap": "I stopped here: this request reached the limit of 32 steps in one turn. Ask again to carry on.",
     "call_cap": "I stopped here: this request reached the limit of 12 model calls in one turn. Ask again to carry on.",
@@ -149,6 +151,9 @@ LIMIT_SAY = {
                     "or add your own key in your settings.",
     "own_key_needed": "I stopped here: this would run on someone else's key. Add your own key in Keys to go on.",
 }
+# gateway r1a (r1.1 §C, r1.2): a turn-bound call with no monthly total; done.limit.reason and the host's one sentence
+MONTHLY_TOTAL_REQUIRED = "monthly_total_required"
+LIMIT_SAY[MONTHLY_TOTAL_REQUIRED] = "I stopped here: set your monthly limit so your mind can spend."
 # done.limit.kind (ask-limits r1): which limit stopped a spend_cap turn; Surface maps these in words.ts
 LIMIT_KINDS = ("per_turn", "thread", "mind_total", "session", "swarm", "hive", "member_allowance", "key", "own_key_limit",
                "own_key_required", "no_key_grant", "own_key_needed", "unknown")
@@ -333,11 +338,55 @@ def limit_kind(code, scope=None, session_rule=False):
 
 
 def limit_frame(detail):
-    """done.limit: {kind, current_usd, limit_usd, estimate_usd}, figures rounded to the micro-dollar or null."""
+    """done.limit: {kind, current_usd, limit_usd, estimate_usd}, figures rounded to the micro-dollar or null; plus
+    reason (gateway r1a) when the refusal names one: monthly_total_required."""
     def r(x):
         return None if x is None else round(float(x), 6)
-    return {"kind": detail.get("kind", "unknown"), "current_usd": r(detail.get("spent_usd")), "limit_usd": r(detail.get("limit_usd")),
-            "estimate_usd": r(detail.get("estimate_usd"))}
+    out = {"kind": detail.get("kind", "unknown"), "current_usd": r(detail.get("spent_usd")), "limit_usd": r(detail.get("limit_usd")),
+           "estimate_usd": r(detail.get("estimate_usd"))}
+    if detail.get("reason") == MONTHLY_TOTAL_REQUIRED:
+        out["reason"] = MONTHLY_TOTAL_REQUIRED
+    return out
+
+
+def check_detail(hive, agent, exc, estimate):
+    """The limit detail of a 402 from Hive.check_budget (its code and details; figures the host knows otherwise):
+    {code, kind, scope, period, limit_usd, spent_usd, estimate_usd}, plus reason when the refusal names one (gateway r1a:
+    monthly_total_required). Lifted to module level (gateway plan §2.2): the conductor and the personal-mind gateway share
+    this one implementation."""
+    code, d = exc.code, dict(exc.details or {})
+    detail = {"code": code, "scope": d.get("scope"), "period": d.get("period"), "limit_usd": d.get("limit_usd"),
+              "spent_usd": d.get("spent_usd"), "estimate_usd": estimate}
+    if code in ("budget_exhausted", "no_budget"):
+        detail.update(scope=f"agent:{agent['id']}", period="total", limit_usd=float(agent.get("budget_usd") or 0),
+                      spent_usd=float(agent.get("spent_usd") or 0))
+    elif code == "hive_budget_exhausted":
+        detail.update(scope="hive", period="total", limit_usd=hive.budgets.hard_cap(), spent_usd=hive.budgets.hard_total_spent())
+    elif code in ("own_key_required", "no_key_grant", "own_key_needed"):
+        detail.update(scope=None, period=None, limit_usd=None, spent_usd=None)
+    if d.get("reason") == MONTHLY_TOTAL_REQUIRED:   # no monthly total: its kind is named by the refusal, figures null
+        detail.update(reason=MONTHLY_TOTAL_REQUIRED, kind=d.get("kind") if d.get("kind") in LIMIT_KINDS else "unknown",
+                      estimate_usd=None)
+        return detail
+    session_rule = (str(detail.get("scope") or "").startswith("agent:") and d.get("rule") in hive.budgets.session_cap_rules())
+    detail["kind"] = limit_kind(code, detail.get("scope"), session_rule)
+    return detail
+
+
+def reserve_detail(hive, exc):
+    """The limit detail of a reservation refused by one budget row (its label "<scope>:<period>", or an Ask scope).
+    Lifted to module level with check_detail (gateway plan §2.2)."""
+    label = exc.scope
+    if label.startswith(("askturn:", "askthread:")):
+        scope, period = label, None
+    else:
+        scope, _, period = label.rpartition(":")
+    session_rule = False
+    if scope.startswith("agent:") and period == "total":
+        rule = hive.db.one("SELECT id, limit_usd FROM budgets WHERE scope = ? AND period = 'total'", (scope,))
+        session_rule = bool(rule) and rule["id"] in hive.budgets.session_cap_rules() and abs(float(rule["limit_usd"]) - exc.limit_usd) < 1e-9
+    return {"code": "spend_limit", "kind": limit_kind("spend_limit", scope, session_rule), "scope": scope, "period": period,
+            "limit_usd": exc.limit_usd, "spent_usd": exc.spent_usd + exc.held_usd, "estimate_usd": exc.estimate_usd}
 
 
 def stop_say(stop):
@@ -347,6 +396,8 @@ def stop_say(stop):
     if stop.limit != "spend_cap":
         return LIMIT_SAY[stop.limit]
     d = stop.detail
+    if d.get("reason") == MONTHLY_TOTAL_REQUIRED:
+        return LIMIT_SAY[MONTHLY_TOTAL_REQUIRED]
     amounts = ""
     if d.get("limit_usd") is not None and d.get("spent_usd") is not None:
         period = PERIOD_SAY.get(d.get("period"))
@@ -541,7 +592,7 @@ def fence_view(view, private_page):
     return out
 
 
-# ---- per-turn memory notes (the owner's memory ruling, 2026-10-07) -------------------------------------------------------------
+# ---- per-turn memory notes (Jon's memory ruling, 2026-10-07) -------------------------------------------------------------
 # The person's memory lives on their own side (in-page, encrypted); the hive keeps none. Their page may send, with one
 # turn, up to 20 notes (<= 8 KB in all) that turn needs. They are used in that turn's model context only: never stored,
 # published or logged (a digest and a count may be logged).
@@ -850,7 +901,11 @@ class Conductor:
         st.calls += 1
         provider_name, _ = split_model(st.model)
         try:
-            paid, estimate = gw.estimate(agent, body, hive.settings.allow_unpriced)
+            # Ask's fixed turn cap needs a worst-case price even when an operator allows unpriced calls elsewhere.
+            # the asker, for the one route that reads it (a subscription instance): a conducting turn is theirs, and Hive.user_for
+            # does not read it; every other route's call is unchanged
+            who = {"principal": st.principal} if is_subscription(provider_name) else {}
+            paid, estimate = gw.estimate(agent, body, allow_unpriced=False, **who)
             # OI-13 r1.2: the call is for the asking person (a 'conducting' turn is not one Hive.user_for reads), so a
             # default that is another person's own key switches to the asker's own key for this provider, if they have one
             own = (hive.ownhive.own_key_for(agent, provider_name, user=st.principal)
@@ -876,6 +931,8 @@ class Conductor:
             scope = f"askturn:{st.turn_id}"
 
             def budgets():
+                # money port r1.2: the asker's use of this key, read again before anything is held (disabled, revoked)
+                host_use_check(hive, agent["id"], key_id, st.principal, user=st.principal)
                 rows = [*self.budget_snapshot(hive, agent["id"], key_id, st.principal, False), (scope, st.cap, st.spent)]
                 # ask-limits r1: the thread's own cap, against the thread's own spend, read inside this transaction
                 t = hive.ask._row(st.turn_id)
@@ -892,6 +949,10 @@ class Conductor:
                                           subjects=host_subjects(hive, agent["id"], key_id, st.principal, False))
             except BudgetExhausted as exc:
                 raise _Stop("spend_cap", self._reserve_detail(agent, exc)) from None
+            except HiveError as exc:
+                if exc.status == 402:
+                    raise _Stop("spend_cap", self._check_detail(agent, exc, estimate)) from None
+                raise
             except ValueError:
                 raise _Stop("spend_cap", {"code": "reservation", "kind": "unknown", "estimate_usd": estimate}) from None
         started = False   # True once the call is committed (gateway.SEND_GATE): dispatched, and let finish to be settled
@@ -900,10 +961,12 @@ class Conductor:
             """Awaited by the gateway at httpcore's send_request_headers.started trace (after any wait for a pooled
             connection and after connecting). A turn closed (takeover, stop, thread end) by then aborts the call with
             nothing sent and its hold released. Otherwise the reservation is marked dispatched, once: dispatch is
-            commitment to this in-flight call. It is not the first byte: AnyIO's socket send yields once before it hands
-            the bytes to the OS, so a takeover committed in that one step may still see this one already-authorised
-            request handed off; it is then settled at its real cost, and no further model call or act follows. A
-            failure to mark dispatch raises here, before any byte, and the hold is released."""
+            commitment to this in-flight call. It is not the first byte: gate then yields once to the loop before the
+            bytes are handed to the OS, so a takeover committed in that one step is seen before they leave, and this one
+            already-authorised request still leaves; it is then settled at its real cost, and no further model call or
+            act follows. The yield is ours, not the transport's: AnyIO 4.16 no longer yields before its socket write
+            (omegahive#9), and the boundary must not move with it. A failure to mark dispatch raises here, before any
+            byte, and the hold is released."""
             nonlocal started
             if started:
                 return
@@ -915,6 +978,7 @@ class Conductor:
             if reservation:
                 self.reservations.dispatch(reservation)
             started = True
+            await asyncio.sleep(0)   # the step a takeover committed at dispatch lands in, before the write
 
         async def go():
             nonlocal started
@@ -925,7 +989,7 @@ class Conductor:
                 raise _Closed()
             token = SEND_GATE.set(gate)
             try:
-                out = await gw.chat(agent, body)
+                out = await gw.chat(agent, body, **who)
             finally:
                 SEND_GATE.reset(token)
             if not started:   # answered without passing a transport's send boundary: it was made all the same
@@ -963,12 +1027,12 @@ class Conductor:
         except asyncio.TimeoutError:     # the turn's own time ran out: a call already sent is still settled, not held
             cut_off()
             raise _Stop("time_cap") from None
-        except BaseException:
+        except BaseException as exc:
             if not call.done():
                 call.cancel()
             if started:
                 if reservation:
-                    self.hold_unknown(reservation)
+                    self.hold_unknown(reservation, exc)   # a refusal with a charge settles; a guaranteed-unbilled one (OpenRouter 402) is released
             else:
                 release()
             raise
@@ -980,34 +1044,10 @@ class Conductor:
         return message if isinstance(message, dict) else {}
 
     def _check_detail(self, agent, exc, estimate):
-        """_Stop detail for a 402 from Hive.check_budget (its code and details; figures the host knows otherwise)."""
-        hive, code, d = self.hive, exc.code, dict(exc.details or {})
-        detail = {"code": code, "scope": d.get("scope"), "period": d.get("period"), "limit_usd": d.get("limit_usd"),
-                  "spent_usd": d.get("spent_usd"), "estimate_usd": estimate}
-        if code in ("budget_exhausted", "no_budget"):
-            detail.update(scope=f"agent:{agent['id']}", period="total", limit_usd=float(agent.get("budget_usd") or 0),
-                          spent_usd=float(agent.get("spent_usd") or 0))
-        elif code == "hive_budget_exhausted":
-            detail.update(scope="hive", period="total", limit_usd=hive.budgets.hard_cap(), spent_usd=hive.budgets.hard_total_spent())
-        elif code in ("own_key_required", "no_key_grant", "own_key_needed"):
-            detail.update(scope=None, period=None, limit_usd=None, spent_usd=None)
-        session_rule = (str(detail.get("scope") or "").startswith("agent:") and d.get("rule") in hive.budgets.session_cap_rules())
-        detail["kind"] = limit_kind(code, detail.get("scope"), session_rule)
-        return detail
+        return check_detail(self.hive, agent, exc, estimate)
 
     def _reserve_detail(self, agent, exc):
-        """_Stop detail for a reservation refused by one budget row (its label "<scope>:<period>", or an Ask scope)."""
-        label = exc.scope
-        if label.startswith(("askturn:", "askthread:")):
-            scope, period = label, None
-        else:
-            scope, _, period = label.rpartition(":")
-        session_rule = False
-        if scope.startswith("agent:") and period == "total":
-            rule = self.hive.db.one("SELECT id, limit_usd FROM budgets WHERE scope = ? AND period = 'total'", (scope,))
-            session_rule = bool(rule) and rule["id"] in self.hive.budgets.session_cap_rules() and abs(float(rule["limit_usd"]) - exc.limit_usd) < 1e-9
-        return {"code": "spend_limit", "kind": limit_kind("spend_limit", scope, session_rule), "scope": scope, "period": period,
-                "limit_usd": exc.limit_usd, "spent_usd": exc.spent_usd + exc.held_usd, "estimate_usd": exc.estimate_usd}
+        return reserve_detail(self.hive, exc)
 
     def _settle_late(self, call, st, reservation, agent):
         """A paid call already sent when the loop stopped waiting for it: await its answer apart from the loop, for up to
@@ -1018,8 +1058,9 @@ class Conductor:
             try:
                 response, usage = await asyncio.wait_for(call, LATE_SETTLE_SECONDS)
             except BaseException as exc:
-                log.warning("ask conductor: turn %s cut-off call not settled (%s); held unknown", st.turn_id, type(exc).__name__)
-                self.hold_unknown(reservation)
+                log.warning("ask conductor: turn %s cut-off call not settled (%s); held unknown unless refused",
+                            st.turn_id, type(exc).__name__)
+                self.hold_unknown(reservation, exc)
                 if isinstance(exc, asyncio.CancelledError):
                     raise
                 return
@@ -1064,8 +1105,7 @@ class Conductor:
         resolved = response.get("model") if isinstance(response, dict) else None
         try:
             if reservation:
-                counters = response.get("usage") if isinstance(response, dict) else None
-                if not isinstance(counters, dict) or any(type(counters.get(k)) is not int or counters[k] < 0 for k in ("prompt_tokens", "completion_tokens")):
+                if not billable(response, usage):
                     # its worst case stays held in cost_reservations (askturn scope included), which counts it once at
                     # the next reservation; adding it to st.spent as well would count it twice
                     self.hold_unknown(reservation)

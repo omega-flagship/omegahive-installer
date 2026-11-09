@@ -36,7 +36,7 @@ export function UGlyph({ value, conf, size = 18 }: { value: number; conf: number
   const col = surenessColor({ f: Math.min(1, Math.max(0, value)), c: Math.min(1, Math.max(0, conf)) })
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true" className="shrink-0 -rotate-90">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgb(255 255 255 / 0.12)" strokeWidth={2} />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="color-mix(in oklab, var(--color-ink) 12%, transparent)" strokeWidth={2} />
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={col} strokeWidth={2.2} strokeLinecap="round" strokeDasharray={`${Math.max(0.5, value * c)} ${c}`} style={{ filter: `drop-shadow(0 0 3px ${col})` }} />
       <circle cx={size / 2} cy={size / 2} r={r * 0.46} fill="#eceaff" opacity={0.12 + conf * 0.85} />
     </svg>
@@ -71,7 +71,7 @@ export function UChip({ u, compact }: { u: Uncertainty | null | undefined; compa
   return (
     <span
       className={cx('inline-flex max-w-full min-w-0 shrink items-center gap-1 rounded-md border font-medium', compact ? 'px-1 text-[10px]' : 'px-1.5 py-0.5 text-[11.5px]')}
-      style={{ color: '#d8d1ff', borderColor: 'rgb(180 166 255 / 0.3)', background: 'rgb(180 166 255 / 0.08)' }}
+      style={{ color: '#d8d1ff', borderColor: 'color-mix(in oklab, var(--color-ink) 30%, transparent)', background: 'color-mix(in oklab, var(--color-ink) 8%, transparent)' }}
       title={uncertaintyText(u)}
     >
       <span aria-hidden="true" className="opacity-70">≈</span>
@@ -108,9 +108,9 @@ export function UReading({ u, large }: { u: Uncertainty | null | undefined; larg
 
 
 const STATUS_STYLE: Record<string, { label: string; color: string; icon: IconName; why: string }> = {
-  corrected: { label: 'Corrected', color: '#fbbf24', icon: 'edit', why: 'The program corrected this item; earlier wording is kept in its revisions.' },
+  corrected: { label: 'Corrected', color: 'var(--color-warn)', icon: 'edit', why: 'The program corrected this item; earlier wording is kept in its revisions.' },
   superseded: { label: 'Superseded', color: '#a1a1c2', icon: 'history', why: 'Replaced by something newer; kept for the record.' },
-  retracted: { label: 'Retracted', color: '#fb7185', icon: 'ban', why: 'Withdrawn: do not rely on it.' },
+  retracted: { label: 'Retracted', color: 'var(--color-bad)', icon: 'ban', why: 'Withdrawn: do not rely on it.' },
 }
 
 export function StatusChip({ status, compact }: { status?: string; compact?: boolean }) {
@@ -133,7 +133,7 @@ export function FlagChip({ flag, compact }: { flag: string; compact?: boolean })
   const warn = flag === 'affected-by-correction'
   return (
     <span
-      className={cx('inline-flex shrink-0 items-center gap-1 rounded-md border font-semibold', compact ? 'px-1 py-px text-[10px]' : 'px-1.5 py-0.5 text-[11px]', warn ? 'border-warn/40 bg-warn/15 text-warn' : 'border-line-2 bg-white/[0.04] text-ink-2')}
+      className={cx('inline-flex shrink-0 items-center gap-1 rounded-md border font-semibold', compact ? 'px-1 py-px text-[10px]' : 'px-1.5 py-0.5 text-[11px]', warn ? 'border-warn/40 bg-warn/15 text-warn' : 'border-line-2 bg-tint/[0.04] text-ink-2')}
       title={known?.why ?? flag}
     >
       {warn && <Icon name="alert" size={compact ? 10 : 11} strokeWidth={2.4} />}

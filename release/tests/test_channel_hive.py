@@ -129,13 +129,13 @@ class HiveChannelTests(unittest.TestCase):
         sys.path.insert(0, str(ROUTER_SRC))
         try:
             self.connect()
-            envelope = {"hive": 1, "sender": "user:quinn", "conversation_id": "c-42", "text": "status?"}
+            envelope = {"hive": 1, "sender": "user:jon", "conversation_id": "c-42", "text": "status?"}
             self.hub.push(1, json.dumps(envelope))
             self.assertTrue(wait_for(lambda: "received=1" in self.channel.status()))
             block = self.channel.getLastMessage()
             self.assertTrue(block.startswith("CHANNEL_EVENT"), block)
             self.assertIn("channel=hive", block)
-            self.assertIn("sender=user:quinn", block)
+            self.assertIn("sender=user:jon", block)
             self.assertIn("text=status?", block)
 
             self.assertEqual(self.channel.send_message("all good"), "HIVE-MESSAGE-QUEUED")
@@ -442,7 +442,7 @@ class AdmissionTests(unittest.TestCase):
         return sent
 
     def test_review_b5_probe_an_old_altered_revision_is_not_admitted_again(self):
-        # Review's probe (receipts-local/omegareview-mind-control-60f4e46/review-retention.py), unchanged in substance.
+        # Review's probe (review-retention.py), unchanged in substance.
         c, f = self.channel, self.channel.channel_dir()
         os.environ["HIVE_AGENT_ID"] = "own"
 

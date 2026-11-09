@@ -1,6 +1,6 @@
 """J3 host round R7: every member's own Studio maker, on their own key (hive/core/studio_makers.py).
 
-the owner 2026-10-19: "everyone needs studio, they just need to use their own keys"; "Yes: each member gets their own Studio maker
+Jon 2026-10-19: "everyone needs studio, they just need to use their own keys"; "Yes: each member gets their own Studio maker
 mind that runs on their own key. Build it."
 - POST /api/studio/setup makes the person's maker on demand (kind omega, the reviewed template's role/prompt/tools, the
   HIVE_STUDIO_MAKER_MODEL model, options.key = their own key), attaches it to the Studio app (the host's one audited
@@ -16,6 +16,7 @@ import types
 import pytest
 
 import hive.tests.test_studio_session_r3 as R3
+from hive.core.code_project_tests import execution_available
 from hive.core.studio_sessions import StudioSessions
 from hive.tests.test_studio_session_r3 import (drive, mount, outcome, r3, ses_row, step_row, token_now,  # noqa: F401
                                                upload)
@@ -161,11 +162,25 @@ def test_R7_no_own_key_is_402_own_key_needed_with_nothing_created_attached_or_re
         assert (r.status_code, err(r)["code"]) == (402, "own_key_needed")
         assert "Add your own key in Keys" in err(r)["message"]
     assert tables(hive) == before and maker_of(p) is None
-    # recording without a maker finds none and stores nothing
+    # recording without a maker tries to make one (as setup does) and is refused the same way: nothing stored
     r = p.client.post("/api/ask/op-mia-turn-01/intents", headers=p.mg,
                       json={"kind": "studio.session", "request": {**CARD, "consent_digest": "sha256:" + "c" * 64}})
-    assert (r.status_code, err(r)["code"]) == (409, "studio_maker_missing")
-    assert tables(hive) == before
+    assert (r.status_code, err(r)["code"]) == (402, "own_key_needed")
+    assert "Add your own key in Keys" in err(r)["message"]
+    assert tables(hive) == before and maker_of(p) is None
+
+
+def test_R7_a_handoff_from_the_ask_makes_the_persons_maker_on_demand_never_set_up_first(p):
+    # Jon 4 Nov (cloud): the Design mind's Studio handoff stopped at "Set up your Studio maker first". With their own key,
+    # recording a studio.session intent makes the maker exactly as setup would, and records the intent for it (pending:
+    # nothing is sent until the person submits).
+    assert maker_of(p) is None
+    r = p.client.post("/api/ask/op-mia-turn-01/intents", headers=p.mg,
+                      json={"kind": "studio.session", "request": {**CARD, "consent_digest": "sha256:" + "c" * 64}})
+    assert r.status_code == 201, r.text
+    m = maker_of(p)
+    assert m is not None
+    assert r.json()["state"] == "pending" and r.json()["request"]["maker_id"] == m["id"]
 
 
 # ---- 3. someone else's maker, and the shared maker -----------------------------------------------------------------------
@@ -181,7 +196,7 @@ def test_R7_another_members_maker_named_explicitly_is_refused_at_record_and_at_a
     assert (r.status_code, err(r)["code"]) == (409, "maker_not_yours") and tables(hive) == before
     # an admin is refused too: a personal maker is its person's alone
     with pytest.raises(Exception) as e:
-        hive.studio.refuse_others_maker("user:u_quinn", bobs["id"])
+        hive.studio.refuse_others_maker("user:u_jon", bobs["id"])
     assert e.value.code == "maker_not_yours"
     hive.studio.refuse_others_maker(BOB, bobs["id"])                      # his own: fine
     hive.studio.refuse_others_maker(MIA, p.maker["id"])                   # a shared maker: not affected
@@ -199,9 +214,9 @@ def test_R7_another_members_maker_named_explicitly_is_refused_at_record_and_at_a
 
 def test_R7_the_admin_attached_shared_maker_still_admits_unchanged(p):
     hive = p.hive
-    hive.db.execute("INSERT INTO app_activations VALUES (?, ?, 1, 'user:u_quinn')", (PROGRAM, p.home["id"]))
+    hive.db.execute("INSERT INTO app_activations VALUES (?, ?, 1, 'user:u_jon')", (PROGRAM, p.home["id"]))
     hive.db.execute("INSERT INTO app_attachments (id, program, swarm, mind, actor, scope, policy, expires, status, by_person) "
-                    "VALUES ('at_shared', ?, ?, ?, 'mind', '{}', '{}', NULL, 'active', 'user:u_quinn')",
+                    "VALUES ('at_shared', ?, ?, ?, 'mind', '{}', '{}', NULL, 'active', 'user:u_jon')",
                     (PROGRAM, p.home["id"], p.maker["id"]))
     r = submit(p, record(p).json()["intent_id"])                           # explicit maker_id: the G1 request
     assert r.status_code == 201, r.text
@@ -211,7 +226,7 @@ def test_R7_the_admin_attached_shared_maker_still_admits_unchanged(p):
 def test_R7_without_an_activation_the_shared_maker_is_still_not_attached(p):
     """The relaxed activation rule is the personal maker's only: a shared maker with a row but no activation is refused."""
     p.hive.db.execute("INSERT INTO app_attachments (id, program, swarm, mind, actor, scope, policy, expires, status, by_person) "
-                      "VALUES ('at_shared', ?, ?, ?, 'mind', '{}', '{}', NULL, 'active', 'user:u_quinn')",
+                      "VALUES ('at_shared', ?, ?, ?, 'mind', '{}', '{}', NULL, 'active', 'user:u_jon')",
                       (PROGRAM, p.home["id"], p.maker["id"]))
     r = submit(p, record(p).json()["intent_id"])
     assert (r.status_code, err(r)["code"]) == (409, "app_not_attached")
@@ -263,7 +278,7 @@ def test_R7_pin_with_studio_off_nothing_is_created_attached_or_changed_for_anyon
     assert r.status_code == 404
     assert hive.studio_makers.sweep() == 0
     assert hive.studio_makers.retire_for(MIA) is None
-    assert p.client.patch("/api/people/u_bob", headers=p.quinn, json={"disabled": True}).status_code == 200
+    assert p.client.patch("/api/people/u_bob", headers=p.jon, json={"disabled": True}).status_code == 200
     assert tables(hive) == before
 
 
@@ -272,7 +287,7 @@ def test_R7_with_studio_off_an_existing_maker_is_left_alone(p, monkeypatch):
     m = maker_of(p)
     monkeypatch.setattr(p.hive.studio, "enabled", False)
     before = tables(p.hive)
-    assert p.client.patch("/api/people/u_mia", headers=p.quinn, json={"disabled": True}).status_code == 200
+    assert p.client.patch("/api/people/u_mia", headers=p.jon, json={"disabled": True}).status_code == 200
     assert p.hive.studio_makers.sweep() == 0
     assert tables(p.hive) == before and maker_of(p)["id"] == m["id"] and not maker_of(p)["deleted"]
 
@@ -326,7 +341,7 @@ def test_R7_reconcile_leaves_the_host_row_alone_and_an_admin_revoke_ends_it_with
     R3.on_loop(p, hive.app_attachments.reconcile)
     att = hive.db.one("SELECT * FROM app_attachments WHERE mind = ?", (m["id"],))
     assert att["status"] == "active"                                       # no activation row, still active
-    r = p.client.delete(f"/api/programs/{PROGRAM}/attachments/{att['id']}", headers=p.quinn)
+    r = p.client.delete(f"/api/programs/{PROGRAM}/attachments/{att['id']}", headers=p.jon)
     assert r.status_code == 200, r.text
     assert hive.db.one("SELECT status FROM app_attachments WHERE id = ?", (att["id"],))["status"] == "revoked"
     again = setup(p).json()["maker"]                                       # the next setup attaches it again
@@ -353,7 +368,7 @@ def test_R7_a_disabled_person_s_maker_is_retired_and_a_stale_binding_is_swept(p)
     hive = p.hive
     setup(p)
     m = maker_of(p)
-    assert p.client.patch("/api/people/u_mia", headers=p.quinn, json={"disabled": True}).status_code == 200
+    assert p.client.patch("/api/people/u_mia", headers=p.jon, json={"disabled": True}).status_code == 200
     assert hive.db.one("SELECT deleted FROM agents WHERE id = ?", (m["id"],))["deleted"] == 1
     assert hive.db.one("SELECT agent_id FROM person_minds WHERE principal = ?", (MIA,))["agent_id"] is None
     assert hive.db.one("SELECT status FROM app_attachments WHERE mind = ?", (m["id"],))["status"] == "revoked"
@@ -567,12 +582,12 @@ def caps(x, who=None):
 
 def test_R71_capabilities_studio_sessions_is_true_only_when_the_self_check_passes_and_the_template_is_usable(p, monkeypatch):
     studio = p.hive.studio
-    assert caps(p) == {"conductor": False, "memory": False, "studio_sessions": True, "studio_directions": True}   # R7.3
+    assert caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive), "studio_sessions": True, "studio_directions": True}   # R7.3
     monkeypatch.setenv("HIVE_STUDIO_SESSIONS", "on")
     # the real self-check with a component missing: off, and not advertised
     monkeypatch.setattr(studio, "components", lambda: {"gateway session/execution hook": True, "something": False})
     monkeypatch.setattr(studio, "enabled", studio.self_check()[0])
-    assert studio.enabled is False and caps(p) == {"conductor": False, "memory": False}
+    assert studio.enabled is False and caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive)}
     # every component present: on, advertised
     monkeypatch.setattr(studio, "components", lambda: {"gateway session/execution hook": True})
     monkeypatch.setattr(studio, "enabled", studio.self_check()[0])
@@ -587,7 +602,51 @@ def test_R71_capabilities_studio_sessions_is_true_only_when_the_self_check_passe
 
 def test_R71_pin_with_studio_off_the_capabilities_are_exactly_as_before(p, monkeypatch):
     monkeypatch.setattr(p.hive.studio, "enabled", False)
-    assert caps(p) == {"conductor": False, "memory": False}
+    assert caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive)}
+
+
+@pytest.mark.parametrize("operator_flag", [False, True], ids=["operator-off", "operator-on"])
+@pytest.mark.parametrize("claims_enabled", [False, True], ids=["claims-off", "claims-on"])
+@pytest.mark.parametrize("runner_configured", [False, True], ids=["runner-absent", "runner-configured"])
+def test_R71_code_test_capability_requires_operator_opt_in_and_runner_configuration_independently_of_studio(
+        p, monkeypatch, tmp_path, operator_flag, claims_enabled, runner_configured):
+    from hive.core import code_project_tests
+
+    hive = p.hive
+    program = code_project_tests.PROGRAM
+    # Retained metadata is enough for discovery, not verification or execution.
+    # These paths are deliberately not created, and no runner is started.
+    release = str(tmp_path / "invented-code-project-test")
+    pin = {"release": release, "digest": "sha256:" + "c" * 64}
+    monkeypatch.setitem(hive.programs.pins, program, pin)
+    monkeypatch.setitem(hive.programs.programs, program, {
+        "id": program, "digest": pin["digest"], "path": release,
+        "capabilities": ["sandbox:run"],
+    })
+    monkeypatch.setattr(hive.programs, "disabled", hive.programs.disabled - {program})
+    monkeypatch.setenv("HIVE_SANDBOX_RUN_APPS", program)
+    runtimes = {"python": {"exe": str(tmp_path / "invented-python"), "reads": []}} if runner_configured else {}
+    monkeypatch.setenv("HIVE_SANDBOX_RUNTIMES", json.dumps(runtimes))
+    monkeypatch.setattr(hive.settings, "proposal_test_claims", claims_enabled)
+    if operator_flag:
+        monkeypatch.setenv("HIVE_CODE_SANDBOX_PROJECT_TESTS", "on")
+    else:
+        monkeypatch.delenv("HIVE_CODE_SANDBOX_PROJECT_TESTS", raising=False)
+
+    # Exercise the real readers and predicate; never stub availability or a
+    # native owner. Darwin discovery needs all three configuration conditions.
+    # The synthetic Linux fixture has no retained aggregate bootstrap; enabling
+    # configuration alone must not advertise Linux execution.
+    assert code_project_tests._runner_configuration_present(hive) is runner_configured
+    platform = code_project_tests.os.sys.platform
+    if platform == "linux":
+        assert getattr(getattr(hive, "_code_aggregate", None), "attempt", None) is None
+    expected = operator_flag and claims_enabled and runner_configured if platform == "darwin" else False
+    assert execution_available(hive) is expected
+    base = {"conductor": False, "memory": False, "code_test_intents": expected}
+    assert caps(p) == {**base, "studio_sessions": True, "studio_directions": True}
+    monkeypatch.setattr(hive.studio, "enabled", False)
+    assert caps(p) == base
 
 
 def test_R71_template_unset_setup_refuses_with_an_admin_facing_code_and_startup_says_so(p, monkeypatch, caplog):
@@ -628,12 +687,12 @@ def patch_key(x, agent_id, key, who):
     return x.client.patch(f"/api/agents/{agent_id}", headers=who, json={"options": {"key": key} if key else {}})
 
 
-@pytest.mark.parametrize("who", ["mia", "quinn"])
+@pytest.mark.parametrize("who", ["mia", "jon"])
 def test_R72_patch_puts_only_the_bound_members_own_key_on_her_maker_admins_included(p, who):
     hive = p.hive
     setup(p)
     m = maker_of(p)
-    headers = p.mg if who == "mia" else p.quinn
+    headers = p.mg if who == "mia" else p.jon
     hive_key(p)
     for key in (HIVE_KEY, "env:openrouter", BOB_KEY, ANN_KEY):
         r = patch_key(p, m["id"], key, headers)
@@ -650,7 +709,7 @@ def test_R72_patch_puts_only_the_bound_members_own_key_on_her_maker_admins_inclu
     assert patch_key(p, m["id"], "k_0000a005", headers).status_code == 200      # another of her own keys: fine
     assert patch_key(p, m["id"], None, headers).status_code == 200              # removing the key: fine
     # the shared maker is unchanged: an admin may still put the hive key on it
-    assert patch_key(p, p.maker["id"], HIVE_KEY, p.quinn).status_code == 200
+    assert patch_key(p, p.maker["id"], HIVE_KEY, p.jon).status_code == 200
 
 
 @pytest.mark.parametrize("case", ["hive", "env", "other_member"])
@@ -776,17 +835,17 @@ def test_R72_kimi_the_step_skills_open_only_for_a_live_session_never_a_held_or_u
 
 def test_R73_studio_directions_is_true_together_with_studio_sessions_and_absent_whenever_it_is(p, monkeypatch):
     on = caps(p)
-    assert on == {"conductor": False, "memory": False, "studio_sessions": True, "studio_directions": True}
+    assert on == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive), "studio_sessions": True, "studio_directions": True}
     put = p.client.put("/api/me/ask", headers=p.mg, json={"thread_budget_usd": 1.0})
     assert put.status_code == 200 and put.json()["capabilities"] == on, put.text                 # PUT: same shape
     p.entry = studio_entry(hooks=True)                                     # program not attachable
-    assert caps(p) == {"conductor": False, "memory": False}
+    assert caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive)}
     p.entry = studio_entry()
     monkeypatch.delenv("HIVE_STUDIO_MAKER_TEMPLATE")                       # template not ready
-    assert caps(p) == {"conductor": False, "memory": False}
+    assert caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive)}
     monkeypatch.setenv("HIVE_STUDIO_MAKER_TEMPLATE", p.template["id"])
     monkeypatch.setattr(p.hive.studio, "enabled", False)                   # Studio off
-    assert caps(p) == {"conductor": False, "memory": False}
+    assert caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive)}
 
 
 # ---- R7.3 (stand-in R7.1 P1): a personal maker's recall embeds on its person's own key, or free; never pauses ------------------
@@ -891,3 +950,193 @@ def test_R73_shared_maker_and_ordinary_mind_embeddings_keep_the_provider_default
     assert pr.embedded == [("openrouter/test/embed", None)]               # default key: no key_id override
     row = pr.hive.db.one("SELECT key_id FROM usage WHERE agent_id = ?", (pr.template["id"],))
     assert row["key_id"] == HIVE_KEY
+
+
+def _record(x):
+    return x.client.post("/api/ask/op-mia-turn-01/intents", headers=x.mg,
+                         json={"kind": "studio.session", "request": {**CARD, "consent_digest": "sha256:" + "c" * 64}})
+
+
+def test_R7_concurrent_makerless_handoffs_make_one_maker_and_one_pending_intent(p):
+    # Dot's follow-up on f3cef2dd (Kimi's race): two handoffs at once for a person with no maker yet
+    from concurrent.futures import ThreadPoolExecutor
+    hive = p.hive
+    with ThreadPoolExecutor(2) as pool:
+        codes = sorted(f.result().status_code for f in [pool.submit(_record, p), pool.submit(_record, p)])
+    makers = hive.db.all("SELECT agent_id FROM person_minds WHERE principal = ? AND purpose = 'studio_maker'", (MIA,))
+    pending = hive.db.all("SELECT id FROM ask_intents WHERE state = 'pending'")
+    assert len(makers) == 1, makers
+    # the second handoff gets the same pending intent back (200, the same request), or is told one is pending (409);
+    # Dot's ruling allows at worst a duplicate pending (201, 201). Never a second maker, never a spend.
+    assert codes in ([200, 201], [201, 409], [201, 201]), codes
+    assert len(pending) == (2 if codes == [201, 201] else 1), pending
+    assert hive.db.one("SELECT COUNT(*) AS n FROM studio_sessions")["n"] == 0
+
+
+def test_R7_with_studio_off_a_handoff_is_404_and_makes_nothing(p, monkeypatch):
+    hive = p.hive
+    monkeypatch.setattr(hive.studio, "enabled", False)
+    before = tables(hive)
+    r = _record(p)
+    assert r.status_code == 404
+    assert tables(hive) == before and maker_of(p) is None
+
+
+def test_R7_a_makerless_handoff_audits_the_maker_it_made_and_reserves_or_starts_nothing(p):
+    hive = p.hive
+    before = tables(hive)
+    r = _record(p)
+    assert r.status_code == 201, r.text
+    m = maker_of(p)
+    actions = [row["action"] for row in hive.db.all("SELECT action FROM studio_maker_audit WHERE agent_id = ? ORDER BY rowid", (m["id"],))]
+    assert actions == ["created", "attached"], actions                 # exactly the audit trail setup leaves
+    after = tables(hive)
+    assert after["cost_reservations"] == before["cost_reservations"]  # nothing reserved
+    assert after["studio_sessions"] == before["studio_sessions"] == 0 # nothing started
+    assert r.json()["state"] == "pending"                              # sending stays the person's own act
+
+
+def own_hive(x, principal="user:u_ann"):
+    """Store the hive's owner: Jon and Ann are both admins made in the same second, so 'the first admin' is a tie."""
+    stamp = time.time()
+    x.hive.db.execute("INSERT OR REPLACE INTO hive_owner (id, owner, via, set_at, updated_at) VALUES (1, ?, 'claim', ?, ?)",
+                      (principal, stamp, stamp))
+
+
+def test_R7_the_hive_owner_needs_no_key_step_the_hives_own_key_is_theirs_others_still_need_their_own(p):
+    # Jon 11-05: "if i have to set it up, its wrong - it should all auto deploy during setup". The hive owner (Ann here)
+    # has no key of her own, only the hive's key the hive was set up with: her maker is made on it, with no step. Mia,
+    # a member who is not the owner and has no key of her own, still gets the own-key refusal, as before.
+    hive = p.hive
+    own_hive(p)
+    assert hive.ownhive.owner() == "user:u_ann"
+    del hive.keyring.ring["keys"][ANN_KEY]                                 # the owner has no personal key
+    hive_key(p)                                                            # the hive's own key is the provider default
+    r = setup(p, {**p.ann, **ORIGIN})
+    assert r.status_code == 200, r.text
+    m = maker_of(p, "user:u_ann")
+    assert m is not None and json.loads(m["options"])["key"] == HIVE_KEY
+    del hive.keyring.ring["keys"][KEY]                                     # Mia has no key of her own
+    r = setup(p)
+    assert (r.status_code, err(r)["code"]) == (402, "own_key_needed")
+
+
+def owner_step_admitted(r3, monkeypatch):
+    """The owner (Ann) with no personal key, on the hive's key: card, admission and a mounted, admitted step 1."""
+    x = personal_world(r3, monkeypatch)
+    hive = x.hive
+    monkeypatch.setattr(hive.settings.providers["openrouter"], "prices", {"test/maker": PRICE})
+    own_hive(x)
+    owner = hive.ownhive.owner()
+    assert owner == "user:u_ann"
+    del hive.keyring.ring["keys"][ANN_KEY]                                 # no personal key: only the hive's
+    hive_key(x)                                                            # the provider default
+    ann = {**x.ann, **ORIGIN}
+    view = setup(x, ann).json()["maker"]
+    assert (view["key_id"], view["own_key"]) == (HIVE_KEY, False)
+    x.driver.known.add(view["id"])
+    x.maker = dict(maker_of(x, owner))
+    the_card = card(x, ann)
+    assert the_card["consent"]["monthly"]["kind"] == "member_allowance"   # hive money, not own_key_limit
+    assert the_card["request"]["key_id"] == HIVE_KEY
+    x.client.post("/api/ask/op-mia-turn-01/stop", headers=x.mia)           # the coordinator is free for Ann's own turn
+    turn(x, op="op-ann-turn-01", who=ann)
+    r = record_card(x, the_card, ann, op="op-ann-turn-01")
+    assert r.status_code in (200, 201), r.text
+    r = submit(x, r.json()["intent_id"], ann)
+    assert r.status_code == 201, r.text                                    # admitted: neither 402 own_key_needed nor spend_limit
+    sid = r.json()["session_id"]
+    row = ses_row(x, sid)
+    assert (row["payer"], row["own_key"], row["key_id"]) == (owner, 0, HIVE_KEY)
+    x.transport = Transport()
+    gw = x.client.app.state.gateway
+    x.transport.key_of = lambda agent: gw.paying_key(agent, "openrouter")[0]
+    monkeypatch.setattr(gw, "chat", x.transport.chat)
+    stream = r.json()["stream_id"]
+    m = mount(x, sid, stream, who=ann).json()
+    upload(x, sid, m, 1, who=ann)
+    drive(x)
+    step = step_row(x, sid, 1)
+    assert step is not None and step["state"] == "admitted", ses_row(x, sid)["state_reason"]
+    return x, owner, sid
+
+
+def test_R7_the_owner_on_the_hives_key_is_hive_money_under_her_allowance_card_admission_paid_call_usage(r3, monkeypatch):
+    # Dot's FIX-FIRST on edbc2c30 (P1): the owner on the hive's key is ONE payer classification everywhere: the hive's
+    # money under the owner's month allowance (payer the owner, own_key False), at the card, at admission (no 402
+    # own_key_needed, no own_key_limit branch), in the monthly total (an admin has no member default: the hive's default)
+    # and at the paid call (the usage row is on the hive's key, billed to the owner).
+    x, owner, sid = owner_step_admitted(r3, monkeypatch)
+    hive = x.hive
+    r = chat(x)                                                            # the capped paid call
+    assert r.status_code == 200, r.text
+    res = reservations_of(x)[0]
+    assert "person:" + owner[5:] + ":month" in res["scopes"]               # the allowance is a row of the reservation
+    meta = res["metadata"]
+    assert (meta["payer"], meta["key"]) == (owner, HIVE_KEY)
+    usage = hive.db.one("SELECT * FROM usage WHERE agent_id = ? ORDER BY rowid DESC LIMIT 1", (x.maker["id"],))
+    assert (usage["payer"], usage["key_id"]) == (owner, HIVE_KEY)
+
+
+def _spend(x, payer, usd):
+    from hive.core.db import now
+    x.hive.db.execute("INSERT INTO usage (agent_id, model, prompt_tokens, completion_tokens, cost_usd, created_at, payer) "
+                      "VALUES (?, ?, 0, 0, ?, ?, ?)", ("a_00000000", "test/other", usd, now(), payer))
+
+
+def test_R7_the_owners_allowance_is_enforced_at_every_reservation_when_her_month_is_spent(r3, monkeypatch):
+    # 74df4002 review P1 (sol, Dot): the owner on the hive's key spends under her month allowance at EVERY reservation,
+    # not only at the card and admission: once the month is spent elsewhere (her personal mind, another app), the next
+    # paid call is refused before anything is sent, on the person month row
+    x, owner, sid = owner_step_admitted(r3, monkeypatch)
+    allowance = x.hive.studio._allowance(owner, x.maker["id"], HIVE_KEY)
+    assert allowance == x.hive.budgets.default_allowance()
+    _spend(x, owner, allowance - 0.0001)                                   # spent after admission
+    r = chat(x)
+    assert r.status_code == 402, r.text
+    assert "person:" + owner[5:] + ":month" in r.text
+    assert all(res["state"] != "dispatched" for res in reservations_of(x))
+
+
+def test_R7_the_owners_concurrent_sessions_share_her_allowance_an_open_hold_elsewhere_counts(r3, monkeypatch):
+    # the same P1, concurrent: another session's (or app's) open hold for the owner counts against her month row, so
+    # two sessions can never together cross the allowance
+    x, owner, sid = owner_step_admitted(r3, monkeypatch)
+    hive = x.hive
+    allowance = hive.studio._allowance(owner, x.maker["id"], HIVE_KEY)
+    held = hive.studio.reservations
+    # another session's reservation carries the same person month row (and, with a real 8-hex person id, its subject)
+    month = "person:" + owner[5:] + ":month"
+    held.reserve("other-session-hold", {"x": 1}, allowance - 0.0001, lambda: [(month, allowance, 0.0)],
+                 subjects=["person:" + owner[5:]])
+    r = chat(x)
+    assert r.status_code == 402, r.text
+    assert "person:" + owner[5:] + ":month" in r.text
+    assert all(res["state"] != "dispatched" for res in reservations_of(x))   # nothing of this session was sent
+    assert ses_row(x, sid)["state"] == "paused"                            # the refusal pauses it, as for any budget
+
+
+def test_R7_a_member_whose_maker_names_the_hives_key_never_gets_it_at_the_card_and_is_refused_at_admission(p):
+    # Kimi P2 on 74df4002: the owner-on-hive-key exemption is the OWNER's only. With an owner set (Ann), a member (Mia)
+    # whose maker row names the hive's key (past the PATCH guard: an earlier build, a direct DB edit) is never offered
+    # it: the card puts her own key back on her maker; and a direct record naming the hive's key is refused at
+    # admission with nothing written
+    hive = p.hive
+    own_hive(p)
+    assert hive.ownhive.owner() == "user:u_ann"
+    old = card(p)                                                          # Mia's own maker, on her own key
+    m = maker_of(p)
+    hk = hive_key(p)
+    hive.db.execute("UPDATE agents SET options = ? WHERE id = ?", (json.dumps({"key": hk}), m["id"]))
+    again = card(p)                                                        # the card: her own key, never the hive's
+    assert again["request"]["key_id"] == KEY != hk
+    assert json.loads(maker_of(p)["options"])["key"] == KEY
+    hive.db.execute("UPDATE agents SET options = ? WHERE id = ?", (json.dumps({"key": hk}), m["id"]))
+    request = {**{k: v for k, v in old["request"].items() if k not in ("maker_id", "swarm_id")}, "key_id": hk}
+    before = tables(hive)
+    iid = p.client.post("/api/ask/op-mia-turn-01/intents", headers=p.mg,
+                        json={"kind": "studio.session", "request": request}).json()["intent_id"]
+    r = submit(p, iid)
+    assert (r.status_code, err(r)["code"]) == (402, "own_key_needed"), r.text
+    assert tables(hive) == {**before, "goals": before["goals"]}
+    assert hive.db.one("SELECT COUNT(*) AS n FROM studio_sessions")["n"] == 0 and reservations_of(p, m["id"]) == []

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LiveClient } from './live'
-import { codeRequest, parseAdmission, parseIntentView, VIBE_REQUEST_LIMITS, type CodeTeamOffer } from './askIntents'
+import { codeRequest, LIFETIME_MARGIN_MS, parseRequestLimits, parseAdmission, parseIntentView, VIBE_REQUEST_LIMITS, type CodeTeamOffer } from './askIntents'
 import { vibeAvailability, NO_INTENTS } from '../features/code/canvas/vibeRoute'
 
 // The live client's linkage-intent routes, exactly as the host serves them at release main 39c0731 (app.py:1495-1527),
@@ -190,5 +190,31 @@ describe('r4 live: failed eligibility reads fail closed', () => {
     expect(await vibeAvailability(new LiveClient('http://hive.invalid'), CTX0, 'ws_w')).toEqual({ ok: false, text: 'Couldn’t check which swarms offer Code. Try again.' })
     answer = (url) => (url.endsWith('/api/swarms') ? json({ error: { code: 'unauthorized', message: 'x' } }, 401) : url.includes('/api/ask/intents') ? json({ intents: [] }) : json({}, 404))
     expect(await vibeAvailability(new LiveClient('http://hive.invalid'), CTX0, 'ws_w')).toMatchObject({ ok: false, text: expect.stringMatching(/^Sign in again/) })
+  })
+})
+
+describe('Create · Code: a request is composed inside the team’s host-bound limits', () => {
+  const origin = { task_id: 'g_1', repository_id: 'synthetic', workspace_id: 'ws_1', scope_id: 'sc_1', scope_digest_hex: 'ab'.repeat(32), generation: 1 }
+  const raw = { to_swarm: 's_code', templates: [], request_limits: { limit_usd: 0.25, max_children: 1, lifetime_seconds: 600, template_ids: ['foundation.code-helper.v1'] } }
+  it('reads the limits strictly, and treats anything malformed as absent', () => {
+    expect(parseRequestLimits(raw)).toEqual({ limit_usd: 0.25, max_children: 1, lifetime_seconds: 600, template_ids: ['foundation.code-helper.v1'] })
+    expect(parseRequestLimits({ templates: [] })).toBeUndefined()
+    expect(parseRequestLimits({ request_limits: { ...raw.request_limits, limit_usd: -1 } })).toBeUndefined()
+    expect(parseRequestLimits({ request_limits: { ...raw.request_limits, template_ids: [] } })).toBeUndefined()
+  })
+  it('never asks for more money, time or templates than the foundation team admits', () => {
+    const now = Date.parse('2026-11-08T12:00:00Z')
+    const offer = { to_swarm: 's_code', team_name: 'Create · Code', template_ids: ['foundation.code-helper.v1', 'foundation.flow.v1'], limits: parseRequestLimits(raw)! }
+    const r = codeRequest({ offer, instruction: 'Fix add() in the calculator', title: 'calculator.py: Fix add()', origin, now })
+    expect(r.budget.limit_usd).toBe(0.25)
+    expect(r.lease).toEqual({ template_ids: ['foundation.code-helper.v1'], max_children: 1 })
+    expect(Date.parse(r.lifetime.until) - now).toBe(600_000 - LIFETIME_MARGIN_MS)
+  })
+  it('keeps the per-request defaults for a team that states no limits', () => {
+    const now = 0
+    const r = codeRequest({ offer: { to_swarm: 's', team_name: 'T', template_ids: ['a', 'b'] }, instruction: 'x', title: 't', origin, now })
+    expect(r.budget.limit_usd).toBe(0.5)
+    expect(r.lease.template_ids).toEqual(['a', 'b'])
+    expect(Date.parse(r.lifetime.until)).toBe(60 * 60_000)
   })
 })

@@ -43,7 +43,7 @@ export function HealthMind() {
   }
 
   return (
-    <section aria-labelledby="hm-h" className="rounded-2xl border border-line bg-white/[0.03] p-4" data-tour="health-mind">
+    <section aria-labelledby="hm-h" className="rounded-2xl border border-line bg-tint/[0.03] p-4" data-tour="health-mind">
       <div className="flex flex-wrap items-center gap-3">
         <div className="min-w-0 flex-1">
           <h2 id="hm-h" className="eyebrow">
@@ -78,7 +78,7 @@ export function HealthMind() {
         <div className="mt-3 flex flex-wrap items-end gap-2">
           <label className="min-w-[200px] flex-1">
             <span className="text-[12px] text-ink-3">Mind told of every health alert</span>
-            <select value={pick} onChange={(e) => setPick(e.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-black/30 px-3 text-[13px] text-ink outline-none focus:border-line-2">
+            <select value={pick} onChange={(e) => setPick(e.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-shade/30 px-3 text-[13px] text-ink outline-none focus:border-line-2">
               <option value="">No mind</option>
               {candidates.map((a) => (
                 <option key={a.id} value={a.id}>

@@ -8,6 +8,7 @@ try:
     from .helper_metta_syntax import (
         CORE_ROOT,
         _has_unescaped_quote,
+        _metta_expr_syntax_error,
         _metta_string,
         test_metta_expression,
     )
@@ -15,6 +16,7 @@ except Exception:
     from helper_metta_syntax import (
         CORE_ROOT,
         _has_unescaped_quote,
+        _metta_expr_syntax_error,
         _metta_string,
         test_metta_expression,
     )
@@ -1386,10 +1388,20 @@ def _signature_parse_one(line):
     return f"({cmd}{(' ' + ' '.join(args)) if args else ''})"
 
 
-def signature_balance_parentheses(s):
+def _signature_source_text(s):
     s = str(s or "").replace("_quote_", '"').replace("_newline_", "\n")
     if '\\"' in s and not _has_unescaped_quote(s):
         s = re.sub(r'\\+"', '"', s)
+    return s
+
+
+def signature_raw_batch_complete(s):
+    """Check exactly these bytes as text, before any encoded-quote decoding or escape repair."""
+    return not _metta_expr_syntax_error(str(s or ""), allow_triple=True)
+
+
+def signature_balance_parentheses(s):
+    s = _signature_source_text(s)
     stripped = s.strip()
     if _signature_looks_like_primary_prose(stripped):
         return _signature_render_prose_fallback(stripped)

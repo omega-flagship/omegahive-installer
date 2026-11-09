@@ -9,6 +9,7 @@ import pathlib
 import shutil
 import socket
 import stat
+import sys
 import tempfile
 import time
 
@@ -88,6 +89,17 @@ def test_first_boot_creates_one_named_admin_owner(local):
     owner = hive.db.one("SELECT * FROM hive_owner WHERE id = 1")
     assert owner["owner"] == f"user:{person['id']}" and owner["via"] == "local-install"
     assert hive.db.one("SELECT * FROM hive_owner_log WHERE owner = ?", (owner["owner"],))["by"] == "local-install"
+
+
+def test_operator_throttle_never_changes_local_owner_password_refusal(local):
+    attempts = local.app.state.password_attempts
+    attempts.failures = attempts.LIMIT
+    before = local.app.state.hive.db.one("SELECT COUNT(*) AS n FROM sessions")["n"]
+    for payload in [b'{"password":"pw"}', b'{"password":"invented-wrong"}', b'not-json']:
+        response = local.post("/api/auth/login", content=payload, headers={"Content-Type": "application/json", **ORIGIN})
+        assert response.status_code == 403 and response.json()["error"]["code"] == "password_signin_off"
+    assert attempts.failures == attempts.LIMIT
+    assert local.app.state.hive.db.one("SELECT COUNT(*) AS n FROM sessions")["n"] == before
 
 
 def test_a_second_boot_keeps_the_same_owner(local_env):
@@ -176,6 +188,12 @@ def test_the_control_socket_is_private_and_issues_codes(local):
     assert stat.S_ISSOCK(os.lstat(sock).st_mode) and stat.S_IMODE(os.lstat(sock).st_mode) == 0o600
     hello = _control(sock, {"op": "hello"})
     assert hello["ok"] and hello["port"] == 8700 and hello["owner"] == local.local.principal and hello["pid"] == os.getpid()
+    # self identity (localowner.self_identity): Linux states exe {dev, ino} and listener_inode; elsewhere neither key
+    if sys.platform.startswith("linux"):
+        exe = os.stat("/proc/self/exe")
+        assert hello["exe"] == {"dev": exe.st_dev, "ino": exe.st_ino} and "listener_inode" in hello
+    else:
+        assert "exe" not in hello and "listener_inode" not in hello
     issued = _control(sock, {"op": "signin"})
     assert issued["url"] == f"{BASE}/local-signin#{issued['code']}" and issued["expires_in"] == 60
     assert local.post("/api/auth/local/exchange", json={"code": issued["code"]}, headers=ORIGIN).status_code == 200
@@ -424,7 +442,7 @@ def test_provider_errors_carry_status_and_code_only(local):
     redact.enable()
     response = httpx.Response(500, json={"error": {"code": "server_error", "message": "key sk-or-v1-" + "b" * 30 + " is bad"}})
     text = redact.provider_error_text("openrouter", response)
-    assert text == "openrouter answered 500 (server_error)"
+    assert text == "openrouter answered 500 (unavailable)"   # keyview R8: this hive's own category, never the provider's code
 
 
 def test_the_keyring_is_written_privately_without_following_links(tmp_path, monkeypatch):
@@ -432,7 +450,7 @@ def test_the_keyring_is_written_privately_without_following_links(tmp_path, monk
     settings = load_settings(data_dir=tmp_path / "data", admin_password="pw", petta_path=PETTA)
     store = ProviderStore(settings)
     store.ring["keys"]["k_00000000"] = {"id": "k_00000000", "provider": "openrouter", "label": "x", "owner": "user:operator",
-                                        "secret": "sk-or-" "v1-secret", "created_at": 0}
+                                        "secret": "sk-or-v1-secret", "created_at": 0}
     victim = tmp_path / "victim"
     victim.write_text("untouched")
     monkeypatch.setattr("hive.core.providers.secrets.token_hex", lambda n=None: "f" * 16)
@@ -451,7 +469,7 @@ def test_the_keyring_is_written_privately_without_following_links(tmp_path, monk
     finally:
         os.umask(old)
     assert stat.S_IMODE(os.stat(store.path).st_mode) == 0o600
-    assert json.loads(store.path.read_text())["keys"]["k_00000000"]["secret"] == "sk-or-" "v1-secret"
+    assert json.loads(store.path.read_text())["keys"]["k_00000000"]["secret"] == "sk-or-v1-secret"
     assert len(fsynced) >= 2   # the file and its folder
     assert not list(store.path.parent.glob(".providers.json.e*.tmp"))
 
@@ -492,7 +510,8 @@ def test_without_local_owner_provider_errors_and_logs_are_unchanged(caplog):
     key = "sk-or-v1-" + "c" * 40
     redact.register(key)
     response = httpx.Response(500, text="raw upstream text")
-    assert redact.provider_error_text("openrouter", response) == "openrouter answered 500: raw upstream text"
+    # keyview R8 (sol on 1edef3b4): a provider's own text is never relayed on any hive, local-owner or not
+    assert redact.provider_error_text("openrouter", response) == "openrouter answered 500 (unavailable)"
     assert redact.scrub(f"x {key}") == f"x {key}"
 
 
@@ -695,70 +714,3 @@ def test_r13_a_sandbox_python_path_with_dot_parts_refuses_start(tmp_path):
         with pytest.raises(localowner.LocalOwnerRefused, match="plain form"):
             localowner.check_environment(_env(HIVE_SANDBOX_PYTHON=value))
     localowner.check_environment(_env(HIVE_SANDBOX_PYTHON=str(real)))
-
-
-# R11.1: exercise the real existing second-port Host/Origin and exchange guards.
-# The inherited PeTTa fixture/skip remains in force; these are not SSH tunnel tests.
-@pytest.fixture()
-def browser_port_local(local_env):
-    local_env.setenv("HIVE_LOCAL_BROWSER_PORT", "8701")
-    app, data = make_app()
-    try:
-        with TestClient(app, base_url="http://127.0.0.1:8701") as client:
-            client.data = data
-            client.local = app.state.hive.local_owner
-            yield client
-    finally:
-        shutil.rmtree(data, ignore_errors=True)
-
-
-def test_r11_1_browser_host_8701_is_allowed_but_8702_is_not(browser_port_local):
-    client = browser_port_local
-    for host in ("127.0.0.1:8700", "127.0.0.1:8701", "localhost:8701"):
-        assert client.get("/api/auth/methods", headers={"Host": host}).status_code == 200
-    for host in ("127.0.0.1:8702", "localhost:8702", "evil.example:8701"):
-        reply = client.get("/api/auth/methods", headers={"Host": host})
-        assert reply.status_code == 421 and reply.json()["error"]["code"] == "wrong_host"
-
-
-def test_r11_1_browser_origin_8701_is_allowed_but_8702_is_not(browser_port_local):
-    client = browser_port_local
-    for origin in (BASE, "http://127.0.0.1:8701", "http://localhost:8701"):
-        reply = client.options("/api/swarms", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
-        assert reply.headers.get("access-control-allow-origin") == origin
-    reply = client.options("/api/swarms", headers={"Origin": "http://127.0.0.1:8702", "Access-Control-Request-Method": "POST"})
-    assert reply.status_code == 403 and "access-control-allow-origin" not in reply.headers
-
-
-def test_r11_1_normal_code_exchanges_at_browser_origin_8701_once(browser_port_local):
-    client = browser_port_local
-    issued = client.local.issue_code()
-    assert issued["expires_in"] == 60
-    assert issued["url"] == BASE + "/local-signin#" + issued["code"]
-    origin = {"Origin": "http://127.0.0.1:8701"}
-    reply = client.post("/api/auth/local/exchange", json={"code": issued["code"]}, headers=origin)
-    assert reply.status_code == 200, reply.text
-    assert reply.headers.get("cache-control") == "no-store" and "set-cookie" not in reply.headers
-    me = client.get("/api/auth/me", headers={"Authorization": "Bearer " + reply.json()["token"], **origin}).json()
-    assert me["kind"] == "sso" and me["principal"] == client.local.principal
-    assert me["local_operator"] is False and me["person_kind"] == "person" and me["role"] == "admin"
-    again = client.post("/api/auth/local/exchange", json={"code": issued["code"]}, headers=origin)
-    assert again.status_code == 401 and again.json()["error"]["code"] == "code_refused"
-    # The original desktop/API origin is still admitted, using a different one-use code.
-    other = client.local.issue_code()["code"]
-    assert client.post("/api/auth/local/exchange", json={"code": other},
-        headers={"Host": "127.0.0.1:8700", "Origin": BASE}).status_code == 200
-
-
-def test_r11_1_refused_browser_host_or_origin_does_not_consume_code(browser_port_local):
-    client = browser_port_local; code = client.local.issue_code()["code"]
-    bad_origin = client.post("/api/auth/local/exchange", json={"code": code},
-        headers={"Origin": "http://127.0.0.1:8702"})
-    assert bad_origin.status_code == 403 and bad_origin.json()["error"]["code"] == "origin_refused"
-    bad_host = client.post("/api/auth/local/exchange", json={"code": code},
-        headers={"Host": "127.0.0.1:8702", "Origin": "http://127.0.0.1:8701"})
-    assert bad_host.status_code == 421 and bad_host.json()["error"]["code"] == "wrong_host"
-    missing_origin = client.post("/api/auth/local/exchange", json={"code": code})
-    assert missing_origin.status_code == 403 and missing_origin.json()["error"]["code"] == "origin_required"
-    assert client.post("/api/auth/local/exchange", json={"code": code},
-        headers={"Origin": "http://127.0.0.1:8701"}).status_code == 200

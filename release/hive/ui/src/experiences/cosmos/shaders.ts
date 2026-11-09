@@ -133,6 +133,7 @@ uniform float uDim;
 uniform float uNear;
 varying vec3 vColor;
 varying float vFade;
+varying float vPx;
 void main() {
   vColor = aColor;
   float ang = aAng + uTime * 0.18 / (1.0 + aRad * 0.06);
@@ -141,17 +142,26 @@ void main() {
   gl_Position = projectionMatrix * mv;
   float dist = -mv.z;
   gl_PointSize = clamp(aSize * uPx * uScale / dist, 0.0, uMax * uPx);
+  vPx = gl_PointSize;
   // dust close to the camera thins out so systems stay readable
   vFade = smoothstep(uNear * 0.2, uNear, dist) * uDim;
 }
 `
+// uCrisp 1 (stars): a pinpoint core about a device pixel wide, whatever the sprite size, under a faint halo, so a near
+// star reads as a sharp point with glow rather than an out-of-focus disc (Jon 3 Nov: the background looked blurry).
+// uCrisp 0 (the nebula cloud): one soft Gaussian, as before.
 export const dustFrag = /* glsl */ `
 uniform float uSoft;
+uniform float uCrisp;
+uniform float uPx;
 varying vec3 vColor;
 varying float vFade;
+varying float vPx;
 void main() {
   float r = length(gl_PointCoord - 0.5) * 2.0;
-  float a = exp(-r * r * uSoft) * vFade * smoothstep(1.0, 0.8, r);
+  float d = r * 0.5 * vPx / clamp(0.16 * vPx, 0.7 * uPx, 2.0 * uPx);
+  float shape = mix(exp(-r * r * uSoft), exp(-d * d) + 0.10 * exp(-r * r * 3.0), uCrisp);
+  float a = shape * vFade * smoothstep(1.0, 0.8, r);
   if (a < 0.003) discard;
   gl_FragColor = vec4(vColor * a, a);
 }
@@ -439,5 +449,29 @@ void main() {
   float a = (ring * 0.55 + ticks * 0.7 + arcs * 0.9) * uShow;
   if (a < 0.01) discard;
   gl_FragColor = vec4(uColor * a * 1.6, a);
+}
+`
+
+/* ---------------- Rest → awake (CANDIDATE, cosmos-rest-r1): the apps' lit bodies around the Ω ---------------- */
+/**
+ * An app is a cut crystal lit from within, in its own colour: faceted, rim-bright, never a planet (planets are minds)
+ * and never a star (stars are swarms). Used with planetVert.
+ */
+export const appFrag = /* glsl */ `
+uniform vec3 uColor;
+uniform float uTime;
+uniform float uShow;
+uniform float uSeed;
+varying vec3 vWorld;
+void main() {
+  vec3 N = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+  vec3 V = normalize(cameraPosition - vWorld);
+  float fres = pow(1.0 - abs(dot(N, V)), 2.2);
+  float key = abs(dot(N, normalize(vec3(0.35, 0.85, 0.4))));
+  float pulse = 0.85 + 0.15 * sin(uTime * 1.3 + uSeed * 6.2831);
+  // kept under the bloom's knee so the crystal keeps its own colour (only the rim catches white)
+  vec3 inner = uColor * (0.28 + 0.5 * key) * pulse;
+  vec3 col = inner + uColor * fres * 0.7 + vec3(1.0) * fres * fres * 0.12;
+  gl_FragColor = vec4(col * uShow, 1.0);
 }
 `

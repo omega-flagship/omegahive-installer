@@ -1,5 +1,5 @@
 /**
- * The mind's presence on code (Surface, Code canvas phase 1). The owner, 2026-10-06: "someone had already been working on the
+ * The mind's presence on code (Surface, Code canvas phase 1). Jon, 2026-10-06: "someone had already been working on the
  * ability to draw on screen — we need to extend that out to full frontier functionality." This is the Ask presence
  * protocol (UNIVERSAL_ASK_DESIGN §9: look, point, sketch with closed ink shapes) and the Design draft-op stream (2a:
  * cursor with caption, strict validation, the page re-checks) carried over to code:

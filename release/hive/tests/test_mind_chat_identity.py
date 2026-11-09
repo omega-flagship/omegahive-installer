@@ -68,16 +68,16 @@ def test_two_people_reach_the_mind_as_themselves_and_read_only_their_own_convers
 
 def test_admin_opt_in_sees_all_and_default_is_own(client):
     ann, bob, mind = _shared_mind(client)
-    quinn = person(client, "u_mci_quinn", role="admin")
+    jon = person(client, "u_mci_jon", role="admin")
     url = f"/api/agents/{mind['id']}/messages"
     client.post(url, headers=ann, json={"text": "synthetic ann"})
     client.post(url, headers=bob, json={"text": "synthetic bob"})
-    client.post(url, headers=quinn, json={"text": "synthetic quinn"})
-    assert [m["text"] for m in client.get(url, headers=quinn).json()] == ["synthetic quinn"]
-    audit = client.get(url, headers=quinn, params={"include": "all"}).json()
-    assert [m["text"] for m in audit] == ["synthetic ann", "synthetic bob", "synthetic quinn"]
-    assert [m["sender"] for m in audit] == ["user:u_mci_ann", "user:u_mci_bob", "user:u_mci_quinn"]
-    assert [m["sender_name"] for m in audit] == ["u_mci_ann", "u_mci_bob", "u_mci_quinn"]
+    client.post(url, headers=jon, json={"text": "synthetic jon"})
+    assert [m["text"] for m in client.get(url, headers=jon).json()] == ["synthetic jon"]
+    audit = client.get(url, headers=jon, params={"include": "all"}).json()
+    assert [m["text"] for m in audit] == ["synthetic ann", "synthetic bob", "synthetic jon"]
+    assert [m["sender"] for m in audit] == ["user:u_mci_ann", "user:u_mci_bob", "user:u_mci_jon"]
+    assert [m["sender_name"] for m in audit] == ["u_mci_ann", "u_mci_bob", "u_mci_jon"]
 
 
 def test_loopback_operator_is_unchanged(client):
@@ -115,12 +115,12 @@ def test_live_message_frames_do_not_leak_between_people(client):
     a = client.post(url, headers=ann, json={"text": "synthetic ann"}).json()
     reply = _reply(client, mind, a["conversation_id"], "synthetic reply to ann")
     ann_v, bob_v = Viewer("user:u_mci_ann", False), Viewer("user:u_mci_bob", False)
-    quinn_v, loop_v = Viewer("user:u_mci_quinn", True), Viewer("user:operator", True)
+    jon_v, loop_v = Viewer("user:u_mci_jon", True), Viewer("user:operator", True)
     for frame in (a, reply):
         text = json.dumps({"type": "message", "message": frame})
         assert hive.visibility.event_visible(ann_v, text) is True
         assert hive.visibility.event_visible(bob_v, text) is False
-        assert hive.visibility.event_visible(quinn_v, text) is False     # named admins audit over HTTP (?include=all)
+        assert hive.visibility.event_visible(jon_v, text) is False     # named admins audit over HTTP (?include=all)
         assert hive.visibility.event_visible(loop_v, text) is True     # loopback unchanged
 
 
@@ -256,14 +256,14 @@ def test_iter_channel_answers_one_conversation_at_a_time(client, tmp_path, monke
 
 def test_nobody_posts_into_another_persons_conversation_admins_and_operator_included(client):
     ann, bob, mind = _shared_mind(client)
-    quinn = person(client, "u_mci_quinn", role="admin")
+    jon = person(client, "u_mci_jon", role="admin")
     url = f"/api/agents/{mind['id']}/messages"
     a = client.post(url, headers=ann, json={"text": "synthetic ann"}).json()
-    for who in (quinn, {}):                               # a named admin, then the loopback operator (client default)
+    for who in (jon, {}):                               # a named admin, then the loopback operator (client default)
         r = client.post(url, headers=who, json={"text": "synthetic cross-post", "conversation_id": a["conversation_id"]})
         assert r.status_code == 404, r.text
     assert [m["text"] for m in client.get(url, headers=ann).json()] == ["synthetic ann"]
-    audit = client.get(url, headers=quinn, params={"include": "all"}).json()     # audit stays read-only and complete
+    audit = client.get(url, headers=jon, params={"include": "all"}).json()     # audit stays read-only and complete
     assert [m["text"] for m in audit] == ["synthetic ann"]
 
 
@@ -294,12 +294,12 @@ def test_legacy_conversation_owned_by_a_person_is_theirs_alone_loopback_included
     """r4 (stand-in P1): a legacy conversation id owned by its first person speaker refuses everyone else, the loopback
     operator and admins included."""
     ann, bob, mind = _shared_mind(client)
-    quinn = person(client, "u_mci_quinn", role="admin")
+    jon = person(client, "u_mci_jon", role="admin")
     hive = client.app.state.hive
     hive.enqueue_message(mind["id"], "synthetic legacy ann", "c_legacy_ann", "user:u_mci_ann")   # pre-namespace shape
     assert hive.conversation_owner(mind["id"], "c_legacy_ann") == "user:u_mci_ann"
     url = f"/api/agents/{mind['id']}/messages"
-    for who in ({}, quinn, bob):
+    for who in ({}, jon, bob):
         r = client.post(url, headers=who, json={"text": "synthetic intrusion", "conversation_id": "c_legacy_ann"})
         assert r.status_code == 404, r.text
     assert [m["text"] for m in client.get(url, headers=ann, params={"conversation_id": "c_legacy_ann"}).json()] == [

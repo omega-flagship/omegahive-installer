@@ -9,6 +9,7 @@ authority is still r2.13 (a named, signed-in admin person submits an exact body 
   intent answers its recorded 201 byte for byte (S4).
 - Nothing in a running process moves a dispatching intent except its own submit; the §L startup recovery moves what a
   previous process left (R2b, recover_startup).
+- code.test queues an action to an existing original request/controller/lease; it never creates another request or grants test execution.
 - Links attach a request the same person already made directly. They grant and change nothing.
 - Reads are the owner's only; admins see links through the Ask audit routes. Frames are 'ask' frames
   {phase: "intent", intent_id, state, links_rev}, so the asker-only rule applies; they are hints and may be dropped.
@@ -42,9 +43,10 @@ SCHEMA = [
 ]
 
 KIND = "code.request"
+TEST = "code.test"
 STUDIO = "studio.session"   # J3 host R2 (G1): studio_sessions.py; named people, members included, may record and send it
 # each kind's own gate (plan §3.2): code.request stays the r2.13 named-admin path; studio.session is any named person's
-KINDS = {KIND: {"admin_only": True}, STUDIO: {"admin_only": False}}
+KINDS = {KIND: {"admin_only": True}, STUDIO: {"admin_only": False}, TEST: {"admin_only": False}}
 KEY_PREFIX = "ask."
 STATES = ("pending", "dispatching", "linked", "refused", "abandoned")
 TURN_MAX_AGE = datetime.timedelta(hours=24)
@@ -111,6 +113,11 @@ class Intents:
         body = json.loads(row["body"] or "{}")
         if row["kind"] == STUDIO:
             return self._studio_view(row, body, links_rev)
+        if row["kind"] == TEST:
+            result = self._studio_view(row, {"request": {}}, links_rev)
+            result.update(request=body.get("request"), title="Test retained proposal",
+                          session_id=None, acceptance="queued_only")
+            return result
         lifetime = body.get("lifetime") if isinstance(body.get("lifetime"), dict) else {}
         return {"intent_id": row["id"], "turn_id": row["turn_id"], "kind": row["kind"], "state": row["state"],
                 "request_operation_id": row["request_operation_id"], "request_digest": row["request_digest"],
@@ -129,7 +136,7 @@ class Intents:
         """The common intent view for a studio.session intent: the same fields, the person's own request (owner-only
         reads) and, once linked, its session id."""
         request = body.get("request") if isinstance(body.get("request"), dict) else None
-        session = self.hive.db.one("SELECT id FROM studio_sessions WHERE intent_id = ?", (row["id"],)) if row["state"] == "linked" else None
+        session = self.hive.db.one("SELECT id FROM studio_sessions WHERE intent_id = ?", (row["id"],)) if row["kind"] == STUDIO and row["state"] == "linked" else None
         return {"intent_id": row["id"], "turn_id": row["turn_id"], "kind": row["kind"], "state": row["state"],
                 "request_operation_id": row["request_operation_id"], "request_digest": row["request_digest"],
                 "destination": json.loads(row["destination"]), "title": (request or {}).get("title"),
@@ -232,6 +239,8 @@ class Intents:
             raise self._bad("the body is exactly {kind, request}")
         if data["kind"] not in KINDS:
             raise self._bad(f"kind is one of {sorted(KINDS)}")
+        if data["kind"] == TEST:
+            raise self._bad("code.test requires the original asynchronous retained-Source record path")
         if data["kind"] == STUDIO:
             return self._record_studio(viewer, t, created, data["request"])
         request = data["request"]
@@ -290,6 +299,65 @@ class Intents:
         self.ask._publish(frames)
         return 201, self.view(self._row(intent_id))
 
+    async def record_async(self, viewer, operation_id, data, admin=None):
+        """Same existing POST route; only code.test needs the original async Source read."""
+        if not isinstance(data, dict) or data.get("kind") != TEST:
+            return self.record(viewer, operation_id, data, admin=admin)
+        from .code_test_intents import clean, current, verify
+        self._gate(TEST, viewer.admin if admin is None else admin)
+        if set(data) != {"kind", "request"}:
+            raise self._bad("the body is exactly {kind, request}")
+        t = self._turn(viewer, operation_id)
+        created = _iso_time(t["created_at"])
+        if created is None or datetime.datetime.now(datetime.timezone.utc) - created > TURN_MAX_AGE:
+            raise self._bad("that Ask turn is more than24 hours old", reason="turn_too_old")
+        request = clean(self, data["request"])
+        context, _ = await verify(self, viewer, request)
+        req, lease, origin, grant, _ = context
+        cap = min(created + TURN_MAX_AGE, parse_time(lease["until"]),
+                  datetime.datetime.fromtimestamp(grant["expires_at"], datetime.timezone.utc))
+        if cap <= datetime.datetime.now(datetime.timezone.utc):
+            raise self._err(403, "code_test_lease", "the original request window has expired")
+        intent_id = "ai_" + secrets.token_hex(12)
+        body = {"kind": TEST, "request": request}
+        same, frames = canonical(body), []
+        with self.hive.db.transaction():
+            if current(self, viewer.principal, request) != context:
+                raise self._err(403, "code_test_lease", "the original request context changed")
+            t = self.hive.db.one("SELECT * FROM ask_turns WHERE id=?", (t["id"],))
+            if t["deleted_at"]:
+                raise self._not_available()
+            live = self.hive.db.one("SELECT * FROM ask_intents WHERE turn_id=? AND state IN ('pending','dispatching')", (t["id"],))
+            if live is not None:
+                if live["state"] == "dispatching":
+                    raise self._err(409, "intent_in_flight", "that intent is being sent", intent_id=live["id"])
+                if live["kind"] == TEST and live["body"] == same:
+                    self._audit(live)
+                    return 200, self.view(live)
+                raise self._err(409, "intent_pending", "that turn already has an intent", intent_id=live["id"])
+            refused_rows = self.hive.db.all("SELECT * FROM ask_intents WHERE turn_id=? AND state='refused'", (t["id"],))
+            for refused in refused_rows:
+                self._audit(refused)
+            for refused in refused_rows:
+                self.hive.db.execute("UPDATE ask_intents SET state='abandoned',updated_at=? WHERE id=? AND state='refused'", (now(), refused["id"]))
+                self._bump(t["id"])
+                frames.append(self._frame(t["id"], refused["id"], "abandoned"))
+            at = now()
+            self.hive.db.insert("ask_intents", {
+                "id": intent_id, "turn_id": t["id"], "principal": viewer.principal, "kind": TEST,
+                "request_operation_id": KEY_PREFIX + intent_id, "body": same,
+                "request_digest": sha(canonical({"route": TEST, "body": body})),
+                "destination": canonical({"to_swarm": req["to_swarm"], "task_id": origin["task_id"],
+                    "workspace_id": origin["workspace_id"], "repository_id": origin["repository_id"]}),
+                "instruction_digest": sha(canonical(request)), "state": "pending",
+                "dispatch_id": None, "dispatch_started_at": None, "last_dispatch": None, "last_refusal": None,
+                "request_id": None, "lease_id": None, "receiving_goal": None, "deleted_at": None,
+                "created_at": at, "updated_at": at, "expires_at": rfc3339_ms(cap)})
+            self._bump(t["id"])
+            frames.append(self._frame(t["id"], intent_id, "pending"))
+        self.ask._publish(frames)
+        return 201, self.view(self._row(intent_id))
+
     def _record_studio(self, viewer, t, created, request):
         """Record one studio.session intent: the exact canonical request and its digest, and nothing else. The intent's
         own window ends with its turn's 24 hours (as code.request's lifetime is capped); the session's window is set
@@ -297,9 +365,16 @@ class Intents:
         hive = self.hive
         hive.studio.require_enabled()
         if isinstance(request, dict) and request.get("maker_id") is None and getattr(hive, "studio_makers", None) is not None:
-            # R7: no maker named: the person's own Studio maker, from their binding (made by POST /api/studio/setup);
-            # the Studio home, app pin, key, model, role and tools the card did not carry are the host's current values
-            request = hive.studio_makers.fill(viewer.principal, {k: v for k, v in request.items() if k != "maker_id"})
+            # R7: no maker named: the person's own Studio maker. Made on demand here exactly as POST /api/studio/setup
+            # makes it (apps ready on install, Jon 10-27: a mind's handoff from the Ask must not stop at "set up your
+            # Studio maker first"); ensure() keeps every guard: Studio on, a named person, their own key (402
+            # own_key_needed with nothing made). The Studio home, app pin, key, model, role and tools the request did not
+            # carry are the host's current values. Recording sends nothing: submitting stays the person's own act.
+            # Only a person with no maker yet gets one made; an existing binding is used exactly as before (never re-resolved
+            # or re-audited here: admission keeps judging a changed key as it always has).
+            makers = hive.studio_makers
+            row = makers.bound(viewer.principal) or makers.ensure(viewer.principal)[0]
+            request = makers.fill(viewer.principal, {k: v for k, v in request.items() if k != "maker_id"}, row)
         cleaned = hive.studio.clean_request(request)
         hive.studio.refuse_others_maker(viewer.principal, cleaned["maker_id"])   # R7, before anything is stored
         intent_id = "ai_" + secrets.token_hex(12)
@@ -376,9 +451,9 @@ class Intents:
     async def submit(self, viewer, intent_id, admin=None):
         hive = self.hive
         admin = viewer.admin if admin is None else admin
-        if not admin:                                      # a member: only their own studio.session intent, else 403 as before
+        if not admin:                                      # a member: their own studio.session or code.test intent, else 403 as before
             found = self._row(intent_id)
-            if found is None or found["principal"] != viewer.principal or found["kind"] != STUDIO:
+            if found is None or found["principal"] != viewer.principal or found["kind"] not in (STUDIO, TEST):
                 self._gate(KIND, False)
         row = self._own(viewer, intent_id)
         if row["kind"] == STUDIO:
@@ -414,6 +489,9 @@ class Intents:
                 # S6.1): the session's step message is the maker's only prompt, and it names the goal
                 goal = hive.studio.admit(viewer, stored, bind=lambda recorded: self._link(row["id"], dispatch_id, recorded))
                 hive.goals._emit(goal["id"])
+            elif stored["kind"] == TEST:
+                from .code_test_intents import dispatch
+                await dispatch(self, viewer, stored, bind=lambda recorded: self._link(row["id"], dispatch_id, recorded))
             else:
                 await hive.minds.instruct(viewer.principal, body, bind=lambda recorded: self._link(row["id"], dispatch_id, recorded))
         except BaseException as exc:                       # noqa: BLE001  (settled by row state below, then re-raised)

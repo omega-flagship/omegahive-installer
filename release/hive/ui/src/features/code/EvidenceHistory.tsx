@@ -32,7 +32,7 @@ export function EvidenceHistory({ call, workspace }: { call: Call; workspace: st
     {page && <>
       <p className="break-all font-mono text-xs text-ink-3">Observed generation {page.generation} · tree {page.tree_digest}</p>
       {!page.items.length && <p className="text-xs text-ink-3">No recorded {kind}.</p>}
-      <div className="space-y-2">{page.items.map((record) => <button key={record.id} disabled={kind === 'verifications' && !record.run_id} aria-pressed={selected === (record.run_id ?? record.id)} onClick={() => setSelected(record.run_id ?? record.id)} className="block w-full rounded-xl border border-line p-3 text-left hover:bg-white/5">
+      <div className="space-y-2">{page.items.map((record) => <button key={record.id} disabled={kind === 'verifications' && !record.run_id} aria-pressed={selected === (record.run_id ?? record.id)} onClick={() => setSelected(record.run_id ?? record.id)} className="block w-full rounded-xl border border-line p-3 text-left hover:bg-tint/5">
         <span className="block break-all font-mono text-xs">{record.id}</span>
         <span className="text-xs text-ink-3">{record.outcome ?? record.status} · generation {record.generation} · {record.currency ?? 'currency unknown'}{record.exit_code != null ? ` · exit ${record.exit_code}` : ''}</span>
         {record.run_id && <span className="block break-all font-mono text-xs text-ink-3">Run {record.run_id}</span>}

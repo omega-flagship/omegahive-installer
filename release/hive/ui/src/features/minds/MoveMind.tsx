@@ -54,7 +54,7 @@ export function MoveMind({ agent }: { agent: Agent }) {
         Where {name} lives
       </h3>
       {movedAway ? (
-        <p className="rounded-xl border border-line bg-white/[0.03] px-3 py-2.5 text-[13px] text-ink-2">
+        <p className="rounded-xl border border-line bg-tint/[0.03] px-3 py-2.5 text-[13px] text-ink-2">
           {name} moved to <span className="font-medium text-ink">{a.moved_to_name || a.moved_to}</span>
           {a.moved_at && ` ${ago(a.moved_at)}`}. Its history here stays readable; it cannot start here. Bringing its bundle back restores the same mind.
         </p>
@@ -87,7 +87,7 @@ export function MoveMind({ agent }: { agent: Agent }) {
 
       {moves.status === 'error' && <p className="mt-2 text-meta text-bad">Could not read its moves: {errorMessage(moves.error)}</p>}
       {moves.data && moves.data.length > 0 && (
-        <ul className="mt-2.5 overflow-hidden rounded-xl border border-line bg-black/20 text-[12px]">
+        <ul className="mt-2.5 overflow-hidden rounded-xl border border-line bg-shade/20 text-[12px]">
           {[...moves.data].reverse().map((mv, i) => (
             <li key={mv.id} className={i ? 'border-t border-line px-3 py-1.5' : 'px-3 py-1.5'}>
               <span className="text-ink-2">
@@ -242,11 +242,11 @@ function SettleDialog({ seen, move, liveAgent, liveMove, onClose, onDone }: { se
     >
       <label className="block">
         <span className="text-[12px] text-ink-3">The other hive’s id</span>
-        <input value={hiveId} onChange={(e) => setHiveId(e.target.value)} placeholder="h_…" spellCheck={false} autoComplete="off" className="mt-1 min-h-11 w-full rounded-xl border border-line bg-black/30 px-3 font-mono text-[13px] text-ink outline-none focus:border-line-2" />
+        <input value={hiveId} onChange={(e) => setHiveId(e.target.value)} placeholder="h_…" spellCheck={false} autoComplete="off" className="mt-1 min-h-11 w-full rounded-xl border border-line bg-shade/30 px-3 font-mono text-[13px] text-ink outline-none focus:border-line-2" />
       </label>
       <label className="block">
         <span className="text-[12px] text-ink-3">Its name</span>
-        <input value={hiveName} onChange={(e) => setHiveName(e.target.value)} placeholder="Cloud hive" className="mt-1 min-h-11 w-full rounded-xl border border-line bg-black/30 px-3 text-[13px] text-ink outline-none focus:border-line-2" />
+        <input value={hiveName} onChange={(e) => setHiveName(e.target.value)} placeholder="Cloud hive" className="mt-1 min-h-11 w-full rounded-xl border border-line bg-shade/30 px-3 text-[13px] text-ink outline-none focus:border-line-2" />
       </label>
     </DecisionDialog>
   )
@@ -275,7 +275,7 @@ function Identity({ me, onRenamed }: { me: HiveIdentity; onRenamed: (next: HiveI
   const { admin } = useMe()
   const [naming, setNaming] = useState<HiveIdentity | null>(null)
   return (
-    <div className="rounded-2xl border border-line bg-white/[0.03] p-4" data-tour="hive-identity">
+    <div className="rounded-2xl border border-line bg-tint/[0.03] p-4" data-tour="hive-identity">
       <AnimatePresence>{naming && <NameHive seen={naming} live={me} onClose={() => setNaming(null)} onDone={onRenamed} />}</AnimatePresence>
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium text-ink">{me.name}</span>
@@ -288,7 +288,7 @@ function Identity({ me, onRenamed }: { me: HiveIdentity; onRenamed: (next: HiveI
         {me.owner && <span className="text-meta text-ink-4">whose machine: {me.owner}</span>}
       </div>
       <div className="mt-2 flex items-center gap-2">
-        <code className="min-w-0 flex-1 truncate rounded-lg border border-line bg-black/30 px-2.5 py-1.5 font-mono text-[12.5px] text-ink-2">{me.id}</code>
+        <code className="min-w-0 flex-1 truncate rounded-lg border border-line bg-shade/30 px-2.5 py-1.5 font-mono text-[12.5px] text-ink-2">{me.id}</code>
         <Button variant="ghost" icon="copy" className="min-h-9 px-2.5 text-[12px]" onClick={async () => {
             const ok = await copyText(me.id)
             toast({ tone: ok ? 'success' : 'error', title: ok ? 'Hive id copied' : 'Could not copy' })
@@ -343,7 +343,7 @@ function NameHive({ seen, live, onClose, onDone }: { seen: HiveIdentity; live: H
     >
       <label className="block">
         <span className="text-[12px] text-ink-3">New name</span>
-        <input value={name} onChange={(e) => setName(e.target.value)} maxLength={120} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-black/30 px-3 text-[13px] text-ink outline-none focus:border-line-2" />
+        <input value={name} onChange={(e) => setName(e.target.value)} maxLength={120} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-shade/30 px-3 text-[13px] text-ink outline-none focus:border-line-2" />
       </label>
       <p className="text-meta leading-snug text-ink-4">Other hives see this name when a mind moves between hives. The hive id stays the same, so moves already settled are unaffected.</p>
     </DecisionDialog>
@@ -378,7 +378,7 @@ function ImportMind() {
   }
 
   return (
-    <div className="rounded-2xl border border-line bg-white/[0.03] p-4" data-unsaved-scope="mind-import">
+    <div className="rounded-2xl border border-line bg-tint/[0.03] p-4" data-unsaved-scope="mind-import">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="text-sm font-medium">Bring a mind here</div>
@@ -419,7 +419,7 @@ function ImportMind() {
           </dl>
           <label className="block">
             <span className="text-[12px] text-ink-3">Swarm it joins here</span>
-            <select value={swarm} onChange={(e) => setSwarm(e.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-black/30 px-3 text-[13px] text-ink outline-none focus:border-line-2">
+            <select value={swarm} onChange={(e) => setSwarm(e.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-shade/30 px-3 text-[13px] text-ink outline-none focus:border-line-2">
               <option value="">{preview.swarm ? `Its own swarm (${preview.swarm.name}), if it is here` : 'Choose a swarm'}</option>
               {Object.values(swarms).map((s) => (
                 <option key={s.id} value={s.id}>

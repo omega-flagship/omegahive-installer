@@ -21,6 +21,13 @@ export interface PickRow {
 
 export const PROVIDER_LABEL: Record<string, string> = { openrouter: 'OpenRouter', anthropic: 'Anthropic', openai: 'OpenAI', local: 'Local', ollama: 'Local', mock: 'Offline' }
 
+/** Where each provider issues keys, and how its keys begin. */
+export const HELP: Record<string, { where: string; prefix: string; url: string }> = {
+  openrouter: { where: 'openrouter.ai → Keys', prefix: 'sk-or-', url: 'https://openrouter.ai/settings/keys' },
+  anthropic: { where: 'console.anthropic.com → API keys', prefix: 'sk-ant-', url: 'https://console.anthropic.com/settings/keys' },
+  openai: { where: 'platform.openai.com → API keys', prefix: 'sk-', url: 'https://platform.openai.com/api-keys' },
+}
+
 export const providerLabel = (name: string, providers?: ProviderStatus[] | null) =>
   providers?.find((p) => p.name === name)?.label ?? PROVIDER_LABEL[name] ?? name.charAt(0).toUpperCase() + name.slice(1)
 

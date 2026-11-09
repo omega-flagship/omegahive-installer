@@ -14,6 +14,7 @@ import { MeTTa } from '../../ui/MeTTa'
 import { EmptyState, ErrorState, IconButton, Segmented, Skeleton } from '../../ui/primitives'
 import { ArchivedHistory } from './ArchivedHistory'
 import { shown as shownName } from '../../lib/displayName'
+import { scrubbed } from '../../brand/timeJump'
 
 type Filter = 'all' | 'skills' | 'errors'
 const EMPTY: Trace[] = []
@@ -141,7 +142,7 @@ export function MindTimeline({ agent }: { agent: Agent }) {
             onClick={play}
             disabled={filtered.length < 2}
             aria-label={playing ? 'Pause replay' : 'Replay recent iterations'}
-            className="flex size-10 items-center justify-center rounded-full text-[#0b0820] transition-transform active:scale-95 disabled:opacity-40"
+            className="flex size-10 items-center justify-center rounded-full text-primary-ink transition-transform active:scale-95 disabled:opacity-40"
             style={{ background: `linear-gradient(180deg, ${hsl(agent.hue, 100, 84)}, ${hsl(agent.hue, 92, 68)})`, boxShadow: `0 0 18px ${hsl(agent.hue, 100, 65, 0.45)}` }}
           >
             <Icon name={playing ? 'pause' : 'play'} size={16} strokeWidth={2.4} />
@@ -155,6 +156,7 @@ export function MindTimeline({ agent }: { agent: Agent }) {
             onChange={(e) => {
               setPlaying(false)
               const v = Number(e.target.value)
+              scrubbed(at, v, filtered[v]?.created_at)   // the egg takes the raw timestamp and fails silent on a bad one
               setCursor(v >= last ? null : v)
             }}
             aria-label="Scrub iterations"
@@ -227,7 +229,7 @@ function ThinkingNow({ hue, phase }: { hue: number; phase: ThinkingPhase }) {
           </span>
           <span className="ml-auto font-mono text-[11px] text-ink-3 tabular-nums">{secs.toFixed(1)} s</span>
         </div>
-        <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/[0.06]">
+        <div className="mt-2 h-1 overflow-hidden rounded-full bg-tint/[0.06]">
           <m.div className="h-full w-1/3 rounded-full" style={{ background: `linear-gradient(90deg, transparent, ${hsl(h, 100, 75)}, transparent)` }} animate={{ x: ['-100%', '300%'] }} transition={{ duration: 1.3, repeat: Infinity, ease: 'easeInOut' }} />
         </div>
       </div>
@@ -260,7 +262,7 @@ function TraceItem({ trace: t, hue, head, expanded, onToggle, animateIn }: { tra
       <span
         className="absolute top-1 left-0 flex size-[31px] items-center justify-center rounded-full border"
         style={{
-          borderColor: errors ? 'rgb(251 113 133 / 0.5)' : hsl(hue, 100, 75, head ? 0.6 : 0.25),
+          borderColor: errors ? 'color-mix(in oklab, var(--color-bad) 50%, transparent)' : hsl(hue, 100, 75, head ? 0.6 : 0.25),
           background: errors ? 'rgb(60 10 24 / 0.9)' : hsl(hue, 60, head ? 26 : 16, 0.95),
           boxShadow: head ? `0 0 16px ${hsl(hue, 100, 60, 0.5)}` : undefined,
         }}
@@ -269,7 +271,7 @@ function TraceItem({ trace: t, hue, head, expanded, onToggle, animateIn }: { tra
         <Icon name={trg.icon} size={14} style={{ color: errors ? '#fb7185' : hsl(hue, 100, head ? 86 : 74) }} />
       </span>
 
-      <article className={cx('overflow-hidden rounded-2xl border bg-white/[0.025] transition-colors', head ? 'border-line-2' : 'border-line')}>
+      <article className={cx('overflow-hidden rounded-2xl border bg-tint/[0.025] transition-colors', head ? 'border-line-2' : 'border-line')}>
         <button onClick={onToggle} aria-expanded={expanded} className="block w-full px-3.5 pt-2.5 pb-2 text-left">
           <div className="flex items-center gap-2 text-[12px]">
             <span className="font-mono text-ink-3" title={`Trace ${t.id} · ${t.agent_id}`}>#{t.iteration}</span>
@@ -277,19 +279,19 @@ function TraceItem({ trace: t, hue, head, expanded, onToggle, animateIn }: { tra
             <span className="ml-auto shrink-0 text-ink-4">{ago(t.created_at, now)}</span>
           </div>
           {trg.text && (
-            <p className={cx('mt-1.5 rounded-xl px-2.5 py-1.5 text-[13px] leading-snug', trg.kind === 'message' ? 'bg-white/[0.06] text-ink-2' : 'border border-line bg-black/20 text-ink-3')}>
+            <p className={cx('mt-1.5 rounded-xl px-2.5 py-1.5 text-[13px] leading-snug', trg.kind === 'message' ? 'bg-tint/[0.06] text-ink-2' : 'border border-line bg-shade/20 text-ink-3')}>
               {trg.kind === 'approved' ? <MeTTa src={trg.text} /> : <span className={cx(!expanded && 'line-clamp-2')}>{trg.text}</span>}
             </p>
           )}
           <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
-            <span className="inline-flex items-center gap-1 rounded-md border border-line bg-black/20 px-1.5 py-0.5 font-mono text-ink-2" title="Gateway latency of the model call">
+            <span className="inline-flex items-center gap-1 rounded-md border border-line bg-shade/20 px-1.5 py-0.5 font-mono text-ink-2" title="Gateway latency of the model call">
               <Icon name="clock" size={11} />
               {seconds(t.llm_ms)}
-              <span className="ml-0.5 h-1 w-8 overflow-hidden rounded-full bg-white/10">
+              <span className="ml-0.5 h-1 w-8 overflow-hidden rounded-full bg-tint/10">
                 <span className="block h-full rounded-full" style={{ width: `${Math.min(100, (lat / 4000) * 100)}%`, background: latColor }} />
               </span>
             </span>
-            <span className="inline-flex items-center gap-1 rounded-md border border-line bg-black/20 px-1.5 py-0.5 font-mono text-ink-2" title="Tokens">
+            <span className="inline-flex items-center gap-1 rounded-md border border-line bg-shade/20 px-1.5 py-0.5 font-mono text-ink-2" title="Tokens">
               <Icon name="token" size={11} />
               {tokens(t.tokens)}
             </span>
@@ -313,7 +315,7 @@ function TraceItem({ trace: t, hue, head, expanded, onToggle, animateIn }: { tra
                 <p className="break-all font-mono text-meta text-ink-4">Trace {t.id} · {t.created_at}</p>
                 <div>
                   <div className="eyebrow mb-1 !text-[10px]">Model response</div>
-                  <div className="rounded-xl border border-line bg-black/35 px-3 py-2 text-[12.5px] leading-relaxed">
+                  <div className="rounded-xl border border-line bg-shade/35 px-3 py-2 text-[12.5px] leading-relaxed">
                     {textLines.map((l, i) => (
                       <TypeOn key={`t${i}`} text={l} run={animateIn && head} className="text-ink-2" />
                     ))}
@@ -384,7 +386,7 @@ function CommandRow({ c, agentId, delay }: { c: TraceCommand; agentId: string; d
       initial={delay ? { opacity: 0, x: -8 } : false}
       animate={{ opacity: 1, x: 0 }}
       transition={{ delay, type: 'spring', stiffness: 400, damping: 30 }}
-      className="relative overflow-hidden rounded-xl border bg-black/20"
+      className="relative overflow-hidden rounded-xl border bg-shade/20"
       style={{ borderColor: gate === 'allow' && !err ? 'var(--color-line)' : `color-mix(in srgb, ${err && gate === 'allow' ? '#fb7185' : st.color} 35%, transparent)` }}
     >
       <span className="absolute inset-y-0 left-0 w-[3px]" style={{ background: err && gate === 'allow' ? '#fb7185' : st.color, opacity: gate === 'allow' && !err ? 0.45 : 0.9 }} />

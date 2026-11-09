@@ -15,7 +15,7 @@ Cost: every message a mind receives can cost a model call, so rooms deliver deli
 - A mind receives the new message plus a short digest of what it missed in that room (at most DIGEST_LINES lines of
   DIGEST_CHARS characters), never the whole history.
 - Minds that are not addressed are not woken.
-The Coffee Room (the owner, 2026-10-06; coordination/PLATFORM_COFFEE_ROOM_PLAN_20261006.md): one built-in room per hive
+The Coffee Room (Jon, 2026-10-06; PLATFORM_COFFEE_ROOM_PLAN_20261006.md): one built-in room per hive
 (kind "coffee", alias "coffee") that every person and every eligible mind belongs to automatically, so everyone has
 somewhere to meet and then break off (a DM or group created with `origin` links back to the message it came from).
 - Public minds in public swarms join; a private or shared mind or swarm joins only if an admin opts it in; an admin may
@@ -23,7 +23,7 @@ somewhere to meet and then break off (a DM or group created with `origin` links 
 - It wakes no one by itself: @mentions as in any room; "@here" from a person also reaches up to HERE_MAX awake minds.
 - An awake mind may post an unprompted note (note=true) at most once per NOTE_SECONDS; a note never wakes anyone.
 - Everyone signed in to the hive can read it, and minds are told so on every delivery.
-Team rooms (the owner, 2026-10-08, after "Patswarm": minds in one swarm had no way to reach each other): every unarchived
+Team rooms (Jon, 2026-10-08, after "Patswarm": minds in one swarm had no way to reach each other): every unarchived
 swarm has one private group room (alias team_<swarm>, bound by swarm_id) holding its owner and its minds, made with the
 swarm and kept in step as minds join, leave, move or are deleted, and as the swarm is renamed or changes owner. It follows
 every room rule: a mind's post reaches only the minds it @mentions, under the turn cap. A mind joins only if the swarm's
@@ -48,6 +48,9 @@ import re
 import threading
 
 from .db import new_id, now
+
+#: who Health is in a mind's messages (health.py reads it from here: it imports rooms, never the other way round)
+HEALTH_SENDER = "hive:health"
 
 log = logging.getLogger("hive")
 
@@ -117,6 +120,9 @@ class Rooms:
         self._add_column("rooms", "origin", "TEXT")
         self._add_column("room_messages", "note", "INTEGER NOT NULL DEFAULT 0")
         self._add_column("room_messages", "here_reached", "TEXT NOT NULL DEFAULT '[]'")
+        # sol and Kimi on 7cf0ca57: a mirrored copy's provenance (the messages row it copies) and Health's verified mark
+        self._add_column("room_messages", "source_message_id", "TEXT")
+        self._add_column("room_messages", "health_check", "INTEGER NOT NULL DEFAULT 0")
         self._migrate_dms()
         try:
             self.sync_teams()      # existing swarms gain their team room (idempotent; each swarm on its own)
@@ -183,6 +189,8 @@ class Rooms:
                 return p.get("name") or p.get("email") or member
         if member.startswith("system:"):
             return "Hive" if member == "system:hive" else member[7:].capitalize()
+        if member == HEALTH_SENDER:
+            return "Health"
         return "You" if member == "user:operator" else member[5:]
 
     def _display(self, r):
@@ -781,7 +789,8 @@ class Rooms:
         name = self._public_name if m["room_id"] == coffee_id else self._name
         return {"id": m["id"], "room_id": m["room_id"], "seq": m["seq"], "sender": m["sender"], "name": name(m["sender"]),
                 "text": m["text"], "mentions": json.loads(m["mentions"]), "delivered_to": json.loads(m["delivered_to"]),
-                "note": bool(m["note"]), "here_reached": json.loads(m["here_reached"] or "[]"), "created_at": m["created_at"]}
+                "note": bool(m["note"]), "here_reached": json.loads(m["here_reached"] or "[]"), "created_at": m["created_at"],
+                **({"health_check": True} if m.get("health_check") else {})}
 
     def messages(self, viewer, room_id, after=0, limit=100):
         r = self.get(viewer, room_id)
@@ -829,13 +838,14 @@ class Rooms:
                 found.append(pick[1])
         return found
 
-    def _append(self, room_id, sender, text, mentions, mind_run, note=False, here=()):
+    def _append(self, room_id, sender, text, mentions, mind_run, note=False, here=(), source_message_id=None, health_check=False):
         with self.hive.db._lock:
             seq = self.hive.db.one("SELECT seq FROM rooms WHERE id = ?", (room_id,))["seq"] + 1
             self.hive.db.execute("UPDATE rooms SET seq = ?, updated_at = ? WHERE id = ?", (seq, now(), room_id))
         msg = {"id": new_id("rm"), "room_id": room_id, "seq": seq, "sender": sender, "text": text,
                "mentions": json.dumps(mentions), "delivered_to": "[]", "mind_run": mind_run, "created_at": now(),
-               "note": 1 if note else 0, "here_reached": json.dumps(list(here))}
+               "note": 1 if note else 0, "here_reached": json.dumps(list(here)),
+               "source_message_id": source_message_id, "health_check": 1 if health_check else 0}
         self.hive.db.insert("room_messages", msg)
         if not sender.startswith("agent:"):
             self.hive.db.execute("UPDATE room_members SET read_seq = ? WHERE room_id = ? AND member = ?", (seq, room_id, sender))
@@ -999,8 +1009,10 @@ class Rooms:
             r = self.row(room["id"])
         return r
 
-    def mirror_in(self, agent_id, conversation_id, sender, text):
-        """A message sent to a mind outside rooms (the classic chat, a lease note, an alert): keep the DM transcript whole."""
+    def mirror_in(self, agent_id, conversation_id, sender, text, source_message_id=None, health_check=False):
+        """A message sent to a mind outside rooms (the classic chat, a lease note, an alert): keep the DM transcript whole.
+        source_message_id: the messages row this copies (its provenance). health_check: Hive.verified_health_question
+        proved it Health's question (its text is already the people's words); it keeps Health as its sender."""
         conversation_id = conversation_id or f"c_{agent_id}"
         r = self.room_for_conversation(conversation_id)
         if r is None and conversation_id == f"c_{agent_id}":
@@ -1008,11 +1020,11 @@ class Rooms:
         if r is None:
             return
         # G1: retain schedule provenance if this DM is later shared or made public; its full text stays stored.
-        who = sender if sender.startswith(("user:", "agent:")) or sender == "hive:schedule" else "system:hive"
+        who = sender if sender.startswith(("user:", "agent:")) or sender == "hive:schedule" or (health_check and sender == HEALTH_SENDER) else "system:hive"
         with self._seat(r, f"agent:{agent_id}") as seated:
             if not seated:
                 return
-            msg = self._append(r["id"], who, str(text)[:MAX_TEXT], [], 0)
+            msg = self._append(r["id"], who, str(text)[:MAX_TEXT], [], 0, source_message_id=source_message_id, health_check=health_check)
             self.hive.db.execute("UPDATE room_members SET delivered_seq = ? WHERE room_id = ? AND member = ?", (msg["seq"], r["id"], f"agent:{agent_id}"))
             self.hive.db.execute("UPDATE room_messages SET delivered_to = ? WHERE id = ?", (json.dumps([f"agent:{agent_id}"]), msg["id"]))
         self._event(r["id"], "message")

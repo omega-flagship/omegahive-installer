@@ -83,7 +83,7 @@ export function RequestUpdate({ apps, initial, onClose, onDone }: { apps: { id: 
     >
       <label className="block">
         <span className="text-[12px] text-ink-3">What to update</span>
-        <select value={target} onChange={(e) => setTarget(e.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-black/30 px-2.5 text-[13px] text-ink outline-none focus:border-line-2">
+        <select value={target} onChange={(e) => setTarget(e.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-shade/30 px-2.5 text-[13px] text-ink outline-none focus:border-line-2">
           <option value="platform">The platform</option>
           {apps.map((a) => (
             <option key={a.id} value={`program:${a.id}`}>
@@ -94,11 +94,11 @@ export function RequestUpdate({ apps, initial, onClose, onDone }: { apps: { id: 
       </label>
       <label className="block">
         <span className="text-[12px] text-ink-3">Why (shown to everyone who updates)</span>
-        <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} maxLength={UPDATE_NOTE_MAX} placeholder="The new release fixes the pin overlay; reviewed and signed off." className="mt-1 w-full resize-y rounded-xl border border-line bg-black/30 px-3 py-2 text-[13px] text-ink outline-none focus:border-line-2" />
+        <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} maxLength={UPDATE_NOTE_MAX} placeholder="The new release fixes the pin overlay; reviewed and signed off." className="mt-1 w-full resize-y rounded-xl border border-line bg-shade/30 px-3 py-2 text-[13px] text-ink outline-none focus:border-line-2" />
       </label>
       <label className="block">
         <span className="text-[12px] text-ink-3">Receipts (optional, one per line: review links, hashes)</span>
-        <textarea value={receipts} onChange={(e) => setReceipts(e.target.value)} rows={2} className="mt-1 w-full resize-y rounded-xl border border-line bg-black/30 px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-line-2" />
+        <textarea value={receipts} onChange={(e) => setReceipts(e.target.value)} rows={2} className="mt-1 w-full resize-y rounded-xl border border-line bg-shade/30 px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-line-2" />
       </label>
     </DecisionDialog>
   )

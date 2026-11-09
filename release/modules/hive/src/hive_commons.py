@@ -135,6 +135,7 @@ def goal_get(goal_id):
     if error:
         return error
     head = (f"HIVE-GOAL {result['id']} {result['status']} {result['title']} assignee={result.get('assignee')} "
+            f"swarm={result.get('swarm_id')} "
             f"binding={json.dumps(result.get('binding'))} binding_digest={result.get('binding_digest')}")
     if result.get("deadline_at"):
         head += f" deadline={result['deadline_at']}"

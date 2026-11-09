@@ -71,7 +71,7 @@ export function Limits() {
   }
 
   return (
-    <section aria-labelledby="limits-h" className="mb-6 rounded-[20px] border border-line bg-white/[0.025] p-4">
+    <section aria-labelledby="limits-h" className="mb-6 rounded-[20px] border border-line bg-tint/[0.025] p-4">
       <div className="mb-3 flex items-end justify-between gap-3">
         <div>
           <h2 id="limits-h" className="eyebrow">Spending limits</h2>
@@ -139,7 +139,7 @@ function LimitRow({ row, who, onSave, onRemove }: { row: BudgetRow; who: { kind:
             }}
           >
             <span className="text-ink-3">$</span>
-            <input autoFocus inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value.replace(/[^\d.]/g, ''))} aria-label="Limit in dollars" className="w-20 rounded-lg border border-line-2 bg-black/30 px-2 py-1 font-mono text-[13px] text-ink outline-none" />
+            <input autoFocus inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value.replace(/[^\d.]/g, ''))} aria-label="Limit in dollars" className="w-20 rounded-lg border border-line-2 bg-shade/30 px-2 py-1 font-mono text-[13px] text-ink outline-none" />
             <Button type="submit" variant="subtle" className="min-h-8 px-2.5 text-[12px]">
               Save
             </Button>
@@ -150,7 +150,7 @@ function LimitRow({ row, who, onSave, onRemove }: { row: BudgetRow; who: { kind:
           </button>
         )}
         {onRemove && !edit && (
-          <button onClick={onRemove} aria-label="Remove this limit" className="flex size-7 items-center justify-center rounded-lg text-ink-4 hover:bg-white/[0.06] hover:text-ink">
+          <button onClick={onRemove} aria-label="Remove this limit" className="flex size-7 items-center justify-center rounded-lg text-ink-4 hover:bg-tint/[0.06] hover:text-ink">
             <Icon name="x" size={13} />
           </button>
         )}
@@ -167,7 +167,7 @@ function AddLimit({ onSave, onCancel }: { onSave: (scope: string, period: string
   const [scope, setScope] = useState('hive')
   const [period, setPeriod] = useState('month')
   const [limit, setLimit] = useState('50')
-  const selectCls = 'min-h-10 rounded-xl border border-line bg-black/25 px-2.5 text-[13px] text-ink outline-none'
+  const selectCls = 'min-h-10 rounded-xl border border-line bg-shade/25 px-2.5 text-[13px] text-ink outline-none'
   return (
     <form
       onSubmit={(e) => {
@@ -175,7 +175,7 @@ function AddLimit({ onSave, onCancel }: { onSave: (scope: string, period: string
         const n = Number(limit)
         if (Number.isFinite(n) && n >= 0) onSave(scope, period, n)
       }}
-      className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-black/20 p-3"
+      className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-shade/20 p-3"
     >
       <select aria-label="Applies to" value={scope} onChange={(e) => setScope(e.target.value)} className={selectCls}>
         <option value="hive">Whole hive</option>
@@ -194,7 +194,7 @@ function AddLimit({ onSave, onCancel }: { onSave: (scope: string, period: string
         <option value="month">per month</option>
         <option value="total">in total</option>
       </select>
-      <div className="flex min-h-10 items-center rounded-xl border border-line bg-black/25 px-2.5">
+      <div className="flex min-h-10 items-center rounded-xl border border-line bg-shade/25 px-2.5">
         <span className="text-ink-3">$</span>
         <input inputMode="decimal" aria-label="Limit in dollars" value={limit} onChange={(e) => setLimit(e.target.value.replace(/[^\d.]/g, ''))} className="w-20 bg-transparent px-1 font-mono text-[13px] text-ink outline-none" />
       </div>

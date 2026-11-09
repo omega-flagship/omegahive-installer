@@ -242,7 +242,7 @@ def clone_or_bootstrap_workspace(url: str, path: pathlib.Path) -> None:
 def restore_generated_repo_files(core: pathlib.Path) -> None:
     if not (core / ".git").exists():
         return
-    for rel in ["modules/loader.metta"]:
+    for rel in ["memory/prompt.txt", "modules/loader.metta"]:
         run(["git", "restore", rel], cwd=core, check=False)
 
 
@@ -584,10 +584,8 @@ def write_root_run(workspace: pathlib.Path) -> None:
 
 def write_agent_prompt(workspace: pathlib.Path, core: pathlib.Path, agent_name: str) -> pathlib.Path:
     prompt_path = local_prompt_path(workspace)
-    # The shipped base prompt is src/base_prompt.txt (memory/ is runtime state and git-ignored). Prefer the
-    # committed copy, then the working file, then a legacy memory/prompt.txt.
     result = subprocess.run(
-        ["git", "show", "HEAD:src/base_prompt.txt"],
+        ["git", "show", "HEAD:memory/prompt.txt"],
         cwd=str(core),
         check=False,
         text=True,
@@ -597,9 +595,7 @@ def write_agent_prompt(workspace: pathlib.Path, core: pathlib.Path, agent_name: 
     if result.returncode == 0:
         text = result.stdout
     else:
-        source_prompt = core / "src" / "base_prompt.txt"
-        if not source_prompt.exists():
-            source_prompt = core / "memory" / "prompt.txt"
+        source_prompt = core / "memory" / "prompt.txt"
         text = source_prompt.read_text(encoding="utf-8")
     # Replace the default agent name only as a standalone word. OmegaClaw remains
     # the framework name and should not be rewritten.

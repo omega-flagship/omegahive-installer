@@ -2,6 +2,7 @@
 """Regression checks for the LLM provider membrane."""
 
 import importlib
+import json
 import pathlib
 import sys
 import tempfile
@@ -41,6 +42,78 @@ class FakeOpenAI:
 
 
 class LlmProviderTests(unittest.TestCase):
+    def test_original_and_decoded_batches_are_checked_through_the_consumed_sdk_boundary(self):
+        import helper
+        cases = [
+            'send "VALID_PREFIX"\nread-file "unterminated_quote_',
+            'send _quote_VALID_PREFIX_quote_\nread-file _quote_unterminated',
+            'send "VALID_PREFIX_quote_"',
+        ]
+        for provider_name, key in (("OpenRouter", "OPENROUTER_API_KEY"), ("ASIOne", "ASIONE_API_KEY")):
+            for source in cases:
+                with self.subTest(provider=provider_name, source=source), tempfile.TemporaryDirectory() as tmp:
+                    with mock.patch.dict('os.environ', {key: 'invented-test-key', 'OMEGACLAW_MEMORY_DIR': tmp}):
+                        module = self.load_module()
+                        response = SimpleNamespace(model='invented-model', usage=None, choices=[SimpleNamespace(
+                            finish_reason='stop', message=SimpleNamespace(content=source))])
+                        with mock.patch.object(FakeCompletions, 'create', return_value=response) as created:
+                            envelope = module.callProviderCommands(provider_name, 'invented system:-:-:-:invented input', 123)
+                        created.assert_called_once()
+                        self.assertEqual(helper.prepared_response_kind(envelope), 'format')
+                        commands = helper.prepared_response_commands(envelope)
+                        self.assertTrue(commands.startswith('((wait "LLM-FORMAT-ERROR'), commands)
+                        self.assertNotIn('VALID_PREFIX', commands)
+
+    def test_transport_failure_keeps_provider_backoff_through_the_consumed_sdk_boundary(self):
+        import helper
+        for provider_name, key in (("OpenRouter", "OPENROUTER_API_KEY"), ("ASIOne", "ASIONE_API_KEY")):
+            with self.subTest(provider=provider_name), tempfile.TemporaryDirectory() as tmp:
+                with mock.patch.dict('os.environ', {key: 'invented-test-key', 'OMEGACLAW_MEMORY_DIR': tmp}):
+                    module = self.load_module()
+                    with mock.patch.object(FakeCompletions, 'create', side_effect=RuntimeError('invented transport outage')) as created:
+                        envelope = module.callProviderCommands(provider_name, 'invented system:-:-:-:invented input', 123)
+                    created.assert_called_once()
+                    self.assertEqual(helper.prepared_response_kind(envelope), 'provider')
+                    self.assertEqual(helper.chosen_wait_seconds(helper.prepared_response_commands(envelope), 'provider', 1), 60)
+
+    def test_provider_results_keep_trusted_failure_provenance_separate_from_model_text(self):
+        import helper
+        for provider_name, key in (("OpenRouter", "OPENROUTER_API_KEY"), ("ASIOne", "ASIONE_API_KEY")):
+            for kind in ("complete", "incomplete", "empty", "malformed", "transport", "model-marker"):
+                with self.subTest(provider=provider_name, kind=kind), tempfile.TemporaryDirectory() as tmp:
+                    with mock.patch.dict('os.environ', {key: 'invented-test-key', 'OMEGACLAW_MEMORY_DIR': tmp}):
+                        module = self.load_module()
+                        text = 'send "valid prefix"\nread-file'
+                        if kind == 'empty': text = ''
+                        if kind == 'complete': text = 'send "complete response"'
+                        if kind == 'model-marker': text = 'wait "LLM-FORMAT-ERROR invented model text"'
+                        response = SimpleNamespace(model='invented-model', usage=None, choices=[SimpleNamespace(
+                            finish_reason='length' if kind == 'incomplete' else 'stop', message=SimpleNamespace(content=text))])
+                        behavior = {'side_effect': RuntimeError('invented transport outage')} if kind == 'transport' else {'return_value': response}
+                        with mock.patch.object(FakeCompletions, 'create', **behavior) as created:
+                            answer = module.callProvider(provider_name, 'invented system:-:-:-:invented input', 123)
+                        created.assert_called_once()  # prove this exact mocked SDK boundary was consumed
+                        if kind in ('incomplete', 'empty'):
+                            self.assertEqual(answer, 'wait "LLM-FORMAT-ERROR incomplete response"')
+                            self.assertEqual(answer.failure_kind, 'format')
+                        elif kind == 'transport':
+                            self.assertEqual(answer, 'wait "LLM-PROVIDER-ERROR retry after 60 seconds"')
+                            self.assertEqual(answer.failure_kind, 'provider')
+                        else:
+                            self.assertEqual(answer, text)
+                            self.assertIs(type(answer), str)  # model-authored marker text has NO trusted failure tag
+                        prepared = helper.prepare_model_response(str(answer), getattr(answer, 'failure_kind', 'normal'))
+                        self.assertEqual(set(json.loads(prepared)), {'commands', 'retry_kind'})
+                        retry_kind = helper.prepared_response_kind(prepared)
+                        commands = helper.prepared_response_commands(prepared)
+                        expected_kind = 'provider' if kind == 'transport' else 'format' if kind in ('incomplete', 'empty', 'malformed') else 'normal'
+                        self.assertEqual(retry_kind, expected_kind)
+                        expected_wait = 60 if kind == 'transport' else 2 if expected_kind == 'format' else 0 if kind == 'model-marker' else -1
+                        self.assertEqual(helper.chosen_wait_seconds(commands, retry_kind, 1), expected_wait)
+                        if expected_kind == 'format':
+                            self.assertTrue(commands.startswith('((wait "LLM-FORMAT-ERROR'), commands)
+                            self.assertNotIn('valid prefix', commands)
+
     def load_module(self):
         sys.modules.pop("lib_llm_ext", None)
         sys.modules.pop("energy", None)

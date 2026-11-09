@@ -1,5 +1,5 @@
 /**
- * r5: Codex's summary-contract correction (coordination/omegacode/patches/surface-summary-contract-r1.patch): the
+ * r5: Codex's summary-contract correction (surface-summary-contract-r1.patch): the
  * plain_summary parser limit is 2000 Unicode code points (not UTF-16 units), nonblank, without forbidden controls,
  * at most 8192 canonical UTF-8 bytes; and plain_summary is covered by the inner normalised digest too.
  */

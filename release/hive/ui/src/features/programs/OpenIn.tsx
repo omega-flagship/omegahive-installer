@@ -34,8 +34,8 @@ export function OpenIn({ onPick, className, iconOnly }: { onPick: (programId: st
         title="Open in a program"
         className={cx(
           'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl text-sm font-medium transition-colors',
-          iconOnly ? 'size-11 text-ink-2 hover:bg-white/[0.07] hover:text-ink' : 'border border-line bg-white/[0.06] px-4 text-ink hover:border-line-2 hover:bg-white/[0.1]',
-          open && 'bg-white/[0.09] text-ink',
+          iconOnly ? 'size-11 text-ink-2 hover:bg-tint/[0.07] hover:text-ink' : 'border border-line bg-tint/[0.06] px-4 text-ink hover:border-line-2 hover:bg-tint/[0.1]',
+          open && 'bg-tint/[0.09] text-ink',
         )}
       >
         <Icon name="apps" size={iconOnly ? 20 : 18} />
@@ -63,9 +63,9 @@ export function OpenIn({ onPick, className, iconOnly }: { onPick: (programId: st
                   key={p.id}
                   role="menuitem"
                   onClick={() => (setOpen(false), onPick(p.id))}
-                  className="flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left hover:bg-white/[0.07]"
+                  className="flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left hover:bg-tint/[0.07]"
                 >
-                  <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border border-line bg-white/[0.04] text-accent">
+                  <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border border-line bg-tint/[0.04] text-accent">
                     <Icon name={iconOr(p.icon, 'spark')} size={17} />
                   </span>
                   <span className="min-w-0">

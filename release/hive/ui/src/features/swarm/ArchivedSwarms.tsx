@@ -51,7 +51,7 @@ export function ArchivedSwarms() {
           </button>
         </p>
       )}
-      <ul className="overflow-hidden rounded-2xl border border-line bg-white/[0.02]">
+      <ul className="overflow-hidden rounded-2xl border border-line bg-tint/[0.02]">
         {list.map((s, i) => (
           <li key={s.id} className={i ? 'flex flex-wrap items-center gap-3 border-t border-line px-3 py-2.5' : 'flex flex-wrap items-center gap-3 px-3 py-2.5'}>
             <span className="size-3 shrink-0 rounded-full opacity-60" style={{ background: hsl(s.hue, 70, 60) }} aria-hidden="true" />

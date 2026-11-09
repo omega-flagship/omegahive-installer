@@ -1,5 +1,5 @@
 """Mind control, phase one: a team's controller runs child minds for one request (seam contracts r2.12, r2.12.1,
-r2.13 and r2.13.1, coordination/omegacode/, 2026-10-05).
+r2.13 and r2.13.1, 2026-10-05).
 
 - A person's instruction (POST /api/requests, a named signed-in admin) becomes a request in the team swarm with its own
   budget root, and a lease that same person issues in the same transaction: controller = the team's coordinator, scope
@@ -17,7 +17,8 @@ r2.13 and r2.13.1, coordination/omegacode/, 2026-10-05).
   recovery_needed.
 - Every write carries an operation_id, scoped to its caller. Only a success is recorded; a retry with the same
   canonical payload returns the original status and body byte for byte; the same id with another payload is 409.
-- Live spawning and resume stay off unless the operator sets HIVE_MIND_SPAWN=1 (Settings.mind_spawn).
+- Live spawning and resume require the original operator flag or the exact host-bound foundation Code exception;
+  an explicit operator-off value still refuses that exception.
 - A delegated Code capability (r2.13.1) is host-issued to a child, read/search/suggest only, on the origin task; its live
   status re-checks child, request, lease, the issuer's origin grant and the origin task on every use.
 - A copy_apply capability (linkage slice 3, PLATFORM_COPY_APPLY_AUTHORITY_ANSWER_20261007 §2) is host-issued to the
@@ -48,6 +49,7 @@ import time
 
 from .db import latest_stamp, new_id, now, parse_stamp
 from .limits_auto import dollars, to_micros
+from .cost_reservations import host_budget_snapshot, pending_micros
 
 log = logging.getLogger("hive")
 
@@ -185,7 +187,7 @@ class Minds:
         return out
 
     @staticmethod
-    def _template(e):
+    def _template(e, *, swarm_ids=None):
         if not isinstance(e, dict):
             raise ValueError("a template is an object")
         tid = e["template_id"]
@@ -213,7 +215,7 @@ class Minds:
         modes = e.get("lifecycle_modes", list(MODES))
         if not isinstance(modes, list) or not modes or not set(modes) <= set(MODES):
             raise ValueError(f"{tid}: lifecycle_modes are among {list(MODES)}")
-        teams = e.get("teams")
+        teams = e.get("teams", swarm_ids)
         if not isinstance(teams, list) or not teams or not all(isinstance(s, str) and s for s in teams):
             raise ValueError(f"{tid}: teams lists the swarms it is registered for")
         return {"template_id": tid, "harness": "native", "model_id": model, "role_id": role, "max_allocation_usd": float(ceiling),
@@ -225,15 +227,18 @@ class Minds:
         return {k: t[k] for k in ("template_id", "harness", "model_id", "role_id", "max_allocation_usd", "overridable",
                                   "controls", "lifecycle_modes")}
 
-    def registered(self, team_id):
-        return [t for t in self.templates.values() if team_id in t["teams"]]
+    def registered(self, team_id, *, exact=False):
+        def matches(t):
+            scopes = t["teams"]
+            return scopes == [team_id] if exact else team_id in scopes
+        return [t for t in self.templates.values() if matches(t)]
 
     # ---- authority -------------------------------------------------------------------------------
 
     def _team(self, team_id):
         row = self.db.one("SELECT * FROM swarms WHERE id = ?", (str(team_id or ""),))
         if row is None:
-            raise self.err(404, "not_found", f"no swarm {team_id}")
+            raise self.err(404, "not_found", "no such swarm")
         return row
 
     def _member(self, agent_id, swarm_id=None):
@@ -284,10 +289,11 @@ class Minds:
         'starting' (spawned or resumed, nothing withdrawn since), its request open, its lease live, its allocation not
         spent and spawning switched on. Anything else refuses the start (409 start_withdrawn)."""
         child = self._child(child_id)
+        self._foundation_limits(child["team_id"], child["controller_id"])
         reason = None
         if child["state"] != "starting":
             reason = f"the child is {child['state']}"
-        elif not self.hive.settings.mind_spawn:
+        elif not self._spawn_enabled(child["team_id"]):
             reason = "spawning is off"
         elif not self.request_open(self._request(child["request_id"])):
             reason = "the request is cancelled or finished"
@@ -422,6 +428,10 @@ class Minds:
         self.hive.require_open_swarm(to_swarm)
         if to_swarm == task["swarm_id"]:
             raise self._bad("to_swarm is the coordinator's swarm, not the task's own swarm")
+        foundation = getattr(self.hive, "foundation", None)
+        if foundation is not None:
+            # Refresh only this host-owned route before snapshots, never while the DB/mind admission lock is held.
+            foundation.prepare_request(to_swarm)
         if "code" not in self.hive.collab.services(to_swarm):
             raise self.err(403, "not_offered", "that swarm does not offer 'code'")
         controller = team.get("coordinator_id") if self._member(team.get("coordinator_id"), to_swarm) else None
@@ -430,6 +440,8 @@ class Minds:
         unknown = [t for t in lease_in["template_ids"] if t not in {x["template_id"] for x in self.registered(to_swarm)}]
         if unknown:
             raise self.err(422, "template_unknown", "templates not registered for that swarm", template_ids=unknown)
+        foundation_limits = self._foundation_request_limits(to_swarm, controller, data, until)
+        template_binding = canonical({t: self.templates.get(t) for t in lease_in["template_ids"]})
         limit = float(data["budget"]["limit_usd"])
         ceiling, _source = self.hive.budgets.request_ceiling(to_swarm)   # the team's day once the hive has a total
         if limit > ceiling + 1e-9:
@@ -444,8 +456,40 @@ class Minds:
         context = {"origin": dict(origin), "instruction": {"text": text, "digest": sha(text)}}
         try:
             with self.db.transaction():
+                replay = self._replay(principal, op, digest)
+                if replay is not None:
+                    if bind is not None:
+                        bind(json.loads(replay[1]))
+                    return replay
+                current_foundation = self._foundation_request_limits(to_swarm, controller, data, until)
+                if canonical(current_foundation) != canonical(foundation_limits):
+                    raise self.err(409, "spawn_binding_changed", "the host-bound Code instruction binding changed")
+                if foundation_limits is not None:
+                    current_team = self._team(to_swarm)
+                    self.hive.require_open_swarm(to_swarm)
+                    current_controller = current_team.get("coordinator_id")
+                    if (current_controller != controller or not self._member(controller, to_swarm) or
+                            canonical({t: self.templates.get(t) for t in lease_in["template_ids"]}) != template_binding):
+                        raise self.err(409, "spawn_binding_changed", "the host-bound Code instruction binding changed")
+                    current_task = self.db.one("SELECT * FROM goals WHERE id = ?", (origin["task_id"],))
+                    if (not current_task or current_task["created_by"] != principal or
+                            current_task["status"] not in ("open", "claimed", "waiting") or
+                            self._origin_grant(origin["task_id"], principal) is None):
+                        raise self.err(403, "origin_not_held", "the instruction's original task grant changed")
+                    self._check_controller_allocation(controller, limit)
                 binding = {"request_id": rid, "kind": "code", "from_swarm": task["swarm_id"], "subject_digest": None}
-                receiving = self.hive.goals._create_record(to_swarm, data["title"], "", 0.5, created_by=f"request:{rid}",
+                # Only where to start, never the instruction itself: goal reads are authorized by the receiving swarm alone,
+                # the instruction stays behind request visibility (context_refs, digest-bound, read via code-mind-work).
+                engine = getattr(self.hive, "code_controller", None)
+                engine = engine if engine is not None and engine.enabled() else None
+                if engine is not None:      # the MeTTa coding controller holds the goal; no controller mind is woken
+                    brief = engine.receiving_brief(rid, to_swarm)
+                else:
+                    # The controller-mind path, kept as an unpatched fallback (engine off). Jon: the 8e8da86e
+                    # "set-energy-mode focused" line patched a symptom; the engine is the fix, so it is gone.
+                    brief = (f"Code request {rid} for your team {to_swarm}. Read the person's instruction (authoritative) "
+                             f"with: code-mind-work {rid} {to_swarm} .")
+                receiving = self.hive.goals._create_record(to_swarm, data["title"], brief, 0.5, created_by=f"request:{rid}",
                                                            binding=binding, assignee=controller, emit=False)
                 row = {"id": rid, "kind": "code", "title": data["title"], "from_swarm": task["swarm_id"], "from_goal": task["id"],
                        "from_principal": principal, "to_swarm": to_swarm, "receiving_goal": receiving["id"], "subject": None,
@@ -471,9 +515,31 @@ class Minds:
                 bind(json.loads(out[1]))
             return out
         self.hive.goals._emit(receiving["id"])
-        await self.hive.goals.announce(receiving)
+        if engine is not None:
+            engine.adopt(rid)
+        else:
+            await self.hive.goals.announce(receiving)
         self.hive.events.publish("request.updated", request=self.hive.collab.request_view(self._request(rid)))
         return out
+
+    def helper_instruction(self, agent):
+        """GET /api/agent/code/helper-instruction (skill code-helper-instruction): a request helper reads ITS OWN request's
+        instruction. There is no request parameter: the request is the one mind_children binds this child to, so a
+        helper can never name, or read, another request. Any other mind (a controller included) is refused."""
+        child = self.db.one("SELECT * FROM mind_children WHERE id = ?", (agent["id"],))
+        if child is None:
+            raise self.err(403, "not_request_helper", "only a request's own helper reads its instruction this way")
+        req = self._request(child["request_id"])
+        if req is None:
+            raise self.err(404, "not_found", "this helper's request is gone")
+        if not self.request_open(req):
+            raise self.err(409, "request_closed", "this helper's request is cancelled or finished")
+        context = json.loads(req["context_refs"] or "{}")
+        instruction, origin = context.get("instruction") or {}, context.get("origin") or {}
+        return {"schema": "hive.code-helper-instruction/1", "request_id": req["id"], "title": req["title"],
+                "workspace_id": origin.get("workspace_id"), "classification": "UNTRUSTED_DATA",
+                "instruction": {"text": instruction.get("text"), "digest": instruction.get("digest")},
+                "authority": "none: a person's words to act on within the proposal path, never a grant"}
 
     def _origin_grant(self, task_id, principal):
         return self.db.one("SELECT * FROM goal_grants WHERE goal_id = ? AND principal = ? AND revoked_at IS NULL AND expires_at > ? "
@@ -515,7 +581,19 @@ class Minds:
         but not narrowed to a live lease, because a person composes the request that creates the lease. The caller has
         already checked visibility (operator/check_path); a team that does not exist is 404 here too. Writes nothing."""
         team = self._team(swarm_id)
-        return {"to_swarm": team["id"], "templates": [self.template_view(t) for t in self.registered(team["id"])]}
+        out = {"to_swarm": team["id"], "templates": [self.template_view(t) for t in self.registered(team["id"])]}
+        # The limits a request to this team is admitted within (the foundation Code team's are host-bound: see
+        # _foundation_request_limits), so a person's request is composed inside them rather than refused 403. Absent for
+        # a generic team, and absent while the foundation team is not ready (its own refusal then stands).
+        try:
+            limits = self._foundation_limits(team["id"])
+        except Exception:
+            limits = None
+        if limits is not None:
+            out["request_limits"] = {"limit_usd": float(limits["request_usd"]), "max_children": int(limits["max_children"]),
+                                     "lifetime_seconds": int(limits["lifetime_seconds"]),
+                                     "template_ids": list(limits["template_ids"])}
+        return out
 
     # ---- r2.12 §2: spawn ---------------------------------------------------------------------------
 
@@ -566,7 +644,62 @@ class Minds:
             raise self._bad(f"allocation_usd is a number more than 0 and at most {MAX_ALLOCATION_USD:g}")
         return limits
 
-    async def spawn(self, agent, data):
+    def _spawn_enabled(self, team_id):
+        settings = self.hive.settings
+        if getattr(settings, "mind_spawn_operator_off", False):
+            return False
+        if settings.mind_spawn:
+            return True
+        foundation = getattr(self.hive, "foundation", None)
+        return bool(foundation is not None and foundation.spawn_enabled(team_id))
+
+    def _foundation_limits(self, team_id, controller_id=None):
+        foundation = getattr(self.hive, "foundation", None)
+        return foundation.admission_limits(team_id, controller_id) if foundation is not None else None
+
+    def _foundation_request_limits(self, team_id, controller_id, data, until):
+        limits = self._foundation_limits(team_id, controller_id)
+        if limits is None:
+            return None
+        lease = data["lease"]
+        if (to_micros(data["budget"]["limit_usd"], up=True) > to_micros(limits["request_usd"]) or
+                lease["max_children"] > limits["max_children"] or
+                not set(lease["template_ids"]) <= set(limits["template_ids"]) or
+                until > _utc_now() + datetime.timedelta(seconds=limits["lifetime_seconds"])):
+            raise self.err(403, "foundation_limits", "the host-bound Code request exceeds its person-selected limits")
+        return limits
+
+    def _foundation_spawn_limits(self, controller_id, body, req, lease):
+        limits = self._foundation_limits(body["team_id"], controller_id)
+        if limits is None:
+            return None
+        until = parse_time(lease["until"])
+        if (to_micros(body["allocation_usd"], up=True) > to_micros(limits["child_usd"]) or
+                to_micros(req["limit_usd"], up=True) > to_micros(limits["request_usd"]) or
+                lease["max_children"] > limits["max_children"] or
+                body["template_id"] not in limits["template_ids"] or
+                not set(json.loads(lease["template_ids"])) <= set(limits["template_ids"]) or
+                until is None or until > _utc_now() + datetime.timedelta(seconds=limits["lifetime_seconds"])):
+            raise self.err(403, "foundation_limits", "the host-bound Code child exceeds its person-selected limits")
+        # A new lease does not reset the request's lifetime child count.
+        children = self.db.one("SELECT COUNT(*) AS n FROM mind_children WHERE request_id = ?", (req["id"],))["n"]
+        if children >= limits["max_children"]:
+            raise self.err(403, "lease_required", "the host-bound Code request has used its child count", reason="max_children")
+        return limits
+
+    def _check_controller_allocation(self, controller_id, allocation):
+        """Inside the shared reservation transaction, before the new child is inserted."""
+        rows = host_budget_snapshot(self.hive, controller_id)
+        if not rows:
+            raise self.err(402, "spend_limit", "the controller has no governing budget")
+        for label, limit, spent in rows:
+            held = pending_micros(self.db, label)
+            remaining = max(0, to_micros(limit) - to_micros(spent, up=True) - held)
+            if to_micros(allocation, up=True) > remaining:
+                raise self.err(402, "spend_limit", "the controller's aggregate budget has no room for this allocation",
+                               scope=label, remaining_usd=dollars(remaining))
+
+    async def spawn(self, agent, data, acting=None):
         op = self._operation(data if isinstance(data, dict) else {})
         body = self._spawn_canonical(data)
         scope, digest = f"agent:{agent['id']}", sha(canonical({"route": "spawn", "body": body}))
@@ -574,13 +707,14 @@ class Minds:
         if replay is not None:
             return replay
         limits = self._spawn_validate(body)
-        if not self.hive.settings.mind_spawn:
+        if not self._spawn_enabled(body["team_id"]):
             raise self.err(403, "spawn_disabled", "child spawning is off on this hive (HIVE_MIND_SPAWN); the operator turns it on")
         team = self._require_controller(agent, body["team_id"])
         self.hive.require_open_swarm(team["id"])
         template = self.templates.get(body["template_id"])
         if template is None or team["id"] not in template["teams"]:
             raise self.err(404, "not_found", "no such template registered for this swarm")
+        template_binding, team_binding = canonical(template), canonical(team)
         req = self._request(body["request_id"])
         if req is None:
             raise self.err(404, "not_found", f"no request {body['request_id']}")
@@ -607,9 +741,12 @@ class Minds:
         if allocation > req["limit_usd"] - req["allocated_usd"] + 1e-9:
             raise self.err(402, "spend_limit", f"the request has ${req['limit_usd'] - req['allocated_usd']:.2f} left",
                            remaining_usd=round(req["limit_usd"] - req["allocated_usd"], 6))
+        foundation_limits = self._foundation_spawn_limits(agent["id"], body, req, lease)
         model = body["model_id"] or template["model_id"]
         shared = json.loads(team.get("shared_with") or "[]")
-        row, token, role = self.hive.new_agent_row(f"{template['template_id']} {secrets.token_hex(2)}", "omega", team["id"], model, "",
+        foundation = getattr(self.hive, "foundation", None)
+        persona = getattr(foundation, "child_persona", lambda _t: None)(template) or ""
+        row, token, role = self.hive.new_agent_row(f"{template['template_id']} {secrets.token_hex(2)}", "omega", team["id"], model, persona,
                                                    None, allocation, None, template["role_id"], owner=team.get("owner"),
                                                    visibility=team.get("visibility") or "private", shared_with=shared)
         child_id, res_id, at = row["id"], new_id("res"), now()
@@ -617,9 +754,35 @@ class Minds:
         def commit_and_start():
             # The rule (stand-in r9): the new mind's lock (taken before its row exists) and the team swarm's fence, held
             # from the insert through finish_agent and the start, all on this one worker thread (the lock is per thread).
-            with self.hive._mind_lock(child_id), self.hive.swarm_membership(team["id"]):
+            # roles.lock first (the order Roles.apply and foundation._ensure_team use: roles, then swarm, then DB), so the
+            # child's role rules are written in the same transaction as its row
+            roles = getattr(self.hive, "roles", None)
+            with (roles.lock if roles is not None else contextlib.nullcontext()), self.hive._mind_lock(child_id), \
+                    self.hive.swarm_membership(team["id"]):
                 try:
                     with self.db.transaction():
+                        # A concurrent same-key success replays before consuming budget a second time.
+                        replay = self._replay(scope, op, digest)
+                        if replay is not None:
+                            return None, replay
+                        current_team = self._require_controller(self.hive.agent(agent["id"]), body["team_id"])
+                        self.hive.require_open_swarm(current_team["id"])
+                        if (canonical(current_team) != team_binding or
+                                canonical(self.templates.get(body["template_id"])) != template_binding):
+                            raise self.err(409, "spawn_binding_changed", "the swarm or registered template changed during admission")
+                        if not self._spawn_enabled(current_team["id"]):
+                            raise self.err(403, "spawn_disabled", "child spawning is off for this swarm")
+                        current_req, current_lease = self._request(req["id"]), self._lease(lease["id"])
+                        if not self.request_open(current_req) or not self.lease_live(current_lease):
+                            raise self.err(409, "request_closed", "the request or its lease closed")
+                        if (current_lease["controller_id"] != agent["id"] or current_lease["team_id"] != current_team["id"] or
+                                current_lease["request_id"] != current_req["id"] or
+                                body["template_id"] not in json.loads(current_lease["template_ids"])):
+                            raise self.err(403, "lease_required", "the original lease no longer admits this child")
+                        current_foundation = self._foundation_spawn_limits(agent["id"], body, current_req, current_lease)
+                        if canonical(current_foundation) != canonical(foundation_limits):
+                            raise self.err(409, "spawn_binding_changed", "the host-bound Code child binding changed")
+                        self._check_controller_allocation(agent["id"], allocation)
                         for retired in self.db.all("SELECT id FROM mind_children WHERE request_id = ? AND state = 'retired'", (req["id"],)):
                             self._rebalance(retired["id"])   # a late charge on a retired sibling is held before anything new is
                         cur = self.db.execute("UPDATE requests SET allocated_usd = allocated_usd + ? WHERE id = ? AND cancelled_at IS NULL "
@@ -631,10 +794,14 @@ class Minds:
                         if not self.request_open(self._request(req["id"])) or not self.lease_live(self._lease(lease["id"])):
                             raise self.err(409, "request_closed", "the request or its lease closed")
                         spawned = self.db.one("SELECT COUNT(*) AS n FROM mind_children WHERE lease_id = ?", (lease["id"],))["n"]
-                        if spawned >= lease["max_children"]:
-                            raise self.err(403, "lease_required", f"this lease admits {lease['max_children']} children and all are spawned",
+                        if spawned >= current_lease["max_children"]:
+                            raise self.err(403, "lease_required", f"this lease admits {current_lease['max_children']} children and all are spawned",
                                            reason="max_children")
                         self.hive.insert_into_open_swarm("agents", row, team["id"])     # archived-swarm condition, in this write
+                        # A request helper's proposal-only rules come with its role (template role_id), written here in
+                        # the spawn's own write, so the child never exists without them (no window before finish_agent)
+                        if template.get("role_id") and roles is not None:
+                            roles._apply_rules(child_id, lease["issued_by"])
                         seq = self.db.one("SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM mind_children")["n"]
                         self.db.insert("mind_children", {"id": child_id, "seq": seq, "controller_id": agent["id"], "team_id": team["id"],
                                                          "request_id": req["id"], "lease_id": lease["id"], "template_id": template["template_id"],
@@ -645,7 +812,9 @@ class Minds:
                         self.db.insert("mind_reservations", {"id": res_id, "child_id": child_id, "request_id": req["id"],
                                                              "budget_root": req["budget_root"], "allocated_usd": allocation,
                                                              "released_usd": None, "released_at": None, "created_at": at})
-                        message = self._prompt_row(child_id, 1, "queued", body["initial_prompt"], f"agent:{agent['id']}")
+                        # acting: who performed it for the audit (the host coding controller acts with the lease's
+                        # controller authority, recorded as itself); the authority and idempotency scope stay the controller's
+                        message = self._prompt_row(child_id, 1, "queued", body["initial_prompt"], acting or f"agent:{agent['id']}")
                         out = self._record(scope, op, digest, 201, {
                             "child_id": child_id, "team_id": team["id"], "request_id": req["id"], "template_id": template["template_id"],
                             "model_id": model, "reservation_id": res_id, "prompt_rev": 1, "state": "starting"})
@@ -680,7 +849,7 @@ class Minds:
 
     # ---- r2.12 §3: prompt ----------------------------------------------------------------------------
 
-    async def prompt(self, agent, child_id, data):
+    async def prompt(self, agent, child_id, data, acting=None):
         op = self._operation(data if isinstance(data, dict) else {})
         self._fields(data, ("operation_id", "mode", "text", "expected_rev"))
         body = {k: data.get(k) for k in ("operation_id", "mode", "text", "expected_rev")}
@@ -714,7 +883,7 @@ class Minds:
                 if cur.rowcount != 1:
                     current = self._child(child_id)["prompt_rev"]
                     raise self.err(409, "stale_revision", f"the current revision is {current}", current_rev=current)
-                message = self._prompt_row(child_id, rev, body["mode"], body["text"], f"agent:{agent['id']}")
+                message = self._prompt_row(child_id, rev, body["mode"], body["text"], acting or f"agent:{agent['id']}")
                 out = self._record(scope, op, digest, 202, {"prompt_rev": rev, "delivery": "accepted"})
         except sqlite3.IntegrityError:
             return self._raced(scope, op, digest)
@@ -753,7 +922,7 @@ class Minds:
 
     # ---- r2.12 §4: control (agents and people share one path) ---------------------------------------
 
-    async def control(self, agent, child_id, data):
+    async def control(self, agent, child_id, data, acting=None):
         op = self._operation(data if isinstance(data, dict) else {})
         self._fields(data, ("operation_id", "action"))
         body = {"operation_id": op, "action": data.get("action")}
@@ -771,13 +940,14 @@ class Minds:
         if action not in template["controls"]:
             raise self.err(422, "unsupported_control", f"this template does not support {action}")
         if action == "resume":    # gaining authority again: a live lease, an open request, and spawning switched on
+            self._foundation_limits(child["team_id"], child["controller_id"])
             if not self.lease_live(self._lease(child["lease_id"])):
                 raise self.err(403, "lease_required", "the lease this child runs under is no longer live")
             if not self.request_open(self._request(child["request_id"])):
                 raise self.err(409, "request_closed", "this child's request is cancelled or finished")
-            if not self.hive.settings.mind_spawn:
+            if not self._spawn_enabled(child["team_id"]):
                 raise self.err(403, "spawn_disabled", "child spawning is off on this hive (HIVE_MIND_SPAWN)")
-        return await self._apply(child, action, f"agent:{agent['id']}", scope, op, digest)
+        return await self._apply(child, action, acting or f"agent:{agent['id']}", scope, op, digest)
 
     async def team_control(self, principal, admin, team_id, child_id, data):
         """POST /api/teams/{team}/children/{child}/control: an admin person, or the person who issued the request's lease.
@@ -1024,7 +1194,26 @@ class Minds:
 
     # ---- r2.12 §5: status (and the human team projection) --------------------------------------------
 
-    def child_view(self, row, text=False):
+    @staticmethod
+    def proposal_ref(goal):
+        """A request child's retained proposal id, as it submitted it on its own request subgoal: a bounded opaque
+        lookup hint for the controller, never authority (code-test-prepare re-authenticates the retained proposal).
+        Read from the structured result (hive-goal-propose g {"proposal_id": ...}), else the one suggestion id the
+        result names; None when there is none or the result names several."""
+        try:
+            data = json.loads(goal["result_data"]) if goal.get("result_data") else {}
+        except ValueError:
+            data = {}
+        data = data if isinstance(data, dict) else {}
+        proposal = data.get("proposal") if isinstance(data.get("proposal"), dict) else {}
+        for value in (proposal.get("proposal_id"), proposal.get("suggestion_id"), data.get("proposal_id")):
+            if isinstance(value, str) and SUGGESTION_ID.fullmatch(value):
+                return value
+        texts = [goal.get("result") or ""] + [v for v in (proposal.get("text"),) if isinstance(v, str)]
+        found = {m for t in texts for m in re.findall(r"(?<![0-9A-Za-z_])suggestion_[0-9a-f]{32}(?![0-9A-Za-z_])", t[:8192])}
+        return found.pop() if len(found) == 1 else None
+
+    def child_view(self, row, text=False, controller=False):
         agent = self.db.one("SELECT last_active_at FROM agents WHERE id = ?", (row["id"],)) or {}
         spent = float((self.db.one("SELECT spent_usd FROM agents WHERE id = ?", (row["id"],)) or {}).get("spent_usd") or 0)
         res = self.db.one("SELECT * FROM mind_reservations WHERE child_id = ?", (row["id"],))
@@ -1038,7 +1227,9 @@ class Minds:
         controls = [{"action": c["action"], "requested_at": c["requested_at"], "observed": json.loads(c["observed"]) if c["observed"] else None,
                      "by": c["by"]} for c in self.db.all("SELECT * FROM mind_controls WHERE child_id = ? ORDER BY requested_at, rowid", (row["id"],))]
         results = [{"goal_id": g["id"], "status": g["status"],
-                    "result_digest": sha(canonical(json.loads(g["result_data"]) if g["result_data"] else g["result"] or ""))}
+                    "result_digest": sha(canonical(json.loads(g["result_data"]) if g["result_data"] else g["result"] or "")),
+                    # controller-only (status/scan): the child's result reaches its controller here, not by a message
+                    **({"proposal_ref": self.proposal_ref(g) if g["status"] == "done" else None} if controller else {})}
                    for g in self._request_work(row) if g["status"] in ("done", "failed", "submitted")]
         allocated = float(res["allocated_usd"]) if res else 0.0
         remaining = 0.0 if not res or res["released_at"] else max(0.0, allocated - spent - self._held(row["id"]))
@@ -1076,11 +1267,11 @@ class Minds:
         except (ValueError, KeyError, TypeError):
             raise self.err(400, "bad_cursor", "that cursor is not for this caller and selector, or it expired") from None
 
-    def _page(self, where, params, caller, selector, value, cursor, text=lambda row: False):
+    def _page(self, where, params, caller, selector, value, cursor, text=lambda row: False, controller=False):
         after = self._after(cursor, caller, selector, value)
         rows = self.db.all(f"SELECT * FROM mind_children WHERE {where} AND seq > ? ORDER BY seq LIMIT ?", (*params, after, PAGE + 1))
         page = rows[:PAGE]
-        return {"children": [self.child_view(r, text(r)) for r in page], "snapshot_at": now(),
+        return {"children": [self.child_view(r, text(r), controller=controller) for r in page], "snapshot_at": now(),
                 "next_cursor": self._cursor(caller, selector, value, page[-1]["seq"]) if len(rows) > PAGE else None}
 
     def status(self, agent, child_id=None, team_id=None, request_id=None, cursor=None):
@@ -1100,7 +1291,8 @@ class Minds:
             if not leased and agent["id"] not in self.controllers(self._team(req["to_swarm"])):
                 raise self.err(403, "not_controller", "only a controller of this request reads its children")
         column = {"child_id": "id", "team_id": "team_id", "request_id": "request_id"}[selector]
-        return self._page(f"{column} = ? AND controller_id = ?", (value, agent["id"]), f"agent:{agent['id']}", selector, value, cursor)
+        return self._page(f"{column} = ? AND controller_id = ?", (value, agent["id"]), f"agent:{agent['id']}", selector, value, cursor,
+                          controller=True)
 
     def team_children(self, viewer, team_id, cursor=None):
         """GET /api/teams/{team}/children: every child of the team (the route already checked the person sees the team).
@@ -1509,7 +1701,7 @@ class Minds:
         raise self.err(403, "consent_required", "the request's person has not accepted and confirmed this exact proposal",
                        reason="declined" if declined and declined["decision"] == "decline" else "no_consent")
 
-    def issue_copy_apply(self, agent, member_token, data):
+    def issue_copy_apply(self, agent, member_token, data, by="host:minds"):
         """POST /api/agent/code/capability {service, copy_apply}: the request's controller asks for the one-proposal
         copy capability. Idempotent under mind_operations scope capply:<controller_id>: a replay returns the same binding
         with a freshly signed token (a new capability id; the binding's earlier capability is revoked, so one lives)."""
@@ -1546,7 +1738,7 @@ class Minds:
             issued = services.issue(svc["id"], actor=agent["id"], kind="agent", task_id=binding["origin"]["task_id"],
                                     swarm_id=task["swarm_id"], repository_id=binding["origin"]["repository_id"],
                                     actions=["proposal-apply"], max_runs=0, max_runtime_seconds=0, member_token=member_token,
-                                    grant_id=lease["grant_id"], by="host:minds", copy_apply=binding, exp=exp,
+                                    grant_id=lease["grant_id"], by=by, copy_apply=binding, exp=exp,
                                     copy_apply_consent={"consent_id": consent["id"], "accepted_at": consent["created_at"]})
             self.db.execute("INSERT OR REPLACE INTO copy_apply_bindings VALUES (?, ?, ?, ?, ?, ?, ?)",
                             (*key, agent["id"], op, issued["claims"]["id"], held["created_at"] if held else now()))

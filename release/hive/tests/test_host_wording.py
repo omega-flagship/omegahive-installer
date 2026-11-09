@@ -1,6 +1,6 @@
 """Host wording (host-wording r1): the hive's own server text calls a swarm a swarm and work motivations and tasks.
 
-the owner's standing rulings: no Goals/Boards (work is Motivations and Tasks), and a group of minds is a swarm, never a team.
+Jon's standing rulings: no Goals/Boards (work is Motivations and Tasks), and a group of minds is a swarm, never a team.
 The UI said so in uifix-r1; this guard holds the host's shown text to the same words, as test_bench_names does for "dot".
 
 - "team", "teams", "teammate(s)", "subgoal(s)": no string the host can show (every string constant in hive/**/*.py

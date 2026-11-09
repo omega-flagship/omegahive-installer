@@ -1,5 +1,5 @@
 /**
- * The personal mind in the other looks (the owner, 2026-10-08: "use whatever is tasteful for each UI"), on the same props
+ * The personal mind in the other looks (Jon, 2026-10-08: "use whatever is tasteful for each UI"), on the same props
  * and data as the Classic glass figure:
  * - Cosmos: a constellation, a standing figure in points of light (mock-up personal-mind/cosmos.html). Its outline is
  *   sampled from the same body path as the glass figure; the dust around it is seeded, so it never moves between renders.

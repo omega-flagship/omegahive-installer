@@ -98,6 +98,19 @@ jobs:
             --commit "$R" --tree "$TREE" --inputs /home/$HIVE_USER/stage/inputs \
             --bundle /home/$HIVE_USER/bundle --release-id "ci-x86-${R:0:12}"
 
+      - name: Pack the newcomer download from this bundle (test kit for local user testing)
+        run: |
+          # The release's own deploy/linux/installer.sh template, bound to this exact bundle; nothing else changes.
+          mkdir -p /tmp/kit
+          sudo python3 -I -B ci/linux-x86/pack_kit.py --bundle /home/$HIVE_USER/bundle \
+            --template release/deploy/linux/installer.sh --out /tmp/kit/omegahive-linux.sh
+          sudo chown -R "$(id -u):$(id -g)" /tmp/kit && chmod 0644 /tmp/kit/*
+          cd /tmp/kit && sha256sum -c omegahive-linux.sh.sha256 && ls -la
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omegahive-linux-kit
+          path: /tmp/kit/
+
       - name: Install as the fresh user (the real installer)
         run: |
           set +e
@@ -198,6 +211,7 @@ jobs:
         run: |
           sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
           printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
+          printf 'Defaults!/usr/bin/apt-get env_keep += "DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l"\n' | sudo tee -a /etc/sudoers.d/90-omegahive-ci >/dev/null
           sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
       - name: Check and stage the download
         run: |
@@ -285,6 +299,7 @@ jobs:
         run: |
           sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
           printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
+          printf 'Defaults!/usr/bin/apt-get env_keep += "DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l"\n' | sudo tee -a /etc/sudoers.d/90-omegahive-ci >/dev/null
           sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
       - name: Check and stage the r13 download; make swi-prolog.org unreachable (no seeding)
         run: |
@@ -368,6 +383,7 @@ jobs:
         run: |
           sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
           printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
+          printf 'Defaults!/usr/bin/apt-get env_keep += "DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l"\n' | sudo tee -a /etc/sudoers.d/90-omegahive-ci >/dev/null
           sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
       - name: Check and stage the r13 download; make swi-prolog.org unreachable (no seeding)
         run: |
@@ -492,7 +508,8 @@ jobs:
     # The newcomer's journey after install, in a real browser: the tester guide's First Light (section 5), OmegaAssist
     # (section 6) and Studio if there is a way in. Same install and sign-in as the kit job. No AI key, ever: where a step
     # needs one, the walk takes the page's own Not now / Later and records what the page says. Test tooling only.
-    if: github.event_name != 'pull_request'
+    # Runs on the test kit the install job packed from this branch's release, so the journey proves the version testers get.
+    needs: install
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     env:
@@ -503,16 +520,16 @@ jobs:
         run: |
           sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
           printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
+          printf 'Defaults!/usr/bin/apt-get env_keep += "DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l"\n' | sudo tee -a /etc/sudoers.d/90-omegahive-ci >/dev/null
           sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
-      - name: Check and stage the download
+      - uses: actions/download-artifact@v4
+        with:
+          name: omegahive-linux-kit
+          path: /tmp/kit
+      - name: Check and stage the download (the test kit from the install job)
         run: |
-          cd ci/kit && sha256sum -c omegahive-linux-r13.sh.sha256
-          sudo install -o "$HIVE_USER" -m 0600 omegahive-linux-r13.sh /home/$HIVE_USER/omegahive-linux.sh
-          # r13 carries the SWI-Prolog source: the whole tester journey with swi-prolog.org unreachable, nothing seeded.
-          printf '0.0.0.0 www.swi-prolog.org download.swi-prolog.org swi-prolog.org\n:: www.swi-prolog.org download.swi-prolog.org swi-prolog.org\n' | sudo tee -a /etc/hosts >/dev/null
-          ! curl -s -m 5 -o /dev/null https://www.swi-prolog.org/ && echo "swi-prolog.org is unreachable from this runner"
-        env:
-          GH_TOKEN: ${{ github.token }}
+          cd /tmp/kit && sha256sum -c omegahive-linux.sh.sha256
+          sudo install -o "$HIVE_USER" -m 0600 omegahive-linux.sh /home/$HIVE_USER/omegahive-linux.sh
       - name: Run the installer as the newcomer (sh ~/omegahive-linux.sh)
         run: |
           set +e

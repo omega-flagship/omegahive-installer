@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextvars
 import datetime
 import hashlib
 import hmac
@@ -29,9 +30,19 @@ import time
 
 from ..spaces import sexpr
 from .db import new_id, now
+from .code_mind_proof import prove as code_mind_proof, validate_inputs as validate_code_mind_proof_inputs
 from .result_schema import validate as schema_errors
 
 log = logging.getLogger("omegahive.mcp")
+# Session onboarding R2.7 §V: set while a restricted (mixed-context) bridged credential's call runs, so every policy check
+# inside it takes the non-filing path (Policy.enforce_read_only).
+_RESTRICTED = contextvars.ContextVar("omegahive_mcp_restricted", default=False)
+MIGRATION_SCHEMA = {
+    "name": "hive_migrate_retire_legacy",
+    "description": "Migration only (Dot and Surface): retire your own old member credential once this session is verified. "
+                   "op retire, then confirm after hive_whoami answers again; rollback restores the old one.",
+    "inputSchema": {"type": "object", "properties": {"op": {"type": "string", "enum": ["retire", "confirm", "rollback"]}},
+                    "required": ["op"], "additionalProperties": False}}
 
 HARNESSES = {
     "claude-code": "Claude Code",
@@ -118,6 +129,10 @@ _TO = {"type": "object", "properties": {"kind": {"type": "string", "enum": ["ser
 # The read tools' schemas are kept exactly equal to the shapes HiveConnect's draft client pins (draft_client.py READ_SCHEMAS);
 # limits that schema cannot carry are enforced in code (see _check_args) and published in hive/MCP_S3.md.
 TOOLS = [
+    {"name": "hive_code_mind_proof", "description": "Check a synthetic claimed task using this member: fixed read and host candidate denial; metadata only. Issues a short read capability; no model work.",
+     "inputSchema": _props({k: {"type": "string", "pattern": "^[A-Za-z0-9_~-]{1,200}$"}
+                            for k in ("task_id", "repository_id", "workspace_id", "suggestion_id")},
+                           ["task_id", "repository_id", "workspace_id", "suggestion_id"])},
     {"name": "hive_whoami", "description": "Who you are in the hive: your name, swarm, role and the instructions your role gives you. Read this first.",
      "inputSchema": _props()},
     {"name": "hive_inbox", "description": "New messages for you (from people and minds), after a cursor. Pass the highest seq you have seen as 'after'.",
@@ -240,7 +255,7 @@ def studio_op_ids(body):
         return None
     return ops
 # the native skill each tool is decided under (r2.4 item 9); None = no native skill, nothing to decide
-POLICY = {"hive_whoami": None, "hive_inbox": None, "hive_send": "send", "hive_goals": "hive-goals", "hive_goal_claim": "hive-goal-claim",
+POLICY = {"hive_code_mind_proof": None, "hive_whoami": None, "hive_inbox": None, "hive_send": "send", "hive_goals": "hive-goals", "hive_goal_claim": "hive-goal-claim",
           "hive_goal_create": "hive-goal-create", "hive_goal_get": "hive-goal-get", "hive_goal_heartbeat": "hive-goal-heartbeat",
           "hive_goal_cancel_ack": "hive-goal-cancel-ack", "hive_exhibit_read": "hive-shared", "hive_artifact_read": "hive-revision-read",
           "hive_revision_read": "hive-revision-read", "hive_request": "hive-request", "hive_capabilities": "hive-capabilities",
@@ -377,7 +392,7 @@ class Harnesses:
         """The member behind a bearer token: an existing member, or a fresh invite redeemed now."""
         if not token:
             return None
-        agent = self.hive.authenticate_agent(token)
+        agent = self.hive.authenticate_agent(token, surface="mcp")
         if agent is not None:
             return agent
         if not token.startswith("ohv1_"):
@@ -393,9 +408,9 @@ class Harnesses:
                               (now(), created["id"], row["id"]))
         if cur.rowcount != 1:  # redeemed concurrently
             self.hive.delete_agent(created["id"])
-            return self.hive.authenticate_agent(token)
+            return self.hive.authenticate_agent(token, surface="mcp")
         self.hive.events.publish("harness.connected", invite=self.get(row["id"]))
-        return self.hive.authenticate_agent(token)
+        return self.hive.authenticate_agent(token, surface="mcp")
 
     def rate_ok(self, agent_id, limit=120):
         moment = time.monotonic()
@@ -409,8 +424,9 @@ class Harnesses:
 
     # ---- MCP ------------------------------------------------------------------------------------
 
-    async def handle(self, agent, message):
-        """One JSON-RPC message; returns the response object, or None for a notification."""
+    async def handle(self, agent, message, credential=None):
+        """One JSON-RPC message; returns the response object, or None for a notification. credential: the bridged-session
+        credential's restriction context (credentials.Credentials.context), or None for a member token."""
         if not isinstance(message, dict) or message.get("jsonrpc") != "2.0" or not isinstance(message.get("method"), str):
             return {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "invalid request"}}
         method, mid = message["method"], message.get("id")
@@ -423,8 +439,10 @@ class Harnesses:
         if method == "ping":
             return self._ok(mid, {})
         if method == "tools/list":
-            return self._ok(mid, {"tools": TOOLS + STUDIO_TOOLS if self._studio_on() else TOOLS,
-                                  "_meta": {"x-hive-schema": SCHEMA_MARKER}})
+            tools = TOOLS + STUDIO_TOOLS if self._studio_on() else TOOLS
+            if credential is not None:
+                tools = self._restricted_tools(tools, credential)
+            return self._ok(mid, {"tools": tools, "_meta": {"x-hive-schema": SCHEMA_MARKER}})
         if method == "tools/call":
             params = message.get("params")
             try:
@@ -435,21 +453,80 @@ class Harnesses:
                 if not isinstance(args, dict):
                     raise McpError(400, "bad_request", "arguments must be an object")
                 name = params["name"]
+                if credential is not None:
+                    return self._ok(mid, self._result(name, await self._restricted_call(agent, name, args, credential)))
                 return self._ok(mid, self._result(name, await self.call(agent, name, args)))
             except Exception as exc:  # hive errors carry a status and code; anything else is ours and stays opaque
-                return self._fail(mid, exc)
+                return self._fail(mid, exc, getattr(self.hive, "keyring", None), restricted=credential is not None)
         return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": f"method not found: {method}"}}
 
     @staticmethod
     def _ok(mid, result):
         return {"jsonrpc": "2.0", "id": mid, "result": result}
 
+    # ---- bridged-session credentials (session onboarding R2.8 §R, §P, §V, §W, §X; credentials.py) ------------------
+
+    def _allowed(self, credential):
+        from .credentials import MIGRATION_TOOL, MIXED_CONTEXT_READS
+        if credential["status"] == "pending":
+            return {"hive_whoami"}
+        allowed = set(MIXED_CONTEXT_READS) if credential["mixed_context"] else None
+        if allowed is not None and credential.get("exception"):
+            allowed.add(MIGRATION_TOOL)
+        return allowed
+
+    def _restricted_tools(self, tools, credential):
+        allowed = self._allowed(credential)
+        if allowed is None:
+            return tools
+        listed = [t for t in tools if t["name"] in allowed]
+        return listed + ([MIGRATION_SCHEMA] if MIGRATION_SCHEMA["name"] in allowed else [])
+
+    async def _restricted_call(self, agent, name, args, credential):
+        """Checked on the credential row, before call() reloads the agent row (R2.6 §T). Refusals carry a generic code
+        and none of the arguments."""
+        allowed = self._allowed(credential)
+        if allowed is not None and name not in allowed:
+            if credential["status"] == "pending":
+                raise McpError(403, "credential_pending", "call hive_whoami first; nothing else is open until it answers")
+            raise McpError(403, "mixed_context_refused", "this session may only read; that tool is not open to it")
+        if name == MIGRATION_SCHEMA["name"]:
+            return self._migrate(agent, args)
+        token = _RESTRICTED.set(bool(credential["mixed_context"]))
+        try:
+            result = await self.call(agent, name, args)
+        finally:
+            _RESTRICTED.reset(token)
+        if name == "hive_whoami" and credential["status"] == "pending":
+            self.hive.credentials.activate(credential["id"])
+        return result
+
+    def _migrate(self, agent, args):
+        """X-a: the §J pair's own mind only; compare-and-swap on the legacy hash; the epoch never changes."""
+        if not self.hive.credentials._excepted(agent["id"]):   # bound id, while the exception lasts
+            raise McpError(403, "mixed_context_refused", "this session may only read; that tool is not open to it")
+        op = args.get("op") if isinstance(args, dict) and set(args) == {"op"} else None
+        creds = self.hive.credentials
+        if op == "retire":
+            return creds.retire_legacy_credential(agent["id"])
+        if op == "confirm":
+            return creds.confirm_legacy_retire(agent["id"])
+        if op == "rollback":
+            return creds.rollback_legacy_retire(agent["id"])
+        raise McpError(400, "bad_request", "op is retire, confirm or rollback")
+
     @staticmethod
-    def _fail(mid, exc):
-        """s3-r1: every tool error is a JSON-RPC error, -32000, with data {code, http_status, message}."""
+    def _fail(mid, exc, store=None, restricted=False):
+        """s3-r1: every tool error is a JSON-RPC error, -32000, with data {code, http_status, message}. Its message and
+        details are a refusal's descriptive text, answered here with HTTP 200, so they pass keyview's projection for a
+        caller with no session (an agent token: no key id or person; sol on 04875179) before they leave. store: kept for
+        callers that pass the hive's ProviderStore; the projection itself needs nothing from it."""
         status, code = getattr(exc, "status", None), getattr(exc, "code", None)
         if not isinstance(status, int) or not isinstance(code, str):
-            log.exception("mcp tool failed")
+            if restricted:   # R2.8 §Y: no traceback, exception text or arguments for a restricted credential
+                log.error("mcp tool failed (%s)", type(exc).__name__)
+            else:
+                log.exception("mcp tool failed")
             status, code, message, details = 500, "internal_error", "the hive could not complete that call", None
         else:
             message, details = str(getattr(exc, "message", None) or exc)[:500], getattr(exc, "details", None)
@@ -457,6 +534,9 @@ class Harnesses:
                 code = "schema_invalid"
             elif code in CODE_MAP:
                 code = CODE_MAP[code]
+        from .keyview import refusal_for_no_one
+        out = refusal_for_no_one({"message": message, "details": details})
+        message, details = out["message"], out["details"]
         data = {"code": code, "http_status": status, "message": message}
         if details:
             data["details"] = details
@@ -507,6 +587,9 @@ class Harnesses:
             raise McpError(400, "bad_request", "; ".join(problems[:6])[:500])
 
     def _enforce(self, agent, skill, *parts):
+        if _RESTRICTED.get():
+            self.hive.policy.enforce_read_only(agent, skill)
+            return
         self.hive.policy.enforce(agent, skill, _canon(skill, *parts))
 
     def _cursor_make(self, kind, agent, binding, position, expires):
@@ -541,6 +624,8 @@ class Harnesses:
 
     async def call(self, agent, name, args):
         hive = self.hive
+        if name == "hive_code_mind_proof":
+            validate_code_mind_proof_inputs(args)
         if name in STUDIO_INDEX and self._studio_on():
             # OI-11 / r1.4 G2: the agent row this request authenticated with (its token epoch captured on arrival), never
             # re-read here; the host's own consuming transactions decide (context, revision_fence, done). Like the REST
@@ -559,6 +644,9 @@ class Harnesses:
                                                     "hive_artifact_read", "hive_revision_read", "hive_request", "hive_repo_query"):
             self._enforce(agent, skill, args.get("goal_id") or args.get("title") or "")  # decided under the native skill name
         return await getattr(self, "_t_" + name)(agent, args)
+
+    async def _t_hive_code_mind_proof(self, agent, args):
+        return await code_mind_proof(agent, args)
 
     # ---- Studio maker tools (OI-11) ------------------------------------------------------------------
 

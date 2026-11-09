@@ -4,7 +4,7 @@ import { NAV_FEATURE, onScreen, resolvePresence, selectorsFor, type PresenceEl, 
 import { FEATURES } from '../features/registry'
 import { NAV_ITEMS } from '../shell/navItems'
 
-/** Presence (the owner, 2026-10-05): the pure resolver and the host's checks mirrored on the client. */
+/** Presence (Jon, 2026-10-05): the pure resolver and the host's checks mirrored on the client. */
 const vp = { width: 1000, height: 800 }
 const el = (left: number, top: number, w: number, h: number, inert = false): PresenceEl => ({
   getBoundingClientRect: () => ({ left, top, right: left + w, bottom: top + h, width: w, height: h }),

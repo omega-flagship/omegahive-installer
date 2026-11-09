@@ -222,7 +222,7 @@ function HealthRing({ frac, color, label }: { frac: number; color: string; label
 
 function Figure({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: 'good' | 'bad' }) {
   return (
-    <div className="min-w-0 rounded-xl border border-line bg-black/20 px-3 py-2">
+    <div className="min-w-0 rounded-xl border border-line bg-shade/20 px-3 py-2">
       <dt className="truncate text-[11px] text-ink-3">{label}</dt>
       <dd className="mt-0.5 flex items-baseline gap-1">
         <span className={cx('font-display text-[20px] leading-none font-semibold tabular-nums', tone === 'bad' ? 'text-bad' : tone === 'good' ? 'text-good' : 'text-ink')}>{value}</span>
@@ -428,7 +428,7 @@ function RunView({ runId, suite }: { runId: string; suite: LabSuite | undefined 
   return (
     <div className="space-y-3">
       {latest && latest.id !== runId && (
-        <button onClick={() => navigate({ name: 'lab', suite: suite!.id })} className="flex min-h-11 w-full items-center gap-2 rounded-2xl border border-line bg-white/[0.025] px-3.5 text-left text-[13px] text-ink-2 hover:border-line-2">
+        <button onClick={() => navigate({ name: 'lab', suite: suite!.id })} className="flex min-h-11 w-full items-center gap-2 rounded-2xl border border-line bg-tint/[0.025] px-3.5 text-left text-[13px] text-ink-2 hover:border-line-2">
           <Icon name="history" size={16} className="text-ink-3" />
           <span className="flex-1">This is an earlier run.</span>
           <span className="font-medium text-accent">Latest run</span>
@@ -469,7 +469,7 @@ function DimensionView({ dimension, suites }: { dimension: string; suites: LabSu
     <div className="space-y-3">
       <Card>
         <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-          <span className="flex size-12 items-center justify-center rounded-2xl border border-line bg-black/25 text-ink-2">
+          <span className="flex size-12 items-center justify-center rounded-2xl border border-line bg-shade/25 text-ink-2">
             <Icon name={meta.icon} size={22} />
           </span>
           <div className="min-w-0 flex-1">

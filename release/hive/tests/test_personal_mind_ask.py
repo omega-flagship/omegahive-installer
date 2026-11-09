@@ -23,7 +23,9 @@ def _on(client, monkeypatch, conductor=True):
     monkeypatch.setenv("HIVE_ASK_CONDUCTOR_MODEL", "fakepaid/x")
     w = world(client)
     hive = w["hive"]
-    hive.settings.providers["fakepaid"] = Provider("fakepaid", "http://127.0.0.1:9", prices={"*": {"in": 1, "out": 1}})
+    # the host's own key for it (invented): a pin is a person's mind's model only when the host pays for it (First Light)
+    hive.settings.providers["fakepaid"] = Provider("fakepaid", "http://127.0.0.1:9", prices={"*": {"in": 1, "out": 1}},
+                                                   stored_key="sk-fakepaid-invented")
     w["mine"] = hive.personal.ensure("user:u_ann")
     return w
 
@@ -113,12 +115,12 @@ def test_a_zero_budget_personal_mind_is_paid_from_the_persons_allowance_and_refu
             hive.check_budget(mine, True, 0.01, None, payer, own)
         assert e.value.code == "no_budget"
     # an admin has no allowance unless a month rule gives one: the usual rules apply (no_budget without a hive total)
-    quinns = hive._agent_row(hive.personal.ensure("user:u_quinn")["id"])
+    jons = hive._agent_row(hive.personal.ensure("user:u_jon")["id"])
     with pytest.raises(HiveError) as e:
-        hive.check_budget(quinns, True, 0.01, None, "user:u_quinn", False)
+        hive.check_budget(jons, True, 0.01, None, "user:u_jon", False)
     assert e.value.code == "no_budget"
-    _month(hive, "u_quinn", 2.0)
-    hive.check_budget(quinns, True, 0.01, None, "user:u_quinn", False)
+    _month(hive, "u_jon", 2.0)
+    hive.check_budget(jons, True, 0.01, None, "user:u_jon", False)
     # the allowance spent: refused with the existing code, and a conductor turn ends spend_cap with no model call
     _month(hive, "u_ann", 0.001)
     with pytest.raises(HiveError) as e:
@@ -153,14 +155,14 @@ def test_a_personal_mind_answers_its_own_person_only(client, monkeypatch):
     hive, mine = w["hive"], w["mine"]
     script(client, Script("ok", repeat_last=True))
     before = counts(hive)
-    for extra in ({"context": {"swarm_id": mine["swarm_id"]}}, {"context": {"mind": mine["id"]}}):   # Quinn is an admin
-        r = ask(client, w["quinn"], "op-p2-other-01", **extra)
+    for extra in ({"context": {"swarm_id": mine["swarm_id"]}}, {"context": {"mind": mine["id"]}}):   # Jon is an admin
+        r = ask(client, w["jon"], "op-p2-other-01", **extra)
         assert r.status_code == 403 and r.json()["error"]["code"] == "not_allowed", extra
     assert counts(hive) == before
-    assert client.put("/api/me/ask", headers=w["quinn"], json={"swarm_id": mine["swarm_id"]}).json()["error"]["code"] == "not_allowed"
-    quinns = hive.personal.ensure("user:u_quinn")
-    eligible = [s["id"] for s in client.get("/api/me/ask", headers=w["quinn"]).json()["eligible"]]
-    assert mine["swarm_id"] not in eligible and quinns["swarm_id"] in eligible
+    assert client.put("/api/me/ask", headers=w["jon"], json={"swarm_id": mine["swarm_id"]}).json()["error"]["code"] == "not_allowed"
+    jons = hive.personal.ensure("user:u_jon")
+    eligible = [s["id"] for s in client.get("/api/me/ask", headers=w["jon"]).json()["eligible"]]
+    assert mine["swarm_id"] not in eligible and jons["swarm_id"] in eligible
     # Ann may still address her own from its page
     r = ask(client, w["ann"], "op-p2-own-001", context={"swarm_id": mine["swarm_id"]})
     assert r.status_code == 202 and r.json()["acting_as"]["mind_id"] == mine["id"]
@@ -171,22 +173,25 @@ def test_a_new_personal_minds_model_is_the_conductors_else_the_hive_default(clie
     w = world(client)
     hive = w["hive"]
     monkeypatch.setenv("HIVE_ASK_CONDUCTOR_MODEL", "fakepaid/x")
+    hive.settings.providers["fakepaid"] = Provider("fakepaid", "http://127.0.0.1:9", prices={"*": {"in": 1, "out": 1}})
+    assert hive.personal.ensure("user:u_bob")["model"] == hive.settings.default_model, "no key pays for the pin: not used"
+    hive.settings.providers["fakepaid"].stored_key = "sk-fakepaid-invented"
     assert hive.personal.ensure("user:u_ann")["model"] == "fakepaid/x"
     monkeypatch.delenv("HIVE_ASK_CONDUCTOR_MODEL")
-    assert hive.personal.ensure("user:u_bob")["model"] == hive.settings.default_model
+    assert hive.personal.ensure("user:u_jon")["model"] == hive.settings.default_model
 
 
 def test_an_admins_ab_pick_still_wins_on_a_personal_mind_turn(client, monkeypatch):
     w = _on(client, monkeypatch)
     hive = w["hive"]
-    quinns = hive.personal.ensure("user:u_quinn")
-    hive.db.execute("UPDATE agents SET model = 'fakepaid/mine' WHERE id = ?", (quinns["id"],))
-    _month(hive, "u_quinn", 2.0)
+    jons = hive.personal.ensure("user:u_jon")
+    hive.db.execute("UPDATE agents SET model = 'fakepaid/mine' WHERE id = ?", (jons["id"],))
+    _month(hive, "u_jon", 2.0)
     script(client, Script("ok", repeat_last=True))
-    r = ask(client, w["quinn"], "op-p2-ab-0001", conductor={"model": "fakepaid/x"})
+    r = ask(client, w["jon"], "op-p2-ab-0001", conductor={"model": "fakepaid/x"})
     assert r.status_code == 202, r.text
-    assert r.json()["conductor"] == {"model": "fakepaid/x"} and r.json()["acting_as"]["mind_id"] == quinns["id"]
-    wait(hive, "op-p2-ab-0001", closed, principal="user:u_quinn")
+    assert r.json()["conductor"] == {"model": "fakepaid/x"} and r.json()["acting_as"]["mind_id"] == jons["id"]
+    wait(hive, "op-p2-ab-0001", closed, principal="user:u_jon")
 
 
 def test_a_conductor_turn_on_an_asleep_coordinator_leaves_it_asleep(client, monkeypatch):

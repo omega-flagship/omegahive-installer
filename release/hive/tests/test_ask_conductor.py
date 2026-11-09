@@ -146,7 +146,7 @@ def test_result_route_owner_only_emitted_ids_once_bounded_and_timeout(client, on
     act = acts(wait(hive, "op-cond-res", acts))[0]
     url = f"/api/ask/op-cond-res/acts/{act['act_id']}/result"
     # another person, and an admin who is not the owner: as for an unknown op
-    for who in (on["bob"], on["quinn"]):
+    for who in (on["bob"], on["jon"]):
         r = client.post(url, headers=who, json={"ok": True})
         assert r.status_code == 404 and r.json()["error"]["code"] == "not_available"
     r = client.post("/api/ask/op-cond-res/acts/ac_notemitted/result", headers=on["ann"], json={"ok": True})
@@ -185,6 +185,28 @@ def test_stop_ends_the_loop_and_a_late_result_is_refused(client, on):
 
 
 # ---- turn limits ------------------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("allow_unpriced", [False, True])
+def test_conductor_requires_a_price_even_when_the_operator_allows_unpriced_calls(client, on, monkeypatch, allow_unpriced):
+    hive = on["hive"]
+    hive.settings.allow_unpriced = allow_unpriced
+    hive.settings.providers["fakepaid"] = Provider("fakepaid", "http://127.0.0.1:9", prices={})
+    monkeypatch.setenv("HIVE_ASK_CONDUCTOR_MODEL", "fakepaid/no-price")
+    hive.db.execute("UPDATE agents SET budget_usd = 10 WHERE id = ?", (on["coord"]["id"],))
+    fake = script(client, Script("must not dispatch"))
+
+    def no_reservation(*args, **kwargs):
+        raise AssertionError("unknown-price Ask must refuse before reserving or sending")
+
+    monkeypatch.setattr(on["conductor"].reservations, "reserve", no_reservation)
+    op = f"op-unpriced-default-{int(allow_unpriced)}"
+    response = ask(client, on["ann"], op, context=on["ctx"])
+    assert response.status_code == 202
+    fs = wait(hive, op, closed)
+    assert fs[-1]["outcome"] == "error" and fs[-1]["error"] == "unpriced_model"
+    assert fs[-2]["text"] == cmod.ERROR_SAY["unpriced_model"]
+    assert fake.bodies == []
+
 
 def test_the_act_limit(client, on):
     script(client, Script([call("say", text=f"step {i}") for i in range(40)], "never"))
@@ -253,17 +275,17 @@ def test_acts_naming_a_private_app_are_dropped(client, on):
 # ---- conductor off --------------------------------------------------------------------------------------------------------
 
 def test_conductor_off_leaves_the_ask_unchanged(client, monkeypatch):
-    monkeypatch.delenv("HIVE_ASK_CONDUCTOR", raising=False)
+    monkeypatch.setenv("HIVE_ASK_CONDUCTOR", "0")
     w = world(client)
     s = script(client, Script("never"))
     ctx = {"swarm_id": w["swarm"]["id"]}
-    r = ask(client, w["quinn"], "op-off-bad-conductor", context=ctx, conductor={"model": cmod.DEFAULT_MODEL})
+    r = ask(client, w["jon"], "op-off-bad-conductor", context=ctx, conductor={"model": cmod.DEFAULT_MODEL})
     assert r.status_code == 400 and r.json()["error"]["code"] == "invalid"
     # memory_notes are accepted and ignored while off (Surface, 2026-10-07; test_ask_memory covers where they go: nowhere)
-    r = ask(client, w["quinn"], "op-off-notes", context=ctx, memory_notes=["likes dark"])
+    r = ask(client, w["jon"], "op-off-notes", context=ctx, memory_notes=["likes dark"])
     assert r.status_code == 202 and r.json()["state"] == "accepted" and "conductor" not in r.json()
     notes_turn = r.json()["turn_id"]
-    client.post("/api/ask/op-off-notes/stop", headers=w["quinn"])
+    client.post("/api/ask/op-off-notes/stop", headers=w["jon"])
     delivered = w["hive"].db.all("SELECT text, extra FROM messages WHERE conversation_id = ?", (f"ask:{notes_turn}",))
     assert len(delivered) == 1 and "likes dark" not in json.dumps(delivered)   # delivered as phase 1, without the notes
     r = ask(client, w["ann"], "op-off-0001", context=ctx).json()
@@ -288,18 +310,18 @@ def test_conductor_on_needs_no_awake_coordinator_and_ab_override_is_admin_only(c
     wait(hive, "op-cond-aslp", closed)
     r = ask(client, on["ann"], "op-cond-ab01", context=on["ctx"], conductor={"model": "openrouter/openai/gpt-6.1-sol"})
     assert r.status_code == 403 and r.json()["error"]["code"] == "not_allowed"
-    r = ask(client, on["quinn"], "op-cond-ab02", context=on["ctx"], conductor={"model": "openrouter/some/other"})
+    r = ask(client, on["jon"], "op-cond-ab02", context=on["ctx"], conductor={"model": "openrouter/some/other"})
     assert r.status_code == 400
     hive.settings.providers["openrouter"].prices = {}   # unpriced: never pickable (Kimi 5)
-    r = ask(client, on["quinn"], "op-cond-ab04", context=on["ctx"], conductor={"model": "openrouter/openai/gpt-6.1-sol"})
+    r = ask(client, on["jon"], "op-cond-ab04", context=on["ctx"], conductor={"model": "openrouter/openai/gpt-6.1-sol"})
     assert r.status_code == 400 and r.json()["error"]["code"] == "invalid"
     hive.settings.providers["openrouter"].prices = {"openai/gpt-6.1-sol": {"in": 1, "out": 1}}   # priced; the chat is the script
     hive.db.execute("UPDATE agents SET budget_usd = 10 WHERE id = ?", (on["coord"]["id"],))
-    r = ask(client, on["quinn"], "op-cond-ab03", context=on["ctx"], conductor={"model": "openrouter/openai/gpt-6.1-sol"})
+    r = ask(client, on["jon"], "op-cond-ab03", context=on["ctx"], conductor={"model": "openrouter/openai/gpt-6.1-sol"})
     assert r.status_code == 202 and r.json()["conductor"] == {"model": "openrouter/openai/gpt-6.1-sol"}
 
 
-# ---- per-turn memory notes (the owner's memory ruling: the hive keeps none) ---------------------------------------------------------
+# ---- per-turn memory notes (Jon's memory ruling: the hive keeps none) ---------------------------------------------------------
 
 def test_memory_notes_are_used_for_that_turn_only_and_never_stored_or_logged(client, on, caplog, monkeypatch):
     monkeypatch.setenv("HIVE_ASK_MEMORY", "on")   # notes reach the model only with the memory switch on (test_ask_memory)
@@ -358,7 +380,7 @@ def test_a_wired_dispatch_emits_the_dispatched_frame(client, on):
             return 201, {"intent_id": "ai_" + "0" * 24, "kind": body["kind"], "state": "pending", "destination": {"to_swarm": on["swarm"]["id"]}}
     on["conductor"].intents = Intents()
     script(client, Script([call("dispatch", kind="code.request", request={"title": "Fix"}, label="Fix it")], "Recorded."))
-    ask(client, on["quinn"], "op-cond-wire", context=on["ctx"])
+    ask(client, on["jon"], "op-cond-wire", context=on["ctx"])
     t = hive.db.one("SELECT id FROM ask_turns WHERE operation_id = 'op-cond-wire'")
     end = time.time() + 5
     while time.time() < end and not hive.db.one("SELECT 1 FROM ask_events WHERE turn_id = ? AND frame LIKE '%\"done\"%'", (t["id"],)):
@@ -367,7 +389,7 @@ def test_a_wired_dispatch_emits_the_dispatched_frame(client, on):
     d = [f for f in fs if f["phase"] == "dispatched"]
     assert len(d) == 1 and d[0]["intent_id"] == "ai_" + "0" * 24 and d[0]["intent_kind"] == "code.request" and d[0]["label"] == "Fix it"
     assert d[0]["to"] == {"kind": "swarm", "ref": on["swarm"]["id"], "name": "Home"}
-    assert seen == [("user:u_quinn", True, "op-cond-wire", {"kind": "code.request", "request": {"title": "Fix"}})]
+    assert seen == [("user:u_jon", True, "op-cond-wire", {"kind": "code.request", "request": {"title": "Fix"}})]
 
 
 def test_dispatch_records_exactly_one_pending_slice2_intent_and_emits_dispatched(w, monkeypatch):  # noqa: F811
@@ -386,11 +408,11 @@ def test_dispatch_records_exactly_one_pending_slice2_intent_and_emits_dispatched
     request.pop("operation_id")
     before = {t: hive.db.one(f"SELECT COUNT(*) AS n FROM {t}")["n"] for t in ("requests", "mind_operations", "ask_intents")}
     s = script(c, Script([call("dispatch", kind="code.request", request=request, label="Fix it")], "Recorded."))
-    r = c.post("/api/ask", headers=w.quinn, json={"operation_id": "op-cond-s2", "text": "fix add()", "context": {"swarm_id": w.origin["id"]}})
+    r = c.post("/api/ask", headers=w.jon, json={"operation_id": "op-cond-s2", "text": "fix add()", "context": {"swarm_id": w.origin["id"]}})
     assert r.status_code == 202 and r.json()["conductor"] == {"model": "mock/conductor"}
-    fs = wait(hive, "op-cond-s2", closed, principal="user:u_quinn")
+    fs = wait(hive, "op-cond-s2", closed, principal="user:u_jon")
     rows = hive.db.all("SELECT * FROM ask_intents WHERE turn_id = ?", (r.json()["turn_id"],))
-    assert len(rows) == 1 and rows[0]["state"] == "pending" and rows[0]["principal"] == "user:u_quinn" and rows[0]["kind"] == "code.request"
+    assert len(rows) == 1 and rows[0]["state"] == "pending" and rows[0]["principal"] == "user:u_jon" and rows[0]["kind"] == "code.request"
     assert {t: hive.db.one(f"SELECT COUNT(*) AS n FROM {t}")["n"] for t in before} == {**before, "ask_intents": before["ask_intents"] + 1}
     assert submitted == []
     assert [f["phase"] for f in fs] == ["accepted", "intent", "dispatched", "answer", "done"]
@@ -401,7 +423,7 @@ def test_dispatch_records_exactly_one_pending_slice2_intent_and_emits_dispatched
     assert fs[-1]["outcome"] == "complete"
     result = tool_results(s.bodies[1])[0]
     assert result["ok"] is True and result["intent_id"] == rows[0]["id"] and result["state"] == "pending"
-    links = c.get("/api/ask/op-cond-s2/links", headers=w.quinn).json()
+    links = c.get("/api/ask/op-cond-s2/links", headers=w.jon).json()
     assert links["links_rev"] == 1 and [x["state"] for x in links["links"]] == ["pending"]
 
 
@@ -504,7 +526,7 @@ def test_view_fields_and_regions_refusals_and_size_cap(client, on):
 
 
 def test_fields_and_regions_are_accepted_but_not_forwarded_with_the_conductor_off(client, monkeypatch):
-    monkeypatch.delenv("HIVE_ASK_CONDUCTOR", raising=False)
+    monkeypatch.setenv("HIVE_ASK_CONDUCTOR", "0")
     w = world(client)
     r = ask(client, w["ann"], "op-off-view", context={"swarm_id": w["swarm"]["id"], "view": {"fields": FIELDS, "regions": ["list"], "acts": ["a.b"]}})
     assert r.status_code == 202 and r.json()["context"]["view"] == {"acts": ["a.b"]}
@@ -728,7 +750,7 @@ def test_kimi5_the_ab_list_is_unioned_and_unpriced_entries_are_reported(client, 
     assert set(cmod.DEFAULT_AB_MODELS) <= set(models) and "fakeunpriced/x" in models and models[0] == "mock/conductor"
     caplog.set_level(logging.WARNING)
     assert "fakeunpriced/x" in on["conductor"].check_models() and "fakeunpriced/x" in caplog.text
-    r = ask(client, on["quinn"], "op-k5-pick", context=on["ctx"], conductor={"model": "fakeunpriced/x"})
+    r = ask(client, on["jon"], "op-k5-pick", context=on["ctx"], conductor={"model": "fakeunpriced/x"})
     assert r.status_code == 400 and r.json()["error"]["code"] == "invalid"
 
 
@@ -744,11 +766,11 @@ def test_kimi7_thread_deletion_blanks_dispatched_frames(client, on):
             return 201, {"intent_id": "ai_" + "1" * 24, "kind": body["kind"], "state": "pending", "destination": {"to_swarm": on["swarm"]["id"]}}
     on["conductor"].intents = Intents()
     script(client, Script([call("dispatch", kind="code.request", request={"title": "Fix"}, label="Fix it")], "Recorded."))
-    r = ask(client, on["quinn"], "op-kimi-07", context=on["ctx"]).json()
+    r = ask(client, on["jon"], "op-kimi-07", context=on["ctx"]).json()
     end = time.time() + 5
     while time.time() < end and not hive.db.one("SELECT 1 FROM ask_events WHERE turn_id = ? AND frame LIKE '%\"done\"%'", (r["turn_id"],)):
         time.sleep(0.02)
-    assert client.delete(f"/api/ask/threads/{r['thread']['id']}", headers=on["quinn"]).status_code == 200
+    assert client.delete(f"/api/ask/threads/{r['thread']['id']}", headers=on["jon"]).status_code == 200
     fs = [json.loads(x["frame"]) for x in hive.db.all("SELECT frame FROM ask_events WHERE turn_id = ? ORDER BY seq", (r["turn_id"],))]
     d = [f for f in fs if f["phase"] == "dispatched"][0]
     assert d["intent_id"] == "" and d["intent_kind"] == "" and d["to"]["ref"] == "" and d["to"].get("name", "") == "" and d["label"] == ""
@@ -811,7 +833,7 @@ def test_takeover_ends_the_turn_at_once_no_further_step_or_act_and_tells_every_v
     turn_id = r.json()["turn_id"]
     act = acts(wait(hive, "op-cond-take", acts))[0]
     # another person, and an admin who is not the owner: as for an unknown op, and the turn goes on
-    for who in (on["bob"], on["quinn"]):
+    for who in (on["bob"], on["jon"]):
         x = client.post("/api/ask/op-cond-take/takeover", headers=who, json={"reason": "user_took_over"})
         assert x.status_code == 404 and x.json()["error"]["code"] == "not_available"
     assert hive.ask._row(turn_id)["state"] == "conducting"
@@ -892,7 +914,7 @@ def test_takeover_body_is_none_empty_or_the_one_reason(client, on):
 
 
 def test_takeover_with_the_conductor_off_is_not_available_and_changes_nothing(client, monkeypatch):
-    monkeypatch.delenv("HIVE_ASK_CONDUCTOR", raising=False)
+    monkeypatch.setenv("HIVE_ASK_CONDUCTOR", "0")
     w = world(client)
     r = ask(client, w["ann"], "op-off-take", context={"swarm_id": w["swarm"]["id"]})
     assert r.status_code == 202 and r.json()["state"] == "accepted"
@@ -1225,10 +1247,10 @@ def test_r3_a_failed_shutdown_drain_is_logged_not_silent(monkeypatch, caplog):
 
 def test_r5_the_commitment_boundary_at_most_the_one_committed_call_leaves_and_it_settles_then_nothing_follows(client, on, monkeypatch):
     """The boundary as it is (owner decision r5): dispatch is commitment to the in-flight call, not its first byte. The
-    takeover is queued for the very next scheduling point after dispatch is marked, which is AnyIO's yield before the
-    socket write. Then: that one already-authorised request is still handed to the OS after the takeover committed
-    (pinned here, honestly), it is settled at its real cost, and no further model call or act follows, although the
-    provider's answer asks for another act."""
+    takeover is queued for the very next scheduling point after dispatch is marked, which is gate()'s own yield before
+    the socket write (AnyIO 4.16 has none there, omegahive#9). Then: that one already-authorised request is still handed
+    to the OS after the takeover committed (pinned here, honestly), it is settled at its real cost, and no further model
+    call or act follows, although the provider's answer asks for another act."""
     from asyncio import selector_events
     hive, conductor = on["hive"], on["conductor"]
     srv = SlowProvider(message={"role": "assistant", "content": None, "tool_calls": [call("navigate", route="#/rooms")]})

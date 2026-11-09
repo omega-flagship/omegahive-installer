@@ -61,6 +61,10 @@ vi.mock('../../store/ask', async () => {
   const actual = await vi.importActual<typeof import('../../store/ask')>('../../store/ask')
   return { ...actual, useAskStore: viaSelector(actual.useAskStore) }
 })
+vi.mock('../../shell/phase', async () => {
+  const actual = await vi.importActual<typeof import('../../shell/phase')>('../../shell/phase')
+  return { ...actual, usePhase: viaSelector(actual.usePhase) }
+})
 vi.mock('./state', async () => {
   const actual = await vi.importActual<typeof import('./state')>('./state')
   return { ...actual, useC: viaSelector(actual.useC) }
@@ -156,6 +160,7 @@ const inputOf = (tree: unknown) => find(tree, (e) => e.type === 'input')[0].prop
 // the host's frames are numbered per turn, 1, 2, 3…
 const seqs = new Map<string, number>()
 function withAsk(p: TestPerson) {
+  kit.reportTestPrincipal(p)
   const thread = { id: `ses_${p.name}`, mind: { id: 'a_vega01', name: 'Vega' }, budget_usd: 0.25, spent_usd: 0 }
   Object.assign(p.client, {
     ask: vi.fn(async (b: { operation_id: string }) => ({ operation_id: b.operation_id, turn_id: `t_${p.name}`, thread, state: 'accepted' as const })),
@@ -550,4 +555,16 @@ describe('r2b: a Construct command’s late output never prints for the next per
       now.mockRestore()
     }
   })
+})
+
+// The added me() fixture must follow the very credential change used by the custody cases above.
+it.each([true, false])('invented principal reads follow A→B→A (same client: %s)', async (sameTab) => {
+  const a = testPerson('a'), b = testPerson('b', sameTab ? { sameTab: a } : {})
+  withAsk(a); withAsk(b)
+  await signInAs(a)
+  expect((await a.client.me()).principal).toBe('user:a')
+  await switchPerson(a, b)
+  expect((await b.client.me()).principal).toBe('user:b')
+  await switchPerson(b, a)
+  expect((await a.client.me()).principal).toBe('user:a')
 })

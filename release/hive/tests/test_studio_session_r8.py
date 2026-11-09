@@ -1,6 +1,6 @@
 """J3 host R8: image generation for each member's own Studio maker, inside its live session, on that member's own key.
 
-the owner's POC scope: "lets stop at imagegen/live drawing/co-edit on studio"; "each member gets their own Studio maker mind that
+Jon's POC scope: "lets stop at imagegen/live drawing/co-edit on studio"; "each member gets their own Studio maker mind that
 runs on their own key". Two host gates stood in the way of a personal maker (Design's readback, 2026-10-20):
 
 1. ``media.allowed()`` admits only an exact agent:/swarm: entry of HIVE_MEDIA_ALLOW (no wildcard), and personal makers
@@ -431,7 +431,7 @@ def studio_elsewhere(p, tmp_path, monkeypatch):
     """The Mac's shape: Studio activated by an admin in another (team) swarm, so attachments are required everywhere."""
     entry = studio_program(p, tmp_path, monkeypatch)
     p.team = p.client.post("/api/swarms", json={"name": "Design team", "visibility": "public"}).json()["id"]
-    p.hive.db.execute("INSERT INTO app_activations VALUES ('omegadesign', ?, 1, 'user:u_rowan')", (p.team,))
+    p.hive.db.execute("INSERT INTO app_activations VALUES ('omegadesign', ?, 1, 'user:u_jon')", (p.team,))
     assert p.hive.app_attachments.required(entry) is True
     return p
 
@@ -463,12 +463,12 @@ def test_R82_no_other_swarm_or_program_changes_and_the_requirement_is_not_widene
     assert att.active("omegadesign", p.home["id"]) is False
     assert att.active("some-other-app", home) is False                     # any other program in her swarm: as before
     # Bob (no setup) has nothing active; his save in Mia's swarm is not his to reach
-    hive.db.execute("INSERT INTO app_activations VALUES ('omegadesign', ?, 1, 'user:u_rowan')", (other,))
+    hive.db.execute("INSERT INTO app_activations VALUES ('omegadesign', ?, 1, 'user:u_jon')", (other,))
     assert att.required(entry) is True
     r = save_source(p, home, who=p.bob, key="keep-bob-01")
     assert r.status_code in (403, 404), r.text
     # an admin's explicit deactivation in her swarm is honoured (the row decides when there is one)
-    hive.db.execute("INSERT INTO app_activations VALUES ('omegadesign', ?, 0, 'user:u_rowan')", (home,))
+    hive.db.execute("INSERT INTO app_activations VALUES ('omegadesign', ?, 0, 'user:u_jon')", (home,))
     assert att.active("omegadesign", home) is False
     assert (save_source(p, home, key="keep-0002").json().get("error") or {}).get("code") == "app_inactive"
 

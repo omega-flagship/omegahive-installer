@@ -37,7 +37,7 @@ export const SCENES: Scene[] = [
           source: synthetic,
           screen: { component: 'PersonalMindPage › Remembers', control: 'You › Your mind', sent: 'GET /api/me/mind (the simulator answers it)' },
           code: [
-            { file: 'hive/ui/src/features/mind/PersonalMindPage.tsx', line: 319, symbol: 'Use my swarm talk in answers', excerpt: '<Switch checked={mem.talkRecall} onChange={(on) => askMemory.setTalkRecall(on)} label="Use my swarm talk in answers" disabled={!mem.ready} />' },
+            { file: 'hive/ui/src/features/mind/data.ts', line: 130, symbol: 'Use my swarm talk in answers', excerpt: "'talk.choice': [{ id: 'talk-recall', label: 'Use my swarm talk in answers', on: memory.talkRecall }]," },
             { file: 'hive/ui/src/api/live.ts', line: 546, symbol: 'myMind', excerpt: "myMind = () => this.request<unknown>('GET', '/api/me/mind')" },
           ],
           hive: [{ method: 'GET', route: '/api/me/mind', handler: 'the owner-only personal-mind route (Platform’s; not in this release’s host, so the simulator answers it)', check: 'owner only: a person reads only their own mind; what it remembers never leaves the browser' }],
@@ -262,8 +262,8 @@ export const SCENES: Scene[] = [
           source: synthetic,
           screen: { component: 'ProgramHost (omega-tools)', control: 'Inspect', sent: 'POST /api/programs/omega-tools/act {action:"inspect-tool", items:["t-urgency"]}' },
           code: [
-            { file: 'hive/ui/src/store/store.ts', line: 1214, symbol: 'client.programAct', excerpt: 'const r = await client.programAct(s0.programId, { swarm_id: s0.swarmId, action, items, params: sent, base_revision: s0.graph?.revision ?? null })' },
-            { file: 'hive/core/app.py', line: 2952, symbol: 'program_act', excerpt: 'async def program_act(program_id: str, request: Request):' },
+            { file: 'hive/ui/src/lib/hostConfirm.ts', line: 292, symbol: 'client.programAct', excerpt: 'const result = await client.programAct(intent.programId, sent)' },
+            { file: 'hive/core/app.py', line: 4538, symbol: 'program_act', excerpt: 'async def program_act(program_id: str, request: Request, response: Response):' },
           ],
           hive: [{ method: 'POST', route: '/api/programs/{program_id}/act', handler: 'hive/core/app.py program_act → programs.act', check: 'visibility.check_path(viewer, swarm_id); check_named_minds; the app declares inspect-tool as a read' }],
           mind: {

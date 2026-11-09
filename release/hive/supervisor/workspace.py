@@ -5,7 +5,7 @@
       repos/OmegaClaw-Core -> the shared checkout (git-import! finds it here)
       repos/petta_lib_chromadb
       memory/              OMEGACLAW_MEMORY_DIR: spaces, history, hive channel files
-      memory/prompt.txt    base prompt + persona (written per mind; core default: src/base_prompt.txt)
+      memory/prompt.txt    base prompt + persona
       token                the agent's hive token (0600)
       agent.log
 """
@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import os
+import contextlib
 import pathlib
 import shutil
 import subprocess
@@ -89,6 +90,17 @@ class Workspace:
     def path(self, agent_id) -> pathlib.Path:
         return self.settings.agents_dir / agent_id
 
+    @contextlib.contextmanager
+    def _namespace(self, agent_id):
+        # Production supervisors attach Programs/hive before workspace access. Standalone render/driver fixtures
+        # have no hive DB. Reuse placement's one namespace authority whenever that host context exists.
+        hive = getattr(self.programs, "hive", None)
+        if hive is None:
+            yield
+            return
+        with hive.placement._workspace_guard(agent_id, self.path(agent_id)):
+            yield
+
     def chromadb_lib(self) -> pathlib.Path:
         lib = self.settings.data_dir / "libs" / "petta_lib_chromadb"
         if not (lib / "lib_chromadb.metta").exists():
@@ -112,6 +124,10 @@ class Workspace:
         return source
 
     def create_iter(self, agent, token):
+        with self._namespace(agent["id"]):
+            return self._create_iter(agent, token)
+
+    def _create_iter(self, agent, token):
         root = self.path(agent["id"])
         source = self.iter_source()
         for name in ITER_FILES:
@@ -133,12 +149,9 @@ class Workspace:
         return ["sh", str(pathlib.Path(petta_path) / "run.sh"), str(root / "run.metta"), "--silent"]
 
     def base_prompt(self):
-        """The personal-Omega base: WhatsApp, operator, energy. Minds off the hive keep it. A local memory/prompt.txt
-        (runtime state, git-ignored) wins; otherwise the shipped default src/base_prompt.txt."""
-        for prompt in (self.settings.core_root / "memory" / "prompt.txt", self.settings.core_root / "src" / "base_prompt.txt"):
-            if prompt.exists():
-                return prompt.read_text(encoding="utf-8")
-        return "You are an always-on OmegaClaw agent."
+        """The personal-Omega base (memory/prompt.txt): WhatsApp, operator, energy. Minds off the hive keep it."""
+        prompt = self.settings.core_root / "memory" / "prompt.txt"
+        return prompt.read_text(encoding="utf-8") if prompt.exists() else "You are Omega, an always-on agent."
 
     def mind_base_prompt(self, agent):
         """A mind's base prompt. On the hive channel it is the hive-worker base (hive/templates/omega/prompt.txt:
@@ -149,6 +162,10 @@ class Workspace:
         return self.base_prompt().replace("Omega", agent["name"])
 
     def write_iter_note(self, agent):
+        with self._namespace(agent["id"]):
+            return self._write_iter_note(agent)
+
+    def _write_iter_note(self, agent):
         """An Iter's memory/hive.txt: its name, the hive kit protocol (template), its role and persona. An Iter reads
         all of memory/ only while it fits (see ITER_NOTE_CHARS), so the role and persona are cut to fit, and marked."""
         note = (ITER_TEMPLATE / "memory" / "hive.txt").read_text(encoding="utf-8")
@@ -169,6 +186,10 @@ class Workspace:
         (memory / "hive.txt").write_text(text, encoding="utf-8")
 
     def write_prompt(self, agent):
+        with self._namespace(agent["id"]):
+            return self._write_prompt(agent)
+
+    def _write_prompt(self, agent):
         if agent.get("kind") == "iter":
             if (self.path(agent["id"]) / "iter.py").exists():
                 self.write_iter_note(agent)   # a role or persona change reaches the Iter as it does an omega mind
@@ -184,6 +205,10 @@ class Workspace:
         (memory / "prompt.txt").write_text(text, encoding="utf-8")
 
     def create(self, agent, token):
+        with self._namespace(agent["id"]):
+            return self._create(agent, token)
+
+    def _create(self, agent, token):
         selection = (agent.get('options') or {}).get('tools', [])
         plan = self.tools_plan(agent) if selection else None
         if agent.get("kind") == "iter":
@@ -220,6 +245,10 @@ class Workspace:
         return plan
 
     def write_tools(self, agent, plan=None):
+        with self._namespace(agent["id"]):
+            return self._write_tools(agent, plan)
+
+    def _write_tools(self, agent, plan=None):
         root=self.path(agent['id']); memory=root/'memory'; memory.mkdir(exist_ok=True)
         selected=(agent.get('options') or {}).get('tools',[])
         plan=plan or (self.tools_plan(agent) if selected else {'skills':{},'reviewed':{}})
@@ -235,6 +264,10 @@ class Workspace:
         (root/'run.metta').write_text(RUN_METTA.replace('!(omegaclaw)',fragment+'!(omegaclaw)') if selected else RUN_METTA)
 
     def write_studio_skills(self, agent, on):
+        with self._namespace(agent["id"]):
+            return self._write_studio_skills(agent, on)
+
+    def _write_studio_skills(self, agent, on):
         """Add (on) or remove (off) the Studio module's import in an omega mind's run.metta, before !(omegaclaw). A file
         already in that state, a mind of another kind or a mind without a run.metta is left untouched (no write)."""
         if agent.get("kind") != "omega":
@@ -258,7 +291,9 @@ class Workspace:
         run.write_text(text, encoding="utf-8")
 
     def token(self, agent_id):
-        return current_token(self.path(agent_id))
+        # Every kind reaches this before launch, including Iter/module paths without write_studio_skills.
+        with self._namespace(agent_id):
+            return current_token(self.path(agent_id))
 
     def env(self, agent, hub_url, api_url, memory_dir=None):
         """Environment for an agent talking to this hive."""

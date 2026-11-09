@@ -10,7 +10,7 @@
  * TODO(conductor: declare-motivations-field): once surface/motivations merges, declare the new-motivation field and
  * its region on the Motivations page (and the new-task field on Tasks) with useAskFillable, and point the simulator's
  * "show me around motivations" demo at them. The earlier Goals declarations were removed: Goals and Boards are
- * replaced by Motivations above Tasks (the owner, 2026-10-07).
+ * replaced by Motivations above Tasks (Jon, 2026-10-07).
  */
 import { useEffect, useRef } from 'react'
 import { conformingField, type AskField } from '../../api/ask'

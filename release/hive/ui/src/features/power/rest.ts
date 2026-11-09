@@ -1,5 +1,5 @@
 /**
- * Quiet: resting mode (the owner, 2026-10-05: "when no user input for some time it just goes into a resting animation while
+ * Quiet: resting mode (Jon, 2026-10-05: "when no user input for some time it just goes into a resting animation while
  * it works quietly in the background and subtle alerts are displayed along with a clock"; Ask design §resting).
  *
  * Pure. Built ONLY from events this page received while resting; it carries counts and titles, never a body (no
@@ -161,8 +161,11 @@ export function restAlertFor(e: unknown): RestAlert | null {
 }
 
 /**
- * Items that end the rest, so they surface as they always do: budget refusals (a mind is being stopped from working).
- * Decisions no longer do: they wait as a count among the subtle alerts (the Inbox count, always shown while resting).
+ * Items that end the rest, so they surface at once: a budget refusal (a mind is being stopped from working) and a new
+ * decision that is pending (the approved Quiet design: it comes straight through, below). Settled decisions and
+ * everything else wait as counts among the subtle alerts (the Inbox count, always shown while resting).
+ * (Comment corrected in cosmos-rest r2.1: an earlier line here said decisions no longer end the rest; the code below,
+ * unchanged since resting r4, has always let a pending decision through.)
  */
 export function isUrgent(e: unknown): boolean {
   const o = rec(e)
@@ -171,6 +174,15 @@ export function isUrgent(e: unknown): boolean {
   // a decision that needs the person comes straight through (the approved Quiet design): it wakes the page
   if (o.type === 'approval.created') return rec(o.approval)?.status === 'pending'
   return false
+}
+
+/**
+ * CANDIDATE (one-experience r1): while an experience's own rest stands in for this page's (shell/phase, delegated by
+ * PowerHost), exactly the same predicate wakes it as wakes this page's own rest (isUrgent: a pending decision or a budget
+ * refusal), and only a rest the idle time began.
+ */
+export function nativeWakeFor(e: unknown, nativeResting: boolean): boolean {
+  return nativeResting && isUrgent(e)
 }
 
 // ---- the person's own setting (this browser) ----

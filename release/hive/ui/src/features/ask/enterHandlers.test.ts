@@ -78,6 +78,10 @@ vi.mock('../../store/ask', async () => {
   const actual = await vi.importActual<typeof import('../../store/ask')>('../../store/ask')
   return { ...actual, useAskStore: await bridged(actual.useAskStore) }
 })
+vi.mock('../../shell/phase', async () => {
+  const actual = await vi.importActual<typeof import('../../shell/phase')>('../../shell/phase')
+  return { ...actual, usePhase: await bridged(actual.usePhase) }
+})
 vi.mock('../mind/store', async () => {
   const actual = await vi.importActual<typeof import('../mind/store')>('../mind/store')
   return { ...actual, useMind: await bridged(actual.useMind) }
@@ -92,7 +96,8 @@ vi.mock('framer-motion', async (orig) => ({ ...(await orig<typeof import('framer
 const M = vi.hoisted(() => ({ asks: [] as string[] }))
 vi.mock('./mind', async (orig) => ({ ...(await orig<typeof import('./mind')>()), askMind: async (text: string) => void M.asks.push(text) }))
 
-const win = { location: { hash: '#/', search: '', pathname: '/' }, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), addEventListener() {}, removeEventListener() {}, dispatchEvent() {}, innerWidth: 1440, innerHeight: 900, setTimeout, clearTimeout, setInterval, clearInterval, requestAnimationFrame: () => 0, cancelAnimationFrame() {}, getComputedStyle: () => ({}) }
+const windowEvents = new Map<string, Set<(event: unknown) => void>>()
+const win = { location: { hash: '#/', search: '', pathname: '/' }, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), addEventListener(type: string, fn: (event: unknown) => void) { (windowEvents.get(type) ?? windowEvents.set(type, new Set()).get(type)!).add(fn) }, removeEventListener(type: string, fn: (event: unknown) => void) { windowEvents.get(type)?.delete(fn) }, dispatchEvent(event: { type: string }) { for (const fn of windowEvents.get(event.type) ?? []) fn(event); return true }, innerWidth: 1440, innerHeight: 900, setTimeout, clearTimeout, setInterval, clearInterval, requestAnimationFrame: () => 0, cancelAnimationFrame() {}, getComputedStyle: () => ({}) }
 const doc = { documentElement: { lang: 'en-GB', style: { setProperty() {}, removeProperty() {} }, dataset: {} }, body: {}, activeElement: null, querySelector: () => null, querySelectorAll: () => [], addEventListener() {}, removeEventListener() {}, createElement: () => ({ style: {}, setAttribute() {} }) }
 vi.stubGlobal('window', win)
 vi.stubGlobal('document', doc)
@@ -100,9 +105,9 @@ vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined, r
 vi.stubGlobal('navigator', { userAgent: '', language: 'en-GB' })
 
 const { useHive } = await import('../../store/store')
-const { useAskStore } = await import('../../store/ask')
-const { testPerson, signInAs, releasePersons } = await import('../../lib/identityEpoch.testkit')
-const { FloatingAsk } = await import('./ClassicAsk')
+const { useAskStore, askRetryContext } = await import('../../store/ask')
+const { testPerson, signInAs, releasePersons, reportTestPrincipal } = await import('../../lib/identityEpoch.testkit')
+const { ClassicAsk, FloatingAsk } = await import('./ClassicAsk')
 const { VoiceNoticeView } = await import('./VoiceParts')
 const { StillLine } = await import('./StillLine')
 const { Ask: StillAsk } = await import('../../experiences/still/Ask')
@@ -113,6 +118,9 @@ const { REFUSED, useAskField, useSeen } = await import('./useAskField')
 const { noteComposition, noteKeyCapture, resetComposition } = await import('./keys')
 const { default: voiceSource } = await import('./useAskVoice.ts?raw')
 const { ARM_MS } = await import('../../lib/decisionGate')
+const { NoteRow } = await import('./Thread')
+const { askAutoWake } = await import('../../store/askAutoWake')
+const { currentEpoch } = await import('../../lib/identityEpoch')
 
 interface El { type: unknown; props: Record<string, unknown> }
 const isEl = (x: unknown): x is El => !!x && typeof x === 'object' && 'type' in x && 'props' in x
@@ -188,6 +196,7 @@ const palette = vi.fn()
 let clock = 1_000_000
 
 beforeEach(async () => {
+  win.location.hash = '#/'
   resetComposition()
   vi.stubGlobal('window', win)
   vi.stubGlobal('document', doc)
@@ -847,5 +856,222 @@ describe('ask-send-r1 item 2 (pin): the thread money is the host thread view\'s 
     const all = text(m.tree)
     expect(all, skin).toContain('$0.00 / $0.25')
     expect(all, skin).not.toContain('$0.17')
+  })
+})
+
+
+describe('retained floating field: page context is part of the paid reading interval', () => {
+  const skins = [
+    ['flux', () => FloatingAsk({ place, experience: 'flux', inputRef, look: 'liquid' })],
+    ['canvas', () => FloatingAsk({ place, experience: 'canvas', inputRef, look: 'note' })],
+    ['released Classic', () => {
+      // The stand-in renders hook leaves directly; follow ClassicAsk's real one-level wrapper as React would.
+      const child = ClassicAsk({ place, experience: 'classic', inputRef })
+      expect(child.type).toBe(FloatingAsk)
+      return FloatingAsk(child.props as Parameters<typeof FloatingAsk>[0])
+    }],
+    ['released Cosmos', SKINS.floating],
+    ['released Professional', SKINS.professional],
+  ] as const
+  it.each(skins)('%s: unchanged paid row and held words wait again on page out and return', async (_skin, component) => {
+    const m = mount(component)
+    const words = 'Invented question without a local action'
+    await type(m, words)
+    const selected = () => find(m.tree, e => e.props.role === 'option' && e.props['aria-selected'] === true).map(text).join(' ')
+    const originalRow = selected()
+    expect(originalRow).toMatch(/Ask/)
+    for (const hash of ['#/programs', '#/', '#/first-light?beat=one', '#/first-light?beat=two']) {
+      clock += ARM_MS + 10 // the old context's line has already been read
+      useHive.setState({ toasts: [] }); m.settle()
+      win.location.hash = hash
+      win.dispatchEvent({ type: 'hashchange' }); m.settle()
+      expect(selected()).toBe(originalRow) // same recipient and row; only the page context changed
+      await press(m)
+      expect(M.asks).toEqual([])
+      expect(refusedWith(REFUSED.changed)).toBe(true)
+      expect(valueOf(m)).toBe(words)
+    }
+    clock += ARM_MS + 10
+    // A genuine subscribed ambient update renders a fresh parsed route object with the SAME identity.
+    const extra = { ...Object.values(useHive.getState().agents)[0], id: 'a_invented_quill', name: 'Quill' }
+    useHive.setState({ agents: { ...useHive.getState().agents, [extra.id]: extra }, toasts: [] }); m.settle()
+    expect(selected()).toBe(originalRow)
+    await press(m) // no new reading interval for that unrelated render
+    expect(M.asks).toEqual([words])
+    expect(refusedWith(REFUSED.changed)).toBe(false)
+  })
+})
+
+
+describe('released Ask: a retained paid-row callback belongs to its presentation and identity', () => {
+  const skins = [
+    ['Classic', () => { const child = ClassicAsk({ place, experience: 'classic', inputRef }); return FloatingAsk(child.props as Parameters<typeof FloatingAsk>[0]) }],
+    ['Cosmos', SKINS.floating],
+    ['Professional', SKINS.professional],
+  ] as const
+  const capturePaidClick = (m: Mounted) => {
+    const row = find(m.tree, e => e.props.role === 'option' && e.props['aria-selected'] === true).find(e => /Paid by you/.test(text(e)))
+    expect(row, 'actual selected paid row').toBeDefined()
+    const target = find(row, e => typeof e.props.onClick === 'function')[0]
+    expect(target, 'actual paid-row click handler').toBeDefined()
+    const click = target.props.onClick as () => unknown
+    return async () => { await click(); await flush() }
+  }
+  it.each(skins)('%s: retained paid-row callback cannot act after a same-person remount', async (_skin, component) => {
+    const old = mount(component)
+    await type(old, 'Explain this invented onboarding message'); clock += ARM_MS + 10
+    const click = capturePaidClick(old)
+    old.unmount()
+    const fresh = mount(component)
+    const words = 'Explain a different invented onboarding message'
+    await type(fresh, words); clock += ARM_MS + 10
+    await click()
+    expect(M.asks, 'disposed presentation cannot reach the money seam').toEqual([])
+    expect(valueOf(fresh)).toBe(words)
+    await press(fresh)
+    expect(M.asks, 'current presentation still works once').toEqual([words])
+  })
+  it.each(skins)('%s: retained paid-row callback cannot act after a covered-page context commit', async (_skin, component) => {
+    const m = mount(component)
+    const words = 'Explain this invented onboarding message'
+    await type(m, words); clock += ARM_MS + 10
+    const click = capturePaidClick(m)
+    win.location.hash = '#/programs'; win.dispatchEvent({ type: 'hashchange' }); m.settle()
+    clock += ARM_MS + 10 // a stale callback must not revive when the new context's reading interval ends
+    await click()
+    expect(M.asks, 'earlier page presentation cannot reach the money seam').toEqual([])
+    expect(valueOf(m)).toBe(words)
+    await press(m)
+    expect(M.asks, 'current page still has one working field').toEqual([words])
+  })
+  it.each(skins)('%s: retained paid-row callback cannot cross identity before the next field commit', async (_skin, component) => {
+    const m = mount(component)
+    await type(m, 'Explain this invented onboarding message'); clock += ARM_MS + 10
+    const click = capturePaidClick(m)
+    await signInAs(testPerson(`after${++clock}`))
+    useAskStore.getState().bind(useHive.getState().session, 'user:p_invented_after')
+    await click() // no m.settle(): the old callback must be dead before a new field commit
+    expect(M.asks, 'earlier identity cannot reach the money seam').toEqual([])
+    m.settle()
+    expect(valueOf(m)).toBe('')
+    const words = 'Explain a different invented onboarding message'
+    await type(m, words); clock += ARM_MS + 10
+    await press(m)
+    expect(M.asks, 'new identity still has one working field').toEqual([words])
+  })
+})
+
+
+describe('retained Ask again: the rendered request, presentation and identity own Retry', () => {
+  beforeEach(async () => {
+    const person = testPerson(`retry_before${++clock}`)
+    reportTestPrincipal(person)
+    await signInAs(person)
+    useAskStore.getState().bind(useHive.getState().session, `user:${person.name}`)
+  })
+  async function settled(words: string) {
+    const client = useHive.getState().client
+    if (!client) throw new Error('synthetic signed-in client required')
+    const posts = vi.fn(async (body: { operation_id: string }) => ({ operation_id: body.operation_id, turn_id: `t_${body.operation_id}`, thread: { id: 'ses_invented', mind: { id: 'a_invented', name: 'Invented' }, budget_usd: 1, spent_usd: 0 } }))
+    client.ask = posts as never
+    await useAskStore.getState().send(words, { route: 'hive', experience: 'classic' })
+    expect(posts).toHaveBeenCalledTimes(1)
+    const op = posts.mock.calls[0][0].operation_id
+    useAskStore.setState(s => ({ open: null, turns: { ...s.turns, [op]: { ...s.turns[op], state: 'done' } } }))
+    return { op, posts }
+  }
+  const offer = (op: string, words: string) => () => {
+    const row = NoteRow({ r: { id: 'retry_invented', kind: 'note', text: 'Invented stopped request', op, offer: [{ kind: 'retry', label: 'Ask again' }] }, lastYou: words })
+    const leaf = find(row, e => typeof e.type === 'function' && 'offers' in e.props)[0]
+    expect(leaf, 'actual NoteRow offer leaf').toBeDefined()
+    return (leaf.type as (props: unknown) => unknown)(leaf.props)
+  }
+  const click = (m: Mounted) => {
+    const button = find(m.tree, e => typeof e.props.onClick === 'function' && text(e) === 'Ask again')[0]
+    expect(button, 'actual rendered Ask again handler').toBeDefined()
+    return button.props.onClick as () => unknown
+  }
+  it('a retained handler stays revoked after same-person remount; the new button works once', async () => {
+    const f = await settled('Invented first request')
+    const old = mount(offer(f.op, 'Invented first request')), retry = click(old)
+    old.unmount()
+    const fresh = mount(offer(f.op, 'Invented first request'))
+    retry(); await flush()
+    expect(useAskStore.getState().open, 'stale retry cannot open a sending operation').toBeNull()
+    expect(f.posts).toHaveBeenCalledTimes(1)
+    click(fresh)(); await flush()
+    await vi.waitFor(() => expect(f.posts).toHaveBeenCalledTimes(2))
+  })
+  it('a retained handler stays revoked after a page commit and return; the current button works once', async () => {
+    const f = await settled('Invented page request')
+    const m = mount(offer(f.op, 'Invented page request')), retry = click(m)
+    win.location.hash = '#/programs'; win.dispatchEvent({ type: 'hashchange' }); m.settle()
+    win.location.hash = '#/'; win.dispatchEvent({ type: 'hashchange' }); m.settle()
+    retry(); await flush()
+    expect(useAskStore.getState().open, 'stale retry cannot open a sending operation').toBeNull()
+    expect(f.posts).toHaveBeenCalledTimes(1)
+    click(m)(); await flush()
+    await vi.waitFor(() => expect(f.posts).toHaveBeenCalledTimes(2))
+  })
+  it('an old identity cannot retry the new person’s settled request, even before the next presentation commit', async () => {
+    const a = await settled('Invented A request')
+    const m = mount(offer(a.op, 'Invented A request')), retry = click(m)
+    const person = testPerson(`retry_after${++clock}`)
+    reportTestPrincipal(person)
+    await signInAs(person)
+    useAskStore.getState().bind(useHive.getState().session, `user:${person.name}`)
+    const b = await settled('Invented B request')
+    retry(); await flush()
+    expect(useAskStore.getState().open, 'stale retry cannot open a sending operation').toBeNull()
+    expect(a.posts).toHaveBeenCalledTimes(1)
+    expect(b.posts).toHaveBeenCalledTimes(1)
+    const fresh = mount(offer(b.op, 'Invented B request'))
+    click(fresh)(); await flush()
+    await vi.waitFor(() => expect(b.posts).toHaveBeenCalledTimes(2))
+    expect((b.posts.mock.calls[1][0] as { text?: string }).text).toBe('Invented B request')
+  })
+  it('a mid-flight reroute revokes the old Retry context; a freshly rendered retry sends the exact first posted context', async () => {
+    let m!: Mounted, earlier!: () => unknown
+    const words = 'Invented rerouted page request'
+    vi.spyOn(askAutoWake, 'deliver').mockImplementationOnce(async (op, ports) => {
+      m = mount(offer(op, words))
+      earlier = click(m)
+      // Exercise the real store routeOwn callback used by the explicit own-mind alternate before dispatch.
+      if ('private' in ports.context) throw new Error('this invented page request is non-private')
+      ports.routeOwn({ ...ports.context, route: 'programs' })
+      return ports.send()
+    })
+    const f = await settled(words)
+    earlier(); await flush() // no new presentation commit yet: the store must enforce the captured context too
+    expect(useAskStore.getState().open).toBeNull()
+    expect(f.posts).toHaveBeenCalledTimes(1)
+    m.settle()
+    click(m)(); await flush()
+    await vi.waitFor(() => expect(f.posts).toHaveBeenCalledTimes(2))
+    const posts = f.posts.mock.calls.map(([body]) => body as { context?: unknown })
+    expect(posts[1].context).toEqual(posts[0].context)
+    expect(posts[0].context).toMatchObject({ route: 'programs' })
+  })
+  it('the store refuses an earlier identity epoch even when given the new person’s current request id', async () => {
+    await settled('Invented old identity request')
+    const epoch = currentEpoch()
+    const person = testPerson(`retry_epoch${++clock}`)
+    reportTestPrincipal(person)
+    await signInAs(person)
+    useAskStore.getState().bind(useHive.getState().session, `user:${person.name}`)
+    const b = await settled('Invented new identity request')
+    await useAskStore.getState().retryLast(b.op, epoch, askRetryContext(b.op, currentEpoch()))
+    expect(useAskStore.getState().open).toBeNull()
+    expect(b.posts).toHaveBeenCalledTimes(1)
+    await useAskStore.getState().retryLast(b.op, currentEpoch(), askRetryContext(b.op, currentEpoch()))
+    expect(b.posts).toHaveBeenCalledTimes(2)
+  })
+  it('the store refuses an earlier request id under the same current epoch', async () => {
+    const a = await settled('Invented superseded request'), epoch = currentEpoch()
+    const b = await settled('Invented current request')
+    await useAskStore.getState().retryLast(a.op, epoch, askRetryContext(b.op, currentEpoch()))
+    expect(b.posts).toHaveBeenCalledTimes(1)
+    await useAskStore.getState().retryLast(b.op, epoch, askRetryContext(b.op, currentEpoch()))
+    await vi.waitFor(() => expect(b.posts).toHaveBeenCalledTimes(2))
   })
 })

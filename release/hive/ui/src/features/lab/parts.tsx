@@ -62,7 +62,7 @@ export function RunStrip({ runs, max = 12, onPick }: { runs: LabRunSummary[]; ma
   return (
     <span className="inline-flex items-end gap-[3px]" role="list" aria-label="Recent runs, oldest first">
       {Array.from({ length: Math.max(0, max - list.length) }, (_, i) => (
-        <span key={`e${i}`} className="h-3.5 w-1.5 rounded-[2px] bg-white/[0.05]" aria-hidden="true" />
+        <span key={`e${i}`} className="h-3.5 w-1.5 rounded-[2px] bg-tint/[0.05]" aria-hidden="true" />
       ))}
       {list.map((r) => {
         const s = STATUS[r.status]
@@ -199,7 +199,7 @@ export function DemoChip({ demo }: { demo?: LabRunSummary['demo'] }) {
       title={d.title}
       className={cx(
         'inline-flex shrink-0 items-center rounded-md border px-1.5 py-px text-[10.5px] font-semibold tracking-wide uppercase',
-        demo === 'example' ? 'border-warn/30 bg-warn/10 text-warn' : 'border-line-2 bg-white/[0.04] text-ink-3',
+        demo === 'example' ? 'border-warn/30 bg-warn/10 text-warn' : 'border-line-2 bg-tint/[0.04] text-ink-3',
       )}
     >
       {d.label}

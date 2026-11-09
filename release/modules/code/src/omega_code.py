@@ -61,7 +61,9 @@ def _client():
     hive, token = os.environ.get("HIVE_API_URL"), os.environ.get("HIVE_WS_TOKEN")
     if not hive or not token:
         return None, "CODE-UNAVAILABLE this mind has no hive identity"
-    return NativeClient(hive, token, os.environ.get("OMEGACODE_URL", "http://127.0.0.1:8724")), None
+    # A mind reaches Code through the hive's relay, which proves the Code listener on the same connection before the
+    # capability is sent. Code R1.4+ refuses an hc1 capability that arrives without that proof (2026-10-29).
+    return NativeClient(hive, token, hive.rstrip("/") + "/api/agent/code/relay"), None
 
 
 def _error(result):
@@ -719,3 +721,403 @@ merge_apply = _out(merge_apply)
 retrieve = _out(retrieve)
 proof_result = _out(proof_result)
 proof_check = _out(proof_check)
+
+
+# Module-local mind client is shipped and digest-checked before any native skill loads.
+_MIND_CLIENT_SHA256 = "b24162a4693501baf823a0aa318ff5410e4d563380d22b23e020c59412a15079"
+
+
+def _load_mind_client_binding():
+    import types
+    path = pathlib.Path(__file__).resolve().with_name("mind_control_client.py")
+    try:
+        source = path.read_bytes()
+    except OSError:
+        raise ImportError("CODE-MIND-INSTALL-REFUSED pinned client Source unavailable") from None
+    if hashlib.sha256(source).hexdigest() != _MIND_CLIENT_SHA256:
+        raise ImportError("CODE-MIND-INSTALL-REFUSED pinned client Source digest mismatch") from None
+    module = types.ModuleType("_omega_code_pinned_mind_client_r2")
+    module.__file__ = str(path)
+    try:
+        exec(compile(source, str(path), "exec", dont_inherit=True), module.__dict__)
+    except ImportError:
+        raise ImportError("CODE-MIND-INSTALL-REFUSED client public dependency unavailable (httpx)") from None
+    return module
+
+
+_MIND_SDK = _load_mind_client_binding()
+
+
+def _mind_client():
+    hive, token = os.environ.get("HIVE_API_URL"), os.environ.get("HIVE_WS_TOKEN")
+    if not hive or not token:
+        return None, "CODE-MIND-UNAVAILABLE this mind has no hive identity"
+    return _MIND_SDK.MindControlClient(hive, token), None
+
+
+def _mind_payload(text):
+    raw = str(text).strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] == '"':
+        raw = raw[1:-1].replace('\\"', '"')
+    raw = decode(raw)
+    if len(raw.encode("utf-8")) > 65536:
+        raise ValueError("mind payload is too large")
+    def unique(pairs):
+        result = {}
+        for key, item in pairs:
+            if key in result:
+                raise ValueError("duplicate mind payload key")
+            result[key] = item
+        return result
+    value = json.loads(raw, object_pairs_hook=unique)
+    if not isinstance(value, dict):
+        raise ValueError("mind payload must be an object")
+    return value
+
+
+def _mind_call(invoke):
+    # Deliberate client callback, no runtime replacement of client._call.
+    client = None
+    dispatched = False
+    original_callback = None
+    try:
+        client, problem = _mind_client()
+        if client is None:
+            return problem
+        original_callback = client.before_request
+        def before_request(method, path, *, body=None, query=None, status, contract=None):
+            nonlocal dispatched
+            if original_callback is not None:
+                original_callback(method, path, body=body, query=query, status=status, contract=contract)
+            if method == "POST":
+                _retain_mind_write(client, method, path, body, contract)
+            dispatched = True
+        client.before_request = before_request
+        with client:
+            result = invoke(client)
+        rendered = json.dumps(result, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        if len(rendered) > 24000:
+            return "CODE-MIND-UNCONFIRMED response too large; retain original operation_id and exact payload, or read a narrower child selection"
+        return "CODE-MIND " + rendered
+    except _MindJournalUnavailable:
+        return "CODE-MIND-UNAVAILABLE retained request unavailable; retain original operation_id and exact payload; retry same key when available; do not rekey"
+    except _MindJournalError as exc:
+        return "CODE-MIND-JOURNAL-REFUSED " + exc.code + "; retain original operation_id and exact payload; do not rekey"
+    except _MindPayloadInvalid as exc:
+        if dispatched:
+            return "CODE-MIND-UNCONFIRMED response or presentation failed; retain original operation_id and exact payload"
+        return "CODE-MIND-INVALID " + str(exc)
+    except (ValueError, TypeError):
+        if dispatched:
+            return "CODE-MIND-UNCONFIRMED response or presentation failed; retain original operation_id and exact payload"
+        return "CODE-MIND-INVALID exact caller operation and payload required"
+    except Exception as exc:
+        if isinstance(exc, _MIND_SDK.MindControlError):
+            return "CODE-MIND-REFUSED " + str(exc.status) + " " + str(exc.code)
+        if isinstance(exc, _MIND_SDK.MindProtocolError):
+            return "CODE-MIND-UNCONFIRMED host response is unusable; do not infer delivery or stop"
+        return "CODE-MIND-UNCONFIRMED " + type(exc).__name__ + "; retain the original operation_id and exact payload"
+    finally:
+        if client is not None:
+            client.before_request = original_callback
+
+
+def mind_templates(team_id):
+    return _mind_call(lambda client: client.templates(_mind_argument(team_id)))
+
+
+class _MindPayloadInvalid(ValueError):
+    """A refusal before dispatch whose text names what is wrong: one plain line, no quotes or parentheses."""
+
+
+_SPAWN_REQUIRED = ("operation_id", "request_id", "team_id", "template_id", "initial_prompt", "allocation_usd")
+_SPAWN_OPTIONAL = ("lifecycle_mode", "lifecycle_limits", "model_id")
+_SPAWN_RENAMES = {"prompt": "use initial_prompt not prompt",
+                  "goal_id": "name the work goal id inside initial_prompt, not as goal_id",
+                  "work_goal_id": "name the work goal id inside initial_prompt, not as work_goal_id"}
+_SPAWN_SHAPE = ("required " + " ".join(_SPAWN_REQUIRED) + "; optional " + " ".join(_SPAWN_OPTIONAL)
+                + "; see the code-mind-spawn card example")
+
+
+def _plain(text):
+    """One line the MeTTa loop can carry: no quotes, parentheses, brackets, braces or newlines."""
+    kept = "".join(" " if ch in "\"'`()[]{}\r\n\t\\" else ch for ch in str(text))
+    return " ".join(kept.split())[:300]
+
+
+def _mind_spawn_fields(payload):
+    """Check the spawn payload's fields before any client call, and say exactly which are missing or unknown."""
+    try:
+        fields = _mind_payload(payload)
+    except (ValueError, TypeError) as exc:
+        raise _MindPayloadInvalid("spawn payload must be one JSON object, " + _plain(exc) + "; " + _SPAWN_SHAPE) from None
+    missing = [name for name in _SPAWN_REQUIRED if name not in fields]
+    unknown = sorted(name for name in fields if name not in _SPAWN_REQUIRED and name not in _SPAWN_OPTIONAL)
+    if missing or unknown:
+        parts = ["spawn payload"]
+        if missing:
+            parts.append("missing " + " ".join(missing))
+        if unknown:
+            parts.append("unknown " + " ".join(_plain(name) for name in unknown))
+        problem = " ".join(parts[:2]) + ("; " + parts[2] if len(parts) > 2 else "")
+        hints = [_SPAWN_RENAMES[name] for name in unknown if name in _SPAWN_RENAMES]
+        raise _MindPayloadInvalid("; ".join([problem] + hints + [_SPAWN_SHAPE]))
+    try:
+        _MIND_SDK._spawn_body(**fields)                   # the pinned client's own value checks, before dispatch
+    except (ValueError, TypeError) as exc:
+        raise _MindPayloadInvalid("spawn payload " + _plain(exc) + "; " + _SPAWN_SHAPE) from None
+    return fields
+
+
+def mind_spawn(payload):
+    # operation_id is supplied by the caller and retained by that caller before dispatch.
+    return _mind_call(lambda client: client.spawn(**_mind_spawn_fields(payload)))
+
+
+def mind_prompt(child_id, payload):
+    return _mind_call(lambda client: client.prompt(_mind_argument(child_id), **_mind_payload(payload)))
+
+
+def mind_control(child_id, operation_id, action):
+    return _mind_call(lambda client: client.control(_mind_argument(child_id), operation_id=_mind_argument(operation_id), action=_mind_argument(action)))
+
+
+def mind_status(child_id, team_id, controller_id):
+    def observe(client):
+        report = client.status(child_id=_mind_argument(child_id))
+        for child in report["children"]:
+            if child["team_id"] != _mind_argument(team_id) or child["controller_id"] != _mind_argument(controller_id):
+                raise _MIND_SDK.MindProtocolError("child team/controller mismatch")
+        return report
+    return _mind_call(observe)
+
+
+def mind_scan(team_id, controller_id, max_pages):
+    def observe(client):
+        bound = _mind_argument(max_pages)
+        if not bound.isascii() or not bound.isdecimal():
+            raise ValueError("max_pages must be explicit decimal")
+        return client.scan_team(_mind_argument(team_id), controller_id=_mind_argument(controller_id), max_pages=int(bound))
+    return _mind_call(observe)
+
+
+mind_templates = _out(mind_templates)
+mind_spawn = _out(mind_spawn)
+mind_prompt = _out(mind_prompt)
+mind_control = _out(mind_control)
+mind_status = _out(mind_status)
+mind_scan = _out(mind_scan)
+
+
+class _MindJournalUnavailable(RuntimeError):
+    """I/O cannot establish absence; preserve the original operation key."""
+
+
+class _MindJournalError(RuntimeError):
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
+
+
+def _mind_canonical(value):
+    return json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
+
+
+def _retain_mind_write(client, method, path, body, contract):
+    """Private per-mind request outbox, not a lifecycle registry or authority cache.
+
+    Lock is released before network I/O. Every explicit retry still reaches the host.
+    Prepared records never assert host admission, prompt acknowledgement or child state.
+    """
+    import fcntl
+    import stat
+    import tempfile
+    memory = os.environ.get("OMEGACLAW_MEMORY_DIR")
+    if not memory:
+        raise _MindJournalError("memory_required")
+    try:
+        directory = pathlib.Path(memory).resolve()
+        _MIND_SDK.validate_retained_request(method, path, body, contract)
+        meta = directory.stat()
+        if not stat.S_ISDIR(meta.st_mode) or meta.st_uid != os.getuid() or meta.st_mode & 0o022:
+            raise _MindJournalError("memory_scope_unusable")
+        scope = _mind_scope(client)
+        intent = {"scope": scope, "operation_id": body["operation_id"], "method": method, "path": path, "body": body, "contract": contract}
+        digest = hashlib.sha256(_mind_canonical(intent).encode()).hexdigest()
+        key = hashlib.sha256(_mind_canonical([scope, body["operation_id"]]).encode()).hexdigest()
+        lock_path = directory / ".omegacode-mind-requests.lock"
+        journal = directory / "omegacode-mind-requests.json"
+        flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
+        lock_fd = os.open(lock_path, flags, 0o600)
+        with os.fdopen(lock_fd, "r+") as lock:
+            lm = os.fstat(lock.fileno())
+            if not stat.S_ISREG(lm.st_mode) or lm.st_uid != os.getuid() or lm.st_mode & 0o077:
+                raise _MindJournalError("journal_lock_unusable")
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                fd = os.open(journal, os.O_RDONLY | os.O_NOFOLLOW)
+            except FileNotFoundError:
+                data = {"schema": 1, "requests": {}}
+            else:
+                with os.fdopen(fd) as source:
+                    jm = os.fstat(source.fileno())
+                    if not stat.S_ISREG(jm.st_mode) or jm.st_uid != os.getuid() or jm.st_mode & 0o077 or jm.st_size > 70000000:
+                        raise _MindJournalError("journal_unusable")
+                    data = _read_mind_journal(source)
+            previous = data["requests"].get(key)
+            if previous:
+                if previous["digest"] != digest:
+                    raise _MindJournalError("operation_changed")
+                return
+            if len(data["requests"]) >= 1000:
+                raise _MindJournalError("journal_capacity")
+            data["requests"][key] = {"intent": intent, "digest": digest}
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=directory, prefix=".mind-request-", delete=False) as target:
+                    temporary = pathlib.Path(target.name)
+                    os.fchmod(target.fileno(), 0o600)
+                    target.write(_mind_canonical(data))
+                    target.flush()
+                    os.fsync(target.fileno())
+                os.replace(temporary, journal)
+                temporary = None
+                dir_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+    except _MindJournalError:
+        raise
+    except OSError:
+        raise _MindJournalUnavailable() from None
+    except (ValueError, TypeError, KeyError):
+        raise _MindJournalError("journal_corrupt") from None
+
+
+def _read_mind_journal(source):
+    def unique(pairs):
+        result = {}
+        for name, item in pairs:
+            if name in result:
+                raise _MindJournalError("journal_corrupt")
+            result[name] = item
+        return result
+    data = json.load(source, object_pairs_hook=unique)
+    if not isinstance(data, dict) or type(data.get("schema")) is not int or data.get("schema") != 1 or not isinstance(data.get("requests"), dict) or len(data["requests"]) > 1000:
+        raise _MindJournalError("journal_corrupt")
+    for saved_key, record in data["requests"].items():
+        if not isinstance(record, dict) or not isinstance(record.get("intent"), dict):
+            raise _MindJournalError("journal_corrupt")
+        saved = record["intent"]
+        if set(saved) not in ({"scope", "operation_id", "method", "path", "body"}, {"scope", "operation_id", "method", "path", "body", "contract"}) or not isinstance(saved["body"], dict) or saved["operation_id"] != saved["body"].get("operation_id") or saved["method"] != "POST":
+            raise _MindJournalError("journal_corrupt")
+        try:
+            _MIND_SDK._same_origin_relative_path(saved["path"])
+            if "contract" in saved:
+                _MIND_SDK.validate_retained_request(saved["method"], saved["path"], saved["body"], saved["contract"])
+        except (ValueError, TypeError, KeyError):
+            raise _MindJournalError("journal_corrupt") from None
+        if hashlib.sha256(_mind_canonical(saved).encode()).hexdigest() != record.get("digest") or hashlib.sha256(_mind_canonical([saved["scope"], saved["operation_id"]]).encode()).hexdigest() != saved_key:
+            raise _MindJournalError("journal_corrupt")
+    return data
+
+
+def _mind_scope(client):
+    return hashlib.sha256(_mind_canonical([
+        str(client._client.base_url),
+        hashlib.sha256(client._client.headers["Authorization"].encode()).hexdigest()
+    ]).encode()).hexdigest()
+
+
+def _retained_mind_request(client, operation_id):
+    """Read one exact local intent in current credential scope, without authority inference."""
+    import fcntl
+    import stat
+    operation_id = _MIND_SDK._operation(operation_id)
+    memory = os.environ.get("OMEGACLAW_MEMORY_DIR")
+    if not memory:
+        raise _MindJournalError("memory_required")
+    try:
+        directory = pathlib.Path(memory).resolve()
+        dm = directory.stat()
+        if not stat.S_ISDIR(dm.st_mode) or dm.st_uid != os.getuid() or dm.st_mode & 0o022:
+            raise _MindJournalError("memory_scope_unusable")
+        key = hashlib.sha256(_mind_canonical([_mind_scope(client), operation_id]).encode()).hexdigest()
+        try:
+            fd = os.open(directory / ".omegacode-mind-requests.lock", os.O_RDWR | os.O_NOFOLLOW)
+        except FileNotFoundError:
+            raise _MindJournalUnavailable() from None
+        with os.fdopen(fd, "r+") as lock:
+            lm = os.fstat(lock.fileno())
+            if not stat.S_ISREG(lm.st_mode) or lm.st_uid != os.getuid() or lm.st_mode & 0o077:
+                raise _MindJournalError("journal_lock_unusable")
+            fcntl.flock(lock.fileno(), fcntl.LOCK_SH)
+            try:
+                fd = os.open(directory / "omegacode-mind-requests.json", os.O_RDONLY | os.O_NOFOLLOW)
+            except FileNotFoundError:
+                raise _MindJournalUnavailable() from None
+            with os.fdopen(fd) as source:
+                jm = os.fstat(source.fileno())
+                if not stat.S_ISREG(jm.st_mode) or jm.st_uid != os.getuid() or jm.st_mode & 0o077 or jm.st_size > 70000000:
+                    raise _MindJournalError("journal_unusable")
+                data = _read_mind_journal(source)
+            record = data["requests"].get(key)
+            if record is None:
+                raise _MindJournalError("request_not_retained")
+            return record["intent"]
+    except _MindJournalError:
+        raise
+    except OSError:
+        raise _MindJournalUnavailable() from None
+    except (ValueError, TypeError, KeyError):
+        raise _MindJournalError("journal_corrupt") from None
+
+
+def mind_request(operation_id):
+    def inspect(client):
+        intent = _retained_mind_request(client, _mind_argument(operation_id))
+        return {"source": "local_retained_request", "host_admission": "not_established", "method": intent["method"], "path": intent["path"], "body": intent["body"]}
+    return _mind_call(inspect)
+
+
+def mind_retry(operation_id):
+    def retry(client):
+        intent = _retained_mind_request(client, _mind_argument(operation_id))
+        if "contract" not in intent:
+            raise _MindJournalError("legacy_contract_missing_operator_migration_required")
+        return client.replay_retained(intent["method"], intent["path"], intent["body"], intent["contract"])
+    return _mind_call(retry)
+
+
+mind_request = _out(mind_request)
+mind_retry = _out(mind_retry)
+
+
+def _mind_argument(value):
+    """Remove native string quoting without expanding legacy source-text placeholders.
+
+    Reference grammar is validated by the reviewed client; accepted underscore
+    sequences in IDs must remain byte-for-byte equal to the original reference.
+    """
+    text = str(value).strip()
+    if len(text) >= 2 and text[0] == text[-1] == '"':
+        text = text[1:-1].replace('\\"', '"')
+    return text
+
+
+def mind_work(request_id, receiving_team):
+    """Read host-authorized cross-swarm request; this confers no child/lease authority."""
+    def read_work(client):
+        expected = _mind_argument(request_id)
+        result = client.request(expected)
+        if result.get("id") != expected or result["to_swarm"] != _mind_argument(receiving_team):
+            raise _MIND_SDK.MindProtocolError("work request identity/receiving swarm mismatch")
+        return {"source": "host_work_request", "request": result}
+    return _mind_call(read_work)
+
+
+mind_work = _out(mind_work)

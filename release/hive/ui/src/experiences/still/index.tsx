@@ -1,6 +1,13 @@
+import { usePhase } from '../../shell/phase'
+import { navigate, parse, useRoute } from '../../lib/router'
+import { flushSync } from 'react-dom'
+import { createAskPort } from '../../features/ask/askPort'
+import { readDraft, useDraft } from '../drafts'
+import { usePhaseAnchor } from '../phaseAnchor'
+import { bindEpoch, currentEpoch, onIdentityChange } from '../../lib/identityEpoch'
 import { plural } from '../../lib/plural'
 import { AnimatePresence, m } from 'framer-motion'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Activity, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { FEATURES, featureById } from '../../features/registry'
 import { openClassic, openGallery, openPalette, shown, storeIdentity, useHive, useHomeRequested, useReducedMotion } from '../sdk'
 import { Ask, isStillAct, type Receipt } from './Ask'
@@ -47,6 +54,16 @@ async function confirmed(run: () => Promise<boolean>): Promise<'ok' | 'refused' 
  * what needs you, what is happening, and what the hive has learned. Opening a mind turns the page into a reading room.
  */
 export default function Still() {
+  const epoch = useSyncExternalStore(onIdentityChange, currentEpoch, currentEpoch)
+  return <Paper key={epoch} />
+}
+
+function Paper() {
+  const binding = useMemo(bindEpoch, [])
+  const phaseAnchor = usePhaseAnchor()
+  const shellHome = usePhase((s) => s.phased && s.phase !== 'pro')
+  const route = useRoute()
+  const phaseHeld = shellHome && route.name === 'hive'
   const world = useWorld()
   const reduced = useReducedMotion()
   const sp = useSprings()
@@ -54,34 +71,71 @@ export default function Still() {
   const hiveName = useHive((s) => s.hive?.name)
   const [focus, setFocus] = useState<string | null>(null)
   const [sheet, setSheet] = useState<SheetKind | null>(null)
+  const [askWords] = useDraft('still:ask')
+  const [pendingScroll, setPendingScroll] = useState<{ to: 'needs' | 'now' | 'learned' | 'everything'; words: string | null } | null>(null)
+  const focusTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(focusTimer.current), [])
+  const paperCol = useRef<HTMLElement>(null)
   const everyRef = useRef<HTMLElement>(null)
   const ask = useRef<HTMLInputElement>(null)
   const needHead = useRef<HTMLElement>(null)
   const returnTo = useRef<HTMLElement | null>(null)
+  const restorePending = useRef(false)
+  const [exiting, setExiting] = useState(false)
   const needsRef = useRef<HTMLElement>(null)
   const nowRef = useRef<HTMLElement>(null)
   const learnedRef = useRef<HTMLElement>(null)
 
+  // Local reading, sheets and passages belong to Pro. Commit that view before using its retained DOM refs.
+  const revealPro = useCallback(() => {
+    if (!binding.current()) return false
+    flushSync(() => {
+      if (parse(window.location.hash).name !== 'hive') navigate({ name: 'hive' })
+      usePhase.getState().send('pro')
+    })
+    return true
+  }, [binding])
+
   const open = useCallback((id: string) => {
+    if (!revealPro()) return
+    restorePending.current = false
+    window.clearTimeout(focusTimer.current)
     if (!returnTo.current) returnTo.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
     setSheet(null)
     setFocus(id)
-  }, [])
+  }, [revealPro])
   const openSheet = useCallback((k: SheetKind) => {
+    if (!revealPro()) return
+    restorePending.current = false
+    window.clearTimeout(focusTimer.current)
     returnTo.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
     setFocus(null)
     setSheet(k)
-  }, [])
+  }, [revealPro])
   const close = useCallback(() => {
+    if (!binding.current()) return
+    restorePending.current = true
+    setExiting(true)
     setFocus(null)
     setSheet(null)
+  }, [binding])
+  const away = !phaseHeld && (!!focus || !!sheet)
+  // The original field may have yielded to StillLine while a modal was in front. Restore after its exit releases
+  // containment; the Ask's own handover then follows focus back onto the paper. No delayed focus crosses identities.
+  useEffect(() => {
+    if (exiting || away || !restorePending.current) return
+    restorePending.current = false
     const back = returnTo.current
     returnTo.current = null
-    window.setTimeout(() => (back && document.contains(back) ? back.focus({ preventScroll: true }) : ask.current?.focus({ preventScroll: true })), 60)
-  }, [])
-  const away = !!focus || !!sheet
+    const phase = usePhase.getState()
+    if (!binding.current() || parse(window.location.hash).name !== 'hive' || (phase.phased && phase.phase !== 'pro')) return
+    if (back && document.contains(back)) back.focus({ preventScroll: true })
+    else createAskPort('still').focus()
+  }, [exiting, away, binding, route.name])
   // a surface's X lands on the plain page: no reading room or sheet left open (home:requested)
   useHomeRequested(() => {
+    restorePending.current = false
+    setExiting(false)
     returnTo.current = null
     setFocus(null)
     setSheet(null)
@@ -114,13 +168,54 @@ export default function Still() {
     return () => window.removeEventListener('keydown', onKey, true)
   }, [away, reduced])
 
-  const scrollTo = (k: 'needs' | 'now' | 'learned' | 'everything') => {
-    ({ needs: needsRef, now: nowRef, learned: learnedRef, everything: everyRef })[k].current?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' })
-    // the request's heading, never its Yes: a decision starts with reading
-    if (k === 'needs') window.setTimeout(() => needHead.current?.focus({ preventScroll: true }), reduced ? 0 : 450)
+  const scrollTo = (k: 'needs' | 'now' | 'learned' | 'everything', afterAsk = false) => {
+    if (!revealPro()) return
+    window.clearTimeout(focusTimer.current)
+    setPendingScroll({ to: k, words: afterAsk ? readDraft('still:ask') : null })
   }
+  // A submitted request clears its suggestions. Scroll after that commit, so their height cannot move the heading.
+  useEffect(() => {
+    if (!pendingScroll) return
+    const phase = usePhase.getState()
+    if (!binding.current() || document.hidden || parse(window.location.hash).name !== 'hive' || (phase.phased && phase.phase !== 'pro')) { setPendingScroll(null); return }
+    if (pendingScroll.words !== null && askWords.trim()) {
+      if (askWords !== pendingScroll.words) setPendingScroll(null) // new typing takes over
+      return
+    }
+    let closed = false, quiet = 0, limit = 0
+    let observer: ResizeObserver | null = null
+    const dispose = () => {
+      window.clearTimeout(quiet); window.clearTimeout(limit); observer?.disconnect()
+      for (const kind of ['pointerdown', 'wheel', 'keydown']) window.removeEventListener(kind, cancel, true)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+    const cancel = () => { if (!closed) { closed = true; dispose(); setPendingScroll(null) } }
+    const onVisibility = () => { if (document.hidden) cancel() }
+    const finish = () => {
+      if (closed) return
+      closed = true; dispose()
+      const current = usePhase.getState()
+      if (binding.current() && !document.hidden && parse(window.location.hash).name === 'hive' && (!current.phased || current.phase === 'pro')) {
+        ({ needs: needsRef, now: nowRef, learned: learnedRef, everything: everyRef })[pendingScroll.to].current?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' })
+        // The heading, never its Yes. A later identity, route, view or draft owns its focus.
+        if (pendingScroll.to === 'needs') focusTimer.current = window.setTimeout(() => {
+          const next = usePhase.getState()
+          if (binding.current() && parse(window.location.hash).name === 'hive' && (!next.phased || next.phase === 'pro') && !readDraft('still:ask').trim()) needHead.current?.focus({ preventScroll: true })
+        }, reduced ? 0 : 450)
+      }
+      setPendingScroll(null)
+    }
+    // One navigation-owned quiet window, driven by actual layout changes; no idle polling or frame loop.
+    const settle = () => { if (!closed) { window.clearTimeout(quiet); quiet = window.setTimeout(finish, 100) } }
+    if (typeof ResizeObserver !== 'undefined' && paperCol.current) { observer = new ResizeObserver(settle); observer.observe(paperCol.current); settle() }
+    limit = window.setTimeout(finish, 1500)
+    for (const kind of ['pointerdown', 'wheel', 'keydown']) window.addEventListener(kind, cancel, true)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => { closed = true; dispose() }
+  }, [pendingScroll, askWords, reduced, binding, phaseHeld, route.name])
 
   const act = async (a: Act): Promise<Receipt | null> => {
+    if (!binding.current()) return null
     const s = useHive.getState()
     const offline = (what: string): Receipt => ({ tone: 'error', keep: true, text: `Not connected to the hive, so ${what}. Your words are still here.` })
     switch (a.do) {
@@ -161,10 +256,10 @@ export default function Still() {
           : { tone: 'error', keep: true, text: 'The task could not be made. Nothing changed; your words are still here.' }
       }
       case 'scroll':
-        scrollTo(a.to)
+        scrollTo(a.to, true)
         return null
       case 'feature':
-        return openFeature(a.id, a.name)
+        return openFeature(a.id, a.name, true)
       case 'swarm':
         openClassic({ name: 'swarm', id: a.swarm.id })
         return null
@@ -192,14 +287,16 @@ export default function Still() {
   }
 
   /** Any hive feature: Still's own sheet or passage when it has one, the host's window, or its classic page. */
-  const openFeature = (id: string, name?: string): Receipt | null => {
+  const openFeature = (id: string, name?: string, afterAsk = false): Receipt | null => {
+    if (!binding.current()) return null
     const place = STILL_PLACE[id]
     const f = featureById(id)
     if (place && 'sheet' in place) openSheet(place.sheet)
     else if (place && 'scroll' in place) {
+      if (!revealPro()) return null
       setSheet(null)
       setFocus(null)
-      window.setTimeout(() => scrollTo(place.scroll), 30)
+      scrollTo(place.scroll, afterAsk)
     } else if (place?.host === 'gallery') openGallery(true)
     else if (place?.host === 'search') ask.current?.focus()
     else if (place?.host === 'stopall') useHive.getState().setStopAll(true)
@@ -254,8 +351,9 @@ export default function Still() {
     <div className="still" data-reduced={reduced}>
       <div className="still-paper" />
         <div className="still-scroll" aria-hidden={away} inert={away}>
-          <main className="still-col">
-            <header style={{ paddingTop: 'clamp(56px, 13vh, 132px)' }}>
+          <main ref={paperCol} className="still-col">
+            <Activity mode={phaseHeld ? 'hidden' : 'visible'}>
+            <header className="st-pro-only" style={{ paddingTop: 'clamp(56px, 13vh, 132px)' }}>
               <m.p className="st-kicker" {...rise(0)} style={{ margin: '0 0 22px' }}>
                 {dateLine(d)} · {shown(hiveName) || 'The hive'}
               </m.p>
@@ -280,7 +378,7 @@ export default function Still() {
               </m.p>
             </header>
 
-            <m.nav className="st-quick" aria-label="Start something" {...rise(2)}>
+            <m.nav className="st-quick st-pro-only" aria-label="Start something" {...rise(2)}>
               <button className="st-link" onClick={() => openFeature('swarms.launch')}>
                 Start a swarm
               </button>
@@ -294,19 +392,24 @@ export default function Still() {
               </button>
             </m.nav>
 
-            <m.div {...rise(3)} style={{ marginTop: 'clamp(36px, 7vh, 64px)' }}>
+            </Activity>
+            <m.div className="st-question-block" {...rise(3)} style={{ marginTop: 'clamp(36px, 7vh, 64px)' }}>
               <Ask inputRef={ask} world={world} onAct={act} />
+              <div ref={phaseAnchor} className="st-phase-anchor" />
+              <Activity mode={phaseHeld ? 'hidden' : 'visible'}>
               {/* J3 r4.3 O3: the Studio setup card / Directing Studio shows even before the letter has rows */}
-              {letterRows === 0 && <DirectingStudio />}
+              {letterRows === 0 && <div className="st-pro-only"><DirectingStudio /></div>}
               {letterRows > 0 && (
-                <section className="st-letter" aria-label="Today’s page">
+                <section className="st-letter st-pro-only" aria-label="Today’s page">
                   <ThreadHead variant="letter" />
                   <Thread variant="letter" words={words} />
                 </section>
               )}
+              </Activity>
             </m.div>
 
-            <m.section ref={needsRef} className="st-section" aria-labelledby="st-h-needs" data-presence-region="needs" data-presence-feature="decide.approvals" {...rise(4)}>
+            <Activity mode={phaseHeld ? 'hidden' : 'visible'}>
+            <m.section ref={needsRef} className="st-section st-pro-only" aria-labelledby="st-h-needs" data-presence-region="needs" data-presence-feature="decide.approvals" {...rise(4)}>
               <div className="st-section-head">
                 <h2 id="st-h-needs" className="st-kicker" style={{ margin: 0 }}>
                   Needs you
@@ -315,7 +418,7 @@ export default function Still() {
               <Needs headRef={needHead} />
             </m.section>
 
-            <m.section ref={nowRef} className="st-section" aria-labelledby="st-h-now" data-presence-region="now" data-presence-feature="minds.see" {...rise(5)}>
+            <m.section ref={nowRef} className="st-section st-pro-only" aria-labelledby="st-h-now" data-presence-region="now" data-presence-feature="minds.see" {...rise(5)}>
               <div className="st-section-head">
                 <h2 id="st-h-now" className="st-kicker" style={{ margin: 0 }}>
                   Happening now
@@ -324,7 +427,7 @@ export default function Still() {
               <Now focusId={focus} onOpen={open} />
             </m.section>
 
-            <m.section ref={learnedRef} className="st-section" aria-labelledby="st-h-learned" data-presence-region="learned" data-presence-feature="swarms.beliefs" {...rise(6)}>
+            <m.section ref={learnedRef} className="st-section st-pro-only" aria-labelledby="st-h-learned" data-presence-region="learned" data-presence-feature="swarms.beliefs" {...rise(6)}>
               <div className="st-section-head">
                 <h2 id="st-h-learned" className="st-kicker" style={{ margin: 0 }}>
                   Lately the hive learned
@@ -333,7 +436,7 @@ export default function Still() {
               <Learned />
             </m.section>
 
-            <m.section ref={everyRef} className="st-section" aria-labelledby="st-h-everything" data-presence-region="everything" {...rise(7)}>
+            <m.section ref={everyRef} className="st-section st-pro-only" aria-labelledby="st-h-everything" data-presence-region="everything" {...rise(7)}>
               <div className="st-section-head">
                 <h2 id="st-h-everything" className="st-kicker" style={{ margin: 0 }}>
                   Everything the hive can do
@@ -360,15 +463,16 @@ export default function Still() {
               </div>
             </m.section>
 
-            <footer className="st-foot">
+            <footer className="st-foot st-pro-only">
               Press <kbd>/</kbd> to ask for anything. The Ω below has every other way in.
             </footer>
+            </Activity>
           </main>
         </div>
 
-        <AnimatePresence>
-          {focus && <Reading key={focus} id={focus} onClose={close} />}
-          {sheet && !focus && <Sheet key={sheet} kind={sheet} onClose={close} onOpenMind={open} onLaunch={() => openFeature('swarms.launch')} />}
+        <AnimatePresence onExitComplete={() => setExiting(false)}>
+          {!phaseHeld && focus && <Reading key={focus} id={focus} onClose={close} />}
+          {!phaseHeld && sheet && !focus && <Sheet key={sheet} kind={sheet} onClose={close} onOpenMind={open} onLaunch={() => openFeature('swarms.launch')} />}
         </AnimatePresence>
     </div>
   )

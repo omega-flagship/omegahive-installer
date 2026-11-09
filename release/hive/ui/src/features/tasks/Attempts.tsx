@@ -26,7 +26,7 @@ export function TaskAttempts({ task: goal }: { task: Goal }) {
   if (!has(client, 'goalAttempts') || res.status === 'unsupported') return null
   const n = res.data?.length ?? 0
   return (
-    <div className="rounded-lg border border-line bg-black/20 px-2.5 py-1.5 text-[11.5px]" data-task-attempts>
+    <div className="rounded-lg border border-line bg-shade/20 px-2.5 py-1.5 text-[11.5px]" data-task-attempts>
       <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center gap-1 text-left text-ink-4 hover:text-ink-2">
         <span className="flex-1">Every result attempt on this task{res.status === 'ready' ? ` (${n})` : ''}</span>
         <span aria-hidden="true">{open ? '−' : '+'}</span>

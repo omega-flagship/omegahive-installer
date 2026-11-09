@@ -19,7 +19,7 @@ export function FindHelp() {
   const matchNeed = matchKind === 'mind' ? role : service
   if (!client?.matchServices) return null
   return (
-    <section className="mt-6 rounded-[20px] border border-line bg-white/[0.02]" aria-labelledby="find-help-h" id="find-help">
+    <section className="mt-6 rounded-[20px] border border-line bg-tint/[0.02]" aria-labelledby="find-help-h" id="find-help">
       <h2 id="find-help-h">
         <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="flex min-h-12 w-full items-center gap-2 px-4 text-left text-[13.5px] font-semibold text-ink-2">
           <Icon name="search" size={14} />
@@ -36,7 +36,7 @@ export function FindHelp() {
 function Matches({ kind, need: matchNeed, setKind, role, setRole, service, setService }: { kind: 'mind' | 'swarm'; need: string; setKind: (k: 'mind' | 'swarm') => void; role: string; setRole: (r: string) => void; service: string; setService: (s: string) => void }) {
   const client = useHive((s) => s.client)
   const matches = useResource(() => need(client, 'matchServices', 'Service matching')(matchNeed, kind), { key: `${kind}:${matchNeed}` })
-  const field = 'min-h-10 rounded-xl border border-line bg-white/[0.04] px-3 text-[13px] text-ink'
+  const field = 'min-h-10 rounded-xl border border-line bg-tint/[0.04] px-3 text-[13px] text-ink'
   return (
     <div className="space-y-3 px-4 pb-4">
       <p className="text-[12.5px] text-ink-3">Recommendations use configured roles or advertised services and recorded claims. Acceptance is required before assignment.</p>
@@ -69,7 +69,7 @@ function Matches({ kind, need: matchNeed, setKind, role, setRole, service, setSe
           <div className="grid gap-2 md:grid-cols-2">
             {!data.candidates.length && <p className="text-[12.5px] text-ink-3">No configured candidates match this request.</p>}
             {data.candidates.map((c) => (
-              <article key={c.entity_id} className="space-y-1 rounded-2xl border border-line bg-white/[0.03] p-3 text-[12.5px] text-ink-2">
+              <article key={c.entity_id} className="space-y-1 rounded-2xl border border-line bg-tint/[0.03] p-3 text-[12.5px] text-ink-2">
                 <strong className="text-[13.5px] text-ink">{shown(c.name)}</strong>
                 <p>
                   {c.active_claims} recorded held tasks · Eligibility: {c.eligibility}

@@ -6,7 +6,7 @@ import { wordsHash } from '../../lib/askMemory/hash'
 import type { Talk } from '../../lib/askMemory/types'
 
 /**
- * r2 (Quinn: "it should be used when talking to me - it should get to know me"): the person's swarm conversations are
+ * r2 (Jon: "it should be used when talking to me - it should get to know me"): the person's swarm conversations are
  * recalled with their Ask turns, under the same caps and every forget. Invented conversations only.
  */
 

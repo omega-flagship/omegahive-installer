@@ -1,0 +1,20 @@
+{
+  "why": "Classic phase UI and the UI parts inspector remain candidate. Cosmos, Professional, Still and Construct native phases are released; only those three newly approved renderer markers are removed.",
+  "markers": [
+    "classic-home",
+    "UiPart",
+    "ui-on-screen",
+    "parts-list"
+  ],
+  "chunks": [
+    "answer",
+    "uiParts",
+    "space",
+    "lib_ui",
+    "parts"
+  ],
+  "files": [
+    "src/experiences/construct/parts.metta"
+  ],
+  "released": "Jon visual go 2026-11-04T10:00:53Z: Professional, Still and Construct join already released Cosmos. Classic, Flux and Canvas native phases stay candidates; parts inspection and its raw assets are not released."
+}

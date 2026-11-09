@@ -15,10 +15,10 @@ the account is managed by that Workspace domain. Disabled people stay refused. T
 Google URL carries ``hd=<domain>`` as an account-picker hint only; the callback check is what enforces.
 
 Identity: a person is bound to Google's stable subject (``sub``), stored on first sign-in (trust on first use for rows
-made before this binding or by the webhost sign-in) and required to match on every later one: another Google account
+made before this binding or by the family sign-in) and required to match on every later one: another Google account
 reporting the same email is refused (``identity_mismatch``); only an admin clearing the binding lets a new one bind.
 A person enrolled by domain, or whose email is in a listed domain, must also present the matching ``hd`` on every
-sign-in. The webhost sign-in carries no Google ``sub`` or ``hd``, so it is refused for every person bound to a Google
+sign-in. The family sign-in carries no Google ``sub`` or ``hd``, so it is refused for every person bound to a Google
 account and for every person who needs the Workspace check (``google_signin_required``).
 
 The ID token from the token endpoint is required and checked (iss, aud, exp, sub == userinfo sub, email == userinfo
@@ -33,6 +33,15 @@ checks the one-time ``state`` (CSRF), exchanges the code with Google over TLS, v
 then sets an HttpOnly ``hive_signin`` cookie scoped to the hive's path.  The page exchanges that cookie
 for a bearer session (POST /api/auth/sso).  No token ever appears in a URL.
 
+Member passwords (T-101): an admin adds a member by email (POST /api/people/members); the hive makes the password
+(``secrets``), shows it once in that response and stores only a salted scrypt hash (``password_hash``; never logged,
+never in a view or event). The member signs in with email + password (POST /api/auth/login) and gets a session of kind
+``member_password`` for that person, which is never admin: a password session is a member's even if the row is later
+made an admin. An admin resets it (a new one, shown once; that person's password sessions end) or removes it (the hash
+is dropped; the same). Disabling a person drops the hash too. From outside this machine it works only while
+HIVE_PUBLIC_PASSWORD=1 and Google sign-in is not configured; once HIVE_GOOGLE_* are set it is refused from outside,
+as the operator password is, and the same email continues with Google as the same row (bound on first use, below).
+
 Roles: ``admin`` (everything, including people, invitations and limits) and ``member`` (uses the hive).
 
 Own hive H1 (ownhive.py): the hive has one owner (stored; migrated from the first admin). Admins keep every right they
@@ -44,7 +53,7 @@ visitor (``access = "public"``, ``invited_by = "public"``, role member); a priva
 
 Configured admins (``HIVE_ADMIN_EMAILS``, a comma list matched exactly after strip and lowercase): a listed email is
 always an admin. At startup a listed email with no row gets an admin row (``invited_by = "config"``), and an existing
-enabled non-admin row is upgraded; every sign-in (the hive's Google flow and the webhost path) checks the same thing, so
+enabled non-admin row is upgraded; every sign-in (the hive's Google flow and the family path) checks the same thing, so
 a row that became a member later is upgraded again. An upgrade stamps ``promoted_by = "config:HIVE_ADMIN_EMAILS"`` and
 ``promoted_at``, logs a warning line and publishes ``people.updated`` ``{change: "promoted", via: "config", previous_role,
 trigger}``. It never downgrades anyone, never touches ``invited_by`` (which drives the Workspace check for
@@ -61,11 +70,14 @@ import json
 import logging
 import math
 import os
+import pathlib
 import secrets
+import re
 import time
 import urllib.parse
 
 import httpx
+from xkcdpass import xkcd_password
 
 from .db import new_id, now
 
@@ -99,6 +111,76 @@ CREATE TABLE IF NOT EXISTS signins (
 
 def _hash(value):
     return hashlib.sha256(str(value).encode()).hexdigest()
+
+
+# Member passwords: scrypt (RFC 7914), N = 2^14, r = 8, p = 1 (16 MiB, tens of ms), 16-byte random salt per hash.
+SCRYPT_N, SCRYPT_R, SCRYPT_P, SCRYPT_LEN = 2 ** 14, 8, 1, 32
+
+
+def password_hash(password, salt=None):
+    """``scrypt$N$r$p$salt$hash`` (url-safe base64) for a member password; a new random salt each time."""
+    salt = os.urandom(16) if salt is None else salt
+    key = hashlib.scrypt(str(password).encode(), salt=salt, n=SCRYPT_N, r=SCRYPT_R, p=SCRYPT_P, dklen=SCRYPT_LEN)
+    enc = lambda b: base64.urlsafe_b64encode(b).decode().rstrip("=")
+    return f"scrypt${SCRYPT_N}${SCRYPT_R}${SCRYPT_P}${enc(salt)}${enc(key)}"
+
+
+def password_matches(stored, password):
+    """Whether ``password`` matches a ``password_hash`` value; constant-time compare. A malformed value never matches."""
+    try:
+        scheme, n, r, p, salt, key = str(stored).split("$")
+        dec = lambda s: base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+        if scheme != "scrypt":
+            return False
+        want = dec(key)
+        got = hashlib.scrypt(str(password).encode(), salt=dec(salt), n=int(n), r=int(r), p=int(p), dklen=len(want))
+    except (ValueError, TypeError):
+        return False
+    return hmac.compare_digest(got, want)
+
+
+# Member passwords (T-108, T-109): three words from xkcdpass's EFF long list, joined by dashes. The list is read once,
+# at import, and the hive refuses to start without a usable one rather than make weaker passwords.
+PASSWORD_WORDS_LIST = "eff-long"   # the EFF large wordlist as xkcdpass ships it (xkcdpass/static/eff-long)
+PASSWORD_WORD = re.compile(r"[a-z]+")   # matched whole: no word holds a dash, so a password splits back on "-"
+PASSWORD_WORDS_MIN = 2048   # three words from 2048 give 33 bits; eff-long (7772 words kept) gives about 38.8
+PASSWORD_WORD_COUNT = 3
+
+
+def password_words_file(name=PASSWORD_WORDS_LIST):
+    """The path of the word list ``name`` that the xkcdpass package ships. Raises RuntimeError when the package does
+    not have it: xkcdpass's ``locate_wordfile`` then falls back to a system dictionary such as /usr/share/dict/words,
+    which the hive does not take."""
+    found = xkcd_password.locate_wordfile(name)
+    own = os.path.join(os.path.dirname(os.path.abspath(xkcd_password.__file__)), "static", name)
+    if found is None or os.path.abspath(found) != own:
+        raise RuntimeError(f"member password word list {name!r} cannot be read: xkcdpass does not ship it "
+                           f"(locate_wordfile gave {found!r})")
+    return pathlib.Path(own)
+
+
+def load_password_words(path=None, minimum=PASSWORD_WORDS_MIN):
+    """The word list as a sorted tuple: the lines of ``path`` (by default xkcdpass's ``eff-long``) that are lowercase
+    ASCII letters only, each word once; other lines (eff-long's four dashed words) are left out. Raises RuntimeError
+    when the file is missing or unreadable, or fewer than ``minimum`` words remain."""
+    path = password_words_file() if path is None else pathlib.Path(path)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        raise RuntimeError(f"member password word list {path} cannot be read: {e}") from e
+    words = sorted({word for word in (line.strip() for line in text.splitlines()) if PASSWORD_WORD.fullmatch(word)})
+    if len(words) < minimum:
+        raise RuntimeError(f"member password word list {path} holds {len(words)} words; at least {minimum} are needed")
+    return tuple(words)
+
+
+PASSWORD_WORDS = load_password_words()
+
+
+def new_password(words=None):
+    """A member password: three words picked with ``secrets.choice`` from the list, joined by "-" (otter-maple-quiet)."""
+    words = PASSWORD_WORDS if words is None else words
+    return "-".join(secrets.choice(words) for _ in range(PASSWORD_WORD_COUNT))
 
 
 def admin_emails(raw=None):
@@ -159,11 +241,12 @@ class People:
             hive.db.execute("ALTER TABLE people ADD COLUMN profile_kind TEXT CHECK (profile_kind IN ('child', 'adult') OR profile_kind IS NULL)")
         # older hives: the audit stamp for an upgrade by HIVE_ADMIN_EMAILS (see promote_configured_admin)
         columns = {r["name"] for r in hive.db.all("PRAGMA table_info(people)")}
-        for column in ("promoted_by", "promoted_at"):
+        for column in ("promoted_by", "promoted_at", "password_hash"):   # password_hash: T-101 member passwords
             if column not in columns:
                 hive.db.execute(f"ALTER TABLE people ADD COLUMN {column} TEXT")
         from .ownhive import OwnHive
         OwnHive.migrate_people(hive.db)   # own hive H1: people.access, invites.kind / limit_usd / terms (additive)
+        self.dummy_hash = password_hash(secrets.token_urlsafe(18))   # checked for an unknown email: same cost
         self.client_id = os.environ.get("HIVE_GOOGLE_CLIENT_ID", "")
         self.client_secret = os.environ.get("HIVE_GOOGLE_CLIENT_SECRET", "")
         self.redirect_uri = os.environ.get("HIVE_GOOGLE_REDIRECT_URI", "")
@@ -214,7 +297,8 @@ class People:
     def view(row):
         return {k: row[k] for k in ("id", "email", "name", "role", "invited_by", "created_at", "last_seen_at")} | {
             k: row.get(k) for k in ("promoted_by", "promoted_at", "access", "profile_kind")} | {
-            "disabled": bool(row["disabled"]), "google_bound": bool(row.get("google_sub"))}
+            "disabled": bool(row["disabled"]), "google_bound": bool(row.get("google_sub")),
+            "password_set": bool(row.get("password_hash"))}
 
     def list(self):
         return [self.view(r) for r in self.db.all("SELECT * FROM people ORDER BY created_at")]
@@ -260,6 +344,8 @@ class People:
             changes["role"] = role
         if disabled is not None:
             changes["disabled"] = 1 if disabled else 0
+            if disabled:
+                changes["password_hash"] = None   # re-enabling never brings an old password back
         if by == f"user:{person_id}" and (changes.get("role") == "member" or changes.get("disabled")):
             raise SignInError(400, "not_yourself", "you cannot remove your own admin access")
         if changes:
@@ -276,6 +362,74 @@ class People:
                 logging.getLogger("hive").exception("studio maker of user:%s not retired", person_id)
         out = self.view(self.get(person_id) | changes)
         return out if kept is None else out | {"sessions_kept": len(kept)}   # r1.1: sessions that refused to end
+
+    # ---- member passwords (T-101) -------------------------------------------------------------------------------
+
+    password_hash = staticmethod(password_hash)
+    password_matches = staticmethod(password_matches)
+
+    @staticmethod
+    def normal_email(email):
+        return str(email or "").strip().lower()
+
+    def _publish(self, person_id, change, by):
+        view = self.view(self.get(person_id))
+        self.db.after_commit(lambda: self.hive.events.publish("people.updated", person=view, change=change, by=by))
+        return view
+
+    def add_member(self, email, name="", by="user:operator"):
+        """A new member row with a password the hive makes. Returns (view, password); the password is shown once by
+        the caller and kept nowhere but as a hash. An email that already has a row is refused (409)."""
+        email = self.normal_email(email)
+        if "@" not in email or len(email) > 254 or any(c.isspace() for c in email):
+            raise SignInError(400, "bad_email", "a valid email address is required")
+        password = new_password()
+        stored = self.password_hash(password)
+        with self.db.transaction():
+            if self.db.one("SELECT 1 FROM people WHERE email = ?", (email,)):
+                raise SignInError(409, "already_member", f"{email} is already in this hive: reset its password instead")
+            person_id = new_id("u")
+            self.db.insert("people", {"id": person_id, "email": email, "name": str(name or "").strip()[:100],
+                                      "role": "member", "invited_by": by, "created_at": now(), "password_hash": stored})
+            view = self._publish(person_id, "password_set", by)
+        return view, password
+
+    def reset_password(self, person_id, by="user:operator"):
+        """A new password for an enabled member (shown once by the caller); ends that person's password sessions.
+        Returns (view, password, ended)."""
+        row = self.get(person_id)
+        if row["role"] != "member":
+            raise SignInError(400, "member_only", "only a member has a hive password; admins sign in with Google")
+        if row["disabled"]:
+            raise SignInError(409, "disabled", "enable this person before giving them a password")
+        password = new_password()
+        stored = self.password_hash(password)
+        with self.db.transaction():
+            self.db.update("people", person_id, {"password_hash": stored})
+            ended = self.end_password_sessions(person_id)
+            view = self._publish(person_id, "password_reset", by)
+        return view, password, ended
+
+    def remove_password(self, person_id, by="user:operator"):
+        """Drop the person's password hash and end their password sessions. Returns (view, ended)."""
+        self.get(person_id)
+        with self.db.transaction():
+            self.db.update("people", person_id, {"password_hash": None})
+            ended = self.end_password_sessions(person_id)
+            view = self._publish(person_id, "password_removed", by)
+        return view, ended
+
+    def end_password_sessions(self, person_id):
+        return self.db.execute("DELETE FROM sessions WHERE principal = ? AND kind = 'member_password'",
+                               (f"user:{person_id}",)).rowcount
+
+    def member_for_password(self, email, password):
+        """The enabled person row this email + password signs in, or None. Always runs one scrypt check (a dummy hash
+        for an unknown, disabled or password-less email), so every failure costs the same."""
+        row = self.db.one("SELECT * FROM people WHERE email = ?", (self.normal_email(email),))
+        usable = row is not None and not row["disabled"] and row.get("password_hash")
+        ok = self.password_matches(row["password_hash"] if usable else self.dummy_hash, password)
+        return row if usable and ok else None
 
     def revoke_sessions(self, person_id):
         self.db.execute("DELETE FROM sessions WHERE principal = ?", (f"user:{person_id}",))
@@ -417,7 +571,7 @@ class People:
 
     def needs_google(self, person):
         """Whether this person may only sign in through the hive's own Google flow, where sub and hd are checked: anyone
-        bound to a Google account, and anyone who needs the Workspace check. The webhost sign-in verifies neither."""
+        bound to a Google account, and anyone who needs the Workspace check. The family sign-in verifies neither."""
         return bool(person.get("google_sub")) or self.required_domain(person["email"], person.get("invited_by")) is not None
 
     async def callback(self, code, state, browser=""):
@@ -541,7 +695,7 @@ class People:
         return person
 
     def accept_invite_for_verified_email(self, email, name=""):
-        """A sign-in that already verified this Google address (the webhost sign-in, same Google client) accepts the
+        """A sign-in that already verified this Google address (the family sign-in, same Google client) accepts the
         address's live invitation exactly as the hive's own Google callback would. Returns the person, or None."""
         email = str(email or "").strip().lower()
         if not email:
@@ -575,7 +729,7 @@ class People:
                 self.db.execute("DELETE FROM signins WHERE token_hash = ?", (signin_hash,))
 
     def family_person(self, email, name=""):
-        """The hive person a webhost sign-in (verified Google email, no Google sub or hd) may become, or None. Decided
+        """The hive person a family sign-in (verified Google email, no Google sub or hd) may become, or None. Decided
         before any write, against the row whether or not it is disabled: a person bound to a Google account, or one who
         needs the Workspace check, is refused (google_signin_required) with nothing changed. Otherwise an enabled
         person is used as is, or the address's live invitation is accepted. Call inside a transaction so the decision

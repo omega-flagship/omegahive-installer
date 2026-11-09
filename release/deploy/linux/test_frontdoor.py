@@ -30,7 +30,7 @@ serve = load('serve')
 
 class BoundaryTests(unittest.TestCase):
     def setUp(self):
-        # The service's self-attested executable is checked by exe_matches (its own tests are below).
+        # The service's executable is checked by exe_matches (its own tests are below).
         patcher = mock.patch.object(control, 'exe_matches', return_value=True)
         patcher.start(); self.addCleanup(patcher.stop)
         listener = mock.patch.object(control, 'listener_matches', return_value=True)
@@ -566,29 +566,100 @@ class FixedBrowserRuntimeTests(unittest.TestCase):
                         with self.assertRaises(module.Refused): module.runtime(str(path))
 
 
+class TemplateIdMatchesHiveTests(unittest.TestCase):
+    """The Studio maker template id check in serve.py and control.py accepts exactly the hive's agent ids."""
+
+    def test_launchers_accept_what_the_hive_mints(self):
+        import re
+        hive = (HERE.parent.parent / 'hive' / 'core' / 'studio_sessions.py').read_text(encoding='utf-8')
+        agent_id = re.compile(re.search(r'AGENT_ID = re\.compile\(r"([^"]+)"\)', hive).group(1))
+        samples = ['a_1234abcd', 'a_' + '0123456789abcdef' * 2, 'a_1234abc', 'a_' + 'f' * 31,
+                   'a_' + 'f' * 33, 'a_1234ABCD', 'b_1234abcd', 'a_synthetic']
+        for name in ('serve.py', 'control.py'):
+            source = (HERE / name).read_text(encoding='utf-8')
+            pattern = re.search(r"re\.fullmatch\('(a_[^']+)', template\)", source).group(1)
+            for sample in samples:
+                with self.subTest(file=name, sample=sample):
+                    self.assertEqual(bool(re.fullmatch(pattern, sample)), bool(agent_id.fullmatch(sample)))
+
+
 if __name__ == '__main__':
     unittest.main()
 
 
-class SelfAttestedExecutableTests(unittest.TestCase):
-    def test_hello_executable_must_be_the_configured_python_by_device_and_inode(self):
+class ServiceExecutableTests(unittest.TestCase):
+    HOME = Path('/synthetic/home')
+
+    def show(self, python, serve, *, main='4000', exec_main='4000', started='4000', path=None, argv=None, extra=''):
+        argv = argv if argv is not None else ' '.join([python, '-I', '-B', serve, '--runtime',
+                                                       str(self.HOME / '.local/share/omegahive/runtime.json')])
+        start = ('{ path=%s ; argv[]=%s ; ignore_errors=no ; start_time=[Mon 2026-11-09 13:00:00 UTC] ; '
+                 'stop_time=[n/a] ; pid=%s ; code=(null) ; status=0/0 }' % (path or python, argv, started))
+        return ('MainPID=%s\nExecMainPID=%s\nExecStart=%s%s\n' % (main, exec_main, start, extra)).encode()
+
+    def setup_files(self, raw):
+        python = Path(raw) / 'venv/bin/python'; python.parent.mkdir(parents=True); python.write_bytes(b'x')
+        other = Path(raw) / 'other'; other.write_bytes(b'y')
+        cfg = {'python': str(python), 'release_root': str(Path(raw) / 'app'), 'port': 8700}
+        return cfg, python, other, str(Path(raw) / 'app/deploy/linux/serve.py')
+
+    def test_systemd_record_must_be_the_configured_python_running_serve_for_this_main_process(self):
         with tempfile.TemporaryDirectory() as raw:
-            python = Path(raw) / 'python'; python.write_bytes(b'x'); other = Path(raw) / 'other'; other.write_bytes(b'y')
+            cfg, python, other, serve = self.setup_files(raw)
+            good = self.show(str(python), serve)
+            with mock.patch.object(control, '_systemctl_show', return_value=good):
+                self.assertTrue(control.service_started_from_configured_python(cfg, self.HOME, 4000))
+                self.assertFalse(control.service_started_from_configured_python(cfg, self.HOME, 4001))   # another pid
+            bad = [self.show(str(python), serve, exec_main='3999'),                     # main process is not what systemd started
+                   self.show(str(python), serve, started='3999'),
+                   self.show(str(python), serve, path=str(other)),                     # a different interpreter
+                   self.show(str(python), serve, argv=' '.join([str(python), '-B', '-m', 'hive'])),
+                   self.show(str(python), serve, argv=' '.join([str(python), '-I', '-B', serve + 'x', '--runtime', '/r'])),
+                   self.show(str(python), serve, extra=' ; { path=/x ; argv[]=/x ; ignore_errors=no ; start_time=[] ; '
+                             'stop_time=[] ; pid=4000 ; code=(null) ; status=0/0 }'),        # two ExecStart lines
+                   self.show(str(python), serve) + b'MainPID=4000\n',                     # repeated key
+                   b'MainPID=4000\nExecMainPID=4000\n',                                  # no ExecStart
+                   b'\xff']
+            for raw_show in bad:
+                with self.subTest(show=raw_show[:120]), mock.patch.object(control, '_systemctl_show', return_value=raw_show):
+                    self.assertFalse(control.service_started_from_configured_python(cfg, self.HOME, 4000))
+
+    def test_hello_without_attestation_is_bound_by_systemd(self):
+        with tempfile.TemporaryDirectory() as raw:
+            cfg, python, _other, serve = self.setup_files(raw)
+            for verdict in (True, False):
+                with self.subTest(verdict=verdict), \
+                        mock.patch.object(control, 'service_started_from_configured_python', return_value=verdict) as record:
+                    self.assertIs(control.exe_matches(cfg, {'pid': 4000}, self.HOME, 4000), verdict)
+                    record.assert_called_once_with(cfg, self.HOME, 4000)
+            self.assertFalse(control.exe_matches(cfg, None, self.HOME, 4000))
+
+    def test_an_attested_executable_must_also_be_the_configured_python_by_device_and_inode(self):
+        with tempfile.TemporaryDirectory() as raw:
+            cfg, python, other, _serve = self.setup_files(raw)
             real, wrong = os.stat(python), os.stat(other)
-            cfg = {'python': str(python)}
-            self.assertTrue(control.exe_matches(cfg, {'exe': {'dev': real.st_dev, 'ino': real.st_ino}}))
-            for bad in ({}, {'exe': None}, {'exe': {'dev': real.st_dev}}, {'exe': {'dev': wrong.st_dev, 'ino': wrong.st_ino}},
-                        {'exe': {'dev': str(real.st_dev), 'ino': real.st_ino}}, {'exe': {'dev': real.st_dev, 'ino': real.st_ino, 'x': 1}}):
-                with self.subTest(bad=bad):
-                    self.assertFalse(control.exe_matches(cfg, bad))
+            with mock.patch.object(control, 'service_started_from_configured_python', return_value=True):
+                self.assertTrue(control.exe_matches(cfg, {'exe': {'dev': real.st_dev, 'ino': real.st_ino}}, self.HOME, 4000))
+                for bad in ({'exe': None}, {'exe': {'dev': real.st_dev}}, {'exe': {'dev': wrong.st_dev, 'ino': wrong.st_ino}},
+                            {'exe': {'dev': str(real.st_dev), 'ino': real.st_ino}}, {'exe': {'dev': real.st_dev, 'ino': real.st_ino, 'x': 1}}):
+                    with self.subTest(bad=bad):
+                        self.assertFalse(control.exe_matches(cfg, bad, self.HOME, 4000))
+            with mock.patch.object(control, 'service_started_from_configured_python', return_value=False):
+                self.assertFalse(control.exe_matches(cfg, {'exe': {'dev': real.st_dev, 'ino': real.st_ino}}, self.HOME, 4000))
 
     def test_validated_hello_refuses_a_foreign_executable(self):
         with tempfile.TemporaryDirectory() as raw:
-            python = Path(raw) / 'python'; python.write_bytes(b'x')
-            cfg = {'python': str(python), 'port': 8700}
+            cfg, _python, _other, _serve = self.setup_files(raw)
             hello = {'ok': True, 'local_owner': True, 'pid': 4000, 'port': 8700, 'instance': 'b' * 32, 'exe': {'dev': 0, 'ino': 0}}
-            with self.assertRaises(control.Refused):
-                control.validated_hello(cfg, (hello, 4000))
+            with mock.patch.object(control, 'service_started_from_configured_python', return_value=True), \
+                    self.assertRaises(control.Refused):
+                control.validated_hello(cfg, (hello, 4000), self.HOME)
+            hello.pop('exe')
+            with mock.patch.object(control, 'service_started_from_configured_python', return_value=False), \
+                    self.assertRaises(control.Refused):
+                control.validated_hello(cfg, (hello, 4000), self.HOME)
+            with mock.patch.object(control, 'service_started_from_configured_python', return_value=True):
+                self.assertEqual(control.validated_hello(cfg, (hello, 4000), self.HOME), (hello, 4000))
 
 
 class AttestedListenerTests(unittest.TestCase):
@@ -608,6 +679,13 @@ class AttestedListenerTests(unittest.TestCase):
             ([(port, '01', me, '777')], {'listener_inode': '777'}, False),                            # not listening
             ([(port, '0A', me, '777')], {'listener_inode': None}, False),
             ([(port, '0A', me, '777')], {'listener_inode': '7a7'}, False),
+            # The current hive attests no listener: exactly one LISTEN socket on the port, owned by this account.
+            ([(port, '0A', me, '777')], {}, True),
+            ([(port, '0A', me, '777'), (port, '0A', me, '778')], {}, False),
+            ([(port, '0A', '0', '777')], {}, False),
+            ([(port, '0A', me, '777'), (port, '0A', '0', '778')], {}, False),
+            ([(port, '01', me, '777')], {}, False),
+            ([], {}, False),
         ]
         for rows, hello, want in cases:
             with self.subTest(rows=rows, hello=hello), self.tcp(rows):

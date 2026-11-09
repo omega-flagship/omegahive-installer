@@ -64,7 +64,7 @@ export function Provenance({ swarmId, statement, onClose }: { swarmId: string; s
   return (
     <Sheet label="Belief provenance" onClose={onClose} header={header} width={460} initialSnap="peek" peekHeight="60dvh">
       <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-4 pb-6">
-        <div className="relative rounded-2xl border border-line bg-black/30 p-4 pr-12 text-[15px]">
+        <div className="relative rounded-2xl border border-line bg-shade/30 p-4 pr-12 text-[15px]">
           <p className="text-[15px] leading-snug text-ink">{beliefText(statement)}</p>
           <AsWritten text={statement} />
           <IconButton
@@ -92,7 +92,7 @@ export function Provenance({ swarmId, statement, onClose }: { swarmId: string; s
           </div>
         ) : (
           <>
-            <section className="mt-4 rounded-2xl border border-line bg-white/[0.02] p-4" aria-label="Current truth value" data-tour="prov-truth">
+            <section className="mt-4 rounded-2xl border border-line bg-tint/[0.02] p-4" aria-label="Current truth value" data-tour="prov-truth">
               <div className="mb-2.5 flex items-baseline justify-between">
                 <span className="eyebrow">Current truth</span>
                 <span className="text-[11px] text-ink-4">updated {ago(detail.updated_at, now)}</span>
@@ -107,7 +107,7 @@ export function Provenance({ swarmId, statement, onClose }: { swarmId: string; s
               </h3>
               <div className="flex flex-wrap gap-1.5">
                 {detail.sources.map((id) => (
-                  <button key={id} onClick={() => navigate({ name: 'dot', id })} className="flex min-h-10 items-center gap-1.5 rounded-full border border-line bg-white/[0.04] py-1 pr-3 pl-1.5 text-[13px] hover:border-line-2">
+                  <button key={id} onClick={() => navigate({ name: 'dot', id })} className="flex min-h-10 items-center gap-1.5 rounded-full border border-line bg-tint/[0.04] py-1 pr-3 pl-1.5 text-[13px] hover:border-line-2">
                     <Orb hue={hue(id)} status={agents[id]?.status ?? 'stopped'} size={20} />
                     {name(id)}
                   </button>
@@ -127,7 +127,7 @@ export function Provenance({ swarmId, statement, onClose }: { swarmId: string; s
                 Assertions · {detail.assertions.length} · newest first
               </h3>
               <ol className="relative">
-                <div className="absolute top-2 bottom-2 left-[15px] w-px bg-gradient-to-b from-white/20 via-white/10 to-transparent" aria-hidden="true" />
+                <div className="absolute top-2 bottom-2 left-[15px] w-px bg-gradient-to-b from-tint/20 via-tint/10 to-transparent" aria-hidden="true" />
                 {[...detail.assertions].reverse().map((a, i) => {
                   const o = OUTCOME[a.outcome]
                   return (
@@ -141,7 +141,7 @@ export function Provenance({ swarmId, statement, onClose }: { swarmId: string; s
                       <div className="relative z-[1] flex size-8 shrink-0 items-center justify-center rounded-full border" style={{ color: o.color, borderColor: `${o.color}55`, background: `${o.color}18`, boxShadow: `0 0 14px ${o.color}33` }} title={o.hint}>
                         <Icon name={o.icon} size={15} />
                       </div>
-                      <div className="min-w-0 flex-1 rounded-xl border border-line bg-white/[0.025] px-3 py-2.5">
+                      <div className="min-w-0 flex-1 rounded-xl border border-line bg-tint/[0.025] px-3 py-2.5">
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                           <span className="text-[12px] font-semibold" style={{ color: o.color }}>
                             {o.label}
@@ -173,7 +173,7 @@ export function Provenance({ swarmId, statement, onClose }: { swarmId: string; s
                 <p className="mb-2 text-[12px] text-ink-3">Overlapping evidence cannot be revised without double counting, so the commons kept one side.</p>
                 <div className="space-y-2">
                   {detail.choices.map((c, i) => (
-                    <div key={i} className="grid grid-cols-[auto_1fr] items-start gap-x-3 gap-y-1.5 rounded-xl border border-line bg-white/[0.02] p-3 text-[11px]">
+                    <div key={i} className="grid grid-cols-[auto_1fr] items-start gap-x-3 gap-y-1.5 rounded-xl border border-line bg-tint/[0.02] p-3 text-[11px]">
                       <span className="pt-1 font-semibold text-[#f5c06b]">kept</span>
                       <StampChips stamp={c.kept} hue={hue} small />
                       <span className="pt-1 text-ink-4">rejected</span>
@@ -198,7 +198,7 @@ function StampChips({ stamp, hue, small }: { stamp: string[]; hue: (id: string) 
       {stamp.map((s) => {
         const a = stampAgent(s)
         return (
-          <span key={s} className={`inline-flex items-center gap-1 rounded-md border border-line bg-black/30 font-mono text-ink-2 ${small ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-1 text-[11px]'}`}>
+          <span key={s} className={`inline-flex items-center gap-1 rounded-md border border-line bg-shade/30 font-mono text-ink-2 ${small ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-1 text-[11px]'}`}>
             {a && <span className="size-1.5 rounded-full" style={{ background: hsl(hue(a), 95, 68) }} />}
             {s}
           </span>

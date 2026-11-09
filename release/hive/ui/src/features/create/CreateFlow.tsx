@@ -147,7 +147,7 @@ export default function CreateFlow({ swarmId }: { swarmId?: string }) {
               aria-current={i === step ? 'step' : undefined}
               className="group flex w-full flex-col gap-1.5 text-left"
             >
-              <span className="relative h-1 w-full overflow-hidden rounded-full bg-white/10">
+              <span className="relative h-1 w-full overflow-hidden rounded-full bg-tint/10">
                 <m.span
                   className="absolute inset-y-0 left-0 rounded-full"
                   initial={false}
@@ -197,7 +197,7 @@ export default function CreateFlow({ swarmId }: { swarmId?: string }) {
                       placeholder="Vega, Coral, Anvil…"
                       autoComplete="off"
                       aria-invalid={!!nameErr}
-                      className="min-h-12 min-w-0 flex-1 rounded-xl border border-line bg-black/25 px-4 font-display text-lg text-ink outline-none placeholder:text-ink-4 focus:border-line-2"
+                      className="min-h-12 min-w-0 flex-1 rounded-xl border border-line bg-shade/25 px-4 font-display text-lg text-ink outline-none placeholder:text-ink-4 focus:border-line-2"
                     />
                     <IconButton icon="dice" label="Suggest a name" onClick={suggest} className="size-12 border border-line" />
                   </div>
@@ -263,7 +263,7 @@ export default function CreateFlow({ swarmId }: { swarmId?: string }) {
                     onChange={(e) => setPersona(e.target.value)}
                     rows={5}
                     placeholder={`Who is ${name.trim() || 'this mind'}? What does it care about? How sure must it be before it publishes?`}
-                    className="thin-scroll mt-2 w-full resize-y rounded-xl border border-line bg-black/25 p-3 text-[14px] leading-relaxed text-ink outline-none placeholder:text-ink-4 focus:border-line-2"
+                    className="thin-scroll mt-2 w-full resize-y rounded-xl border border-line bg-shade/25 p-3 text-[14px] leading-relaxed text-ink outline-none placeholder:text-ink-4 focus:border-line-2"
                   />
                 </div>
                 <VisibilityPicker value={vis} onChange={setVis} label="Who can see this mind" />
@@ -276,13 +276,13 @@ export default function CreateFlow({ swarmId }: { swarmId?: string }) {
                         role="radio"
                         aria-checked={budget === b}
                         onClick={() => setBudget(b)}
-                        className={cx('min-h-10 rounded-xl border px-3.5 font-mono text-[13px] transition-colors', budget === b ? 'border-transparent text-[#0b0820]' : 'border-line bg-white/[0.04] text-ink-2 hover:border-line-2')}
+                        className={cx('min-h-10 rounded-xl border px-3.5 font-mono text-[13px] transition-colors', budget === b ? 'border-transparent text-primary-ink' : 'border-line bg-tint/[0.04] text-ink-2 hover:border-line-2')}
                         style={budget === b ? { background: hsl(hue, 100, 80) } : undefined}
                       >
                         {b === '0' ? '∞' : `$${b}`}
                       </button>
                     ))}
-                    <div className="flex min-h-10 items-center rounded-xl border border-line bg-black/25 px-3 focus-within:border-line-2">
+                    <div className="flex min-h-10 items-center rounded-xl border border-line bg-shade/25 px-3 focus-within:border-line-2">
                       <span className="text-ink-3">$</span>
                       <input
                         aria-label="Custom budget in dollars"
@@ -368,7 +368,7 @@ export default function CreateFlow({ swarmId }: { swarmId?: string }) {
 function Radio({ on, hue }: { on: boolean; hue: number }) {
   return (
     <span className={cx('flex size-4 shrink-0 items-center justify-center rounded-full border', on ? 'border-transparent' : 'border-line-2')} style={on ? { background: hsl(hue, 100, 75), boxShadow: `0 0 10px ${hsl(hue, 100, 65, 0.7)}` } : undefined}>
-      {on && <span className="size-1.5 rounded-full bg-[#0b0820]" />}
+      {on && <span className="size-1.5 rounded-full bg-primary-ink" />}
     </span>
   )
 }
@@ -379,7 +379,7 @@ function Choice({ on, hue, onClick, title, body, lead }: { on: boolean; hue: num
       role="radio"
       aria-checked={on}
       onClick={onClick}
-      className={cx('flex min-h-14 w-full items-start gap-3 rounded-xl border px-3 py-2.5 text-left transition-all', on ? 'bg-white/[0.07]' : 'border-line bg-white/[0.02] hover:border-line-2')}
+      className={cx('flex min-h-14 w-full items-start gap-3 rounded-xl border px-3 py-2.5 text-left transition-all', on ? 'bg-tint/[0.07]' : 'border-line bg-tint/[0.02] hover:border-line-2')}
       style={on ? { borderColor: hsl(hue, 90, 70, 0.55), boxShadow: `0 0 0 1px ${hsl(hue, 90, 70, 0.25)} inset, 0 8px 30px -12px ${hsl(hue, 100, 60, 0.5)}` } : undefined}
     >
       <span className="mt-1 flex w-4 justify-center">{lead ?? <Radio on={on} hue={hue} />}</span>

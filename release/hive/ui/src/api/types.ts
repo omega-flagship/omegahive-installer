@@ -108,16 +108,26 @@ export interface ProviderStatus {
   label: string
   local: boolean
   needs_key: boolean
+  /** Whether YOU can pay for a call on this provider (a key you own, one you were granted, the hive's key on its
+   * terms), or it is local or mock; you may not be able to see the key that pays. Never proof of an answer. */
   connected: boolean
+  /** Additive readiness evidence, for the route YOU pay by; optional for older hosts, which remain unverified here. */
+  configured?: boolean
+  readiness?: 'answered' | 'unverified' | 'not_answering' | 'test_only'
+  answer_ready?: boolean
+  test_only?: boolean
+  /** Where the key you pay with comes from; null when you cannot pay, or may not see that key. */
   source: 'stored' | 'env' | null
   key_hint: string
   key_env: string
   base_url: string
   /** The featured model names (without the provider prefix). */
   models: string[]
-  /** How many keys exist for this provider (stored + environment). */
+  /** How many of this provider's keys YOU may see (yours, and the hive keys offered to you); not the hive's inventory,
+   * and not whether you can pay (see connected). */
   keys?: number
   account?: ProviderAccount | null
+  /** fetched_at and error describe the hive's default key's fetch: null unless that is the key you pay with. */
   catalog?: { count: number; fetched_at: number | null; error: string | null }
 }
 
@@ -159,8 +169,11 @@ export interface CatalogModel {
 
 export interface Catalog {
   models: CatalogModel[]
-  fetched_at: number
+  /** When the hive last fetched it; null unless you pay by the hive's own OpenRouter key (or are an admin). */
+  fetched_at: number | null
   error: string | null
+  /** Whether you may ask the hive to fetch it again; absent (older hosts) reads as no. */
+  can_refresh?: boolean
 }
 
 /** One upstream serving an OpenRouter model. */
@@ -222,6 +235,8 @@ export interface Message {
   sender: string
   text: string
   created_at: string
+  /** Health's idle question, verified and its id tag removed for people by the hive (health.people_message): shown "Health check". */
+  health_check?: boolean
 }
 
 export interface TruthValue {
@@ -933,6 +948,16 @@ export type HiveEvent =
   | (EventBase<'app.grants_restore_applied'> & { program: string; restored_by: string | null })
   | (EventBase<'app.grants_renewed'> & { program: string; by: string | null; grants: string[] })
   | (EventBase<'app.grants_refused'> & { program: string; by: string | null; reason: string })
+  // The MeTTa coding controller (hive/core/code_controller_engine.py view(), reducer R3.12): typed, carry request_id
+  | (EventBase<'code.controller.status'> & { request_id: string; status: string; phase: string; candidate: string | null })
+  // Create's plan engine (create_plan_engine.py): status on any change of (status, phase, next_action); piece once per
+  // change of a piece's (state, candidate, repairs); question when shown (answered false) and when answered (only
+  // {plan_id, q, answered: true}); preview when a verified preview is made (preview = its ref)
+  | (EventBase<'create.plan.status'> & { plan_id: string; phase: string | null; status: string; next_action: string | null })
+  | (EventBase<'create.plan.piece'> & { plan_id: string; piece: string; state: string; candidate: string | null; repairs: number })
+  | (EventBase<'create.plan.question'> & { plan_id: string; q: string; answered: boolean; about?: string | { piece: string }; text?: string; choices?: string[] })
+  | (EventBase<'create.plan.preview'> & { plan_id: string; ckpt: string; preview: string })
+  | (EventBase<'code.controller.applied'> & { request_id: string; candidate: string; workspace_id: string; paths: string[]; application_id: string | null; after: { generation: number; tree_digest: string } | null })
 
 /** One spending limit with what has been spent against it (GET /api/budgets, budgets.updated). */
 export interface BudgetLine {
@@ -1148,6 +1173,8 @@ export interface RoomMessage {
   here_reached?: string[]
   /** A mind's unprompted note: no mentions, wakes nobody. */
   note?: boolean
+  /** Health's idle question mirrored into the mind's DM room, its id tag removed (lib/healthQuestion). */
+  health_check?: boolean
 }
 
 /** A focused working thread with one mind (hive/core/sessions.py). */
@@ -1215,9 +1242,9 @@ export interface Motivation {
   visibility: Visibility
   /** Content revision: moves on title, why, status and visibility edits only, never on links. */
   rev: number
-  /** Sub-motivations exist in the data but are switched off on the hive (owner Q1): always null for now. */
+  /** Sub-motivations exist in the data but are switched off on the hive (Jon Q1): always null for now. */
   parent_id: string | null
-  /** Who made it: a person's principal or `agent:<id>` (a mind, owner Q2). */
+  /** Who made it: a person's principal or `agent:<id>` (a mind, Jon Q2). */
   created_by: string
   created_at: string
   updated_at: string

@@ -99,12 +99,14 @@ export interface AskShape {
   name: string
   how: string | null
 }
+export interface MindProfile { id: string; name: string; persona: string; model: string | null }
 /** One bound hive write (lib/boundOperation `op.write`): sent only while the same person is signed in, its answer taken
  * only if they still are. A chain of writes passes each one through it, so nothing goes out under another person. */
 export type BoundWrite = <T>(send: () => Promise<T>) => Promise<T>
 
 export const ASK_NAME_MAX = 40
 export const ASK_HOW_MAX = 400
+export const DEFAULT_ASK_PURPOSE = 'Help me and my family improve our lives.'
 
 export interface LimitRequest {
   id: string
@@ -131,6 +133,8 @@ export class FlRefusal extends Error {
 /** Everything First Light asks of a hive. The live one calls the routes; the demo one is invented and deterministic. */
 export interface FlHost {
   readonly kind: 'live' | 'demo'
+  /** Optional local reconciliation identity; not Host authority or an RPC. */
+  retainedMutationScope?(): { host: string; principal: string } | null
   progress(): Promise<Progress>
   writeProgress(patch: ProgressWrite, version: number): Promise<Progress>
   setup(): Promise<Setup>
@@ -147,9 +151,14 @@ export interface FlHost {
   apps(): Promise<AppRef[]>
   /** R3: their own mind's current persona ('' when none) */
   askHow(mindId: string): Promise<string>
+  /** U1 context, whole and for the exact personal mind. Optional on older adapters. */
+  profile?(mindId: string): Promise<MindProfile>
   /** R3: save the name (and how, unless null) on their own mind, each write through `write`; answers the mind as it now
    * stands. A changed sign-in stops the chain at the next write (OperationStopped), and nothing after it is sent. */
   saveAsk(mindId: string, shape: AskShape, write: BoundWrite): Promise<MindRef>
+  /** The owner's tap on "Think with your … plan": set their own mind's model to a connected subscription model, through
+   * `write`. Optional: a host without it never offers the plan. Answers the model as the host now holds it. */
+  useModel?(mindId: string, model: string, write: BoundWrite): Promise<string>
 }
 
 // ---------------------------------------------------------------- strict readers
@@ -275,10 +284,16 @@ export function cleanWords(v: string, max: number): string | null {
 export const personaEditable = (current: string | null): boolean => current !== null && current.length <= ASK_HOW_MAX && !/[\r\n]/.test(current)
 
 /**
- * What beat 6 saves: `how` only when the person edited the field (a dirty flag, never a comparison with what was read),
- * and only when it was editable. Otherwise null: the persona is left exactly as it is.
+ * The visible proposal is offered only after a known-empty read. Unknown is never treated as empty.
  */
-export const askToSave = (name: string, edited: string | null, current: string | null): AskShape => ({ name, how: edited !== null && personaEditable(current) ? edited : null })
+export const askPurposeValue = (current: string | null): string => current === '' ? DEFAULT_ASK_PURPOSE : current ?? ''
+
+/** Explicit Save adopts the visible default for a known-empty persona. An edit (including clear) takes precedence.
+ * Existing words are changed only by the dirty flag, never by comparing with a shortened display. */
+export const askToSave = (name: string, edited: string | null, current: string | null): AskShape => ({
+  name,
+  how: !personaEditable(current) ? null : edited !== null ? edited : current === '' ? DEFAULT_ASK_PURPOSE : null,
+})
 
 /**
  * The app the person will talk in: the first ready app, in the order the host lists them. Hive code names no app; no
@@ -293,6 +308,7 @@ export const firstName = (name: string | null | undefined): string | null => (na
 
 /** The client methods First Light needs (all optional: a hive without them refuses with not_on_this_hive). */
 export interface FlClient {
+  retainedMutationScope?(): { host: string; principal: string } | null
   onboarding?(): Promise<unknown>
   patchOnboarding?(body: Record<string, unknown>): Promise<unknown>
   mySetup?(): Promise<unknown>
@@ -306,15 +322,17 @@ export interface FlClient {
   programInstall?(program: string): Promise<unknown>
   getAgent?(id: string): Promise<unknown>
   renameMyMind?(name: string): Promise<unknown>
-  patchAgent?(id: string, body: { persona: string }): Promise<unknown>
+  patchAgent?(id: string, body: { persona?: string; model?: string }): Promise<unknown>
   setAskSettings?(body: Record<string, never>): Promise<unknown>
 }
 
 const missing = () => new FlRefusal(404, 'not_on_this_hive', 'This hive does not offer that yet.')
 const malformed = () => new FlRefusal(0, 'unreadable', 'The hive answered in a shape this page does not understand.')
 
-/** An error from the client, as a refusal (its code, status, host message and envelope fields such as `current`). */
+/** An ordinary client error as a refusal; typed session stops rethrow unchanged. Keeps code/status/envelope details. */
 export function asRefusal(e: unknown): FlRefusal {
+  // Keep the client's typed identity change (and OperationStopped) intact through call() and every later catch.
+  if (stopped(e)) throw e
   if (e instanceof FlRefusal) return e
   const x = e as { status?: unknown; code?: unknown; message?: unknown; envelope?: unknown } | null
   const status = typeof x?.status === 'number' ? x.status : 0
@@ -339,6 +357,7 @@ async function call<T>(fn: (() => Promise<unknown>) | undefined, read: (v: unkno
 export function liveHost(c: FlClient, otherMinds: (mindId: string | null) => number | null): FlHost {
   return {
     kind: 'live',
+    retainedMutationScope: () => c.retainedMutationScope?.() ?? null,
     progress: () => call(c.onboarding && (() => c.onboarding!()), readProgress),
     writeProgress: (patch, version) => call(c.patchOnboarding && (() => c.patchOnboarding!({ ...patch, version })), readProgress),
     setup: () => call(c.mySetup && (() => c.mySetup!()), readSetup),
@@ -361,7 +380,8 @@ export function liveHost(c: FlClient, otherMinds: (mindId: string | null) => num
       return checked.filter((a): a is AppRef => !!a)
     },
     // read whole (never cut): First Light only edits a persona it can hold whole (personaEditable), and never writes a read
-    askHow: (mindId) => call(c.getAgent && (() => c.getAgent!(mindId)), (v) => (isObj(v) ? { p: typeof v.persona === 'string' ? v.persona : '' } : null)).then((r) => r.p),
+    askHow: (mindId) => call(c.getAgent && (() => c.getAgent!(mindId)), (v) => (isObj(v) && v.id === mindId && typeof v.persona === 'string' ? { p: v.persona } : null)).then((r) => r.p),
+    profile: (mindId) => call(c.getAgent && (() => c.getAgent!(mindId)), (v) => (isObj(v) && v.id === mindId && !!str(v.name, 120) && typeof v.persona === 'string' ? { id: mindId, name: v.name as string, persona: v.persona, model: str(v.model, 300) } : null)),
     async saveAsk(mindId, shape, write) {
       // stand-in R3.1 P1: every write in the chain is bound on its own, so a sign-in change between them sends nothing more
       const named = await write(() => call(c.renameMyMind && (() => c.renameMyMind!(shape.name)), (v) => (isObj(v) ? readMindRef(v.mind) : null)))
@@ -373,6 +393,9 @@ export function liveHost(c: FlClient, otherMinds: (mindId: string | null) => num
         if (stopped(e)) throw e
       })
       return named
+    },
+    async useModel(mindId, model, write) {
+      return write(() => call(c.patchAgent && (() => c.patchAgent!(mindId, { model })), (v) => (isObj(v) && typeof v.model === 'string' && v.model === model ? v.model : null)))
     },
   }
 }

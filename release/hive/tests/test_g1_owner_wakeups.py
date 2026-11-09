@@ -87,8 +87,12 @@ def test_owner_admin_and_hive_owner_can_manage_private_wakeups(client, privilege
     elif privilege == "admin":
         caller = person(client, "u_wake_admin", role="admin")
     else:
-        caller = person(client, "u_wake_hive_owner")  # a member, independently of the admin role
+        caller = person(client, "u_wake_hive_owner")  # a member recorded as owner (demoted): no owner powers
         set_hive_owner(client.app.state.hive, "user:u_wake_hive_owner")
+        # money port r1.1 (Dot): every owner power needs the owner still an enabled admin
+        r = client.post(f"/api/agents/{mind['id']}/wakeups", headers=caller, json={"at": "2099-01-01T00:00:00Z", "text": "x"})
+        assert r.status_code == 404 and client.app.state.hive.scheduler.list(mind["id"]) == []
+        return
     wakeup = create_wakeup(client, mind, caller)
     listed = client.get(f"/api/agents/{mind['id']}/wakeups", headers=caller)
     if privilege == "hive_owner":
@@ -182,8 +186,8 @@ def test_authentication_is_rechecked_after_request_body(client, monkeypatch, act
     hive = client.app.state.hive
     if privilege == "mind_owner":
         caller, principal = owner, "user:u_wake_owner"
-    else:
-        caller, principal = person(client, "u_wake_hive_owner"), "user:u_wake_hive_owner"
+    else:   # the owner acts as owner only as an enabled admin (money port r1.1)
+        caller, principal = person(client, "u_wake_hive_owner", role="admin"), "user:u_wake_hive_owner"
         set_hive_owner(hive, principal)
     path = f"/api/agents/{mind['id']}/wakeups" if action == "create" else f"/api/wakeups/{wakeup['id']}"
     original_json = Request.json
@@ -266,11 +270,28 @@ def test_live_wakeup_updates_revalidate_authentication(client, privilege, invali
         invalidate_auth(hive, caller, principal, invalidation)
         changed = client.patch(f"/api/wakeups/{wakeup['id']}", json={"text": "never deliver after invalidation"})
         assert changed.status_code == 200
+        if invalidation in ("revoked", "expired"):   # keyview r2: the socket itself ends, with nothing more on it
+            assert all("never deliver" not in json.dumps(f) for f in until_closed(ws))
+            return
         # This public marker follows the update in the same event queue. It bounds the negative
         # assertion without a timed receive or assuming that a ping ran after the event pump.
         hive.events.publish("programs.updated", programs=[], g1_marker="after invalidation")
         frame = json.loads(ws.receive_text())
         assert frame["type"] == "programs.updated" and frame["g1_marker"] == "after invalidation"
+
+
+def until_closed(ws):
+    """keyview r2 (sol on f06f2915): a socket whose session was revoked or expired is closed (4401) at its next frame,
+    never fed more. The frames it got before the close, bounded."""
+    from starlette.websockets import WebSocketDisconnect
+    frames = []
+    for _ in range(20):
+        try:
+            frames.append(json.loads(ws.receive_text()))
+        except WebSocketDisconnect as gone:
+            assert gone.code == 4401
+            return frames
+    raise AssertionError("a revoked or expired socket was not closed")
 
 
 def through_marker(ws, marker):
@@ -332,19 +353,20 @@ def test_fired_wakeup_text_is_owner_admin_only_in_HTTP_and_live_messages(client,
             assert next(row for row in rows if row["sender"] == "hive:schedule")["text"] == wanted
 
 
-def test_hive_owner_can_change_wakeup_without_reading_other_owners_text(client):
+def test_a_hive_owner_who_is_not_an_admin_cannot_change_wakeups(client):
+    """money port r1.1 (Dot): hive ownership alone, without an enabled admin role (a demoted owner), changes no one's
+    wakeup; the mind's metadata stays readable as before, its text hidden."""
     owner, hive_owner = person(client, "u_write_owner"), person(client, "u_write_hive_owner")
     hive = client.app.state.hive
     mind = mind_for(client, owner)
     wakeup = create_wakeup(client, mind, owner, "never echo this to the hive owner")
     set_hive_owner(hive, "user:u_write_hive_owner")
     changed = client.patch(f"/api/wakeups/{wakeup['id']}", headers=hive_owner, json={"enabled": False})
-    assert changed.status_code == 200 and changed.json()["text"] == "text hidden"
-    assert changed.json()["enabled"] is False
+    assert changed.status_code == 404
+    assert client.delete(f"/api/wakeups/{wakeup['id']}", headers=hive_owner).status_code == 404
+    assert hive.scheduler.get(wakeup["id"])["enabled"] and hive.scheduler.get(wakeup["id"])["text"] == wakeup["text"]
     listed = client.get(f"/api/agents/{mind['id']}/wakeups", headers=hive_owner)
     assert listed.status_code == 200 and listed.json()[0]["text"] == "text hidden"
-    assert client.get(f"/api/agents/{mind['id']}/wakeups", headers=owner).json()[0]["text"] == wakeup["text"]
-    assert hive.scheduler.get(wakeup["id"])["text"] == wakeup["text"]
 
 
 @pytest.fixture()
@@ -446,7 +468,8 @@ def test_fired_message_rechecks_current_authentication_and_text_privilege(client
         due = datetime.datetime.fromisoformat(wakeup["next_run_at"].replace("Z", "+00:00"))
         assert asyncio.run(hive.scheduler.tick(at=due)) == [wakeup["id"]]
         hive.events.publish("programs.updated", programs=[], g1_marker="current authority")
-        frames = through_marker(ws, "current authority")
+        # keyview r2: a revoked or expired session's socket closes at its next frame instead of staying open
+        frames = until_closed(ws) if change in ("revoked", "expired") else through_marker(ws, "current authority")
         scheduled = [frame["message"] for frame in frames if frame.get("type") == "message" and frame.get("message", {}).get("sender") == "hive:schedule"]
         assert [frame for frame in frames if frame.get("type") == "wakeup.fired"] == []
         if change in ("disabled", "revoked", "expired"):

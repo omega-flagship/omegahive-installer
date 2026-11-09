@@ -10,6 +10,7 @@ import type { Route } from '../router'
 import type { Act, Named, Suggestion, World as StillWorld } from './understand'
 import type { AccentName } from './palette'
 import type { MapHive, MapOp } from './hiveMap'
+import type { PartsAct } from './uiParts'
 
 /** What running a candidate does to the world, for the policy (§2.4). */
 export type Effect =
@@ -54,6 +55,8 @@ export type IntentAct =
   | { do: 'deleteSwarm'; swarm: Named }
   /** the hive map's view only (lib/intent/hiveMap): show a hive, zoom, or put the hives back; changes nothing else */
   | { do: 'map'; op: MapOp; label: string; hive?: string }
+  /** the UI's named parts, read from the real MeTTa parts space (lib/intent/uiParts): list and explain; changes nothing */
+  | PartsAct
 
 /** A chip offered with a clarifying question: picking it fills the field or runs a resolved act. */
 export interface Chip {

@@ -60,7 +60,7 @@ async function release(client: object) {
   const { createRoot } = await import('react-dom/client')
   const root = createRoot(doc.body.appendChild(doc.createElement('div')) as unknown as Element)
   roots.push({ unmount: () => act(() => root.unmount()) })
-  await act(async () => root.render(createElement(ApprovalDecision, { seen: ask(), session: store.getState().session, onClose: () => undefined })))
+  await act(async () => root.render(createElement(ApprovalDecision, { current: () => true, seen: ask(), session: store.getState().session, onClose: () => undefined })))
   return { store, labels: dialog!.actions.map((a) => a.label), run: (label: string) => dialog!.actions.find((a) => a.label === label)!.run() }
 }
 const ok = (id: string) => ({ ...ask(), id, status: 'approved' as const })

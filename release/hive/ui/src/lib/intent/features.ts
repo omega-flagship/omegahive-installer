@@ -53,6 +53,7 @@ export const WORDS: Record<string, string[]> = {
   'build.code': ['code', 'code workspaces'],
   'build.roles': ['roles', 'job descriptions'],
   'build.models': ['models', 'providers', 'model providers'],
+  'build.tools': ['tools', 'skills', 'thought tools', 'mind tools'],
   'build.evolve': ['evolve', 'research pair'],
   'build.updates': ['updates', 'holds', 'platform updates'],
   'watch.health': ['health', 'errors', 'problems'],

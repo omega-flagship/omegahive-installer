@@ -28,6 +28,13 @@ const rgbOf = (hex: string): RGB | null => {
 const BLACK: RGB = [0, 0, 0]
 const WHITE: RGB = [255, 255, 255]
 const mixRgb = (a: RGB, b: RGB, t: number): RGB => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
+/**
+ * A light page (Paper Studio, the light-token round's looks) reads dark ink; a dark page light ink. Decided by which
+ * of black or white stands further from the page, so every move below goes the readable way for that page.
+ */
+export const isLightPage = (colors: Colors): boolean => contrast(colors.void, '#000000') > contrast(colors.void, '#ffffff')
+/** The colour text moves toward to read better on this page, and the one the page moves toward for more depth */
+const readable = (colors: Colors): RGB => (isLightPage(colors) ? BLACK : WHITE)
 
 /** A colour value (#rrggbb, or rgb(r g b / a) for the translucent keys) with its channels moved by `f`; alpha kept. */
 function mapColour(value: string, f: (c: RGB) => RGB, alpha?: (a: number) => number): string {
@@ -91,15 +98,16 @@ export function legibilityProblems(c: Colors): string[] {
 }
 
 /**
- * The same colours, with every text and edge token that falls under its floor lifted toward white (this build's looks
- * are dark), and the ink on the primary button pressed toward black, a step at a time until it holds (or white, when
- * that is what reads on this accent). The accent's own colour is never changed here (Kimi K3): a named accent that
+ * The same colours, with every text and edge token that falls under its floor moved toward the readable end for this
+ * page (white on a dark page, black on a light one), and the ink on the primary button pressed toward black, a step at a
+ * time until it holds (or white, when that is what reads on this accent). The accent's own colour is never changed here (Kimi K3): a named accent that
  * cannot be read is refused by accentPlan, not repaired into another hue.
  */
 export function makeLegible(colors: Colors): Colors {
   const c = { ...colors }
+  const to = readable(c)
   for (const [k, floor] of TEXT_FLOORS) {
-    for (let i = 0; i < 40 && contrast(c[k], c.void) < floor; i++) c[k] = hexOf(mixRgb(rgbOf(c[k]) ?? WHITE, WHITE, 0.08))
+    for (let i = 0; i < 40 && contrast(c[k], c.void) < floor; i++) c[k] = hexOf(mixRgb(rgbOf(c[k]) ?? to, to, 0.08))
   }
   for (let i = 0; i < 40 && contrast(c['primary-ink'], c.accent) < 4.5; i++) c['primary-ink'] = hexOf(mixRgb(rgbOf(c['primary-ink']) ?? BLACK, BLACK, 0.25))
   if (contrast(c['primary-ink'], c.accent) < 4.5 && contrast('#ffffff', c.accent) >= 4.5) c['primary-ink'] = '#ffffff'
@@ -120,18 +128,22 @@ export function temper(colors: Colors, way: 'warmer' | 'cooler'): Colors {
   return makeLegible(c)
 }
 
-/** More contrast: brighter ink, clearer edges, a deeper page. Less: ink and edges eased toward the page, floors kept. */
+/**
+ * More contrast: stronger ink, clearer edges, the page pushed the other way (on a dark page: brighter ink, a deeper
+ * page; on a light page: darker ink, a brighter page). Less: ink and edges eased toward the page, floors kept.
+ */
 export function contrasted(colors: Colors, way: 'more' | 'less'): Colors {
   const c = { ...colors }
   const page = rgbOf(c.void) ?? BLACK
+  const ink = readable(c), depth = ink === WHITE ? BLACK : WHITE
   const toward = (k: ColorKey, to: RGB, t: number) => (c[k] = mapColour(c[k], (x) => mixRgb(x, to, t)))
   if (way === 'more') {
-    toward('ink', WHITE, 0.6)
-    for (const k of ['ink-2', 'ink-3', 'ink-4'] as ColorKey[]) toward(k, WHITE, 0.3)
-    toward('ink-5', WHITE, 0.2)
-    toward('control', WHITE, 0.25)
-    toward('void', BLACK, 0.4)
-    toward('abyss', BLACK, 0.3)
+    toward('ink', ink, 0.6)
+    for (const k of ['ink-2', 'ink-3', 'ink-4'] as ColorKey[]) toward(k, ink, 0.3)
+    toward('ink-5', ink, 0.2)
+    toward('control', ink, 0.25)
+    toward('void', depth, 0.4)
+    toward('abyss', depth, 0.3)
     c.line = mapColour(c.line, (x) => x, (a) => Math.min(0.5, a * 1.8))
     c['line-2'] = mapColour(c['line-2'], (x) => x, (a) => Math.min(0.6, a * 1.6))
   } else {
@@ -144,7 +156,7 @@ export function contrasted(colors: Colors, way: 'more' | 'less'): Colors {
   return makeLegible(c)
 }
 
-/** The accents a person can name, each bright enough on a dark page. */
+/** The accents a person can name: the bright ones read on a dark page, the deep ones on a light page. */
 export const ACCENTS = {
   red: '#ff6b6b',
   orange: '#ff9f43',
@@ -174,9 +186,11 @@ export const ACCENT_WORDS: ReadonlyMap<string, AccentName> = new Map<string, Acc
   ['dark green', 'deep-green'], ['deep green', 'deep-green'], ['forest green', 'deep-green'],
   ['dark red', 'deep-red'], ['deep red', 'deep-red'], ['maroon', 'deep-red'],
 ])
-/** How an accent is said back: "dark purple", and the lighter one to try. */
-export const accentWords = (name: AccentName): { said: string; lighter: string } =>
-  name.startsWith('deep-') ? { said: `dark ${name.slice(5)}`, lighter: `a lighter ${name.slice(5)}` } : { said: name, lighter: `a lighter ${name}` }
+/** How an accent is said back: "dark purple", and the lighter and darker ones to try. */
+export const accentWords = (name: AccentName): { said: string; lighter: string; darker: string } => {
+  const hue = name.startsWith('deep-') ? name.slice(5) : name
+  return { said: name.startsWith('deep-') ? `dark ${hue}` : hue, lighter: `a lighter ${hue}`, darker: `a darker ${hue}` }
+}
 const isAccent = (name: string): name is AccentName => Object.hasOwn(ACCENTS, name)
 
 /**
@@ -190,7 +204,8 @@ export function accentPlan(colors: Colors, name: AccentName): { colors: Colors }
   const accent = ACCENTS[name]
   const a = rgbOf(accent) ?? WHITE
   const w = accentWords(name)
-  if (contrast(accent, colors.void) < 3) return { problem: `That ${w.said} is too dark to read on this page; try ${w.lighter}.` }
+  // too close to the page: too dark on a dark page, too light on a light one, said that way
+  if (contrast(accent, colors.void) < 3) return { problem: isLightPage(colors) ? `That ${w.said} is too light to read on this page; try ${w.darker}.` : `That ${w.said} is too dark to read on this page; try ${w.lighter}.` }
   const ink = [hexOf(mixRgb(a, BLACK, 0.88)), '#000000', '#ffffff'].find((x) => contrast(x, accent) >= 4.5)
   if (!ink) return { problem: `That ${w.said} is too dark to read buttons on; try ${w.lighter}.` }
   const c = makeLegible({ ...colors, accent, 'primary-top': hexOf(mixRgb(a, WHITE, 0.3)), 'primary-ink': ink })

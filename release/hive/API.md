@@ -10,7 +10,28 @@ URL-safe strings.
   - `POST /api/auth/login {"password"}` → `{"token"}`.
   - Send the token as `Authorization: Bearer <token>`, or as `?token=` on
     WebSocket URLs.
-  - Phase 1 has a single operator. The password comes from `HIVE_ADMIN_PASSWORD`.
+  - Without an email, this signs in the local operator using `HIVE_ADMIN_PASSWORD`.
+- **Member passwords** (`hive/core/people.py`)
+  - An admin adds a member with `POST /api/people/members {"email", "name"?}`. The 201 response contains
+    `{person, password, note}`. The password is shown once; people views and events expose only `password_set`.
+    The hive stores a salted scrypt hash, never the password. New passwords are three random words from the pinned
+    `xkcdpass==1.30.0` packaged EFF long list, joined by dashes; startup refuses a missing or unusable list.
+  - The member calls `POST /api/auth/login {"email", "password"}` and receives `{token}` for that person's
+    `member_password` session. It has member authority even if that person is later promoted to admin.
+  - Admins reset with `POST /api/people/{id}/password` → `{person, password, ended_sessions, note}`, or remove with
+    `DELETE /api/people/{id}/password` → `{person, ended_sessions}`. These end only that person's password sessions;
+    Google sessions remain. Disabling a person also drops their password. Reset/removal/disable committed during
+    in-flight verification prevents a new session from the old credential.
+  - Public member-password sign-in and sessions work only with `HIVE_PUBLIC_PASSWORD=1` while Google sign-in is
+    unconfigured. Google sign-in continues as the same person row when configured. Public operator-password
+    sessions retain this fork's existing refusal; this member path does not grant operator access from outside.
+  - Wrong public guesses use identical counters, responses, expensive checks, retention and eviction for member
+    and unknown identifiers. State has at most 10,000 fixed-size identifier keys, with increasing waits up to an hour
+    and closure at 100 counted failures. Counters are in memory and subject to uniform bounded-table eviction;
+    local correct sign-in or admin reset clears the identifier's counter. Local guesses do not count or wait.
+  - J1 local-owner hives refuse login/add/reset/remove before parsing a password body or changing stored access.
+    `GET /api/auth/methods` exposes `member_password: false`; the admin People response exposes
+    `member_passwords: false`, so clients hide the controls. Other hives expose their supported capability explicitly.
 - **People (Google sign-in)** (`hive/core/people.py`)
   - Invite only by default: an admin invites an address (`POST /api/invites`), and that Google account accepts it
     through `GET /api/auth/google/start?invite=…` → Google → `GET /api/auth/google/callback`. Admins come only from
@@ -18,7 +39,7 @@ URL-safe strings.
   - **Configured admins** `HIVE_ADMIN_EMAILS` (comma list; each entry matched exactly after strip and lowercase): a
     listed email is always an admin. At startup a listed email with no row gets an admin row
     (`invited_by: "config"`), and an existing enabled non-admin row (for example one first enrolled as `member` through
-    `HIVE_SIGNIN_DOMAINS`) is upgraded to `admin`. Every sign-in (the hive's Google callback and the webhost path)
+    `HIVE_SIGNIN_DOMAINS`) is upgraded to `admin`. Every sign-in (the hive's Google callback and the family path)
     checks the same thing inside its transaction, so a listed row that became a member later is upgraded again at the
     next sign-in or restart. An upgrade stamps `promoted_by: "config:HIVE_ADMIN_EMAILS"` and `promoted_at` (both on
     people views), writes a warning line to the `hive` log and publishes `people.updated`
@@ -43,20 +64,20 @@ URL-safe strings.
   - **Identity binding.** Each person is bound to Google's stable subject (`sub`, column `people.google_sub`). Every
     later Google sign-in must present the same `sub`; another Google account reporting the same email is refused
     `403 identity_mismatch` (no silent rebind). People who have no binding yet (rows from before this change,
-    `HIVE_ADMIN_EMAILS` rows, webhost-path rows) bind on their next Google sign-in: **trust on first use**. For an
+    `HIVE_ADMIN_EMAILS` rows, family-path rows) bind on their next Google sign-in: **trust on first use**. For an
     address in a listed domain that first use also needs the matching `hd`, so a consumer account cannot win it;
     for other domains it does not. An admin clears a binding explicitly with
     `PATCH /api/people/{id} {"clear_google_identity": true}` (also ends the person's sessions); people views carry
     `google_bound`.
   - **Workspace on every sign-in.** A person enrolled by domain, or whose address is in a listed domain, must present
-    the matching `hd` on every Google sign-in (`403 domain_unverified`). The webhost sign-in (`POST /api/auth/sso` with
+    the matching `hd` on every Google sign-in (`403 domain_unverified`). The family sign-in (`POST /api/auth/sso` with
     the webhost cookie) carries no `sub` or `hd` and cannot verify a Google subject, so it refuses every person bound
     to a Google account and everyone who needs the Workspace check (`403 google_signin_required`, with the hive's
-    Google `login_url`), whatever the webhost `allowed` flag says, and never accepts their invitations. It decides
+    Google `login_url`), whatever the family `allowed` flag says, and never accepts their invitations. It decides
     against the person row (disabled or not) before any write, and the decision, any invitation acceptance and the
     session are one transaction, so a refusal re-enables no one and consumes no invitation. Unbound people
     with no Workspace requirement still map as before. Whenever the hive's own Google flow is set up,
-    `GET /api/auth/methods` offers it as `sso.login_url` (webhost login only when it is not); a webhost session already
+    `GET /api/auth/methods` offers it as `sso.login_url` (family login only when it is not); a family session already
     in the browser is still exchanged by `POST /api/auth/sso`.
   - **ID token.** Required, and checked: `iss` is `accounts.google.com` or `https://accounts.google.com`, `aud` is the
     hive's client id (a list must contain it; with more than one entry `azp` is required), any `azp` present equals
@@ -160,8 +181,10 @@ interface ModelOption { id: string; provider: string; label: string; local: bool
 
 | Method & path | Body → Response |
 |---|---|
-| `POST /api/auth/login` | `{password}` → `{token}` |
-| `POST /api/auth/logout` | → `{ok: true, sessions_kept}`. Revokes this bearer and the Google sign-in it came from (and every bearer exchanged from that sign-in), and expires the sign-in cookie. Host identity: it also ends that person's own work (`Sessions.end_for`): their open Ask turns stop and each active work session they own ends, so its cap is restored. Minds keep running; personal and hive minds' own work is not touched. A session that refuses to end (unsettled calls, or a running mind while the media route is on) stays active, is counted in `sessions_kept` and is sent to admins as a `sessions.kept` event. A new-hive setup session gets 403 `bootstrap_session_restricted` |
+| `POST /api/auth/login` | `{password, email?}` → `{token}`; an email selects member-password sign-in |
+| `POST /api/people/members` | Admin only. `{email, name?}` →201 `{person, password, note}`; password shown once |
+| `POST /api/people/{id}/password` | Admin only. → `{person, password, ended_sessions, note}`; new password shown once |
+| `DELETE /api/people/{id}/password` | Admin only. → `{person, ended_sessions}`; remove password and its sessions |
 | `GET /api/auth/me` | → `{principal, auth_session_ref, kind, expires_at, role, person, person_kind, local_operator}`. `auth_session_ref` is `"as1_"` + lowercase hex HMAC-SHA256, keyed with this deployment's secret (`HIVE_DATA_DIR/auth-session-ref.key`, 32 random bytes as 64 hex, mode 0600, created atomically on first use; a missing or malformed key is replaced, never skipped), over the ASCII string `hive-auth-session-reference/2`, a NUL byte, then the verified session's `token_hash`. It is stable within one session and across restarts with the same key, different across sessions and principals, changes if the key is replaced, and cannot be computed from the bearer or the sessions table without the key. **No consumer yet: attribution only, not a bound identity.** No route accepts it as authentication or capability authority, and nothing binds actions to it today. |
 | `GET /api/hive` | → `{name, version, agents, swarms, awake, beliefs, spent_usd}` |
 | `GET /api/models` | → `ModelOption[]` |
@@ -420,7 +443,7 @@ interface MemoryAtom { index: number; text: string }
 
 ## Spending limits: one total, the rest automatic
 
-Plan: `coordination/PLATFORM_AUTO_BUDGET_LIMITS_PLAN_20261007.md` (the owner approved 2026-10-07). Code: `hive/core/limits_auto.py`
+Plan: `PLATFORM_AUTO_BUDGET_LIMITS_PLAN_20261007.md` (Jon approved 2026-10-07). Code: `hive/core/limits_auto.py`
 (the ratios, pure), `hive/core/budgets.py` (where they are enforced), `hive/core/limits_view.py` (the page's read model).
 
 **The total.** The hive total is the hive-scope `month` rule set on the Limits page (`POST /api/budgets {scope: "hive",
@@ -453,7 +476,7 @@ mind is admitted within its automatic month, its team's limits and the total** (
 `rule: "auto"`). Its `$0` lifetime row is then not one of its reservation rows. A $0 controller or lease coordinator hands
 on what its automatic limits leave instead of nothing.
 
-**Server settings only seed a hive with no total** (the owner 2026-10-07: "surely they should match the number I set in the
+**Server settings only seed a hive with no total** (Jon 2026-10-07: "surely they should match the number I set in the
 admin panel"). `HIVE_BUDGET_USD` (an all-time cap), `HIVE_SWARM_MONTHLY_USD` (each team's month) and
 `HIVE_PERSON_REQUEST_CEILING_USD` apply only while the hive has no total. Once it has one they are reported and unused;
 `GET /api/hive` `limits.hive_budget_usd` is the cap in force (0 then). `HIVE_MEMBER_MONTHLY_USD` and
@@ -472,7 +495,7 @@ reservation is checked under), `scope`, `period` (`day`, `month`, `total`, or `l
 - `session`: a mind total rule a work session installed while it runs (not reset from the page).
 - `server-settings`: from the server's environment, in force because the hive has no total; `setting` names it.
 - `default`: built in, in force because the hive has no total and the environment does not set one.
-- `owner-ruling`: a fixed figure the owner decided (`rulings`).
+- `jon-ruling`: a fixed figure Jon decided (`rulings`).
 
 `minds[].checked` lists every key a paid call by that mind is checked against; taking the lowest `limit_usd` per key
 over the hive, team and mind rows gives exactly the reservation snapshot (tested). `paid_calls` is `allowed` or
@@ -509,9 +532,9 @@ over the hive, team and mind rows gives exactly the reservation snapshot (tested
      "headroom_usd": 5.0, "session_default_usd": 0.5, "lease_default_usd": 0.5}],
   "others": [],
   "request_ceiling": {"source": "auto", "limit_usd": null, "basis": "each receiving team's day limit"},
-  "rulings": [{"name": "ask_thread", "limit_usd": 0.25, "max_usd": 5.0, "source": "owner-ruling"},
-              {"name": "conductor_turn", "limit_usd": 0.25, "source": "owner-ruling", "setting": "HIVE_ASK_CONDUCTOR_TURN_USD"},
-              {"name": "member_month", "limit_usd": 50.0, "source": "owner-ruling", "setting": "HIVE_MEMBER_MONTHLY_USD"}],
+  "rulings": [{"name": "ask_thread", "limit_usd": 0.25, "max_usd": 5.0, "source": "jon-ruling"},
+              {"name": "conductor_turn", "limit_usd": 0.25, "source": "jon-ruling", "setting": "HIVE_ASK_CONDUCTOR_TURN_USD"},
+              {"name": "member_month", "limit_usd": 50.0, "source": "jon-ruling", "setting": "HIVE_MEMBER_MONTHLY_USD"}],
   "server_settings": [
     {"name": "HIVE_BUDGET_USD", "value": 0.01, "set": true, "applies": false, "effect": "not used: the hive total on the Limits page replaces it"},
     {"name": "HIVE_SWARM_MONTHLY_USD", "value": 0.01, "set": true, "applies": false, "effect": "not used: team limits come from the hive total"},
@@ -808,12 +831,6 @@ An unknown billable or unit is refused, and so is a price that is missing, non-n
 
 **Mind side.** Inside a hive (`HIVE_LLM_URL` set), `generate-image` and `generate-image-quality` (`modules/media_imagegen`) call this route and return `IMAGE-GENERATED sha256=… WxH operation=… artifact-ready`. Without an id, a retry reuses the derived operation. A deliberate new attempt starts the prompt with `op=<new-id> ` (or passes `operation_id` from Python). They never fall back to the direct vendor. The inventory reports these skills as `host_metered: true`, with `budget_route: "reservations"`, while the route is on and the op is pinned.
 
-**Media r2 additions (since the 2026-10-10 handover).**
-- **Who may use an op.** Switching the route on does not open image skills to every funded mind. `HIVE_MEDIA_ALLOW` is JSON `{op: ["agent:a_…" | "swarm:s_…", …]}`. A mind reaches an op only when it, or its swarm, is named there; the skill policy still applies to the minds it names. Empty, unreadable or malformed entries admit nobody, and there is no wildcard. Otherwise 403 `media_not_allowed`. The one exception is a person's own Studio maker during that person's live session (see "Studio live sessions" below), which is admitted by the host binding, never by a name.
-- **Refused outputs that were billed** are recorded as `billed_refused` with their reason and no asset, and are told to the mind's people and admins (event `media.billed_refused`).
-- **Breaker.** `HIVE_MEDIA_BREAKER_REFUSALS` (at least 1, default 2) `billed_refused` results in a row pause a mind's media ops until an admin resets its breaker; an overrun pauses it at once.
-- **Admin reads.** `GET /api/media/results` (`?billing=` filters; newest 200), `GET /api/media/breakers`, and `POST /api/media/breakers/{agent_id}/reset {reason?}`. These routes exist only while the route is on.
-
 ---
 
 ## Per-mind tool inventory (S4)
@@ -832,7 +849,7 @@ What a mind can *prove* it registered, not what its source says. Read-only; no s
 
 ## Motivations and the Tasks query (phase 1)
 
-Design: `coordination/omegaui/MOTIVATIONS_TASKS_HOST_DESIGN_20261005.md` r3 with the owner's Q1–Q7. Code: `hive/core/motivations.py`. A **motivation** is the *why*; a **task** is today's goal, unchanged. Every goal route, MCP tool, envelope, board, program `ctx` and the `goal.updated` event are unchanged and carry no motivation field (design §1.6, pinned by freeze tests).
+Design: `MOTIVATIONS_TASKS_HOST_DESIGN_20261005.md` r3 with Jon's Q1–Q7. Code: `hive/core/motivations.py`. A **motivation** is the *why*; a **task** is today's goal, unchanged. Every goal route, MCP tool, envelope, board, program `ctx` and the `goal.updated` event are unchanged and carry no motivation field (design §1.6, pinned by freeze tests).
 
 `Motivation` (reader view): `{id, title, why, owner, swarm_id, status, visibility, rev, parent_id, created_by, created_at, updated_at, status_changed_at, editable}`; an editor also gets `shared_with` and `links_version`.
 - `owner`: `user:u_…` (a person; `swarm_id` null = spans teams, or one team), `swarm:s_…` (a team; `swarm_id` is that swarm) or `agent:a_…` (a mind's own, scoped to its swarm). Anything else is 400 `bad_scope`; the hive password (`user:operator`) owns no personal motivation.
@@ -871,8 +888,8 @@ Not in phase 1: the motivation summary (progress, minds, money), subtask link in
 ## Universal Ask, phase 1 (text)
 
 A person types a request anywhere in the UI; the coordinator of the relevant swarm answers it in an Ask thread.
-Code: `hive/core/ask.py`. Contract: `coordination/omegaui/UNIVERSAL_ASK_HOST_CONTRACT_DRAFT_20261005.md` as amended by
-OmegaReview's design review (items 1–5) and the owner's routing ruling. Phase 1 has no proposals, app tools, ui changes,
+Code: `hive/core/ask.py`. Contract: `UNIVERSAL_ASK_HOST_CONTRACT_DRAFT_20261005.md` as amended by
+OmegaReview's design review (items 1–5) and Jon's routing ruling. Phase 1 has no proposals, app tools, ui changes,
 confirm tokens, delegation or voice.
 
 **Who may call:** a named signed-in person whose role is admin or member. The local operator password gets 403
@@ -910,7 +927,7 @@ rate_limited | too_large | timed_out | operation_conflict | invalid | stopped`, 
   409 `turn_closed`. Money (this holds for stop, thread end, the turn's time limit and shutdown as well): a model call is
   reserved first, then committed at httpcore's send_request_headers trace (after any wait for a pooled connection and
   after connecting), where the turn is read again: a call the close caught before then never reaches the provider and
-  its hold is released. Dispatch = commitment to the in-flight call; with AnyIO, at most this one already-authorised
+  its hold is released. Dispatch = commitment to the in-flight call; at most this one already-authorised
   request may still be handed off after a takeover commits, and it is settled at its real cost. No further model call
   or act follows it, and nothing retries or redirects it (the provider client has retries and redirects off). A committed paid call finishes apart
   from the loop, in its own window of up to 300 s (not the turn's remaining time), and is settled at its real cost. At
@@ -950,7 +967,7 @@ the thread's latest turn.
 
 ### Who answers
 
-Routing follows the owner's ruling of 2026-10-05: "ask should be the orchestrator or owner of whatever mind you're talking
+Routing follows Jon's ruling of 2026-10-05: "ask should be the orchestrator or owner of whatever mind you're talking
 to". The answering mind is the coordinator (`swarms.coordinator_id`) of the first swarm in this order:
 
 1. the swarm of the addressed mind: `context.mind`, or else the first visible mind in `selection`;
@@ -974,7 +991,7 @@ The gate:
   allowance spent: 402 `spend_limit` at the call, the turn's `done` says `spend_cap`). It is never woken. With the
   conductor off it is never asked: asleep is `mind_asleep`, awake is `not_available` (the hub path would keep the
   words). Its own turns are never held copies.
-- **A personal mind's turn keeps no content on the host** (the owner 2026-10-08: its memory and history live in the person's
+- **A personal mind's turn keeps no content on the host** (Jon 2026-10-08: its memory and history live in the person's
   browser). Its turn row has no `text` and no `context` (`personal = 1`; ids, times, state, money and the body digest
   only); nothing is written to its thread's room or the hub; its frames are stored content-free, by allowlist: ids,
   phase, seq, time, host enums (`outcome`, `reason`, `state`, `op`), money, flags and digests; an act keeps `act_id`
@@ -997,7 +1014,7 @@ An Ask thread is a Session with `purpose: "ask"`:
 - a private room, and a goal assigned to the coordinator. The goal, the session and the room are all titled
   "Ask thread", never the request text.
 
-The thread's cap is the coordinator's spend at creation plus `thread_budget_usd`. The default is **$0.25**, as the owner
+The thread's cap is the coordinator's spend at creation plus `thread_budget_usd`. The default is **$0.25**, as Jon
 decided on 2026-10-05. The person may raise it up to $5 without an admin. Session caps on one mind compose: the mind's total rule is min(the rule before any session, every
 active session's cap). It is recomputed on every start and end, so the rule that was there before comes back exactly
 whatever order the sessions end in. A rule set by anyone else in the meantime is kept. A session never raises a cap.
@@ -1054,7 +1071,7 @@ published, and the recovery read returns the same sequence.
 | `done` | `spent_usd` (the thread), `turn_spent_usd` (approximate: the mind's spend delta over the turn), `outcome: "answered"` |
 | `refused` | `reason` (`timed_out`, `stopped`, `spend_limit` or `not_available`), `say`, `spent_usd`, `turn_spent_usd` |
 
-Asker-only frames, with admins using the audit list, is the owner's decision of 2026-10-05. The same asker-only rule,
+Asker-only frames, with admins using the audit list, is Jon's decision of 2026-10-05. The same asker-only rule,
 checked before the admin bypass, covers every live event that carries Ask content:
 - `message` frames in an `ask:<turn_id>` conversation: the request, and the mind's replies;
 - `agent.trace` frames, by an audience the host fixes when the trace is created and stores (`ask_trace_scopes`). It is
@@ -1109,7 +1126,7 @@ body is 409 `operation_conflict`.
 
 ### Conductor memory: kept by the person's browser
 
-the owner, 2026-10-07: "keep the memory local on the browser side and put cloud hosted memory coming soon". The host keeps
+Jon, 2026-10-07: "keep the memory local on the browser side and put cloud hosted memory coming soon". The host keeps
 **nothing** about the person: no store, no memory routes (`/api/me/ask/memory` does not exist), no memory data dir.
 Applies only to conductor turns (`HIVE_ASK_CONDUCTOR=1`).
 
@@ -1202,7 +1219,7 @@ Ask person gate. Anything not the caller's own is 404 `not_available`.
 
 ## First Light (onboarding), host round R1a
 
-The host side of the onboarding journey (plan: `coordination/omegareview/PLATFORM_ONBOARDING_PLAN_R1.md`). Source:
+The host side of the onboarding journey (plan: `PLATFORM_ONBOARDING_PLAN_R1.md`). Source:
 `hive/core/onboarding.py`. Every route here acts only on the signed-in **person** (a `people` row, `user:u_…`, enabled):
 the loopback operator, a family sign-in without a people row and a disabled person get 403 `person_required`; a mind's
 token or no session gets 401. No route takes another person's id, admins included.
@@ -1336,7 +1353,7 @@ allowance or their own key), under every limit on the model route.
 
 ## Own hive, round H1 (`hive/core/ownhive.py`)
 
-Plan: `coordination/omegareview/PLATFORM_OWN_HIVE_CONNECTIONS_PLAN_R1.md` (the owner approved it 2026-10-13). A hive is one
+Plan: `PLATFORM_OWN_HIVE_CONNECTIONS_PLAN_R1.md` (Jon approved it 2026-10-13). A hive is one
 person's hive: it has one owner, each person owns their keys and sets limits on them, things are public or private, and
 a newcomer with no keys can be invited to use the hive. Nothing here crosses to another hive: connections (H2), grants
 over them (H3) and moving out (H4) come later. Every change is additive and keeps today's access.
@@ -1381,7 +1398,7 @@ their own key.
   their own key may pay: `own_key_required`. Anything else: `no_key_grant`. The model route picks a guest's or public
   visitor's own key for the provider when they have one and hold no grant on the default (`Gateway.paying_key`).
 
-**Public and private** (the owner, verbatim: "minds and swarms and hives can be set as public or private and have access granted
+**Public and private** (Jon, verbatim: "minds and swarms and hives can be set as public or private and have access granted
 within both public and private"). Minds and swarms keep `private` / `shared` / `public` (`shared` is private with access
 grants in `shared_with`; grants can be added to public things too) and gain `pays`: `own-key` (default) or `hive-key`.
 Only the hive owner may set `hive-key` (403 `owner_only`; `pays_by` records who set it), and at use a `hive-key` counts
@@ -1433,7 +1450,7 @@ acceptance (410 `invite_unavailable`). Approving a request keeps a live grant's 
 
 ## Mind control, phase one (r2.12, r2.12.1, r2.13, r2.13.1)
 
-A team's controller runs child minds for one request, under a lease the person who submitted that request issued in the same submission. Source: `hive/core/minds.py`. Contracts: `coordination/omegacode/PLATFORM_MIND_CONTROL_R2_12_SPEC_20261005.md`, its r2.12.1 amendment, `PLATFORM_PERSON_INSTRUCTION_ROOT_R2_13_20261005.md`, its r2.13.1 amendment, and `PLATFORM_CONTROL_PLANE_SEQUENCING_20261005.md` (human routes).
+A team's controller runs child minds for one request, under a lease the person who submitted that request issued in the same submission. Source: `hive/core/minds.py`. Contracts: `PLATFORM_MIND_CONTROL_R2_12_SPEC_20261005.md`, its r2.12.1 amendment, `PLATFORM_PERSON_INSTRUCTION_ROOT_R2_13_20261005.md`, its r2.13.1 amendment, and `PLATFORM_CONTROL_PLANE_SEQUENCING_20261005.md` (human routes).
 
 **Off by default.** Spawn and resume answer 403 `spawn_disabled` until the launcher sets `HIVE_MIND_SPAWN=1`. Templates are operator-registered in the launcher: `HIVE_MIND_TEMPLATES` is a JSON list of `{template_id, harness: "native", model_id, role_id?, max_allocation_usd (0-100], overridable?: {model_id: [..]}, controls: [interrupt|stop|pause|resume|retire, always including stop and retire; steer is refused at registration until the native child's steer semantics are qualified], lifecycle_modes?: [deliver|bounded|ongoing], teams: [swarm ids]}`; an invalid entry is dropped and logged. `HIVE_PERSON_REQUEST_CEILING_USD` (default 1.00) caps one instruction's budget.
 
@@ -1491,162 +1508,6 @@ A team's controller runs child minds for one request, under a lease the person w
   - `acknowledged`: the first ack, also accepted from a revision still shown accepted or pending;
   - `duplicate`: confirmed, never re-sent;
   - `refused`: kept apart in `refused.json` and retried only after a reconnect.
-
----
-
-## Studio live sessions (J3 host rounds R2 to R8.4)
-
-A person directs a Studio maker mind that draws on one of their saved Studio pieces, live, while they keep editing it
-themselves. Code: `hive/core/studio_sessions.py` (intent and record), `studio_steps.py` (steps, piece custody, the
-maker's write fence), `studio_handoff.py`, `studio_gateway.py` (money at call time), `studio_steer.py` (directions),
-`studio_makers.py` (each member's own maker) and `program_attachments.py` (the host attach). The UI is
-`hive/ui/src/features/studioLive/`.
-
-**Switch.** Off by default. `HIVE_STUDIO_SESSIONS` (`1`, `true`, `on` or `yes`) turns it on only when every component
-of this build is present; the startup self-check logs what is missing and keeps it off otherwise. On macOS the switch
-cannot turn on in this build: it also needs a reviewed exact-commit safe-restart override
-(`MAC_SAFE_RESTART_OVERRIDE_HASHES`), and none is adopted. While it is off every route below answers 404
-`not_available` and nothing is created, attached or changed. Members' own makers also need
-`HIVE_STUDIO_MAKER_TEMPLATE` (the id of a reviewed Omega maker mind on this hive); without it sessions run but setup
-answers 409 `studio_maker_unavailable` and the hive does not advertise `capabilities.studio_sessions`. Other settings:
-`HIVE_STUDIO_MAKER_MODEL` (default `openrouter/anthropic/claude-sonnet-5.5`) and `HIVE_STUDIO_PROGRAM` (default
-`omegadesign`).
-
-**Each member's own maker (R7, R8.2, R8.3).**
-- `POST /api/studio/setup` (a signed-in person) makes the caller's own maker on first use and reuses it after. It is
-  shaped from the template mind (kind `omega`, role, persona, tools, budget), lives asleep in a private Studio swarm
-  the person owns, and is found by its binding (`person_minds`, purpose `studio_maker`), never by name.
-- It runs on the person's **own** key for the model's provider, re-resolved on every setup. No own key: 402
-  `own_key_needed`, before anything is made, attached or reserved. Never the hive's key or anyone else's.
-- The host attaches it to the Studio app itself (`ProgramAttachments.host_attach_studio_maker`), the one audited
-  exception to admin-only attachment. For an app with attachment hooks (`offer`/`bind`/`unbind`) this needs the app's
-  own `member_attach` declaration (R8.3, below); otherwise 409 `studio_maker_attach_unsupported`. No app hook is run.
-- R8.2: Studio counts as active in the person's own Studio swarm through a derived check on that row and binding; no
-  other swarm changes.
-- With `{request: {title, detail, piece, max_steps, window_minutes, cap_usd?, step_cap_usd?, ...}}` setup also returns
-  the setup card: the full `studio.session` request with the host's consent payload and digest, ready to record
-  unchanged.
-
-**`member_attach` (R8.3).** A hooked Studio app may export a module attribute `member_attach = {"actions": [...],
-"channels": None | []}`. It is honoured only when the loaded app is its digest-pinned release (`HIVE_APP_PINS`, the
-loaded digest equal to the pin's), and each action must be one the app offers to minds (`agents: true` in
-`describe()`). The host then attaches the maker with exactly that scope, policy `ask` on each action, recorded as
-`hive:studio-maker` and audited with `scope_source: "member_attach"`. A malformed declaration counts as none. Studio
-0.4.21 declares it, naming every action it offers to minds.
-
-**The Ask sets it up (R2).** A `studio.session` intent on the Ask intent plane (`ask_intents.py`; any named person,
-members included) records the person's exact consented request. Submit admits it in one write transaction: the goal
-(assigned to the exact maker, created by the person), the proposal artifact (created by the host), the session row,
-the recorded answer and the intent link. A refusal commits none of them.
-
-**Money.** The person's monthly total must exist first: on their own key, the self / all-keys key limit
-(`PUT /api/me/key-limits/self {key_id: "*", month_usd}`, shown on the Me page as "Monthly total on your own keys");
-otherwise their monthly allowance. Without it: 402 `spend_limit`, reason `monthly_total_required`. The session cap
-(default $2.00) must fit inside the current headroom of every limit on the maker's calls, and the step cap (default
-$0.25) inside the session cap. Admission is a pre-check and reserves nothing; each paid call reserves at call time
-under `studio:<session>` and `studiostep:<session>:<n>` rows. The ledger's `budget.monthly` lists every limit that
-applies, one row each.
-
-**Routes for the person** (the session's owner; anyone else, admins included, gets 404 `not_available`):
-
-| Route | What it does |
-|---|---|
-| `GET /api/studio-sessions/{id}` | The ledger: request, pin, maker, key, model, state, steps, directions, piece custody, budget (cap, spent, held, unknown, step cap, monthly rows), stop and handoff views |
-| `POST`, `GET`, `DELETE /api/studio-sessions/{id}/mount` | The Studio frame mounts by compare-and-swap on the session's mount epoch and gets a host-issued mount token; older tokens are retired. The mount is bound to the caller's sign-in |
-| `POST /api/studio-sessions/{id}/mount/heartbeat` | Renews the mount lease (60 s) |
-| `PUT /api/studio-sessions/{id}/piece` | Uploads the current piece (exact UTF-8 body, at most 256 KB, never parsed). A refresh with the same bytes renews freshness with a new host sequence number |
-| `POST /api/studio-sessions/{id}/steps/{n}/outcome` | The frame reports what happened to the step's proposal: `applied`, `refused`, `accepted-no-source-change`, `invalid` or `unknown` |
-| `POST /api/studio-sessions/{id}/controls` | `{control_id, action}` with `pause`, `resume`, `stop`, `finish_stopping`, `retry_retirement {override?}` or `rebind_source {artifact_id}` |
-
-Admins: `POST /api/studio-sessions/{id}/admin-controls` (`stop` and `finish_stopping` only) and
-`GET /api/studio-sessions/{id}/audit` (read-only; no piece body and no direction text).
-
-**Steps.** Each step runs in its own maker execution: before step n the host stops the maker, rotates its token,
-starts it and waits for its new execution boundary. The maker uses only the hub while a session is live. Inside a
-step it may only:
-- read its context: `GET /api/agent/studio-sessions/{id}/context?execution_id=&after_dir=` (skill
-  `hive-studio-context`, MCP `hive_studio_context`);
-- publish at most one proposal (an `omega-maker-revision-2` body of at most 32 KB, its op ids carried as given) to the
-  session's proposal artifact (skill `hive-studio-publish`, MCP `hive_studio_publish`);
-- finish: `POST /api/agent/studio-sessions/{id}/steps/{n}/done {execution_id, more}` (skill `hive-studio-done`, MCP
-  `hive_studio_done`).
-
-`done`, a deadline or an interrupt ends the step and fences that execution for good. The skills are in
-`modules/hive_studio`; the three MCP tools are listed only while Studio is on.
-
-**Stale reads (R8.4).** A proposal is refused 409 `stale_piece_read` only when the maker made no context read, there is
-no piece, or the piece's content changed since the read (its `body_sha256`, `scene_ref` and `edit_generation`). A
-refresh upload of unchanged art no longer counts as a change; any real edit by the person still does. Sequence order
-still governs upload numbering and the outcome custody floor.
-
-**Directions (R5).** While the person's own session is bound to an Ask turn, their steer words (`POST
-/api/ask/{operation_id}/steer`) are queued as Studio directions and reach the maker only through the next step's
-context read. Ask and Studio directions share the person's per-minute and per-day counters, and at most 20 unread
-directions are queued. A stopping or ended session refuses with 409 `studio_session_closed` and writes nothing.
-
-**Expiry (R8.1)** is enforced at reservation and at send.
-
-**Images (R8).** During the person's live session their maker may call `POST /llm/v1/media` on the person's own key
-for the media provider (the key the session was consented on when that fits), without an `HIVE_MEDIA_ALLOW` entry. No
-own key: 402 `own_key_needed`. **Placing a generated image on the canvas is not done**; it needs host round R9 and a
-later Studio release.
-
----
-
-## Local-owner hive and the new hive (J1 host side)
-
-The host side of the planned one-click installers: a hive installed on one person's own computer. **Inert unless
-`HIVE_LOCAL_OWNER=1`**, which only an installer launcher sets. The installers themselves are not built yet; `install/`
-holds the legacy OmegaClaw installers, kept for reference. Code: `hive/core/localowner.py`, `newhive.py`,
-`newhive_helper.py`, `newhive_update.py`; the sign-in page is `hive/core/localsignin/`.
-
-**Local owner (`localowner.py`).**
-- **The owner.** On first boot one person row (admin, `owner@local.invalid`, invited by `local-install`) is created
-  and stored as the hive owner (`via: "local-install"`).
-- **Control socket.** `<data>/run/control.sock`, in a 0700 folder. A connection is served only when the peer's uid is
-  the hive process's uid. Ops: `hello`, `signin` (issues a one-time sign-in code), `preflight`, and on a new hive the
-  `bootstrap-*` ops below. No reusable credential exists anywhere.
-- **One-time-link sign-in.** The code is 256 random bits, valid 60 s, tied to this process, stored hashed and consumed
-  once. The browser opens `GET /local-signin`, which posts it to `POST /api/auth/local/exchange {code}` (exact Origin,
-  JSON, at most 1024 bytes) for a session of the owner. A used or expired code: 401 `code_refused`. There is no
-  password.
-- **Browser boundary.** The outermost middleware allows only exact loopback Host names (421 otherwise), refuses any
-  `?token=` (400), and requires this hive's own Origin on session-authenticated writes and on the events socket.
-- **Start refusals.** Google or webhost sign-in settings (`HIVE_SSO_USERS`, `HIVE_SSO_LOGIN_URL`,
-  `HIVE_GOOGLE_CLIENT_ID`, `HIVE_SIGNIN_DOMAINS`), a public base (`HIVE_BASE_PATH`, `HIVE_PUBLIC_BASE`), a non-loopback
-  bind, an unsandboxed mind setting, or a data folder open to group or others.
-- **Sandbox interpreter checks.** `HIVE_SANDBOX_PYTHON`, when set, is the program every Linux mind and tool is launched
-  with. It must be an absolute, plain path to a regular file (not a link), owned by root or this account, with no group
-  or other write bit, in folders other accounts cannot change.
-- `GET /api/local/status` (any signed-in session of this hive): `{local_owner, port, pid, owner, preflight}`.
-- `HIVE_LOCAL_BROWSER_PORT` is a second loopback port a browser may name in Host/Origin; it must differ from `HIVE_PORT`.
-  On Windows it is the local gateway's port. On Linux it is the browser side of the owner's SSH tunnel (8701 → 8700):
-  nothing listens on it on the server; it is only an extra admitted loopback origin, for both the local-owner boundary
-  and the §G origin set.
-
-**New hive (`newhive.py`).** Inert unless the data folder carries the required-feature marker
-(`required-features.json`, feature `repo-work-gate/1`) **and** `HIVE_LOCAL_OWNER=1`; a marker without it refuses to
-start. A hive without the marker never constructs it.
-- **Installed-source census.** Only regular, canonical, manifest-listed files inside the verified release source root
-  (`HIVE_RELEASE_MANIFEST`, `HIVE_RELEASE_SOURCE`), with exact size and sha256. It refuses escapes, links anywhere in
-  the tree, secret-like or unsupported paths, missing or changed files, an oversize census, and unlisted importable
-  files. It never deletes anything.
-- **Repository map.** Code's pinned three-file extractor (`HIVE_REPOMAP_EXTRACTOR`) builds the hive's map of its own
-  installed source.
-- **Setup helper session** (`sso-bootstrap`). Minted through the control socket's one-use code, bound to this process,
-  the installation and one attempt; it lasts at most 10 minutes and is never extended. It is accepted only on four
-  exact routes (asset upload and read, repo-map upload and read) and cannot sign out.
-- **Coding barrier.** Mind start and restore, goal claims and the Code routes wait until the installed map is complete
-  and mounted. The person's Ask and ordinary reads are not held.
-- `HIVE_REQUIRED_FEATURES` lets a launcher require the marker (never disable it); `HIVE_INSTALLATION_ID` is the
-  installation id the launcher expects.
-
-**Mac test hive restart prepare.** `POST /api/local/restart-prepare {keep?: [...]}` exists only when
-`HIVE_RESTART_PREPARE=1`. It answers this machine only, with the token written for this start into
-`$HIVE_DATA_DIR/restart-prepare.token`, and asks each awake mind (the `keep` ones aside) to sleep once: no retry, no
-stop, no force. What refused is reported, and the restart script then decides not to restart.
-
----
 
 ## Person notices (G2) and daily spend (G4)
 

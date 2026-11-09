@@ -1,6 +1,6 @@
 """J3 host round R3 (O2 core): a Studio session's steps, executions, current-piece custody and the maker's write fence.
 
-Plan: coordination/omegareview/PLATFORM_J3R4_HOST_O1_O2_G1_PLAN.md, r1 §3.3-3.6 as amended by r1.1 (S3, S4.3-4, S5 at
+Plan: PLATFORM_J3R4_HOST_O1_O2_G1_PLAN.md, r1 §3.3-3.6 as amended by r1.1 (S3, S4.3-4, S5 at
 step time, S6, K7, K11), r1.2 (E3, E5, E7) and r1.3 (F1, F2, F3, F4); contract J3_ASK_SETS_UP_STUDIO_CONTRACT_R4_3.md
 (it wins where they differ); Design's current-piece envelope J3_R4_CURRENT_PIECE_ENVELOPE_R1_20261017.md (opaque here).
 
@@ -146,9 +146,9 @@ class StudioSteps(StudioGateway, StudioHandoffs, StudioSteers):
     TOKEN_ROTATION = True            # r1.3 F4.2 component: this build rotates a maker's token per execution
     # the person controls this build offers; the self-check needs pause, resume and stop here (r1.4 G5d): R3 added stop
     # and finish_stopping (handoff spec r2.4 §5), R5 pause and resume. Stop is also the release (r1.8 L2.3): there is no
-    # separate release_maker control
-    CONTROL_ACTIONS = ("rebind_source", "retry_retirement", "stop", "finish_stopping", "pause", "resume")
-    STUDIO_ONLY_ACTIONS = ("stop", "finish_stopping", "retry_retirement", "pause", "resume")
+    # separate release_maker control; repair_handoff rechecks only the original installed namespace hold
+    CONTROL_ACTIONS = ("rebind_source", "retry_retirement", "stop", "finish_stopping", "pause", "resume", "repair_handoff")
+    STUDIO_ONLY_ACTIONS = ("stop", "finish_stopping", "retry_retirement", "pause", "resume", "repair_handoff")
 
     def _init_steps(self):
         db = self.hive.db
@@ -939,7 +939,8 @@ class StudioSteps(StudioGateway, StudioHandoffs, StudioSteers):
 
     def controls(self, viewer, session_id, data, admin=False):
         """POST /api/studio-sessions/{sid}/controls. rebind_source, retry_retirement {override?}, stop, finish_stopping
-        (an admin may stop and finish stopping any session through /admin-controls), pause and resume. Stop is the
+        (an admin may stop and finish stopping any session through /admin-controls), pause, resume and owner-only
+        repair_handoff. Stop is the
         release (r1.8 L2.3; no separate release_maker). Idempotent per control_id."""
         if not isinstance(data, dict) or "control_id" not in data or "action" not in data:
             raise self._bad("the body is {control_id, action, ...}")
@@ -957,7 +958,7 @@ class StudioSteps(StudioGateway, StudioHandoffs, StudioSteers):
             if not {"control_id", "action"} <= set(data) <= {"control_id", "action", "override"} \
                     or ("override" in data and type(data["override"]) is not bool):
                 raise self._bad("retry_retirement is exactly {control_id, action, override?: true|false}")
-        elif action in ("stop", "finish_stopping", "pause", "resume"):
+        elif action in ("stop", "finish_stopping", "pause", "resume", "repair_handoff"):
             if set(data) != {"control_id", "action"}:
                 raise self._bad(f"{action} is exactly {{control_id, action}}")
         if action not in self.CONTROL_ACTIONS or (admin and action not in ("stop", "finish_stopping")):
@@ -1001,6 +1002,20 @@ class StudioSteps(StudioGateway, StudioHandoffs, StudioSteers):
                 open_attempt = True
                 result = {"session_id": row["id"], "control_id": data["control_id"], "action": action,
                           "retrying": reason, "override": bool(data.get("override")), "at": stamp}
+            elif action == "repair_handoff":
+                if row["state"] != "stopping" or row["credential_reason"] != "namespace_conflict" or row["release_phase"] != "installed":
+                    raise self._err(409, "handoff_not_held", "This session is not waiting for a workspace repair.")
+                if self.worker.outstanding(row["maker_id"]):
+                    raise self._err(409, "handoff_in_progress", "A handoff job is still running. Wait for it to finish.")
+                # Only recheck the existing authority here. Credential IO stays in the existing maker-owned S job.
+                root = self.hive.supervisor.workspace.path(row["maker_id"])
+                self.hive.placement._namespace_cache = None  # explicit owner recheck always starts from current rows/files
+                with self.hive.placement._workspace_guard(row["maker_id"], root):
+                    db.execute("UPDATE studio_sessions SET credential_reason = NULL, updated_at = ? WHERE id = ?",
+                               (stamp, row["id"]))
+                submit_stop = self.finish_stopping(row["id"], count=False)
+                result = {"session_id": row["id"], "control_id": data["control_id"], "action": action,
+                          "state": "stopping", "repairing": True, "at": stamp}
             elif action == "pause":
                 self._pause(row)
                 result = {"session_id": row["id"], "control_id": data["control_id"], "action": action,

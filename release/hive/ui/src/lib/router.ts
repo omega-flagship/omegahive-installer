@@ -75,6 +75,7 @@ export type Route =
   | { name: 'roles'; id?: string }
   | { name: 'connect'; swarm?: string }
   | { name: 'artifacts' }
+  | { name: 'tools'; id?: string }
   | { name: 'assets'; swarm?: string }
   | { name: 'setup' }
 
@@ -135,6 +136,8 @@ export function parse(hash: string): Route {
       return { name: 'connect', swarm: q.get('swarm') ?? undefined }
     case 'artifacts':
       return { name: 'artifacts' }
+    case 'tools':
+      return parts[1] ? { name: 'tools', id: parts[1] } : { name: 'tools' }
     case 'setup':
       return { name: 'setup' }
     case 'assets':
@@ -218,6 +221,8 @@ export function href(r: Route): string {
       return `#/connect${r.swarm ? `?swarm=${encodeURIComponent(r.swarm)}` : ''}`
     case 'artifacts':
       return '#/artifacts'
+    case 'tools':
+      return r.id ? `#/tools/${encodeURIComponent(r.id)}` : '#/tools'
     case 'setup':
       return '#/setup'
     case 'assets':
@@ -290,7 +295,7 @@ export function useRoute(): Route {
 export const pageKey = (r: Route): string => (r.name === 'goals' || r.name === 'boards' ? 'tasks' : r.name)
 
 /** Routes that open a full page: the HUD's top bar hides on these and the navigation sits higher. One list for the app and its navigation. */
-export const PAGE_ROUTES: readonly Route['name'][] = ['tasks', 'motivations', 'boards', 'flow', 'messages', 'settings', 'swarms', 'swarm', 'usage', 'approvals', 'goals', 'lab', 'programs', 'program', 'models', 'me', 'people', 'health', 'updates', 'explore', 'lifecycle', 'code', 'launch', 'roles', 'connect', 'artifacts', 'assets', 'setup', 'conversations']
+export const PAGE_ROUTES: readonly Route['name'][] = ['tasks', 'motivations', 'boards', 'flow', 'messages', 'settings', 'swarms', 'swarm', 'usage', 'approvals', 'goals', 'lab', 'programs', 'program', 'models', 'me', 'people', 'health', 'updates', 'explore', 'lifecycle', 'code', 'launch', 'roles', 'connect', 'artifacts', 'tools', 'assets', 'setup', 'conversations']
 export const isPageRoute = (name: Route['name']): boolean => PAGE_ROUTES.includes(name)
 
 /** Where a page goes when there is no in-app history to return to (a deep link, a fresh tab). */
@@ -311,6 +316,8 @@ export function parentOf(r: Route): Route {
       return r.suite || r.run || r.dimension ? { name: 'lab' } : { name: 'hive' }
     case 'roles':
       return r.id ? { name: 'roles' } : { name: 'hive' }
+    case 'tools':
+      return r.id ? { name: 'tools' } : { name: 'hive' }
     case 'models':
       return r.provider ? { name: 'models' } : { name: 'hive' }
     case 'code':
@@ -382,7 +389,7 @@ if (typeof window !== 'undefined' && typeof history !== 'undefined') {
 
 /**
  * A surface's X: always the home screen (the experience's own hive), never whatever surface was open before it
- * (the owner 2026-10-08). The open surface's history entry is replaced by home, so nothing is reopened, while Back and Esc
+ * (Jon 2026-10-08). The open surface's history entry is replaced by home, so nothing is reopened, while Back and Esc
  * keep stepping through the person's in-app history as before.
  */
 export function closeToHome(): void {

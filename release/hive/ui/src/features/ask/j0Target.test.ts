@@ -4,7 +4,7 @@ import { chipWords, planAsk, planName, type Carry, type PlanInputs } from './ans
 
 /**
  * j0-fixes r1 item 1 (J0 live 14:38, Design's source repro ONBOARDING_ASK_RECIPIENT_SOURCE_REPRO_20261017): the chip
- * said "Answering: you (the owner's Mind)" while the paid row said "Ask Product Design: …", and choosing under Change moved
+ * said "Answering: you (Jon's Mind)" while the paid row said "Ask Product Design: …", and choosing under Change moved
  * neither. Design's reproducer cases, as tests of the ONE decision the chip, the row and the send now share
  * (answerer.planAsk / planName). INVENTED people and minds, as in the reproducer; no host, no request.
  */

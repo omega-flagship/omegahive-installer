@@ -90,5 +90,5 @@ def test_every_decision_rechecks_revoked_consent_instead_of_caching_allow():
 
 def test_calendar_requirement_does_not_change_an_unrelated_skill():
     policy, connector = engine(RuntimeError("must not be called"))
-    assert policy.decide(AGENT, "unrelated-read") == ("allow", "default")
+    assert policy.decide(AGENT, "read-file") == ("allow", "default")
     assert connector.calls == []

@@ -1,4 +1,4 @@
-"""Mac test hive restart prepare (the owner 2026-10-18): the restart script may ask awake minds to sleep ONCE, then restart only
+"""Mac test hive restart prepare (Jon 2026-10-18): the restart script may ask awake minds to sleep ONCE, then restart only
 when they are all asleep; it never forces. The route is off unless HIVE_RESTART_PREPARE=1, answers this machine only, and
 takes the one-time token the hive wrote to a 0600 file in its data folder."""
 

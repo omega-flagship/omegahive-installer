@@ -255,7 +255,7 @@ function Vocab({ swarmId }: { swarmId: string }) {
               layout
               initial={fresh.includes(t) ? { opacity: 0, scale: 0.6 } : false}
               animate={{ opacity: 1, scale: 1 }}
-              className="inline-flex min-h-7 items-center rounded-lg border border-line bg-white/[0.04] px-2 font-mono text-[12px] text-ink-2"
+              className="inline-flex min-h-7 items-center rounded-lg border border-line bg-tint/[0.04] px-2 font-mono text-[12px] text-ink-2"
             >
               {t}
             </m.span>
@@ -271,7 +271,7 @@ function Vocab({ swarmId }: { swarmId: string }) {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           placeholder="add terms, comma separated"
-          className="min-h-11 min-w-0 flex-1 rounded-xl border border-line bg-black/25 px-3 font-mono text-[13px] text-ink outline-none placeholder:font-sans placeholder:text-ink-4 focus:border-line-2"
+          className="min-h-11 min-w-0 flex-1 rounded-xl border border-line bg-shade/25 px-3 font-mono text-[13px] text-ink outline-none placeholder:font-sans placeholder:text-ink-4 focus:border-line-2"
         />
         <IconButton icon="plus" label="Add terms" type="submit" className="border border-line" disabled={!draft.trim()} />
       </form>
@@ -312,7 +312,7 @@ export function BeliefTable({ beliefs, onSelect, selected }: { beliefs: Belief[]
         </thead>
         <tbody className="tabular-nums">
           {rows.map((b) => (
-            <tr key={b.statement} onClick={() => onSelect(b.statement)} className={cx('cursor-pointer border-t border-line transition-colors hover:bg-white/[0.04]', selected === b.statement && 'bg-white/[0.07]')}>
+            <tr key={b.statement} onClick={() => onSelect(b.statement)} className={cx('cursor-pointer border-t border-line transition-colors hover:bg-tint/[0.04]', selected === b.statement && 'bg-tint/[0.07]')}>
               <td className="px-3 py-2.5">
                 <button className="text-left" onClick={(e) => (e.stopPropagation(), onSelect(b.statement))}>
                   <BeliefSentence statement={b.statement} sure={false} written={false} />

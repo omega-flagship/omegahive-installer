@@ -110,7 +110,7 @@ function IdleSleep({ agent }: { agent: Agent }) {
     setSaving(null)
   }
   return (
-    <section aria-labelledby="idle-h" className="rounded-2xl border border-line bg-white/[0.025] p-3.5" data-tour="schedule-idle">
+    <section aria-labelledby="idle-h" className="rounded-2xl border border-line bg-tint/[0.025] p-3.5" data-tour="schedule-idle">
       <div className="flex items-start gap-3">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-xl" style={{ background: hsl(235, 70, 55, 0.16), color: '#a5b4fc' }}>
           <Icon name="moon" size={18} />
@@ -136,9 +136,9 @@ function IdleSleep({ agent }: { agent: Agent }) {
               aria-checked={on}
               disabled={!supported || saving !== null}
               onClick={() => set(o.value)}
-              className={cx('relative min-h-10 rounded-lg text-[12.5px] font-medium transition-colors disabled:cursor-default', on ? 'text-ink' : 'text-ink-3 hover:bg-white/[0.04] hover:text-ink-2')}
+              className={cx('relative min-h-10 rounded-lg text-[12.5px] font-medium transition-colors disabled:cursor-default', on ? 'text-ink' : 'text-ink-3 hover:bg-tint/[0.04] hover:text-ink-2')}
             >
-              {on && <m.span layoutId={`idle-${agent.id}`} className="absolute inset-0 rounded-lg border" style={{ borderColor: '#a5b4fc66', background: 'rgb(165 180 252 / 0.12)' }} transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
+              {on && <m.span layoutId={`idle-${agent.id}`} className="absolute inset-0 rounded-lg border" style={{ borderColor: '#a5b4fc66', background: 'color-mix(in oklab, var(--color-ink) 12%, transparent)' }} transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
               <span className="relative">{o.label}</span>
             </button>
           )
@@ -173,7 +173,7 @@ function WakeupCard({ w, hue }: { w: Wakeup; hue: number }) {
       initial={{ opacity: 0, y: -8 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, height: 0, transition: { duration: 0.2 } }}
-      className={cx('relative overflow-hidden rounded-2xl border bg-white/[0.025] transition-colors', w.enabled ? 'border-line' : 'border-line opacity-70')}
+      className={cx('relative overflow-hidden rounded-2xl border bg-tint/[0.025] transition-colors', w.enabled ? 'border-line' : 'border-line opacity-70')}
     >
       {fired && !reduced && (
         <m.span
@@ -188,7 +188,7 @@ function WakeupCard({ w, hue }: { w: Wakeup; hue: number }) {
       <div className="relative flex items-start gap-3 p-3.5">
         <span
           className="relative mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-xl"
-          style={{ background: w.enabled ? hsl(sun, 90, 55, 0.14) : 'rgb(255 255 255 / 0.05)', color: w.enabled ? hsl(sun, 100, 72) : 'var(--color-ink-4)' }}
+          style={{ background: w.enabled ? hsl(sun, 90, 55, 0.14) : 'color-mix(in oklab, var(--color-ink) 5%, transparent)', color: w.enabled ? hsl(sun, 100, 72) : 'var(--color-ink-4)' }}
         >
           <Icon name={w.cron ? 'calendar' : 'clock'} size={18} />
           {fired && !reduced && <m.span key={fired} className="absolute inset-0 rounded-xl border-2" style={{ borderColor: hsl(sun, 100, 70) }} initial={{ scale: 1, opacity: 1 }} animate={{ scale: 1.9, opacity: 0 }} transition={{ duration: 1.2 }} />}
@@ -284,7 +284,7 @@ function Composer({ agent, onDone }: { agent: Agent; onDone: () => void }) {
   }
 
   return (
-    <form onSubmit={submit} className="mb-3 space-y-3 rounded-2xl border border-line-2 bg-black/25 p-3.5">
+    <form onSubmit={submit} className="mb-3 space-y-3 rounded-2xl border border-line-2 bg-shade/25 p-3.5">
       <Segmented
         label="Wakeup kind"
         value={kind}
@@ -303,7 +303,7 @@ function Composer({ agent, onDone }: { agent: Agent; onDone: () => void }) {
                 key={p.cron}
                 type="button"
                 onClick={() => setCron(p.cron)}
-                className={cx('min-h-9 shrink-0 rounded-lg border px-2.5 text-[12px] font-medium whitespace-nowrap transition-colors', cron === p.cron ? 'border-line-2 bg-white/[0.09] text-ink' : 'border-line text-ink-3 hover:text-ink-2')}
+                className={cx('min-h-9 shrink-0 rounded-lg border px-2.5 text-[12px] font-medium whitespace-nowrap transition-colors', cron === p.cron ? 'border-line-2 bg-tint/[0.09] text-ink' : 'border-line text-ink-3 hover:text-ink-2')}
               >
                 {p.label}
               </button>
@@ -314,8 +314,8 @@ function Composer({ agent, onDone }: { agent: Agent; onDone: () => void }) {
             <input
               value={cron}
               onChange={(e) => setCron(e.target.value)}
-              className="min-h-11 w-full rounded-xl border bg-black/30 px-3 font-mono text-[14px] text-ink outline-none"
-              style={{ borderColor: cErr ? 'rgb(251 113 133 / 0.5)' : 'var(--color-line)' }}
+              className="min-h-11 w-full rounded-xl border bg-shade/30 px-3 font-mono text-[14px] text-ink outline-none"
+              style={{ borderColor: cErr ? 'color-mix(in oklab, var(--color-bad) 50%, transparent)' : 'var(--color-line)' }}
               autoCapitalize="off"
               spellCheck={false}
               aria-invalid={!!cErr}
@@ -331,7 +331,7 @@ function Composer({ agent, onDone }: { agent: Agent; onDone: () => void }) {
       ) : (
         <label className="block">
           <span className="mb-1 block text-[12px] text-ink-3">When (wall clock in the zone below)</span>
-          <input type="datetime-local" value={once} onChange={(e) => setOnce(e.target.value)} className="min-h-11 w-full rounded-xl border border-line bg-black/30 px-3 font-mono text-[14px] text-ink outline-none [color-scheme:dark] focus:border-line-2" />
+          <input type="datetime-local" value={once} onChange={(e) => setOnce(e.target.value)} className="min-h-11 w-full rounded-xl border border-line bg-shade/30 px-3 font-mono text-[14px] text-ink outline-none [color-scheme:dark] focus:border-line-2" />
         </label>
       )}
       <label className="block">
@@ -342,8 +342,8 @@ function Composer({ agent, onDone }: { agent: Agent; onDone: () => void }) {
           list="tz-list"
           autoCapitalize="off"
           spellCheck={false}
-          className="min-h-11 w-full rounded-xl border bg-black/30 px-3 font-mono text-[14px] text-ink outline-none"
-          style={{ borderColor: tzOk ? 'var(--color-line)' : 'rgb(251 113 133 / 0.5)' }}
+          className="min-h-11 w-full rounded-xl border bg-shade/30 px-3 font-mono text-[14px] text-ink outline-none"
+          style={{ borderColor: tzOk ? 'var(--color-line)' : 'color-mix(in oklab, var(--color-bad) 50%, transparent)' }}
         />
         <datalist id="tz-list">
           {['UTC', localTz(), ...ZONES].filter((z, i, a) => a.indexOf(z) === i).map((z) => (
@@ -362,7 +362,7 @@ function Composer({ agent, onDone }: { agent: Agent; onDone: () => void }) {
           onChange={(e) => setText(e.target.value)}
           rows={2}
           placeholder="Pull fresh photometry and revise variable stars."
-          className="w-full resize-none rounded-xl border border-line bg-black/30 p-3 text-[14px] leading-snug text-ink outline-none placeholder:text-ink-4 focus:border-line-2"
+          className="w-full resize-none rounded-xl border border-line bg-shade/30 p-3 text-[14px] leading-snug text-ink outline-none placeholder:text-ink-4 focus:border-line-2"
         />
       </label>
       <Button type="submit" variant="primary" hue={42} icon="calendar" disabled={!valid || busy} className="w-full">

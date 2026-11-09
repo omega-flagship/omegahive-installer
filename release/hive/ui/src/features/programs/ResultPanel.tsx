@@ -59,7 +59,7 @@ function Text({ s }: { s: string }) {
   const cut = s.length > MAX_TEXT
   const shown = cut ? s.slice(0, MAX_TEXT) : s
   return codeLike(s) ? (
-    <pre className="thin-scroll max-w-full overflow-x-auto rounded-lg border border-line bg-black/30 px-2.5 py-1.5 font-mono text-[11.5px] leading-snug whitespace-pre text-ink-2">
+    <pre className="thin-scroll max-w-full overflow-x-auto rounded-lg border border-line bg-shade/30 px-2.5 py-1.5 font-mono text-[11.5px] leading-snug whitespace-pre text-ink-2">
       {shown}
       {cut && `\n… ${s.length - MAX_TEXT} more characters not shown`}
     </pre>
@@ -91,7 +91,7 @@ function Value({ v, depth = 0, examples = false, basis = 'unstated' }: { v: unkn
       return (
         <span className="flex flex-wrap gap-1">
           {shown.map((x, i) => (
-            <span key={i} className="max-w-full rounded-md border border-line bg-white/[0.03] px-1.5 py-px font-mono text-[11.5px] break-all text-ink-2">
+            <span key={i} className="max-w-full rounded-md border border-line bg-tint/[0.03] px-1.5 py-px font-mono text-[11.5px] break-all text-ink-2">
               {x === null || x === undefined ? 'none' : String(x)}
             </span>
           ))}
@@ -104,7 +104,7 @@ function Value({ v, depth = 0, examples = false, basis = 'unstated' }: { v: unkn
         {shown.map((x, i) => {
           const tag = examples ? exampleLabel(x, basis) : null
           return (
-            <li key={i} className="min-w-0 rounded-xl border border-line bg-white/[0.02] p-2.5" data-result-entry={examples ? 'example' : 'entry'}>
+            <li key={i} className="min-w-0 rounded-xl border border-line bg-tint/[0.02] p-2.5" data-result-entry={examples ? 'example' : 'entry'}>
               {tag && <span className={cx('mb-1.5 inline-flex rounded-md border px-1.5 py-px text-[10.5px] font-semibold', TONE[tag.tone])}>{tag.text}</span>}
               <Value v={x} depth={depth + 1} basis={basis} />
             </li>
@@ -151,7 +151,7 @@ export function ResultPanel({ result, currentRevision, itemLabel, onClose, class
           <div className="text-[10.5px] font-semibold tracking-[0.1em] text-accent-2 uppercase">Returned by the app</div>
           <h3 className="mt-0.5 text-[14px] leading-snug font-semibold text-ink">{result.label}</h3>
         </div>
-        <button onClick={onClose} className="-mr-1 rounded-lg p-1.5 text-ink-3 hover:bg-white/[0.06] hover:text-ink" aria-label="Close what the app returned">
+        <button onClick={onClose} className="-mr-1 rounded-lg p-1.5 text-ink-3 hover:bg-tint/[0.06] hover:text-ink" aria-label="Close what the app returned">
           <Icon name="x" size={15} />
         </button>
       </header>

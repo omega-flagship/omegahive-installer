@@ -13,7 +13,7 @@
  */
 import { AnimatePresence } from 'framer-motion'
 import { handleAskKey } from './summon'
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal, flushSync } from 'react-dom'
 import { isPageRoute, navigate, useRoute } from '../../lib/router'
 import { useRailExpanded } from '../../shell/rail'
@@ -27,11 +27,15 @@ import { askRoom, setAskRoom } from './askRoom'
 import { DecisionDialog } from '../../ui/DecisionDialog'
 import { ClassicAsk } from './ClassicAsk'
 import { useAuthContext } from '../../lib/useResource'
-import { askUnderModal, placeInExperience, type ClearBox } from './placement'
+import { askMode, askSideOf, askUnderModal, PINNED_AXIS_SHIFT, placeInExperience } from './placement'
+import { useAskStill, useCardHeight, useKeepClear, useOmegaRight, useOwnBoxVisible, useOwnReservation } from './askMeasure'
 import { CanvasPresence, ClassicPresence, ConstructPresence, CosmosPresence, FluxPresence, StillPresence, usePresenceWords } from './Presence'
 import { currentEpoch } from '../../lib/identityEpoch'
 import { useResting } from '../../lib/resting'
 import { StillLine } from './StillLine'
+import { ConstructLine } from './ConstructLine'
+import { placeConstructField, useConstructFieldPlace } from './constructField'
+import { placeStillField, useStillFieldPlace } from './stillField'
 // the conductor's executor installs itself into the store (acts are applied only where the Ask is mounted)
 import './conductor'
 import { FloatingAsk } from './ClassicAsk'
@@ -159,20 +163,6 @@ function safeProbe(): HTMLElement {
   return probe
 }
 
-function useOmegaRight(dep: unknown): number | null {
-  const [right, setRight] = useState<number | null>(null)
-  useEffect(() => {
-    const measure = () => {
-      const o = document.querySelector('[data-omega-button]')?.getBoundingClientRect()
-      setRight(o && o.width ? o.right : null)
-    }
-    measure()
-    const t = window.setInterval(measure, 800)
-    return () => window.clearInterval(t)
-  }, [dep])
-  return right
-}
-
 /**
  * True while the Ask sits under a modal layer: an aria-modal dialog not its own, or a layer that made it inert (a nav
  * menu over the rail or over the More sheet). It dims exactly while it cannot be used, and stays dimmed through a menu
@@ -190,92 +180,6 @@ function useUnderModal(): boolean {
   )
 }
 
-/** Is the experience's own field (Still's question box, Construct's prompt) on screen and live? */
-function useOwnBoxVisible(selector: string | null): boolean {
-  const active = !!selector
-  const [visible, setVisible] = useState(true)
-  useEffect(() => {
-    if (!active) return
-    let io: IntersectionObserver | null = null
-    let el: Element | null = null
-    let inView = true
-    const check = () => {
-      const box = document.querySelector(selector!)
-      if (box !== el) {
-        io?.disconnect()
-        el = box
-        if (box) {
-          io = new IntersectionObserver((es) => {
-            inView = es[es.length - 1].isIntersecting
-            setVisible(inView && !box.closest('[inert]'))
-          })
-          io.observe(box)
-        }
-      }
-      setVisible(!!el && inView && !el.closest('[inert]'))
-    }
-    check()
-    const t = window.setInterval(check, 400)
-    return () => {
-      window.clearInterval(t)
-      io?.disconnect()
-    }
-  }, [active, selector])
-  return active ? visible : false
-}
-
-/** The bottom safe area, measured (the Ask's `bottom` is above it). */
-function readSab(): number {
-  const probe = document.createElement('div')
-  probe.style.cssText = 'position:fixed;left:0;bottom:0;width:0;height:0;visibility:hidden;pointer-events:none;padding-bottom:env(safe-area-inset-bottom,0px)'
-  document.body.appendChild(probe)
-  const v = parseFloat(getComputedStyle(probe).paddingBottom) || 0
-  probe.remove()
-  return v
-}
-
-/**
- * The chrome an experience keeps clear (`data-xc-keep-clear`: navigators, pills, docks, chip rows), measured while the
- * experience is in front, re-measured on a slow poll and on resize; the Ask's own marks and Ω are not counted (Ω is
- * placeAsk's). State changes only when a box really moved.
- */
-function useKeepClear(active: boolean): { boxes: ClearBox[]; sab: number } {
-  const [v, setV] = useState<{ boxes: ClearBox[]; sab: number; sig: string }>({ boxes: [], sab: 0, sig: '' })
-  useEffect(() => {
-    if (!active) return
-    const measure = () => {
-      const boxes: ClearBox[] = []
-      for (const el of document.querySelectorAll('[data-xc-keep-clear]')) {
-        if (el.closest('.ask-root, [data-omega-button]')) continue
-        if (el.closest('[inert],[aria-hidden="true"]')) continue
-        const r = el.getBoundingClientRect()
-        if (r.width < 1 || r.height < 1) continue
-        const cs = getComputedStyle(el)
-        if (cs.visibility === 'hidden' || Number(cs.opacity) === 0) continue
-        // only chrome actually on top at its centre (a classic page over the experience covers it); the Ask's own
-        // layers and presence are looked through, since the Ask may be sitting on the very chrome it must clear
-        const cx = Math.min(window.innerWidth - 1, Math.max(0, (r.left + r.right) / 2))
-        const cy = Math.min(window.innerHeight - 1, Math.max(0, (r.top + r.bottom) / 2))
-        const top = (document.elementsFromPoint?.(cx, cy) ?? []).find((t) => !t.closest('.ask-root, .ask-presence-layer, .ask-move-veil'))
-        if (top && !el.contains(top) && !top.contains(el)) continue
-        boxes.push({ left: Math.round(r.left), top: Math.round(r.top), right: Math.round(r.right), bottom: Math.round(r.bottom) })
-      }
-      const sab = readSab()
-      const sig = `${sab}|${boxes.map((b) => `${b.left},${b.top},${b.right},${b.bottom}`).join(';')}`
-      setV((p) => (p.sig === sig ? p : { boxes, sab, sig }))
-    }
-    measure()
-    const t = window.setInterval(measure, 700)
-    window.addEventListener('resize', measure)
-    return () => {
-      window.clearInterval(t)
-      window.removeEventListener('resize', measure)
-    }
-  }, [active])
-  return active ? v : NO_KEEP
-}
-const NO_KEEP = { boxes: [] as ClearBox[], sab: 0 }
-
 export function AskHost({ experience }: { experience: string }) {
   const skin = ASK_SKINS[experience] ?? 'phase-2'
   const isPro = skin === 'professional'
@@ -291,7 +195,8 @@ export function AskHost({ experience }: { experience: string }) {
   const look = useLook()
   const desktop = useIsDesktop()
   const vp = useViewport()
-  const omegaRight = useOmegaRight(`${experience}|${route.name}`)
+  const still = useAskStill(route.name)
+  const omegaRight = useOmegaRight(`${experience}|${route.name}`, still)
   const clockLeft = useClockSlotLeft(vp.w)
   // the classic desktop rail (also on a landscape phone): the Ask starts right of it, as pages do (--rail-x)
   const railExpanded = useRailExpanded()
@@ -301,14 +206,14 @@ export function AskHost({ experience }: { experience: string }) {
   const underModal = useUnderModal()
   const page = isPageRoute(route.name) || route.name === 'dot' || route.name === 'new'
   const own = skin === 'phase-2' || isTown || isPro ? undefined : OWN_FIELD[skin as SkinId]
-  const ownBox = useOwnBoxVisible(own?.box ?? null)
+  const ownBox = useOwnBoxVisible(own?.box ?? null, still)
   // inside an experience, the floating Ask keeps clear of the experience's own chrome on screen. It is measured whenever an experience is mounted: a route over it (a page, or one the experience draws itself, like a
   // mind's conversation) is told apart by what is actually on top, not by the route's name
-  const keep = useKeepClear(experience !== 'classic' && skin !== 'phase-2')
+  const keep = useKeepClear(experience !== 'classic' && skin !== 'phase-2', still)
   const inputRef = useRef<HTMLInputElement>(null)
   // a callback ref: the card mounts after its lazy skin loads, and the measuring effect follows it
   const [professionalBox, setProfessionalBox] = useState<HTMLDivElement | null>(null)
-  const [professionalHeight, setProfessionalHeight] = useState(0)
+  const [floatingBox, setFloatingBox] = useState<HTMLDivElement | null>(null)
   const confirm = useAskStore((s) => s.confirm)
   const threadOpen = useAskStore((s) => s.threadOpen)
   const pinned = useAskStore((s) => s.pinned)
@@ -318,17 +223,10 @@ export function AskHost({ experience }: { experience: string }) {
   const inApp = appTurns.some((t) => t.current() && !t.offeredLocally && t.presentation.owner === 'frame' && t.controller.active() && (!openOperation || t.presentation.operation_id === openOperation))
 
   // The card's options/thread can grow: canonical pages and toasts clear its actual height, not a capsule guess.
-  useEffect(() => {
-    if (!isPro || resting) return
-    const box = professionalBox
-    if (!box) return
-    const measure = () => setProfessionalHeight(Math.ceil(box.getBoundingClientRect().height))
-    const initial = window.requestAnimationFrame(measure)
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
-    observer?.observe(box)
-    window.addEventListener('resize', measure)
-    return () => { window.cancelAnimationFrame(initial); observer?.disconnect(); window.removeEventListener('resize', measure) }
-  }, [isPro, resting, displayedContext, professionalBox])
+  const professionalHeight = useCardHeight(professionalBox, isPro && !resting && !still, displayedContext)
+  const floatingHeight = useCardHeight(floatingBox, !isPro && !still, displayedContext)
+  // A departed dock's last measurement must not reserve space for the next look's field.
+  const measuredDockHeight = isPro ? (professionalBox ? professionalHeight : 0) : (floatingBox ? floatingHeight : 0)
 
   // ---- bound to the store session and the signed-in identity: a switch clears the thread. The store resets the
   // thread synchronously on a credential change (store/ask watchAuth); this reads me() again under the new sign-in
@@ -402,40 +300,62 @@ export function AskHost({ experience }: { experience: string }) {
     }
   }, [client])
 
-  // inside an experience it is lifted clear of the kept-clear chrome, and widened once it is above Ω and the clock
-  const place = useMemo(
-    () => placeInExperience({ width: vp.w, height: vp.h, layout: isPro ? 'topbar' : look.layout, page, tabBar: !desktop && experience === 'classic' && (route.name === 'hive' || (isPageRoute(route.name) && route.name !== 'program')), omegaRight, railX, clockLeft }, keep.boxes, keep.sab),
-    [vp, look.layout, isPro, page, desktop, experience, omegaRight, route.name, railX, clockLeft, keep],
-  )
   // a page or sheet over the paper (or the terminal) hides the experience's own field (covered, even when "in view"):
   // the floating line takes over
   const ownLive = ownBox && !page
-  const showStillLine = skin === 'still-line' && !ownLive
+  const constructPlace = useConstructFieldPlace()
+  useLayoutEffect(() => { if (skin === 'command-line') placeConstructField(ownLive ? 'native' : 'floating') }, [skin, ownLive])
+  useLayoutEffect(() => () => { if (skin === 'command-line') placeConstructField('native', null) }, [skin])
+  const stillPlace = useStillFieldPlace()
+  useLayoutEffect(() => {
+    if (skin === 'still-line') placeStillField(ownLive ? 'paper' : 'floating')
+  }, [skin, ownLive])
+  useLayoutEffect(() => () => { if (skin === 'still-line') placeStillField('paper', null) }, [skin])
+  const showStillLine = skin === 'still-line' && stillPlace === 'floating'
   const floating = skin === 'phase-2' || isTown || isPro ? null : floatingLook(skin as SkinId)
-  const showFloating = !!floating && !(skin === 'command-line' && ownLive)
+  const showFloating = !!floating && (skin !== 'command-line' || constructPlace === 'floating')
+  // where the thread sits beside the view (one source for data-ask-side, which the scene frames by, and the Ask's axis)
+  const side = askSideOf({ floating: showFloating || isTown, threadOpen, pinned, mode: askMode(vp.w, vp.h) })
+  // inside an experience it is lifted clear of the kept-clear chrome, and widened once it is above Ω and the clock
+  const place = useMemo(
+    () => placeInExperience({ width: vp.w, height: vp.h, layout: isPro ? 'topbar' : look.layout, page, tabBar: !desktop && experience === 'classic' && (route.name === 'hive' || (isPageRoute(route.name) && route.name !== 'program')), omegaRight, railX, clockLeft, pageAxis: route.name === 'hive', axisShift: experience === 'cosmos' && side === 'desktop' ? PINNED_AXIS_SHIFT : 0 }, keep.boxes, keep.sab),
+    [vp, look.layout, isPro, page, desktop, experience, omegaRight, route.name, railX, clockLeft, keep, side],
+  )
   const shown = !inApp && (showFloating || showStillLine || ((isTown || isPro) && !resting))
+  const nativeConstruct = !inApp && skin === 'command-line' && constructPlace === 'native' && ownLive
+  const nativeReservation = useOwnReservation(nativeConstruct ? '.cx-cmd' : null)
 
   // ---- room for the Ask: pages pad their scroll so their last row clears it; phone toasts stack above it
   useEffect(() => {
     const root = document.documentElement
-    if (!shown) {
+    if (!shown && !nativeReservation) {
       setAskRoom(root, null)
+      root.style.removeProperty('--ask-left')
+      root.style.removeProperty('--ask-width')
       delete root.dataset.ask
+      delete root.dataset.askNative
       return
     }
     // the Ask's room for pages, sheets and toasts, and for the hive map's fits (features/ask/askRoom, followups-r5)
-    setAskRoom(root, askRoom(place, isPro, professionalHeight))
+    setAskRoom(root, nativeReservation?.room ?? askRoom(place, isPro, measuredDockHeight))
+    // Native awake composition aligns with this host-owned dock, never a second placement calculation.
+    root.style.setProperty('--ask-left', `${nativeReservation?.left ?? place.left}px`)
+    root.style.setProperty('--ask-width', `${nativeReservation?.width ?? place.width}px`)
     root.dataset.ask = place.mode
+    if (nativeReservation) root.dataset.askNative = 'construct'
+    else delete root.dataset.askNative
     // a side sheet (landscape) or a pinned column (desktop): toasts keep to the other side of it
-    const side = (showFloating || isTown) && threadOpen && (place.mode === 'landscape' || (place.mode === 'desktop' && pinned))
-    if (side) root.dataset.askSide = place.mode
+    if (side) root.dataset.askSide = side
     else delete root.dataset.askSide
     return () => {
       setAskRoom(root, null)
+      root.style.removeProperty('--ask-left')
+      root.style.removeProperty('--ask-width')
       delete root.dataset.ask
       delete root.dataset.askSide
+      delete root.dataset.askNative
     }
-  }, [shown, place, isPro, isTown, showFloating, threadOpen, pinned, professionalHeight])
+  }, [shown, place, isPro, side, measuredDockHeight, nativeReservation])
 
   // ---- ⌘K / Ctrl+K / `/` focus the Ask (captured first, so the palette's same keys do not also fire), except where a
   //      region owns ⌘K (lib/shortcutOwner)
@@ -470,13 +390,14 @@ export function AskHost({ experience }: { experience: string }) {
         Jump to Ask
       </a>}
       {/* one Ask landmark: here, unless Construct's own prompt is the Ask (it is its own section then) */}
-      {!inApp && !(skin === 'command-line' && ownLive) && (
+      {!inApp && !(skin === 'command-line' && constructPlace === 'native') && (
         <section aria-label="Ask" className="ask-root" data-skin={skin} data-under-modal={underModal || undefined} id="ask">
-          {skin === 'capsule' && <ClassicAsk place={place} experience={experience} inputRef={inputRef} />}
-          {showFloating && skin !== 'capsule' && <FloatingAsk place={place} experience={experience} inputRef={inputRef} look={floating!} />}
+          {skin === 'capsule' && <ClassicAsk place={place} experience={experience} inputRef={inputRef} boxRef={setFloatingBox} />}
+          {showFloating && skin === 'command-line' && <ConstructLine key={displayedContext} place={place} inputRef={inputRef} />}
+          {showFloating && skin !== 'capsule' && skin !== 'command-line' && <FloatingAsk place={place} experience={experience} inputRef={inputRef} look={floating!} boxRef={setFloatingBox} />}
         {isTown && !resting && <Suspense fallback={null}><TownAskSkin place={place} experience={experience} inputRef={inputRef} ctx={displayedContext} /></Suspense>}
         {isPro && !resting && <Suspense fallback={null}><ProfessionalAskSkin place={place} experience={experience} inputRef={inputRef} ctx={displayedContext} boxRef={setProfessionalBox} /></Suspense>}
-          {showStillLine && <StillLine place={place} inputRef={inputRef} words={words} />}
+          {showStillLine && <StillLine key={displayedContext} place={place} inputRef={inputRef} words={words} />}
         </section>
       )}
       {!inApp && !underModal && <SkinPresence skin={skin} />}

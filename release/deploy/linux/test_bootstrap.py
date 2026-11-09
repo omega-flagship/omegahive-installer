@@ -154,7 +154,8 @@ class BootstrapTests(unittest.TestCase):
             def getsockname(self): return ('127.0.0.1', 40000)
             def sendall(self, raw): self.sent.append(raw)
             def close(self): pass
-        transport = Transport(); control = SimpleNamespace(supervisor_pid=lambda _home: 123, exe_matches=lambda _c, _h: True)
+        transport = Transport(); control = SimpleNamespace(supervisor_pid=lambda _home: 123, exe_matches=lambda _c, _h, _home, _pid: True,
+                                                   listener_matches=lambda _c, _h: True)
         api = bootstrap.OwnerAPI(control, {'python': '/synthetic/python', 'port': 8700}, Path('/synthetic/home'), 123, bootstrap.time.monotonic() + 30,
                                  {'pid': 123, 'listener_inode': '4242'})
         with patch.object(bootstrap.socket, 'socket', return_value=transport), \
@@ -296,6 +297,17 @@ class BootstrapTests(unittest.TestCase):
         self.assertNotIn('Your data is safe', message)
         self.assertNotIn('session', message)
         self.assertNotIn('sign-in secret', message)
+
+
+class ReleasePinTests(unittest.TestCase):
+    def test_pins_match_the_release_files_beside_bootstrap(self):
+        # bootstrap.py verifies these files by size and SHA256 before it uses them; a changed file needs a new pin.
+        import hashlib
+        here = Path(__file__).resolve().parent
+        for pin, name in ((bootstrap.CONTROL_PIN, 'control.py'), (bootstrap.SEED_PIN, 'studio-maker-template.json')):
+            raw = (here / name).read_bytes()
+            with self.subTest(name=name):
+                self.assertEqual(pin, (len(raw), hashlib.sha256(raw).hexdigest()))
 
 if __name__ == '__main__':
     unittest.main()

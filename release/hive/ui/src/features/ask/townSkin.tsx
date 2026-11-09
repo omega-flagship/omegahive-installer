@@ -1,8 +1,6 @@
 /**
- * Closed Source for Product Consideration (OmegaTown): see experiences/omegatown/CLOSED_SOURCE.md. Not Apache-2.0.
- *
  * OmegaTown's Ask skin and presence (released: registry `reviewed`). AskHost loads this module lazily, only when Town
- * is the experience, so other experiences never fetch it. The Ask here is the person's own Ask (the owner, 2026-10-08:
+ * is the experience, so other experiences never fetch it. The Ask here is the person's own Ask (Jon, 2026-10-08:
  * "ask is essentially me"): the shared floating capsule, bound to Town's displayed origin. Residents speak in their
  * own chat, never through it.
  */

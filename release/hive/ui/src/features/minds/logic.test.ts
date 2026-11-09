@@ -114,7 +114,7 @@ describe('portable minds', () => {
 
   const manifest = {
     format: 'omegahive.mind/1', exported_at: at(0), from: { id: 'h_ab12', name: 'Home', home: true },
-    mind: { id: 'a_vega01', name: 'Vega', kind: 'omega', model: 'm', owner: 'user:quinn' }, role: null, swarm: { id: 's_lyra', name: 'Lyra' },
+    mind: { id: 'a_vega01', name: 'Vega', kind: 'omega', model: 'm', owner: 'user:jon' }, role: null, swarm: { id: 's_lyra', name: 'Lyra' },
     messages: [{}, {}], wakeups: [{}], rules: [{ skill: 'shell', mode: 'deny' }], files: { 'workspace/memory/a.metta': 'x' },
   }
 

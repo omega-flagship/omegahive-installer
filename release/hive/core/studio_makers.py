@@ -1,13 +1,15 @@
 """J3 host R7: a personal Studio maker for every member, on that member's own key.
 
-the owner 2026-10-19: "everyone needs studio, they just need to use their own keys"; and, asked whether each member gets their
+Jon 2026-10-19: "everyone needs studio, they just need to use their own keys"; and, asked whether each member gets their
 own Studio maker mind on their own key: "Yes: each member gets their own Studio maker mind that runs on their own key."
 
 - One maker per named person, made by the host on demand (setup), never by an admin by hand, and reused while it lives.
   It is found by its binding (person_minds: principal + purpose 'studio_maker'), never by name.
-- Its shape is the reviewed Design maker's: the template mind HIVE_STUDIO_MAKER_TEMPLATE gives kind (omega only: the hub
-  channel and R6.1's native Studio skills), role, persona (prompt), tools and budget; the model is HIVE_STUDIO_MAKER_MODEL
-  (default the reviewed maker's openrouter/anthropic/claude-sonnet-5.5, the owner's standing Sonnet 5.5 for making minds).
+- Its default shape comes from the configured Studio app's pinned create-maker manifest asset. An explicit
+  HIVE_STUDIO_MAKER_TEMPLATE names a local template mind or Studio release template; unusable overrides never fall back.
+  Local template minds retain their role; portable release assets name no hive-local role. Both supply Omega kind,
+  persona, tools and budget; the model is HIVE_STUDIO_MAKER_MODEL
+  (default the reviewed maker's openrouter/anthropic/claude-sonnet-5.5, Jon's standing Sonnet 5.5 for making minds).
 - It lives in a private Studio swarm the person owns (their personal swarm holds their personal mind alone, personal.py),
   owned by them and private, so only they and the existing admin views see it. It is written asleep; the Studio handoff
   starts it per step, as for any maker.
@@ -24,7 +26,9 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
+import re
 import threading
 
 from .db import new_id, now
@@ -34,7 +38,7 @@ log = logging.getLogger("hive")
 PURPOSE = "studio_maker"
 MODEL_SETTING = "HIVE_STUDIO_MAKER_MODEL"
 DEFAULT_MODEL = "openrouter/anthropic/claude-sonnet-5.5"   # the reviewed Design maker's (a_e6ccf6f5), on OpenRouter's list
-TEMPLATE_SETTING = "HIVE_STUDIO_MAKER_TEMPLATE"            # the reviewed Design maker's mind id on this hive
+TEMPLATE_SETTING = "HIVE_STUDIO_MAKER_TEMPLATE"            # explicit local mind id or <Studio app>:<template>
 PROGRAM_SETTING = "HIVE_STUDIO_PROGRAM"
 DEFAULT_PROGRAM = "omegadesign"
 HOST_ACTOR = "hive:studio-maker"                           # who the host's own acts are recorded as
@@ -59,6 +63,48 @@ def model_setting():
 
 def program_setting():
     return os.environ.get(PROGRAM_SETTING, "").strip() or DEFAULT_PROGRAM
+
+
+def release_template(hive, reference=None):
+    """Read the configured Studio's reviewed maker asset, without creating a template mind or running app code.
+
+    Kept independent of StudioMakers construction: Studio's startup self-check runs before its binding tables exist.
+    The existing Programs manifest capture owns pin validation, discovery and identity.
+    """
+    from .providers import clean_options
+    program = program_setting()
+    reference = reference or f"{program}:create-maker"
+    parts = reference.split(":")
+    if len(parts) != 2 or parts[0] != program or not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", parts[1]):
+        raise ValueError("maker template must belong to the configured Studio app")
+    manifest, digest = hive.programs._pinned_manifest(program)
+    templates = manifest.get("maker_templates")
+    template = templates.get(parts[1]) if isinstance(templates, dict) else None
+    fields = {"name", "kind", "persona", "role", "tools", "budget_usd"}
+    if not isinstance(template, dict) or set(template) != fields:
+        raise ValueError("maker template fields are invalid")
+    if template["kind"] not in TEMPLATE_KINDS:
+        raise ValueError("maker template must be an Omega mind")
+    if not isinstance(template["name"], str) or not 0 < len(template["name"].strip()) <= 120 \
+            or not isinstance(template["persona"], str) or not 0 < len(template["persona"].strip()) <= 64000:
+        raise ValueError("maker template name or persona is invalid")
+    budget = template["budget_usd"]
+    if type(budget) not in (int, float):
+        raise ValueError("maker template budget must be finite and nonnegative")
+    try:
+        budget = float(budget)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError("maker template budget must be finite and nonnegative") from exc
+    if not math.isfinite(budget) or budget < 0:
+        raise ValueError("maker template budget must be finite and nonnegative")
+    # Release assets are portable, not references to hive-local policy/role rows. Explicit local-template overrides
+    # still retain the reviewed role of their local mind, as before.
+    if template["role"] is not None:
+        raise ValueError("release maker templates cannot name a hive-local role")
+    options = clean_options({"tools": template["tools"]})
+    return {"id": reference, "kind": template["kind"], "persona": template["persona"], "role_id": None,
+            "budget_usd": float(budget), "options": json.dumps(options),
+            "release_digest": digest, "release_version": manifest.get("version", "0")}
 
 
 class StudioMakers:
@@ -108,7 +154,7 @@ class StudioMakers:
     def own_key(self, principal, provider):
         """The key the person's maker runs on: the provider default when it is the person's own, else their earliest own
         key for that provider (OwnHive.own_key_for's choice). None when they have none. Never a hive key or a key someone
-        else owns or granted: the owner's rule is their own key."""
+        else owns or granted: Jon's rule is their own key."""
         keyring = getattr(self.hive, "keyring", None) or getattr(getattr(self._studio(), "gateway", None), "keyring", None)
         if keyring is None:
             return None
@@ -121,7 +167,16 @@ class StudioMakers:
         own = sorted((r for r in (keyring.ring.get("keys") or {}).values()
                       if r.get("owner") == principal and r.get("provider") == provider),
                      key=lambda r: r.get("created_at") or 0)
-        return own[0]["id"] if own else None
+        if own:
+            return own[0]["id"]
+        # Jon 11-05 (friction-free, everything auto-deployed at setup): the hive's own key for this provider, the one the
+        # hive was set up with, is its owner's own key (ownhive.key_owner: the hive owner pays for the hive's keys), so
+        # the owner's maker is made on it with no step; anyone else still needs a key of their own
+        if default and ownhive.is_owner(principal) and ownhive.key_person(default) is None:
+            record = (keyring.ring.get("keys") or {}).get(default) or {}
+            if record.get("provider") == provider:
+                return default
+        return None
 
     def key_label(self, key_id):
         keyring = getattr(self.hive, "keyring", None) or getattr(getattr(self._studio(), "gateway", None), "keyring", None)
@@ -131,9 +186,15 @@ class StudioMakers:
     # ---- the reviewed template ------------------------------------------------------------------------------------------
 
     def template(self):
-        """The reviewed Design maker this hive's personal makers copy. 409 studio_maker_unavailable when unset, missing or
-        not an Omega mind (so nothing is created)."""
+        """The pinned release asset by default; an explicit local mind override stays authoritative and never falls back."""
         mind_id = os.environ.get(TEMPLATE_SETTING, "").strip()
+        if not mind_id or ":" in mind_id:
+            from .hive import HiveError
+            try:
+                return release_template(self.hive, mind_id)
+            except (HiveError, ValueError, TypeError, OSError) as exc:
+                raise self._err(409, "studio_maker_unavailable", "Studio's maker isn't set up on this hive yet; ask an admin.",
+                                reason="template_unset" if not mind_id else "template_unusable") from exc
         row = self.hive.db.one("SELECT * FROM agents WHERE id = ? AND deleted = 0", (mind_id,)) if mind_id else None
         if row is None or (row.get("kind") or "omega") not in TEMPLATE_KINDS or self.person_of(row["id"]):
             raise self._err(409, "studio_maker_unavailable", "Studio's maker isn't set up on this hive yet; ask an admin.",
@@ -144,15 +205,32 @@ class StudioMakers:
 
     OWN_KEY_SAY = "This mind would run on someone else's key. Add your own key in Keys, then try again."
 
+    def owner_on_hive_key(self, agent_id, key_id):
+        """Jon 11-05 (friction-free): the hive owner's own maker on one of the hive's own keys (no named person holds it).
+        The one classification, read at the card, admission, the monthly total and every paid call: it is the HIVE's money
+        under the owner's month allowance (payer the owner, own_key False), never the owner's own key."""
+        bound = self.person_of(agent_id)
+        ownhive = self.hive.ownhive
+        return bool(bound and key_id and ownhive.key_person(key_id) is None and ownhive.is_owner(bound))
+
+    def _key_setup(self, principal, agent_id):
+        """The add-your-key step's details for this maker's provider (OwnHive.key_setup)."""
+        from .gateway import split_model
+        row = self.hive.db.one("SELECT model FROM agents WHERE id = ?", (agent_id,))
+        provider = split_model(row["model"])[0] if row and row.get("model") and "/" in row["model"] else None
+        return self.hive.ownhive.key_setup(principal, provider)
+
     def key_refusal(self, agent_id, key_id, where):
-        """For a person's own Studio maker: the paying key must be a key that person owns (the owner: own keys only). A hive or
+        """For a person's own Studio maker: the paying key must be a key that person owns (Jon: own keys only). A hive or
         environment key, no key, or another person's key is refused. None for every other mind (shared makers unchanged).
         where: 'admission' (another person's key is 409 key_drift: the card's key is no longer theirs) or 'call' / 'patch'."""
         bound = self.person_of(agent_id)
         if bound is None:
             return None
         holder = self.hive.ownhive.key_person(key_id) if key_id else None
-        if holder == bound:
+        # Jon 11-05: the owner's maker may run on the hive's own key (hive money under the owner's allowance:
+        # owner_on_hive_key); for anyone else a hive key stays refused, as before
+        if holder == bound or self.owner_on_hive_key(agent_id, key_id):
             return None
         if where == "patch":
             return self._err(403, "own_key_only", "A Studio maker runs only on its person's own key; choose one of "
@@ -160,7 +238,8 @@ class StudioMakers:
         if where == "admission" and holder is not None:
             return self._err(409, "key_drift", "The key paying for the maker changed since you confirmed; confirm again.",
                              reason="not_own_key")
-        return self._err(402, "own_key_needed", self.OWN_KEY_SAY, scope="studio_maker", pays="own-key")
+        return self._err(402, "own_key_needed", self.OWN_KEY_SAY, scope="studio_maker", pays="own-key",
+                         **self._key_setup(bound, agent_id))
 
     # ---- J3 host R8: image generation for a person's own maker, inside its live session only ----------------------------
 
@@ -209,7 +288,7 @@ class StudioMakers:
         return self.own_key(principal, provider)
 
     def template_ready(self):
-        """True when the template setting names a usable Omega mind AND the Studio program is loaded, ready and attachable
+        """True when the release template (or explicit local override) is usable AND Studio is loaded, ready and attachable
         by the host (hook-free), i.e. when setup could succeed for a member with a key (R7.1 capability, R7.2 stand-in
         follow-up; also the startup log). J3 host R8.3: a hooked Studio app counts as attachable only with a valid
         member_attach declaration; the one check is ProgramAttachments.host_scope, the same one setup's attach makes,
@@ -237,8 +316,8 @@ class StudioMakers:
         key = self.own_key(principal, provider)
         if key is None:
             # OI-13's code and words (ownhive.person_key_check): nothing is made, attached or reserved
-            raise self._err(402, "own_key_needed", "This mind would run on someone else's key. Add your own key in Keys, "
-                            "then try again.", scope="studio_maker", pays="own-key", provider=provider)
+            raise self._err(402, "own_key_needed", self.OWN_KEY_SAY, scope="studio_maker", pays="own-key",
+                            **self.hive.ownhive.key_setup(principal, provider))
         template = self.template()
         with self._lock:
             row = self.bound(principal)
@@ -285,7 +364,9 @@ class StudioMakers:
                             "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(principal, purpose) DO UPDATE SET agent_id = excluded.agent_id, "
                             "swarm_id = excluded.swarm_id, updated_at = excluded.updated_at",
                             (principal, PURPOSE, agent["id"], swarm_id, stamp, stamp))
-            self._audit(principal, agent["id"], "created", template=template["id"], model=model, key_id=key, swarm_id=swarm_id)
+            release = {k: template[k] for k in ("release_digest", "release_version") if k in template}
+            self._audit(principal, agent["id"], "created", template=template["id"], model=model, key_id=key,
+                        swarm_id=swarm_id, **release)
         hive.emit_agent(agent["id"])
         log.info("studio maker %s made for %s", agent["id"], principal)
         return hive.db.one("SELECT * FROM agents WHERE id = ?", (agent["id"],))
@@ -409,8 +490,8 @@ class StudioMakers:
         refused = self.key_refusal(maker["id"], key_id, "admission")      # R7.2: the bound person's own key only
         if refused is not None:
             raise refused
-        payer, own_key = studio._payer_as_if(viewer.principal, self.hive.ownhive.key_person(key_id))
-        if payer != viewer.principal or not own_key:
+        payer, own_key = studio._payer_as_if(viewer.principal, self.hive.ownhive.key_person(key_id) if key_id else None)
+        if payer != viewer.principal or not (own_key or self.owner_on_hive_key(maker["id"], key_id)):
             raise self._err(409, "payer_mismatch", "That maker's calls wouldn't be billed to you; choose your own key.")
         monthly = studio._monthly_total(viewer.principal, maker, key_id, own_key, float(request["cap_usd"]))
         payload = consent_payload(request, own_key=own_key, monthly=monthly)

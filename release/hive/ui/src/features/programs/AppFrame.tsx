@@ -37,6 +37,7 @@ import { parseAppAsk } from '../../lib/appAsk'
 import { useAppAsk, appAskVisible } from './AppAsk'
 import { useAppLinks } from './AppLinks'
 import { readAppPresentation, type AppLinkEntry, type AppPresentation } from '../../lib/appLinks'
+import { restoreAfterConsent } from '../../lib/appLinkRestore'
 
 /** J3 r4.3 O3: each frame document's mount generation (time-based so a reload never reuses an older one). */
 let mountSeq = 0
@@ -447,27 +448,21 @@ export function AppFrame({ programId, swarmId, source, onDirty, onBack, entry, u
         const retained = restore.current
         restore.current = null // one attempted restore; never retained as authority or logged
         if (retained && retained.epoch === docBinding.epoch && retained.digest === loaded.release?.digest && client.appLinkPresentation) {
-          void (async () => {
-            let consumeStarted = false
-            try {
-            if (requireNormalConsent || entryForDocument) {
-              if (!await askNow.current.ensureEntry()) return
-              const fid = await linksNow.current.ready()
-              if (!fid || disposed || !releaseCurrent || !docBinding.current()) return
-              const consent = entryForDocument && client.appLinkCheck ? await client.appLinkCheck(entryForDocument.id, { frame_id: fid })
-                : client.appLinkCheckFrame ? await client.appLinkCheckFrame(programId, fid) : null
-              if (!consent || typeof consent !== 'object' || (consent as { current?: unknown }).current !== true) return
-            }
-            consumeStarted = true
-            const answer = await client.appLinkPresentation!(retained.entryId, true)
-            if (disposed || !releaseCurrent || !docBinding.current() || !answer || typeof answer !== 'object' || Object.keys(answer).join(',') !== 'current' || (answer as { current?: unknown }).current !== true) return
-            const presentation = readAppPresentation(retained.snapshot)
-            if (presentation) notify({ type: 'presentation-restore', ...presentation })
-            } finally {
-              if (!consumeStarted) void client.appLinkPresentation?.(retained.entryId, true).catch(() => undefined)
-            }
-          })().catch(() => undefined)
+          const current = () => !disposed && releaseCurrent && docBinding.current()
+          void restoreAfterConsent({
+            needsConsent: !!(requireNormalConsent || entryForDocument),
+            ensureEntry: () => askNow.current.ensureEntry(),
+            frame: () => linksNow.current.ready(),
+            check: (fid) => entryForDocument && client.appLinkCheck ? client.appLinkCheck(entryForDocument.id, { frame_id: fid })
+              : client.appLinkCheckFrame ? client.appLinkCheckFrame(programId, fid) : null,
+            current,
+            consume: () => client.appLinkPresentation!(retained.entryId, true),
+            burn: () => void client.appLinkPresentation?.(retained.entryId, true).catch(() => undefined),
+            restore: () => { const presentation = readAppPresentation(retained.snapshot); if (presentation) notify({ type: 'presentation-restore', ...presentation }) },
+          }).catch(() => undefined)
         }
+        // the app-ready path awaited the frame's admission above: attach only for the sign-in and document still current
+        if (disposed || !releaseCurrent || !docBinding.current()) return
         return attachFrame(livePort)   // J3 r4.3 O3: may receive for this person's live session, if it is this app's
       }
       // J3 r4.3 O3: the receiver's current-piece captures and terminal outcomes, for THIS mount only (wire.ts)
@@ -594,10 +589,14 @@ export function AppFrame({ programId, swarmId, source, onDirty, onBack, entry, u
         if (admitted.kind === 'refused') return reply(actFileRefused(m.id, admitted.reason, true))
         if (admitted.kind === 'asked') return void settleAct(m.id, admitted.asked, reply)
       }
+      // this message may have waited on the network above (its entry or consent check): send the view or act only for
+      // the sign-in, document and release still current
+      if (disposed || !releaseCurrent || !docBinding.current()) return reply({})
       try {
-        const result = m.op === 'view' ? await client.programView(programId, body as never)
-          : m.op === 'act' ? await client.programAct(programId, body as never)
-          : (() => { throw new Error('unknown operation') })()
+        let result: unknown
+        if (m.op === 'view') result = await client.programView(programId, body as never)
+        else if (m.op === 'act') result = await client.programAct(programId, body as never)
+        else throw new Error('unknown operation')
         if (!docBinding.current()) return reply({})   // a late result cannot commit another identity's host state
         if (m.op === 'act') goals.record(startedGoal(result as never))   // G9: only goals this frame's own act started
         reply({ type: 'app-reply', id: m.id, ok: true, result })

@@ -17,7 +17,8 @@ import type { AskContext, AskVia } from '../../api/ask'
 import { bindOperation, stopped, type BoundOperation } from '../../lib/boundOperation'
 import { bindEpoch, guard, onIdentityChange, STALE } from '../../lib/identityEpoch'
 import { useHive } from '../../store/store'
-import { useAskStore } from '../../store/ask'
+import { optionalAskPrincipalMatches, useAskStore, type AskOpts, type AskOperationReceipt } from '../../store/ask'
+import { askFieldWords, askNowFromField, type AskNowResult } from '../ask/useAskField'
 import {
   CLOSED_STATES, SETUP_DEFAULT_MINUTES, SETUP_DEFAULT_STEPS, readAdmission, readConsent, readLedger, readStudioEvent, readStudioSteer, sha256Hex, studioCapable,
   type Admission, type ConsentPayload, type Ledger, type SetupPrep, type SetupTurn, type StudioHostClient, type StudioSessionRequest,
@@ -35,6 +36,9 @@ import { registerStudioRoute } from './route'
 import { exactPieceRef, readPieceList, readPieceScene, samePiece, STUDIO_SOURCE_KIND, type PieceListed, type PieceRef } from './pieces'
 import { sourceFocus } from '../../forms/designCanvas/model'
 import { navigate } from '../../lib/router'
+import type { DrawingMode } from './drawingUi'
+import { authIdentity } from '../../lib/readContext'
+import { resolveDrawingTurn, type DrawingTurnAssociation } from './turnAssociation'
 
 /** What the Ask prepared for the person to confirm (G1). The live source of this is Platform's studio tool; sim invents it. */
 export interface SetupProposal {
@@ -80,13 +84,15 @@ export interface SetupCard {
  *  are not proven (Design native r2), so this page neither receives nor reports for it: it shows the record as held. */
 export type LocalState = 'receiving' | 'waiting-for-studio' | 'closed-unmount' | 'stopped' | 'held-reload' | 'mount-lost' | 'not-offered' | 'host-paused'
 export interface HeldWords { id: string; text: string; refusal: StudioRefusal }
-/** a direction the Ask routed to steer the session; `queuedToo`: the person overruled it with one tap (the owner 2640) */
+/** a direction the Ask routed to steer the session; `queuedToo`: the person overruled it with one tap (Jon 2640) */
 export interface SentDirection { steer_id: string; text: string; seq: number | null; context: AskContext | null; queuedToo: boolean }
-export interface NextTurn { id: string; text: string; context: AskContext; from: string | null }
+export interface NextTurn { id: string; text: string; context: AskContext; from: string | null; handoff?: 'uncertain' | 'checking' | 'not-admitted' | 'edited' }
 
 export interface FramePort { mount: number; programId: string; swarmId: string; post(msg: object): void }
 
 interface State {
+  /** UI-only choice for future words; switching never reroutes an already sent direction. */
+  directionMode: DrawingMode
   setup: SetupCard | null
   admission: Admission | null
   ledger: Ledger | null
@@ -112,7 +118,7 @@ interface State {
   /** an earlier mount's reports: shown with their original bindings, NEVER sent again (Design O3 finding P1 #2) */
   retired: ReportEntry[]
   /** host R5 controls: the pause/resume/finish-stopping control in flight, and the last refusal of one (with its way on) */
-  control: { action: 'pause' | 'resume' | 'finish_stopping'; state: 'sending' | 'refused'; refusal: StudioRefusal | null } | null
+  control: { action: 'pause' | 'resume' | 'finish_stopping' | 'repair_handoff'; state: 'sending' | 'refused'; refusal: StudioRefusal | null } | null
   /** the person's one Finish stopping was used for this session (a second parked Stop reads the host's admin words) */
   finishUsed: boolean
   /** r1.13: choosing the saved canvas to draw on (listed from the person's own Studio space), before any card */
@@ -134,6 +140,7 @@ const NO_STREAM = 'The hive has not admitted a drawing stream and scene for this
 export const ELSEWHERE = 'This session draws in your own Studio space, not in the swarm open here. Open Studio there to watch and edit.'
 
 const EMPTY: State = {
+  directionMode: 'steer',
   setup: null, admission: null, ledger: null, local: null, stopRequested: false, stopError: null, held: [], sent: [], next: [],
   custody: { state: 'idle', reason: null, seq: null, fresh: 'none' }, reports: [], cards: [], principal: null, trace: [], openHold: null, retired: [], moneyDrift: false, remount: null,
   control: null, finishUsed: false, pick: null, frameDirty: false,
@@ -142,6 +149,17 @@ const EMPTY: State = {
 export const useStudioLive = create<State>(() => ({ ...EMPTY }))
 const set = useStudioLive.setState
 const get = useStudioLive.getState
+let nextHandoff: ReturnType<typeof bindEpoch> | null = null
+interface NextReceipt {
+  binding: ReturnType<typeof bindEpoch>
+  view: NextTurn
+  edited: boolean
+  receipt?: import('../../store/ask').AskOperationReceipt
+  checking: boolean
+}
+const nextReceipts = new Map<string, NextReceipt>()
+// Retain one key per automatic advance until identity/reset; unsafe eviction could replay an old COMPLETE.
+let advancedQueueCompletions = new Set<string>()
 
 // ---------------------------------------------------------------- runtime (not React state)
 
@@ -220,8 +238,7 @@ function kept(): Kept | null {
   }
 }
 
-/** True while the person directs a running session: the Ask routes words to it as a direction (the owner 2640: no manual toggle;
- *  until the host's routing decision exists, a live session means steer, shown with a chip and a one-tap overrule). */
+/** True while this session can accept the person's choice of directions or separate queued work. */
 export function directing(): boolean {
   const s = get()
   // host R5 decision 3: a held session queues directions as a paused one does (studio_steer.direction)
@@ -282,6 +299,9 @@ function teardown() {
 }
 
 onIdentityChange(() => {
+  nextHandoff = null
+  nextReceipts.clear()
+  advancedQueueCompletions = new Set<string>()
   // synchronously, inside the identity change: the frame stops receiving before anyone sees the new person
   closeLocal('identity')
   teardown()
@@ -349,12 +369,88 @@ export function prepFromAsk(): SetupTurn | null {
   for (let i = ops.length - 1; i >= 0; i--) {
     const t = a.turns[ops[i]]
     if (!t || t.state === 'refused' || t.state === 'sending' || t.state === 'checking' || !t.you.trim()) continue
-    const words = t.you.trim()
-    // r1.13: the turn only; the piece is the person's picked saved canvas (never a random scene)
-    return { operation_id: t.op, title: words.length > 80 ? `${words.slice(0, 79)}…` : words, detail: words.slice(0, 4000), max_steps: SETUP_DEFAULT_STEPS, window_minutes: SETUP_DEFAULT_MINUTES }
+    return turnPrep(t)
   }
   return null
 }
+/** a recorded own turn as the setup's turn: its op, and its words as title and brief */
+function turnPrep(t: { op: string; you: string }): SetupTurn {
+  const words = t.you.trim()
+  // r1.13: the turn only; the piece is the person's picked saved canvas (never a random scene)
+  return { operation_id: t.op, title: words.length > 80 ? `${words.slice(0, 79)}…` : words, detail: words.slice(0, 4000), max_steps: SETUP_DEFAULT_STEPS, window_minutes: SETUP_DEFAULT_MINUTES }
+}
+
+/**
+ * Create's Draw live from the words in the Ask (Jon, 4 Nov: typing what you want and pressing Draw live must just work).
+ *
+ * - Words in the Ask win: they are asked as a NEW Ask turn through the mounted field's own path, and that turn (and only
+ *   it) is the setup's turn. A turn recorded earlier is used only when the Ask is empty.
+ * - The turn is the one the Ask's own receipt names for this exact request (AskOpts.onOperation), never one found by
+ *   its text. The receipt must belong to the person and Ask thread of the press, and the press stays bound to its
+ *   identity epoch and the caller's `alive` (the page still shown): any change cancels it, silently.
+ * - The deadline starts BEFORE the request is sent; a stalled send gives up plainly. A late answer never opens drawing.
+ * - One press at a time: a second press while one is in flight joins it (no second request).
+ * Resolves { turn }, { reason } (plain words for the page to say under the button) or { cancelled: true } (say nothing).
+ */
+export type DrawTurnResult = { turn: SetupTurn } | { reason: string } | { cancelled: true }
+/** the press in flight, keyed by whose it is: a press joins only one of the same person, thread and identity */
+let drawInFlight: { key: string; run: Promise<DrawTurnResult> } | null = null
+const drawKey = () => { const s = useAskStore.getState(); return `${bindEpoch().epoch}|${s.epoch}|${s.bound?.principal ?? ''}` }
+export function recordDrawTurn(o: { alive: () => boolean; signal?: AbortSignal; timeoutMs?: number; words?: () => string; askNow?: (opts: AskOpts) => Promise<AskNowResult> }): Promise<DrawTurnResult> {
+  const key = drawKey()
+  if (drawInFlight?.key === key) return drawInFlight.run
+  const run = drawTurn(o).finally(() => { if (drawInFlight?.run === run) drawInFlight = null })
+  drawInFlight = { key, run }
+  return run
+}
+function drawTurn({ alive, signal, timeoutMs = 30_000, words = askFieldWords, askNow = askNowFromField }: Parameters<typeof recordDrawTurn>[0]): Promise<DrawTurnResult> {
+  const press = bindOperation(alive)
+  const at = useAskStore.getState(), thread = at.epoch, principal = at.bound?.principal ?? null
+  const live = () => { const s = useAskStore.getState(); return press.current() && !signal?.aborted && s.epoch === thread && (s.bound?.principal ?? null) === principal }
+  const draft = words().trim()
+  if (!draft) {
+    const have = prepFromAsk()
+    return Promise.resolve(!live() ? { cancelled: true } : have ? { turn: have } : { reason: DRAW_NEEDS_WORDS })
+  }
+  if (!principal) return Promise.resolve({ reason: DRAW_NOT_ASKED })
+  return new Promise((resolve) => {
+    let done = false, receipt: AskOperationReceipt | null = null
+    let off = () => {}, offIdentity = () => {}
+    const finish = (r: DrawTurnResult) => {
+      if (done) return
+      done = true; clearTimeout(timer); off(); offIdentity(); signal?.removeEventListener('abort', abort)
+      resolve('cancelled' in r || live() ? r : { cancelled: true })
+    }
+    const abort = () => finish({ cancelled: true })
+    const timer = setTimeout(() => finish({ reason: DRAW_ASK_SLOW }), timeoutMs)   // started before anything is sent
+    const check = () => {
+      if (!live()) return finish({ cancelled: true })
+      if (!receipt) return
+      const s = useAskStore.getState()
+      if (receipt.principal !== principal || receipt.epoch !== thread) return finish({ cancelled: true })
+      const t = s.turns[receipt.op]
+      if (!t) return
+      if (t.state === 'refused') return finish({ reason: DRAW_ASK_REFUSED })
+      if (t.state === 'sending' || t.state === 'checking' || !t.you.trim()) return
+      finish({ turn: turnPrep(t) })
+    }
+    signal?.addEventListener('abort', abort)
+    off = useAskStore.subscribe(check)
+    offIdentity = onIdentityChange(check)   // a change of person cancels at once, not at the next Ask update
+    askNow({
+      onOperation: (r) => { receipt = r; check() },
+      admission: (a) => { if (!a.admitted) finish({ reason: a.reason === 'held' ? DRAW_ASK_BUSY : DRAW_ASK_REFUSED }) },
+    }).then(
+      (r) => { if (r === 'asked') check(); else finish({ reason: r === 'busy' ? DRAW_ASK_BUSY : r === 'empty' ? DRAW_NEEDS_WORDS : DRAW_NOT_ASKED }) },
+      () => finish({ reason: DRAW_NOT_ASKED }),
+    )
+  })
+}
+export const DRAW_NEEDS_WORDS = 'Type what you want drawn in the Ask, then press Draw live.'
+export const DRAW_NOT_ASKED = 'Your words could not be sent from here. Send them in the Ask, then press Draw live again.'
+export const DRAW_ASK_BUSY = 'Your last request is still running in the Ask. Press Draw live again when it has finished, or stop it first.'
+export const DRAW_ASK_REFUSED = 'The Ask did not take that request, so nothing was drawn. Its reply in the Ask says why.'
+export const DRAW_ASK_SLOW = 'The hive has not recorded your request yet. Nothing is drawing. Press Draw live again in a moment.'
 
 /** r1.10: the last setup choice made from the app page (a resume's refreshed card reads setup again with it) */
 let lastPrep: { principal: string; prep: SetupPrep } | null = null
@@ -410,7 +506,7 @@ export async function confirmSetup(): Promise<void> {
     const admission = readAdmission(answer)
     if (!admission) throw new ApiError(0, 'answer_unreadable', 'The hive’s answer did not name the session it started.')
     op.binding.commit(() => {
-      set({ setup: null, admission, principal: principalNow(), local: 'waiting-for-studio', stopRequested: false, stopError: null, held: [], sent: [], trace: [], control: null, finishUsed: false })
+      set({ setup: null, admission, principal: principalNow(), local: 'waiting-for-studio', stopRequested: false, stopError: null, held: [], sent: [], trace: [], control: null, finishUsed: false, directionMode: 'steer' })
       startRuntime(admission.session_id, card.proposal.request.program_id, card.proposal.request.swarm_id)
       const who = principalNow()
       if (who) keep({ principal: who, sid: admission.session_id, programId: card.proposal.request.program_id, swarmId: card.proposal.request.swarm_id })
@@ -863,11 +959,12 @@ export function currentNotStopped(): boolean {
  * the host's per-control idempotency answers the original). Refusals keep the session as the host left it and say what
  * helps next; a resume refused for a changed binding or consent reads a refreshed card for a NEW session (afterStop).
  */
-async function control(action: 'pause' | 'resume' | 'finish_stopping'): Promise<void> {
+async function control(action: 'pause' | 'resume' | 'finish_stopping' | 'repair_handoff'): Promise<void> {
   const r = rt
   const l = get().ledger
   if (!r || !l || get().control?.state === 'sending') return
   if (action === 'finish_stopping' && get().finishUsed) return
+  if (action === 'repair_handoff' && (l.state !== 'stopping' || l.credential_reason !== 'namespace_conflict' || l.stop.release_phase !== 'installed')) return
   const op = bindOperation(() => rt === r)
   const control_id = newId(action === 'finish_stopping' ? 'finish' : action)
   set({ control: { action, state: 'sending', refusal: null }, ...(action === 'finish_stopping' ? { finishUsed: true } : {}) })
@@ -897,6 +994,8 @@ export const resumeSession = () => control('resume')
 /** The person's ONE Finish stopping for a parked Stop (stop_failed / release_stale); after it, the host's own words
  *  (an administrator must stop the process) are what the panel shows. */
 export const finishStopping = () => control('finish_stopping')
+/** Explicit owner retry of the held original release; host verifies the workspace again. */
+export const repairHandoff = () => control('repair_handoff')
 export function dismissControl() {
   set({ control: null })
 }
@@ -913,24 +1012,71 @@ async function refreshedCard(r: Runtime, programId: string, swarmId: string, op:
 
 // ---------------------------------------------------------------- directions (Steer) and the next turn (Queue)
 
+export const DRAWING_TURN_LINK_WORDS = 'The recorded Ask turn is not uniquely retained under your current sign-in. Steer is unavailable; your words are kept. Queue is separate new work.'
+
+function sameDrawingPerson(): boolean {
+  const a = useAskStore.getState()
+  return !!a.bound && !!get().principal && get().principal === a.bound.principal && a.bound.auth === authIdentity(client())
+}
+
+/** Same-person, same-live-session state first; the pure join never grants an identity or host permission. */
+export function drawingTurnAssociation(): DrawingTurnAssociation {
+  const a = useAskStore.getState()
+  const s = get()
+  if (!sameDrawingPerson() || rt && !rt.binding.current()) return { state: 'foreign' }
+  if (!rt || !s.ledger || !s.principal) return { state: 'missing' }
+  return resolveDrawingTurn(s.ledger.ask_turn_id, s.principal, a.turns)
+}
+
+export function canChooseDrawingMode(): boolean {
+  return directing() && offered() && sameDrawingPerson() && !!rt?.binding.current()
+}
+
+/** Explicit UI choice applies only to FUTURE messages in this person's current session. */
+export function setDirectionMode(mode: DrawingMode): boolean {
+  if ((mode !== 'steer' && mode !== 'queue') || !canChooseDrawingMode()) return false
+  if (mode === 'steer' && (!directionsOffered() || drawingTurnAssociation().state !== 'known')) return false
+  set({ directionMode: mode })
+  return true
+}
+
+/** Queue is the existing local next-turn path; it never buys or submits a drawing/Ask request at selection time. */
+export function routeStudioMessage(text: string, via: AskVia, context: AskContext): Promise<boolean> {
+  // Selection is not a grant for later words: recheck the original runtime and current auth before ANY draft.
+  if (!sameDrawingPerson() || !rt?.binding.current()) return Promise.resolve(false)
+  if (get().directionMode !== 'queue') return steerSession(text, via, context)
+  if (!text.trim()) return Promise.resolve(false)
+  // Keep the existing refusal/held-words path when availability changed after the choice.
+  if (!directing() || !offered()) return steerSession(text, via, context)
+  queueNext(text, context)
+  return Promise.resolve(true)
+}
+
 /** Words for the maker: one direction through the Ask's steer route, intercepted for this session (O1). */
 export async function steerSession(text: string, via: AskVia = 'typed', context: AskContext | null = null): Promise<boolean> {
   const r = rt
   const l = get().ledger
   const words = text.trim().slice(0, 4000)
   if (!words) return false
+  // No old-session words or requests cross a person/auth change, even before its reset observer runs.
+  if (!sameDrawingPerson() || r && !r.binding.current()) return false
   // a session that is not being directed (stopped here or by the host, ended, not offered) takes no directions
   if (r && l && offered() && !directing()) { set((s) => ({ held: [...s.held, { id: newId('w'), text: words, refusal: studioRefusal(new ApiError(409, 'session_closed', '')) }] })); return false }
   // host R3 has no O1 steer interception (R5): directions need their own capability, else a steer on a closed turn
   // would become a fresh paid turn on the host (ask.py). Fail closed: the words are kept.
   if (r && l && offered() && !directionsOffered()) { set((s) => ({ held: [...s.held, { id: newId('w'), text: words, refusal: studioRefusal(new ApiError(0, 'not_available', '')) }] })); return false }
   if (!r || !l || !offered()) { set((s) => ({ held: [...s.held, { id: newId('w'), text: words, refusal: studioRefusal(new ApiError(0, 'not_available', '')) }] })); return false }
+  const link = drawingTurnAssociation()
+  if (link.state !== 'known') { set((s) => ({ held: [...s.held, { id: newId('w'), text: words, refusal: { code: 'studio_turn_link_' + link.state, words: DRAWING_TURN_LINK_WORDS, keepWords: true } }] })); return false }
   const op = bindOperation(() => rt === r)
   const steer_id = newId('st')
   set((s) => ({ sent: [...s.sent, { steer_id, text: words, seq: null, context, queuedToo: false }] }))
   try {
-    const at = useAskStore.getState().turns[l.ask_turn_id]?.lastSeq ?? 0
-    const v = await op.write(() => call((c) => c.askSteer(l.ask_turn_id, { steer_id, text: words, at_seq: at, via })))
+    const v = await op.write(() => {
+      const current = drawingTurnAssociation()
+      if (current.state !== 'known' || current.operationId !== link.operationId || current.serverTurnId !== l.ask_turn_id) throw new ApiError(409, 'studio_turn_link_changed', DRAWING_TURN_LINK_WORDS)
+      return call((c) => c.askSteer(current.operationId, { steer_id, text: words, at_seq: current.lastSeq, via }))
+    })
     const ok = readStudioSteer(v, r.sid)
     if (!ok) throw new ApiError(0, 'not_available', 'not a direction for this session')
     op.binding.commit(() => set((s) => ({ sent: s.sent.map((x) => (x.steer_id === steer_id ? { ...x, seq: ok.seq } : x)) })))
@@ -976,25 +1122,126 @@ export function editNext(id: string, text: string) {
   set((s) => ({ next: s.next.map((n) => (n.id === id ? { ...n, text } : n)) }))
 }
 export function dropNext(id: string) {
+  nextReceipts.delete(id) // remove only local correlation; the actual Ask is not cancelled
   set((s) => ({ next: s.next.filter((n) => n.id !== id) }))
 }
-/** Start one queued turn as a new Ask turn now (the person pressed Send, or a turn ended complete; the paid row was shown). */
-export async function sendNext(id?: string) {
-  const n = id ? get().next.find((x) => x.id === id) : get().next[0]
-  if (!n) return
-  set((s) => ({ next: s.next.filter((x) => x.id !== n.id) }))
-  await useAskStore.getState().send(n.text, n.context)
+/** Metadata-only wraps preserve the submitted object; a person's edit is always new manual work. */
+function showNextHandoff(h: NextReceipt, state: NonNullable<NextTurn['handoff']>) {
+  h.binding.commit(() => set((s) => ({ next: s.next.map((n) => {
+    if (n.id !== h.view.id) return n
+    if (n !== h.view) h.edited = true
+    if (n === h.view && n.handoff === state) return n
+    const view = { ...n, handoff: state }
+    h.view = view
+    return view
+  }) })))
 }
 
-// an open Ask turn that ends COMPLETE starts the queued words; stopped/refused/limited never does (design §1)
+function advanceCompletedQueue(op: string) {
+  const ask = useAskStore.getState()
+  const turn = ask.turns[op]
+  const done = turn?.events.find((e) => e.phase === 'done')
+  const head = get().next[0]
+  if (ask.open || !head || head.handoff || nextHandoff?.current() || turn?.state !== 'done' || turn.refusedEarly === 'stopped' || !done || done.phase !== 'done' || done.outcome !== 'complete' || done.operation_id !== op || !optionalAskPrincipalMatches(done, ask.bound?.principal) || !sameDrawingPerson() || advancedQueueCompletions.has(op)) return
+  advancedQueueCompletions.add(op)
+  void sendNext()
+}
+
+function settleNextHandoff(h: NextReceipt, a: import('../../store/ask').AskAdmission) {
+  if (!h.binding.current() || nextReceipts.get(h.view.id) !== h) return
+  if (a.admitted) {
+    if (a.principal !== useAskStore.getState().bound?.principal || h.receipt && a.op !== h.receipt.op) return
+    const current = get().next.find((n) => n.id === h.view.id)
+    if (current && (h.edited || current !== h.view)) showNextHandoff(h, 'edited')
+    else h.binding.commit(() => set((s) => ({ next: s.next.filter((n) => n !== h.view) })))
+    nextReceipts.delete(h.view.id)
+    advanceCompletedQueue(a.op)
+  } else if ((a.reason === 'not_admitted' && !a.receipt && !h.receipt) || a.reason === 'refused' || a.reason === 'not_available' || a.reason === 'held' || a.reason === 'unsupported' || a.reason === 'capped') {
+    h.receipt = a.receipt ?? h.receipt
+    showNextHandoff(h, 'not-admitted')
+    if (!h.receipt) nextReceipts.delete(h.view.id) // a later exact original frame may still settle an early refusal
+  } else {
+    h.receipt = a.receipt
+    showNextHandoff(h, h.checking ? 'checking' : 'uncertain')
+  }
+}
+
+function reconcileNextHandoffs() {
+  for (const h of [...nextReceipts.values()]) {
+    if (!h.binding.current()) { nextReceipts.delete(h.view.id); continue }
+    if (h.receipt) {
+      const admission = useAskStore.getState().admissionOf(h.receipt)
+      const draft = get().next.find((n) => n.id === h.view.id)
+      if (draft && (h.edited || draft !== h.view) && (admission.admitted || admission.reason === 'refused')) {
+        // Unknown originals stay checkable; a resolved original no longer dispatches an edited draft.
+        h.receipt = undefined
+        showNextHandoff(h, 'edited')
+        nextReceipts.delete(h.view.id) // local correlation only; the actual Ask is unchanged
+        if (admission.admitted) {
+          const originalAdmittedOp = admission.op // the retired receipt's original, never the edited draft
+          advanceCompletedQueue(originalAdmittedOp)
+        }
+      } else settleNextHandoff(h, admission)
+    }
+  }
+}
+
+export function canCheckNext(id: string): boolean {
+  const h = nextReceipts.get(id)
+  if (!h?.receipt || h.checking || !h.binding.current() || !get().next.some((n) => n.id === id)) return false
+  const ask = useAskStore.getState()
+  if (ask.bound?.principal !== h.receipt.principal) return false
+  const turn = ask.turns[h.receipt.op]
+  // Match the existing checkAgain/check eligibility; an open/done turn or lost body is not actionable.
+  if (turn?.state !== 'checking' || !turn.unsure || turn.unsure.state === 'checking' || turn.unsure.body.operation_id !== h.receipt.op || turn.unsure.principal !== h.receipt.principal || !useHive.getState().client?.ask) return false
+  const a = ask.admissionOf(h.receipt)
+  return !a.admitted && a.reason === 'unknown' && a.receipt === h.receipt
+}
+
+/** Recovery never calls admit/send/retryLast: only the existing bounded original-operation check. */
+export async function checkNext(id: string) {
+  if (!canCheckNext(id)) return
+  const h = nextReceipts.get(id)!
+  const receipt = h.receipt!
+  h.checking = true
+  showNextHandoff(h, 'checking')
+  try { await useAskStore.getState().checkAgain(receipt.op) } catch { /* no replacement request */ }
+  finally {
+    h.checking = false
+    if (nextReceipts.get(id) === h && h.binding.current()) settleNextHandoff(h, useAskStore.getState().admissionOf(receipt))
+  }
+}
+
+/** Hand queued words to a new Ask turn only after its admission; unknown original identity stays recoverable. */
+export async function sendNext(id?: string) {
+  const binding = bindEpoch()
+  const n = id ? get().next.find((x) => x.id === id) : get().next[0]
+  const ask = useAskStore.getState()
+  if (!n || (!id && n.handoff) || n.handoff === 'uncertain' || n.handoff === 'checking' || ask.open || nextHandoff?.current() || !binding.current()) return
+  const h: NextReceipt = { binding, view: n, edited: false, checking: false }
+  nextReceipts.set(n.id, h)
+  nextHandoff = binding
+  let admittedOp: string | null = null
+  try {
+    const a = await ask.admit(n.text, n.context, { newTurnOnly: true })
+    if (a.admitted) admittedOp = a.op
+    settleNextHandoff(h, a)
+  } catch {
+    showNextHandoff(h, 'uncertain') // no original receipt means no safe guessed check or replacement
+  } finally {
+    if (nextHandoff === binding) nextHandoff = null
+  }
+  if (admittedOp && binding.current()) advanceCompletedQueue(admittedOp)
+}
+
+// Reconcile original receipts before completion can consider the next queued item.
 let watchedOpen: string | null = null
 useAskStore.subscribe((s) => {
+  reconcileNextHandoffs()
   const was = watchedOpen
   watchedOpen = s.open
   if (!was || s.open === was) return
-  const t = s.turns[was]
-  const done = t?.events.find((e) => e.phase === 'done') as { outcome?: string } | undefined
-  if (t?.state === 'done' && done?.outcome === 'complete' && get().next.length && get().principal === principalNow()) void sendNext()
+  advanceCompletedQueue(was)
 })
 
 /** After a reload: this person's kept session is read and shown HELD (no receiving, no reports, Stop still works). */
@@ -1036,6 +1283,9 @@ function notOffered() {
 
 /** For tests: drop everything (as an identity change would), without a frame. */
 export function resetStudioLiveForTests() {
+  nextHandoff = null
+  nextReceipts.clear()
+  advancedQueueCompletions = new Set<string>()
   teardown()
   keep(null)
   restoredFor = null
@@ -1048,7 +1298,7 @@ export function resetStudioLiveForTests() {
 export const runtimeForTests = () => rt
 export const isCapable = () => studioCapable(client(), useAskStore.getState().settings)
 
-registerStudioRoute({ directing, steer: steerSession })
+registerStudioRoute({ directing, steer: routeStudioMessage })
 
 // ---------------------------------------------------------------- r1.13: the saved canvas the session draws on
 

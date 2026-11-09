@@ -53,11 +53,15 @@ def search_(query, max_results=10):
     return parser.results[:max_results]
 
 def search(query, max_results=10):
+    # A failed search says so (a sandboxed mind has no direct internet; an empty string read as "nothing found").
     try:
-        ret = "("
-        for r in search_(query):
-            ret += "(TITLE: " + r["title"] + " SNIPPET: " + r["snippet"] + ") "
-        ret += ")"
-        return ret
-    except Exception:
-        return ""
+        results = search_(query)
+    except Exception as error:  # noqa: BLE001
+        kind = type(error).__name__
+        return f"WEB-SEARCH-UNAVAILABLE {kind}: this mind cannot reach the web search service from here"
+    if not results:
+        return "WEB-SEARCH-NO-RESULTS"
+    ret = "("
+    for r in results:
+        ret += "(TITLE: " + r["title"] + " SNIPPET: " + r["snippet"] + ") "
+    return ret + ")"

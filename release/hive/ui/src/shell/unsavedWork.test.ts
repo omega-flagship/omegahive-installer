@@ -308,12 +308,12 @@ describe('an app that reports unsaved edits (app-dirty from its frame) holds bac
 })
 
 describe('the forms that keep their fields to themselves register explicitly too', () => {
-  it('CreateFlow, ProfilePage’s AddKey, LaunchSwarm (every step) and ProgramPage (its app’s edits) mark themselves unsaved', async () => {
+  it('CreateFlow, the You page’s AddKey (AddKeyForm), LaunchSwarm (every step) and ProgramPage (its app’s edits) mark themselves unsaved', async () => {
     const fsName = 'node:fs'
     const { readFileSync } = (await import(/* @vite-ignore */ fsName)) as { readFileSync: (p: string, e: 'utf8') => string }
     const read = (rel: string) => readFileSync(new URL(rel, import.meta.url).pathname, 'utf8')
     expect(read('../features/create/CreateFlow.tsx')).toContain('useUnsaved(!!name.trim() || !!persona.trim() || step > 0)')
-    expect(read('../features/keys/ProfilePage.tsx')).toContain('useUnsaved(!!secret.trim() || !!label.trim())')
+    expect(read('../features/keys/AddKeyForm.tsx')).toContain('useUnsaved(!!secret.trim() || !!label.trim())')
     expect(read('../features/launch/LaunchSwarm.tsx')).toContain('useUnsaved(!made && (!!name.trim() || !!purpose.trim() || step > 0))')
     expect(read('../features/programs/ProgramPage.tsx')).toContain('useUnsaved(unsaved)')
     const merge = read('../features/code/MergePanel.tsx')

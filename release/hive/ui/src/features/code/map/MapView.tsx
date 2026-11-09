@@ -1,5 +1,5 @@
 /**
- * #/code/map/<repo>@<sha>: Workbench Map, a "Map" mode of the Code page on one living canvas (the owner's rule: controls
+ * #/code/map/<repo>@<sha>: Workbench Map, a "Map" mode of the Code page on one living canvas (Jon's rule: controls
  * revealed in context, no stacked panels). Reads only through api/repoMap (the Slice A routes); draws only what the
  * answers contain. Fail closed: a map the person cannot see (404 / 401 / 403), a newer format or an extractor outside
  * the pin draws nothing. The whole view is keyed by the person's identity, so nothing read for one person survives a

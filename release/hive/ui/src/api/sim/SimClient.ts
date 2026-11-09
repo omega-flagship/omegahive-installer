@@ -1,5 +1,7 @@
 import { cachedLook, SEED_VARIANTS, type UiPrefs, type UiPrefsResponse, type UiPrefsWriteOptions } from '../../shell/uiVariant'
 import type { Board, Matches, Scope } from '../../features/boards/types'
+import { SimController } from './controllerSim'
+import { SimPlans, type PlanSimMode } from './planSim'
 import { ApiError, Emitter, type CodeContext, type ConnectionState, type HiveClient, type Invite, type Me, type Person, type SimCodeFixture, type SwarmCounts, type SwarmDeletePreview, type SwarmDeleteResult } from '../client'
 import { SimCodeService, SIM_CODE_REPOSITORY, SIM_CODE_TARGET, SIM_UNREGISTERED_REPOSITORY, SIM_UNREGISTERED_TARGET, simClosedReason, simRepositoryUnregistered, type SimStaleSession } from './codeService'
 import type { SuggestionCreateRequest, SuggestionDecisionRequest, SuggestionScopeRequest } from '../../features/code/suggestions/contract'
@@ -63,8 +65,8 @@ import { SimMoneyWork } from './moneyWork'
 import { cancelRequests, requestPage, requestView, type SimRequestRow } from './requests'
 import { SimDrafts } from './drafts'
 import { SimAsk } from './ask' // Surface universal Ask (sim only)
-import { SimIntents, SIM_CODE_TEAM } from './intents'
-import { chooseCodeTeam } from '../askIntents' // the Ask's linkage intents (sim only)
+import { SimIntents, SIM_CODE_TEAM, SIM_CODE_TEAM_TEMPLATES } from './intents'
+import { chooseCodeTeam, parseRequestLimits, parseTeamTemplates } from '../askIntents' // the Ask's linkage intents (sim only)
 import { SimMinds } from './minds'
 import { SimPower } from './power' // Surface: hive power (Off, Quiet and Wake all), sim only
 import { SimRooms } from './rooms' // Surface: rooms and the Coffee Room (sim only)
@@ -81,6 +83,7 @@ import { MIND_SOURCES } from '../../lib/mindSpace/sources'
 import { sha256 } from '../../lib/askMemory/hash'
 import { SimStudioHost } from './studioSessions'
 import { generateReply, PEER_LINES, PEER_REPLIES } from './replies'
+import { simToolsCatalogue } from './simTools'
 import {
   COMMON_CMDS,
   EPISODES,
@@ -150,6 +153,11 @@ export interface SimOptions {
    * host whose controller puts a proposal into the copy by itself, which the canvas labels as done without your OK.
    */
   codeCopyApply?: boolean
+  /**
+   * SIM: pace the Code person flow for screenshots (the helper is seen working ~3.5 s; a sandbox test reads as running
+   * ~3 s). Default on, off under vitest (MODE 'test') so tests stay fast.
+   */
+  codePacing?: boolean
   /**
    * SIM: plain demo mode (?sim=1, the demo build; api/sim/demo.ts): team rooms that talk, the Ask's first answer teaching
    * a few invented notes, and the extra swarm-delete swarms. Off for tests and other harnesses.
@@ -277,7 +285,7 @@ export class SimClient implements HiveClient {
   private state: ConnectionState = 'idle'
 
   constructor(options: SimOptions = {}) {
-    this.opts = { seed: 7, autoStart: true, speed: 1, latency: true, historyDays: 30, extraDots: 0, ...options, codeMode: options.codeMode ?? 'mind', codeCopyApply: options.codeCopyApply ?? (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('simcopyapply') === 'on') }
+    this.opts = { seed: 7, autoStart: true, speed: 1, latency: true, historyDays: 30, extraDots: 0, ...options, codeMode: options.codeMode ?? 'mind', codeCopyApply: options.codeCopyApply ?? (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('simcopyapply') === 'on'), codePacing: options.codePacing ?? import.meta.env.MODE !== 'test' }
     if (this.opts.codeMode === 'mind') this.codeSuggestionAsk = (ctx, ws, body) => this.askSimMind(ctx, ws, body)
     // SIM ONLY smoke hooks (?simhooks=1): another sign-in, a late consent answer, a slow workspace journal
     if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('simhooks') === '1')
@@ -300,7 +308,12 @@ export class SimClient implements HiveClient {
             return { kinds: ['code'] }
           },
         )
-        return this.delay(() => ({ ...structuredClone(SIM_CODE_TEAM), to_swarm: team.id }))
+        // GET /api/teams/{swarm}/templates, read as live.ts codeTeamOffer reads it: the template ids and request_limits
+        return this.delay(() => {
+          const raw = structuredClone(SIM_CODE_TEAM_TEMPLATES)
+          const limits = parseRequestLimits(raw)
+          return { to_swarm: team.id, team_name: team.name, template_ids: parseTeamTemplates(raw, team.id), ...(limits ? { limits } : {}) }
+        })
       }
     this.rng = mulberry32(this.opts.seed)
     this.studioFlags = { monthlyMissing: !!options.studio?.monthlyMissing, rollover: !!options.studio?.rollover, hold: !!options.studio?.hold, role: !!options.studio?.role, stopFail: options.studio?.stopFail ?? 0, consentDrift: !!options.studio?.consentDrift, fenced: !!options.studio?.fenced, keyNone: !!options.studio?.keyNone, makerKind: options.studio?.makerKind, piecesNone: !!options.studio?.piecesNone, unbindable: !!options.studio?.unbindable }
@@ -342,6 +355,8 @@ export class SimClient implements HiveClient {
       emit: (program) => this.emit({ type: 'program.updated', at: this.now(), program }),
     })
     if (options.askFlags) this.askHost.setFlags(options.askFlags)
+    // the invented Code team runs a proposal's sandbox test (code.test intents); ?simtest=off plays a hive without them
+    if (this.opts.codeMode === 'mind') this.askHost.setCodeTests(!(typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('simtest') === 'off'))
     if (options.strayMemoryFrames) this.askHost.strayFrames()
     if (options.askAnswer) this.askHost.setAnswerFixture(options.askAnswer)
     if (this.demo) this.askHost.demoNotes(DEMO_MEMORY_NOTES)
@@ -630,6 +645,37 @@ export class SimClient implements HiveClient {
     // Quench went quiet after hammering the gateway during the last incident
     const quench = this.agents.get('a_qnch11')
     if (quench) quench.last_error = '429 rate_limited: 61 LLM calls in the last minute (HIVE_MAX_LLM_CALLS_PER_MINUTE=60)'
+
+    this.seedHelpers(now)
+  }
+
+  /**
+   * INVENTED: request helpers the Code team (s_lyra, SIM_CODE_TEAM) spawned for earlier requests, named as the host names
+   * a child (minds.py spawn: `<template_id> <4 hex>`): six finished (five stopped, one asleep) that the map folds into
+   * one quiet "+6 helpers" orb, and one still working that it draws on its own (scene/helperGroups). No random draws, so
+   * the seed's other numbers are unchanged. They join by swarm_id only, after the commons seed, so the seeded commons'
+   * grants (the team's member list, recorded in parity/cases.json against PeTTa) stay exactly as recorded.
+   */
+  private seedHelpers(now: number) {
+    const team = this.swarms.get(SIM_CODE_TEAM.to_swarm)
+    if (!team) return
+    const hour = 3_600_000
+    const helpers: [string, string, Agent['status'], number][] = [
+      ['a_help01', '3a7c', 'stopped', 50], ['a_help02', '91be', 'stopped', 44], ['a_help03', 'c04d', 'stopped', 30],
+      ['a_help04', '5f12', 'stopped', 26], ['a_help05', 'e8a9', 'asleep', 9], ['a_help06', '2b60', 'stopped', 5], ['a_help07', 'd71f', 'awake', 0.2],
+    ]
+    for (const [id, hex, status, hoursAgo] of helpers) {
+      const a: Agent = {
+        id, name: `foundation.code-helper.v1 ${hex}`, kind: 'omega', swarm_id: team.id, model: 'anthropic/claude-haiku-5',
+        persona: 'You work on a request: read the proposal context, change only by proposing, finish on your work goal.',
+        hue: team.hue, status, driver: 'local', budget_usd: 0.25, spent_usd: status === 'awake' ? 0.03 : 0.11, connected: status === 'awake',
+        last_active_at: iso(now - (status === 'awake' ? 20_000 : hoursAgo * hour - 600_000)), created_at: iso(now - hoursAgo * hour), idle_sleep_minutes: 0,
+      }
+      this.agents.set(id, a)
+      this.voices.set(id, 'terse')
+      this.messages.set(id, [])
+      this.logs.set(id, [this.logLine(a, Date.parse(a.created_at), 'INFO', 'boot: spawned for a Code request')])
+    }
   }
 
   // ------------------------------------------------------------------ Phase 2 seeding
@@ -1857,6 +1903,8 @@ export class SimClient implements HiveClient {
       return share
     })
   }
+  /** The tools catalogue: invented samples (simTools.ts). */
+  tools() { return this.delay(() => simToolsCatalogue()) }
   agentInventory(id: string) { return this.delay(() => this.minds.inventory(this.mustAgent(id))) }
   agentInventoryActivity(id: string, cycles = 30) { return this.delay(() => this.minds.activity(this.mustAgent(id), cycles)) }
   agentHealth(id: string) {
@@ -2995,6 +3043,19 @@ export class SimClient implements HiveClient {
     if (next) this.askHost.uiChanged(before, next)
     return { prefs: next, updated_at: next ? new Date().toISOString() : null, rev: this.simLookRev }
   }
+  /**
+   * SIM: GET /api/me/apps over the invented apps. Enabled apps without an error, person apps first, then swarm apps in the
+   * first swarm still open (the live host lists by audience and activation; hive/core/my_apps.py). INVENTED data.
+   */
+  myApps(): Promise<{ apps: import('../../features/apps/myApps').MyAppRow[] }> {
+    return this.delay(() => {
+      const home = [...this.swarms.values()].find((s) => !s.archived_at)
+      const ok = this.programsHost.list().filter((p) => p.enabled && !p.error)
+      const person = ok.filter((p) => p.placement === 'person').map((p) => ({ id: p.id, name: p.name, icon: null, placement: 'person' as const, open: { kind: 'person' as const }, pinned: false }))
+      const swarm = home ? ok.filter((p) => p.placement !== 'person').map((p) => ({ id: p.id, name: p.name, icon: null, placement: 'swarm' as const, open: { kind: 'swarm' as const, swarm_id: home.id, swarm_name: home.name }, pinned: false })) : []
+      return { apps: [...person, ...swarm].map((a, order) => ({ ...a, order })) }
+    })
+  }
   uiPrefs(): Promise<UiPrefsResponse> {
     return this.delay(() => ({ prefs: this.simLook, updated_at: null, rev: this.simLookRev }))
   }
@@ -3041,6 +3102,11 @@ export class SimClient implements HiveClient {
     evidence: () => !(typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('simevidence') === 'off'),
     consentGate: () => !(typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('simconsent') === 'off'),
     spawn: () => !(typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('simspawn') === 'off'),
+    // SIM: the helper is seen working before its proposal lands; the sandbox test reads as running before it settles
+    workMs: () => (this.opts.codePacing ? 3500 : 0),
+    testRunMs: () => (this.opts.codePacing ? 3000 : 0),
+    // SIM: ?simtest=fail plays a sandbox test that fails (assert add(2, 3) == 5)
+    testOutcome: () => (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('simtest') === 'fail' ? 'fail' : 'pass'),
   })
   /** POST /api/requests/{rq}/proposals/{suggestion}/{accept|decline} (copy-apply consent, Platform 66312cd): a named person. */
   async proposalConsent(requestId: string, suggestionId: string, decision: 'accept' | 'decline', suggestionDigest: string) {
@@ -3054,6 +3120,50 @@ export class SimClient implements HiveClient {
   }
   private consentHold: Promise<void> | null = null
   private releaseConsentHold: (() => void) | null = null
+  /** SIM (?simengine=1): the MeTTa coding controller's person view and routes for a sim Code request (controllerSim.ts) */
+  private controllerSim = new SimController({
+    on: () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('simengine') === '1',
+    applyOn: () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('simapply') === 'on',
+    known: (id) => this.intentsHost.hasRequest(id),
+  })
+  requestController(requestId: string) { return this.delay(() => this.controllerSim.view(requestId)) }
+  requestApply(requestId: string) { return this.delay(() => this.controllerSim.apply(requestId)) }
+  requestChanges(requestId: string, text: string) { return this.delay(() => this.controllerSim.changes(requestId, text)) }
+  requestDiscard(requestId: string) { return this.delay(() => this.controllerSim.discard(requestId)) }
+  /** GET/PUT /api/me/code-controller (the person's review setting; a 404 without ?simengine=1, as an older host) */
+  codeControllerPrefs() { return this.delay(() => this.controllerSim.prefs()) }
+  setCodeControllerPrefs(body: { review_policy: 'review-required' | 'review-waivable' }) { return this.delay(() => this.controllerSim.setPrefs(body)) }
+  /**
+   * SIM: Create's plan engine (planSim.ts; contract features/createPlan/contract.ts). Brisk real time in the browser
+   * (~50 s end to end), every step due at once under vitest. Flags: ?simplan=unreviewed | fail | hive. While a plan is
+   * moving, a 500 ms ticker runs its due steps so create.plan.* events reach the store without a read.
+   */
+  private plansSim = new SimPlans({
+    scale: import.meta.env.MODE === 'test' ? 0 : 1,
+    mode: () => {
+      const m = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('simplan') : null
+      return (m === 'unreviewed' || m === 'fail' || m === 'hive' ? m : 'normal') as PlanSimMode
+    },
+    emit: (e) => this.emit({ ...e, at: this.now() } as unknown as HiveEvent),
+  })
+  private planTicking = false
+  private planTick() {
+    if (this.planTicking || import.meta.env.MODE === 'test') return
+    this.planTicking = true
+    const step = () => {
+      if (this.plansSim.advanceAll()) this.later(500, step, true)
+      else this.planTicking = false
+    }
+    this.later(500, step, true)
+  }
+  createPlanStart(sentence: string) { return this.delay(() => { const v = this.plansSim.start(sentence); this.planTick(); return v }) }
+  createPlans() { return this.delay(() => this.plansSim.list()) }
+  createPlan(planId: string) { return this.delay(() => this.plansSim.get(planId)) }
+  createPlanPreview(planId: string) { return this.delay(() => this.plansSim.preview(planId)) }
+  createPlanAnswer(planId: string, q: string, text: string) { return this.delay(() => { const v = this.plansSim.answer(planId, q, text); this.planTick(); return v }) }
+  createPlanDeploy(planId: string) { return this.delay(() => { const v = this.plansSim.deploy(planId); this.planTick(); return v }) }
+  createPlanStop(planId: string) { return this.delay(() => this.plansSim.stop(planId)) }
+  createPlanFile(planId: string, path: string, ckpt: string) { return this.delay(() => this.plansSim.file(planId, path, ckpt)) }
   /** GET /api/teams/{swarm_id}/children (the invented Code team's children; a named person reads it, as any viewer). */
   teamChildren(swarmId: string) {
     return this.delay(() => this.intentsHost.children(swarmId))
@@ -3070,6 +3180,10 @@ export class SimClient implements HiveClient {
   }
   askRecordIntent(op: string, body: import('../askIntents').IntentRecordBody) {
     return this.intentPerson(() => this.intentsHost.record(op, body).view)
+  }
+  /** POST /api/ask/{op}/intents {kind: 'code.test', request} (the same route as askRecordIntent; live.ts:754). */
+  askRecordCodeTestIntent(op: string, body: import('../../features/code/testIntent').CodeTestIntentBody) {
+    return this.intentPerson(() => this.intentsHost.recordTest(op, body).view)
   }
   askSubmitIntent(id: string) {
     return this.intentPerson(() => (id.startsWith('ai_studio') ? this.studio.submitIntent(id) : this.intentsHost.submit(id)))
@@ -3401,6 +3515,62 @@ export class SimClient implements HiveClient {
       this.lastSimCode = svc
       return { target: this.codeTarget(t), task_id: goal.id, swarm_id: goal.swarm_id, grant_id: grant.id, repository_id: SIM_CODE_REPOSITORY, base_commit: t.commit ?? '' }
     })
+  }
+  /**
+   * POST /api/code/select {task_id, repository_id} (hive/core/code.py select_target): pick the repository for an existing
+   * task (Create's own task) with no workspace yet. Keeps the exact task; only a 12-hour edit grant is added for the
+   * person, and (sim) the invented service gets a workspace for that task. Same answer shape as code/open.
+   */
+  codeSelect(task: string, repository: string) {
+    return this.delay(() => {
+      if (!/^g_[A-Za-z0-9_-]+$/.test(task || '')) throw new ApiError(400, 'bad_task', 'name an existing task')
+      if (repository !== SIM_CODE_REPOSITORY) throw simRepositoryUnregistered()
+      const t = SIM_CODE_TARGETS.find((x) => x.id === SIM_CODE_TARGET)!
+      const goal = this.goals.get(task)
+      if (!goal) throw new ApiError(404, 'not_found', `no task ${task}`)
+      if (['done', 'failed', 'cancelled'].includes(goal.status)) throw new ApiError(409, 'task_closed', 'this task is closed; it cannot be reopened by choosing a target')
+      const principal = this.simPrincipal()
+      const n = String(++this.simCodeSeq).padStart(2, '0')
+      const grant = { id: `grant_simcode${n}`, goal_id: task, principal, scope: 'edit' as const, workspace_id: null, created_by: principal, created_at: new Date().toISOString(), expires_at: Date.now() / 1000 + 12 * 3600, revoked_at: null }
+      this.simGrants.set(grant.id, grant)
+      if (!this.simCodes.has(task)) {
+        const svc = new SimCodeService({ relay: this.opts.codeMode !== 'unrelayed', task_id: task, workspace_id: `ws_simsuggest${n}`, swarm_id: goal.swarm_id, copyApply: this.opts.codeCopyApply })
+        this.simCodes.set(task, svc)
+        this.lastSimCode = svc
+      }
+      return { target: this.codeTarget(t), task_id: task, swarm_id: goal.swarm_id, grant_id: grant.id, repository_id: SIM_CODE_REPOSITORY, base_commit: t.commit ?? '' }
+    })
+  }
+  /**
+   * POST /api/code/attach {task_id, workspace_id, repository_id} (hive/core/code.py attach): join an existing workspace
+   * of an open task; never creates a goal. A 2-hour edit grant on that workspace; the workspace must be the task's own
+   * (else the grant is revoked and 403 workspace_refused / workspace_mismatch). The answer carries workspace_id.
+   */
+  async codeAttach(task: string, workspace: string, repository: string) {
+    await this.delay(() => null)
+    {
+      if (!/^ws_[A-Za-z0-9_-]+$/.test(workspace || '')) throw new ApiError(400, 'bad_workspace', 'name an existing workspace')
+      if (repository !== SIM_CODE_REPOSITORY) throw simRepositoryUnregistered()
+      const t = SIM_CODE_TARGETS.find((x) => x.id === SIM_CODE_TARGET)!
+      const goal = this.goals.get(task)
+      if (!goal) throw new ApiError(404, 'not_found', `no task ${task}`)
+      if (['done', 'failed', 'cancelled'].includes(goal.status)) throw new ApiError(409, 'task_closed', 'this task is closed; it cannot be reopened by attaching')
+      const principal = this.simPrincipal()
+      const n = String(++this.simCodeSeq).padStart(2, '0')
+      const grant = { id: `grant_simcode${n}`, goal_id: task, principal, scope: 'edit' as const, workspace_id: workspace, created_by: principal, created_at: new Date().toISOString(), expires_at: Date.now() / 1000 + 120 * 60, revoked_at: null }
+      this.simGrants.set(grant.id, grant)
+      const svc = this.simCodes.get(task)
+      try {
+        const w = svc ? ((await svc.proxy('GET', `/v1/workspaces/${workspace}`, {}, undefined).catch(() => null)) as Record<string, unknown> | null) : null
+        if (!w) throw new ApiError(403, 'workspace_refused', 'workspace is unavailable or outside this task/repository')
+        if (w.id !== workspace || w.task_id !== task || w.swarm_id !== goal.swarm_id || w.repository_id !== repository) throw new ApiError(403, 'workspace_mismatch', 'workspace does not match this task/swarm/repository')
+        return { target: this.codeTarget(t), task_id: task, swarm_id: goal.swarm_id, grant_id: grant.id, repository_id: repository, base_commit: String(w.base_commit), workspace_id: workspace }
+      } catch (e) {
+        const g = this.simGrants.get(grant.id)
+        if (g) g.revoked_at = new Date().toISOString()
+        throw e
+      }
+    }
   }
   private simStaleSeq = 0
   /**
@@ -3750,7 +3920,8 @@ export class SimClient implements HiveClient {
     return this.delay(() => {
       if (!key.trim()) throw new ApiError(400, 'bad_request', 'key is required')
       if (key.trim().length < 8) throw new ApiError(401, 'bad_key', `${this.providerStatus(name).label} rejected that key`)
-      this.providerKeys[name] = key.trim()
+      // never the typed secret (Dot on b7de1e5b): a one-way fingerprint, then the last four the hint shows
+      this.providerKeys[name] = `${SimClient.fingerprint(key.trim())}·${key.trim().slice(-4)}`
       return this.providerStatus(name)
     })
   }
@@ -3759,6 +3930,12 @@ export class SimClient implements HiveClient {
       delete this.providerKeys[name]
       return this.providerStatus(name)
     })
+  }
+  /** sol on 4e3cd2b6: the sim never keeps a pasted secret, only a one-way fingerprint for its duplicate check (and the hint) */
+  private static fingerprint(secret: string): string {
+    let h = 0x811c9dc5
+    for (let i = 0; i < secret.length; i++) h = Math.imul(h ^ secret.charCodeAt(i), 0x01000193) >>> 0
+    return `fp_${h.toString(16)}_${secret.length}`
   }
   private simKeys: (Omit<KeyInfo, 'minds' | 'spent_usd'> & { secret: string })[] = [
     { id: 'k_51a10001', provider: 'anthropic', provider_label: 'Anthropic', label: 'Anthropic key', owner: 'user:operator', hint: '…ropc', default: true, created_at: Date.now() / 1000, secret: 'sim-anthropic' },
@@ -3799,17 +3976,19 @@ export class SimClient implements HiveClient {
       return this.ownMonthlyRow()[0]
     })
   }
-  addKey(body: { provider: string; key: string; label?: string; default?: boolean }) {
+  addKey(body: { provider: string; key: string; label?: string; default?: boolean; month_usd?: number }) {   // month_usd ignored, as a hive without the mind gateway does
     return this.delay(() => {
       const secret = body.key.trim()
       if (secret.length < 8) throw new ApiError(401, 'bad_key', `${this.providerStatus(body.provider).label} rejected that key`)
-      if (this.simKeys.some((k) => k.provider === body.provider && k.secret === secret)) throw new ApiError(409, 'duplicate_key', 'that key is already saved')
+      const print = SimClient.fingerprint(secret)
+      if (this.simKeys.some((k) => k.provider === body.provider && (k.secret === print || k.secret === secret))) throw new ApiError(409, 'duplicate_key', 'that key is already saved')
       const first = !this.simKeys.some((k) => k.provider === body.provider && k.default)
       const makeDefault = body.default ?? first
       if (makeDefault) for (const k of this.simKeys) if (k.provider === body.provider) k.default = false
-      const k = { id: `k_${Math.random().toString(16).slice(2, 10)}`, provider: body.provider, provider_label: this.providerStatus(body.provider).label, label: body.label?.trim() || `${this.providerStatus(body.provider).label} key`, owner: 'user:operator', hint: '…' + secret.slice(-4), default: makeDefault, created_at: Date.now() / 1000, secret }
+      const k = { id: `k_${Math.random().toString(16).slice(2, 10)}`, provider: body.provider, provider_label: this.providerStatus(body.provider).label, label: body.label?.trim() || `${this.providerStatus(body.provider).label} key`, owner: 'user:operator', hint: '…' + secret.slice(-4), default: makeDefault, created_at: Date.now() / 1000, secret: print }
       this.simKeys.push(k)
-      this.providerKeys[body.provider] = this.providerKeys[body.provider] ?? secret
+      this.providerKeys[body.provider] = this.providerKeys[body.provider] ?? `sim-${body.provider}`
+      this.studioHostLazy?.addOwnKey()   // Studio's maker now resolves to the person's own key (sim OI-13)
       return this.keyView(k)
     })
   }
@@ -3845,7 +4024,7 @@ export class SimClient implements HiveClient {
   }
 
   openrouterCatalog() {
-    return this.delay(() => ({ models: clone(SIM_CATALOG), fetched_at: Date.now() / 1000, error: null }))
+    return this.delay(() => ({ models: clone(SIM_CATALOG), fetched_at: Date.now() / 1000, error: null, can_refresh: true }))
   }
   openrouterEndpoints(modelId: string) {
     return this.delay(() => {

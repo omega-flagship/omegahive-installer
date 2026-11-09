@@ -77,6 +77,7 @@ export const FEATURES: Feature[] = [
   { id: 'build.code', label: 'Code', blurb: 'Code workspaces with minds', group: 'build', classic: { name: 'code' } },
   { id: 'build.roles', label: 'Roles', blurb: 'Job descriptions for minds', group: 'build', classic: { name: 'roles' } },
   { id: 'build.models', label: 'Models and providers', blurb: 'AI providers and models', group: 'build', classic: { name: 'models' }, money: true },
+  { id: 'build.tools', label: 'Tools', blurb: 'Skills of thought minds can use: what each does, who made it, which minds have it', group: 'build', classic: { name: 'tools' }, keywords: 'tools tool skills thought tools which minds have a tool turn a tool on turn a tool off' },
   { id: 'build.evolve', label: 'Evolve', blurb: 'The evolving research pair', group: 'build', classic: { name: 'programs' } },
   { id: 'build.updates', label: 'Updates and holds', blurb: 'App and platform updates; place or lift a hold', group: 'build', classic: { name: 'updates' }, decision: true, keywords: 'update reload restart hold holds lift release, ask for an update, request an update' },
   // watch
@@ -96,7 +97,7 @@ export const FEATURES: Feature[] = [
   { id: 'hive.setup', label: 'Getting started', blurb: 'Setup checklist: provider, who pays, limit, a swarm, invites', group: 'hive', classic: { name: 'setup' }, keywords: 'first run setup checklist onboarding start' },
   { id: 'hive.identity', label: 'Name this hive', blurb: 'How other hives know this one', group: 'hive', classic: { name: 'settings' }, decision: true, keywords: 'rename hive name identity home cloud' },
   { id: 'hive.settings', label: 'Settings', blurb: 'Sign-in, password, disk, apps', group: 'hive', classic: { name: 'settings' }, keywords: 'registered services, code service, turn a service off, remove a service, ask audit, every person’s ask turns' },
-  { id: 'hive.changeui', label: 'Change UI', blurb: 'Looks, layouts and experiences', group: 'hive', classic: null },
+  { id: 'hive.changeui', label: 'Change experience', blurb: 'Looks, layouts and experiences', group: 'hive', classic: null },
   { id: 'hive.search', label: 'Search everything', blurb: 'Jump to anything', group: 'hive', classic: { name: 'hive' } },
   { id: 'hive.help', label: 'Help and the tour', blurb: 'How the hive works', group: 'hive', classic: { name: 'hive' } },
 ]

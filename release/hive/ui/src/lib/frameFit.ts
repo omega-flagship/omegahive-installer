@@ -126,6 +126,27 @@ export function noticeLane(device: Insets, omega: Box | null, margin = OMEGA_MAR
   return { left: px(o.right), top: px(o.top), right: Math.max(d.right, margin, px(clockRoom)), bottom: d.bottom }
 }
 
+/**
+ * Framed notices and the frame reserve the same band above the host Ask. The Ask's single room publication includes
+ * its measured dock and gap, excluding the device bottom inset (already in the base lane). No Ask keeps the old fit.
+ * Bound an impossible/tall reservation so a measurement cannot give the frame a negative or empty content height;
+ * that bound is not proof that every overlay fits an arbitrarily small viewport.
+ */
+export function framedNoticeFit(viewport: Viewport, device: Insets, omega: Box | null, clockRoom = 0, askRoom = 0): {
+  padding: Insets
+  lane: ReturnType<typeof noticeLane>
+} {
+  const padding = framedPadding(viewport, device, omega)
+  const lane = noticeLane(device, omega, undefined, clockRoom)
+  const available = Math.max(0, Math.floor(viewport.height - padding.top - padding.bottom - 1))
+  const lift = Math.min(px(askRoom), available)
+  if (!lift) return { padding, lane }
+  return {
+    padding: { ...padding, bottom: padding.bottom + lift },
+    lane: lane ? { ...lane, top: lane.top - lift, bottom: lane.bottom + lift } : null,
+  }
+}
+
 /** Gap kept between a host notice and anything it must keep clear of. */
 export const NOTICE_GAP = 8
 /** The one-line notice pill grows no wider than this (and never past 12 px from either side). */

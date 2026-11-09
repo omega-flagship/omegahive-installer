@@ -73,7 +73,7 @@ export function SwarmServices({ swarm }: { swarm: Swarm }) {
   }
 
   return (
-    <section aria-labelledby="svc-h" className="mb-4 rounded-2xl border border-line bg-white/[0.02] p-4" data-tour="swarm-services">
+    <section aria-labelledby="svc-h" className="mb-4 rounded-2xl border border-line bg-tint/[0.02] p-4" data-tour="swarm-services">
       <h2 id="svc-h" className="eyebrow">
         Services to other swarms
       </h2>
@@ -90,8 +90,8 @@ export function SwarmServices({ swarm }: { swarm: Swarm }) {
           <Kinds title="Only through a connection" kinds={res.data.connection_only_kinds} onWithdraw={canEdit && !busy ? withdraw : undefined} empty="Nothing kept for connections." />
           {canEdit && (
             <form onSubmit={add} className="flex flex-wrap items-center gap-2">
-              <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="code-review, plan" aria-label="Request kinds to offer" className="min-h-10 min-w-[160px] flex-1 rounded-xl border border-line bg-black/30 px-3 text-[13px] text-ink outline-none focus:border-line-2" />
-              <select value={scope} onChange={(e) => setScope(e.target.value as 'public' | 'connection')} aria-label="Offered to" className="min-h-10 rounded-xl border border-line bg-black/30 px-2.5 text-[13px] text-ink outline-none focus:border-line-2">
+              <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="code-review, plan" aria-label="Request kinds to offer" className="min-h-10 min-w-[160px] flex-1 rounded-xl border border-line bg-shade/30 px-3 text-[13px] text-ink outline-none focus:border-line-2" />
+              <select value={scope} onChange={(e) => setScope(e.target.value as 'public' | 'connection')} aria-label="Offered to" className="min-h-10 rounded-xl border border-line bg-shade/30 px-2.5 text-[13px] text-ink outline-none focus:border-line-2">
                 <option value="public">to everyone who can see it</option>
                 <option value="connection">only through a connection</option>
               </select>
@@ -106,7 +106,7 @@ export function SwarmServices({ swarm }: { swarm: Swarm }) {
       {grants && (grants.toUs.length > 0 || grants.fromUs.length > 0) && (
         <div className="mt-4 space-y-2">
           <h3 className="text-[12px] font-medium text-ink-2">Granted through connections</h3>
-          <ul className="overflow-hidden rounded-xl border border-line bg-black/20 text-[12.5px]">
+          <ul className="overflow-hidden rounded-xl border border-line bg-shade/20 text-[12.5px]">
             {[...grants.toUs, ...grants.fromUs].map((g, i) => (
               <li key={`${g.connection.id}:${g.asker}:${g.kinds.join()}`} className={i ? 'flex items-start gap-2 border-t border-line px-3 py-2' : 'flex items-start gap-2 px-3 py-2'}>
                 <Icon name="link" size={15} className="mt-0.5 shrink-0 text-ink-3" />
@@ -154,10 +154,10 @@ function Kinds({ title, kinds, onWithdraw, empty }: { title: string; kinds: stri
       ) : (
         <div className="flex flex-wrap gap-1.5">
           {kinds.map((k) => (
-            <span key={k} className="inline-flex min-h-8 items-center gap-1 rounded-full border border-line bg-white/[0.04] pr-1 pl-2.5 text-[12.5px] text-ink">
+            <span key={k} className="inline-flex min-h-8 items-center gap-1 rounded-full border border-line bg-tint/[0.04] pr-1 pl-2.5 text-[12.5px] text-ink">
               {k}
               {onWithdraw ? (
-                <button onClick={() => onWithdraw(k)} aria-label={`Withdraw ${k}`} title={`Withdraw ${k}`} className="flex size-7 items-center justify-center rounded-full text-ink-3 hover:bg-white/[0.08] hover:text-ink">
+                <button onClick={() => onWithdraw(k)} aria-label={`Withdraw ${k}`} title={`Withdraw ${k}`} className="flex size-7 items-center justify-center rounded-full text-ink-3 hover:bg-tint/[0.08] hover:text-ink">
                   <Icon name="x" size={13} />
                 </button>
               ) : (

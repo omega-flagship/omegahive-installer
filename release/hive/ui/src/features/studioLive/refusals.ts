@@ -6,6 +6,7 @@
  * figures null (contract :170). Words the person typed are always kept when a direction is refused (429 included).
  */
 import { ApiError } from '../../api/client'
+import { keySetupFrom, limitOnlySetup, type KeySetup } from '../ownKey/addOwnKey'
 
 export interface StudioRefusal {
   code: string
@@ -18,6 +19,8 @@ export interface StudioRefusal {
   next?: 'confirm-new-card' | 'stop-then-new' | 'wait' | 'none' | 'ask'
   /** a direction refused this way keeps its words for the person to send again */
   keepWords: boolean
+  /** Jon 11-05: the one add-your-key step, shown inline (features/ownKey) instead of sending the person to Keys */
+  keySetup?: KeySetup
 }
 
 const rec = (v: unknown): Record<string, unknown> | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null)
@@ -52,10 +55,12 @@ export function heldWords(reason: string | null): string {
   return (reason && HELD_WORDS[reason]) || 'The hive is holding this session. Nothing new will draw until it is cleared; the piece stays.'
 }
 
-/** OI-13 (the owner 10-19: "everyone needs studio, they just need to use their own keys"): 402 own_key_needed, raised before
+/** OI-13 (Jon 10-19: "everyone needs studio, they just need to use their own keys"): 402 own_key_needed, raised before
  *  any reservation or dispatch (ownhive.person_key_check). Words kept; never retried on its own. */
 export const OWN_KEY_WORDS = 'This would run on someone else’s key, so nothing was started and nothing was spent. Add your own key in Keys, then try again.'
 export const OWN_KEY_REMEDY = 'Add your own key'
+/** with the inline step: what the refusal says above the sheet (nothing was started or spent; the sheet is the way on) */
+export const OWN_KEY_SHEET_WORDS = 'Drawing with a mind runs on your own key. Add it once here and the drawing starts; nothing was spent.'
 
 /** r1.10: the card's intent is recorded on the person's own Ask turn (host: POST /api/ask/{op}/intents) */
 export const SETUP_NEEDS_TURN_WORDS = 'Studio starts from your Ask: ask the hive what to draw (for example “a poster for the picnic”), then choose Draw live with a mind. Nothing was started.'
@@ -130,12 +135,14 @@ export function studioRefusal(e: unknown, context?: 'resume'): StudioRefusal {
     const r = resumeRefusal(e)
     if (r) return r
   }
-  if (isMonthlyTotalRequired(e)) return { code: 'monthly_total_required', words: MONTHLY_TOTAL_WORDS, remedy: { label: MONTHLY_TOTAL_REMEDY, go: 'me' }, keepWords: true }
+  if (isMonthlyTotalRequired(e)) return { code: 'monthly_total_required', words: MONTHLY_TOTAL_WORDS, remedy: { label: MONTHLY_TOTAL_REMEDY, go: 'me' }, keepWords: true, keySetup: limitOnlySetup() }
   if (!(e instanceof ApiError)) return { code: 'unknown', words: 'The hive did not answer. Nothing is assumed: your words are kept.', keepWords: true }
   const { kind } = limitParts(e)
   switch (e.code) {
-    case 'own_key_needed':
-      return { code: e.code, words: OWN_KEY_WORDS, remedy: { label: OWN_KEY_REMEDY, go: 'keys' }, keepWords: true }
+    case 'own_key_needed': {
+      const keySetup = keySetupFrom(e) ?? undefined
+      return { code: e.code, words: keySetup ? OWN_KEY_SHEET_WORDS : OWN_KEY_WORDS, remedy: { label: OWN_KEY_REMEDY, go: 'keys' }, keepWords: true, ...(keySetup ? { keySetup } : {}) }
+    }
     // host R6 (OI-11, studio_sessions.admit): only an Omega mind (hub channel) can take Studio steps; nothing written
     case 'maker_kind_unsupported':
       return { code: e.code, words: 'That maker can’t take Studio steps: it is a kind of mind this hive’s Studio can’t drive yet. Nothing was created or spent. Choose an Omega mind as the maker.', keepWords: true, next: 'none' }

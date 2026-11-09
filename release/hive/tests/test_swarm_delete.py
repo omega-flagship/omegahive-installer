@@ -10,7 +10,7 @@ def test_only_an_empty_swarm_can_be_deleted(client):
     assert client.get(f"/api/swarms/{empty['id']}").status_code == 404
 
 
-# ---- delete with its minds (the owner, 2026-10-07: a warning, not a lock) ------------------------------------------------
+# ---- delete with its minds (Jon 2026-10-07: a warning, not a lock) ------------------------------------------------
 
 def _delete(client, swarm_id, payload=None, **kw):
     return client.request("DELETE", f"/api/swarms/{swarm_id}", json=payload, **kw)
@@ -445,7 +445,7 @@ def test_submitted_work_stays_for_review_and_a_return_reopens_it(client):
     row = hive.db.one("SELECT * FROM goals WHERE id = ?", (goal["id"],))
     assert row["status"] == "submitted" and row["assignee"] is None and row["result"] == "the answer"
     client.post(f"/api/swarms/{swarm['id']}/restore")
-    reviewer = {"kind": "person", "principal": "user:u_quinn", "admin": True}
+    reviewer = {"kind": "person", "principal": "user:u_jon", "admin": True}
     back = asyncio.run(hive.goals.review(goal["id"], reviewer, "return", "try again"))
     assert back["status"] == "open" and back["claimed_by"] is None                   # never back to the deleted mind
 
@@ -535,7 +535,7 @@ def test_a_review_return_whose_holder_is_deleted_mid_review_reopens_it(client, m
         record(*args, **kw)
         hive.delete_agent(a["id"])
     monkeypatch.setattr(hive.goals, "_record_review", record_then_delete)
-    out = asyncio.run(hive.goals.review(goal["id"], {"kind": "person", "principal": "user:u_quinn", "admin": True},
+    out = asyncio.run(hive.goals.review(goal["id"], {"kind": "person", "principal": "user:u_jon", "admin": True},
                                         "return", "again"))
     assert out["status"] == "open" and out["claimed_by"] is None
     assert hive.db.one("SELECT claimed_by, status FROM goals WHERE id = ?", (goal["id"],)) == {"claimed_by": None, "status": "open"}
@@ -547,7 +547,7 @@ def test_a_review_return_to_a_live_holder_is_unchanged(client):
     swarm, (a, b) = make_swarm_and_agents(client)
     goal = client.post(f"/api/swarms/{swarm['id']}/goals", json={"title": "reviewed", "binding": {"review": "person"}}).json()
     hive.db.update("goals", goal["id"], {"status": "submitted", "claimed_by": a["id"], "result": "r"})
-    out = asyncio.run(hive.goals.review(goal["id"], {"kind": "person", "principal": "user:u_quinn", "admin": True},
+    out = asyncio.run(hive.goals.review(goal["id"], {"kind": "person", "principal": "user:u_jon", "admin": True},
                                         "return", "again"))
     assert out["status"] == "claimed" and out["claimed_by"] == a["id"]
 

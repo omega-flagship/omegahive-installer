@@ -18,11 +18,8 @@ from hive.core.goals import binding_digest
 
 PETTA = os.environ.get("PETTA_PATH", str(pathlib.Path.home() / "PeTTa"))
 pytestmark = pytest.mark.skipif(not pathlib.Path(PETTA, "src", "main.pl").exists(), reason="needs PeTTa")
-# Sibling checkouts (not part of this repository): the folder that holds them, by default the one next to this repo.
-SIBLINGS = pathlib.Path(__file__).resolve().parents[3]
-ATOM = pathlib.Path(os.environ.get("OMEGAATOM_PATH", str(SIBLINGS)))
-needs_atom = pytest.mark.skipif(not (ATOM / "omegaatom" / "envelope.py").exists(),
-                                reason="needs sibling repo omegaatom (OmegaAtom's validator, not in this repository; set OMEGAATOM_PATH)")
+ATOM = pathlib.Path(os.environ.get("OMEGAATOM_PATH", str(pathlib.Path.home() / "OmegaDot")))
+needs_atom = pytest.mark.skipif(not (ATOM / "omegaatom" / "envelope.py").exists(), reason="needs OmegaAtom's validator")
 HEX = "a" * 64
 
 
@@ -475,11 +472,10 @@ def test_evidence_pages_split_between_closure_groups_and_stay_bound(c):
 
 # ---- conformance with HiveConnect's own client (L1: their DraftReadClient against this disposable host) ---------
 
-HC = pathlib.Path(os.environ.get("HIVECONNECT_PATH", str(SIBLINGS)))
+HC = pathlib.Path(os.environ.get("HIVECONNECT_PATH", str(pathlib.Path.home() / "OmegaDot")))
 
 
-@pytest.mark.skipif(not (HC / "hiveconnect" / "draft_client.py").exists(),
-                    reason="needs sibling repo hiveconnect (HiveConnect's client, not in this repository; set HIVECONNECT_PATH)")
+@pytest.mark.skipif(not (HC / "hiveconnect" / "draft_client.py").exists(), reason="needs HiveConnect's client")
 @needs_atom
 def test_hiveconnect_draft_read_client_runs_against_this_host(c):
     sys.path.insert(0, str(HC))

@@ -1,5 +1,5 @@
 /**
- * Plain words for code (the owner's rule: nobody has to read or write code). Pure helpers for the Code canvas:
+ * Plain words for code (Jon's rule: nobody has to read or write code). Pure helpers for the Code canvas:
  *  - describeChange: what one proposed change does, in words, from its before and after text;
  *  - summarize: the summary of a whole proposal (what changed, where, and what must go together);
  *  - runMarks / runTally: a test run's output turned into results beside the lines they name.

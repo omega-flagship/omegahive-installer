@@ -3,26 +3,31 @@
  * Shared by every skin; `variant` sets the grammar (Classic glass, Still's letter). Everything is plain text: the
  * mind's words, captions and labels are never rendered as HTML, and refusals are the page's own sentences.
  */
+import { AnswerParagraph } from './answerText'
 import { m } from 'framer-motion'
-import { Fragment, useMemo, useState, type ReactNode } from 'react'
+import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useStickToBottom } from '../../lib/stickToBottom'
 import { NewBelow } from '../../ui/NewBelow'
 import { useReducedMotion } from '../../lib/hooks'
-import { href, navigate } from '../../lib/router'
+import { href, navigate, useRoute } from '../../lib/router'
 import { useAdminView } from '../../lib/useAdmin'
 import { focusCoordinatorPicker } from '../swarm/coordinatorPicker'
 import type { AskWho } from '../../api/ask'
-import { threadRows, useAskStore, type AskRow } from '../../store/ask'
+import { askRetryContext, threadRows, useAskStore, type AskRow } from '../../store/ask'
 import { useHive } from '../../store/store'
+import { canOwnKeySheet, OwnKeySheet, type OwnKeyClient } from '../ownKey/OwnKeySheet'
+import type { KeySetup } from '../ownKey/addOwnKey'
 import { useLook } from '../../shell/uiVariant'
 import { REFUSAL_WORDS, money, raiseSteps, refusedSay, shownMind, spendRefusalOffers, threadLabel, type Offer } from './words'
 import { GuideCard } from '../guided/GuideLayer'
 import { openAskMemory } from './memoryNav'
+import { currentEpoch } from '../../lib/identityEpoch'
 import { AskEarlier } from './Earlier'
 import { AnswererPicker, AnswererRefusal } from './AnswererPicker'
 import { hasNotation, plainText } from '../../lib/beliefSentence'
 import { AsWritten } from '../../ui/Belief'
 import { PICKER_REASONS, threadInfo } from './answerer'
+import { AutoWakeStatus } from './AutoWakeStatus'
 import { DirectingStudio } from '../studioLive/DirectingStudio'
 
 /** glass: Classic · letter: Still · transmission: Cosmos · liquid: Flux · terminal: Construct · note: Canvas */
@@ -63,8 +68,19 @@ function Btn({ children, onClick, tone = 'plain', label, pressed }: { children: 
   )
 }
 
-function OfferButtons({ offers, retry, mind, op }: { offers: Offer[]; retry?: string; mind?: AskWho; op?: string }) {
+function OfferButtons({ offers, retry, mind, op, keySetup }: { offers: Offer[]; retry?: string; mind?: AskWho; op?: string; keySetup?: KeySetup }) {
   const s = useAskStore()
+  const route = useRoute()
+  const look = useLook()
+  const place = JSON.stringify(route)
+  const epoch = currentEpoch()
+  const retryContext = op ? askRetryContext(op, epoch) : null
+  const activation = useMemo(() => ({ epoch }), [epoch, s.epoch, place, look.current?.experience, op, retryContext])
+  const authority = useRef<object | null>(null)
+  useLayoutEffect(() => {
+    authority.current = activation
+    return () => { if (authority.current === activation) authority.current = null }
+  }, [activation])
   const [open, setOpen] = useState<'swarm' | 'wake' | 'raise' | null>(null)
   const [pick, setPick] = useState<number | null>(null)
   const [saved, setSaved] = useState<number | null>(null)
@@ -80,16 +96,24 @@ function OfferButtons({ offers, retry, mind, op }: { offers: Offer[]; retry?: st
     else if (o.kind === 'raise-budget') toggle('raise')
     else if (o.kind === 'stop') void s.stop()
     else if (o.kind === 'wake') toggle('wake')
-    else if (o.kind === 'retry' && retry) void s.retryLast()
+    else if (o.kind === 'retry' && retry && op && authority.current === activation && activation.epoch === currentEpoch()) void s.retryLast(op, activation.epoch, retryContext)
   }
   const sleeper = mind ?? s.thread?.mind
   const steps = raiseSteps(s.settings?.max_thread_budget_usd)
   const own = s.thread ? money(s.thread.budget_usd) : null
+  // Jon 11-05: own_key_needed's way on is the one add-your-key step, right here; on success the person's last words are
+  // asked again through the thread's own retry (never the Keys page and back)
+  const hiveClient = useHive((x) => x.client) as Partial<OwnKeyClient> | null
+  // the sheet only where this client can run it (P3): otherwise "Add your own key" (Keys) stays the way on
+  const keyClient = canOwnKeySheet(hiveClient) ? hiveClient : null
+  const sheet = !!(keySetup && keyClient && retry && op)
   return (
     <>
+      {sheet && <OwnKeySheet setup={keySetup!} client={keyClient!} action="ask" onDone={() => run({ kind: 'retry', label: 'Ask again' })} />}
       <span className="ask-offers">
         {offers
           .filter((o) => o.kind !== 'wake' || sleeper)
+          .filter((o) => !(sheet && o.kind === 'keys'))
           .map((o) => (
             <Btn key={o.kind} onClick={() => run(o)} tone={o.kind === 'raise-budget' || o.kind === 'choose-swarm' ? 'primary' : 'plain'}>
               {o.kind === 'wake' && sleeper ? `Wake ${shownMind(sleeper.name)}` : o.label}
@@ -332,9 +356,7 @@ function Row({ r, variant, words, lastYou, trail }: { r: AskRow; variant: Thread
           {r.incomplete && <p className="ask-row-note">Incomplete: steps before this answer could not be loaded.</p>}
           {/* uifix-r3 (S3): beliefs and truth numbers in an answer read as words; the exact answer is "as written" */}
           {r.text.split(/\n{2,}/).map((p, i) => (
-            <p key={i} className="ask-answer">
-              {lit(plainText(p), words)}
-            </p>
+            <AnswerParagraph key={i} className="ask-answer" text={plainText(p)} mark={(s) => lit(s, words)} />
           ))}
           {hasNotation(r.text) && <AsWritten text={r.text} className="ask-row-note" />}
         </div>
@@ -399,7 +421,7 @@ function Row({ r, variant, words, lastYou, trail }: { r: AskRow; variant: Thread
       return (
         <div className="ask-row" data-kind="refused" role="note">
           <span className="ask-row-text">{refusedSay(r.reason, r.spentUsd)}</span>
-          {offers && <OfferButtons offers={offers} retry={lastYou} mind={r.mind} op={r.op} />}
+          {offers && <OfferButtons offers={offers} retry={lastYou} mind={r.mind} op={r.op} keySetup={r.keySetup} />}
         </div>
       )
     }
@@ -528,6 +550,7 @@ export function ThreadLog({ rows, variant, words = [] }: { rows: AskRow[]; varia
         {rows.map((r) => (
           <m.div key={r.id} initial={reduced ? false : { opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={reduced ? { duration: 0 } : { type: 'spring', stiffness: 420, damping: 34 }}>
             <Row r={r} variant={variant} words={words} lastYou={lastYou} trail={r.kind === 'nav' && r.op && trails.get(r.op)?.at(-1) === r ? trails.get(r.op) : undefined} />
+            {r.kind === 'you' && r.op && <AutoWakeStatus op={r.op} words={r.text} />}
           </m.div>
         ))}
         </div>

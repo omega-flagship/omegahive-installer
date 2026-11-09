@@ -66,7 +66,7 @@ class HiveChannelRuntimeTests(unittest.TestCase):
             self.assertTrue(wait_for(lambda: self.hub.connections, timeout=120), "agent never connected")
             self.assertEqual(self.hub.next_frame(timeout=10), {"type": "resume", "last_seen_seq": None})
             self.assertEqual(self.hub.tokens[-1], "Bearer agent-alpha")
-            envelope = {"hive": 1, "sender": "user:quinn", "conversation_id": "c-1", "text": "ping"}
+            envelope = {"hive": 1, "sender": "user:jon", "conversation_id": "c-1", "text": "ping"}
             self.hub.push(1, json.dumps(envelope))
             reply = self.hub.next_frame(timeout=60)
             self.assertEqual(reply["type"], "agent_message")

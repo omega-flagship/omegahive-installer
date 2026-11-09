@@ -1,3 +1,4 @@
+import { useCanvasCurrent } from './actionAuthority'
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from 'react'
 import { heldForInbox, shown, useHive, type Approval, type Decision } from '../sdk'
 import { ago, RISK_PAPER } from './data'
@@ -21,6 +22,7 @@ export function DecisionInspect({ id, now, onClose, fallbackFocus }: { id: strin
 }
 
 function Inspector({ seen, live, now, onClose, fallbackFocus }: { seen: Inspected; live: Approval | undefined; now: number; onClose: () => void; fallbackFocus: () => HTMLElement | null }) {
+  const current = useCanvasCurrent()
   const deciding = useHive((s) => s.deciding[seen.id])
   // Surface R: re-check the binding when the store's session changes (a different client is a different hive)
   useHive((s) => s.session)
@@ -49,10 +51,11 @@ function Inspector({ seen, live, now, onClose, fallbackFocus }: { seen: Inspecte
   const paper = RISK_PAPER[seen.risk]
 
   const decide = async (d: Decision, minutes?: number) => {
+    if (!current()) return
     setError(null)
     setSent(true)
     const r = await useHive.getState().decide(seen.id, d, minutes, seen.session)
-    if (!alive.current) return
+    if (!alive.current || !current()) return
     // UI review S5: held for the Inbox in a surface-preview build (said there): close, claiming nothing
     if (heldForInbox(r) || r) onClose()
     else {

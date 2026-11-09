@@ -1,5 +1,5 @@
 /**
- * r4 (stand-in Review on f7c1cd4, coordination/omegareview/standin/STANDIN_canvas3_VERDICT_20261006.md): the confirm
+ * r4 (stand-in Review on f7c1cd4, STANDIN_canvas3_VERDICT_20261006.md): the confirm
  * the person actually sees, rendered. The canvas's own VibeCard is rendered over a real VibeSession (the simulator's
  * invented service), its confirm opened through the session's own review(); the rendered dialog must say what was
  * allowed and asked. Shown to fail with the confirm's facts wiring removed (receipts r4/p4-M*.txt).

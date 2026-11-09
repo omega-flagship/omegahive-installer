@@ -144,19 +144,6 @@ Quench every 10) and wake sleeping minds; memory spaces hold atoms built from th
 and retire/reset are applied a few seconds later; paid models with a $0 cap are refused with
 `no_budget`, budget exhaustion and rate limits land in `last_error`.
 
-## Added since the 2026-10-10 handover
-
-- **First Light** (`src/features/firstlight/`): the onboarding journey on the real hive screens, loaded only once
-  asked for (`#/first-light`, the Ask, or `?firstlight=` in the simulator). It adds marks, a ring on the current target
-  and one small panel above the Ask; captions always, voice off in this round. Nothing is sent or spent by an
-  implicit submit.
-- **Studio live** (`src/features/studioLive/`): the directing bar for a live Studio session (`StudioLiveBar`), the
-  frame mount, piece custody, outcomes, receipts, cost lines and plain refusals. Host routes: "Studio live sessions"
-  in `../API.md`.
-- **Monthly total on your own keys** (`src/features/keys/OwnMonthlyLimit.tsx`, on the Me page): reads and saves the
-  self / all-keys limit (`GET /api/me/key-limits`, `PUT /api/me/key-limits/self {key_id: "*", month_usd}`) and says
-  "Saved" only after reading it back. The Add-a-key form keeps a `duplicate_key` refusal on screen in plain words.
-
 ## Mind programs: the adaptive host
 
 Built against [`../PROGRAMS.md`](../PROGRAMS.md) (contract 0.1). A program returns data only (a work

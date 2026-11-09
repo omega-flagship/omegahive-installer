@@ -24,7 +24,7 @@ import types
 import uuid
 
 SEED_PIN = (1627, "917fc8c77357ef076712e867e0f1026e8910fc0683b017f824111b2b5c62f0ee")
-CONTROL_PIN = (24048, 'a3bf9aae0c66a0f4c9811a69299f5fdd9116aff512a5779808b4a83f62a19ce1')
+CONTROL_PIN = (26945, '1d9a6909c72106ac42bba4758b7a1dc9404fb59201f85a928b8b282ac86d8a87')
 APPS = ("omegaassist", "omegadesign")
 MAX_BODY = 256 * 1024
 STOP = False
@@ -208,10 +208,12 @@ class OwnerAPI:
         end = time.monotonic() + 5 if cleanup else min(self.deadline, time.monotonic() + 5)
         require((cleanup or not STOP) and end - time.monotonic() > 0.1)
         require(self.control.supervisor_pid(self.home) == self.pid)
-        # The service is not dumpable, so /proc/<pid>/exe is unreadable: its hello attests its executable and listener.
+        # The service is not dumpable, so /proc/<pid>/exe is unreadable: systemd's record binds its executable, and the
+        # one loopback listener must be owned by this account (control.exe_matches / control.listener_matches).
         hello = self.hello
-        require(type(hello) is dict and hello.get("pid") == self.pid and self.control.exe_matches(self.config, hello)
-                and type(hello.get("listener_inode")) is str and hello["listener_inode"].isdecimal())
+        require(type(hello) is dict and hello.get("pid") == self.pid
+                and self.control.exe_matches(self.config, hello, self.home, self.pid)
+                and self.control.listener_matches(self.config, hello))
         require(time.monotonic() < end)
         connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         raw = bytearray()
@@ -351,8 +353,8 @@ def bootstrap(runtime, seed_path):
                 and hello.get("pid") == pid and hello.get("port") == config["port"]
                 and type(hello.get("instance")) is str and type(hello.get("owner")) is str
                 and re.fullmatch(r"user:u_[A-Za-z0-9_-]+", hello["owner"]))
-        # The attested executable and loopback listener are checked before any sign-in code is requested.
-        require(control.exe_matches(config, hello) and control.listener_matches(config, hello))
+        # The executable and loopback listener are checked before any sign-in code is requested.
+        require(control.exe_matches(config, hello, home, pid) and control.listener_matches(config, hello))
         signin, observed_pid = control.request(config, home, "signin", expected_pid=pid)
         require(type(signin) is dict and signin.get("ok") is True and observed_pid == pid)
         api = OwnerAPI(control, config, home, pid, time.monotonic() + 50, hello)

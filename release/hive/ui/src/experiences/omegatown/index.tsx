@@ -138,7 +138,7 @@ function Town({ ctx }: { ctx: string }) {
     const id = event.currentTarget.dataset.featureId
     if (id) feature(id)
   }
-  // The owner, 2026-10-08: "Residents use their own voice, ask is essentially me." Talking to a resident opens that mind's
+  // Jon, 2026-10-08: "Residents use their own voice, ask is essentially me." Talking to a resident opens that mind's
   // own chat (its own voice); the Universal Ask stays the person's and never speaks for, or as, a resident.
   const talk = (id: string) => {
     const agent = useHive.getState().agents[id]

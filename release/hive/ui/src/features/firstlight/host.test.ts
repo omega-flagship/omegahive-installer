@@ -1,11 +1,75 @@
 import { describe, expect, it } from 'vitest'
+import { ApiError } from '../../api/client'
 import { useHive } from '../../store/store'
-import { bindOperation, stopped } from '../../lib/boundOperation'
-import { ASK_HOW_MAX, askToSave, cleanWords, liveHost, personaEditable, readPersonApp, startApp, type BoundWrite, type FlClient } from './host'
+import { bindOperation, OperationStopped, stopped } from '../../lib/boundOperation'
+import { ASK_HOW_MAX, DEFAULT_ASK_PURPOSE, asRefusal, askPurposeValue, askToSave, cleanWords, liveHost, personaEditable, readPersonApp, startApp, type BoundWrite, type FlClient } from './host'
 
 const open: BoundWrite = (send) => send()
 
 const app = (over: Record<string, unknown> = {}) => ({ id: 'talk', name: 'Your assistant', enabled: true, placement: 'person', ui: true, error: null, app: { tagline: 'Talk every day' }, ...over })
+
+describe('U1 exact personal-mind profile reader', () => {
+  it('requires the requested ID and whole persona, returns actual model or unknown, and never uses a different agent', async () => {
+    const sent: string[] = []
+    const persona = 'Whole\n' + 'x'.repeat(900)
+    let body: unknown = { id: 'a_m', name: 'Wren', persona, model: 'host/model' }
+    const h = liveHost({ getAgent: async (id) => { sent.push(id); return body } }, () => 0)
+    expect(await h.profile!('a_m')).toEqual({ id: 'a_m', name: 'Wren', persona, model: 'host/model' })
+    body = { id: 'a_m', name: 'Wren', persona: '', model: null }
+    expect(await h.profile!('a_m')).toEqual({ id: 'a_m', name: 'Wren', persona: '', model: null })
+    for (const bad of [{ id: 'a_other', name: 'Wren', persona: '', model: 'x' }, { id: 'a_m', name: 'Wren', persona: null, model: 'x' }, { id: 'a_m', name: '', persona: '', model: 'x' }]) {
+      body = bad
+      await expect(h.profile!('a_m')).rejects.toBeInstanceOf(Error)
+    }
+    expect(sent).toEqual(Array(5).fill('a_m'))
+  })
+})
+
+describe('typed client stops survive ordinary host error conversion', () => {
+  for (const [at, expected] of [
+    ['rename', ['rename']],
+    ['persona', ['rename', 'persona']],
+    ['prefs', ['rename', 'persona', 'prefs']],
+  ] as const) {
+    it(`rejects the actual ApiError(identity_changed) at ${at}, sending no later step`, async () => {
+      const error = new ApiError(0, 'identity_changed', 'Earlier sign-in answer')
+      const sent: string[] = []
+      const c: FlClient = {
+        renameMyMind: async (name) => {
+          sent.push('rename')
+          if (at === 'rename') throw error
+          return { mind: { id: 'a_m', name, status: 'asleep' } }
+        },
+        patchAgent: async () => {
+          sent.push('persona')
+          if (at === 'persona') throw error
+          return { id: 'a_m' }
+        },
+        setAskSettings: async () => {
+          sent.push('prefs')
+          if (at === 'prefs') throw error
+          return {}
+        },
+      }
+      const op = bindOperation()
+      await expect(liveHost(c, () => 0).saveAsk('a_m', { name: 'Wren', how: 'Kind.' }, (send) => op.write(send))).rejects.toBe(error)
+      expect(stopped(error)).toBe(true)
+      expect(sent).toEqual(expected)
+    })
+  }
+
+  it('conversion rethrows the identical typed stop while ordinary errors remain refusals', () => {
+    for (const error of [new ApiError(0, 'identity_changed', 'Earlier sign-in answer'), new OperationStopped()]) {
+      let caught: unknown
+      try { asRefusal(error) } catch (e) { caught = e }
+      expect(caught).toBe(error)
+      expect(stopped(caught)).toBe(true)
+    }
+    const ordinary = asRefusal(new ApiError(403, 'person_required', 'No'))
+    expect(ordinary).toMatchObject({ status: 403, code: 'person_required' })
+    expect(stopped(ordinary)).toBe(false)
+  })
+})
 
 describe('R3 host: apps ready for the person, and their Ask', () => {
   it('keeps only usable person apps from the list (enabled, person placement, own interface, no error)', () => {
@@ -106,5 +170,35 @@ describe('R3 host: apps ready for the person, and their Ask', () => {
   it('the persona is read whole, never cut', async () => {
     const long = 'x'.repeat(900)
     expect(await liveHost({ getAgent: async () => ({ id: 'a_m', persona: long }) }, () => 0).askHow('a_m')).toBe(long)
+  })
+
+  it('offers the exact editable purpose only for known empty words, and explicit Save adopts it', () => {
+    expect(DEFAULT_ASK_PURPOSE).toBe('Help me and my family improve our lives.')
+    expect(askPurposeValue('')).toBe(DEFAULT_ASK_PURPOSE)
+    expect(askToSave('Wren', null, '')).toEqual({ name: 'Wren', how: DEFAULT_ASK_PURPOSE })
+    expect(askPurposeValue(null)).toBe('')
+    expect(askToSave('Wren', null, null)).toEqual({ name: 'Wren', how: null })
+    expect(askToSave('Wren', 'A proposed edit', null).how).toBeNull()
+  })
+
+  it('keeps an intentional edit or clear instead of restoring the default', () => {
+    expect(askToSave('Wren', 'Help with our garden.', '').how).toBe('Help with our garden.')
+    expect(askToSave('Wren', '', '').how).toBe('')
+    expect(askToSave('Wren', '', 'Kind.').how).toBe('')
+  })
+
+  it('preserves every existing persona whole on name-only Save, including long and multiline words', () => {
+    for (const current of ['Existing purpose.', 'x'.repeat(900), 'two\nlines']) {
+      expect(askPurposeValue(current)).toBe(current)
+      expect(askToSave('Wren', null, current)).toEqual({ name: 'Wren', how: null })
+    }
+  })
+
+  it('distinguishes a known empty read from missing, malformed, foreign or failed answers', async () => {
+    expect(await liveHost({ getAgent: async () => ({ id: 'a_m', persona: '' }) }, () => 0).askHow('a_m')).toBe('')
+    for (const answer of [{ id: 'a_other', persona: '' }, { id: 'a_m' }, { id: 'a_m', persona: null }, {}]) {
+      await expect(liveHost({ getAgent: async () => answer }, () => 0).askHow('a_m')).rejects.toMatchObject({ code: 'unreadable' })
+    }
+    await expect(liveHost({ getAgent: async () => { throw new Error('offline') } }, () => 0).askHow('a_m')).rejects.toMatchObject({ code: 'network' })
   })
 })

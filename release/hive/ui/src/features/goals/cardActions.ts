@@ -20,9 +20,9 @@ export function cardActions(g: Pick<Goal, 'status'>): CardAction[] {
   if (s === 'open' || s === 'claimed' || s === 'waiting' || s === 'stalled')
     return [
       ...(s === 'stalled' ? [{ to: 'open' as const, label: 'Re-open', icon: 'reset' as const, color: '#a5b4fc' }] : []),
-      { to: 'done', label: s === 'waiting' ? 'Accept · done' : 'Done', icon: 'check', color: '#4ade80' },
-      { to: 'failed', label: 'Failed', icon: 'x', color: '#fb7185' },
-      { to: 'cancelled', label: 'Cancel', icon: 'ban', color: '#8a89b3' },
+      { to: 'done', label: s === 'waiting' ? 'Accept · done' : 'Done', icon: 'check', color: 'var(--color-good)' },
+      { to: 'failed', label: 'Failed', icon: 'x', color: 'var(--color-bad)' },
+      { to: 'cancelled', label: 'Cancel', icon: 'ban', color: 'var(--color-ink-3)' },
     ]
   if (s === 'done' || s === 'failed' || s === 'cancelled') return [{ to: 'open', label: 'Reopen', icon: 'reset', color: '#a5b4fc' }]
   return []

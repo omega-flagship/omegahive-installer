@@ -279,7 +279,7 @@ function showNotice(notice: UpdateNotice) {
   if (notice === 'updating') {
     // the page is about to reload: cover it so nothing half-loaded is clickable
     d.style.cssText =
-      'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(5,5,15,.88);z-index:2147483000'
+      'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;background:color-mix(in oklab, var(--color-void) 88%, transparent);z-index:2147483000'
     c.textContent = NOTICE_TEXT.updating
   } else {
     // not a cover: where the shell is still up, it and the Ask stay usable beneath this card

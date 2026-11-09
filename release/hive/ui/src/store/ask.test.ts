@@ -22,7 +22,7 @@ type HiveClient = import('../api/client').HiveClient
 
 /**
  * Universal Ask phase 1: the store slice. A hand-made client (invented data, no network): what the host sends is
- * played as frames, in order, out of order, malformed, and read back. Covers the owner's rulings of 2026-10-05: moves as
+ * played as frames, in order, out of order, malformed, and read back. Covers Jon's rulings of 2026-10-05: moves as
  * often as the mind chooses (flood cap only), the person always wins (takeover), steering mid-turn, reversal, memory.
  */
 const OP_RE = /^ask:/
@@ -79,6 +79,19 @@ afterEach(() => {
   markUnsaved('test', false)
   previewLook(null) // a look preview counts as unsaved state for the next test
   useAskStore.getState().reset()
+})
+
+describe('new-turn-only callers', () => {
+  it('refuses a queued new turn while an Ask is open without submitting or steering it', async () => {
+    const client = fakeClient()
+    const op = await ask('The current request', client)
+    const result = await useAskStore.getState().admit('A separate queued job', { route: 'hive', experience: 'classic' }, { newTurnOnly: true })
+    expect(result).toEqual({ admitted: false, reason: 'held' })
+    expect(client.ask).toHaveBeenCalledTimes(1)
+    expect(client.askSteer).not.toHaveBeenCalled()
+    expect(useAskStore.getState().open).toBe(op)
+    expect(useAskStore.getState().turns[op].you).toBe('The current request')
+  })
 })
 
 describe('frames: checked, in order, once; gaps recovered', () => {
@@ -146,7 +159,7 @@ describe('frames: checked, in order, once; gaps recovered', () => {
   })
 })
 
-describe('the mind moves the page (Quinn: as often as it chooses; animated only when it asks)', () => {
+describe('the mind moves the page (Jon: as often as it chooses; animated only when it asks)', () => {
   it('five moves all apply, in order, with the trail of every move; animate reaches the mover', async () => {
     const calls: { hash: string; animate: boolean }[] = []
     setMover((r, animate) => {

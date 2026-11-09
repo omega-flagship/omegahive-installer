@@ -67,6 +67,8 @@ vi.mock('../../ask/fields', () => ({ useAskFillable: (_id: string, _l: string, _
 vi.mock('../../ask/view', async (orig) => ({ ...(await orig<typeof import('../../ask/view')>()), useAskView: () => undefined }))
 const hive: { client: object | null } = { client: null }
 vi.mock('../../../store/store', () => ({ useHive: (pick: (s: { client: object | null }) => unknown) => pick({ client: hive.client }) }))
+// This minimal store drives the map revision state machine. Page's live session row has its own mounted tests.
+vi.mock('../../studioLive/DirectingStudio', () => ({ StudioLiveBar: () => null }))
 vi.mock('../../../lib/router', async (orig) => ({ ...(await orig<typeof import('../../../lib/router')>()), navigate: vi.fn() }))
 
 const { default: MapView, MapRoot, RevisionMap } = await import('./MapView')

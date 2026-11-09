@@ -13,6 +13,7 @@ class FakeS3:
     """An in-memory S3 endpoint that insists on SigV4-signed requests."""
     def __init__(self):
         self.objects, self.seen = {}, []
+        self.delete_status = 204
 
     def __call__(self, request: httpx.Request):
         auth = request.headers.get("authorization", "")
@@ -26,6 +27,8 @@ class FakeS3:
         if request.method in ("GET", "HEAD"):
             return httpx.Response(200, content=self.objects[key] if request.method == "GET" else b"") if key in self.objects else httpx.Response(404)
         if request.method == "DELETE":
+            if self.delete_status != 204:
+                return httpx.Response(self.delete_status)
             self.objects.pop(key, None)
             return httpx.Response(204)
         return httpx.Response(405)
@@ -61,6 +64,26 @@ def test_local_only_stays_home_and_html_is_never_rendered(client, cloud):
     assert refused.status_code == 403 and refused.json()["error"]["code"] == "local_only" and not cloud.objects
     r = client.get(f"/api/assets/{digest}")
     assert r.headers["content-type"] == "application/octet-stream" and r.headers["content-disposition"].startswith("attachment")
+
+
+@pytest.mark.parametrize("status", [403, 503])
+def test_failed_s3_delete_keeps_local_only_cleanup_pending(client, cloud, status):
+    data = b"invented file requiring remote cleanup"
+    digest = client.post("/api/assets", content=data).json()["sha256"]
+    client.post(f"/api/assets/{digest}/transfer", json={"to": "cloud"}).raise_for_status()
+    cloud.delete_status = status
+    result = client.post("/api/assets?local_only=true", content=data).json()
+    assert result["placements"] == ["cloud", "local"]
+    assert result["pending_removal"] == ["cloud"]
+    assert result["history"][-1]["removed"] == []
+    assert "cloud" in result["history"][-1]["failed"]
+    assert cloud.objects  # a refused remote delete must stay recorded for retry
+    cloud.delete_status = 204
+    retried = client.app.state.hive.assets.cleanup(digest, "user:operator")
+    assert retried["placements"] == ["local"]
+    assert retried["pending_removal"] == []
+    assert retried["history"][-1]["removed"] == ["cloud"]
+    assert not cloud.objects
 
 
 def test_a_corrupted_copy_is_refused(client):

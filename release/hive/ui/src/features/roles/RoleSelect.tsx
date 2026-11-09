@@ -17,7 +17,7 @@ export function RoleSelect({ value, onChange, label = 'Role', compact }: { value
         value={value ?? ''}
         onChange={(e) => onChange(e.target.value || null)}
         aria-label={label}
-        className={`min-w-0 flex-1 rounded-xl border border-line bg-black/25 px-2.5 text-ink outline-none focus:border-line-2 ${compact ? 'min-h-10 text-[13px]' : 'min-h-11 text-[14px]'}`}
+        className={`min-w-0 flex-1 rounded-xl border border-line bg-shade/25 px-2.5 text-ink outline-none focus:border-line-2 ${compact ? 'min-h-10 text-[13px]' : 'min-h-11 text-[14px]'}`}
       >
         <option value="">No role (own instructions only)</option>
         {(roles ?? []).map((r) => (

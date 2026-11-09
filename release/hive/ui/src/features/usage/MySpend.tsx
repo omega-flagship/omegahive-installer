@@ -5,7 +5,7 @@ import { useHive } from '../../store/store'
 import { Button, Meter } from '../../ui/primitives'
 
 /** The signed-in person's own spend this month: what the hive paid for them (against their allowance), what their own
- *  keys paid, and where it went. The owner (2026-10-04): personalised costs, $50/month per member, then own keys. */
+ *  keys paid, and where it went. Jon (2026-10-04): personalised costs, $50/month per family member, then own keys. */
 export function MySpend() {
   const client = useHive((s) => s.client)
   const res = useResource(() => need(client, 'usageMe', 'Your spend')(), { poll: 30000 })
@@ -14,7 +14,7 @@ export function MySpend() {
   const allowance = me.allowance_usd
   const low = allowance != null && me.remaining_usd != null && me.remaining_usd < allowance * 0.2
   return (
-    <section className="mb-4 rounded-2xl border border-line bg-white/[0.02] p-4" aria-label="Your spend this month">
+    <section className="mb-4 rounded-2xl border border-line bg-tint/[0.02] p-4" aria-label="Your spend this month">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h2 className="font-display text-[15px] font-semibold">Your spend this month</h2>
         <span className="text-[13px] text-ink-2">

@@ -1,5 +1,5 @@
 /**
- * Hive power (the owner, 2026-10-05 ~23:40: Off, Quiet and Wake all): the host's shapes and nothing else. This file is the
+ * Hive power (Jon, 2026-10-05 ~23:40: Off, Quiet and Wake all): the host's shapes and nothing else. This file is the
  * ONE place that knows the wire. Pinned to the live host cf8bd9c (power 7973ca4; shape-equivalent to 293fe18):
  *
  *   GET  /api/hive/power -> {state: 'on'|'off', since, by} (anyone signed in); an admin also gets minds_in_snapshot

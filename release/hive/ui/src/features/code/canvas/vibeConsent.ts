@@ -1,6 +1,6 @@
 /**
  * The person's confirmed OK for one proposal, as the hive's copy-apply consent (r4 [P1]; Platform "copy-apply consent
- * r1", 66312cd on ce8001d, in review). The owner: the person accepts. The team's controller can put a proposal into the
+ * r1", 66312cd on ce8001d, in review). Jon: the person accepts. The team's controller can put a proposal into the
  * person's copy only with a live consent from the request's own person for exactly that proposal digest (otherwise its
  * copy_apply is refused 403 consent_required, or 409 consent_stale when the proposal changed since).
  *

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from '
 import { resultWords, whoWords, type NameOf } from './api'
 import { canPress, screenOf, type PowerView } from './machine'
 import './power.css'
+import { OmegaGlyph } from '../../brand/OmegaGlyph'
 
 /** The experiences with their own Off; anything else (a future experience) falls back to Classic's. */
 export const OFF_EMBODIMENTS = ['classic', 'still', 'canvas', 'cosmos', 'flux', 'construct'] as const
@@ -120,11 +121,11 @@ export function OffScreen({ experience, view, reduced, nameOf, onPress, onLit, o
         aria-disabled={!press}
         onClick={() => press && onPress()}
       >
-        <span aria-hidden="true">{kind === 'construct' ? 'Ω BOOT' : 'Ω'}</span>
+        <span aria-hidden="true">{kind === 'construct' ? <><OmegaGlyph className="pw-glyph" /> BOOT</> : <OmegaGlyph className="pw-glyph" />}</span>
       </button>
     ) : (
       <span className={`pw-button pw-dim ${cls}`} aria-hidden="true">
-        Ω
+        <OmegaGlyph className="pw-glyph" />
       </span>
     )
 
@@ -210,7 +211,7 @@ export function OffScreen({ experience, view, reduced, nameOf, onPress, onLit, o
               <div>
                 OMEGAHIVE // POWER: OFF{by ? ` // BY ${by.toUpperCase()}` : ''}
                 <br />
-                {admin ? '> press Ω BOOT to bring the hive up ' : '> the hive is resting. awaiting an admin '}
+                {admin ? '> press BOOT to bring the hive up ' : '> the hive is resting. awaiting an admin '}
                 <span className="pw-cursor" />
               </div>
             )}

@@ -12,6 +12,7 @@ import { PowerDialogs } from './PowerDialogs'
 import { RestHost } from './RestScreen'
 import { restAllowed } from './rest'
 import { usePower } from './store'
+import { restHolds, usePhase } from '../../shell/phase'
 
 const nameOf = (id: string): string | undefined => {
   const a = useHive.getState().agents[id]
@@ -22,6 +23,20 @@ const nameOf = (id: string): string | undefined => {
  * Hive power on the page: ONE mount (App), over every route, app and experience. Off sits above everything except a
  * dialog an admin opened; the page behind it is inert and shows nothing. Quiet rests when the person is idle.
  */
+/**
+ * The shell's phases (CANDIDATE): idle rests the experience's own rest, and the same urgent events (rest.ts isUrgent: a
+ * pending decision or a budget refusal) wake that rest as they wake this page's own: only a rest the idle time really began (the shell's `restBy`, set on the move itself and
+ * cleared by every other move, opt-out and identity change), never the opening rest or one the person chose.
+ */
+const NATIVE_REST = {
+  rest: () => void usePhase.getState().send('idle'),
+  wake: () => void usePhase.getState().wakeUrgent(),
+  resting: () => {
+    const s = usePhase.getState()
+    return s.phased && s.phase === 'rest' && s.restBy === 'idle'
+  },
+}
+
 export function PowerHost({ experience, signedIn, ready }: { experience: string; signedIn: boolean; ready: boolean }) {
   const view = usePower()
   const screen = screenOf(view)
@@ -29,6 +44,9 @@ export function PowerHost({ experience, signedIn, ready }: { experience: string;
   const reduced = useReducedMotion() || look.motion === 'none'
   const route = useRoute()
   const [resting, setResting] = useState(false)
+  // CANDIDATE (one-experience r1): an opted-in experience draws its own rest; the idle owner hands its rest to it
+  const phased = usePhase((s) => s.phased)
+  const phaseRest = usePhase((s) => restHolds(s))
   const shownOff = signedIn && screen !== 'none'
   const dark = shownOff && (screen === 'off' || screen === 'lighting')
 
@@ -70,7 +88,7 @@ export function PowerHost({ experience, signedIn, ready }: { experience: string;
     <>
       {shownOff && createPortal(<OffScreen experience={experience} view={view} reduced={reduced} nameOf={nameOf} onPress={onPress} onLit={onLit} onDismiss={onDismiss} />, document.body)}
       {signedIn && <PowerDialogs />}
-      {signedIn && <RestHost experience={experience} allowed={restAllowed(ready, screen)} reduced={reduced} onResting={setResting} admin={view.admin === true} />}
+      {signedIn && <RestHost experience={experience} allowed={restAllowed(ready, screen)} reduced={reduced} onResting={setResting} admin={view.admin === true} native={phased ? NATIVE_REST : undefined} phaseRest={phaseRest} />}
     </>
   )
 }

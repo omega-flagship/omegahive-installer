@@ -1239,3 +1239,6 @@ websockets==17.2 \
 
 # Studio derived addition: owner Core50 bytes above remain exact.
 janus-swi==1.5.3 --hash=sha256:2ce9867bb1e0cbab7737c8e2a7af3268f2241251e5b0eb955726c829ae995f8d
+
+# Hive requirement added since 3 Nov (hive/requirements.txt: xkcdpass==1.30.0, member passwords); PyPI wheel + sdist hashes, no dependencies.
+xkcdpass==1.30.0 --hash=sha256:3653a4a1e13de230808bcaf11f8c04207a5d3df8e2f7e1de698e11c262b5b797 --hash=sha256:8a3a6b60255da40d0e5c812458280278c82d2c1cb90e48afbd6777dbbf8795c3

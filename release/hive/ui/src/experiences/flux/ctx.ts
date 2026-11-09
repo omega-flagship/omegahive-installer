@@ -1,3 +1,4 @@
+import type { VisibleOwner } from '../../lib/useVisibleAuthority'
 import { createContext, useCallback, useContext } from 'react'
 import type { Agent } from '../sdk'
 import type { FluxWorld, FluxView } from './world'
@@ -31,6 +32,8 @@ export interface FluxApi {
   closeDecision(): void
   home(): void
   /** The Everything sheet and the native sheets it pours. */
+  sheetOwner: VisibleOwner
+  decisionOwner: VisibleOwner
   sheet: SheetState | null
   openSheet(s: SheetState | null): void
 }

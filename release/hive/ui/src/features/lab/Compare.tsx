@@ -111,7 +111,7 @@ function RunPick({ label, runs, value, other, onChange, run }: { label: string; 
       <span className="flex items-center gap-2 text-[12px] text-ink-3">
         {label} {run && <DemoChip demo={run.demo} />}
       </span>
-      <select value={value ?? ''} onChange={(e) => onChange(e.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-black/30 px-3 text-[13px] text-ink outline-none focus:border-line-2">
+      <select value={value ?? ''} onChange={(e) => onChange(e.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-shade/30 px-3 text-[13px] text-ink outline-none focus:border-line-2">
         {runs.map((r) => (
           <option key={r.id} value={r.id} disabled={r.id === other}>
             {versionLabel(r)} · {r.passed} passed{r.failed + r.errors ? `, ${r.failed + r.errors} not` : ''}

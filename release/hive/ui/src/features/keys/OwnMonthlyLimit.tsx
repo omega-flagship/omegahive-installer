@@ -68,7 +68,7 @@ function OwnMonthlyLimitBody() {
     }))
   }
   return (
-    <section aria-labelledby="own-limit-h" data-own-monthly-limit={view?.state ?? 'reading'} className="rounded-2xl border border-line bg-white/[0.03] p-4">
+    <section aria-labelledby="own-limit-h" data-own-monthly-limit={view?.state ?? 'reading'} className="rounded-2xl border border-line bg-tint/[0.03] p-4">
       <h2 id="own-limit-h" className="eyebrow">Monthly total on your own keys</h2>
       <p className="mt-1 text-[12.5px] text-ink-3">
         {view === null ? 'Reading…'

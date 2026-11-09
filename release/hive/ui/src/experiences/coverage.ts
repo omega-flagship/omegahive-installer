@@ -42,7 +42,7 @@ export function coverageReport(experiences: string[], ask?: { reached: ReadonlyS
 }
 
 /**
- * Parity (the owner, 2026-10-05: "every UI loses different things - make sure all UIs have all features available"). Each
+ * Parity (Jon, 2026-10-05: "every UI loses different things - make sure all UIs have all features available"). Each
  * experience exports `NAV_FEATURES` from `experiences/<id>/nav.ts`: the feature ids its OWN navigation reaches (its
  * menus, panels, commands, board), not counting the host's Ω menu. coverage.test.ts requires every feature that has
  * any UI to be listed, and these first of all.

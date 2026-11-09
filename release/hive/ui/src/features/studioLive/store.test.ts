@@ -1,10 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { useHive } from '../../store/store'
 import { useAskStore } from '../../store/ask'
 import { sha256Hex } from './api'
+import { checkAskEvent } from '../../api/ask'
+import { DrawingSessionView, projectDrawingSession } from './DirectingStudio'
+import { askMind } from '../ask/mind'
 import {
   attachFrame, confirmSetup, detachFrame, frameOutcome, framePiece, proposeSetup, resetStudioLiveForTests, stopSession, useStudioLive, type SetupProposal,
+  setDirectionMode, drawingTurnAssociation, steerSession, runtimeForTests,
 } from './store'
+import { studioRoute } from './route'
 import type { FrameReport } from './outcomes'
 
 /**
@@ -29,6 +36,25 @@ const proposal: SetupProposal = {
   maker_name: 'Invented maker', key_label: 'invented key', audience: 'only you', month_left_micros: 6_000_000,
 }
 let log: string[]
+let steerCalls: { operation: string; at: number }[]
+
+/** Actual producer domains are deliberately distinct; the event is validated by the real current Ask reader. */
+function retainedTurn(operation = 'op_inv1', turn = 'at_inv1', principal = 'user:p_a') {
+  const event = checkAskEvent({ type: 'ask', operation_id: operation, turn_id: turn, principal, seq: 1, phase: 'accepted', at: '2026-10-29T00:00:00Z', thread: { id: 'thread_inv1', mind: { id: 'omega_wren', name: 'Wren' }, budget_usd: 5, spent_usd: 0 }, acting_as: { mind_id: 'omega_wren', name: 'Wren' } })
+  if (!event) throw new Error('Synthetic retained Ask frame must satisfy the real reader')
+  return { op: operation, you: 'Invented drawing request', state: 'open' as const, lastSeq: 1, events: [event], ahead: [], outcomes: {}, notes: [], steers: [], moves: 0, tookOver: false, presence: 0, actingAs: { mind_id: 'omega_wren', name: 'Wren' } }
+}
+
+/** Current-state adapter, NOT an SSR-hook override. Browser subscriptions/mounted integration remain separate. */
+function renderCurrentSession() {
+  const projection = projectDrawingSession(useStudioLive.getState(), useAskStore.getState(), useHive.getState().client)
+  expect(projection.s.ledger).not.toBeNull()
+  const html = renderToStaticMarkup(createElement(DrawingSessionView, { projection, edit: null, toggleEdit: () => undefined }))
+  expect(html.length).toBeGreaterThan(0)
+  expect(html).toContain(`data-studio-session="${projection.s.ledger!.state}"`)
+  expect(html).toContain('Directing Create')
+  return html
+}
 /** r1.13: what the fake host lists in the person's Studio space, and each canvas's current scene id */
 let listed: { artifact_id: string; kind: string; title: string; revision: number; digest: string }[] = []
 let sceneOf: Record<string, string> = {}
@@ -53,7 +79,7 @@ function fakeClient() {
     studioPiece: async (_sid: string, b: { seq: number; body: string }) => { log.push(`host:piece:${b.seq}`); if (pieceGate) await pieceGate; pieceSeq = b.seq; const h = `${hostPrefix ? 'sha256:' : ''}${await sha256Hex(b.body)}`; (ledgerRaw as { piece: unknown }).piece = { seq: b.seq, body_sha256: h, scene_ref: null, at: null }; return { seq: b.seq, body_sha256: h } },
     studioOutcome: async (_sid: string, n: number, b: { receiver_generation: number }) => { log.push(`host:outcome:${n}:gen${b.receiver_generation}`); outcomeBodies.push(b as unknown as Record<string, unknown>); return { n } },
     studioControl: async (_sid: string, b: { action: string }) => { log.push(`host:control:${b.action}`); return {} },
-    askSteer: async (_op: string, b: { steer_id: string; text: string }) => { log.push(`host:steer:${b.text}`); (ledgerRaw.directions as unknown[]).push({ seq: 1, steer_id: b.steer_id, state: 'queued' }); return { steer_id: b.steer_id, new_turn: false, studio: { session_id: 'ss_a', seq: 1, state: 'queued' } } },
+    askSteer: async (operation: string, b: { steer_id: string; text: string; at_seq: number }) => { steerCalls.push({ operation, at: b.at_seq }); if (operation !== 'op_inv1') throw new Error('Ask endpoint requires the operation selector, never the server turn selector'); log.push(`host:steer:${b.text}`); (ledgerRaw.directions as unknown[]).push({ seq: 1, steer_id: b.steer_id, state: 'queued' }); return { steer_id: b.steer_id, operation_id: operation, turn_id: 'at_inv1', new_turn: false, studio: { session_id: 'ss_a', seq: 1, state: 'queued' } } },
     studioMount: async (_sid: string, b: { expected_epoch: number | null }) => {
       log.push(`host:mount:${b.expected_epoch}`)
       if (b.expected_epoch !== mountEpoch) { const { ApiError } = await import('../../api/client'); throw new ApiError(409, 'mount_conflict', 'x') }
@@ -94,6 +120,7 @@ async function started() {
 
 beforeEach(() => {
   log = []
+  steerCalls = []
   listed = [{ artifact_id: 'ar_inv_piece', kind: 'studio-source', title: 'Invented canvas', revision: 2, digest: 'sha256:piece' }]
   sceneOf = {}
   onRecord = null
@@ -107,15 +134,18 @@ beforeEach(() => {
   submitFails = []
   store.clear()
   ledgerRaw = {
-    session_id: 'ss_a', stream_id: 'as_aaaaaaaaaaaaaaaaaaaaaaaa', state: 'active', ask_turn_id: 'op_inv1', goal_id: 'g_a', proposal_artifact_id: 'ar_p', maker_id: 'a_m', swarm_id: 's_x', program_id: 'omegadesign', scene_id: 'sim-poster',
+    session_id: 'ss_a', stream_id: 'as_aaaaaaaaaaaaaaaaaaaaaaaa', state: 'active', ask_turn_id: 'at_inv1', goal_id: 'g_a', proposal_artifact_id: 'ar_p', maker_id: 'a_m', swarm_id: 's_x', program_id: 'omegadesign', scene_id: 'sim-poster',
     steps: [], directions: [], budget: {}, stop: { state: 'none' }, piece: null,
   }
   useHive.setState({ client: fakeClient() as never })
-  useAskStore.setState({ bound: { session: 'inv', principal: 'user:p_a', auth: null } } as never)
+  useAskStore.setState({ bound: { session: 'inv', principal: 'user:p_a', auth: null }, log: [], turns: { op_inv1: retainedTurn() } } as never)
   offer(true)
   resetStudioLiveForTests()
 })
-afterEach(() => resetStudioLiveForTests())
+afterEach(() => {
+  try { expect(steerCalls.filter((c) => c.operation !== 'op_inv1')).toEqual([]) }
+  finally { resetStudioLiveForTests() }
+})
 
 describe('case #3: a setup card belongs to the sign-in it was shown under', () => {
   it('a sign-in change after the card was shown: the card is gone for the new person and Start sends nothing', async () => {
@@ -269,6 +299,225 @@ describe('E3 mount authority, through the store', () => {
 })
 
 describe('directions and the next turn (Design routing review)', () => {
+  it('an already-selected Queue refuses stale same-principal auth through the actual Ask caller, with no ordinary fallback', async () => {
+    await started()
+    expect(setDirectionMode('queue')).toBe(true)
+    const before = useStudioLive.getState()
+    const drafts = { next: [...before.next], held: [...before.held], sent: [...before.sent] }
+    const writes = [...log]
+    const original = { send: useAskStore.getState().send, steer: useAskStore.getState().steer }
+    const ordinaryAttempts: string[] = []
+    // Forbidden fallback endpoints record BEFORE throwing; post-SUT assertions cannot be swallowed by the caller.
+    useAskStore.setState({
+      send: async () => { ordinaryAttempts.push('send'); throw new Error('No ordinary Ask fallback is allowed') },
+      steer: async () => { ordinaryAttempts.push('steer'); throw new Error('No ordinary Ask fallback is allowed') },
+    })
+    try {
+      useAskStore.setState({ bound: { ...useAskStore.getState().bound!, auth: 'earlier-auth-handle' } })
+      expect(studioRoute()).not.toBeNull() // no reset observer has run: the actual selected-route branch is reached
+      expect(drawingTurnAssociation().state).toBe('foreign')
+      await expect(askMind('Do not queue under stale auth', { swarm_id: 's_x' } as never)).resolves.toBeUndefined()
+      expect(useStudioLive.getState().directionMode).toBe('queue')
+      expect(useStudioLive.getState().next).toEqual(drafts.next)
+      expect(useStudioLive.getState().held).toEqual(drafts.held)
+      expect(useStudioLive.getState().sent).toEqual(drafts.sent)
+      expect(ordinaryAttempts).toEqual([])
+      expect(steerCalls).toEqual([])
+      expect(log).toEqual(writes)
+    } finally { useAskStore.setState(original) }
+  })
+
+  it('an already-selected Queue rechecks the original runtime binding before any draft mutation', async () => {
+    await started()
+    expect(setDirectionMode('queue')).toBe(true)
+    const route = studioRoute()!
+    const before = useStudioLive.getState()
+    const drafts = { next: [...before.next], held: [...before.held], sent: [...before.sent] }
+    const writes = [...log]
+    const current = vi.spyOn(runtimeForTests()!.binding, 'current').mockReturnValue(false) // explicit guard endpoint
+    try {
+      expect(await route.steer('Do not use a stale runtime', 'typed', { swarm_id: 's_x' } as never)).toBe(false)
+      expect(current).toHaveBeenCalled()
+      expect(useStudioLive.getState().next).toEqual(drafts.next)
+      expect(useStudioLive.getState().held).toEqual(drafts.held)
+      expect(useStudioLive.getState().sent).toEqual(drafts.sent)
+      expect(steerCalls).toEqual([])
+      expect(log).toEqual(writes)
+    } finally { current.mockRestore() }
+  })
+
+  it('an already-selected route cannot queue old words after the real identity observer resets the session', async () => {
+    await started()
+    expect(setDirectionMode('queue')).toBe(true)
+    const route = studioRoute()!
+    bump()
+    const writes = [...log]
+    expect(studioRoute()).toBeNull()
+    expect(await route.steer('Old-person Queue words', 'typed', { swarm_id: 's_x' } as never)).toBe(false)
+    expect(useStudioLive.getState().next).toEqual([])
+    expect(useStudioLive.getState().held).toEqual([])
+    expect(useStudioLive.getState().sent).toEqual([])
+    expect(steerCalls).toEqual([])
+    expect(log).toEqual(writes)
+  })
+
+  it('joins the actual retained server-turn frame to its operation for both the active organ label and real Steer call', async () => {
+    await started()
+    expect(useStudioLive.getState().ledger?.ask_turn_id).toBe('at_inv1')
+    expect(drawingTurnAssociation()).toMatchObject({ state: 'known', serverTurnId: 'at_inv1', operationId: 'op_inv1', omega: { mind_id: 'omega_wren', name: 'Wren' } })
+    const html = renderCurrentSession()
+    expect(html).toContain('Wren · drawing')
+    expect(html).toContain('Maker ID (host record)')
+    expect(html).toContain('a_m')
+    expect(await steerSession('Use the verified operation', 'typed', { swarm_id: 's_x' } as never)).toBe(true)
+    await settle()
+    expect(steerCalls).toEqual([{ operation: 'op_inv1', at: 1 }])
+    expect(useStudioLive.getState().ledger?.ask_turn_id).toBe('at_inv1')
+  })
+
+  it('holds Steer without a retained mapping, shows the unknown identity and reason, and leaves Queue separate', async () => {
+    await started()
+    useAskStore.setState({ turns: {} })
+    expect(drawingTurnAssociation().state).toBe('missing')
+    const html = renderCurrentSession()
+    expect(html).toContain('This record does not identify the omega')
+    expect(html).toContain('not uniquely retained under your current sign-in')
+    expect(html).toMatch(/disabled[^>]*>Steer/)
+    expect(setDirectionMode('steer')).toBe(false)
+    expect(await steerSession('Keep these direction words')).toBe(false)
+    expect(useStudioLive.getState().held.map((h) => h.text)).toContain('Keep these direction words')
+    expect(steerCalls).toEqual([])
+    expect(setDirectionMode('queue')).toBe(true)
+    await studioRoute()!.steer('Separate new work', 'typed', { swarm_id: 's_x' } as never)
+    expect(useStudioLive.getState().next.map((n) => n.text)).toEqual(['Separate new work'])
+    expect(steerCalls).toEqual([])
+  })
+
+  it('refuses duplicate, conflicting, foreign, aliased, unplaced and malformed mappings instead of guessing an operation', async () => {
+    await started()
+    const mixed = retainedTurn()
+    mixed.lastSeq = 2
+    mixed.events.push({ ...mixed.events[0], seq: 2, turn_id: 'at_other' })
+    const mismatched = retainedTurn()
+    mismatched.events = [{ ...mismatched.events[0], operation_id: 'op_other' }]
+    const cases = [
+      [{ op_inv1: retainedTurn(), op_other: retainedTurn('op_other') }, 'ambiguous'],
+      [{ op_inv1: mixed }, 'ambiguous'],
+      [{ op_inv1: mismatched }, 'ambiguous'],
+      [{ op_inv1: retainedTurn('op_inv1', 'at_inv1', 'user:foreign') }, 'foreign'],
+      [{ wrong_key: retainedTurn() }, 'invalid'],
+      [{ op_inv1: { ...retainedTurn(), appAskTurnId: 'at_other' } }, 'ambiguous'],
+      [{ at_inv1: retainedTurn('at_inv1', 'at_inv1') }, 'invalid'],
+      [{ op_inv1: { ...retainedTurn(), events: [], ahead: retainedTurn().events, lastSeq: 0 } }, 'missing'],
+    ] as const
+    for (const [turns, state] of cases) {
+      useAskStore.setState({ turns } as never)
+      expect(drawingTurnAssociation().state).toBe(state)
+      expect(setDirectionMode('steer')).toBe(false)
+      expect(await steerSession(`Hold ${state}`)).toBe(false)
+      expect(steerCalls).toEqual([])
+      expect(renderCurrentSession()).not.toContain('Wren · drawing')
+    }
+  })
+
+  it('does not use retained frames or touch old-person drafts while the current principal or auth handle differs', async () => {
+    await started()
+    const beforeHeld = [...useStudioLive.getState().held]
+    const originalBound = useAskStore.getState().bound!
+    useAskStore.setState({ bound: { ...originalBound, principal: 'user:foreign' } })
+    expect(drawingTurnAssociation().state).toBe('foreign')
+    expect(await steerSession('Do not move across people')).toBe(false)
+    expect(setDirectionMode('queue')).toBe(false)
+    expect(useStudioLive.getState().held).toEqual(beforeHeld)
+    expect(steerCalls).toEqual([])
+    useAskStore.setState({ bound: { ...originalBound, auth: 'earlier-auth-handle' } })
+    expect(drawingTurnAssociation().state).toBe('foreign')
+    expect(await steerSession('Do not use an earlier auth handle')).toBe(false)
+    expect(useStudioLive.getState().held).toEqual(beforeHeld)
+    expect(steerCalls).toEqual([])
+  })
+
+  it('an actual identity reset removes the association and a retained old direction callback creates no new-person draft or write', async () => {
+    await started()
+    expect(drawingTurnAssociation().state).toBe('known')
+    const oldSteer = steerSession
+    bump()
+    expect(drawingTurnAssociation().state).not.toBe('known')
+    expect(await oldSteer('Old-person words')).toBe(false)
+    expect(useStudioLive.getState().held).toEqual([])
+    expect(useStudioLive.getState().next).toEqual([])
+    expect(steerCalls).toEqual([])
+    expect(studioRoute()).toBeNull()
+  })
+
+  it('a visible Queue choice routes future words to the existing next-turn queue without a host call', async () => {
+    await started()
+    log.length = 0
+    expect(setDirectionMode('queue')).toBe(true)
+    expect(await studioRoute()!.steer('A separate poster', 'typed', { swarm_id: 's_x' } as never)).toBe(true)
+    expect(useStudioLive.getState().next.map((n) => n.text)).toEqual(['A separate poster'])
+    expect(useStudioLive.getState().sent).toEqual([])
+    expect(log).toEqual([])
+  })
+
+  it('switching back to Steer uses the same bound direction path and does not consume queued work', async () => {
+    await started()
+    expect(setDirectionMode('queue')).toBe(true)
+    await studioRoute()!.steer('Later work', 'typed', { swarm_id: 's_x' } as never)
+    expect(setDirectionMode('steer')).toBe(true)
+    await studioRoute()!.steer('Make the title bigger', 'typed', { swarm_id: 's_x' } as never)
+    await settle()
+    expect(log.filter((x) => x.startsWith('host:steer'))).toEqual(['host:steer:Make the title bigger'])
+    expect(useStudioLive.getState().next.map((n) => n.text)).toEqual(['Later work'])
+    expect(useStudioLive.getState().sent.map((d) => d.text)).toEqual(['Make the title bigger'])
+  })
+
+  it('switching modes never withdraws or also queues a direction already recorded by the host', async () => {
+    await started()
+    await studioRoute()!.steer('Current direction', 'typed', { swarm_id: 's_x' } as never)
+    await settle()
+    const before = useStudioLive.getState().sent.map((d) => ({ ...d }))
+    const hostBefore = JSON.stringify(ledgerRaw.directions)
+    expect(setDirectionMode('queue')).toBe(true)
+    expect(useStudioLive.getState().sent).toEqual(before)
+    expect(useStudioLive.getState().next).toEqual([])
+    expect(JSON.stringify(ledgerRaw.directions)).toBe(hostBefore)
+  })
+
+  it('a capability drop after choosing Queue keeps the words held and sends no new work', async () => {
+    await started()
+    expect(setDirectionMode('queue')).toBe(true)
+    const route = studioRoute()!
+    offer(false)
+    log.length = 0
+    expect(await route.steer('Keep these words', 'typed', { swarm_id: 's_x' } as never)).toBe(false)
+    expect(useStudioLive.getState().next).toEqual([])
+    expect(useStudioLive.getState().held.map((h) => h.text)).toContain('Keep these words')
+    expect(log).toEqual([])
+    expect(setDirectionMode('steer')).toBe(false)
+  })
+
+  it('the choice and queued words reset with the person, and the previous route cannot queue for the next person', async () => {
+    await started()
+    expect(setDirectionMode('queue')).toBe(true)
+    await studioRoute()!.steer('Old person work', 'typed', { swarm_id: 's_x' } as never)
+    bump()
+    expect(useStudioLive.getState().directionMode).toBe('steer')
+    expect(useStudioLive.getState().next).toEqual([])
+    expect(studioRoute()).toBeNull()
+    expect(setDirectionMode('queue')).toBe(false)
+  })
+
+  it('missing directions capability cannot be enabled by selecting Steer; Queue remains separate work', async () => {
+    await started()
+    useAskStore.setState({ settings: { ...useAskStore.getState().settings!, capabilities: { conductor: false, memory: false, studio_sessions: true, studio_directions: false } } } as never)
+    expect(setDirectionMode('steer')).toBe(false)
+    expect(setDirectionMode('queue')).toBe(true)
+    await studioRoute()!.steer('Separate work', 'typed', { swarm_id: 's_x' } as never)
+    expect(useStudioLive.getState().next.map((n) => n.text)).toEqual(['Separate work'])
+    expect(log.some((x) => x.startsWith('host:steer'))).toBe(false)
+  })
+
   it('“Also queue as new work” is additive, offered only while still queued, and two queued turns are both kept', async () => {
     const { alsoQueue, queueNext, steerSession } = await import('./store')
     await started()
@@ -287,6 +536,739 @@ describe('directions and the next turn (Design routing review)', () => {
     alsoQueue(d.steer_id)                               // delivered: no longer offered
     expect(useStudioLive.getState().next.length).toBe(2)
   })
+})
+
+describe('Create R3.1: queued work is a new admitted Ask turn', () => {
+  // Real Ask success replies carry the thread that their accepted frame names.
+  const queueThread = { id: 'thread_inv1', mind: { id: 'omega_wren', name: 'Wren' }, budget_usd: 5, spent_usd: 0 }
+  const realAdmit = useAskStore.getState().admit
+  beforeEach(() => useAskStore.setState({ open: null }))
+  afterEach(() => useAskStore.setState({ admit: realAdmit, open: null }))
+  const context = { route: 'hive', experience: 'classic', swarm_id: 's_x' } as const
+  const accepted = { admitted: true, op: 'op_queue', principal: 'user:p_a' } as const
+  const complete = (op: string) => {
+    const t = retainedTurn(op)
+    const done = checkAskEvent({ type: 'ask', operation_id: op, turn_id: 'at_inv1', principal: 'user:p_a', seq: 2, phase: 'done', outcome: 'complete', at: '2026-10-29T00:00:01Z' })
+    if (!done) throw new Error('The queued-turn completion must satisfy the actual Ask reader')
+    return { ...t, state: 'done' as const, lastSeq: 2, events: [...t.events, done] }
+  }
+
+  it('Send now while an Ask is open keeps the same draft and emits no direction', async () => {
+    const { queueNext, sendNext } = await import('./store')
+    await started()
+    useAskStore.setState({ open: 'op_inv1' })
+    queueNext('A separate drawing, not a direction', context)
+    const queued = useStudioLive.getState().next[0]
+    await sendNext(queued.id)
+    expect(useStudioLive.getState().next).toEqual([queued])
+    expect(steerCalls).toEqual([])
+    expect(log.filter((x) => x.startsWith('host:steer'))).toEqual([])
+    expect(renderCurrentSession()).toMatch(/disabled=""[^>]*>Send now/)
+  })
+
+  it('completion of an older turn cannot redirect queued words into a different open turn', async () => {
+    const { queueNext } = await import('./store')
+    await started()
+    useAskStore.setState({ open: 'op_inv1' })
+    queueNext('The next job', context)
+    const queued = useStudioLive.getState().next[0]
+    useAskStore.setState({ open: 'op_other', turns: { op_inv1: complete('op_inv1'), op_other: retainedTurn('op_other') } })
+    await flush()
+    expect(useStudioLive.getState().next).toEqual([queued])
+    expect(steerCalls).toEqual([])
+  })
+
+  it('keeps words until positive admission, then consumes only that queued item', async () => {
+    const { queueNext, sendNext } = await import('./store')
+    let resolve!: (value: typeof accepted) => void
+    const admit = vi.fn(() => new Promise<typeof accepted>((r) => { resolve = r }))
+    useAskStore.setState({ admit })
+    queueNext('First job', context)
+    queueNext('Second job', context)
+    const first = useStudioLive.getState().next[0]
+    const pending = sendNext(first.id)
+    expect(useStudioLive.getState().next.map((x) => x.text)).toEqual(['First job', 'Second job'])
+    expect(admit).toHaveBeenCalledWith('First job', context, { newTurnOnly: true })
+    resolve(accepted)
+    await pending
+    expect(useStudioLive.getState().next.map((x) => x.text)).toEqual(['Second job'])
+  })
+
+  it('an edit made during admission is retained as new queued work', async () => {
+    const { queueNext, editNext, sendNext } = await import('./store')
+    let resolve!: (value: typeof accepted) => void
+    useAskStore.setState({ admit: () => new Promise<typeof accepted>((r) => { resolve = r }) })
+    queueNext('Original words', context)
+    const id = useStudioLive.getState().next[0].id
+    const pending = sendNext(id)
+    editNext(id, 'My edited draft')
+    resolve(accepted)
+    await pending
+    expect(useStudioLive.getState().next.map((x) => x.text)).toEqual(['My edited draft'])
+    expect(useStudioLive.getState().next[0].handoff).toBe('edited')
+  })
+
+  it.each(['refused', 'not_available', 'held'] as const)('a known %s handoff keeps the words available', async (reason) => {
+    const { queueNext, sendNext } = await import('./store')
+    const admit = vi.fn(async () => ({ admitted: false as const, reason }))
+    useAskStore.setState({ admit })
+    queueNext('Keep my draft', context)
+    await sendNext()
+    await sendNext() // automatic progress cannot retry a definitely unadmitted draft
+    expect(admit).toHaveBeenCalledTimes(1)
+    const kept = useStudioLive.getState().next[0]
+    expect(kept).toMatchObject({ text: 'Keep my draft', handoff: 'not-admitted' })
+    await sendNext(kept.id) // a separate explicit manual choice
+    expect(admit).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['unknown', 'not_admitted'] as const)('a %s handoff is visible and never automatically retried', async (reason) => {
+    const { queueNext, editNext, sendNext } = await import('./store')
+    await started()
+    const admit = vi.fn(async () => ({ admitted: false as const, reason }))
+    useAskStore.setState({ admit })
+    queueNext('Do not duplicate this request', context)
+    const id = useStudioLive.getState().next[0].id
+    await sendNext(id)
+    editNext(id, 'An edited draft still needs its original handoff checked')
+    useAskStore.setState({ open: 'op_inv1' })
+    useAskStore.setState({ open: null, turns: { op_inv1: complete('op_inv1') } })
+    if (reason === 'not_admitted') {
+      await sendNext() // the original neutral case still proves no automatic retry
+      expect(admit).toHaveBeenCalledTimes(1)
+      expect(useStudioLive.getState().next[0]).toMatchObject({ id, handoff: 'not-admitted', text: 'An edited draft still needs its original handoff checked' })
+      await sendNext(id) // definite no-admission permits only the person's explicit retry
+      expect(admit).toHaveBeenCalledTimes(2)
+      expect(useStudioLive.getState().next[0]).toMatchObject({ id, handoff: 'not-admitted', text: 'An edited draft still needs its original handoff checked' })
+      expect(steerCalls).toEqual([])
+      return
+    }
+    await sendNext(id)
+    await flush()
+    expect(admit).toHaveBeenCalledTimes(1)
+    expect(useStudioLive.getState().next[0]).toMatchObject({ id, handoff: 'uncertain', text: 'An edited draft still needs its original handoff checked' })
+    expect(renderCurrentSession()).toContain('The Ask has not confirmed this handoff')
+    expect(renderCurrentSession()).toMatch(/disabled=""[^>]*>Send now/)
+    expect(steerCalls).toEqual([])
+  })
+
+  it('an exception keeps an uncertain draft instead of losing it or starting another operation', async () => {
+    const { queueNext, sendNext } = await import('./store')
+    const admit = vi.fn(async () => { throw new Error('Invented ambiguous handoff') })
+    useAskStore.setState({ admit })
+    queueNext('Keep these words', context)
+    await sendNext()
+    await sendNext()
+    expect(admit).toHaveBeenCalledTimes(1)
+    expect(useStudioLive.getState().next[0]).toMatchObject({ text: 'Keep these words', handoff: 'uncertain' })
+  })
+
+  it('concurrent Send now actions reserve one handoff until its actual answer', async () => {
+    const { queueNext, sendNext } = await import('./store')
+    let resolve!: (value: typeof accepted) => void
+    const admit = vi.fn(() => new Promise<typeof accepted>((r) => { resolve = r }))
+    useAskStore.setState({ admit })
+    queueNext('Exactly one new job', context)
+    const pending = sendNext()
+    await sendNext()
+    expect(admit).toHaveBeenCalledTimes(1)
+    resolve(accepted)
+    await pending
+    expect(useStudioLive.getState().next).toEqual([])
+  })
+
+  it('a late admission cannot remove a different person\'s queued words', async () => {
+    const { queueNext, sendNext } = await import('./store')
+    let resolve!: (value: typeof accepted) => void
+    useAskStore.setState({ admit: () => new Promise<typeof accepted>((r) => { resolve = r }) })
+    queueNext('Earlier person', context)
+    const pending = sendNext()
+    bump()
+    queueNext('New person draft', context)
+    resolve(accepted)
+    await pending
+    expect(useStudioLive.getState().next.map((x) => x.text)).toEqual(['New person draft'])
+  })
+
+  it('a positively admitted turn that completes early advances once to the next queued draft', async () => {
+    const { queueNext, sendNext } = await import('./store')
+    await started()
+    let resolve!: (value: typeof accepted) => void
+    const admit = vi.fn()
+      .mockImplementationOnce(() => new Promise<typeof accepted>((r) => { resolve = r }))
+      .mockResolvedValue({ admitted: false, reason: 'refused' })
+    useAskStore.setState({ admit })
+    queueNext('First job', context)
+    queueNext('Second job', context)
+    const pending = sendNext()
+    useAskStore.setState({ open: accepted.op })
+    useAskStore.setState({ open: null, turns: { [accepted.op]: complete(accepted.op) } })
+    expect(admit).toHaveBeenCalledTimes(1)
+    resolve(accepted)
+    await pending
+    await flush()
+    expect(admit).toHaveBeenCalledTimes(2)
+    expect(admit.mock.calls[1][0]).toBe('Second job')
+    expect(useStudioLive.getState().next.map((x) => x.text)).toEqual(['Second job'])
+  })
+  const queuedTransport = async (read: 'confirmed' | 'unknown' | 'completed' = 'confirmed') => {
+    const { ApiError } = await import('../../api/client')
+    const c = useHive.getState().client as unknown as {
+      ask: ReturnType<typeof vi.fn>; askTurn: ReturnType<typeof vi.fn>
+    }
+    const requests: import('../../api/ask').AskBody[] = []
+    let readsConfirm = read !== 'unknown'
+    const view = (op: string) => ({ operation_id: op, turn_id: 'at_inv1', thread: queueThread, state: 'accepted' as const, events: read === 'completed' && requests.length === 1 ? complete(op).events : retainedTurn(op).events, more: false })
+    c.ask = vi.fn(async (body: import('../../api/ask').AskBody) => {
+      requests.push(structuredClone(body))
+      if (requests.length === 1) throw new ApiError(0, 'network', 'Synthetic lost POST response')
+      return view(body.operation_id)
+    })
+    c.askTurn = vi.fn(async (op: string) => {
+      if (!readsConfirm) throw new ApiError(403, 'forbidden', 'Synthetic unreadable original')
+      return view(op)
+    })
+    await started()
+    return { c, requests, confirm: () => { readsConfirm = true } }
+  }
+
+  it('real admit: lost POST then original readback, completion and second queued job advance once without steering or a replacement', async () => {
+    const { queueNext, sendNext } = await import('./store')
+    const h = await queuedTransport()
+    useAskStore.setState({ admit: realAdmit })
+    queueNext('First real-admit job', context)
+    queueNext('Second real-admit job', context)
+    await sendNext()
+    const original = h.requests[0].operation_id
+    expect(h.requests).toHaveLength(1)
+    expect(h.c.askTurn).toHaveBeenCalledWith(original, 0)
+    expect(useStudioLive.getState().next.map((x) => x.text)).toEqual(['Second real-admit job'])
+    const done = complete(original).events[1]
+    useAskStore.getState().onEvent(done)
+    await flush()
+    expect(h.requests).toHaveLength(2)
+    expect(h.requests[1].text).toBe('Second real-admit job')
+    expect(h.requests[1].operation_id).not.toBe(original)
+    expect(h.requests.filter((b) => b.operation_id === original)).toHaveLength(1)
+    expect(useStudioLive.getState().next).toEqual([])
+    useAskStore.getState().onEvent(done) // duplicate completion cannot advance again
+    await flush()
+    expect(h.requests).toHaveLength(2)
+    expect(steerCalls).toEqual([])
+  })
+
+  it('real admit: completion inside the original readback survives the handoff lock and advances queue2 exactly once', async () => {
+    const { queueNext, sendNext } = await import('./store')
+    const h = await queuedTransport('completed')
+    useAskStore.setState({ admit: realAdmit })
+    queueNext('Early-completing original', context)
+    queueNext('Exactly one second job', context)
+    await sendNext()
+    await flush()
+    expect(h.requests).toHaveLength(2)
+    expect(h.requests[1].text).toBe('Exactly one second job')
+    expect(new Set(h.requests.map((b) => b.operation_id)).size).toBe(2)
+    expect(useStudioLive.getState().next).toEqual([])
+    useAskStore.getState().onEvent(complete(h.requests[0].operation_id).events[1])
+    await flush()
+    expect(h.requests).toHaveLength(2)
+    expect(steerCalls).toEqual([])
+  })
+
+  it.each(['ask_busy', 'operation_conflict'] as const)('real admit retains queue words after a same-id %s placeholder until an actual matching frame', async (code) => {
+    const { ApiError } = await import('../../api/client')
+    const { AskRefusal } = await import('../../api/ask')
+    const { queueNext, sendNext, canCheckNext } = await import('./store')
+    const h = await queuedTransport('unknown')
+    let original = ''
+    h.c.askTurn = vi.fn(async () => { throw new AskRefusal(404, 'not_available', 'Synthetic missing read') })
+    h.c.ask = vi.fn(async (body: import('../../api/ask').AskBody) => {
+      h.requests.push(structuredClone(body))
+      if (!original) { original = body.operation_id; throw new ApiError(0, 'network', 'Synthetic lost POST response') }
+      if (body.operation_id === original) {
+        if (code === 'ask_busy') throw new AskRefusal(409, code, 'Synthetic same-id busy', { operation_id: original })
+        throw new ApiError(409, code, 'Synthetic operation conflict')
+      }
+      return { operation_id: body.operation_id, turn_id: 'at_inv1', thread: queueThread, state: 'accepted' as const, events: retainedTurn(body.operation_id).events, more: false }
+    })
+    useAskStore.setState({ admit: realAdmit })
+    queueNext('Do not consume on a placeholder', context)
+    queueNext('Second queued job after actual completion', context)
+    const id = useStudioLive.getState().next[0].id
+    await sendNext(id)
+    await flush()
+    expect(h.requests).toHaveLength(2) // original and unchanged same-id legacy recovery, never a new operation
+    expect(new Set(h.requests.map((b) => b.operation_id)).size).toBe(1)
+    expect(h.requests[1]).toEqual(h.requests[0])
+    expect(useStudioLive.getState().next.map((n) => n.text)).toEqual(['Do not consume on a placeholder', 'Second queued job after actual completion'])
+    expect(useStudioLive.getState().next[0].handoff).toBe('uncertain')
+    expect(canCheckNext(id)).toBe(false) // legacy display is open/no-unsure, not an actionable checkAgain
+    expect(renderCurrentSession()).toContain('>Open Ask</button>')
+    await sendNext(id)
+    expect(h.requests).toHaveLength(2)
+    useAskStore.getState().onEvent(retainedTurn(original).events[0])
+    await flush()
+    expect(useStudioLive.getState().next.map((n) => n.text)).toEqual(['Second queued job after actual completion'])
+    expect(h.requests).toHaveLength(2)
+    useAskStore.getState().onEvent(complete(original).events[1])
+    await flush()
+    expect(h.requests).toHaveLength(3)
+    expect(new Set(h.requests.map((b) => b.operation_id)).size).toBe(2)
+    expect(h.requests[2].text).toBe('Second queued job after actual completion')
+    expect(useStudioLive.getState().next).toEqual([])
+    expect(steerCalls).toEqual([])
+  })
+
+  const ordinaryFrame = (op: string, phase: 'accepted' | 'done') => {
+    const e = checkAskEvent({ type: 'ask', operation_id: op, turn_id: 'at_inv1', seq: phase === 'accepted' ? 1 : 2, phase, at: '2026-10-29T00:00:01Z', ...(phase === 'accepted' ? { thread: { id: 'thread_inv1', mind: { id: 'omega_wren', name: 'Wren' }, budget_usd: 5, spent_usd: 0 } } : { outcome: 'complete' }) })
+    if (!e) throw new Error('Ordinary no-principal frame must satisfy the current API reader')
+    expect(e).not.toHaveProperty('principal')
+    return e
+  }
+
+  it('C6 R3: real pre-POST epoch rejection retains a manual draft, then one retry and completion advance the queue', async () => {
+    const { queueNext, sendNext, canCheckNext } = await import('./store')
+    const h = await queuedTransport()
+    h.c.ask = vi.fn(async (body: import('../../api/ask').AskBody) => {
+      h.requests.push(structuredClone(body))
+      return { operation_id: body.operation_id, turn_id: 'at_inv1', thread: queueThread, state: 'accepted' as const, events: [ordinaryFrame(body.operation_id, 'accepted')], more: false }
+    })
+    useAskStore.setState({ admit: realAdmit })
+    const words = 'A pre-POST rejection stays available for my manual choice'
+    queueNext(words, context)
+    queueNext('Second queued job after the manually admitted original', context)
+    const first = useStudioLive.getState().next[0]
+    const bound = useAskStore.getState().bound
+    let changed = false
+    const unsubscribe = useAskStore.subscribe((s) => {
+      if (changed || !s.open || s.turns[s.open]?.you !== words) return
+      changed = true
+      useAskStore.setState({ epoch: s.epoch + 1 }) // same person/client/session; invalidate only the optimistic snapshot
+    })
+    try { await sendNext(first.id) } finally { unsubscribe() }
+    expect(changed).toBe(true)
+    expect(useAskStore.getState().bound).toBe(bound)
+    expect(h.c.ask).not.toHaveBeenCalled()
+    expect(h.requests).toEqual([])
+    expect(useAskStore.getState().open).toBeNull()
+    expect(useStudioLive.getState().next[0]).toMatchObject({ id: first.id, text: words, handoff: 'not-admitted' })
+    expect(canCheckNext(first.id)).toBe(false) // no receipt was issued, so no guessed original check
+    await sendNext() // an automatic attempt cannot retry even a definitely unadmitted draft
+    expect(h.c.ask).not.toHaveBeenCalled()
+    await sendNext(first.id) // the person's explicit manual retry, not an automatic resubmission
+    expect(h.c.ask).toHaveBeenCalledTimes(1)
+    expect(h.requests).toHaveLength(1)
+    expect(h.requests[0].text).toBe(words)
+    expect(useStudioLive.getState().next.map((n) => n.text)).toEqual(['Second queued job after the manually admitted original'])
+    const original = h.requests[0].operation_id
+    useAskStore.getState().onEvent(ordinaryFrame(original, 'done'))
+    await flush()
+    expect(h.c.ask).toHaveBeenCalledTimes(2)
+    expect(h.requests[1].text).toBe('Second queued job after the manually admitted original')
+    expect(h.requests[1].operation_id).not.toBe(original)
+    expect(useStudioLive.getState().next).toEqual([])
+    expect(steerCalls).toEqual([])
+    useAskStore.getState().onEvent(ordinaryFrame(h.requests[1].operation_id, 'done'))
+  })
+
+  it('real admit uses ordinary no-principal readback/complete frames, advances queue2 and ignores a cloned duplicate seq', async () => {
+    const { queueNext, sendNext } = await import('./store')
+    const h = await queuedTransport()
+    h.c.askTurn = vi.fn(async (op: string) => ({ operation_id: op, turn_id: 'at_inv1', thread: queueThread, state: 'accepted' as const, events: [ordinaryFrame(op, 'accepted')], more: false }))
+    useAskStore.setState({ admit: realAdmit })
+    queueNext('Ordinary protocol original', context)
+    queueNext('Second ordinary job', context)
+    await sendNext()
+    const op = h.requests[0].operation_id
+    expect(h.requests).toHaveLength(1)
+    expect(useStudioLive.getState().next.map((n) => n.text)).toEqual(['Second ordinary job'])
+    const done = ordinaryFrame(op, 'done')
+    useAskStore.getState().onEvent(done)
+    await flush()
+    expect(h.requests).toHaveLength(2)
+    expect(h.requests[1].text).toBe('Second ordinary job')
+    useAskStore.getState().onEvent({ ...done }) // same sequence, a fresh JSON/event object
+    await flush()
+    expect(h.requests).toHaveLength(2)
+    expect(useStudioLive.getState().next).toEqual([])
+    expect(steerCalls).toEqual([])
+  })
+
+  it('a real unknown receipt is confirmed by an ordinary no-principal accepted frame, then only complete advances queue2', async () => {
+    const { queueNext, sendNext } = await import('./store')
+    const h = await queuedTransport('unknown')
+    useAskStore.setState({ admit: realAdmit })
+    queueNext('Unknown original with ordinary frames', context)
+    queueNext('Wait for that original to complete', context)
+    await sendNext()
+    const op = h.requests[0].operation_id
+    expect(useStudioLive.getState().next[0].handoff).toBe('uncertain')
+    useAskStore.getState().onEvent(ordinaryFrame(op, 'accepted'))
+    await flush()
+    expect(h.requests).toHaveLength(1)
+    expect(useStudioLive.getState().next.map((n) => n.text)).toEqual(['Wait for that original to complete'])
+    useAskStore.getState().onEvent(ordinaryFrame(op, 'done'))
+    await flush()
+    expect(h.requests).toHaveLength(2)
+    expect(h.requests[1].operation_id).not.toBe(op)
+    expect(useStudioLive.getState().next).toEqual([])
+  })
+
+  it('ordinary no-principal early COMPLETE survives the real-admit lock and does not block a later valid queue job', async () => {
+    const { queueNext, sendNext } = await import('./store')
+    const h = await queuedTransport()
+    h.c.askTurn = vi.fn(async (op: string) => ({ operation_id: op, turn_id: 'at_inv1', thread: queueThread, state: 'done' as const, events: [ordinaryFrame(op, 'accepted'), ordinaryFrame(op, 'done')], more: false }))
+    useAskStore.setState({ admit: realAdmit })
+    queueNext('Ordinary early-completing original', context)
+    queueNext('Second job after early completion', context)
+    await sendNext()
+    await flush()
+    expect(h.requests).toHaveLength(2)
+    expect(h.requests[1].text).toBe('Second job after early completion')
+    const op = h.requests[0].operation_id
+    useAskStore.getState().onEvent({ ...ordinaryFrame(op, 'done') })
+    await flush()
+    expect(h.requests).toHaveLength(2)
+    queueNext('A later valid third job', context)
+    useAskStore.getState().onEvent(ordinaryFrame(h.requests[1].operation_id, 'done'))
+    await flush()
+    expect(h.requests).toHaveLength(3)
+    expect(h.requests[2].text).toBe('A later valid third job')
+    expect(new Set(h.requests.map((b) => b.operation_id)).size).toBe(3)
+  })
+
+  it.each([null, 7, undefined, 'user:p_other'] as const)('a supplied invalid/foreign principal extension %s never auto-drains the next queue item', async (principal) => {
+    const { queueNext, sendNext } = await import('./store')
+    const h = await queuedTransport()
+    useAskStore.setState({ admit: realAdmit })
+    queueNext('Admitted original', context)
+    queueNext('Retain after foreign or invalid completion', context)
+    await sendNext()
+    const op = h.requests[0].operation_id
+    useAskStore.getState().onEvent({ ...ordinaryFrame(op, 'done'), principal })
+    await flush()
+    expect(h.requests).toHaveLength(1)
+    expect(useStudioLive.getState().next[0].text).toBe('Retain after foreign or invalid completion')
+  })
+
+  it('real original remains unknown until one explicit bounded check; a positive read preserves edited words as manual-only', async () => {
+    const { queueNext, sendNext, checkNext, canCheckNext, editNext } = await import('./store')
+    const h = await queuedTransport('unknown')
+    useAskStore.setState({ admit: realAdmit })
+    queueNext('Submitted original', context)
+    queueNext('Next job', context)
+    const id = useStudioLive.getState().next[0].id
+    await sendNext(id)
+    expect(useStudioLive.getState().next[0].handoff).toBe('uncertain')
+    expect(canCheckNext(id)).toBe(true)
+    expect(renderCurrentSession()).toContain('Check again')
+    expect(renderCurrentSession()).toContain('aria-describedby=')
+    editNext(id, 'Edited retained draft')
+    const original = h.requests[0].operation_id
+    h.confirm()
+    const checking = checkNext(id)
+    await checkNext(id) // same original check lock, no second operation
+    await checking
+    expect(h.requests).toHaveLength(1)
+    expect(useStudioLive.getState().next[0]).toMatchObject({ text: 'Edited retained draft', handoff: 'edited' })
+    useAskStore.getState().onEvent(complete(original).events[1])
+    await flush()
+    await sendNext() // automatic completion does not release the edited draft
+    expect(h.requests).toHaveLength(1)
+    expect(useStudioLive.getState().next.map((x) => x.text)).toEqual(['Edited retained draft', 'Next job'])
+    await sendNext(id) // only the person's separate manual action submits edited words
+    expect(h.requests).toHaveLength(2)
+    expect(h.requests[1].text).toBe('Edited retained draft')
+    expect(h.requests[1].operation_id).not.toBe(original)
+  })
+
+  it('C6: a changed bound principal short-circuits a real unknown receipt before its admission lookup', async () => {
+    const { queueNext, sendNext, canCheckNext, checkNext } = await import('./store')
+    const h = await queuedTransport('unknown')
+    useAskStore.setState({ admit: realAdmit })
+    queueNext('Keep this original under its own principal', context)
+    const id = useStudioLive.getState().next[0].id
+    await sendNext(id)
+    expect(canCheckNext(id)).toBe(true)
+    const admissionOf = useAskStore.getState().admissionOf
+    const lookup = vi.fn(admissionOf) // observe the real receipt lookup, never manufacture admission
+    useAskStore.setState({ admissionOf: lookup })
+    lookup.mockClear()
+    const bound = useAskStore.getState().bound!
+    const principal = bound.principal
+    const reads = h.c.askTurn.mock.calls.length
+    try {
+      // Defence before the identity observer's notification; C5 already refuses downstream.
+      bound.principal = 'user:p_other'
+      expect(canCheckNext(id)).toBe(false)
+      await checkNext(id)
+      expect(lookup).not.toHaveBeenCalled()
+      expect(h.c.askTurn).toHaveBeenCalledTimes(reads)
+      expect(h.requests).toHaveLength(1)
+      expect(useStudioLive.getState().next[0]).toMatchObject({ id, handoff: 'uncertain', text: 'Keep this original under its own principal' })
+    } finally {
+      bound.principal = principal
+      useAskStore.setState({ admissionOf })
+    }
+  })
+
+  it('C6: editing a definitively refused real original retires its receipt and keeps the words manual-only', async () => {
+    const { ApiError } = await import('../../api/client')
+    const { queueNext, sendNext, canCheckNext, checkNext, editNext } = await import('./store')
+    const h = await queuedTransport('unknown')
+    useAskStore.setState({ admit: realAdmit })
+    queueNext('Original words awaiting a real decision', context)
+    const id = useStudioLive.getState().next[0].id
+    await sendNext(id)
+    const original = h.requests[0].operation_id
+    h.c.askTurn = vi.fn(async () => { throw new ApiError(404, 'not_available', 'Synthetic original not found') })
+    h.c.ask = vi.fn(async (body: import('../../api/ask').AskBody) => {
+      h.requests.push(structuredClone(body))
+      throw new ApiError(403, 'forbidden', 'Synthetic definitive original refusal')
+    })
+    await checkNext(id) // the existing recovery may retry only the SAME original body/id
+    expect(useAskStore.getState().turns[original].state).toBe('refused')
+    expect(useStudioLive.getState().next[0].handoff).toBe('not-admitted')
+    expect(h.requests).toHaveLength(2)
+    expect(h.requests[1]).toEqual(h.requests[0])
+    const admissionOf = useAskStore.getState().admissionOf
+    const lookup = vi.fn(admissionOf)
+    useAskStore.setState({ admissionOf: lookup })
+    try {
+      editNext(id, 'Edited words are a separate manual choice')
+      useAskStore.setState({ threadOpen: !useAskStore.getState().threadOpen })
+      expect(useStudioLive.getState().next[0]).toMatchObject({ id, handoff: 'edited', text: 'Edited words are a separate manual choice' })
+      lookup.mockClear()
+      useAskStore.setState({ threadOpen: !useAskStore.getState().threadOpen })
+      expect(lookup).not.toHaveBeenCalled() // a later notification cannot dispatch the retired correlation
+      expect(canCheckNext(id)).toBe(false)
+      await checkNext(id)
+      await sendNext() // automatic progress never resubmits the edited words
+      expect(h.requests).toHaveLength(2)
+      expect(new Set(h.requests.map((b) => b.operation_id))).toEqual(new Set([original]))
+      expect(useStudioLive.getState().next[0].text).toBe('Edited words are a separate manual choice')
+      expect(steerCalls).toEqual([])
+    } finally {
+      useAskStore.setState({ admissionOf })
+    }
+  })
+
+  it('C6: a rematerialized COMPLETE for an already-used operation cannot advance again, while a later operation can', async () => {
+    const { queueNext, sendNext } = await import('./store')
+    const h = await queuedTransport()
+    useAskStore.setState({ admit: realAdmit })
+    queueNext('A completes and advances B', context)
+    queueNext('B was queued before A completed', context)
+    await sendNext()
+    const original = h.requests[0].operation_id
+    useAskStore.getState().onEvent(ordinaryFrame(original, 'done'))
+    await flush()
+    expect(h.requests).toHaveLength(2)
+    expect(h.requests[1].text).toBe('B was queued before A completed')
+    useAskStore.getState().onEvent(ordinaryFrame(h.requests[1].operation_id, 'done'))
+    await flush()
+    expect(useAskStore.getState().open).toBeNull()
+    queueNext('C waits for a new manual start', context)
+    const next = useStudioLive.getState().next[0]
+    const retained = useAskStore.getState().turns[original]
+    const firstDone = retained.events.find((e) => e.phase === 'done')
+    if (!firstDone) throw new Error('The real admitted original must retain its completion')
+    const replay = structuredClone(firstDone)
+    expect(replay).not.toBe(firstDone)
+    // A retained turn can be rebuilt from DATA; event-object identity is not operation identity.
+    useAskStore.setState((s) => ({ open: original, turns: { ...s.turns, [original]: { ...retained, state: 'open' as const, lastSeq: 1, events: [ordinaryFrame(original, 'accepted')], ahead: [] } } }))
+    useAskStore.getState().onEvent(replay)
+    await flush()
+    expect(h.requests).toHaveLength(2)
+    expect(useStudioLive.getState().next).toEqual([next])
+    queueNext('D waits for C to complete', context)
+    await sendNext(next.id) // only the person's manual choice starts C
+    expect(h.requests).toHaveLength(3)
+    expect(h.requests[2].text).toBe('C waits for a new manual start')
+    useAskStore.getState().onEvent(ordinaryFrame(h.requests[2].operation_id, 'done'))
+    await flush()
+    expect(h.requests).toHaveLength(4)
+    expect(h.requests[3].text).toBe('D waits for C to complete')
+    expect(new Set(h.requests.map((b) => b.operation_id)).size).toBe(4)
+    expect(useStudioLive.getState().next).toEqual([])
+    expect(steerCalls).toEqual([])
+    useAskStore.getState().onEvent(ordinaryFrame(h.requests[3].operation_id, 'done'))
+  })
+
+  it('removing a real unknown draft without an identity change clears only queue correlation and disables stale checks', async () => {
+    const { queueNext, sendNext, checkNext, canCheckNext, dropNext } = await import('./store')
+    const h = await queuedTransport('unknown')
+    useAskStore.setState({ admit: realAdmit })
+    queueNext('Remove only this local draft', context)
+    const id = useStudioLive.getState().next[0].id
+    await sendNext(id)
+    const original = h.requests[0].operation_id
+    expect(canCheckNext(id)).toBe(true)
+    const reads = h.c.askTurn.mock.calls.length
+    const sameBinding = useAskStore.getState().bound
+    dropNext(id)
+    expect(canCheckNext(id)).toBe(false)
+    await checkNext(id) // a stale handler cannot issue a read or replace the original
+    expect(h.c.askTurn).toHaveBeenCalledTimes(reads)
+    expect(useAskStore.getState().bound).toBe(sameBinding)
+    expect(useAskStore.getState().turns[original].state).toBe('checking')
+    expect(useStudioLive.getState().next).toEqual([])
+    expect(h.requests).toHaveLength(1)
+  })
+
+  it('removal during an existing real original check cannot reinsert the draft or touch later words without an identity bump', async () => {
+    const { queueNext, sendNext, checkNext, canCheckNext, dropNext } = await import('./store')
+    const h = await queuedTransport('unknown')
+    useAskStore.setState({ admit: realAdmit })
+    queueNext('Removed while checking', context)
+    const id = useStudioLive.getState().next[0].id
+    await sendNext(id)
+    let finish!: () => void
+    h.c.askTurn = vi.fn(async (op: string) => { await new Promise<void>((r) => { finish = r }); return { operation_id: op, turn_id: 'at_inv1', events: retainedTurn(op).events, more: false } })
+    const pending = checkNext(id)
+    await flush()
+    dropNext(id)
+    queueNext('Later retained words', context)
+    const later = useStudioLive.getState().next[0]
+    expect(canCheckNext(id)).toBe(false)
+    await checkNext(id)
+    expect(h.c.askTurn).toHaveBeenCalledTimes(1)
+    finish()
+    await pending
+    await flush()
+    expect(useStudioLive.getState().next).toEqual([later])
+    expect(canCheckNext(id)).toBe(false)
+    expect(h.requests).toHaveLength(1)
+  })
+
+  it('an unknown without a safe receipt keeps words held and offers Open Ask, not a permanently disabled check or a new request', async () => {
+    const { queueNext, sendNext, checkNext, canCheckNext, focusAsk } = await import('./store')
+    await started()
+    const admit = vi.fn(async () => { throw new Error('Synthetic ambiguous handoff') })
+    useAskStore.setState({ admit, threadOpen: false })
+    queueNext('Keep these unconfirmed words', context)
+    const id = useStudioLive.getState().next[0].id
+    await sendNext(id)
+    expect(canCheckNext(id)).toBe(false)
+    const html = renderCurrentSession()
+    expect(html).toContain('An original-operation check is not available here')
+    expect(html).toContain('>Open Ask</button>')
+    expect(html).not.toContain('>Check again</button>')
+    expect(html).toMatch(/disabled=""[^>]*>Send now/)
+    expect(html).toContain('aria-describedby=')
+    await checkNext(id)
+    focusAsk()
+    expect(useAskStore.getState().threadOpen).toBe(true)
+    await sendNext(id)
+    expect(admit).toHaveBeenCalledTimes(1)
+    expect(useStudioLive.getState().next[0]).toMatchObject({ id, text: 'Keep these unconfirmed words', handoff: 'uncertain' })
+  })
+
+  it('an Ask thread reset invalidates its receipt without clearing uncertainty or inventing a replacement', async () => {
+    const { queueNext, sendNext, checkNext, canCheckNext } = await import('./store')
+    const h = await queuedTransport('unknown')
+    useAskStore.setState({ admit: realAdmit })
+    queueNext('Preserved across local Ask reset', context)
+    const id = useStudioLive.getState().next[0].id
+    await sendNext(id)
+    useAskStore.getState().reset()
+    expect(canCheckNext(id)).toBe(false)
+    await checkNext(id)
+    const html = renderCurrentSession()
+    expect(html).toContain('>Open Ask</button>')
+    expect(html).not.toContain('>Check again</button>')
+    expect(useStudioLive.getState().next[0]).toMatchObject({ id, handoff: 'uncertain', text: 'Preserved across local Ask reset' })
+    expect(h.requests).toHaveLength(1)
+  })
+
+  it.each(['open', 'done', 'checking'] as const)('a retained %s turn without an unsure body cannot advertise or run checkAgain', async (state) => {
+    const { queueNext, sendNext, checkNext, canCheckNext } = await import('./store')
+    const h = await queuedTransport('unknown')
+    useAskStore.setState({ admit: realAdmit })
+    queueNext('Keep until original proof', context)
+    const id = useStudioLive.getState().next[0].id
+    await sendNext(id)
+    const op = h.requests[0].operation_id
+    const reads = h.c.askTurn.mock.calls.length
+    useAskStore.setState((s) => ({ turns: { ...s.turns, [op]: { ...s.turns[op], state, unsure: undefined } } }))
+    expect(canCheckNext(id)).toBe(false)
+    await checkNext(id)
+    expect(h.c.askTurn).toHaveBeenCalledTimes(reads)
+    expect(renderCurrentSession()).toContain('>Open Ask</button>')
+    expect(renderCurrentSession()).not.toContain('>Check again</button>')
+    expect(useStudioLive.getState().next[0].handoff).toBe('uncertain')
+    expect(h.requests).toHaveLength(1)
+  })
+
+  it('a foreign frame cannot turn an unknown original into an actionable check on its now-open/no-unsure turn', async () => {
+    const { queueNext, sendNext, checkNext, canCheckNext } = await import('./store')
+    const h = await queuedTransport('unknown')
+    useAskStore.setState({ admit: realAdmit })
+    queueNext('Original principal only', context)
+    const id = useStudioLive.getState().next[0].id
+    await sendNext(id)
+    const op = h.requests[0].operation_id
+    const reads = h.c.askTurn.mock.calls.length
+    const foreign = retainedTurn(op, 'at_inv1', 'user:p_other').events[0]
+    useAskStore.getState().onEvent(foreign)
+    expect(useAskStore.getState().turns[op].state).toBe('open') // inherited generic frame handling, not admission proof
+    expect(canCheckNext(id)).toBe(false)
+    await checkNext(id)
+    expect(h.c.askTurn).toHaveBeenCalledTimes(reads)
+    expect(renderCurrentSession()).toContain('>Open Ask</button>')
+    expect(useStudioLive.getState().next[0].handoff).toBe('uncertain')
+    expect(h.requests).toHaveLength(1)
+  })
+
+  it('a late successful check cannot touch the new identity or imply cancellation after explicit draft removal', async () => {
+    const { queueNext, sendNext, checkNext, dropNext } = await import('./store')
+    const h = await queuedTransport('unknown')
+    useAskStore.setState({ admit: realAdmit })
+    queueNext('Old identity original', context)
+    const id = useStudioLive.getState().next[0].id
+    await sendNext(id)
+    let finish!: () => void
+    h.c.askTurn = vi.fn(async (op: string) => { await new Promise<void>((r) => { finish = r }); return { operation_id: op, turn_id: 'at_inv1', events: retainedTurn(op).events, more: false } })
+    const pending = checkNext(id)
+    await flush()
+    dropNext(id) // removes the local draft, not the actual original Ask
+    bump()
+    queueNext('New identity words', context)
+    finish()
+    await pending
+    await flush()
+    expect(useStudioLive.getState().next.map((x) => x.text)).toEqual(['New identity words'])
+    expect(h.requests).toHaveLength(1)
+  })
+
+  it('a stopped original cannot auto-drain even if a complete frame is later retained', async () => {
+    const { queueNext } = await import('./store')
+    await started()
+    const admit = vi.fn(async () => accepted)
+    useAskStore.setState({ admit, open: accepted.op })
+    queueNext('Wait for the person after Stop', context)
+    useAskStore.setState({ open: null, turns: { [accepted.op]: { ...complete(accepted.op), refusedEarly: 'stopped' } } })
+    await flush()
+    expect(admit).not.toHaveBeenCalled()
+    expect(useStudioLive.getState().next[0].text).toBe('Wait for the person after Stop')
+  })
+
+  it.each(['cancelled', 'spend_cap', 'error'] as const)('a real-admitted original ending %s never advances the second draft', async (outcome) => {
+    const { queueNext, sendNext } = await import('./store')
+    const h = await queuedTransport()
+    useAskStore.setState({ admit: realAdmit })
+    queueNext('Original job', context)
+    queueNext('Wait for a complete answer', context)
+    await sendNext()
+    const op = h.requests[0].operation_id
+    const done = checkAskEvent({ type: 'ask', operation_id: op, turn_id: 'at_inv1', principal: 'user:p_a', seq: 2, phase: 'done', outcome, at: '2026-10-29T00:00:01Z' })
+    expect(done).not.toBeNull()
+    useAskStore.getState().onEvent(done!)
+    await flush()
+    expect(h.requests).toHaveLength(1)
+    expect(useStudioLive.getState().next[0].text).toBe('Wait for a complete answer')
+  })
+
 })
 
 describe('observedBase delivery (Design READBACK: receive needs the maker-read tuple)', () => {
@@ -1510,4 +2492,31 @@ describe('r1.14d (walk 2, Design 202940Z): the frame gets the bare body hash; th
     const body = outcomeBodies[0] as { piece_upload?: { body_sha256: string } }
     expect(body.piece_upload?.body_sha256).toBe(acked.body_sha256)
   })
+})
+
+
+it('owner workspace repair uses the same control id after a lost answer, reads the existing ledger and closes its offer', async () => {
+  const { ApiError } = await import('../../api/client')
+  const ids: string[] = [], c = fakeClient() as unknown as Record<string, unknown>
+  c.studioControl = async (_sid: string, body: { control_id: string; action: string }) => {
+    ids.push(body.control_id)
+    expect(body.action).toBe('repair_handoff')
+    if (ids.length === 1) throw new ApiError(0, 'network', 'invented lost answer')
+    ledgerRaw.credential_reason = null
+    ledgerRaw.state = 'ended'
+    ledgerRaw.stop = { state: 'ended', maker_released: true, release_phase: 'durable' }
+    return {}
+  }
+  useHive.setState({ client: c as never }); await started()
+  ledgerRaw.state = 'stopping'; ledgerRaw.credential_reason = 'namespace_conflict'
+  ledgerRaw.stop = { state: 'stopping', release_phase: 'installed', maker_released: false }
+  const { refresh, repairHandoff } = await import('./store')
+  await refresh()
+  expect(renderCurrentSession()).toContain('Check workspace and finish stopping')
+  await repairHandoff(); await settle()
+  expect(renderCurrentSession()).not.toContain('Check workspace and finish stopping')
+  expect(ids).toHaveLength(2); expect(ids[0]).toBe(ids[1])
+  expect(useStudioLive.getState().ledger?.state).toBe('ended')
+  expect(useStudioLive.getState().ledger?.credential_reason).toBeNull()
+  expect(useStudioLive.getState().control).toBeNull()
 })

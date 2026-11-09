@@ -1,6 +1,6 @@
 /**
  * The retained scoped-suggestion contract, exactly as implemented by the OmegaCode service candidate
- * (coordination/omegacode/SCOPED_SUGGESTIONS_IMPLEMENTATION.md + SUGGESTION_HISTORY_IMPLEMENTATION.md; field shapes read
+ * (SCOPED_SUGGESTIONS_IMPLEMENTATION.md + SUGGESTION_HISTORY_IMPLEMENTATION.md; field shapes read
  * from omegacode/src/omegacode/suggestions.py and suggestion_validation.py, read-only). The illustrative v1 object in
  * OMEGACODE_REPLY_TO_SURFACE.md §1 is NOT this contract: no rationale, request/model attribution or aggregate status.
  *

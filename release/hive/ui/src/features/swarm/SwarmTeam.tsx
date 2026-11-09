@@ -61,7 +61,7 @@ export function SwarmTeam({ swarm }: { swarm: Swarm }) {
 function MindRow({ mind }: { mind: Agent }) {
   const thinking = useHive((s) => s.thinking[mind.id])
   return (
-    <button onClick={() => navigate({ name: 'dot', id: mind.id })} className="flex min-h-14 w-full items-center gap-2 rounded-xl p-2 text-left hover:bg-white/[0.05]">
+    <button onClick={() => navigate({ name: 'dot', id: mind.id })} className="flex min-h-14 w-full items-center gap-2 rounded-xl p-2 text-left hover:bg-tint/[0.05]">
       <Orb hue={mind.hue} status={mind.status} thinking={thinking} size={28} />
       <span className="min-w-0 flex-1"><span className="block break-words text-body font-medium">{shown(mind.name)}</span><span className="block text-meta text-ink-3">{mind.kind} · {money(mind.spent_usd)} <SimChip /></span></span>
       <StatusPill status={mind.status} thinking={thinking} />
@@ -71,5 +71,5 @@ function MindRow({ mind }: { mind: Agent }) {
 
 function ChildTeams({ swarms }: { swarms: Swarm[] }) {
   if (!swarms.length) return null
-  return <ul aria-label="Nested swarms" className="ml-5 space-y-1 border-l border-line-2 pl-3">{swarms.map((s) => <li key={s.id}><button onClick={() => navigate({ name: 'swarm', id: s.id })} className="min-h-11 w-full rounded-lg px-2 py-2 text-left text-small hover:bg-white/[0.05]"><span className="block break-words font-medium">{shown(s.name)}</span><span className="text-meta text-ink-3">Nested swarm · {plural(s.member_ids.length, 'mind')}</span></button></li>)}</ul>
+  return <ul aria-label="Nested swarms" className="ml-5 space-y-1 border-l border-line-2 pl-3">{swarms.map((s) => <li key={s.id}><button onClick={() => navigate({ name: 'swarm', id: s.id })} className="min-h-11 w-full rounded-lg px-2 py-2 text-left text-small hover:bg-tint/[0.05]"><span className="block break-words font-medium">{shown(s.name)}</span><span className="text-meta text-ink-3">Nested swarm · {plural(s.member_ids.length, 'mind')}</span></button></li>)}</ul>
 }

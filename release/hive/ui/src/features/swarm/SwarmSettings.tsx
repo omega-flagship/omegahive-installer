@@ -102,7 +102,7 @@ function SwarmSettings({ swarm, onClose }: { swarm: Swarm; onClose: () => void }
     }
   }
 
-  const field = 'mt-1 min-h-11 w-full rounded-xl border border-line bg-black/30 px-3 text-[13.5px] text-ink outline-none focus:border-line-2'
+  const field = 'mt-1 min-h-11 w-full rounded-xl border border-line bg-shade/30 px-3 text-[13.5px] text-ink outline-none focus:border-line-2'
   const archived = !!s.archived_at
   const showArchive = !archiveGone && has(client, archived ? 'restoreSwarm' : 'archiveSwarm')
   // with its minds (host r3, with its read-only preview): while it has minds, or once archived (an earlier delete may
@@ -139,7 +139,7 @@ function SwarmSettings({ swarm, onClose }: { swarm: Swarm; onClose: () => void }
               {shown(s.name)}
             </h2>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="flex size-10 items-center justify-center rounded-xl text-ink-3 hover:bg-white/[0.07] hover:text-ink">
+          <button type="button" onClick={onClose} aria-label="Close" className="flex size-10 items-center justify-center rounded-xl text-ink-3 hover:bg-tint/[0.07] hover:text-ink">
             <Icon name="x" size={18} />
           </button>
         </div>

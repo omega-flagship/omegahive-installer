@@ -1,0 +1,62 @@
+/* Candidate: Professional retains its own paper palette, native card and workspace. */
+.prh { --prh-clear: 216px; position: fixed; inset: 0; z-index: 25; overflow: auto; padding: max(60px, env(safe-area-inset-top)) 20px max(90px, var(--ask-room, 220px)); display: flex; flex-direction: column; background: var(--pr-page); color: var(--pr-ink); font: 14px/1.5 var(--pr-font); color-scheme: light; }
+.prh[hidden], .prh [hidden], .prh-back[hidden] { display: none; }
+.prh *, .prh *::before, .prh *::after { box-sizing: border-box; }
+.prh-column { width: min(var(--ask-width, 640px), calc(100vw - 2 * var(--prh-clear)), 100%); margin: auto; flex: 0 0 auto; }
+.prh-heading { display: flex; flex-direction: column; align-items: center; text-align: center; transform: translateY(0); transition: transform .36s cubic-bezier(.2,.8,.2,1); }
+
+.prh-omega { width: 100px; height: 100px; border: 0; padding: 0; color: var(--pr-accent); background: none; cursor: pointer; touch-action: none; }
+.prh-mark, .prh-mark svg { width: 100%; height: 100%; }
+.prh h1 { margin: 8px 0 0; font-size: 24px; line-height: 32px; font-weight: 500; letter-spacing: -.4px; }
+.prh-question { color: var(--pr-muted); margin: 16px 0 0; }
+/* rest: apps one press away in every look (Jon 2 Nov) */
+.prh-rest-apps { margin-top: 20px; min-height: 44px; padding: 10px 18px; border: 1px solid var(--pr-line); border-radius: 6px; background: var(--pr-surface); color: var(--pr-buttonInk); font: 14px/1.5 var(--pr-font); cursor: pointer; }
+
+.prh-apps { margin-top: 32px; }
+.prh-apps h2 { margin: 0 0 12px; font-size: 14px; font-weight: 500; color: var(--pr-secondary); }
+.prh-app-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.prh-app { position: relative; min-height: 56px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; text-align: start; padding: 12px 36px 12px 16px; border: 1px solid var(--pr-line); border-inline-start: 3px solid; border-radius: 6px; background: var(--pr-surface); color: var(--pr-ink); font: inherit; cursor: pointer; }
+.prh-app > span:first-child { overflow-wrap: anywhere; }
+.prh-app small { color: var(--pr-muted); font-size: 12px; }
+.prh-arrow { position: absolute; inset-inline-end: 14px; color: var(--pr-muted); }
+.prh-more, .prh-pro, .prh-power, .prh-back { min-height: 44px; padding: 10px 16px; border: 1px solid var(--pr-line); border-radius: 6px; background: var(--pr-surface); color: var(--pr-buttonInk); font: 14px/1.5 var(--pr-font); cursor: pointer; }
+.prh-more { margin-top: 12px; }
+.prh-pro { display: block; margin: 28px auto 0; }
+.prh-power { position: absolute; top: max(20px, env(safe-area-inset-top)); right: 20px; }
+.prh-back { position: fixed; z-index: 64; top: 76px; right: 20px; }
+.prh button:focus-visible, .prh-back:focus-visible { outline: 3px solid var(--pr-accent); outline-offset: 3px; }
+/* Dot's 3 Nov ruling: the released dock stays fixed. Its host publishes the column's
+   alignment and measured room; the look never calculates or moves the Ask. */
+@media (max-width: 767px) {
+  .prh-app-list { grid-template-columns: minmax(0, 1fr); }
+  .prh-back { top: max(8px, env(safe-area-inset-top)); right: 12px; }
+}
+@media (max-height: 620px) {
+  .prh { padding-top: 16px; }
+  .prh-omega { width: 70px; height: 70px; }
+}
+
+/* One native, reversible passage: the workspace enters from the left, the home yields
+   to the right, and the host's Ask does not participate in either transform. Discrete
+   display transitions keep owners mounted only for the finite passage, then fully still. */
+.prh, .professional[data-experience='professional'] {
+  opacity: 1;
+  transform: translateX(0);
+  transition: opacity .32s ease, transform .32s cubic-bezier(.2,.8,.2,1), display .32s allow-discrete;
+}
+.prh[hidden] { opacity: 0; transform: translateX(24px); }
+.professional[data-experience='professional'][data-phase-held] { display: none; opacity: 0; transform: translateX(-24px); }
+.prh-apps, .prh-pro { opacity: 1; transition: opacity .24s ease, display .24s allow-discrete; }
+.prh-apps[hidden], .prh-pro[hidden] { opacity: 0; }
+@starting-style {
+  .prh:not([hidden]) { opacity: 0; transform: translateX(24px); }
+  .professional[data-experience='professional']:not([data-phase-held]) { opacity: 0; transform: translateX(-24px); }
+  .prh-apps:not([hidden]), .prh-pro:not([hidden]) { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .prh, .prh-heading, .prh-apps, .prh-pro, .professional[data-experience='professional'] { transition: none !important; }
+}
+.prh-waiting { margin: 12px 0 0; color: var(--pr-muted); font-size: 12px; }
+
+@media (max-width: 1100px) { .prh { --prh-clear: 182px; } }
+@media (max-width: 767px), (max-height: 559px) { .prh { --prh-clear: 20px; } }

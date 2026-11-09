@@ -454,7 +454,7 @@ def test_iso_job_stuck_marked_after_300s(r3, monkeypatch):
     time.sleep(0.1)
     on_loop(r3, studio(r3).tick)
     assert ses_row(r3, sid)["job_stuck_at"] is not None
-    view = r3.client.get(f"/api/studio-sessions/{sid}/audit", headers=r3.quinn).json()
+    view = r3.client.get(f"/api/studio-sessions/{sid}/audit", headers=r3.jon).json()
     assert view["worker"]["classes"]["S"]["stuck"] == 1 and view["worker"]["stuck_makers"] == [r3.maker["id"]]
     assert view["worker"]["stuck_processes"][r3.maker["id"]] == r3.driver.procs[r3.maker["id"]]   # for an OS stop
     assert "restart the hive" in view["worker"]["message"]
@@ -1193,16 +1193,25 @@ def test_stop_races_B_right_after_revalidation_no_rotation_no_start(r3, monkeypa
     assert epoch_of(r3) == k + 1                                           # only the release rotation
 
 
-def test_stop_races_B_between_install_and_start_authorisation(r3):
+def test_stop_races_B_between_install_and_start_authorisation(r3, monkeypatch):
     session, sid, m, step = ready2(r3)
     upload(r3, sid, m, 2, gen=2)
     studio(r3).worker.wait_idle(15)
     k = epoch_of(r3)
     gate, entered = gate_pair()
-    hook(("rename", "current", (gate, entered)))
+    original_install = studio(r3)._install_files
+    def installed_then_wait(*args):
+        original_install(*args)
+        # The namespace transaction must cover the actual renames. Park after it, at the boundary named by this test,
+        # so Stop really commits before start authorization instead of merely timing out a stalled rename.
+        assert not r3.hive.db._conn.in_transaction
+        entered.set()
+        assert gate.wait(15), "Stop did not reach the post-install boundary"
+    monkeypatch.setattr(studio(r3), "_install_files", installed_then_wait)
     starts = r3.driver.calls.count(("start", r3.maker["id"]))
     tick(r3)
     assert entered.wait(15)                                                # installed (DB k+1), not yet start-authorised
+    assert SH._read_epoch(r3.workspace.path(r3.maker["id"]) / "current") == k + 1
     stop(r3, sid)
     gate.set()
     SH.HOOK = None
@@ -1540,7 +1549,7 @@ def test_S_stuck_restart_with_exact_sha_override_on_cloud_gate(r3, tmp_path):
     gate, entered = r3.driver.park("stop", r3.maker["id"])
     stop(r3, sid)
     assert entered.wait(15)
-    assert cloud_gate(r3, tmp_path, allow=False) is False                  # awake maker: refused without the owner's OK
+    assert cloud_gate(r3, tmp_path, allow=False) is False                  # awake maker: refused without Jon's OK
     assert cloud_gate(r3, tmp_path, allow=True) is True                    # ALLOW_AWAKE=<that exact SHA>: passes
     gate.set()
     stopped_and_released(r3, sid)
@@ -1707,8 +1716,26 @@ def test_J6_override_one_attempt(r3):
     assert step_row(r3, sid, 2)["state"] == "admitted"
 
 
-def test_boot_interrupted_and_dead_worker_stale(r3):
+def test_done_more_can_open_the_next_handoff_before_a_manual_crash_seed(r3):
     session, sid, m, step = ready2(r3)
+    # Force the already scheduled work to run. This is the ordinary product behavior on the live base too;
+    # a boot-recovery test must isolate its synthetic row insertion from this valid admission.
+    on_loop(r3, studio(r3).advance, sid)
+    row = studio(r3)._latest_handoff(sid)
+    assert row["step_n"] == 2 and row["owner_boot"] == studio(r3).boot
+
+
+def test_boot_interrupted_and_dead_worker_stale(r3, monkeypatch):
+    session, sid, m, ack, step = started(r3)
+    in_step(r3, sid, step)
+    # This test seeds its own interrupted handoffs. done(more=True) normally queues advance(), which may correctly
+    # open step2 before the test inserts its synthetic row. Capture that one scheduled call while seeding the crash;
+    # tick() and the real recovery logic below remain intact. No product ordering/transaction behavior is changed.
+    async def defer_advance(session_id):
+        assert session_id == sid
+    with monkeypatch.context() as setup:
+        setup.setattr(studio(r3), "advance", defer_advance)
+        done(r3, sid, 1, step["execution_id"], more=True)
     st, db = studio(r3), r3.hive.db
     k = epoch_of(r3)
     row = {"maker_id": r3.maker["id"], "session_id": sid, "step_n": 2, "attempt": 1, "from_epoch": k, "to_epoch": k + 1,
@@ -1914,7 +1941,7 @@ def test_r31_stop_status_shows_the_driver_status_word_never_exception_text(r3):
     row = ses_row(r3, sid)
     assert row["stop_failed"] == 1 and row["stop_status"] == "running"
     shown = r3.client.get(f"/api/studio-sessions/{sid}", headers=r3.mia).text
-    audit = r3.client.get(f"/api/studio-sessions/{sid}/audit", headers=r3.quinn).text
+    audit = r3.client.get(f"/api/studio-sessions/{sid}/audit", headers=r3.jon).text
     for text in (shown, audit):
         assert "secret" not in text and "HIVE_TOKEN" not in text and "survived KILL" not in text
     assert "(running)" in json.loads(shown)["stop"]["message"]
@@ -1964,3 +1991,213 @@ def test_r32_a_parked_status_read_never_holds_the_database(r3, monkeypatch, wher
     assert control(r3, sid, "finish_stopping").status_code == 200
     stopped_and_released(r3, sid)
 
+
+
+def namespace_alias_before_install(x, monkeypatch):
+    """Raw synthetic historical row appears after the durable rotate authorization, before the protected renames."""
+    from hive.tests.test_identity_namespace import historical
+    st, maker = studio(x), x.maker['id']
+    original = st._install_files
+    def install(aid, root, epoch, digest):
+        alias = 'A_' + maker[2:]
+        if not x.hive.db.one('SELECT id FROM agents WHERE id=?', (alias,)):
+            historical(x.hive, maker, alias)
+        return original(aid, root, epoch, digest)
+    monkeypatch.setattr(st, '_install_files', install)
+
+
+def test_handoff_install_namespace_refusal_is_held_as_namespace_conflict(r3, monkeypatch):
+    session, sid, m, step = ready2(r3)
+    upload(r3, sid, m, 2, gen=2)
+    assert studio(r3).worker.wait_idle(15)
+    starts = r3.driver.calls.count(('start', r3.maker['id']))
+    namespace_alias_before_install(r3, monkeypatch)
+    tick(r3)
+    assert studio(r3).worker.wait_idle(15)
+    row = handoff(r3, sid)
+    assert (row['state'], row['reason']) == ('held', 'namespace_conflict')
+    assert r3.driver.calls.count(('start', r3.maker['id'])) == starts
+
+
+def test_release_install_namespace_refusal_cannot_reset_a_credential_phase(r3, monkeypatch):
+    session, sid, m, ack, step = started(r3)
+    namespace_alias_before_install(r3, monkeypatch)
+    stop(r3, sid)
+    assert studio(r3).worker.wait_idle(15)
+    before = ses_row(r3, sid)
+    assert before['credential_reason'] == 'namespace_conflict'
+    assert before['release_phase'] == 'installed'
+    epoch = epoch_of(r3)
+    assert studio(r3)._phase_reset(sid) is False
+    after = ses_row(r3, sid)
+    assert (after['release_phase'], after['release_epoch'], after['release_token_hash']) == (before['release_phase'], before['release_epoch'], before['release_token_hash'])
+    assert epoch_of(r3) == epoch
+
+
+# Explicit owner recovery of the original installed release; no identity migration or second rotation.
+def namespace_release_held(x, monkeypatch):
+    session, sid, m, ack, step = started(x)
+    st = studio(x); install = st._install_files
+    namespace_alias_before_install(x, monkeypatch)
+    stop(x, sid)
+    assert st.worker.wait_idle(15)
+    monkeypatch.setattr(st, '_install_files', install)
+    row = ses_row(x, sid)
+    assert (row['state'], row['credential_reason'], row['release_phase']) == ('stopping', 'namespace_conflict', 'installed')
+    return sid, 'A_' + x.maker['id'][2:]
+
+
+def test_owner_namespace_repair_resumes_installed_release_without_another_rotation_and_replays_one_control(r3, monkeypatch):
+    sid, alias = namespace_release_held(r3, monkeypatch)
+    st = studio(r3); before = ses_row(r3, sid); epoch = epoch_of(r3)
+    status = r3.client.get(f'/api/studio-sessions/{sid}', headers=r3.mg).json()
+    assert status['credential_reason'] == 'namespace_conflict' and status['stop']['release_phase'] == 'installed'
+    r3.hive.db.execute('DELETE FROM agents WHERE id=?', (alias,))
+    tick(r3); assert st.worker.wait_idle(15)
+    assert ses_row(r3, sid)['credential_reason'] == 'namespace_conflict'  # no automatic resume after external repair
+    history = len(st.worker.history)
+    first = control(r3, sid, 'repair_handoff', cid='repair-owner-0001')
+    assert first.status_code == 200, first.text
+    assert st.worker.wait_idle(15)
+    after = ses_row(r3, sid)
+    assert after['maker_released'] and after['state'] == SH.ENDED
+    assert after['credential_reason'] is None
+    assert epoch_of(r3) == epoch == before['release_epoch']
+    assert after['release_token_hash'] == before['release_token_hash']
+    assert credential_ok(r3)
+    assert len(st.worker.history) == history + 1
+    again = control(r3, sid, 'repair_handoff', cid='repair-owner-0001')
+    assert again.status_code == 200 and again.json() == first.json()
+    assert len(st.worker.history) == history + 1
+    assert control(r3, sid, 'stop', cid='repair-owner-0001').status_code == 409
+
+
+def test_owner_namespace_repair_refuses_a_remaining_conflict_without_touching_credentials_or_dispatching(r3, monkeypatch):
+    sid, alias = namespace_release_held(r3, monkeypatch)
+    st = studio(r3); before = ses_row(r3, sid); history = len(st.worker.history)
+    root = r3.workspace.path(r3.maker['id'])
+    saved = {p.name: p.read_bytes() for p in root.iterdir() if p.is_file()}
+    result = control(r3, sid, 'repair_handoff')
+    assert result.status_code == 409 and result.json()['error']['code'] == 'workspace_identity_conflict'
+    assert ses_row(r3, sid) == before and len(st.worker.history) == history
+    assert {p.name: p.read_bytes() for p in root.iterdir() if p.is_file()} == saved
+
+
+def test_namespace_repair_uses_only_the_owner_control_and_is_closed_when_studio_is_off(r3, monkeypatch):
+    sid, alias = namespace_release_held(r3, monkeypatch)
+    st = studio(r3); before = ses_row(r3, sid); history = len(st.worker.history)
+    payload = {'control_id': 'repair-authority-0001', 'action': 'repair_handoff'}
+    from hive.tests.test_studio_session_g1 import session_headers
+    other = session_headers(r3.hive, 'user:u_ann')
+    assert r3.client.post(f'/api/studio-sessions/{sid}/controls', headers=other, json=payload).status_code == 404
+    assert r3.client.post(f'/api/studio-sessions/{sid}/controls', headers=r3.jg, json=payload).status_code == 404
+    assert r3.client.post(f'/api/studio-sessions/{sid}/admin-controls', headers=r3.jg, json=payload).status_code == 400
+    assert control(r3, sid, 'repair_handoff', extra=True).status_code == 400
+    assert r3.client.get(f'/api/studio-sessions/{sid}', headers=r3.jg).status_code == 404
+    monkeypatch.setattr(st, 'enabled', False)
+    assert control(r3, sid, 'repair_handoff').status_code == 404
+    assert control(r3, sid, 'repair_handoff', extra=True).status_code == 404
+    assert ses_row(r3, sid) == before and len(st.worker.history) == history
+
+
+@pytest.mark.parametrize('phase,reason', [('none', 'namespace_conflict'), ('prepared', 'namespace_conflict'),
+                                        ('durable', 'namespace_conflict'), ('installed', 'credential_missing')])
+def test_owner_repair_rejects_other_release_states(r3, phase, reason):
+    session, sid, m, ack, step = started(r3)
+    r3.hive.db.execute("UPDATE studio_sessions SET state='stopping', release_phase=?, credential_reason=? WHERE id=?", (phase, reason, sid))
+    before = ses_row(r3, sid)
+    result = control(r3, sid, 'repair_handoff')
+    assert result.status_code == 409 and result.json()['error']['code'] == 'handoff_not_held'
+    assert ses_row(r3, sid) == before
+
+
+def test_repair_reholds_if_the_namespace_changes_after_the_owner_control_commits(r3, monkeypatch):
+    from hive.tests.test_identity_namespace import historical
+    sid, alias = namespace_release_held(r3, monkeypatch)
+    st = studio(r3); epoch = epoch_of(r3)
+    r3.hive.db.execute('DELETE FROM agents WHERE id=?', (alias,))
+    submit = st.submit_stop
+    def changed(session_id):
+        historical(r3.hive, r3.maker['id'], alias)
+        return submit(session_id)
+    monkeypatch.setattr(st, 'submit_stop', changed)
+    result = control(r3, sid, 'repair_handoff')
+    assert result.status_code == 200, result.text
+    assert st.worker.wait_idle(15)
+    row = ses_row(r3, sid)
+    assert row['credential_reason'] == 'namespace_conflict' and row['release_phase'] == 'installed'
+    assert not row['maker_released'] and epoch_of(r3) == epoch
+
+
+def test_owner_repair_does_not_clear_a_hold_while_the_existing_worker_is_busy(r3, monkeypatch):
+    sid, alias = namespace_release_held(r3, monkeypatch)
+    st = studio(r3); gate = threading.Event(); entered = threading.Event()
+    r3.hive.db.execute('DELETE FROM agents WHERE id=?', (alias,))
+    before = ses_row(r3, sid)
+    def occupied():
+        entered.set(); gate.wait(15)
+    assert st.worker.submit(r3.maker['id'], 'S', 'synthetic-busy', occupied, sid)
+    try:
+        assert entered.wait(15)
+        result = control(r3, sid, 'repair_handoff')
+        assert result.status_code == 409 and result.json()['error']['code'] == 'handoff_in_progress'
+        assert ses_row(r3, sid) == before
+    finally:
+        gate.set(); assert st.worker.wait_idle(15)
+
+
+
+def test_namespace_conflict_before_first_stop_uses_guarded_retry_without_an_inapplicable_owner_gate(r3):
+    from hive.tests.test_identity_namespace import historical
+    session, sid, m, ack, step = started(r3)
+    st = studio(r3); alias = 'A_' + r3.maker['id'][2:]; epoch = epoch_of(r3)
+    historical(r3.hive, r3.maker['id'], alias)
+    stop(r3, sid); assert st.worker.wait_idle(15)
+    row = ses_row(r3, sid)
+    assert row['credential_reason'] == 'namespace_conflict' and row['release_phase'] == 'none'
+    assert not row['stop_verified'] and not row['maker_released']
+    assert control(r3, sid, 'repair_handoff').status_code == 409
+    r3.hive.db.execute('DELETE FROM agents WHERE id=?', (alias,))
+    tick(r3); assert st.worker.wait_idle(15)
+    row = ses_row(r3, sid)
+    assert row['state'] == SH.ENDED and row['maker_released']
+    assert row['credential_reason'] is None and epoch_of(r3) == epoch + 1
+    assert credential_ok(r3)
+
+
+@pytest.mark.parametrize('stage', ['first-match', 'sync', 'final-match'])
+def test_namespace_refusal_anywhere_in_installed_release_reholds_until_another_owner_action(r3, monkeypatch, stage):
+    from hive.tests.test_identity_namespace import historical
+    sid, alias = namespace_release_held(r3, monkeypatch)
+    st = studio(r3); epoch = epoch_of(r3)
+    r3.hive.db.execute('DELETE FROM agents WHERE id=?', (alias,))
+    match, sync = st._files_match, st._sync_files
+    calls = 0
+    def matching(*args):
+        nonlocal calls
+        calls += 1
+        if (stage == 'first-match' and calls == 1) or (stage == 'final-match' and calls == 2):
+            historical(r3.hive, r3.maker['id'], alias)
+        return match(*args)
+    def syncing(*args):
+        if stage == 'sync': historical(r3.hive, r3.maker['id'], alias)
+        return sync(*args)
+    monkeypatch.setattr(st, '_files_match', matching); monkeypatch.setattr(st, '_sync_files', syncing)
+    result = control(r3, sid, 'repair_handoff', cid='repair-late-0001')
+    assert result.status_code == 200, result.text
+    assert st.worker.wait_idle(15)
+    row = ses_row(r3, sid)
+    assert (row['credential_reason'], row['release_phase']) == ('namespace_conflict', 'installed')
+    assert not row['maker_released'] and epoch_of(r3) == epoch
+    assert row['finish_count'] == 0
+    r3.hive.db.execute('DELETE FROM agents WHERE id=?', (alias,))
+    monkeypatch.setattr(st, '_files_match', match); monkeypatch.setattr(st, '_sync_files', sync)
+    history = len(st.worker.history); before = ses_row(r3, sid)
+    for _ in range(3): tick(r3)
+    assert st.worker.wait_idle(15)
+    assert len(st.worker.history) == history and ses_row(r3, sid) == before
+    result = control(r3, sid, 'repair_handoff', cid='repair-late-0002')
+    assert result.status_code == 200, result.text
+    assert st.worker.wait_idle(15)
+    assert ses_row(r3, sid)['maker_released'] and epoch_of(r3) == epoch
+    assert ses_row(r3, sid)['finish_count'] == 0 and credential_ok(r3)

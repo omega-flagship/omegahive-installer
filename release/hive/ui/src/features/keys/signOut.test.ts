@@ -5,23 +5,31 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
+import { Screen } from '../../screens/Screen'
+import { ScreensSpace } from '../../screens/screenSpace'
+import { profileScreen, type ProfileInput } from './data'
 
-const h = vi.hoisted(() => ({ client: { logout: vi.fn() } as { logout: () => void | Promise<void> } | null }))
-// SignOut reads the client through the hook (invented); everything else of the store is the real one, for modules the
-// profile page now also imports (the Ask's memory section: lib/identityEpoch reads the store when it loads)
-vi.mock('../../store/store', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../../store/store')>()
-  return { ...real, useHive: Object.assign((sel: (s: unknown) => unknown) => sel({ client: h.client }), real.useHive) }
+// opens a real MeTTa space: allow for a loaded machine
+vi.setConfig({ testTimeout: 20_000 })
+
+const { signOutNow } = await import('./ProfilePage')
+
+const space = ScreensSpace.open()
+const compose = (screen: string, facts: Parameters<ScreensSpace['compose']>[2]) => space.compose(screen, 'classic', facts)
+const input = (over: Partial<ProfileInput>): ProfileInput => ({
+  me: { status: 'loading', data: undefined, error: undefined, refreshing: false }, keys: [], keysError: undefined, agents: [],
+  connected: true, signingOut: false, adding: false, work: { editing: new Set(), confirming: new Set() }, ...over,
 })
-
-const { SignOut, signOutNow } = await import('./ProfilePage')
+const html = (over: Partial<ProfileInput>) => {
+  const { data, facts } = profileScreen(input(over), compose)
+  return renderToStaticMarkup(createElement(Screen, { plan: compose('profile', facts), host: { data, onAction: () => {} } }))
+}
 
 describe('Sign out on You & your keys', () => {
-  it('shows a Sign out button when a client is connected, and nothing without one', () => {
-    h.client = { logout: vi.fn() }
-    expect(renderToStaticMarkup(createElement(SignOut))).toContain('Sign out')
-    h.client = null
-    expect(renderToStaticMarkup(createElement(SignOut))).toBe('')
+  it('MeTTa shows a Sign out button when a client is connected, and none without one; it waits while signing out', () => {
+    expect(html({})).toContain('>Sign out</button>')
+    expect(html({ connected: false })).not.toContain('Sign out')
+    expect(html({ signingOut: true })).toMatch(/<button type="button" disabled=""[^>]*>Signing out…<\/button>/)
   })
   it('leaves the profile first, then waits for the client to end the session', async () => {
     const order: string[] = []

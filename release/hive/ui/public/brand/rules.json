@@ -1,0 +1,553 @@
+{
+ "environments": {
+  "cosmos": {
+   "material": "glass-universe",
+   "edge": "#6a5ad0",
+   "style": "stars",
+   "living": "galaxy-turns"
+  },
+  "classic": {
+   "material": "glass-aurora",
+   "edge": "#7a6ae0",
+   "style": "aurora",
+   "living": "aurora-flows"
+  },
+  "flux": {
+   "material": "liquid-glass",
+   "edge": "#c050c0",
+   "style": "flood",
+   "living": "liquid-swirls"
+  },
+  "construct": {
+   "material": "phosphor-mesh",
+   "edge": "#1e8a3a",
+   "style": "scan",
+   "living": "scan-sweeps"
+  },
+  "still": {
+   "material": "ink-lacquer",
+   "edge": "#0d0b09",
+   "style": "ink",
+   "living": "sheen-glides"
+  },
+  "canvas": {
+   "material": "sticky-paper",
+   "edge": "#2b48e0",
+   "style": "notes",
+   "living": "ink-traces"
+  },
+  "omegatown": {
+   "material": "teal-enamel",
+   "edge": "#14504a",
+   "style": "paint",
+   "living": "sun-sheen"
+  },
+  "professional": {
+   "material": "blue-anodised",
+   "edge": "#1d3c8f",
+   "style": "forge",
+   "living": "metal-sweep"
+  },
+  "brand": {
+   "material": "teal-glass",
+   "edge": "#14705f",
+   "style": "crystal",
+   "living": "caustic-shimmer"
+  },
+  "hyperon": {
+   "material": "logic-and-mind",
+   "edge": "#8a6a20",
+   "style": "swarm",
+   "living": "thoughts-travel"
+  },
+  "atomspace": {
+   "material": "living-hypergraph",
+   "edge": "#5a4ac0",
+   "style": "swarm",
+   "living": "graph-pulses"
+  },
+  "glitch": {
+   "material": "vr-glitch",
+   "edge": "#2a6aa0",
+   "style": "glitch",
+   "living": "glitch-flickers"
+  },
+  "bush": {
+   "material": "living-topiary",
+   "edge": "#1f3a14",
+   "style": "grow",
+   "living": "leaves-rustle"
+  },
+  "cake": {
+   "material": "celebration-cake",
+   "edge": "#3a2214",
+   "style": "drip",
+   "living": "icing-glistens"
+  },
+  "voxel": {
+   "material": "block-build",
+   "edge": "#3a2a6a",
+   "style": "build",
+   "living": "blocks-pop"
+  },
+  "puppy": {
+   "material": "puppy-fur",
+   "edge": "#9a6630",
+   "style": "grow",
+   "living": "fur-ruffles"
+  },
+  "balloon": {
+   "material": "foil-balloon",
+   "edge": "#5a3ac0",
+   "style": "inflate",
+   "living": "foil-shimmer"
+  }
+ },
+ "actions": {
+  "create": "grow",
+  "wake": "stars",
+  "rest": "fade",
+  "learn": "swarm",
+  "find": "swarm",
+  "think": "aurora",
+  "error": "glitch",
+  "build": "build",
+  "write": "ink",
+  "approve": "bloom"
+ },
+ "reduced_motion": {
+  "morph": "crossfade",
+  "living": "still"
+ },
+ "source": "omega-mark.metta via PeTTa",
+ "presence": {
+  "listening": "lean-in",
+  "speaking": "voice-ripple"
+ },
+ "time_jump": {
+  "rewind": "1.21 GW",
+  "fast-forward": "1.21 GW"
+ },
+ "ask": {
+  "shows": {
+   "cosmos": {
+    "typing": "listening",
+    "thinking": "stars",
+    "answering": "speaking",
+    "finding": "swarm",
+    "writing": "ink",
+    "making": "grow",
+    "building": "build",
+    "waiting": "listening",
+    "approved": "bloom",
+    "failed": "glitch",
+    "changed": "stars"
+   },
+   "classic": {
+    "typing": "listening",
+    "thinking": "aurora",
+    "answering": "speaking",
+    "finding": "swarm",
+    "writing": "ink",
+    "making": "grow",
+    "building": "build",
+    "waiting": "listening",
+    "approved": "bloom",
+    "failed": "glitch",
+    "changed": "aurora"
+   },
+   "flux": {
+    "typing": "listening",
+    "thinking": "flood",
+    "answering": "speaking",
+    "finding": "swarm",
+    "writing": "ink",
+    "making": "grow",
+    "building": "build",
+    "waiting": "listening",
+    "approved": "bloom",
+    "failed": "glitch",
+    "changed": "flood"
+   },
+   "construct": {
+    "typing": "listening",
+    "thinking": "scan",
+    "answering": "speaking",
+    "finding": "swarm",
+    "writing": "ink",
+    "making": "grow",
+    "building": "build",
+    "waiting": "listening",
+    "approved": "bloom",
+    "failed": "glitch",
+    "changed": "scan"
+   },
+   "still": {
+    "typing": "listening",
+    "thinking": "ink",
+    "answering": "speaking",
+    "finding": "swarm",
+    "writing": "ink",
+    "making": "grow",
+    "building": "build",
+    "waiting": "listening",
+    "approved": "bloom",
+    "failed": "glitch",
+    "changed": "ink"
+   },
+   "canvas": {
+    "typing": "listening",
+    "thinking": "notes",
+    "answering": "speaking",
+    "finding": "swarm",
+    "writing": "ink",
+    "making": "grow",
+    "building": "build",
+    "waiting": "listening",
+    "approved": "bloom",
+    "failed": "glitch",
+    "changed": "notes"
+   },
+   "omegatown": {
+    "typing": "listening",
+    "thinking": "paint",
+    "answering": "speaking",
+    "finding": "swarm",
+    "writing": "ink",
+    "making": "grow",
+    "building": "build",
+    "waiting": "listening",
+    "approved": "bloom",
+    "failed": "glitch",
+    "changed": "paint"
+   },
+   "professional": {
+    "typing": "listening",
+    "thinking": "forge",
+    "answering": "speaking",
+    "finding": "swarm",
+    "writing": "ink",
+    "making": "grow",
+    "building": "build",
+    "waiting": "listening",
+    "approved": "bloom",
+    "failed": "glitch",
+    "changed": "forge"
+   },
+   "brand": {
+    "typing": "listening",
+    "thinking": "crystal",
+    "answering": "speaking",
+    "finding": "swarm",
+    "writing": "ink",
+    "making": "grow",
+    "building": "build",
+    "waiting": "listening",
+    "approved": "bloom",
+    "failed": "glitch",
+    "changed": "crystal"
+   },
+   "hyperon": {
+    "typing": "listening",
+    "thinking": "swarm",
+    "answering": "speaking",
+    "finding": "swarm",
+    "writing": "ink",
+    "making": "grow",
+    "building": "build",
+    "waiting": "listening",
+    "approved": "bloom",
+    "failed": "glitch",
+    "changed": "swarm"
+   },
+   "atomspace": {
+    "typing": "listening",
+    "thinking": "swarm",
+    "answering": "speaking",
+    "finding": "swarm",
+    "writing": "ink",
+    "making": "grow",
+    "building": "build",
+    "waiting": "listening",
+    "approved": "bloom",
+    "failed": "glitch",
+    "changed": "swarm"
+   },
+   "glitch": {
+    "typing": "listening",
+    "thinking": "glitch",
+    "answering": "speaking",
+    "finding": "swarm",
+    "writing": "ink",
+    "making": "grow",
+    "building": "build",
+    "waiting": "listening",
+    "approved": "bloom",
+    "failed": "glitch",
+    "changed": "glitch"
+   },
+   "bush": {
+    "typing": "listening",
+    "thinking": "grow",
+    "answering": "speaking",
+    "finding": "swarm",
+    "writing": "ink",
+    "making": "grow",
+    "building": "build",
+    "waiting": "listening",
+    "approved": "bloom",
+    "failed": "glitch",
+    "changed": "grow"
+   },
+   "cake": {
+    "typing": "listening",
+    "thinking": "drip",
+    "answering": "speaking",
+    "finding": "swarm",
+    "writing": "ink",
+    "making": "grow",
+    "building": "build",
+    "waiting": "listening",
+    "approved": "bloom",
+    "failed": "glitch",
+    "changed": "drip"
+   },
+   "voxel": {
+    "typing": "listening",
+    "thinking": "build",
+    "answering": "speaking",
+    "finding": "swarm",
+    "writing": "ink",
+    "making": "grow",
+    "building": "build",
+    "waiting": "listening",
+    "approved": "bloom",
+    "failed": "glitch",
+    "changed": "build"
+   },
+   "puppy": {
+    "typing": "listening",
+    "thinking": "grow",
+    "answering": "speaking",
+    "finding": "swarm",
+    "writing": "ink",
+    "making": "grow",
+    "building": "build",
+    "waiting": "listening",
+    "approved": "bloom",
+    "failed": "glitch",
+    "changed": "grow"
+   },
+   "balloon": {
+    "typing": "listening",
+    "thinking": "inflate",
+    "answering": "speaking",
+    "finding": "swarm",
+    "writing": "ink",
+    "making": "grow",
+    "building": "build",
+    "waiting": "listening",
+    "approved": "bloom",
+    "failed": "glitch",
+    "changed": "inflate"
+   }
+  },
+  "acts": {
+   "navigate": "finding",
+   "open": "finding",
+   "scroll": "finding",
+   "point": "thinking",
+   "highlight": "thinking",
+   "fill": "writing",
+   "look": "changed",
+   "tour.step": "thinking"
+  },
+  "behaviours": {
+   "gust": {
+    "speed": 2.2,
+    "wind": 2.8,
+    "gain": 1.0,
+    "fx": "none",
+    "dur": 1.8
+   },
+   "still-pool": {
+    "speed": 0.25,
+    "wind": 0.3,
+    "gain": 0.92,
+    "fx": "none",
+    "dur": 0.0
+   },
+   "spin-up": {
+    "speed": 3.2,
+    "wind": 1.8,
+    "gain": 1.08,
+    "fx": "none",
+    "dur": 1.8
+   },
+   "whirlpool": {
+    "speed": 3.0,
+    "wind": 2.8,
+    "gain": 1.05,
+    "fx": "bubbles",
+    "dur": 1.8
+   },
+   "ripple-fast": {
+    "speed": 2.8,
+    "wind": 2.0,
+    "gain": 1.1,
+    "fx": "none",
+    "dur": 1.6
+   },
+   "scan-race": {
+    "speed": 4.0,
+    "wind": 1.0,
+    "gain": 1.12,
+    "fx": "none",
+    "dur": 1.4
+   },
+   "ink-swirl": {
+    "speed": 2.4,
+    "wind": 2.6,
+    "gain": 1.0,
+    "fx": "none",
+    "dur": 1.8
+   },
+   "flutter": {
+    "speed": 2.6,
+    "wind": 1.8,
+    "gain": 1.04,
+    "fx": "none",
+    "dur": 1.4
+   },
+   "sheen-race": {
+    "speed": 3.2,
+    "wind": 1.0,
+    "gain": 1.1,
+    "fx": "none",
+    "dur": 1.4
+   },
+   "flower-talk": {
+    "speed": 1.4,
+    "wind": 1.2,
+    "gain": 1.06,
+    "fx": "flower-talk",
+    "dur": 0.0
+   },
+   "pulsar": {
+    "speed": 1.6,
+    "wind": 1.0,
+    "gain": 1.18,
+    "fx": "none",
+    "dur": 0.0
+   },
+   "sprout": {
+    "speed": 1.4,
+    "wind": 1.4,
+    "gain": 1.05,
+    "fx": "sprout",
+    "dur": 1.6
+   },
+   "nova": {
+    "speed": 2.0,
+    "wind": 1.2,
+    "gain": 1.35,
+    "fx": "nova",
+    "dur": 1.2
+   },
+   "bloom-burst": {
+    "speed": 1.6,
+    "wind": 1.6,
+    "gain": 1.15,
+    "fx": "bloom",
+    "dur": 2.0
+   },
+   "wilt": {
+    "speed": 0.5,
+    "wind": 0.4,
+    "gain": 0.8,
+    "fx": "wilt",
+    "dur": 2.2
+   },
+   "flicker-out": {
+    "speed": 0.6,
+    "wind": 0.6,
+    "gain": 0.6,
+    "fx": "none",
+    "dur": 1.0
+   },
+   "lean": {
+    "speed": 0.8,
+    "wind": 0.8,
+    "gain": 1.04,
+    "fx": "none",
+    "dur": 0.0
+   }
+  },
+  "behaves": {
+   "cosmos": {
+    "typing": "lean",
+    "thinking": "spin-up",
+    "answering": "pulsar",
+    "making": "nova",
+    "waiting": "still-pool",
+    "approved": "nova",
+    "failed": "flicker-out"
+   },
+   "classic": {
+    "thinking": "ripple-fast",
+    "answering": "pulsar",
+    "waiting": "still-pool",
+    "failed": "flicker-out"
+   },
+   "flux": {
+    "thinking": "whirlpool",
+    "answering": "pulsar",
+    "making": "whirlpool",
+    "waiting": "still-pool"
+   },
+   "construct": {
+    "thinking": "scan-race",
+    "answering": "pulsar",
+    "waiting": "still-pool",
+    "failed": "flicker-out"
+   },
+   "still": {
+    "thinking": "ink-swirl",
+    "answering": "pulsar",
+    "waiting": "still-pool"
+   },
+   "canvas": {
+    "thinking": "flutter",
+    "waiting": "still-pool"
+   },
+   "omegatown": {
+    "thinking": "sheen-race",
+    "waiting": "still-pool"
+   },
+   "professional": {
+    "thinking": "sheen-race",
+    "waiting": "still-pool"
+   },
+   "brand": {
+    "thinking": "sheen-race",
+    "waiting": "still-pool"
+   },
+   "hyperon": {},
+   "atomspace": {},
+   "glitch": {},
+   "bush": {
+    "typing": "lean",
+    "thinking": "gust",
+    "answering": "flower-talk",
+    "making": "sprout",
+    "waiting": "still-pool",
+    "approved": "bloom-burst",
+    "failed": "wilt"
+   },
+   "cake": {},
+   "voxel": {},
+   "puppy": {},
+   "balloon": {}
+  }
+ }
+}

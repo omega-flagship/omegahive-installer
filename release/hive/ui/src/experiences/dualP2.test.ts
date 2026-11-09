@@ -77,6 +77,23 @@ vi.mock('../store/ask', async () => {
   }, actual.useAskStore)
   return { ...actual, useAskStore }
 })
+vi.mock('../shell/phase', async () => {
+  const actual = await vi.importActual<typeof import('../shell/phase')>('../shell/phase')
+  const { useSyncExternalStore } = await import('react')
+  const usePhase = Object.assign((sel?: (s: ReturnType<typeof actual.usePhase.getState>) => unknown) => {
+    const read = () => sel ? sel(actual.usePhase.getState()) : actual.usePhase.getState()
+    return useSyncExternalStore(actual.usePhase.subscribe, read, read)
+  }, actual.usePhase)
+  return { ...actual, usePhase }
+})
+vi.mock('../lib/resting', async () => {
+  const actual = await vi.importActual<typeof import('../lib/resting')>('../lib/resting')
+  const { useSyncExternalStore } = await import('react')
+  return { ...actual, useResting: Object.assign((sel?: (s: ReturnType<typeof actual.useResting.getState>) => unknown) => {
+    const read = () => sel ? sel(actual.useResting.getState()) : actual.useResting.getState()
+    return useSyncExternalStore(actual.useResting.subscribe, read, read)
+  }, actual.useResting) }
+})
 // Read-only self/viewport hooks and local walking are leaf presentation stand-ins; no identity or dispatch gate is mocked.
 vi.mock('./sdk', async (orig) => ({ ...(await orig<typeof import('./sdk')>()),
   useMe: () => ({ me: R.admin ? { principal: 'user:operator', kind: 'password', role: 'admin' } : undefined, loaded: R.admin, admin: R.admin }),
@@ -88,12 +105,13 @@ const W = vi.hoisted(() => ({ stop: vi.fn(), walkTo: vi.fn(() => true) }))
 vi.mock('./omegatown/movement', () => ({ useWalking: () => W }))
 const win = { location: { hash: '#/', search: '', pathname: '/' }, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), addEventListener() {}, removeEventListener() {}, innerWidth: 1440, innerHeight: 900, setTimeout, clearTimeout }
 vi.stubGlobal('window', win)
+vi.stubGlobal('document', { hidden: false, documentElement: { lang: 'en-GB', style: { setProperty() {}, removeProperty() {} }, dataset: {} }, body: {}, activeElement: null, querySelector: () => null, querySelectorAll: () => [], addEventListener() {}, removeEventListener() {}, createElement: () => ({ style: {}, setAttribute() {} }) })
 vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined, removeItem: () => undefined })
 
 const { useHive } = await import('../store/store')
 const { currentView } = await import('../features/ask/view')
 const { currentEpoch } = await import('../lib/identityEpoch')
-const { testPerson, signInAs, switchPerson, releasePersons } = await import('../lib/identityEpoch.testkit')
+const { testPerson, signInAs, switchPerson, releasePersons, reportTestPrincipal } = await import('../lib/identityEpoch.testkit')
 const { default: OmegaTown } = await import('./omegatown')
 const { default: Professional } = await import('./professional')
 const townBinding = await import('./omegatown/binding')
@@ -318,6 +336,7 @@ async function submitAsDrawn(m: Mounted) {
   await f.submit()
 }
 function askClient(p: import('../lib/identityEpoch.testkit').TestPerson) {
+  reportTestPrincipal(p, 'user:p_invented')
   const thread = { id: 'ses_invented_ask', mind: { id: 'a_invented_coordinator', name: 'Invented coordinator' }, budget_usd: 0.25, spent_usd: 0 }
   const sent: AskBody[] = []
   const call = vi.spyOn(p.client, 'ask').mockImplementation(async (body) => {
@@ -455,7 +474,7 @@ describe('Surface fixes: actual components and native presentation paths, no pai
     const b = testPerson('b', { sameTab: a }); await switchPerson(a, b)
     const old = text(view.tree); call(right); view.settle(); expect(text(view.tree)).toBe(old)
   })
-  it("the owner's ruling (residents use their own voice, the Ask is the person): Talk opens the exact mind's own chat and never addresses or sends through the Ask", async () => {
+  it("Jon's ruling (residents use their own voice, the Ask is the person): Talk opens the exact mind's own chat and never addresses or sends through the Ask", async () => {
     const { p, agent } = await person()
     const other = { ...agent, id: 'a_invented_duplicate' }
     useHive.setState({ agents: { [agent.id]: agent, [other.id]: other } })
@@ -477,7 +496,7 @@ describe('Surface fixes: actual components and native presentation paths, no pai
       expect(text(view.tree)).toContain('The Ask below is yours.')
     } finally { win.location.hash = '#/' }
   })
-  it("the owner's ruling: Talk to a module opens its native controls, not a chat and not the Ask", async () => {
+  it("Jon's ruling: Talk to a module opens its native controls, not a chat and not the Ask", async () => {
     const { agent } = await person()
     useHive.setState({ agents: { [agent.id]: { ...agent, kind: 'module' } } })
     const { view } = experience(OmegaTown)
@@ -558,11 +577,13 @@ describe('Surface fixes: actual components and native presentation paths, no pai
     expect(bodies[0].text).toContain('Twin words.')
     expect(bodies[0].context).not.toHaveProperty('mind')
   })
-  it('stand-in R2: private-hash recovery keeps the words, sends nothing then, and the next Enter carries no mind ID', async () => {
+  it.each([false, true])('stand-in R2: private-hash recovery keeps the words, sends nothing then, and the next Enter carries no mind ID (surrounding whitespace=%s)', async (padded) => {
     const { p, agent } = await person(), { call: sent, sent: bodies } = askClient(p)
     experience(OmegaTown); const field = mount(() => useAskField({ experience: 'omegatown' }))
     expect(addressAskMind(agent.id, 'omegatown', () => !!currentView())).toBe(true); field.settle()
-    fieldOf(field).change(fieldOf(field).value + 'Private-hash words.'); field.settle()
+    const typed = fieldOf(field).value + 'Private-hash words.'
+    fieldOf(field).change(padded ? `  ${typed}  ` : typed); field.settle()
+    expect(fieldOf(field).to).toBe(agent.id)
     const words = fieldOf(field).value
     win.location.hash = '#/program/%61tlas'
     try {
@@ -570,10 +591,26 @@ describe('Surface fixes: actual components and native presentation paths, no pai
       expect(sent).not.toHaveBeenCalled()
       expect(fieldOf(field).value).toBe(words)
       expect(fieldOf(field).panel).toEqual({ kind: 'say', text: PLACE_CHANGED })
+      // Dot's 20261104T070450Z ruling: a covered native field never sends from an active private app.
+      // The former expectation of a public Ask on this second private Enter was wrong.
+      await submitAsDrawn(field); field.settle()
+      expect(sent).not.toHaveBeenCalled()
+      expect(fieldOf(field).to).toBeUndefined()
+      expect(fieldOf(field).value).toBe(words)
+      win.location.hash = '#/'
+      field.render(); field.settle()
+      expect(fieldOf(field).value).toBe(words)
+      expect(fieldOf(field).to).toBeUndefined()
+      // Returning is a newly shown paid row; the ordinary reading interval still applies.
+      const { ARM_MS } = await import('../lib/decisionGate')
+      vi.spyOn(performance, 'now').mockReturnValue(performance.now() + ARM_MS + 1)
       await submitAsDrawn(field); field.settle()
       expect(sent).toHaveBeenCalledTimes(1)
       expect(bodies[0].context).not.toHaveProperty('mind')
-      expect(JSON.stringify(bodies[0].context)).not.toContain(agent.id)
+      // The recovered PUBLIC view still includes its authorized visible minds; none is a prepared recipient.
+      expect(bodies[0].context).toMatchObject({ route: 'hive', experience: 'omegatown', view: { refs: expect.arrayContaining([{ kind: 'mind', ref: agent.id }]) } })
+      expect(bodies[0].context).not.toHaveProperty('program')
+      expect(bodies[0].context).not.toHaveProperty('private')
     } finally { win.location.hash = '#/' }
   })
   it('stand-in R1 P1: a stale origin under a still-prepared address shows the line once and keeps the words (shared Ask, any experience)', async () => {

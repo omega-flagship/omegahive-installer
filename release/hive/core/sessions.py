@@ -272,7 +272,8 @@ class Sessions:
             return
         other = self.hive.db.one("SELECT 1 FROM work_sessions WHERE agent_id = ? AND status = 'active' AND (purpose IS NULL OR purpose != 'ask') "
                                  "AND owner LIKE 'user:u\\_%' ESCAPE '\\' AND owner != ?", (agent_id, principal))
-        turn = self.hive.db.one("SELECT 1 FROM ask_turns WHERE mind_id = ? AND state IN ('accepted', 'thinking') AND principal != ?",
+        from .ask import OPEN_HOST_MIND, states_sql
+        turn = self.hive.db.one(f"SELECT 1 FROM ask_turns WHERE mind_id = ? AND state IN {states_sql(OPEN_HOST_MIND)} AND principal != ?",
                                 (agent_id, principal)) if getattr(self.hive, "ask", None) else None
         if other or turn:
             raise self.hive.error(409, "payer_conflict", "another person is working with this mind right now; try again when they finish")
@@ -328,12 +329,8 @@ class Sessions:
         authoritative source, in whatever state it settled: a call settled late after a release counts the same), plus
         carried_usd, only what no reservation accounts for (_carried). Open holds are not spend; a reservation counts them against the scope
         itself (Reservations.pending), so a cap is never exceeded by calls still in flight."""
-        db = self.hive.db
-        settled = 0
-        if db.one("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cost_reservation_scopes'"):
-            settled = db.one("SELECT COALESCE(SUM(r.actual), 0) AS n FROM cost_reservations r JOIN cost_reservation_scopes c "
-                             "ON c.reservation = r.id WHERE c.scope = ? AND r.state = 'settled'", (thread_scope(s["id"]),))["n"]
-        return float(s.get("carried_usd") or 0) + settled / 1_000_000
+        from .cost_reservations import settled_usd   # gateway r1a: Reservations.settled, the one source (T-SET)
+        return float(s.get("carried_usd") or 0) + settled_usd(self.hive.db, thread_scope(s["id"]))
 
     def thread_held(self, s):
         """An own-scope thread's open holds (reserved, dispatched or unknown calls under its scope), in USD: what a
@@ -355,6 +352,7 @@ class Sessions:
         will answer): only session_id, restarted on the mind's measure at its own spend so far. That sets spent_at_start to
         mind spend now minus the thread's spend, which may be lower than before: deliberate, so the thread's own spend is
         counted once and spend the mind made on other work while the thread had its own scope is not charged to it."""
+        from .ask import OPEN_HOST_MIND, states_sql
         db = self.hive.db
         moved = []
         with db.transaction():
@@ -363,7 +361,7 @@ class Sessions:
             if to == "thread":
                 rows = db.all("SELECT * FROM work_sessions w WHERE agent_id = ? AND status = 'active' AND purpose = 'ask' "
                               "AND (cap_scope IS NULL OR cap_scope != 'thread') AND NOT EXISTS (SELECT 1 FROM ask_turns t "
-                              "WHERE t.thread_id = w.id AND t.state IN ('accepted', 'thinking'))", (agent_id,))
+                              f"WHERE t.thread_id = w.id AND t.state IN {states_sql(OPEN_HOST_MIND)})", (agent_id,))
                 for r in rows:
                     self._attribute(r)
                     carried = self._carried(r, mind_spent)
@@ -399,7 +397,13 @@ class Sessions:
         return max(0.0, mind_spent - float(r["spent_at_start"]) - self.thread_spent({**dict(r), "carried_usd": 0}))
 
     def _mixed(self, r):
-        return bool(self.hive.db.one("SELECT 1 FROM ask_turns WHERE thread_id = ? AND conductor_model IS NULL", (r["id"],)))
+        """Whether the mind itself answered a turn of this thread (its calls cannot be told apart by thread). A conductor
+        turn never reached the mind, and neither did a browser turn (gateway r1b: route 'browser_mind')."""
+        db = self.hive.db
+        if "route" in {c["name"] for c in db.all("PRAGMA table_info(ask_turns)")}:
+            return bool(db.one("SELECT 1 FROM ask_turns WHERE thread_id = ? AND conductor_model IS NULL "
+                               "AND (route IS NULL OR route != 'browser_mind')", (r["id"],)))
+        return bool(db.one("SELECT 1 FROM ask_turns WHERE thread_id = ? AND conductor_model IS NULL", (r["id"],)))
 
     def _attribute(self, r):
         """Before a thread leaves the mind's rule, label with its own scope (askthread:<id>) every reservation the old rule

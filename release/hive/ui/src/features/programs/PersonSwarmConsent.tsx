@@ -1,4 +1,5 @@
 import { createPortal } from 'react-dom'
+import { plural } from '../../lib/plural'
 import { useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react'
 import { formatPersonSwarmUSD as usd, P2_SAVED, type PersonSwarmCard } from '../../api/personSwarms'
 import { accepts, ARM_MS } from '../../lib/decisionGate'
@@ -54,7 +55,7 @@ export function PersonSwarmCardDetails({ card, changed }: {
   const models = useHive((s) => s.models)
   const keys = useHive((s) => s.keys)
   return <>
-            <p className="mt-3 text-sm">{card.program_name} would create these {card.minds.length} helpers, just for you:</p>
+            <p className="mt-3 text-sm">{card.program_name} would create {plural(card.minds.length, 'helper')}, just for you:</p>
             <ul className="mt-2 space-y-1 text-sm">{card.minds.map((mind) => <li key={mind.slot}>{mind.name}</li>)}</ul>
             <dl className="mt-3 grid grid-cols-[96px_minmax(0,1fr)] gap-2 rounded-lg bg-[#f7f7f9] p-3 text-sm">
               <dt>They think with</dt><dd>{[...new Set(card.minds.map((mind) => models.find((model) => model.id === mind.model)?.label ?? 'See model details below'))].join(', ')}</dd>

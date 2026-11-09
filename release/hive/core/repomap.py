@@ -1,6 +1,6 @@
 """Repository maps (repo-map/1), Slice A: a platform-owned loader and one read engine for people, minds and MCP.
 
-coordination/omegacode/PLATFORM_REPO_MAP_SLICE_A_CONTRACT_R1_20261011.md is the contract; Code's
+PLATFORM_REPO_MAP_SLICE_A_CONTRACT_R1_20261011.md is the contract; Code's
 PREDEGA_REPO_MAP_INTERFACE_R1_20261011.md is the envelope.
 
 - The JSON envelope is the authority. It is validated once, on load, by an admin; a loaded revision is never changed in
@@ -79,6 +79,9 @@ CREATE TABLE IF NOT EXISTS repo_map_edges (
 );
 CREATE INDEX IF NOT EXISTS repo_map_edges_src ON repo_map_edges(repo, sha, src);
 CREATE INDEX IF NOT EXISTS repo_map_edges_dst ON repo_map_edges(repo, sha, dst);
+CREATE TABLE IF NOT EXISTS repo_map_grants (
+  repo TEXT NOT NULL, principal TEXT NOT NULL, granted_by TEXT NOT NULL, granted_at TEXT NOT NULL, PRIMARY KEY (repo, principal)
+);
 CREATE TABLE IF NOT EXISTS repo_map_atoms (
   repo TEXT NOT NULL, sha TEXT NOT NULL, seq INTEGER NOT NULL, atom TEXT NOT NULL, PRIMARY KEY (repo, sha, seq)
 );
@@ -459,6 +462,29 @@ class RepoMaps:
         return {"repo": repo, "sha": sha, "digest": digest, "state": envelope["state"], "counts": counts, "unchanged": False,
                 "space": space}
 
+    def _pin_retained_revision(self, repo, sha, expected_digest):
+        """Internal retention only: pin an existing exact revision without loading, mounting or selecting it.
+
+        The caller must already own the verified Source/assets handoff. This method adds no visibility, readiness,
+        native mount, grant or authority claim; it preserves every other revision and every existing operator pin.
+        Public idempotent load semantics intentionally remain unchanged.
+        """
+        if (type(repo) is not str or not REPO.fullmatch(repo)
+                or type(sha) is not str or not SHA.fullmatch(sha)
+                or type(expected_digest) is not str
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", expected_digest)):
+            raise self._err(400, "bad_request", "retention pin requires an exact repo, sha and canonical digest")
+        with self.db.transaction():
+            row = self.db.one("SELECT digest, pinned FROM repo_maps WHERE repo = ? AND sha = ?", (repo, sha))
+            if row is None:
+                raise self._err(404, "not_found", "no such repo map")
+            if row["digest"] != expected_digest:
+                raise self._err(409, "map_digest_mismatch", "retained repo map digest differs from expected content")
+            changed = not bool(row["pinned"])
+            if changed:
+                self.db.execute("UPDATE repo_maps SET pinned = 1 WHERE repo = ? AND sha = ?", (repo, sha))
+        return {"repo": repo, "sha": sha, "digest": expected_digest, "pinned": True, "changed": changed}
+
     def _same_revision(self, envelope, visibility=None, pinned=None):
         """The idempotent answer for a revision already loaded with exactly this content (same canonical digest), before
         any validation or encoding work; None otherwise (the full load path then validates, and refuses a different digest)."""
@@ -506,7 +532,7 @@ class RepoMaps:
 
     def _visibility(self, value):
         value = value or "hive"
-        if value == "hive":
+        if value in ("hive", "owner"):   # owner (repo maps 1.2): the hive owner and the principals they grant, nobody else
             return value
         match = SWARM.fullmatch(str(value))
         if not match or self.db.one("SELECT 1 FROM swarms WHERE id = ?", (match.group(1),)) is None:
@@ -530,7 +556,28 @@ class RepoMaps:
 
     # ---- who sees what ---------------------------------------------------------------------------------------------
 
+    def owner_sees(self, principal, repo):
+        """An owner-only map: the hive's owner, or a principal (person or agent:<id>) the owner granted this repo. Being
+        an admin is not enough."""
+        ownhive = getattr(self.hive, "ownhive", None)
+        if ownhive is not None and principal == ownhive.owner():
+            return True
+        return self.db.one("SELECT 1 FROM repo_map_grants WHERE repo = ? AND principal = ?", (repo, principal)) is not None
+
+    def grant(self, repo, principal, by):
+        if not REPO.fullmatch(str(repo)) or not re.fullmatch(r"(user|agent):[A-Za-z0-9_.@-]{1,128}", str(principal)):
+            raise self._err(400, "bad_request", "a repo name and a principal user:<id> or agent:<id>")
+        self.db.execute("INSERT OR IGNORE INTO repo_map_grants (repo, principal, granted_by, granted_at) VALUES (?,?,?,?)",
+                        (repo, principal, by, now()))
+        return {"repo": repo, "principal": principal, "granted": True}
+
+    def revoke_grant(self, repo, principal):
+        self.db.execute("DELETE FROM repo_map_grants WHERE repo = ? AND principal = ?", (repo, principal))
+        return {"repo": repo, "principal": principal, "granted": False}
+
     def _sees(self, caller, row):
+        if row["visibility"] == "owner":
+            return self.owner_sees(caller.principal, row["repo"])
         if caller.admin or row["visibility"] == "hive":
             return True
         match = SWARM.fullmatch(row["visibility"])
@@ -942,7 +989,7 @@ def install_routes(app, hive, operator, admin, viewer):
     def member(request: Request):
         auth = request.headers.get("authorization") or ""
         token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
-        agent = hive.authenticate_agent(token) if token else None
+        agent = hive.authenticate_agent(token, surface="rest") if token else None
         if agent is not None:
             hive.policy.enforce(agent, "repo-query", command("repo-query", request.url.path))
             return Caller(f"agent:{agent['id']}", swarm_id=agent.get("swarm_id"), agent=agent)
@@ -995,6 +1042,23 @@ def install_routes(app, hive, operator, admin, viewer):
         caller = member(request)
         data = await json_body(request, 64 * 1024)
         return maps.query(caller, repo, sha, data)
+
+    def owner_only(request):
+        who = viewer(operator(request))
+        if who.principal != hive.ownhive.owner():
+            raise hive.error(403, "owner_only", "only the hive's owner grants an owner-only map")
+        return who
+
+    @app.post("/api/repo-maps/{repo}/grants")
+    async def repo_map_grant(repo: str, request: Request):
+        who = owner_only(request)
+        data = await json_body(request, 4096)
+        return maps.grant(repo, str((data or {}).get("principal") or ""), who.principal)
+
+    @app.delete("/api/repo-maps/{repo}/grants/{principal}")
+    async def repo_map_revoke(repo: str, principal: str, request: Request):
+        owner_only(request)
+        return maps.revoke_grant(repo, principal)
 
     @app.post("/api/admin/repo-maps")
     async def repo_map_load(request: Request, visibility: str | None = None, pinned: str | None = None):

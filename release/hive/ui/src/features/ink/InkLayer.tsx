@@ -5,13 +5,12 @@
  * Reduced motion (the system's or the look's own "no motion"): the cursor jumps, the marks appear without drawing,
  * and their words say what they mark.
  */
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useReducedMotion } from '../../lib/hooks'
-import { reducedMotion } from '../ask/conductor'
 import { findIn } from '../guided/driver'
 import { picksNow } from '../guided/store'
 import { markElement, useInk, visiblePart, type Mark } from './ink'
+import { useLookReduced } from './lookReduced'
 import { dialogTitle, labelTop, type Box } from './labels'
 import './ink.css'
 
@@ -127,19 +126,6 @@ function Cursor({ reduced }: { reduced: boolean }) {
   )
 }
 
-function useLookReduced(): boolean {
-  const media = useReducedMotion()
-  // the look's own "no motion" (conductor reducedMotion) as well as the system's
-  const look = useSyncExternalStore(
-    (cb) => {
-      const t = window.setInterval(cb, 1000)
-      return () => window.clearInterval(t)
-    },
-    () => reducedMotion(),
-    () => false,
-  )
-  return media || look
-}
 
 
 /** The cursor and the marks, whoever is drawing them. */

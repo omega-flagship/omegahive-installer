@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
 import { useAppStage } from './appStage'
 import { KEEP_CLEAR } from './experienceStage'
 import { useHive } from '../store/store'
 import { browserTicker, clockShown, clockText, minuteTicker, setHourCycle, useHourCycle } from './clockModel'
 import './osClock.css'
+import { useJumpReading, useTimeJump } from '../brand/timeJump'
+import { useReducedMotion } from '../lib/hooks'
 
 const SKINS = new Set(['classic', 'still', 'canvas', 'cosmos', 'flux', 'construct'])
 
@@ -46,6 +48,8 @@ export function OsClock({ experience }: { experience: string }) {
   const shown = clockShown({ resting: aside === 'rest', modal: aside === 'modal', stage: stage?.mode ?? null })
   const minute = useMinute(shown)
   const text = useMemo(() => clockText(new Date(minute), undefined, cycle), [minute, cycle])
+  const reading = useJumpReading()
+  const jumped = useTimeJump()   // the Easter egg (brand/timeJump): a second clock, at the time jumped to, for a moment
 
   // the clock's slot is reserved for as long as the clock is mounted, shown or stepped aside (osClock.css
   // --os-clock-slot / --os-clock-room): its own box never grows past the slot, so nothing around it ever has to move
@@ -85,10 +89,37 @@ export function OsClock({ experience }: { experience: string }) {
         {text.time}
         {text.meridiem && <span className="os-clock-ampm">{text.meridiem}</span>}
       </time>
+      {jumped !== null && (
+        <span className="os-clock-then" aria-hidden="true">
+          <span className="os-clock-then-gw">⚡ {reading}</span>
+          <ThenTime to={jumped} cycle={cycle} />
+        </span>
+      )}
       <span className="os-clock-date" aria-hidden="true">
         {text.meridiem && <span className="os-clock-date-time">{`${text.time} ${text.meridiem} · `}</span>}
         {text.date}
       </span>
     </div>
   )
+}
+
+/** The second clock's time: it rolls from now to the time jumped to (a quick spin back or forward), then holds there. */
+function ThenTime({ to, cycle }: { to: string; cycle: ReturnType<typeof useHourCycle> }) {
+  const reduce = useReducedMotion()
+  const target = /^\d{4}-\d\d-\d\dT/.test(to) ? Date.parse(to) : null
+  const [at, setAt] = useState<number | null>(target === null || reduce ? target : Date.now())
+  useEffect(() => {
+    if (target === null || reduce) { setAt(target); return }
+    const from = Date.now(), t0 = performance.now(), ms = 1100
+    let raf = 0
+    const step = (now: number) => {
+      const u = Math.min(1, (now - t0) / ms), e = 1 - Math.pow(1 - u, 3)
+      setAt(from + (target - from) * e)
+      if (u < 1) raf = requestAnimationFrame(step)
+    }
+    raf = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(raf)
+  }, [target, reduce])
+  if (target === null) return <>{to || '…'}</>
+  return <>{clockText(new Date(at ?? target), undefined, cycle).time}</>
 }

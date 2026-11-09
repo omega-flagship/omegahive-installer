@@ -1,3 +1,4 @@
+import { useCanvasCurrent } from './actionAuthority'
 import { memo, useEffect, useId, useRef, useState, type FocusEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { useDraft } from '../drafts'
 import { m } from 'framer-motion'
@@ -356,6 +357,7 @@ export function Target({ size }: { size: number }) {
 }
 
 export function AddSticky({ r, lod, drafting, reduced, draftKey, onStart, onCancel, onSubmit }: { r: Rect; lod: Lod; drafting: boolean; reduced: boolean; /** where the unsent words live (experiences/drafts) */ draftKey: string; onStart: () => void; onCancel: () => void; onSubmit: (title: string) => Promise<boolean> }) {
+  const current = useCanvasCurrent()
   const [text, setText] = useDraft(draftKey)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -366,11 +368,13 @@ export function AddSticky({ r, lod, drafting, reduced, draftKey, onStart, onCanc
   }, [drafting])
   if (drafting) {
     const submit = async () => {
+      if (!current()) return
       const t = text.trim()
       if (!t || busy) return
       setError(null)
       // the draft stays until the task is really pinned; busy always clears
       const r = await withBusy(setBusy, () => onSubmit(t))
+      if (!current()) return
       if (r.ok && r.value) setText('')
       else setError('Not pinned. Your text is kept; try again.')
     }

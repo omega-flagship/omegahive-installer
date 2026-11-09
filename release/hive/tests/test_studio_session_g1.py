@@ -121,7 +121,7 @@ def test_G1a_member_records_and_submits_one_goal_one_host_artifact_one_session(s
     assert r.status_code == 201, r.text
     intent = r.json()
     assert intent["kind"] == "studio.session" and intent["state"] == "pending"
-    assert intent["request"]["cap_usd"] == 2.0 and intent["request"]["step_cap_usd"] == 0.25   # the owner's default backstops
+    assert intent["request"]["cap_usd"] == 2.0 and intent["request"]["step_cap_usd"] == 0.25   # Jon's default backstops
     assert counts(hive) == {**before, "ask_intents": before["ask_intents"] + 1}                 # record creates nothing else
     assert record(s).status_code == 200                                                         # same body: same intent
     out = submit(s, intent["intent_id"])
@@ -150,7 +150,7 @@ def test_G1a_member_records_and_submits_one_goal_one_host_artifact_one_session(s
     assert ledger.status_code == 200 and ledger.json()["goal_id"] == body["goal_id"] and ledger.json()["steps"] == []
     assert ledger.json()["budget"]["cap"] == 2.0 and ledger.json()["budget"]["held"] == 0
     assert any(m["scope"].startswith("keyuse:") and m["limit"] == 10 for m in ledger.json()["budget"]["monthly"])
-    for other in (s.quinn, s.ann):
+    for other in (s.jon, s.ann):
         assert err(c.get(f"/api/studio-sessions/{body['session_id']}", headers=other)).get("code") == "not_available"
 
 
@@ -183,11 +183,11 @@ def test_G1a_the_intent_frame_names_the_goal_and_session_and_a_studio_session_ev
     iid = record(s).json()["intent_id"]
     with c.websocket_connect(f"/api/events?token={token_of(s.mia)}") as mia_ws, \
             c.websocket_connect(f"/api/events?token={token_of(zed)}") as zed_ws, \
-            c.websocket_connect(f"/api/events?token={token_of(s.quinn)}") as quinn_ws:
-        for ws in (mia_ws, zed_ws, quinn_ws):
+            c.websocket_connect(f"/api/events?token={token_of(s.jon)}") as jon_ws:
+        for ws in (mia_ws, zed_ws, jon_ws):
             assert ws.receive_json()["type"] == "hello"
         body = submit(s, iid).json()
-        mia, zed_frames, quinn = drain(mia_ws), drain(zed_ws), drain(quinn_ws)
+        mia, zed_frames, jon = drain(mia_ws), drain(zed_ws), drain(jon_ws)
     linked = [f for f in mia if f.get("type") == "ask" and f.get("phase") == "intent" and f.get("state") == "linked"]
     assert len(linked) == 1 and linked[0]["goal_id"] == body["goal_id"] and linked[0]["session_id"] == body["session_id"]
     assert linked[0]["operation_id"] == "op-mia-turn-01"
@@ -197,7 +197,7 @@ def test_G1a_the_intent_frame_names_the_goal_and_session_and_a_studio_session_ev
     assert (n["session_id"], n["goal_id"], n["agent_id"], n["proposal_artifact_id"], n["state"], n["operation_id"]) == \
         (body["session_id"], body["goal_id"], s.maker["id"], body["proposal_artifact_id"], "active", "op-mia-turn-01")
     assert not [f for f in zed_frames if f.get("type") == "studio.session"]       # not everyone who sees the swarm
-    assert [f["session_id"] for f in quinn if f.get("type") == "studio.session"] == [body["session_id"]]   # admins do
+    assert [f["session_id"] for f in jon if f.get("type") == "studio.session"] == [body["session_id"]]   # admins do
 
 
 # ---- G1-b: a lost response replays the recorded answer -------------------------------------------------------------
@@ -266,7 +266,7 @@ def _drift(x, case):
         hive.db.execute("UPDATE agents SET options = ? WHERE id = ?", (json.dumps({"key": KEY, "tools": ["t@1"]}), x.maker["id"]))
     elif case == "maker_busy":
         hive.db.execute("INSERT INTO work_sessions (id, room_id, agent_id, owner, title, status, budget_usd, spent_at_start, "
-                        "created_at) VALUES ('ws_busy', 'r_x', ?, 'user:u_quinn', 'other work', 'active', 1, 0, ?)", (x.maker["id"], now()))
+                        "created_at) VALUES ('ws_busy', 'r_x', ?, 'user:u_jon', 'other work', 'active', 1, 0, ?)", (x.maker["id"], now()))
     elif case == "budget_exhausted":
         assert x.client.put("/api/me/key-limits/self", headers=x.mia, json={"month_usd": 1.0}).status_code == 200
     elif case == "monthly_total_required":
@@ -372,9 +372,9 @@ def test_G1c_the_real_attachment_check_refuses_an_unattached_app_and_accepts_the
     r = submit(s, iid)
     assert (r.status_code, err(r)["code"]) == (409, "app_not_attached") and counts(hive) == before
     monkeypatch.setattr(hive.programs, "_ready", lambda pid: {"id": pid, "version": PIN["version"], "digest": PIN["digest"]})
-    hive.db.execute("INSERT INTO app_activations VALUES ('omegadesign', ?, 1, 'user:u_quinn')", (s.home["id"],))
+    hive.db.execute("INSERT INTO app_activations VALUES ('omegadesign', ?, 1, 'user:u_jon')", (s.home["id"],))
     hive.db.execute("INSERT INTO app_attachments (id, program, swarm, mind, actor, scope, policy, expires, status, by_person) "
-                    "VALUES ('at_1', 'omegadesign', ?, ?, 'mind', '{}', '{}', NULL, 'active', 'user:u_quinn')",
+                    "VALUES ('at_1', 'omegadesign', ?, ?, 'mind', '{}', '{}', NULL, 'active', 'user:u_jon')",
                     (s.home["id"], s.maker["id"]))
     request = studio_request(s)
     assert hive.studio._app_attached(request) is True
@@ -386,7 +386,7 @@ def test_G1c_the_real_attachment_check_refuses_an_unattached_app_and_accepts_the
 
 def person_rule(hive, scope, usd):
     """A person month rule as the Limits page stores it (Budgets.set's scope pattern wants an 8-hex person id; the
-    fixture people are u_mia / u_quinn)."""
+    fixture people are u_mia / u_jon)."""
     hive.db.insert("budgets", {"id": "b_" + secrets.token_hex(4), "scope": scope, "period": "month", "limit_usd": usd,
                                "note": "", "created_at": now()})
 
@@ -422,8 +422,8 @@ def test_R21_a_cap_that_does_not_fit_the_remaining_allowance_is_refused_with_its
 
 def test_R21_an_admin_with_no_person_rule_has_no_allowance_until_one_is_set(s):
     _hive_key_maker(s)
-    s.client.post("/api/ask/op-mia-turn-01/stop", headers=s.mia)                   # the Ask mind is free for the owner
-    turn(s)                                                                         # the owner (a named admin) asks
+    s.client.post("/api/ask/op-mia-turn-01/stop", headers=s.mia)                   # the Ask mind is free for Jon
+    turn(s)                                                                         # Jon (a named admin) asks
     body = {"kind": "studio.session", "request": studio_request(s, ("member_allowance", None), key_id="env:openrouter")}
     iid = s.client.post("/api/ask/op-turn-0001/intents", headers=s.jg, json=body).json()["intent_id"]
     before = counts(s.hive)
@@ -431,7 +431,7 @@ def test_R21_an_admin_with_no_person_rule_has_no_allowance_until_one_is_set(s):
     assert (r.status_code, err(r)["code"], err(r)["reason"]) == (402, "spend_limit", "monthly_total_required"), r.text
     assert err(r)["limit"] == {"kind": "member_allowance", "limit_usd": None, "spent_usd": None, "held_usd": None}
     assert counts(s.hive) == before
-    person_rule(s.hive, "person:u_quinn", 10)
+    person_rule(s.hive, "person:u_jon", 10)
     body = {"kind": "studio.session", "request": studio_request(s, ("member_allowance", 10.0), key_id="env:openrouter")}
     iid = s.client.post("/api/ask/op-turn-0001/intents", headers=s.jg, json=body).json()["intent_id"]
     assert submit(s, iid, who=s.jg).status_code == 201

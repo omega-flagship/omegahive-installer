@@ -82,7 +82,7 @@ export function OpenThreads() {
       {mine.length > 0 && (
         <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
           {mine.map((s) => (
-            <li key={s.id} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: '1px solid rgb(255 255 255 / 0.06)' }}>
+            <li key={s.id} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: '1px solid color-mix(in oklab, var(--color-ink) 6%, transparent)' }}>
               <span className="ask-row-note" style={{ flex: '1 1 12rem', minWidth: 0 }}>
                 {shownMind(s.mind?.name)} · started {ago(s.created_at)} · {money(s.spent_usd)} of {money(s.budget_usd)}
               </span>

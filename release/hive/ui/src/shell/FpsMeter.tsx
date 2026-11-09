@@ -4,7 +4,7 @@ import { frameStats, setFpsMeter, useFpsMeterOn } from './fpsMeterState'
 /**
  * A small live frame-rate meter for testing experiences on a real device: fps over the last second, the 95th
  * percentile frame time, the worst frame, and a sparkline of recent frames. It only measures; it never changes
- * rendering. On with `?fps=1`, from the Ω menu or from Change UI; the choice is remembered on this device.
+ * rendering. On with `?fps=1`, from the Ω menu or from Change experience; the choice is remembered on this device.
  */
 const W = 96
 const H = 22

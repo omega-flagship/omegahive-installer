@@ -27,7 +27,7 @@ import {
   type UiVariant,
 } from './uiVariant'
 
-/** "Change UI": every look this hive offers, previewed live; nothing is saved until the person keeps it. */
+/** "Change experience": every look this hive offers, previewed live; nothing is saved until the person keeps it. */
 export default function ChangeUi() {
   const client = useHive((s) => s.client)
   const programs = useHive((s) => s.programs)
@@ -84,7 +84,7 @@ export default function ChangeUi() {
   const close = () => openGallery(false)
 
   return (
-    <Sheet label="Change UI" onClose={close} width={520} header={<GalleryHeader onClose={close} />}>
+    <Sheet label="Change experience" onClose={close} width={520} header={<GalleryHeader onClose={close} />}>
       {/* the gallery body is the sheet's scroller (as every Sheet body is), so its sticky footer sticks to the scroller's
           bottom, which ends above the universal Ask (ui/Sheet), not to the sheet's own edge under it */}
       <div className="thin-scroll flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-6 md:px-5" data-tour="change-ui">
@@ -173,7 +173,7 @@ export default function ChangeUi() {
           )}
         </section>
 
-        <div className="sticky bottom-0 -mx-4 flex flex-wrap items-center gap-2 border-t border-line px-4 pt-3 pb-1 md:-mx-5 md:px-5" style={{ background: 'var(--look-strong, rgb(11 11 33 / 0.94))' }}>
+        <div className="sticky bottom-0 -mx-4 flex flex-wrap items-center gap-2 border-t border-line px-4 pt-3 pb-1 md:-mx-5 md:px-5" style={{ background: 'var(--look-strong, color-mix(in oklab, var(--color-abyss) 94%, transparent))' }}>
           <Button variant="primary" icon="check" disabled={!dirty || busy} onClick={() => shown && void keep(shown)}>
             Keep {!shown ? 'this look' : fromWords ? shown.variant?.name ?? lookName(shown) : lookName(shown)}
           </Button>
@@ -196,8 +196,8 @@ function GalleryHeader({ onClose }: { onClose: () => void }) {
   return (
     <div className="flex items-center gap-2 px-4 pt-4 pb-2 md:px-5">
       <Icon name="sparkles" size={18} className="text-accent" />
-      <h2 className="flex-1 font-display text-[18px] font-semibold tracking-tight">Change UI</h2>
-      <button onClick={onClose} className="flex size-11 items-center justify-center rounded-xl text-ink-3 hover:bg-white/[0.06] hover:text-ink" aria-label="Close">
+      <h2 className="flex-1 font-display text-[18px] font-semibold tracking-tight">Change experience</h2>
+      <button onClick={onClose} className="flex size-11 items-center justify-center rounded-xl text-ink-3 hover:bg-tint/[0.06] hover:text-ink" aria-label="Close">
         <Icon name="x" size={18} />
       </button>
     </div>

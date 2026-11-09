@@ -61,7 +61,7 @@ describe('Construct: where a typed line goes', () => {
     // the Ask's guarded submission (useAskField forcedAsk); nothing in the prompt sends to a mind by itself
     expect(src).toMatch(/const asking = !tab && route\.to === 'ask'\n/)
     expect(src).toMatch(/if \(k === 'Enter' && !tab && asking\)/)
-    expect(src).toContain("useAskField({ experience: 'construct', forcedAsk, onDispatch: echoDispatch })")
+    expect(src).toContain("useAskField({ experience: 'construct', forcedAsk, onDispatch: echoDispatch, draft: sharedDraft, active: native })")
     // uifix-r2.3 (Kimi r2.2 #1): the echo, and cancelling a pending yes/no, only once the Ask acts
     expect(src).toMatch(/const echoDispatch = [\s\S]{0,120}cancelAwaiting\(\)/)
     expect(src).toContain('const askEnter = (e: KeyboardEvent<HTMLInputElement>) => f.onKeyDown(e)')

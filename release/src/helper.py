@@ -95,12 +95,15 @@ try:
         _signature_validated_metta,
         _signature_consume_metta,
         _signature_split_commands,
+        _signature_split_top_level_forms,
         _signature_explicit_command_head,
         _signature_accepts_unquoted_continuation,
         _signature_merge_continuations,
         _signature_extract_block,
         _signature_syntax_error,
         _signature_parse_one,
+        _signature_source_text,
+        signature_raw_batch_complete,
         signature_balance_parentheses,
         balance_parentheses,
     )
@@ -213,12 +216,15 @@ except Exception:
         _signature_validated_metta,
         _signature_consume_metta,
         _signature_split_commands,
+        _signature_split_top_level_forms,
         _signature_explicit_command_head,
         _signature_accepts_unquoted_continuation,
         _signature_merge_continuations,
         _signature_extract_block,
         _signature_syntax_error,
         _signature_parse_one,
+        _signature_source_text,
+        signature_raw_batch_complete,
         signature_balance_parentheses,
         balance_parentheses,
     )
@@ -261,10 +267,12 @@ _WAIT_ITEM = r'\(\s*wait(?:\s+(?:"(?:[^"\\]|\\.)*"|[^\s()"]+))*\s*\)'
 _WAIT_ONLY = None
 _WAIT_SECONDS = None
 _WAIT_PROVIDER = None
+MAX_FORMAT_RETRIES = 3
+FORMAT_RETRY_SECONDS = 2
 PROVIDER_RETRY_SECONDS = 60   # a provider-error wait (lib_llm_ext: wait "LLM-PROVIDER-...") retries after this long
 
 
-def chosen_wait_seconds(sexpr_repr):
+def chosen_wait_seconds(sexpr_repr, retry_kind="normal", format_attempts=0):
     """How a response that is nothing but `wait` sets the mind's next wake, read from the parsed commands' repr.
 
     -1: the response is not a pure wait (the mind acted, or wrote nothing), so its turns go on as before.
@@ -272,6 +280,8 @@ def chosen_wait_seconds(sexpr_repr):
      n: the first wait's reason starts with a length ("wait 900", "wait 600 nothing owed", "wait 10 minutes",
         "wait 2h"; seconds unless it says minutes or hours), clamped to 30..86400 like sleep-for; it wakes on new
         input or after n seconds.
+     2: only a trusted runtime format failure, for its first three attempts across wakes.
+        Model-authored marker text is an ordinary wait; exhausted retries use the normal wake interval.
     60: the wait is the runtime's own provider error (lib_llm_ext.callProvider answers wait "LLM-PROVIDER-..." when
         the provider is unknown or unavailable): not the mind's choice, so a short fixed back-off, never the full wake
         interval (Kimi r1 K8), and a recovering provider is tried again within a minute.
@@ -286,6 +296,10 @@ def chosen_wait_seconds(sexpr_repr):
     text = str(sexpr_repr or "").strip()
     if not _WAIT_ONLY.match(text):
         return -1
+    if retry_kind == "format":
+        return FORMAT_RETRY_SECONDS if 1 <= int(format_attempts) <= MAX_FORMAT_RETRIES else 0
+    if retry_kind == "provider":
+        return PROVIDER_RETRY_SECONDS
     if _WAIT_PROVIDER.match(text):
         return PROVIDER_RETRY_SECONDS
     found = _WAIT_SECONDS.match(text)
@@ -294,6 +308,66 @@ def chosen_wait_seconds(sexpr_repr):
     unit = (found.group(2) or "s")[0]
     seconds = float(found.group(1)) * {"s": 1, "m": 60, "h": 3600}[unit]
     return int(min(86400, max(30, seconds)))
+
+
+def next_format_retry_count(kind, previous):
+    """The existing loop keeps this bounded count across wakes; a well-formed response starts a new stretch."""
+    return min(MAX_FORMAT_RETRIES + 1, max(0, int(previous)) + 1) if kind == "format" else 0
+
+
+def _model_response(response, provider_failure="normal"):
+    import re
+    # The host has already classified its own unavailable/exception result. Never reclassify an outage as malformed
+    # model output, including when a later syntax guard is tightened. Model text cannot supply this argument.
+    if provider_failure == "provider":
+        return signature_balance_parentheses(response), "provider"
+    failed = (provider_failure == "format" or not signature_raw_batch_complete(response)
+              or not signature_raw_batch_complete(_signature_source_text(response)))
+    parsed = "" if failed else signature_balance_parentheses(response)
+    commands = _signature_split_top_level_forms(parsed[1:-1]) if parsed else []
+    bad = [command for command in commands if re.match(r"^\(\s*syntax-error(?:\s|\))", command)]
+    if failed or not parsed[1:-1].strip() or bad:
+        # Keep the parser's own recovery text for the first malformed command (e.g. "missing team"), so the next turn
+        # can correct it; quotes, backslashes and parentheses are dropped so the wait stays one plain string.
+        hint = ""
+        if bad and not failed:
+            found = re.findall(r'"((?:[^"\\]|\\.)*)"', bad[0])[:2]
+            hint = re.sub(r'[\\"()]', "", " ".join(found)).strip()[:300]
+        reason = "LLM-FORMAT-ERROR retry with complete skill commands" + (f"; {hint}" if hint else "")
+        return f'((wait "{reason}"))', "format"
+    return parsed, "provider" if provider_failure == "provider" else "normal"
+
+
+def model_response_commands(response):
+    """Standalone command view. Provenance is carried separately by prepare_model_response in the actual loop."""
+    return _model_response(response)[0]
+
+
+def prepare_model_response(response, provider_failure="normal"):
+    """Trusted runtime envelope. The loop extracts string fields without evaluating envelope data as MeTTa.
+
+    provider_failure comes only from a runtime exception/incomplete-result object in callProviderCommands. The raw
+    batch check runs before the canonical parser's repair/prose path. No malformed prefix or suffix is executed.
+    """
+    import json
+    commands, kind = _model_response(response, provider_failure)
+    return json.dumps({"commands": commands, "retry_kind": kind}, separators=(",", ":"))
+
+
+def prepared_response_commands(envelope):
+    import json
+    value = json.loads(envelope)["commands"]
+    if not isinstance(value, str):
+        raise ValueError("prepared commands must be text")
+    return value
+
+
+def prepared_response_kind(envelope):
+    import json
+    kind = json.loads(envelope)["retry_kind"]
+    if kind not in ("normal", "format", "provider"):
+        raise ValueError("invalid runtime retry kind")
+    return kind
 
 
 def add_python_path(path):

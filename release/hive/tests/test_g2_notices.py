@@ -291,7 +291,7 @@ def frame_all(n, h, g, after=0):
 
 
 def test_a_frame_cursor_past_a_held_notice_still_sees_it_after_release(n):
-    """Review repro: hold at seq 1, deliver and poll seq 2, release, poll after 2."""
+    """Stand-in R1 P1 repro: hold at seq 1, deliver and poll seq 2, release, poll after 2."""
     assert settings(n, n.bob, cap=0, quiet_start=None, quiet_end=None).status_code == 200
     assert send(n, n.watcher, "held first").json()["state"] == "held"
     assert n.hive.notices.reminder(n.watcher["id"], "delivered second")["state"] == "delivered"

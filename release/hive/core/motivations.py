@@ -1,8 +1,8 @@
-"""Motivations: the why above tasks (goals). Phase 1 of coordination/omegaui/MOTIVATIONS_TASKS_HOST_DESIGN_20261005.md (r3
-plus the owner's Q1-Q7).
+"""Motivations: the why above tasks (goals). Phase 1 of MOTIVATIONS_TASKS_HOST_DESIGN_20261005.md (r3
+plus Jon's Q1-Q7).
 
 - A motivation is owned by a person (user:u_..), a team (swarm:s_.., scoped to that swarm) or the mind that named it
-  (agent:a_.., scoped to the mind's swarm; owner Q2). Minds create only through the agent route / MCP tool, with owner,
+  (agent:a_.., scoped to the mind's swarm; Jon Q2). Minds create only through the agent route / MCP tool, with owner,
   creator and swarm derived from the authenticated mind row inside the transaction; they read back only what they created.
 - Links live in motivation_tasks (Q7: many per task). A link is association only: no goal serialiser, goal event, envelope,
   board, program ctx or mind output reads these tables (design 1.6); only this module does.
@@ -315,7 +315,7 @@ class Motivations:
         return self.view(viewer, self._row(row["id"]))
 
     def agent_create(self, agent, data):
-        """owner Q2: a mind names an aim owned by itself or by its own swarm. Owner, creator and swarm come from the
+        """Jon Q2: a mind names an aim owned by itself or by its own swarm. Owner, creator and swarm come from the
         authenticated mind row, re-read inside the transaction; a supplied owner, swarm or visibility is refused.
         operation_id is required (Kimi F1 on 0d97c65), as on the links route: every mind create is replay-safe."""
         if set(data) & DERIVED:

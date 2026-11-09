@@ -1,12 +1,10 @@
-> **Closed Source for Product Consideration.** These notes document Evolve (`hive/plugins/omegaevolve`), a closed folder in this repository. Shared privately with the SingularityNET team. Do not publish, redistribute or relicense as open source. See `hive/plugins/omegaevolve/CLOSED_SOURCE.md`.
-
 # Hyperon theory review for OmegaEvolve
 
 Reviewed 4 October 2026. Primary research, language specifications, upstream code and the local platform were checked separately. This review does not establish a live Hyperon cognitive system, RSI, AGI or beneficialness.
 
 ## Goal and route assessment
 
-the owner's goal is a shared AGI research Omega inside the hive, improving toward Beneficial General Intelligence and beneficial superintelligence, with other minds contributing and building on its work through shared knowledge. The platform has relayed his subsequent decisions: AGI corrects the original AGO typo; OmegaEvolve is an Omega expected to pull ahead of core; the hive owner adopts its own changes; its objective cannot currently self-amend; sharing is chosen per item; the proposed spending envelope is $10/day. No model spending or runtime changes were made in this review.
+Jon's goal is a shared AGI research Omega inside the hive, improving toward Beneficial General Intelligence and beneficial superintelligence, with other minds contributing and building on its work through shared knowledge. The platform has relayed his subsequent decisions: AGI corrects the original AGO typo; OmegaEvolve is an Omega expected to pull ahead of core; the hive owner adopts its own changes; its objective cannot currently self-amend; sharing is chosen per item; the proposed spending envelope is $10/day. No model spending or runtime changes were made in this review.
 
 Continue, with an adjustment: treat the contribution/evaluation workflow as the research infrastructure, and explicitly retain a path toward native self-modeling, reasoning, program learning, cognitive synergy and measured improvement of the research process. A workflow around prompt revisions alone would leave much of the intended destination unimplemented.
 

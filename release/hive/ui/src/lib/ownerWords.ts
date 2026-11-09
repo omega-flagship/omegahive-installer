@@ -1,5 +1,5 @@
 /**
- * Host text a person reads, said in the hive's own words (the owner's standing rule): work is Motivations and Tasks, never
+ * Host text a person reads, said in the hive's own words (Jon's standing rule): work is Motivations and Tasks, never
  * goals or boards; agents are minds, never dots. The static wording guards cover the UI's own strings; this covers
  * text the host sends (bench names, case titles, notes), which the UI shows but does not own.
  *

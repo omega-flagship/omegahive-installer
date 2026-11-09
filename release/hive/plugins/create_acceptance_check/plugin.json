@@ -1,0 +1,13 @@
+{
+  "id": "create-acceptance-check",
+  "name": "Create acceptance check runner",
+  "version": "0.1.0",
+  "contract": "0.1",
+  "description": "Host-owned pinned runner for a Create plan's authored acceptance check, with no public actions. Runs only through sandbox:run.",
+  "module": "program.py",
+  "capabilities": [
+    "sandbox:run"
+  ],
+  "icon": "flask",
+  "placement": "swarm"
+}

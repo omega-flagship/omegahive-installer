@@ -144,9 +144,12 @@ def test_integrity_is_enforced_at_every_entry_not_only_view(client, monkeypatch)
     programs = client.app.state.hive.programs
     items = client.get("/api/programs").json()
     items = items if isinstance(items, list) else items.get("programs", [])
-    if not items:
+    # a program that loaded: one that failed to load (a platform program with no act(), my_apps.NOT_APPS) is refused
+    # as program_error before integrity is reached, which is not what this test is about
+    loaded = [i["id"] for i in items if not programs.get(i["id"])["error"]]
+    if not loaded:
         pytest.skip("no app loaded")
-    pid = items[0]["id"]
+    pid = loaded[0]
     monkeypatch.setenv("HIVE_APP_GRANT_RENEWAL", _json.dumps({pid: {"release": "/nowhere/release", "digest": "sha256:" + "0" * 64}}))
     with pytest.raises(HiveError) as e:
         programs._ready(pid)

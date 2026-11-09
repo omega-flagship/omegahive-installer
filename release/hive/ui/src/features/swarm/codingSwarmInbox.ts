@@ -5,7 +5,7 @@ import type { Route } from '../../lib/router'
 
 /**
  * A swarm's request inbox: a read-only projection of the hive's request page beside SwarmTeam. No scheduling, no
- * authority. Adopted from Code's proof of concept (coordination/omegacode/poc/codingSwarmInbox.ts, sha256 2cce5a76…)
+ * authority. Adopted from Code's proof of concept (codingSwarmInbox.ts, sha256 2cce5a76…)
  * onto the owner's CollabRequest type.
  *
  * The person's GET /api/requests answers the newest 200 requests this reader may see (host next15, 3fc8ad4: the

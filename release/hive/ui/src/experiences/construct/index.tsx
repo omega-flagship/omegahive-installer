@@ -1,5 +1,9 @@
+import { useVisibleAuthority, visibleOwner } from '../../lib/useVisibleAuthority'
+import { usePhase } from '../../shell/phase'
+import { usePhaseAnchor } from '../phaseAnchor'
+import { currentEpoch, onIdentityChange } from '../../lib/identityEpoch'
 import { AnimatePresence, m } from 'framer-motion'
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { Activity, useSyncExternalStore, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { hsl, NOTICE_ROW, openGallery, shown, useHive, useHomeRequested, useNoticeRow, useResting, useRoomyLayout, useReducedMotion, useRoute } from '../sdk'
 import { Boot } from './Boot'
 import { CommandLine, Console } from './CommandLine'
@@ -13,12 +17,22 @@ import { ApprovalDecision } from '../ApprovalDecision'
 import { modalLayers } from '../../ui/useModalContainment'
 import { watchAskEcho } from './askEcho'
 
+const approvalOwner = visibleOwner(useC, s => s.answering, request => request !== null)
+export const useConstructApprovalAuthority = () => useVisibleAuthority('hive-pro', true, 'construct-approval', approvalOwner)
+
 /**
  * CONSTRUCT: the hive as an operator's terminal. Digital rain behind tiled panes (stream, minds, session, inbox),
  * a command language at the bottom, CRT optics on top. Everything is keyboard driven; on a phone it becomes one
  * swipeable pane with command chips.
  */
 export default function Construct() {
+  const epoch = useSyncExternalStore(onIdentityChange, currentEpoch, currentEpoch)
+  return <ConstructBody key={epoch} />
+}
+
+function ConstructBody() {
+  const anchor = usePhaseAnchor()
+  const home = usePhase(s => s.phased && s.phase !== 'pro')
   const reduced = useReducedMotion()
   const desktop = useRoomyLayout()
   const phone = !desktop
@@ -30,30 +44,35 @@ export default function Construct() {
     pulse(1)
   }, [])
 
-  useHiveWiring()
-  useKeys(phone)
-  useSessionReset()
-  useAskEcho()
   const answering = useC((s) => s.answering)
   const answeringSession = useC((s) => s.answeringSession)
+  const approvalCurrent = useConstructApprovalAuthority()
 
   // the reveal waits for the boot overlay to fade
   const bootDelay = reduced ? 0 : 0.18
 
   return (
     <div className={`cx-root${phone ? ' is-phone' : ''}${reduced ? ' is-reduced' : ''}`}>
-      <RainLayer />
       <div className="cx-shell">
-        <StatusBar phone={phone} />
-        {!booting && (phone ? <PhoneDeck boot={bootDelay} /> : <Grid boot={bootDelay} />)}
-        {!booting && phone && <Chips />}
-        {!booting && <CommandLine phone={phone} />}
+        <Activity mode={home ? 'hidden' : 'visible'}>
+          <ProWorkspace phone={phone} booting={booting} bootDelay={bootDelay} />
+        </Activity>
+        <div ref={anchor} className="cx-phase-anchor" hidden={!home} />
+        <CommandLine phone={phone} />
       </div>
-      <div className="cx-crt" aria-hidden />
-      <AnimatePresence>{booting && <Boot key="boot" onDone={endBoot} />}</AnimatePresence>
-      <AnimatePresence>{answering && <ApprovalDecision key={answering.id} seen={answering} session={answeringSession ?? undefined} onClose={() => useC.getState().answer(null)} restoreFocus={afterAnswer} />}</AnimatePresence>
+      {!home && <div className="cx-crt" aria-hidden />}
+      <AnimatePresence>{!home && booting && <Boot key="boot" onDone={endBoot} />}</AnimatePresence>
+      <AnimatePresence>{!home && answering && <ApprovalDecision current={approvalCurrent} key={answering.id} seen={answering} session={answeringSession ?? undefined} onClose={() => useC.getState().answer(null)} restoreFocus={afterAnswer} />}</AnimatePresence>
     </div>
   )
+}
+
+function ProWorkspace({ phone, booting, bootDelay }: { phone: boolean; booting: boolean; bootDelay: number }) {
+  useHiveWiring()
+  useKeys(phone)
+  useSessionReset()
+  useAskEcho()
+  return <><RainLayer /><StatusBar phone={phone} />{!booting && (phone ? <PhoneDeck boot={bootDelay} /> : <Grid boot={bootDelay} />)}{!booting && phone && <Chips />}</>
 }
 
 /**
@@ -246,6 +265,9 @@ function useKeys(phone: boolean) {
       const typing = !!t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))
       const c = useC.getState()
       const h = useHive.getState()
+      // The native chooser owns its keyboard. Escape closes the Ask's top
+      // layer before it can close the terminal console underneath.
+      if (e.defaultPrevented || t?.closest('.ask-scoped-answerer') || (e.key === 'Escape' && document.documentElement?.dataset.askPop !== undefined)) return
       if (h.paletteOpen) return
       // classic pages over us own the keyboard
       if (over.current) return

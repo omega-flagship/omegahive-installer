@@ -222,7 +222,7 @@ export default function LaunchSwarm() {
           {STEPS.map((s, i) => (
             <li key={s} className="flex-1">
               <button onClick={() => i < step && !made && setStep(i)} disabled={i > step || !!made} aria-current={i === step ? 'step' : undefined} className="flex w-full flex-col gap-1.5 text-left">
-                <span className="relative h-1 w-full overflow-hidden rounded-full bg-white/10">
+                <span className="relative h-1 w-full overflow-hidden rounded-full bg-tint/10">
                   <m.span className="absolute inset-y-0 left-0 rounded-full" initial={false} animate={{ width: i <= step ? '100%' : '0%' }} style={{ background: hsl(hue, 100, 72), boxShadow: `0 0 10px ${hsl(hue, 100, 65)}` }} />
                 </span>
                 <span className={cx('text-[11px] font-medium', i === step ? 'text-ink' : 'text-ink-4')}>{s}</span>
@@ -241,8 +241,8 @@ export default function LaunchSwarm() {
                     {TEMPLATES.map((t) => {
                       const on = t.id === template.id
                       return (
-                        <button key={t.id} onClick={() => pickTemplate(t)} aria-pressed={on} className={cx('flex items-start gap-3 rounded-2xl border p-3.5 text-left transition-all', on ? 'bg-white/[0.07]' : 'border-line bg-white/[0.02] hover:border-line-2')} style={on ? { borderColor: hsl(t.hue, 90, 70, 0.55), boxShadow: `0 12px 40px -18px ${hsl(t.hue, 100, 60, 0.7)}` } : undefined}>
-                          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-line bg-black/25" style={{ color: hsl(t.hue, 100, 78) }}>
+                        <button key={t.id} onClick={() => pickTemplate(t)} aria-pressed={on} className={cx('flex items-start gap-3 rounded-2xl border p-3.5 text-left transition-all', on ? 'bg-tint/[0.07]' : 'border-line bg-tint/[0.02] hover:border-line-2')} style={on ? { borderColor: hsl(t.hue, 90, 70, 0.55), boxShadow: `0 12px 40px -18px ${hsl(t.hue, 100, 60, 0.7)}` } : undefined}>
+                          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-line bg-shade/25" style={{ color: hsl(t.hue, 100, 78) }}>
                             <Icon name={t.icon} size={17} />
                           </span>
                           <span className="min-w-0">
@@ -258,15 +258,15 @@ export default function LaunchSwarm() {
                 <section className="grid gap-3">
                   <label className="block">
                     <span className="eyebrow">Name</span>
-                    <input data-autofocus value={name} onChange={(e) => setName(e.target.value)} maxLength={48} placeholder="e.g. Market Watch, Bridge Build, Reading Group" className="mt-2 min-h-12 w-full rounded-xl border border-line bg-black/25 px-4 font-display text-lg text-ink outline-none placeholder:text-ink-4 focus:border-line-2" />
+                    <input data-autofocus value={name} onChange={(e) => setName(e.target.value)} maxLength={48} placeholder="e.g. Market Watch, Bridge Build, Reading Group" className="mt-2 min-h-12 w-full rounded-xl border border-line bg-shade/25 px-4 font-display text-lg text-ink outline-none placeholder:text-ink-4 focus:border-line-2" />
                   </label>
                   <label className="block">
                     <span className="eyebrow">What it is for</span>
-                    <textarea value={purpose} onChange={(e) => setPurpose(e.target.value)} rows={2} placeholder="One or two sentences every mind in it will read." className="thin-scroll mt-2 w-full resize-y rounded-xl border border-line bg-black/25 p-3 text-[14px] text-ink outline-none placeholder:text-ink-4 focus:border-line-2" />
+                    <textarea value={purpose} onChange={(e) => setPurpose(e.target.value)} rows={2} placeholder="One or two sentences every mind in it will read." className="thin-scroll mt-2 w-full resize-y rounded-xl border border-line bg-shade/25 p-3 text-[14px] text-ink outline-none placeholder:text-ink-4 focus:border-line-2" />
                   </label>
                   <label className="block">
                     <span className="eyebrow">First task</span>
-                    <input value={goal} onChange={(e) => setGoal(e.target.value)} maxLength={200} placeholder="What should they start on? (you can add more later)" className="mt-2 min-h-11 w-full rounded-xl border border-line bg-black/25 px-3 text-[14px] text-ink outline-none placeholder:text-ink-4 focus:border-line-2" />
+                    <input value={goal} onChange={(e) => setGoal(e.target.value)} maxLength={200} placeholder="What should they start on? (you can add more later)" className="mt-2 min-h-11 w-full rounded-xl border border-line bg-shade/25 px-3 text-[14px] text-ink outline-none placeholder:text-ink-4 focus:border-line-2" />
                   </label>
                 </section>
               </div>
@@ -279,22 +279,22 @@ export default function LaunchSwarm() {
                   const row = rows.find((r) => r.id === s.model)
                   const clash = taken.has(s.name.trim().toLowerCase())
                   return (
-                    <div key={s.key} className="rounded-2xl border border-line bg-white/[0.03]" style={{ boxShadow: `0 16px 40px -30px ${hsl(s.hue, 100, 60, 0.7)}` }}>
+                    <div key={s.key} className="rounded-2xl border border-line bg-tint/[0.03]" style={{ boxShadow: `0 16px 40px -30px ${hsl(s.hue, 100, 60, 0.7)}` }}>
                       <div className="flex flex-wrap items-center gap-3 p-3">
                         <Orb hue={s.hue} size={34} />
                         <div className="grid min-w-0 flex-1 gap-1.5 sm:grid-cols-[1fr_1fr]">
-                          <input value={s.name} onChange={(e) => update(s.key, { name: e.target.value })} aria-label="Mind name" maxLength={32} className={cx('min-h-10 rounded-lg border bg-black/25 px-2.5 font-display text-[15px] text-ink outline-none focus:border-line-2', clash ? 'border-bad/60' : 'border-line')} />
+                          <input value={s.name} onChange={(e) => update(s.key, { name: e.target.value })} aria-label="Mind name" maxLength={32} className={cx('min-h-10 rounded-lg border bg-shade/25 px-2.5 font-display text-[15px] text-ink outline-none focus:border-line-2', clash ? 'border-bad/60' : 'border-line')} />
                           <RoleSelect compact value={roleIdOf(s)} onChange={(roleId) => update(s.key, { roleId, role: library?.find((r) => r.id === roleId)?.name ?? '' })} />
                         </div>
-                        <div className="flex items-center rounded-lg border border-line bg-black/25 px-2" title="Budget cap for this mind">
+                        <div className="flex items-center rounded-lg border border-line bg-shade/25 px-2" title="Budget cap for this mind">
                           <span className="text-ink-3">$</span>
                           <input inputMode="decimal" value={s.budget} onChange={(e) => update(s.key, { budget: e.target.value.replace(/[^\d.]/g, '') })} aria-label={`Budget for ${shown(s.name)}`} className="min-h-10 w-12 bg-transparent px-1 font-mono text-[13px] text-ink outline-none" />
                         </div>
-                        <button onClick={() => setSlots((l) => l.filter((x) => x.key !== s.key))} disabled={slots.length === 1} aria-label={`Remove ${shown(s.name)}`} className="flex size-9 items-center justify-center rounded-lg text-ink-4 hover:bg-white/[0.06] hover:text-ink disabled:opacity-30">
+                        <button onClick={() => setSlots((l) => l.filter((x) => x.key !== s.key))} disabled={slots.length === 1} aria-label={`Remove ${shown(s.name)}`} className="flex size-9 items-center justify-center rounded-lg text-ink-4 hover:bg-tint/[0.06] hover:text-ink disabled:opacity-30">
                           <Icon name="x" size={14} />
                         </button>
                       </div>
-                      <button onClick={() => setOpen(open === s.key ? null : s.key)} className="flex w-full items-center gap-2 border-t border-line px-3 py-2 text-left text-[12.5px] text-ink-3 hover:bg-white/[0.03]">
+                      <button onClick={() => setOpen(open === s.key ? null : s.key)} className="flex w-full items-center gap-2 border-t border-line px-3 py-2 text-left text-[12.5px] text-ink-3 hover:bg-tint/[0.03]">
                         <Icon name="cpu" size={13} />
                         <span className="min-w-0 flex-1 truncate">
                           <span className="text-ink-2">{row?.name ?? s.model}</span>
@@ -310,7 +310,7 @@ export default function LaunchSwarm() {
                               <KeyPicker provider={s.model.split('/')[0]} value={s.options.key} hue={s.hue} onChange={(key) => update(s.key, { options: { ...s.options, key } })} />
                               <label className="block">
                                 <span className="eyebrow">{roleIdOf(s) ? `Extra instructions for ${s.name || 'this mind'}` : `How ${s.name || 'it'} works`}</span>
-                                <textarea value={s.persona} onChange={(e) => update(s.key, { persona: e.target.value })} rows={3} className="thin-scroll mt-2 w-full resize-y rounded-xl border border-line bg-black/25 p-3 text-[13.5px] text-ink outline-none focus:border-line-2" />
+                                <textarea value={s.persona} onChange={(e) => update(s.key, { persona: e.target.value })} rows={3} className="thin-scroll mt-2 w-full resize-y rounded-xl border border-line bg-shade/25 p-3 text-[13.5px] text-ink outline-none focus:border-line-2" />
                               </label>
                             </div>
                           </m.div>
@@ -337,14 +337,14 @@ export default function LaunchSwarm() {
 
             {step === 2 && (
               <div className="space-y-6">
-                <section className="rounded-2xl border border-line bg-white/[0.03] p-4">
+                <section className="rounded-2xl border border-line bg-tint/[0.03] p-4">
                   <VisibilityPicker value={vis} onChange={setVis} label="Who can see this swarm and its minds" />
                 </section>
-                <section className="rounded-2xl border border-line bg-white/[0.03] p-4">
+                <section className="rounded-2xl border border-line bg-tint/[0.03] p-4">
                   <h2 className="eyebrow">Spending</h2>
                   <div className="mt-3 flex flex-wrap items-center gap-3">
                     <span className="text-[13.5px] text-ink-2">The whole swarm may spend at most</span>
-                    <div className="flex items-center rounded-xl border border-line bg-black/25 px-3">
+                    <div className="flex items-center rounded-xl border border-line bg-shade/25 px-3">
                       <span className="text-ink-3">$</span>
                       <input inputMode="decimal" value={limit} onChange={(e) => setLimit(e.target.value.replace(/[^\d.]/g, ''))} aria-label="Monthly limit in dollars" className="min-h-10 w-20 bg-transparent px-1 font-mono text-ink outline-none" />
                     </div>
@@ -354,13 +354,13 @@ export default function LaunchSwarm() {
                     Each mind also stops at its own cap ({money(totalBudget)} across the {slots.length} of them). Every paid call is checked against both before it is made; change them any time on the Usage page.
                   </p>
                 </section>
-                <section className="rounded-2xl border border-line bg-white/[0.03] p-4">
+                <section className="rounded-2xl border border-line bg-tint/[0.03] p-4">
                   <h2 className="eyebrow">Safety</h2>
                   <p className="mt-2 text-[13px] leading-relaxed text-ink-2">
                     Minds talk, research, publish beliefs and work on tasks freely. Anything risky (running commands, writing files, changing code, touching their own memory) waits in your Inbox for a yes. Money and passwords are never theirs to touch.
                   </p>
                 </section>
-                <section className="flex items-center justify-between gap-3 rounded-2xl border border-line bg-white/[0.03] p-4">
+                <section className="flex items-center justify-between gap-3 rounded-2xl border border-line bg-tint/[0.03] p-4">
                   <div>
                     <h2 className="eyebrow">Start right away</h2>
                     <p className="mt-1 text-[12.5px] text-ink-3">{startAwake ? 'The minds wake as soon as they are created and pick up the first task.' : 'The minds are created asleep; wake them when you are ready.'}</p>

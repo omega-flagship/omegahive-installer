@@ -42,7 +42,7 @@ export function SettleCalls() {
 
   const split = res.data ? splitReservations(res.data) : null
   return (
-    <section aria-labelledby="settle-h" className="rounded-2xl border border-line bg-white/[0.02] p-4" data-tour="settle-calls">
+    <section aria-labelledby="settle-h" className="rounded-2xl border border-line bg-tint/[0.02] p-4" data-tour="settle-calls">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 id="settle-h" className="eyebrow">
           Calls to settle
@@ -227,14 +227,14 @@ function SettleDialog({ seen, live, onClose, onDone }: { seen: CostReservation; 
     >
       <label className="block">
         <span className="text-[12px] text-ink-3">Real cost from the provider’s billing (to settle)</span>
-        <span className="mt-1 flex min-h-11 items-center rounded-xl border border-line bg-black/30 px-3 focus-within:border-line-2">
+        <span className="mt-1 flex min-h-11 items-center rounded-xl border border-line bg-shade/30 px-3 focus-within:border-line-2">
           <span className="text-ink-3">$</span>
           <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" autoComplete="off" className="w-full bg-transparent px-1.5 font-mono text-[13px] text-ink outline-none" />
         </span>
       </label>
       <label className="block">
         <span className="text-[12px] text-ink-3">Reason, recorded with the decision</span>
-        <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="Billing shows $0.31 for response msg_…" className="mt-1 w-full resize-y rounded-xl border border-line bg-black/30 px-3 py-2 text-[13px] text-ink outline-none focus:border-line-2" />
+        <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="Billing shows $0.31 for response msg_…" className="mt-1 w-full resize-y rounded-xl border border-line bg-shade/30 px-3 py-2 text-[13px] text-ink outline-none focus:border-line-2" />
       </label>
       <p className="text-meta leading-snug text-ink-4">Settling records the real cost against every budget above (more than was held is recorded as an overrun). Releasing frees the hold and charges nothing. Neither can be undone.</p>
     </DecisionDialog>

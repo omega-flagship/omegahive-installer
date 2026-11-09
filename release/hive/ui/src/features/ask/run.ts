@@ -17,6 +17,7 @@
 import { featureById } from '../registry'
 import { openFeature } from '../../experiences/targets'
 import { applyLookPatch, lookPatchProblem, type IntentAct } from '../../lib/intent'
+import { PARTS_UNAVAILABLE } from '../../lib/intent/uiParts'
 import { href, navigate, parse, type Route } from '../../lib/router'
 import type { Feature } from '../registry'
 import { keepLook, lookState, openGallery, previewLook, type UiPrefs } from '../../shell/uiVariant'
@@ -29,6 +30,8 @@ import { openSwarmDelete } from '../swarm/deleteRequest'
 import { useScene } from '../../scene/sceneStore'
 import { useViewer } from '../../scene/viewer'
 import { resetPositions } from '../../scene/galaxyPositions'
+import { experienceById } from '../../experiences/registry'
+import { usePhase } from '../../shell/phase'
 
 export interface RunCtx {
   /** what the person typed, for the thread */
@@ -190,7 +193,7 @@ export async function runIntent(act: IntentAct, ctx: RunCtx, origin: AskOrigin =
     }
     case 'gallery':
       openGallery(true)
-      say('Opened Change UI')
+      say('Opened Change experience')
       return true
     case 'search':
       s.openPalette(act.text)
@@ -290,6 +293,23 @@ export async function runIntent(act: IntentAct, ctx: RunCtx, origin: AskOrigin =
       return true
     case 'map':
       return runMap(act, say)
+    case 'parts': {
+      // CANDIDATE (one-experience r1): read-only, from the real MeTTa parts space. The literal build-mode test (as
+      // experiences/registry UNREVIEWED_ALLOWED) lets a production build drop the space and its chunk entirely.
+      const def = experienceById((lookState().preview ?? lookState().saved)?.experience)
+      const ph = usePhase.getState()
+      try {
+        const parts = (import.meta.env.PROD ? import.meta.env.MODE === 'surface-preview' : true) ? await import('../../experiences/parts/answer') : null
+        if (!parts) return false
+        const { answerParts } = parts
+        if (!origin.ok()) return true
+        say(answerParts(act, { look: def.id, lookName: def.name, state: ph.phased ? ph.phase : null }))
+      } catch (e) {
+        console.warn('the UI parts space could not answer', e)
+        if (origin.ok()) say(PARTS_UNAVAILABLE)
+      }
+      return true
+    }
     case 'mind':
       return false
   }

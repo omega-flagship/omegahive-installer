@@ -23,7 +23,7 @@ export default function TokenReveal() {
   const { agent, token } = reveal
 
   return (
-    <m.div className="xc-dress xc-backdrop fixed inset-0 z-[60] flex items-end justify-center bg-black/50 p-0 md:items-center md:p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+    <m.div className="xc-dress xc-backdrop fixed inset-0 z-[60] flex items-end justify-center bg-shade/50 p-0 md:items-center md:p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <m.div
         ref={box}
         role="alertdialog"
@@ -51,7 +51,7 @@ export default function TokenReveal() {
         <div className="relative mt-5">
           <div className="eyebrow mb-1.5">Agent token</div>
           <div className="flex items-stretch gap-2">
-            <code className="min-w-0 flex-1 rounded-xl border border-line bg-black/40 px-3 py-3 font-mono text-[13px] leading-relaxed break-all text-ink select-all">{token}</code>
+            <code className="min-w-0 flex-1 rounded-xl border border-line bg-shade/40 px-3 py-3 font-mono text-[13px] leading-relaxed break-all text-ink select-all">{token}</code>
             <button
               onClick={async () => {
                 if (await copyText(token)) {
@@ -59,7 +59,7 @@ export default function TokenReveal() {
                   setTimeout(() => setCopied(false), 1800)
                 }
               }}
-              className="flex w-14 shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl border border-line bg-white/[0.06] text-[10px] text-ink-2 hover:bg-white/[0.1]"
+              className="flex w-14 shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl border border-line bg-tint/[0.06] text-[10px] text-ink-2 hover:bg-tint/[0.1]"
               aria-label={copied ? 'Copied' : 'Copy token'}
             >
               <Icon name={copied ? 'check' : 'copy'} size={18} className={copied ? 'text-good' : ''} />
@@ -77,7 +77,7 @@ export default function TokenReveal() {
         </div>
 
         <label className="relative mt-4 flex min-h-11 cursor-pointer items-center gap-3 text-sm">
-          <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} className="size-5 accent-[#a493ff]" />
+          <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} className="size-5 accent-accent" />
           I have stored the token somewhere safe
         </label>
 

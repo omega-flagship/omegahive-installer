@@ -19,8 +19,12 @@ import { attachGalaxyDrag } from './galaxyDrag'
 import { onIdentityChange } from '../lib/identityEpoch'
 import { useAskStore } from '../store/ask'
 import { combineInsets, useScene } from './sceneStore'
-import { shown } from '../lib/displayName'
+import { shown, shown as shown_ } from '../lib/displayName'
 import { plural } from '../lib/plural'
+import { usePhase } from '../shell/phase'
+import { groupHelpers, helperGroupWords, helperLabels, type HelperGroup } from './helperGroups'
+import { HelperGroupButton } from './HelperGroupButton'
+import { useHelperGroups } from './helperGroupsStore'
 
 
 /** The full-bleed living hive. Owns the engine and bridges store ⇄ canvas. */
@@ -32,6 +36,9 @@ export function HiveScene() {
   const reduced = useReducedMotion()
   const fine = useFinePointer()
   const route = useRoute()
+  // The phase host owns this hold independently of full-page dimming and document visibility.
+  // Keep it across rest ↔ awake; another owner's resume must not restart the hidden map.
+  const phaseHoldsDrawing = usePhase((s) => s.phased && s.phase !== 'pro') && route.name === 'hive'
   const [hover, setHover] = useState<HitTarget | null>(null)
   const [pinned, setPinned] = useState<string | null>(null)
   const setEngine = useScene((s) => s.setEngine)
@@ -50,6 +57,13 @@ export function HiveScene() {
   }, [pinned])
 
   const selectedId = route.name === 'dot' ? route.id : null
+  // folded request helpers (scene/helperGroups): which teams' groups are open, and the groups drawn now (with their
+  // team's name), so each has a keyboard button over its orb
+  const selectedRef = useRef<string | null>(selectedId)
+  const pushRef = useRef<() => void>(() => undefined)
+  const [groups, setGroups] = useState<{ group: HelperGroup; team: string }[]>([])
+  const toggleGroup = useHelperGroups((s) => s.toggle)
+  const sceneEngine = useScene((s) => s.engine)
 
   // create engine once
   useEffect(() => {
@@ -68,6 +82,10 @@ export function HiveScene() {
             }
             if (t.kind === 'core') {
               navigate({ name: 'swarm', id: t.id })
+              return
+            }
+            if (t.kind === 'group') {
+              useHelperGroups.getState().toggle(t.id)
               return
             }
             // Touch: first tap shows the card, second tap (or the card) opens the panel.
@@ -133,8 +151,14 @@ export function HiveScene() {
         pinnedFor = viewer.principal
         engine.setPinned(readPositions(viewer.principal))
       }
+      // finished request helpers fold into one quiet orb per team (scene/helperGroups); a helper never shows its template id
+      const folded = groupHelpers(shown.agents, Date.now(), { expanded: useHelperGroups.getState().expanded, reveal: selectedRef.current })
+      const teamName = (id: string) => (s.swarms[id] ? shown_(s.swarms[id].name) : 'its swarm')
+      const drawn = folded.groups.map((group) => ({ group, team: teamName(group.teamId) }))
+      setGroups((prev) => (JSON.stringify(prev) === JSON.stringify(drawn) ? prev : drawn))
       engine.setData({
-        agents: shown.agents,
+        agents: folded.shown,
+        helperGroups: drawn.map(({ group, team }) => ({ id: group.id, teamId: group.teamId, count: group.memberIds.length, label: helperGroupWords(group, team).label, expanded: group.expanded })),
         swarms: shown.swarms,
         thinking: s.thinking,
         beliefs: s.beliefs,
@@ -154,6 +178,7 @@ export function HiveScene() {
         engine.land(target)
       }
     }
+    pushRef.current = push
     push()
     const unsub = useHive.subscribe((s, p) => {
       if (s.agents !== p.agents || s.swarms !== p.swarms || s.thinking !== p.thinking || s.beliefs !== p.beliefs || s.goals !== p.goals || s.approvals !== p.approvals) push()
@@ -163,6 +188,9 @@ export function HiveScene() {
       if (s.personal !== p.personal) push()
     })
     const unsubViewer = useViewer.subscribe(() => push())
+    const unsubGroups = useHelperGroups.subscribe((st, p) => {
+      if (st.expanded !== p.expanded) push()
+    })
     // a person's arrangement and hive list die with the identity: the next person starts from their own
     const offIdentity = onIdentityChange(() => {
       pinnedFor = undefined
@@ -185,6 +213,7 @@ export function HiveScene() {
     return () => {
       detachDrag()
       unsubViewer()
+      unsubGroups()
       offIdentity()
       useScene.getState().setGalaxies([])
       unsub()
@@ -195,12 +224,16 @@ export function HiveScene() {
       delete window.__hiveScene
       setMapLabelReader(null)
       engineRef.current = null
+      pushRef.current = () => undefined
       setEngine(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => engineRef.current?.setReducedMotion(reduced), [reduced])
+  useEffect(() => {
+    if (phaseHoldsDrawing) return engineRef.current?.holdDrawing()
+  }, [phaseHoldsDrawing])
   useEffect(() => engineRef.current?.setDimmed(dimmed), [dimmed])
   useEffect(() => engineRef.current?.setChatAnchor(chatAnchor), [chatAnchor])
 
@@ -224,6 +257,9 @@ export function HiveScene() {
   useEffect(() => {
     const e = engineRef.current
     if (!e) return
+    // a helper opened from elsewhere is revealed from its group before it is selected
+    selectedRef.current = selectedId
+    pushRef.current()
     e.setSelected(selectedId, true)
     if (!selectedId && route.name === 'hive' && fitted.current) e.land(adminRef.current ? null : ownHiveRef.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -255,12 +291,17 @@ export function HiveScene() {
         <AnimatePresence>{showCard && <DotCard key={cardId} id={cardId} touch={!fine} />}</AnimatePresence>
       </div>
       <AnimatePresence>{coreHover && <CoreTip key={coreHover} id={coreHover} />}</AnimatePresence>
+      {groups.map(({ group, team }) => (
+        <HelperGroupButton key={group.id} engine={sceneEngine} group={group} team={team} reduced={reduced} onToggle={() => toggleGroup(group.id)} />
+      ))}
     </div>
   )
 }
 
 function DotCard({ id, touch }: { id: string; touch: boolean }) {
   const agent = useHive((s) => s.agents[id])
+  // a request helper reads "Helper <n>" among its team's helpers, never its template id (scene/helperGroups)
+  const helperName = useHive((s) => (s.agents[id] ? helperLabels(Object.values(s.agents).filter((a) => a.swarm_id === s.agents[id].swarm_id)).get(id) : undefined))
   const thinking = useHive((s) => s.thinking[id])
   const swarm = useHive((s) => (agent?.swarm_id ? s.swarms[agent.swarm_id] : undefined))
   const now = useNow(5000)
@@ -279,7 +320,7 @@ function DotCard({ id, touch }: { id: string; touch: boolean }) {
       <div className="flex items-center gap-2.5">
         <Orb hue={agent.hue} status={agent.status} thinking={thinking} size={30} />
         <div className="min-w-0 flex-1">
-          <div className="truncate font-display text-[15px] font-semibold leading-tight">{shown(agent.name)}</div>
+          <div className="truncate font-display text-[15px] font-semibold leading-tight">{helperName ?? shown(agent.name)}</div>
           <div className="truncate text-[11px] text-ink-3">
             {agent.kind} · {swarm?.name ?? 'wanderer'}
           </div>
@@ -313,7 +354,7 @@ function DotCard({ id, touch }: { id: string; touch: boolean }) {
           onClick={() => navigate({ name: 'dot', id })}
           className="mt-2.5 flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl bg-white/[0.08] text-[13px] font-medium text-ink"
         >
-          Open {shown(agent.name)} <Icon name="chevron" size={16} />
+          Open {helperName ?? shown(agent.name)} <Icon name="chevron" size={16} />
         </button>
       )}
     </m.div>

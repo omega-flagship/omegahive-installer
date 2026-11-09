@@ -1,4 +1,4 @@
-"""Repository maps, Slice A (hive/core/repomap.py; coordination/omegacode/PLATFORM_REPO_MAP_SLICE_A_CONTRACT_R1_20261011.md).
+"""Repository maps, Slice A (hive/core/repomap.py; PLATFORM_REPO_MAP_SLICE_A_CONTRACT_R1_20261011.md).
 
 Synthetic data only. Two fixtures, copied verbatim into hive/tests/fixtures:
 - repo-map-1.synthetic.json: Code's hand-written repo-map/1 shape fixture (FIXTURE_repo-map-1.synthetic.json).

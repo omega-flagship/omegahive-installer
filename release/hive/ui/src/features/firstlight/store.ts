@@ -20,7 +20,9 @@ import { liveEnv } from '../guided/store'
 import { applyAction } from '../guided/driver'
 import { useHive } from '../../store/store'
 import { DEMO_APPS, DemoHost, type Persona } from './demo'
-import { ASK_HOW_MAX, ASK_NAME_MAX, BLANK_PROGRESS, FlRefusal, asRefusal, cleanWords, firstName, liveHost, readProgress, startApp, type AppRef, type AskShape, type FlClient, type FlHost, type Hello, type MindRef, type MonthlyLimit, type Progress, type ProgressWrite } from './host'
+import { ASK_HOW_MAX, ASK_NAME_MAX, BLANK_PROGRESS, FlRefusal, asRefusal, cleanWords, firstName, liveHost, personaEditable, readProgress, startApp, type AppRef, type AskShape, type BoundWrite, type FlClient, type FlHost, type Hello, type MindRef, type MonthlyLimit, type Progress, type ProgressWrite, type Setup } from './host'
+import { profileSaveCopy, unknownChargeCopy, type ProfileSaveState } from './conditionalCopy'
+import { saveAskObserved } from './profileWrites'
 import { refusalSentence, limitLine, payerLine, cents, TRANSIENT_MS, type Who } from './honest'
 import { afterBeat, holds, beatsFromRecord, freshBeats, nextIndex, prevIndex, resumeBeat, roundResolved, startOf, waitsForPerson, type Beats, type Facts } from './journey'
 import { BEAT_LINES, R2_BEATS, stepsFor, type Beat, type FlPath, type FlStep } from './script'
@@ -57,6 +59,8 @@ export interface HelloRun {
 }
 
 export interface Run {
+  /** Explicit U1 presentation only; never a host readiness badge. */
+  u1?: { context: 'reading' | 'known' | 'unavailable'; model: string | null; busy: boolean; phase: 'editing' | 'waiting' | 'greeted'; error: string | null; profileSaved: boolean; saves?: ProfileSaveState; completion?: 'saving' | 'confirmed' | 'unknown'; completionToken?: number; limitPending?: number | null; limitUncertain?: boolean; limitChecking?: boolean; wakeUnknown?: boolean }
   id: number
   mode: Mode
   persona: Persona | null
@@ -74,9 +78,9 @@ export interface Run {
   hello: HelloRun
   /** a guest asking their host for more: `choosing`, the amounts are open (the journey holds still meanwhile) */
   ask: { busy: boolean; sent: { amount: number } | null; error: string | null; choosing: boolean }
-  limit: { busy: boolean; error: string | null; other: boolean }
+  limit: { busy: boolean; error: string | null; other: boolean; limitPending?: number | null; limitUncertain?: boolean }
   /** R3 beat 6: saving the Ask */
-  askForm: { busy: boolean; error: string | null }
+  askForm: { busy: boolean; error: string | null; saves?: ProfileSaveState }
   loadError: string | null
   /** where the journey started (Stop goes nowhere; this is for "Back to where you were") */
   from: string
@@ -90,6 +94,7 @@ export interface Run {
 }
 
 export interface StartOpts {
+  singleScreen?: boolean
   mode: Mode
   persona?: Persona
   /** start at this beat (the host's routes: #/first-light?beat=models) */
@@ -137,6 +142,12 @@ interface FlState {
   back(): void
   toggle(): void
   stop(): void
+  /**
+   * "Not now": closes First Light and records it on the host as skipped (status 'skipped', compare-and-set on the
+   * record's version), so it never opens by itself again for this person, on any device. Explicit ways in (the Me
+   * page's "Meet your omega", #/first-light, the Ask) still open it. A finished record is never touched; demo writes nothing.
+   */
+  notNow(): void
   /** the person's choice at a choice step (a role, or a monthly amount) */
   choose(value: string | number): Promise<void>
   /** Later: this beat is skipped (it stays on Finish setting up) */
@@ -162,6 +173,10 @@ interface FlState {
   openApp(id: string): void
   /** R3 beat 6: save the Ask's name and how it should be, on the person's own mind */
   saveAsk(shape: AskShape): Promise<void>
+  /** The owner's tap on "Think with your … plan" (plans.ts): set their own mind's model to that plan's model. */
+  thinkWith(model: string): Promise<void>
+  wakeSingleScreen(shape: AskShape, monthly: number | null): Promise<void>
+  finishSingleScreen(): Promise<void>
   /** demo: the newcomer describes their Ask */
   demoSaveAsk(): Promise<void>
   /** R3 hand-off: open the app to talk in, and end First Light */
@@ -169,6 +184,45 @@ interface FlState {
 }
 
 let seq = 0
+
+/** Page-lifetime quarantine, not authority. It outlives runs/epochs/client objects,
+ * but a person's intent is projected only after a current stable scope is known.
+ * Never log/export these private keys or another person's amount. */
+type LimitIntent = { amount: number; settled: boolean }
+type LimitRead = Map<string, { intent: LimitIntent; settledAtStart: boolean }>
+const limitIntents = new Map<string, LimitIntent>()
+const UNKNOWN_LIMIT = "We couldn't confirm a spending limit here."
+function limitScope(host: FlHost): string | null {
+  try {
+    const value = host.retainedMutationScope?.()
+    if (!value || typeof value.host !== 'string' || typeof value.principal !== 'string' || !value.principal || value.principal.length > 256) return null
+    const url = new URL(value.host)
+    if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password || url.search || url.hash) return null
+    return JSON.stringify([url.origin + url.pathname.replace(/\/+$/, ''), value.principal])
+  } catch { return null }
+}
+function sampleLimits(): LimitRead {
+  return new Map([...limitIntents].map(([key, intent]) => [key, { intent, settledAtStart: intent.settled }]))
+}
+function limitProjection(host: FlHost): { limitPending: number | null; limitUncertain: boolean } {
+  if (host instanceof DemoHost) return { limitPending: null, limitUncertain: false }
+  const key = limitScope(host)
+  if (key === null) return { limitPending: null, limitUncertain: limitIntents.size > 0 }
+  const intent = limitIntents.get(key)
+  return { limitPending: intent?.amount ?? null, limitUncertain: !!intent }
+}
+function acceptLimitRead(r: Run, sampled: LimitRead, setup: Setup) {
+  const key = limitScope(r.host)
+  const intent = key === null ? undefined : limitIntents.get(key)
+  const before = key === null ? undefined : sampled.get(key)
+  if (key !== null && intent && before?.intent === intent && before.settledAtStart
+    && setup.own_keys > 0 && setup.limit?.enforced === true && setup.limit.enforced_by === 'own' && setup.limit.limit_usd === intent.amount) {
+    r.bind.commit(() => { if (limitIntents.get(key) === intent) limitIntents.delete(key) })
+  }
+  return limitProjection(r.host)
+}
+/** Presentation only: an older retained amount is not a current claim during reconciliation. */
+export const firstLightLimitLine = (r: Run): string => r.limit.limitUncertain ? UNKNOWN_LIMIT : limitLine(r.facts.limit, whoOf(r))
 /** the person kept a look (set by the store; the look subscription below calls it) */
 let lookChanged: () => void = () => {}
 const noFacts = (): FlFacts => ({ name: null, host: 'your host', ownKeys: 0, limit: null, onlyMind: null, mind: null, lookKept: false, lookName: null, greeted: false, mindOnScreen: null, apps: null, askSaved: false, askHow: null })
@@ -218,18 +272,39 @@ export const useFirstLight = create<FlState>()((set, get) => {
 
   // ---------------------------------------------------------------- saving progress (serialised; never blocks)
   let saving: Promise<unknown> = Promise.resolve()
-  const save = (id: number, w: (p: Progress) => ProgressWrite) => {
+  function projectLimit(id: number, pending: ReturnType<typeof limitProjection>) {
+    patch(id, (x) => ({ limit: { ...x.limit, ...pending }, ...(x.u1 ? { u1: { ...x.u1, ...pending } } : {}) }))
+  }
+  /** Every real First Light own-key setter passes this one guarded dispatch. */
+  async function dispatchOwnLimit(r: Run, amount: number, write: BoundWrite, setup: Setup, path: FlPath) {
+    // Explicit invented DemoHost only; never a live-kind facade or a string mode claim.
+    if (r.mode === 'demo' && r.host instanceof DemoHost) return write(() => r.host.setOwnLimit(amount))
+    return write(async () => {
+      if (path === 'guest' || setup.own_keys <= 0 || setup.limit === null || (setup.limit.enforced && setup.limit.enforced_by !== 'own')) throw new FlRefusal(403, 'own_key_required', 'Your own-key monthly scope is not confirmed.')
+      const key = limitScope(r.host)
+      if (key === null || limitIntents.has(key)) throw new FlRefusal(0, 'limit_unconfirmed', UNKNOWN_LIMIT)
+      const intent: LimitIntent = { amount, settled: false }
+      limitIntents.set(key, intent) // current bound synchronous run, BEFORE actual dispatch
+      projectLimit(r.id, limitProjection(r.host))
+      try { await write(() => r.host.setOwnLimit(amount)) } // renew the person/attempt fence after synchronous subscribers
+      finally { intent.settled = true } // only this original private operation; no newer UI/marker mutation
+    })
+  }
+
+  const save = (id: number, w: (p: Progress) => ProgressWrite, stillCurrent: () => boolean = () => true) => {
+    const intended = live(id)
+    const token = intended?.u1 ? intended.token : null
     saving = saving.then(async () => {
       const r = live(id)
-      if (!r) return
+      if (!r || !stillCurrent() || (token !== null && (r.token !== token || r.status !== 'playing'))) return
       const base = r.progress ?? BLANK_PROGRESS
       // followups-r8 (Kimi FL-R2 #1): the write is a bound operation, checked right before it is sent and on its answer
-      const op = bindOperation(() => live(id) !== null)
+      const op = bindOperation(() => { const x = live(id); return !!x && stillCurrent() && (token === null || (x.token === token && x.status === 'playing')) })
       try {
         const p = await op.write(() => r.host.writeProgress(w(base), base.version))
         patch(id, () => ({ progress: p }))
       } catch (e) {
-        if (stopped(e)) return
+        if (!op.current() || stopped(e)) return
         const x = asRefusal(e)
         const current = x.code === 'stale_onboarding' ? readProgress(x.current) : null
         if (current) patch(id, (rr) => ({ progress: current, notice: refusalSentence('stale_onboarding', { path: rr.path, host: rr.facts.host }), beats: mergeRecord(rr.beats, current) }))
@@ -237,6 +312,36 @@ export const useFirstLight = create<FlState>()((set, get) => {
       }
     })
     return saving
+  }
+
+  /** Only onboarding completion, serialized with other progress writes; never repeats a Wake. */
+  function completeSingle(id: number): Promise<void> {
+    const initial = live(id)
+    if (!initial?.u1 || !initial.facts.greeted || !initial.facts.askSaved || (initial.u1.completion === 'saving' && initial.u1.completionToken === initial.token)) return Promise.resolve()
+    const token = initial.token
+    const ownsLock = () => { const x = live(id); return !!x?.u1 && x.token === token && x.u1.completionToken === token && x.u1.completion === 'saving' }
+    patch(id, (x) => ({ u1: { ...x.u1!, completion: 'saving', completionToken: token, error: null } }))
+    const completion = saving.then(async () => {
+      const op = bindOperation(() => { const x = live(id); return ownsLock() && !!x && x.status === 'playing' && x.facts.greeted && x.facts.askSaved })
+      try {
+        const before = await op.write(() => initial.host.progress())
+        let confirmed = before
+        if (before.status !== 'finished' || !before.beats_done.includes('ask') || !before.beats_done.includes('hello')) {
+          const done = [...new Set([...before.beats_done, 'ask' as Beat, 'hello' as Beat])]
+          await op.write(() => initial.host.writeProgress({ status: 'finished', current_beat: 'hello', beats_done: done, beats_skipped: before.beats_skipped.filter((b) => b !== 'ask' && b !== 'hello') }, before.version))
+          confirmed = await op.write(() => initial.host.progress())
+        }
+        if (confirmed.status !== 'finished' || !confirmed.beats_done.includes('ask') || !confirmed.beats_done.includes('hello')) throw new Error('completion_not_confirmed')
+        if (op.current()) patch(id, (x) => ({ progress: confirmed, u1: { ...x.u1!, completion: 'confirmed', completionToken: undefined, error: null } }))
+      } catch (e) {
+        // A typed stop can precede the store's identity observer. Release only this still-current lock;
+        // a stale old attempt cannot clear the completion state of a newer token.
+        if (!ownsLock()) return
+        patch(id, (x) => ({ u1: { ...x.u1!, completion: 'unknown', completionToken: undefined, error: stopped(e) ? 'Completion stopped before it could be confirmed. Save completion again; no further Wake request is sent.' : 'Your omega answered, but First Light completion could not be confirmed. Save completion again; this only records First Light progress.' } }))
+      }
+    })
+    saving = completion
+    return completion
   }
   /** A beat done (or skipped), with where the journey is now: one write, never both lists. */
   const record = (id: number, beat: Beat, as: 'done' | 'skipped', extra: ProgressWrite = {}) => {
@@ -257,8 +362,12 @@ export const useFirstLight = create<FlState>()((set, get) => {
     const r = live(id)
     if (!r) return
     try {
-      const s = await r.host.setup()
-      patch(id, (rr) => ({ facts: { ...rr.facts, ownKeys: s.own_keys, limit: s.limit, host: rr.path === 'guest' ? s.limit?.host_name ?? rr.facts.host : rr.facts.host } }))
+      const token = r.token
+      const op = bindOperation(() => { const x = live(id); return !!x && x.token === token && x.status === 'playing' })
+      const sampled = sampleLimits()
+      const s = await op.write(() => r.host.setup())
+      const pending = acceptLimitRead(r, sampled, s)
+      patch(id, (rr) => ({ facts: { ...rr.facts, ownKeys: s.own_keys, limit: s.limit, host: rr.path === 'guest' ? s.limit?.host_name ?? rr.facts.host : rr.facts.host }, limit: { ...rr.limit, ...pending }, ...(rr.u1 ? { u1: { ...rr.u1, ...pending } } : {}) }))
     } catch {
       /* the last answer stands; a beat never claims more than it last read */
       return
@@ -312,13 +421,32 @@ export const useFirstLight = create<FlState>()((set, get) => {
     if (step.wait?.for === 'ask' && rr.facts.askHow === null) void readAskHow(id)
   }
 
-  /** R3 beat 6: the persona the person's own mind has now, so the form starts from it (a failed read starts empty). */
+  /** R3 beat 6: start from the whole persona; a failed read remains unknown and cannot propose a default. */
   async function readAskHow(id: number) {
     const r = live(id)
     const mindId = r?.facts.mind?.id
     if (!r || !mindId) return
-    const how = await r.host.askHow(mindId).catch(() => '')
-    patch(id, (x) => ({ facts: { ...x.facts, askHow: x.facts.askHow ?? how } }))
+    const how = await r.host.askHow(mindId).catch(() => null)
+    if (how === null) return
+    patch(id, (x) => x.facts.mind?.id === mindId ? { facts: { ...x.facts, askHow: x.facts.askHow ?? how } } : {})
+  }
+
+  async function readSingleProfile(id: number, token: number) {
+    const r = live(id)
+    const mindId = r?.facts.mind?.id
+    if (!r?.u1 || !mindId || !r.host.profile) {
+      if (r?.u1) patch(id, (x) => ({ u1: { ...x.u1!, context: 'unavailable', model: null, error: 'This hive could not provide your personal omega and current model. Read it again or open its settings.' } }))
+      return
+    }
+    const op = bindOperation(() => { const x = live(id); return !!x?.u1 && x.token === token && x.status === 'playing' })
+    try {
+      const p = await op.write(() => r.host.profile!(mindId))
+      if (p.id !== mindId || typeof p.name !== 'string' || typeof p.persona !== 'string') throw new FlRefusal(409, 'mind_changed', 'Your personal omega changed. Read its settings again.')
+      patch(id, (x) => x.facts.mind?.id !== mindId ? {} : ({ facts: { ...x.facts, mind: { ...x.facts.mind!, name: p.name }, askHow: p.persona }, u1: { ...x.u1!, context: p.model ? 'known' : 'unavailable', model: p.model, error: p.model ? null : 'The hive has not identified a model for this omega. Choose one in its Model settings.' } }))
+    } catch (e) {
+      if (!op.current() || stopped(e)) return
+      patch(id, (x) => ({ u1: { ...x.u1!, context: 'unavailable', model: null, error: 'Your current purpose and model could not be read. Nothing will be replaced with a guessed default.' } }))
+    }
   }
 
   /** A beat ends: its state from what the host said (arrive and look settle at the person's choice). */
@@ -346,6 +474,7 @@ export const useFirstLight = create<FlState>()((set, get) => {
       return
     }
     if (beat !== 'models' || r.beats.models.state !== 'active') return
+    if (r.limit.limitUncertain) { setBeat(id, 'models', 'blocked', UNKNOWN_LIMIT); return }
     const w = whoOf(r)
     const l = r.facts.limit
     if (r.path === 'guest') {
@@ -401,11 +530,18 @@ export const useFirstLight = create<FlState>()((set, get) => {
 
   function greeted(id: number, h: Hello) {
     stopPoll()
+    const prior = live(id)
+    if (prior?.u1 && h.mind.id !== prior.facts.mind?.id) {
+      patch(id, (x) => ({ u1: { ...x.u1!, context: 'unavailable', busy: false, error: 'Your personal omega changed. The Wake result could not be confirmed; read it again.' } }))
+      return
+    }
     patch(id, (r) => ({ facts: { ...r.facts, greeted: true }, hello: { ...r.hello, hello: h, at: Date.now(), busy: false } }))
+    if (prior?.u1) patch(id, (x) => ({ u1: { ...x.u1!, phase: 'greeted', busy: false } }))
     setBeat(id, 'hello', 'ready', 'Your mind is awake, and it said hello.')
     void refreshSetup(id)
     const r = live(id)
     if (!r) return
+    if (r.u1) { void completeSingle(id); return }
     void save(id, (p) => {
       const done = [...p.beats_done.filter((b) => b !== 'hello'), 'hello' as Beat]
       const skipped = p.beats_skipped.filter((b) => b !== 'hello')
@@ -424,7 +560,7 @@ export const useFirstLight = create<FlState>()((set, get) => {
       if (!r || r.facts.greeted) return
       const since = r.hello.postedAt ?? Date.now()
       let h: Hello | null = null
-      const op = bindOperation(() => live(id) !== null)
+      const op = bindOperation(() => { const x = live(id); return !!x && (!x.u1 || (x.status === 'playing' && x.token === r.token)) })
       try {
         h = await op.write(() => r.host.helloGet())
       } catch (e) {
@@ -444,33 +580,48 @@ export const useFirstLight = create<FlState>()((set, get) => {
 
   async function setMonthly(id: number, amount: number) {
     const r = live(id)
-    if (!r) return
+    if (!r || r.status !== 'playing' || r.limit.busy) return
+    const token = r.token
     patch(id, (x) => ({ limit: { ...x.limit, busy: true, error: null, other: false } }))
-    let error: string | null = null
-    // followups-r8 (Kimi FL-R2 #1): the limit and the progress after it are one operation, each write bound (save binds
-    // its own): checked right before it is sent, so nothing is sent for this run once the person or run changed
-    const op = bindOperation(() => live(id) !== null)
-    if (r.facts.ownKeys > 0) {
-      try {
-        await op.write(() => r.host.setOwnLimit(amount))
-      } catch (e) {
-        if (stopped(e)) return
-        const x = asRefusal(e)
-        error = refusalSentence(x.code, { path: r.path, host: r.facts.host, fallback: x.message })
+    const op = bindOperation(() => { const x = live(id); return !!x && x.status === 'playing' && x.token === token && x.limit.busy })
+    try {
+      const sampled = sampleLimits()
+      const fresh = await op.write(() => r.host.setup())
+      const pending = acceptLimitRead(r, sampled, fresh)
+      projectLimit(id, pending)
+      if (pending.limitUncertain) throw new FlRefusal(0, 'limit_unconfirmed', UNKNOWN_LIMIT)
+      const own = await op.write(() => r.host.own())
+      const path = pathOf(own)
+      if (path !== r.path) throw new FlRefusal(409, 'own_key_required', 'Your spending context changed. Read the current setup again.')
+      patch(id, (x) => ({ facts: { ...x.facts, ownKeys: fresh.own_keys, limit: fresh.limit } }))
+      if (fresh.own_keys > 0) {
+        await dispatchOwnLimit(r, amount, (send) => op.write(send), fresh, path)
+        const readStarted = sampleLimits()
+        const confirmed = await op.write(() => r.host.setup())
+        const after = acceptLimitRead(r, readStarted, confirmed)
+        projectLimit(id, after)
+        patch(id, (x) => ({ facts: { ...x.facts, ownKeys: confirmed.own_keys, limit: confirmed.limit } }))
+        if (after.limitUncertain || !confirmed.limit?.enforced || confirmed.limit.enforced_by !== 'own' || confirmed.limit.limit_usd !== amount) throw new FlRefusal(0, 'limit_unconfirmed', UNKNOWN_LIMIT)
       }
+      // No-key proposals retain their original progress-only behavior. An own-key
+      // choice is recorded only after its actual setter and matching readback.
+      await op.write(() => save(id, () => ({ monthly_spend_usd: amount, ...(fresh.own_keys > 0 ? { key_choice: 'own-key' as const } : {}) }), op.current))
+      patch(id, (x) => ({ facts: { ...x.facts, limit: x.facts.limit ? { ...x.facts.limit, chosen_usd: amount } : { done: false, enforced: false, enforced_by: null, limit_usd: null, spent_usd: null, chosen_usd: amount, host_name: null, pending_request: null } } }))
+      const after = live(id)
+      if (after && op.current()) {
+        patch(id, (x) => ({ limit: { ...x.limit, busy: false } }))
+        enter(id, nextOr(after))
+      }
+    } catch (e) {
+      if (stopped(e) || !op.current()) return
+      const failure = asRefusal(e)
+      const pending = limitProjection(r.host)
+      projectLimit(id, pending)
+      const error = pending.limitUncertain || failure.code === 'limit_unconfirmed' ? UNKNOWN_LIMIT : refusalSentence(failure.code, { path: r.path, host: r.facts.host, fallback: failure.message })
+      patch(id, (x) => ({ limit: { ...x.limit, error } }))
+    } finally {
+      patch(id, (x) => x.token === token ? { limit: { ...x.limit, busy: false } } : {})
     }
-    if (!live(id)) return
-    await save(id, () => ({ monthly_spend_usd: amount, ...(r.facts.ownKeys > 0 ? { key_choice: 'own-key' as const } : {}) }))
-    await refreshSetup(id)
-    patch(id, (x) => ({ limit: { ...x.limit, busy: false, error } }))
-    const rr = live(id)
-    if (!rr) return
-    // the chosen amount is what the person said; the limit named next is only what the host enforces
-    patch(id, (x) => ({ facts: { ...x.facts, limit: x.facts.limit ? { ...x.facts.limit, chosen_usd: amount } : { done: false, enforced: false, enforced_by: null, limit_usd: null, spent_usd: null, chosen_usd: amount, host_name: null, pending_request: null } } }))
-    // a key of their own, but the host refused the limit: they stay at the choice, with the reason, to try again
-    if (error) return
-    const after = live(id)
-    if (after) enter(id, nextOr(after))
   }
 
   const nextOr = (r: Run) => {
@@ -497,8 +648,111 @@ export const useFirstLight = create<FlState>()((set, get) => {
     if (rr && rr.steps[rr.i]?.wait?.for === 'look') enter(rr.id, nextOr(rr))
   }
 
+  async function wakeSingleScreen(shape: AskShape, monthly: number | null) {
+    const r = live(get().run?.id ?? -1)
+    if (!r?.u1 || r.mode !== 'live' || r.status !== 'playing' || r.u1.busy || r.u1.phase === 'greeted' || r.u1.context !== 'known' || !r.u1.model || (r.u1.phase === 'waiting' && !r.hello.hello?.retryable)) return
+    const limitRunId = r.id
+    const mindId = r.facts.mind?.id
+    const name = cleanWords(shape.name, ASK_NAME_MAX)
+    const fail = (words: string) => patch(r.id, (x) => ({ hello: { ...x.hello, busy: false }, u1: { ...x.u1!, error: words, busy: false, phase: 'editing' } }))
+    if (!mindId || !name) return fail('Give your omega a name first.')
+    if (shape.how !== null && !personaEditable(r.facts.askHow)) return fail('Your existing purpose cannot be edited here. A name-only save keeps it whole.')
+    if (monthly !== null && (!Number.isFinite(monthly) || monthly < 0 || monthly > 10000)) return fail('Choose a finite monthly amount from $0 to $10,000.')
+    patch(r.id, (x) => ({ u1: { ...x.u1!, busy: true, limitChecking: false, error: null, profileSaved: false, saves: undefined } }))
+    const attemptToken = r.token
+    const op = bindOperation(() => { const x = live(r.id); return !!x?.u1 && x.status === 'playing' && x.token === attemptToken && x.u1.busy })
+    let wakeSent = false
+    let limitSaved = false
+    // Local request state only: retained amounts and unrelated profile/Wake work
+    // cannot claim that a limit request is still in flight.
+    async function limitRequest<T>(send: () => Promise<T>): Promise<T> {
+      return op.write(async () => {
+        patch(limitRunId, (x) => x.token === attemptToken ? ({ u1: { ...x.u1!, limitChecking: true } }) : {})
+        try { return await send() }
+        finally { patch(limitRunId, (x) => x.token === attemptToken ? ({ u1: { ...x.u1!, limitChecking: false } }) : {}) }
+      })
+    }
+    try {
+      const sampled = sampleLimits()
+      const fresh = await limitRequest(() => r.host.setup())
+      const pending = acceptLimitRead(r, sampled, fresh)
+      projectLimit(r.id, pending)
+      if (pending.limitUncertain) return fail(UNKNOWN_LIMIT)
+      const own = await op.write(() => r.host.own())
+      const profile = await op.write(() => r.host.profile!(mindId))
+      if (profile.id !== mindId || typeof profile.name !== 'string' || typeof profile.persona !== 'string') throw new FlRefusal(409, 'mind_changed', 'Your personal omega could not be identified. Read it again.')
+      if (profile.id !== mindId || profile.name !== r.facts.mind?.name || profile.model !== r.u1.model || profile.persona !== r.facts.askHow || pathOf(own) !== r.path || fresh.own_keys !== r.facts.ownKeys || fresh.limit?.enforced !== r.facts.limit?.enforced || fresh.limit?.enforced_by !== r.facts.limit?.enforced_by || fresh.limit?.limit_usd !== r.facts.limit?.limit_usd) {
+        patch(r.id, (x) => ({ path: pathOf(own), facts: { ...x.facts, host: pathOf(own) === 'guest' ? fresh.limit?.host_name ?? own.owner_name ?? 'your host' : own.owner_name ?? x.facts.host, ownKeys: fresh.own_keys, limit: fresh.limit, askHow: profile.persona, mind: { ...x.facts.mind!, name: profile.name } }, u1: { ...x.u1!, context: profile.model ? 'known' : 'unavailable', model: profile.model } }))
+        return fail('Your model, purpose or spending context changed. Review the current values and press Wake again.')
+      }
+      if (monthly !== null) {
+        if (r.path === 'guest' || fresh.own_keys <= 0 || fresh.limit === null || (fresh.limit.enforced && fresh.limit.enforced_by !== 'own')) return fail('An own-key monthly total cannot be changed until its own-key scope is confirmed. Your host controls any guest allowance.')
+        if (fresh.limit.enforced_by !== 'own' || fresh.limit.limit_usd !== monthly || !fresh.limit.enforced) {
+          await limitRequest(() => dispatchOwnLimit(r, monthly, (send) => op.write(send), fresh, pathOf(own)))
+          const sampled = sampleLimits()
+          const confirmed = await limitRequest(() => r.host.setup())
+          const pending = acceptLimitRead(r, sampled, confirmed)
+          patch(r.id, (x) => ({ facts: { ...x.facts, ownKeys: confirmed.own_keys, limit: confirmed.limit }, limit: { ...x.limit, ...pending }, u1: { ...x.u1!, ...pending } }))
+          if (pending.limitUncertain || !confirmed.limit?.enforced || confirmed.limit.enforced_by !== 'own' || confirmed.limit.limit_usd !== monthly) return fail('The monthly-total change could not be confirmed. It may have been saved; nothing was woken. Read it again.')
+          limitSaved = true
+        }
+      }
+      const how = shape.how === null ? null : cleanWords(shape.how, ASK_HOW_MAX) ?? ''
+      const mind = await saveAskObserved(r.host, mindId, { name, how }, (send) => op.write(send), (saves) => {
+        if (op.current()) patch(r.id, (x) => ({ u1: { ...x.u1!, saves } }))
+      }, limitSaved)
+      if (!op.current()) return
+      patch(r.id, (x) => ({ facts: { ...x.facts, mind, askSaved: true, askHow: how ?? x.facts.askHow }, u1: { ...x.u1!, profileSaved: true } }))
+      const postedAt = Date.now()
+      const existing = await op.write(() => r.host.helloGet())
+      if (existing && existing.mind.id !== mindId) throw new FlRefusal(409, 'mind_changed', 'The recorded greeting is for a changed omega. Read it again.')
+      if (existing && (existing.state === 'greeted' || !existing.retryable || !r.u1.wakeUnknown)) {
+        patch(r.id, (x) => ({ hello: { ...x.hello, hello: existing, postedAt, at: postedAt, busy: false }, u1: { ...x.u1!, phase: 'waiting', wakeUnknown: existing.retryable } }))
+        setBeat(r.id, 'ask', 'ready', 'Your profile choices were recorded.')
+        if (existing.state === 'greeted' && existing.greeting) greeted(r.id, existing)
+        else startPoll(r.id)
+        return
+      }
+      patch(r.id, (x) => ({ hello: { ...x.hello, postedAt, at: postedAt, busy: true, refusal: null }, u1: { ...x.u1!, phase: 'waiting' } }))
+      wakeSent = true
+      const hello = await op.write(() => r.host.helloWake())
+      if (hello.mind.id !== mindId) throw new FlRefusal(409, 'mind_changed', 'The Wake result is for a changed omega. Read it again before continuing.')
+      patch(r.id, (x) => ({ hello: { ...x.hello, hello, busy: false, at: Date.now() }, u1: { ...x.u1!, wakeUnknown: hello.retryable } }))
+      setBeat(r.id, 'ask', 'ready', 'Your profile choices were recorded.')
+      if (hello.state === 'greeted' && hello.greeting) greeted(r.id, hello)
+      else startPoll(r.id)
+    } catch (e) {
+      if (!stopped(e)) {
+        const x = asRefusal(e)
+        if (x.code === 'mind_changed' && live(r.id)?.token === attemptToken) {
+          patch(r.id, (y) => ({ u1: { ...y.u1!, context: 'unavailable', model: null } }))
+        }
+        // A later greeting/Wake failure still reads back the already-saved
+        // profile, as U1 did before the shared per-write observer was extracted.
+        if (op.current() && live(r.id)?.u1?.profileSaved && r.host.profile) {
+          try {
+            const profile = await op.write(() => r.host.profile!(mindId))
+            if (profile.id === mindId && typeof profile.name === 'string' && typeof profile.persona === 'string') {
+              patch(r.id, (y) => ({ u1: { ...y.u1!, saves: y.u1!.saves ? { ...y.u1!.saves, readback: { name: profile.name, purpose: profile.persona } } : undefined } }))
+            }
+          } catch { /* A missing readback proves neither rollback nor success. */ }
+        }
+        const current = live(r.id)
+        const reason = limitProjection(r.host).limitUncertain || x.code === 'limit_unconfirmed' ? UNKNOWN_LIMIT : refusalSentence(x.code, { path: current?.path ?? r.path, host: current?.facts.host ?? r.facts.host, limit: current?.facts.limit ?? r.facts.limit, fallback: x.message })
+        if (live(r.id)?.token === attemptToken && op.current()) {
+          patch(r.id, (y) => ({ u1: { ...y.u1!, wakeUnknown: y.u1!.wakeUnknown || wakeSent } }))
+          fail(wakeSent ? unknownChargeCopy(live(r.id)?.facts.mind?.name ?? name) : !current?.u1?.profileSaved && current?.u1?.saves ? profileSaveCopy(current.u1.saves) : reason)
+        }
+      } else if (live(r.id)?.token === attemptToken) fail('Stopped before completion. Earlier changes may already be saved; read the current state before trying again.')
+    } finally {
+      patch(r.id, (x) => x.token === attemptToken ? ({ u1: { ...x.u1!, busy: false, limitChecking: false } }) : {})
+    }
+  }
+
   return {
     run: null,
+    wakeSingleScreen,
+    async finishSingleScreen() { const r = live(get().run?.id ?? -1); if (r) await completeSingle(r.id) },
 
     async start(o) {
       const h = o.host ? { host: o.host, mode: o.host.kind, persona: o.persona ?? null } : hostFor(o)
@@ -514,6 +768,7 @@ export const useFirstLight = create<FlState>()((set, get) => {
         ask: { busy: false, sent: null, error: null, choosing: false }, limit: { busy: false, error: null, other: false },
         askForm: { busy: false, error: null }, loadError: null, from: typeof window !== 'undefined' ? window.location.hash || '#/' : '#/', lookAtStart: null, galleryOpened: false,
         ...(h.mode === 'demo' && o.look ? { demoLook: o.look } : {}),
+        ...(h.mode === 'live' && o.singleScreen ? { u1: { context: 'reading' as const, model: null, busy: false, phase: 'editing' as const, error: null, profileSaved: false } } : {}),
       }
       set({ run })
       await load(id, o)
@@ -546,7 +801,8 @@ export const useFirstLight = create<FlState>()((set, get) => {
     toggle() {
       const r = get().run
       if (!r || (r.status !== 'playing' && r.status !== 'paused')) return
-      set({ run: { ...r, status: r.status === 'paused' ? 'playing' : 'paused', token: r.token + 1 } })
+      if (r.u1 && r.status === 'playing') stopPoll()
+      set({ run: { ...r, status: r.status === 'paused' ? 'playing' : 'paused', token: r.token + 1, ...(r.status === 'playing' ? { limit: { ...r.limit, busy: false, error: r.limit.limitUncertain ? UNKNOWN_LIMIT : r.limit.error } } : {}), ...(r.u1 && r.status === 'playing' ? { u1: { ...r.u1, busy: false, limitChecking: false, phase: r.facts.greeted ? 'greeted' as const : 'editing' as const, completion: r.u1.completion === 'saving' ? 'unknown' as const : r.u1.completion, completionToken: undefined, error: 'Paused. Earlier changes or a Wake request may already be in progress; read the current state before trying again.' } } : {}) } })
     },
     stop() {
       const r = get().run
@@ -554,6 +810,35 @@ export const useFirstLight = create<FlState>()((set, get) => {
       if (r.status === 'ended') return set({ run: null })
       end(r, 'ended')
       set({ run: null })
+    },
+    notNow() {
+      const r = get().run
+      if (!r) return
+      const host = r.host
+      const write = r.mode === 'live' && host.kind === 'live'
+      get().stop()
+      if (!write) return
+      // bound to the sign-in it began under (a different person signing in sends nothing); after any progress write
+      // already queued (a completion in flight lands first, and a finished record is then left as it is)
+      const op = bindOperation()
+      saving = saving.then(async () => {
+        try {
+          let p = await op.write(() => host.progress())
+          for (let tries = 0; tries < 2 && p.status !== 'finished' && p.status !== 'skipped'; tries++) {
+            try {
+              p = await op.write(() => host.writeProgress({ status: 'skipped' }, p.version))
+            } catch (e) {
+              if (stopped(e)) return
+              const x = asRefusal(e)
+              const current = x.code === 'stale_onboarding' ? readProgress(x.current) : null
+              if (!current) return
+              p = current
+            }
+          }
+        } catch {
+          /* not recorded: First Light may offer itself again on the landing; nothing else is affected */
+        }
+      })
     },
 
     async choose(value) {
@@ -620,6 +905,7 @@ export const useFirstLight = create<FlState>()((set, get) => {
         const req = await r.host.askForMore(amount)
         patch(r.id, (x) => ({ ask: { ...x.ask, busy: false, sent: { amount: req.amount_usd }, error: null, choosing: false } }))
       } catch (e) {
+        if (stopped(e)) return
         const x = asRefusal(e)
         patch(r.id, (rr) => ({ ask: { ...rr.ask, busy: false, error: refusalSentence(x.code, { path: rr.path, host: rr.facts.host, fallback: x.message }) } }))
       }
@@ -631,6 +917,12 @@ export const useFirstLight = create<FlState>()((set, get) => {
       if (!r || r.status === 'ended' || r.hello.busy) return
       const step = r.steps[r.i]
       if (step?.beat !== 'hello') return
+      const pending = limitProjection(r.host)
+      projectLimit(r.id, pending)
+      if (pending.limitUncertain) {
+        patch(r.id, (x) => ({ hello: { ...x.hello, busy: false, refusal: { code: 'limit_unconfirmed', sentence: UNKNOWN_LIMIT } } }))
+        return
+      }
       const postedAt = Date.now()
       patch(r.id, (x) => ({ hello: { ...x.hello, busy: true, refusal: null, postedAt, at: postedAt } }))
       try {
@@ -645,6 +937,7 @@ export const useFirstLight = create<FlState>()((set, get) => {
         if (at >= 0 && rr.i !== at) enter(r.id, at)
         startPoll(r.id)
       } catch (e) {
+        if (stopped(e)) return
         const x = e instanceof FlRefusal ? e : asRefusal(e)
         const rr = live(r.id)
         if (!rr) return
@@ -698,24 +991,45 @@ export const useFirstLight = create<FlState>()((set, get) => {
       if (!r || r.status === 'ended' || r.askForm.busy || r.steps[r.i]?.wait?.for !== 'ask') return
       const name = cleanWords(shape.name, ASK_NAME_MAX)
       if (!name) return patch(r.id, (x) => ({ askForm: { ...x.askForm, error: 'Give it a name first.' } }))
-      // how: null unless the person edited the field (FirstLightLayer askToSave); never derived from what was read
+      // how: an intentional edit or an explicitly saved known-empty default (FirstLightLayer askToSave).
       const how = shape.how === null ? null : cleanWords(shape.how, ASK_HOW_MAX) ?? ''
       const mindId = r.facts.mind?.id
       if (!mindId) return patch(r.id, (x) => ({ askForm: { ...x.askForm, error: BEAT_LINES.ask.noMind } }))
-      patch(r.id, () => ({ askForm: { busy: true, error: null } }))
+      patch(r.id, () => ({ askForm: { busy: true, error: null, saves: undefined } }))
       const op = bindOperation(() => live(r.id) !== null)
       try {
-        const mind = await r.host.saveAsk(mindId, { name, how }, (send) => op.write(send))
-        patch(r.id, (x) => ({ askForm: { busy: false, error: null }, facts: { ...x.facts, mind: { ...mind }, askSaved: true, askHow: how ?? x.facts.askHow } }))
+        const mind = await saveAskObserved(r.host, mindId, { name, how }, (send) => op.write(send), (saves) => {
+          if (op.current()) patch(r.id, (x) => ({ askForm: { ...x.askForm, saves } }))
+        })
+        if (!op.current()) return
+        patch(r.id, (x) => ({ askForm: { ...x.askForm, busy: false, error: null }, facts: { ...x.facts, mind: { ...mind }, askSaved: true, askHow: how ?? x.facts.askHow } }))
       } catch (e) {
-        if (stopped(e)) return
+        if (stopped(e) || !op.current()) return
         const x = asRefusal(e)
-        return patch(r.id, (rr) => ({ askForm: { busy: false, error: refusalSentence(x.code, { path: rr.path, host: rr.facts.host, fallback: x.message }) } }))
+        return patch(r.id, (rr) => ({ askForm: { ...rr.askForm, busy: false, error: rr.askForm.saves ? profileSaveCopy(rr.askForm.saves) : refusalSentence(x.code, { path: rr.path, host: rr.facts.host, fallback: x.message }) } }))
       }
       setBeat(r.id, 'ask', 'ready', `Your Ask is ${name}.`)
       void record(r.id, 'ask', 'done')
       const rr = live(r.id)
       if (rr) enter(rr.id, nextOr(rr))
+    },
+
+    async thinkWith(model) {
+      const r = get().run
+      const u = r?.u1
+      const mindId = r?.facts.mind?.id
+      if (!r || !u || !mindId || r.mode !== 'live' || r.path !== 'owner' || r.status !== 'playing' || u.busy || u.phase !== 'editing' || !r.host.useModel) return
+      patch(r.id, (x) => ({ u1: { ...x.u1!, busy: true, error: null } }))
+      const op = bindOperation(() => { const x = live(r.id); return !!x && x.status === 'playing' && x.facts.mind?.id === mindId })
+      try {
+        const now = await r.host.useModel(mindId, model, (send) => op.write(send))
+        if (!op.current()) return
+        patch(r.id, (x) => ({ u1: { ...x.u1!, busy: false, context: 'known', model: now, error: null } }))
+      } catch (e) {
+        if (stopped(e) || !op.current()) return
+        const x = asRefusal(e)
+        patch(r.id, (rr) => ({ u1: { ...rr.u1!, busy: false, error: refusalSentence(x.code, { path: rr.path, host: rr.facts.host, fallback: x.message || 'Your plan could not be chosen. Nothing changed.' }) } }))
+      }
     },
 
     async demoSaveAsk() {
@@ -762,9 +1076,12 @@ export const useFirstLight = create<FlState>()((set, get) => {
   async function load(id: number, o: StartOpts) {
     const r = live(id)
     if (!r) return
-    patch(id, () => ({ status: 'loading', loadError: null }))
+    const token = r.u1 ? r.token + 1 : r.token
+    const op = bindOperation(() => { const x = live(id); return !!x && (!r.u1 || x.token === token) })
+    const sampledLimits = sampleLimits()
+    patch(id, (x) => ({ status: 'loading', loadError: null, ...(r.u1 ? { token, u1: { ...x.u1!, busy: false, limitChecking: false, completion: x.u1!.completion === 'saving' ? 'unknown' as const : x.u1!.completion, completionToken: undefined } } : {}) }))
     try {
-      const [progress, setup, own, name, mind, apps] = await Promise.all([r.host.progress(), r.host.setup(), r.host.own(), r.host.personName(), r.host.mind().catch(() => null), r.host.apps().catch(() => null)])
+      const [progress, setup, own, name, mind, apps] = await op.write(() => Promise.all([r.host.progress(), r.host.setup(), r.host.own(), r.host.personName(), r.host.mind().catch(() => null), r.host.apps().catch(() => null)]))
       const path = pathOf(own)
       const steps = stepsFor(path)
       const host = path === 'guest' ? setup.limit?.host_name ?? own.owner_name ?? 'your host' : own.owner_name ?? 'this hive’s owner'
@@ -778,10 +1095,16 @@ export const useFirstLight = create<FlState>()((set, get) => {
         onScreen = typeof m?.id === 'string' ? m.id : null
       }
       const rr = live(id)
-      if (!rr) return
+      if (!rr || !op.current()) return
       const beats = rr.mode === 'live' ? beatsFromRecord(progress.beats_done, progress.beats_skipped) : freshBeats()
       const facts: FlFacts = { ...noFacts(), name: firstName(name), host, ownKeys: setup.own_keys, limit: setup.limit, onlyMind: others === null ? null : others === 0, mind, mindOnScreen: onScreen, apps }
-      rr.bind.commit(() => set({ run: { ...rr, path, steps, facts, beats, progress, status: 'playing', i: 0 } }))
+      const pending = acceptLimitRead(rr, sampledLimits, setup)
+      rr.bind.commit(() => set({ run: { ...rr, path, steps, facts, beats, progress, limit: { ...rr.limit, ...pending }, status: 'playing', i: 0, ...(rr.u1 ? { u1: { ...rr.u1, ...pending } } : {}) } }))
+      if (rr.u1) {
+        patch(id, (x) => ({ i: -1, u1: { ...x.u1!, context: 'reading', model: null, error: null, phase: 'editing', limitChecking: false } }))
+        await readSingleProfile(id, token)
+        return
+      }
       // where to start: a beat asked for, else where the record left off (live), else the beginning
       const asked = (R2_BEATS as readonly string[]).includes(o.beat ?? '') ? (o.beat as Beat) : null
       const notice = o.beat && !asked ? 'That part of First Light comes in a later version; here is what is ready now.' : null
@@ -799,6 +1122,7 @@ export const useFirstLight = create<FlState>()((set, get) => {
       patch(id, () => ({ i: -1 }))
       enter(id, at)
     } catch (e) {
+      if (!op.current() || stopped(e)) return
       const x = asRefusal(e)
       // what went wrong, for whoever looks (the person sees the plain line below)
       if (!(e instanceof FlRefusal)) console.warn('First Light could not start:', e)
@@ -871,7 +1195,8 @@ function mergeRecord(b: Beats, p: Progress): Beats {
 
 subscribeLook(() => lookChanged())
 
-/** A change of person: the journey is gone at once, before anything renders the new person. */
+/** A change of person clears the journey at once. Private quarantined intents stay
+ * keyed by stable host/principal, never by the replaceable epoch/client wrapper. */
 onIdentityChange(() => {
   const r = useFirstLight.getState().run
   if (!r) return

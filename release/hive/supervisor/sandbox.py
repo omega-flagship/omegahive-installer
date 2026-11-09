@@ -15,6 +15,7 @@ reading the hive's files, environment or Docker socket. Two OS-level boundaries 
 from __future__ import annotations
 
 import os
+import math
 import pathlib
 import shutil
 import sys
@@ -105,10 +106,38 @@ def available():
     return backend() is not None
 
 
-def wrap(command, mind_dir, read_roots, profile_dir, agent_id, ports=None, programs=()):
+_RUNNER_PLACEMENT_FLAG = "--hive-runner-placement-v1"
+_RUNNER_WORKSPACE_FLAG = "--hive-runner-workspace-v1"
+
+
+def _runner_placement_words(value):
+    """Private runner transport DATA, never a public profile or readiness proof.
+
+    Actual descriptor ownership/pass_fds and original process+leaf confirmation
+    remain with the runner. Numbers cannot adopt a root, leaf or foreign PID.
+    """
+    if type(value) is not tuple or len(value) != 4:
+        raise ValueError("runner placement needs three owned descriptors and an absolute deadline")
+    descriptors, until = value[:3], value[3]
+    if (any(type(fd) is not int or not 3 <= fd <= 2**31 - 1 for fd in descriptors)
+            or len(set(descriptors)) != 3 or type(until) is not float
+            or not math.isfinite(until) or until <= 0):
+        raise ValueError("invalid private runner placement transport")
+    return [str(fd) for fd in descriptors] + [until.hex()]
+
+
+def wrap(command, mind_dir, read_roots, profile_dir, agent_id, ports=None, programs=(), *, _runner_placement=None,
+         _runner_workspace=None):
     """`command` wrapped in this host's OS boundary; writes the profile it enforces and returns (command, path)."""
+    placement = None if _runner_placement is None else _runner_placement_words(_runner_placement)
+    if _runner_workspace is not None:
+        if (placement is None or type(_runner_workspace) is not int or not 3 <= _runner_workspace <= 2**31 - 1
+                or str(_runner_workspace) in placement[:3]):
+            raise ValueError("workspace requires a distinct original fourth descriptor")
     ports = loopback_ports() if ports is None else ports
     kind = backend()
+    if placement is not None and kind != "landlock":
+        raise RuntimeError("runner placement is supported only by the Linux Landlock launcher")
     profile_dir = pathlib.Path(profile_dir)
     profile_dir.mkdir(parents=True, exist_ok=True)
     if kind == "sandbox-exec":
@@ -119,7 +148,20 @@ def wrap(command, mind_dir, read_roots, profile_dir, agent_id, ports=None, progr
         import json
         from . import landlock
         path = profile_dir / f"{agent_id}.landlock.json"
-        path.write_text(json.dumps(landlock.profile(mind_dir, safe_roots(read_roots), ports, programs), indent=1))
+        if _runner_workspace is None:
+            path.write_text(json.dumps(landlock.profile(mind_dir, safe_roots(read_roots), ports, programs), indent=1))
+        else:
+            encoded = json.dumps(landlock.profile(mind_dir, safe_roots(read_roots), ports, programs), indent=1)
+            if len(encoded.encode()) > 65536:
+                raise ValueError("private runner profile exceeds64KiB")
+            path.write_text(encoded)
+        if placement is not None:
+            # Ignore site/PYTHONPATH/user startup for the trusted P bootstrap.
+            # The actual caller separately passes exactly these three descriptors.
+            python = [interpreter()[0], "-I", "-B", "-S"]
+            workspace = [] if _runner_workspace is None else [_RUNNER_WORKSPACE_FLAG, str(_runner_workspace)]
+            return python + [str(pathlib.Path(__file__).with_name("landlock.py")), str(path),
+                             _RUNNER_PLACEMENT_FLAG, *placement, *workspace, "--"] + list(command), str(path)
         return interpreter() + [str(pathlib.Path(__file__).with_name("landlock.py")), str(path), "--"] + list(command), str(path)
     raise RuntimeError("no OS isolation is available on this host")
 
@@ -155,6 +197,7 @@ def loopback_ports(environ=None):
 def profile(mind_dir, read_roots, ports=None):
     """A deny-by-default sandbox-exec profile for one mind."""
     ports = loopback_ports() if ports is None else ports
+    outbound = " ".join(f'(remote ip "localhost:{p}")' for p in ports)
     mind_dir = pathlib.Path(mind_dir).resolve()
     reads = sorted({p for p in safe_roots(read_roots) if pathlib.Path(p).exists()})
     lines = [
@@ -164,7 +207,9 @@ def profile(mind_dir, read_roots, ports=None):
         "(allow process-exec)",
         "(allow signal (target same-sandbox))",
         "(allow sysctl-read)",
-        "(allow mach-lookup)",
+        # Mach services, including the Keychain broker, trustd and cfprefsd, stay denied.
+        # Minds have loopback only and tools have no network. Revisit native trust and
+        # preferences dependencies before allowing outbound TLS via Security.framework.
         "(allow ipc-posix-shm)",
         # path resolution needs metadata (existence, size) anywhere; contents are what is restricted
         "(allow file-read-metadata)",
@@ -174,7 +219,8 @@ def profile(mind_dir, read_roots, ports=None):
         # Never /dev/tty: the hive's controlling terminal would let a mind inject input (TIOCSTI), as on Linux.
         # /dev/dtracehelper is the dyld/DTrace registration device every macOS process writes at start-up.
         "(allow file-write* (literal \"/dev/null\") (literal \"/dev/dtracehelper\"))",
-        "(allow network-outbound " + " ".join(f'(remote ip "localhost:{p}")' for p in ports) + ")",
+        # Without a filter this rule allows all outbound traffic.
+        f"(allow network-outbound {outbound})" if outbound else "",
         "(allow network-bind (local ip \"localhost:*\"))",
     ]
     return "\n".join(line for line in lines if line) + "\n"
@@ -186,12 +232,7 @@ def runtime_roots(petta_path, core_root, extra=()):
     roots = [petta_path, core_root, home / "swipl-patched", "/opt/homebrew", "/usr/local/lib", "/usr/local/opt"]
     swipl = shutil.which("swipl")   # wherever this host's SWI-Prolog lives (e.g. /opt/omegahive/runtime/swipl on Linux)
     if swipl:
-        executable = pathlib.Path(os.path.realpath(swipl))
-        swipl_root = executable.parent.parent
-        # Linux SWI installs bin/<arch>/swipl below its home alongside boot.prc and library/.
-        if executable.name == "swipl" and swipl_root.name == "bin" and swipl_root.parent.name == "swipl":
-            swipl_root = swipl_root.parent
-        roots.append(str(swipl_root))
+        roots.append(str(pathlib.Path(os.path.realpath(swipl)).parent.parent))
     venv = pathlib.Path(os.environ.get("VIRTUAL_ENV") or pathlib.Path(core_root).parent / ".runtime" / "venv312")
     roots += [venv, os.environ.get("OMEGACODE_SRC")]
     cfg = venv / "pyvenv.cfg"   # the interpreter the venv was made from (its standard library)

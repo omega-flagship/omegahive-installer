@@ -348,7 +348,8 @@ describe('every act path mints only from a confirm (source check)', () => {
     // the frame bridge never puts the token in a reply: replies are built from the result only
     const frame = await source('../features/programs/AppFrame.tsx')
     expect(frame).not.toMatch(/confirm_token[^:]/)
-    expect(frame).toMatch(/const \{ confirm_token: _frameToken, \.\.\.frameBody \}/)
+    // the token is taken out first; later rounds strip more (untrusted_intent) before the rest becomes the body
+    expect(frame).toMatch(/const \{ confirm_token: _frameToken, (?:[A-Za-z_]+: _[A-Za-z]+, )*\.\.\.frameBody \}/)
   })
 })
 

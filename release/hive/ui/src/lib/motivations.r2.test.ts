@@ -5,7 +5,9 @@ import { applyMotivation } from '../store/reducer'
 import { useHive } from '../store/store'
 import * as lib from './motivations'
 import motivationsPage from '../features/tasks/MotivationsPage.tsx?raw'
-import tasksPage from '../features/tasks/TasksPage.tsx?raw'
+import motivationsScreens from '../features/tasks/motivations.metta?raw'
+import motivationsData from '../features/tasks/motivationsData.ts?raw'
+import screenBlocks from '../screens/Screen.tsx?raw'
 import appSrc from '../App.tsx?raw'
 
 /**
@@ -129,7 +131,10 @@ describe('P1-2: a draft saves against the revision it was opened at', () => {
     expect(motivationsPage).toMatch(/saveDraft\(seen,/)
     expect(motivationsPage).not.toMatch(/editMotivation\(m, \{ \.\.\.\(title/)
     expect(motivationsPage).toMatch(/m\.rev !== seen\.rev/)
-    expect(motivationsPage).toMatch(/data-changed-meanwhile/)
+    // the page is composed by MeTTa: the notice is a part shown while the revision moved (words.changed)
+    expect(motivationsData).toMatch(/'words\.changed': !!words && input\.wordsChanged/)
+    expect(motivationsScreens).toMatch(/\(When motivation-about 24 \(on words\.changed\)\)/)
+    expect(motivationsScreens).toContain('Someone changed this motivation since you began editing.')
   })
 
   it('an unchanged draft sends nothing', async () => {
@@ -227,10 +232,15 @@ describe('P2-4: radio groups move with the arrow keys', () => {
   })
 
   it('every radio group on the two pages uses the keyboard pattern (one tab stop, arrows move)', () => {
-    for (const [name, src] of [['MotivationsPage', motivationsPage], ['TasksPage', tasksPage]] as const) {
-      const radios = src.match(/role="radio"/g)?.length ?? 0
-      expect(radios, name).toBeGreaterThan(0)
-      expect(src.match(/\{\.\.\.radioProps\(/g)?.length ?? 0, name).toBe(radios)
-    }
+    // the Tasks page is composed by MeTTa: its one radio group (Show tasks as) is the screens engine's switcher block
+    const switcher = screenBlocks.slice(screenBlocks.indexOf('  switcher: (p, host) =>'), screenBlocks.indexOf('  actions: (p, host) =>'))
+    expect(switcher).toMatch(/\{\.\.\.radioProps\(/)
+    // the Motivations page's two (Status, Who can see it) are the engine's chooser block: arrows move focus without
+    // choosing, since each choice writes the motivation; the page draws no radio group of its own
+    const chooser = screenBlocks.slice(screenBlocks.indexOf('  chooser: (p, host) =>'), screenBlocks.indexOf('  code: (p, host) =>'))
+    expect(chooser).toMatch(/\{\.\.\.radioProps\([^)]*'focus'\)\}/)
+    expect(motivationsScreens).toMatch(/\(Part motivation-about 50 chooser \(\(label "Status"\)/)
+    expect(motivationsScreens).toMatch(/\(Part motivation-about 51 chooser \(\(label "Who can see it"\)/)
+    expect(motivationsPage).not.toMatch(/role="radio"/)
   })
 })

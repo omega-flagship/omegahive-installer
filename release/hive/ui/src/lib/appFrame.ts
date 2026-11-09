@@ -26,11 +26,41 @@ export function framePrefix(hostOrigin: string, channel: string, nonce: string):
     `<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(frameCsp(nonce))}">`
 }
 
+/** The bundle's content types by extension (the host's create_plan_ports.CONTENT_TYPES), media type only. */
+const ASSET_TYPES: Record<string, string> = {
+  html: 'text/html', htm: 'text/html', css: 'text/css', js: 'text/javascript', mjs: 'text/javascript', json: 'application/json',
+  svg: 'image/svg+xml', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', xml: 'application/xml', webmanifest: 'application/manifest+json',
+}
+function assetType(path: string): string {
+  const name = path.slice(path.lastIndexOf('/') + 1)
+  return name.includes('.') ? ASSET_TYPES[name.slice(name.lastIndexOf('.') + 1).toLowerCase()] ?? 'text/plain' : 'text/plain'
+}
+/** a bundle file as a data: URI (UTF-8 text, base64) */
+function assetUri(text: string, path: string): string {
+  const bytes = new TextEncoder().encode(text)
+  let bin = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return `data:${assetType(path)};base64,${btoa(bin)}`
+}
+/**
+ * The same rule as the host's frame_document (create_plan_ports._inline_assets): `./<path>` references to the bundle's
+ * other files become data: URIs, the only way the frame's CSP (img-src data:, font-src data:) lets an icon or a font
+ * load; it loads nothing by URL. In HTML: src="./x" and href="./x"; in CSS: url(./x), url("./x"), url('./x'). The frame's
+ * own files (index.html, style.css and the scripts it inlines) and checks/ are never inlined this way, and a reference
+ * to a file the bundle does not have is left as it is.
+ */
+export function inlineAssets(text: string, files: Readonly<Record<string, string>>, inCss: boolean, own: ReadonlySet<string>): string {
+  const known = (path: string) => typeof files[path] === 'string' && !own.has(path) && !path.startsWith('checks/')
+  if (inCss) return text.replace(/url\(\s*(["']?)\.\/([A-Za-z0-9._/-]+)\1\s*\)/g, (m, _q, path: string) => known(path) ? `url("${assetUri(files[path], path)}")` : m)
+  return text.replace(/\b(src|href)=(["'])\.\/([A-Za-z0-9._/-]+)\2/g, (m, attr: string, _q, path: string) => known(path) ? `${attr}="${assetUri(files[path], path)}"` : m)
+}
+
 /** An app's own reviewed interface as one opaque-origin document: no network, no forms, no storage of the hive's
  *  origin. It reaches the hive only through the parent's bridge (see AppFrame). Same isolation as Flow's studio.
  *  r17: the CSP comes first (framePrefix), in both modes. With `scripts`, each declared part replaces its own module
  *  tag, inlined with the same nonce, in the listed order (a real-browser test shows they run in that order). Inline
- *  modules cannot import each other, so parts share through globals. */
+ *  modules cannot import each other, so parts share through globals. The bundle's other files referenced as ./<path>
+ *  (an icon, a font) are inlined as data: URIs (inlineAssets), within the same CSP. */
 export function appDocument(files: FrameFiles, hostOrigin: string, channel: string, nonce: string, scripts?: readonly string[]): FrameDocument {
   if (new URL(hostOrigin).origin !== hostOrigin || !/^https?:/.test(hostOrigin) ||
       !/^[a-f0-9-]{36}$/.test(channel) || !/^[a-f0-9-]{36}$/.test(nonce)) throw new Error('Invalid app document binding')
@@ -40,7 +70,10 @@ export function appDocument(files: FrameFiles, hostOrigin: string, channel: stri
     if (reason) throw new Error(`Unexpected app interface: ${reason}`)
   }
   if (typeof html0 !== 'string' || !html0.includes('src="./app.js"') || !html0.includes('href="./style.css"')) throw new Error('Unexpected app interface format')
-  let html = html0.replace('<link rel="stylesheet" href="./style.css">', () => `<style nonce="${nonce}">${files['style.css'].replace(/<\/style/gi, '<\\/style')}</style>`)
+  const own = new Set(['index.html', 'style.css', ...(scripts ?? ['app.js'])])
+  const css = inlineAssets(files['style.css'], files, true, own)
+  let html = inlineAssets(html0, files, false, own)
+    .replace('<link rel="stylesheet" href="./style.css">', () => `<style nonce="${nonce}">${css.replace(/<\/style/gi, '<\\/style')}</style>`)
   for (const name of scripts ?? ['app.js']) {
     html = html.replace(partTag(name), () => `<script type="module" nonce="${nonce}">${files[name].replace(/<\/script/gi, '<\\/script')}</script>`)
   }

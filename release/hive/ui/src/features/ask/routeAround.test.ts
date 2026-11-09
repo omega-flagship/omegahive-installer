@@ -3,7 +3,7 @@ import type { AskContext, AskSettings, MyMind } from '../../api/ask'
 import { answerMindFor, cannotAnswer, routeAround, threadInfo } from './answerer'
 
 /**
- * ask-fix r1 (Quinn, live 044fad4): near Evolve Omega (no coordinator) every plain question was refused "That swarm
+ * ask-fix r1 (Jon, live 044fad4): near Evolve Omega (no coordinator) every plain question was refused "That swarm
  * has no coordinator to answer". The page's swarm is sent as context.swarm_id, which the host routes to; a swarm the
  * Ask cannot use is now never targeted. INVENTED ids and names.
  */
@@ -65,8 +65,8 @@ describe('threadInfo: the audit sentence only where it is true', () => {
   })
   const shown = (n: string) => n
   it('a personal-mind thread never says admins can review it', () => {
-    const words = threadInfo({ mind: { id: 'a_me', name: 'Owen Quill' }, swarm: { id: 's_me', name: 'Owen Quill' } }, me, shown)
-    expect(words).toBe('Answers come from Owen Quill’s own knowledge.')
+    const words = threadInfo({ mind: { id: 'a_me', name: 'Jon Grove' }, swarm: { id: 's_me', name: 'Jon Grove' } }, me, shown)
+    expect(words).toBe('Answers come from Jon Grove’s own knowledge.')
     // another mind in the same swarm is not the person's own: its thread keeps the sentence
     expect(threadInfo({ mind: { id: 'a_other', name: 'Vega' }, swarm: { id: 's_me', name: 'Lyra' } }, me, shown)).toMatch(/Admins can review this in the audit log\.$/)
   })
@@ -78,7 +78,7 @@ describe('threadInfo: the audit sentence only where it is true', () => {
 })
 
 /**
- * ask-fix r2 (Quinn, live a37082e): on Design (OmegaDesign, no coordinator) "Make a poster…" fell back to his own mind
+ * ask-fix r2 (Jon, live a37082e): on Design (OmegaDesign, no coordinator) "Make a poster…" fell back to his own mind
  * with "has no coordinator to answer", and nothing pointed an admin at the fix. INVENTED ids and names.
  */
 describe('ask-fix r2: the words, the admin’s fix, and the mind it would answer through', () => {

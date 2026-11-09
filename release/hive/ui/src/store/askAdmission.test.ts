@@ -1,10 +1,11 @@
+import { currentEpoch } from '../lib/identityEpoch'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // the page's location, played in node: navigate() moves the hash, as the router does
 const loc = { hash: '#/', search: '', pathname: '/' }
 const store = new Map<string, string>()
 const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) }
-vi.stubGlobal('window', { location: loc, matchMedia: () => ({ matches: false }), localStorage: storage })
+vi.stubGlobal('window', { location: loc, matchMedia: () => ({ matches: false }), localStorage: storage, addEventListener: vi.fn(), removeEventListener: vi.fn() })
 vi.stubGlobal('localStorage', storage)
 vi.mock('../lib/router', async (orig) => {
   const real = await orig<typeof import('../lib/router')>()
@@ -12,7 +13,7 @@ vi.mock('../lib/router', async (orig) => {
 })
 
 const { useHive } = await import('./store')
-const { CHECK_BACKOFF_MS, CHECK_TRIES, threadRows, useAskStore } = await import('./ask')
+const { CHECK_BACKOFF_MS, CHECK_TRIES, SILENCE_MS, threadRows, useAskStore, askRetryContext } = await import('./ask')
 const { ApiError } = await import('../api/client')
 const { AskRefusal } = await import('../api/ask')
 const { LiveClient } = await import('../api/live')
@@ -140,7 +141,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
-  vi.stubGlobal('window', { location: loc, matchMedia: () => ({ matches: false }), localStorage: storage })
+  vi.stubGlobal('window', { location: loc, matchMedia: () => ({ matches: false }), localStorage: storage, addEventListener: vi.fn(), removeEventListener: vi.fn() })
   vi.stubGlobal('localStorage', storage)
   useAskStore.getState().reset()
 })
@@ -165,12 +166,389 @@ describe('Review witness (45392df admission probe)', () => {
     }) as never })
     await start(client)
     await useAskStore.getState().send('synthetic question', { route: 'hive', experience: 'classic' })
-    await useAskStore.getState().retryLast()
+    await retryCurrent()
     expect(new Set(calls).size).toBe(1)
   })
 })
 
 // ---------------------------------------------------------------- the scenarios Review asked for
+
+
+describe('client-only original admission receipts', () => {
+  it('real admit sends nothing and removes its unsent turn when publication synchronously changes the epoch', async () => {
+    vi.useFakeTimers()
+    const h = fakeHost(() => 'ok')
+    await start(h.client)
+    const words = 'Keep these words until an operation can actually be issued'
+    let original: string | null = null
+    const unsubscribe = useAskStore.subscribe((s) => {
+      if (original || !s.open || s.turns[s.open]?.you !== words) return
+      original = s.open
+      useAskStore.setState({ epoch: s.epoch + 1 })
+    })
+    try {
+      const a = await useAskStore.getState().admit(words, ctx, { newTurnOnly: true })
+      expect(original).not.toBeNull()
+      expect(a).toEqual({ admitted: false, reason: 'not_admitted' })
+      expect(h.client.ask).not.toHaveBeenCalled()
+      expect(h.posts).toHaveLength(0)
+      expect(useAskStore.getState().turns[original!]).toBeUndefined()
+      expect(useAskStore.getState().open).toBeNull()
+      expect(text()).not.toContain(words)
+      await vi.advanceTimersByTimeAsync(SILENCE_MS + 1)
+      expect(h.client.askTurn).not.toHaveBeenCalled()
+      expect(h.posts).toHaveLength(0)
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it('real admit removes its cloned unsent row when publication copies the row and changes the epoch', async () => {
+    vi.useFakeTimers()
+    const h = fakeHost(() => 'ok')
+    await start(h.client)
+    const words = 'These copied original words were never sent'
+    let original: string | null = null
+    const unsubscribe = useAskStore.subscribe((s) => {
+      if (original || !s.open || s.turns[s.open]?.you !== words) return
+      original = s.open
+      const own = s.turns[original]
+      useAskStore.setState({
+        epoch: s.epoch + 1,
+        turns: { ...s.turns, [original]: { ...own, events: [...own.events], outcomes: { ...own.outcomes }, notes: [...own.notes], steers: [...own.steers], ahead: [...own.ahead] } },
+      })
+    })
+    try {
+      const a = await useAskStore.getState().admit(words, ctx, { newTurnOnly: true })
+      expect(original).not.toBeNull()
+      expect(a).toEqual({ admitted: false, reason: 'not_admitted' })
+      expect(h.client.ask).not.toHaveBeenCalled()
+      expect(h.posts).toHaveLength(0)
+      expect(useAskStore.getState().turns[original!]).toBeUndefined()
+      expect(useAskStore.getState().log.some((entry) => entry.kind === 'turn' && entry.op === original)).toBe(false)
+      expect(useAskStore.getState().open).toBeNull()
+      expect(text()).not.toContain(words)
+      await vi.advanceTimersByTimeAsync(SILENCE_MS + 1)
+      expect(h.client.askTurn).not.toHaveBeenCalled()
+      expect(h.posts).toHaveLength(0)
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it('real admit preserves reworded unsent words locally when publication changes the epoch', async () => {
+    vi.useFakeTimers()
+    const h = fakeHost(() => 'ok')
+    await start(h.client)
+    const words = 'The original unpublished words'
+    const edited = 'The same person’s reworded unpublished words'
+    let original: string | null = null
+    const unsubscribe = useAskStore.subscribe((s) => {
+      if (original || !s.open || s.turns[s.open]?.you !== words) return
+      original = s.open
+      useAskStore.setState({ epoch: s.epoch + 1, turns: { ...s.turns, [original]: { ...s.turns[original], you: edited } } })
+    })
+    try {
+      const a = await useAskStore.getState().admit(words, ctx, { newTurnOnly: true })
+      expect(original).not.toBeNull()
+      expect(a).toEqual({ admitted: false, reason: 'not_admitted' })
+      expect(h.client.ask).not.toHaveBeenCalled()
+      expect(h.posts).toHaveLength(0)
+      expect(useAskStore.getState().turns[original!]).toBeUndefined()
+      expect(useAskStore.getState().open).toBeNull()
+      const retained = rows().filter((row) => row.kind === 'you' && row.text === edited)
+      expect(retained).toHaveLength(1)
+      expect(retained[0].op).toBeUndefined()
+      expect(text()).toContain('These words were not sent.')
+      expect(useAskStore.getState().log.some((entry) => entry.kind === 'turn' && entry.op === original)).toBe(false)
+      await vi.advanceTimersByTimeAsync(SILENCE_MS + 1)
+      expect(h.client.askTurn).not.toHaveBeenCalled()
+      expect(h.posts).toHaveLength(0)
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it('real admit keeps authenticated publication-time progress and its same-operation silence readback on epoch rejection', async () => {
+    vi.useFakeTimers()
+    const h = fakeHost(() => 'ok')
+    const readback = vi.fn(async (op: string, after = 0) => ({ operation_id: op, turn_id: `t_${op}`, thread, state: 'accepted' as const, events: (frames[op] ?? []).filter((e) => e.seq > after), more: false }))
+    ;(h.client as unknown as { askTurn: unknown }).askTurn = readback
+    await start(h.client)
+    const words = 'Keep the original authenticated progress in this publication window'
+    let original: string | null = null
+    const unsubscribe = useAskStore.subscribe((s) => {
+      if (original || !s.open || s.turns[s.open]?.you !== words) return
+      original = s.open
+      useAskStore.getState().onEvent(frame(original, 1, { phase: 'accepted', thread }))
+      useAskStore.setState({ epoch: useAskStore.getState().epoch + 1 })
+    })
+    try {
+      const a = await useAskStore.getState().admit(words, ctx, { newTurnOnly: true })
+      expect(original).not.toBeNull()
+      expect(a).toEqual({ admitted: false, reason: 'not_admitted' })
+      expect(h.client.ask).not.toHaveBeenCalled()
+      expect(h.posts).toHaveLength(0)
+      expect(turn(original!)).toMatchObject({ state: 'open', lastSeq: 1 })
+      expect(turn(original!).events).toHaveLength(1)
+      expect(turn(original!).events[0]).toMatchObject({ operation_id: original, phase: 'accepted' })
+      expect(useAskStore.getState().open).toBe(original)
+      await vi.advanceTimersByTimeAsync(SILENCE_MS + 1)
+      expect(readback).toHaveBeenCalledTimes(1)
+      expect(readback).toHaveBeenCalledWith(original, 1)
+      expect(turn(original!)).toMatchObject({ state: 'open', lastSeq: 1 })
+      expect(turn(original!).events).toHaveLength(1)
+      expect(h.posts).toHaveLength(0)
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it('real admit does not POST or overwrite another person’s rows when publication switches the binding', async () => {
+    vi.useFakeTimers()
+    const h = fakeHost(() => 'ok')
+    await start(h.client)
+    const words = 'The original person’s unsent words'
+    let switched = false
+    const unsubscribe = useAskStore.subscribe((s) => {
+      if (switched || !s.open || s.turns[s.open]?.you !== words) return
+      switched = true
+      useAskStore.getState().bind(useHive.getState().session, 'user:p_other')
+      useAskStore.getState().addLocal('The other person’s question', 'The other person’s retained answer')
+    })
+    try {
+      const a = await useAskStore.getState().admit(words, ctx, { newTurnOnly: true })
+      expect(switched).toBe(true)
+      expect(a).toEqual({ admitted: false, reason: 'not_admitted' })
+      expect(h.client.ask).not.toHaveBeenCalled()
+      expect(h.posts).toHaveLength(0)
+      expect(useAskStore.getState().bound?.principal).toBe('user:p_other')
+      expect(text()).toContain('The other person’s question')
+      expect(text()).toContain('The other person’s retained answer')
+      expect(text()).not.toContain(words)
+      await vi.advanceTimersByTimeAsync(SILENCE_MS + 1)
+      expect(h.client.askTurn).not.toHaveBeenCalled()
+      expect(h.posts).toHaveLength(0)
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it('real admit reconciles a lost POST answer with successful original readback, not its first unknown callback', async () => {
+    const h = fakeHost(() => 'lost-after')
+    await start(h.client)
+    const a = await useAskStore.getState().admit('One retained original', ctx, { newTurnOnly: true })
+    expect(a).toEqual({ admitted: true, op: h.posts[0].operation_id, principal: 'user:p_ada' })
+    oneOperation(h)
+    expect(h.posts).toHaveLength(1)
+  })
+
+  it('definite original refusal is editable proof; generic errors/unknown are not silently made refused', async () => {
+    const h = fakeHost(() => 'rate-limited')
+    await start(h.client)
+    const a = await useAskStore.getState().admit('Definitively refused', ctx, { newTurnOnly: true })
+    expect(a.admitted).toBe(false)
+    if (a.admitted) throw new Error('Synthetic host refused the original')
+    expect(a.reason).toBe('refused')
+    expect(a.receipt?.op).toBe(h.posts[0].operation_id)
+    expect(useAskStore.getState().admissionOf(a.receipt!)).toMatchObject({ admitted: false, reason: 'refused' })
+    expect(h.posts).toHaveLength(1)
+  })
+
+  it('unknown receipt is not state/hydration DATA; copied, foreign and reset receipts cannot qualify or start another operation', async () => {
+    const h = fakeHost(() => 'lost-before')
+    h.client.askTurn = vi.fn(async () => { throw new AskRefusal(403, 'forbidden', 'Synthetic read refusal') })
+    await start(h.client)
+    const a = await useAskStore.getState().admit('Keep original identity', ctx, { newTurnOnly: true })
+    if (a.admitted || !a.receipt) throw new Error('Synthetic unknown must retain its receipt')
+    const r = a.receipt
+    expect(useAskStore.getState().admissionOf(r)).toMatchObject({ admitted: false, reason: 'unknown', receipt: r })
+    expect(useAskStore.getState().admissionOf(JSON.parse(JSON.stringify(r)))).toEqual({ admitted: false, reason: 'unknown' })
+    expect(useAskStore.getState().admissionOf({ ...r, principal: 'user:p_other' })).toEqual({ admitted: false, reason: 'unknown' })
+    await useAskStore.getState().steerTo(r.op, 'Held words', ctx, { onOperation: vi.fn(), admission: vi.fn() })
+    const held = turn(r.op).held![0].opts
+    expect(held).not.toHaveProperty('onOperation')
+    expect(held).not.toHaveProperty('admission')
+    expect(turn(r.op)).not.toHaveProperty('receipt')
+    expect(Object.keys(useAskStore.getState())).not.toContain('admissionReceipts')
+    useAskStore.getState().reset()
+    useAskStore.getState().bind(useHive.getState().session, 'user:p_ada')
+    expect(useAskStore.getState().admissionOf(r)).toEqual({ admitted: false, reason: 'unknown' })
+    expect(h.posts).toHaveLength(1)
+  })
+
+  it('a typed frame for a different principal cannot confirm the private original receipt', async () => {
+    const h = fakeHost(() => 'lost-before')
+    h.client.askTurn = vi.fn(async () => { throw new AskRefusal(403, 'forbidden', 'Synthetic read refusal') })
+    await start(h.client)
+    const a = await useAskStore.getState().admit('Original person only', ctx, { newTurnOnly: true })
+    if (a.admitted || !a.receipt) throw new Error('Synthetic original must stay unknown')
+    const r = a.receipt
+    useAskStore.getState().onEvent({ type: 'ask', operation_id: r.op, turn_id: `t_${r.op}`, principal: 'user:p_other', seq: 1, phase: 'accepted', at: '2026-10-06T10:00:00Z', thread })
+    expect(useAskStore.getState().admissionOf(r)).toMatchObject({ admitted: false, reason: 'unknown', receipt: r })
+    expect(h.posts).toHaveLength(1)
+  })
+
+  it.each([
+    ['missing', 'ask_busy'], ['unknown', 'ask_busy'],
+    ['missing', 'operation_conflict'], ['unknown', 'operation_conflict'],
+  ] as const)('a %s read plus same-id %s placeholder is not positive receipt proof', async (read, code) => {
+    const h = fakeHost(() => 'lost-before')
+    h.client.askTurn = vi.fn(async () => { throw read === 'missing' ? new AskRefusal(404, 'not_available', 'Synthetic missing read') : new ApiError(0, 'network', 'Synthetic unknown read') })
+    h.client.ask = vi.fn(async (body: AskBody) => {
+      h.posts.push(structuredClone(body))
+      if (h.posts.length === 1) throw new ApiError(0, 'network', 'Synthetic lost POST response')
+      if (code === 'ask_busy') throw new AskRefusal(409, code, 'Synthetic same-id busy', { operation_id: body.operation_id })
+      throw new ApiError(409, code, 'Synthetic operation conflict')
+    })
+    await start(h.client)
+    const a = await useAskStore.getState().admit('Keep the original unconfirmed', ctx, { newTurnOnly: true })
+    await flush()
+    if (a.admitted || !a.receipt) throw new Error('A manufactured placeholder must not qualify admission')
+    expect(a.reason).toBe('unknown')
+    expect(useAskStore.getState().admissionOf(a.receipt)).toMatchObject({ admitted: false, reason: 'unknown', receipt: a.receipt })
+    expect(turn(a.receipt.op).state).toBe('open') // retained legacy display semantics are separate from proof
+    expect(h.posts).toHaveLength(2)
+    expect(ops(h).size).toBe(1)
+    expect(h.posts[1]).toEqual(h.posts[0])
+    useAskStore.getState().onEvent(frame(a.receipt.op, 1, { phase: 'accepted', thread }))
+    expect(useAskStore.getState().admissionOf(a.receipt)).toEqual({ admitted: true, op: a.receipt.op, principal: 'user:p_ada' })
+    expect(h.posts).toHaveLength(2)
+  })
+
+  it('a later actual exact-op recover readback with zero new events can confirm a placeholder-held original', async () => {
+    const h = fakeHost(() => 'lost-before')
+    h.client.askTurn = vi.fn(async () => { throw new AskRefusal(404, 'not_available', 'Synthetic missing read') })
+    h.client.ask = vi.fn(async (body: AskBody) => {
+      h.posts.push(structuredClone(body))
+      if (h.posts.length === 1) throw new ApiError(0, 'network', 'Synthetic lost POST response')
+      throw new ApiError(409, 'operation_conflict', 'Synthetic operation conflict')
+    })
+    await start(h.client)
+    const a = await useAskStore.getState().admit('Later readback proof only', ctx, { newTurnOnly: true })
+    await flush()
+    if (a.admitted || !a.receipt) throw new Error('The original must remain unknown without proof')
+    h.client.askTurn = vi.fn(async (op: string) => ({ operation_id: op, turn_id: `t_${op}`, thread, state: 'accepted' as const, events: [], more: false }))
+    await useAskStore.getState().recover(a.receipt.op)
+    expect(useAskStore.getState().admissionOf(a.receipt)).toEqual({ admitted: true, op: a.receipt.op, principal: 'user:p_ada' })
+    expect(turn(a.receipt.op).events).toEqual([])
+    expect(h.posts).toHaveLength(2)
+    expect(ops(h).size).toBe(1)
+  })
+
+  it.each(['null', 'foreign'] as const)('a successful initial %s POST body is not original-operation admission proof', async (kind) => {
+    const h = fakeHost(() => 'lost-before')
+    const foreign = { operation_id: 'ask:foreign', turn_id: 't_foreign', thread, conductor: false, events: [], more: false }
+    // Deliberately malformed synthetic transport values exercise only the private identity boundary.
+    h.client.ask = vi.fn(async (body: AskBody) => {
+      h.posts.push(structuredClone(body))
+      return kind === 'null' ? null : foreign
+    }) as unknown as NonNullable<HiveClient['ask']>
+    h.client.askTurn = vi.fn(async () => { throw new AskRefusal(403, 'forbidden', 'Synthetic read refusal') })
+    await start(h.client)
+    const a = await useAskStore.getState().admit('Require the actual response identity', ctx, { newTurnOnly: true })
+    if (a.admitted || !a.receipt) throw new Error('A null/foreign response is not positive proof')
+    expect(a.reason).toBe('unknown')
+    expect(h.posts).toHaveLength(1)
+    expect(useAskStore.getState().admissionOf(a.receipt)).toMatchObject({ admitted: false, reason: 'unknown', receipt: a.receipt })
+    useAskStore.getState().onEvent(frame(a.receipt.op, 1, { phase: 'accepted', thread }))
+    expect(useAskStore.getState().admissionOf(a.receipt)).toEqual({ admitted: true, op: a.receipt.op, principal: 'user:p_ada' })
+    expect(h.posts).toHaveLength(1)
+  })
+
+  it.each([
+    ['null', 'ask_busy'], ['null', 'operation_conflict'],
+    ['foreign', 'ask_busy'], ['foreign', 'operation_conflict'],
+  ] as const)('a successful %s read cannot qualify itself or carry a true flag into %s recovery', async (kind, code) => {
+    const h = fakeHost(() => 'lost-before')
+    const foreign = { operation_id: 'ask:foreign', turn_id: 't_foreign', thread, state: 'accepted' as const, events: [], more: false }
+    h.client.askTurn = vi.fn(async () => kind === 'null' ? null : foreign) as unknown as NonNullable<HiveClient['askTurn']>
+    h.client.ask = vi.fn(async (body: AskBody) => {
+      h.posts.push(structuredClone(body))
+      if (h.posts.length === 1) throw new ApiError(0, 'network', 'Synthetic lost original POST response')
+      if (code === 'ask_busy') throw new AskRefusal(409, code, 'Synthetic same-id busy', { operation_id: body.operation_id })
+      throw new ApiError(409, code, 'Synthetic operation conflict')
+    })
+    await start(h.client)
+    const a = await useAskStore.getState().admit('Do not trust an arbitrary read body', ctx, { newTurnOnly: true })
+    await flush()
+    if (a.admitted || !a.receipt) throw new Error('Only matching actual proof may confirm the receipt')
+    expect(a.reason).toBe('unknown')
+    expect(h.posts).toHaveLength(kind === 'null' ? 2 : 1) // only null follows the existing same-id fallback
+    expect(ops(h).size).toBe(1)
+    if (h.posts.length === 2) expect(h.posts[1]).toEqual(h.posts[0])
+    expect(useAskStore.getState().admissionOf(a.receipt)).toMatchObject({ admitted: false, reason: 'unknown', receipt: a.receipt })
+    const before = h.posts.length
+    h.client.askTurn = vi.fn(async (op: string) => ({ operation_id: op, turn_id: `t_${op}`, thread, state: 'accepted' as const, events: [], more: false }))
+    await useAskStore.getState().recover(a.receipt.op)
+    expect(useAskStore.getState().admissionOf(a.receipt)).toEqual({ admitted: true, op: a.receipt.op, principal: 'user:p_ada' })
+    expect(h.posts).toHaveLength(before)
+  })
+
+  it.each(['null', 'foreign'] as const)('a successful same-id retry with a %s body stays unknown until matching original frame proof', async (kind) => {
+    const h = fakeHost(() => 'lost-before')
+    h.client.askTurn = vi.fn(async () => { throw new AskRefusal(404, 'not_available', 'Synthetic missing read') })
+    const foreign = { operation_id: 'ask:foreign', turn_id: 't_foreign', thread, conductor: false, events: [], more: false }
+    h.client.ask = vi.fn(async (body: AskBody) => {
+      h.posts.push(structuredClone(body))
+      if (h.posts.length === 1) throw new ApiError(0, 'network', 'Synthetic lost original POST response')
+      return kind === 'null' ? null : foreign
+    }) as unknown as NonNullable<HiveClient['ask']>
+    await start(h.client)
+    const a = await useAskStore.getState().admit('Same request still needs matching proof', ctx, { newTurnOnly: true })
+    await flush()
+    if (a.admitted || !a.receipt) throw new Error('A null/foreign same-id response cannot confirm admission')
+    expect(a.reason).toBe('unknown')
+    expect(h.posts).toHaveLength(2)
+    expect(h.posts[1]).toEqual(h.posts[0])
+    useAskStore.getState().onEvent(frame(a.receipt.op, 1, { phase: 'accepted', thread }))
+    expect(useAskStore.getState().admissionOf(a.receipt)).toEqual({ admitted: true, op: a.receipt.op, principal: 'user:p_ada' })
+    expect(h.posts).toHaveLength(2)
+  })
+
+  it('an actual contract-shaped accepted frame without principal confirms only the current authentic original receipt', async () => {
+    const h = fakeHost(() => 'lost-before')
+    h.client.askTurn = vi.fn(async () => { throw new AskRefusal(403, 'forbidden', 'Synthetic read refusal') })
+    await start(h.client)
+    const a = await useAskStore.getState().admit('Actual no-principal contract frame', ctx, { newTurnOnly: true })
+    if (a.admitted || !a.receipt) throw new Error('Synthetic original should initially be unknown')
+    const ordinary = { type: 'ask', operation_id: a.receipt.op, turn_id: `t_${a.receipt.op}`, seq: 1, at: '2026-10-06T10:00:00Z', phase: 'accepted', thread }
+    expect(ordinary).not.toHaveProperty('principal')
+    useAskStore.getState().onEvent(ordinary)
+    expect(useAskStore.getState().admissionOf(a.receipt)).toEqual({ admitted: true, op: a.receipt.op, principal: 'user:p_ada' })
+    useAskStore.getState().onEvent({ ...ordinary })
+    expect(turn(a.receipt.op).events).toHaveLength(1)
+    expect(h.posts).toHaveLength(1)
+  })
+
+  it.each([null, 7, undefined, 'user:p_other'] as const)('a supplied invalid/foreign principal %s cannot confirm an unknown receipt', async (principal) => {
+    const h = fakeHost(() => 'lost-before')
+    h.client.askTurn = vi.fn(async () => { throw new AskRefusal(403, 'forbidden', 'Synthetic read refusal') })
+    await start(h.client)
+    const a = await useAskStore.getState().admit('Current bound original only', ctx, { newTurnOnly: true })
+    if (a.admitted || !a.receipt) throw new Error('Synthetic original should remain unknown')
+    useAskStore.getState().onEvent({ type: 'ask', operation_id: a.receipt.op, turn_id: `t_${a.receipt.op}`, seq: 1, at: '2026-10-06T10:00:00Z', phase: 'accepted', thread, principal })
+    expect(useAskStore.getState().admissionOf(a.receipt)).toMatchObject({ admitted: false, reason: 'unknown', receipt: a.receipt })
+    expect(h.posts).toHaveLength(1)
+  })
+
+  it('three unknown checks retain the same body/id; explicit checkAgain resolves only that original and no automatic fresh request', async () => {
+    vi.useFakeTimers()
+    const h = fakeHost(() => 'lost-before')
+    await start(h.client)
+    const a = await useAskStore.getState().admit('Still unknown', ctx, { newTurnOnly: true })
+    if (a.admitted || !a.receipt) throw new Error('Synthetic unknown must retain its receipt')
+    await vi.advanceTimersByTimeAsync(CHECK_BACKOFF_MS[0] + CHECK_BACKOFF_MS[1])
+    expect(turn(a.receipt.op).unsure?.state).toBe('unresolved')
+    expect(h.posts).toHaveLength(CHECK_TRIES + 1) // initial POST plus the existing same-id recovery attempts
+    expect(ops(h).size).toBe(1)
+    for (const b of h.posts) expect(b).toEqual(h.posts[0])
+    h.client.askTurn = vi.fn(async (op: string) => ({ operation_id: op, turn_id: `t_${op}`, thread, state: 'accepted' as const, events: [frame(op, 1, { phase: 'accepted', thread })], more: false }))
+    await useAskStore.getState().checkAgain(a.receipt.op)
+    expect(useAskStore.getState().admissionOf(a.receipt)).toEqual({ admitted: true, op: a.receipt.op, principal: 'user:p_ada' })
+    expect(ops(h).size).toBe(1)
+  })
+})
 
 describe('B1 (45392df): an Ask of unknown admission is recovered as the original, never admitted twice', () => {
   it('delayed admission: the original lands late; the check sends the same request under the same id and gets it back', async () => {
@@ -180,7 +558,7 @@ describe('B1 (45392df): an Ask of unknown admission is recovered as the original
     await useAskStore.getState().send('slow question', ctx)
     const op = h.posts[0].operation_id
     await vi.waitFor(() => expect(turn(op).state).toBe('open'))
-    await useAskStore.getState().retryLast()
+    await retryCurrent()
     await useAskStore.getState().send('and another thing', ctx)
     await flush()
     oneOperation(h)
@@ -195,7 +573,7 @@ describe('B1 (45392df): an Ask of unknown admission is recovered as the original
     await flush()
     const op = h.posts[0].operation_id
     expect(turn(op).state).toBe('sending')
-    await useAskStore.getState().retryLast()
+    await retryCurrent()
     await useAskStore.getState().send('more words', ctx)
     await flush()
     expect(h.posts).toHaveLength(1)
@@ -209,7 +587,7 @@ describe('B1 (45392df): an Ask of unknown admission is recovered as the original
     const op = h.posts[0].operation_id
     await vi.waitFor(() => expect(turn(op).state).toBe('open'))
     expect(h.client.askTurn).toHaveBeenCalledWith(op, 0)
-    await useAskStore.getState().retryLast()
+    await retryCurrent()
     await flush()
     oneOperation(h)
     expect(h.posts).toHaveLength(1)
@@ -245,6 +623,14 @@ describe('B1 (45392df): an Ask of unknown admission is recovered as the original
     let count = 0
     const fetch = vi.fn(async (url: string, init?: RequestInit) => {
       const path = new URL(url).pathname
+      if (init?.method === 'GET' && path === '/api/auth/me') {
+        return new Response(JSON.stringify({ principal: 'user:p_ada', role: 'member' }), { status: 200 })
+      }
+      // The real sender resolves its answerer before POST. This no-target fixture still reaches the host's Ask
+      // route; a blanket 404 here prevents dispatch and never exercises an unreadable admission response.
+      if (init?.method === 'GET' && (path === '/api/me/ask' || path === '/api/me/mind')) {
+        return new Response(JSON.stringify(path === '/api/me/mind' ? { mind: null } : { swarm_id: null }), { status: 200 })
+      }
       if (init?.method === 'POST' && path === '/api/ask') {
         const b = JSON.parse(String(init.body)) as AskBody
         posted.push(b)
@@ -272,7 +658,7 @@ describe('B1 (45392df): an Ask of unknown admission is recovered as the original
     await useAskStore.getState().send('unreadable question', ctx)
     const op = posted[0].operation_id
     await vi.waitFor(() => expect(turn(op).state).toBe('open'))
-    await useAskStore.getState().retryLast()
+    await retryCurrent()
     await flush()
     expect(new Set(posted.map((b) => b.operation_id)).size).toBe(1)
     expect(posted).toHaveLength(1)
@@ -287,7 +673,7 @@ describe('B1 (45392df): an Ask of unknown admission is recovered as the original
     await useAskStore.getState().send('raw question', ctx)
     const op = h.posts[0].operation_id
     await vi.waitFor(() => expect(turn(op).state).toBe('open'))
-    await useAskStore.getState().retryLast()
+    await retryCurrent()
     oneOperation(h)
     expect(rows().some((r) => r.kind === 'refused')).toBe(false)
   })
@@ -298,7 +684,7 @@ describe('B1 (45392df): an Ask of unknown admission is recovered as the original
     await useAskStore.getState().send(`question ${step}`, ctx)
     const op = h.posts[0].operation_id
     await vi.waitFor(() => expect(turn(op).state).toBe('open'))
-    await useAskStore.getState().retryLast()
+    await retryCurrent()
     await flush()
     oneOperation(h)
     expect(h.posts).toHaveLength(1)
@@ -313,14 +699,14 @@ describe('B1 (45392df): an Ask of unknown admission is recovered as the original
     const op1 = h.posts[0].operation_id
     await vi.waitFor(() => expect(turn(op1).state).toBe('open'))
     // still open: Try again is not a second request
-    await useAskStore.getState().retryLast()
+    await retryCurrent()
     expect(h.posts).toHaveLength(1)
     // the host finishes the original
     useAskStore.getState().onEvent(frame(op1, 3, { phase: 'done', spent_usd: 0.01 }))
     expect(turn(op1).state).toBe('done')
     expect(h.admissions()).toBe(1)
     // a genuinely new request now: a new id, admitted once
-    await useAskStore.getState().retryLast()
+    await retryCurrent()
     expect(h.posts).toHaveLength(2)
     const op2 = h.posts[1].operation_id
     expect(op2).not.toBe(op1)
@@ -339,7 +725,7 @@ describe('B1 (45392df): an Ask of unknown admission is recovered as the original
     expect(h.posts[1]).toEqual(h.posts[0])
     expect(h.admissions()).toBe(0)
     expect(rows().find((r) => r.kind === 'refused')).toMatchObject({ reason: 'rate_limited' })
-    await useAskStore.getState().retryLast()
+    await retryCurrent()
     expect(h.posts).toHaveLength(3)
     expect(h.posts[2].operation_id).not.toBe(op1)
     expect(h.admissions()).toBe(1)
@@ -355,7 +741,7 @@ describe('B1 (45392df): an Ask of unknown admission is recovered as the original
     expect(turn(op).state).toBe('checking')
     expect(rows().find((r) => r.kind === 'checking')).toMatchObject({ state: 'failed' })
     expect(rows().some((r) => r.kind === 'refused')).toBe(false)
-    await useAskStore.getState().retryLast()
+    await retryCurrent()
     await useAskStore.getState().send('new words meanwhile', ctx)
     expect(ops(h).size).toBe(1)
     for (const b of h.posts) expect(b).toEqual(h.posts[0])
@@ -402,7 +788,7 @@ describe('B1 (45392df): an Ask of unknown admission is recovered as the original
     expect(useAskStore.getState().turns[op]).toBeUndefined()
     expect(rows()).toHaveLength(0)
     // no resubmission under Bob, and Try again has nothing of Ann's to send
-    await useAskStore.getState().retryLast()
+    await retryCurrent()
     expect(h.posts).toHaveLength(1)
     // the original's frames, arriving late, attach to nothing
     useAskStore.getState().onEvent(frames[op][1])
@@ -737,3 +1123,11 @@ it('Review: credential replacement without store reinit discards held private As
   expect(useAskStore.getState().bound).toBeNull()
   read.fail(); await sent
 })
+
+/** The current rendered request in these store-only protocol scenarios. Retained UI authority is tested separately. */
+function retryCurrent() {
+  const state = useAskStore.getState()
+  const op = [...state.log].reverse().find(row => row.kind === 'turn')
+  const request = op?.kind === 'turn' ? op.op : 'no-rendered-request'
+  return state.retryLast(request, currentEpoch(), askRetryContext(request, currentEpoch()))
+}

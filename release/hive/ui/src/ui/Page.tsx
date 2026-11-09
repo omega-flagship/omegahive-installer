@@ -1,11 +1,12 @@
 import { m } from 'framer-motion'
-import type { CSSProperties, ReactNode } from 'react'
+import { useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { useEscape, useReducedMotion } from '../lib/hooks'
 import { IconButton } from './primitives'
 import { cx } from '../lib/cx'
 import { closePage, closeToHome } from '../lib/router'
 import { ViewInfo } from '../tour/ViewInfo'
 import type { ViewKey } from '../tour/views'
+import { StudioLiveBar } from '../features/studioLive/DirectingStudio'
 
 /** A full-screen glass view over the dimmed hive (swarms, usage). */
 export function Page({
@@ -51,12 +52,21 @@ export function Page({
   enter?: boolean
 }) {
   const reduced = useReducedMotion()
+  const [inlineBarReady, setInlineBarReady] = useState(!enter)
+  const entering = useRef(true)
   const escape = () => closePage(onClose)
   useEscape(onEscape ?? onBack ?? escape)
   return (
     <m.section
       role="dialog"
       aria-label={label}
+      onAnimationStart={(definition) => {
+        entering.current = !!definition && typeof definition === 'object' && 'opacity' in definition && definition.opacity === 1
+        setInlineBarReady(false)
+      }}
+      onAnimationComplete={(definition) => {
+        if (entering.current && definition && typeof definition === 'object' && 'opacity' in definition && definition.opacity === 1) setInlineBarReady(true)
+      }}
       initial={enter ? { opacity: 0, y: reduced ? 0 : 24, scale: reduced ? 1 : 0.985 } : false}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: reduced ? 0 : 16, transition: { duration: 0.18 } }}
@@ -70,12 +80,14 @@ export function Page({
       data-presence-region="page"
       style={{
         ...style,
-        background: 'linear-gradient(180deg, var(--look-page-a, rgb(10 10 32 / 0.9)), var(--look-page-b, rgb(6 6 22 / 0.94)))',
+        background: 'linear-gradient(180deg, var(--look-page-a, color-mix(in oklab, var(--color-abyss) 90%, transparent)), var(--look-page-b, color-mix(in oklab, var(--color-void) 94%, transparent)))',
         backdropFilter: 'blur(24px) saturate(140%)',
         WebkitBackdropFilter: 'blur(24px) saturate(140%)',
       }}
     >
       {decor}
+      {/* A real row keeps the shared page header clear of Direct / Stop on narrow screens. */}
+      <StudioLiveBar inline pageOwned inlineReady={inlineBarReady} />
       <header className="relative flex shrink-0 flex-wrap items-center gap-2 px-3 pb-2 md:flex-nowrap md:px-6 md:pt-4" style={{ paddingTop: 'calc(var(--sat) + 10px)' }}>
         {onBack && <IconButton icon="back" label="Back" onClick={onBack} />}
         <div className="min-w-0 flex-1 px-1">

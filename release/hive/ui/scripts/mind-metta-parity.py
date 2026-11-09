@@ -5,8 +5,8 @@ way the hive's own space service does (hive/spaces/service.py: `from petta impor
 the browser runs (src/lib/mindSpace/metta). Writes src/lib/mindSpace/parity/petta.json, which parity.test.ts compares
 with MeTTaScript.
 
-    PATH=<swipl prefix>/bin:$PATH PETTA_PATH=<PeTTa checkout> \
-      python -I scripts/mind-metta-parity.py
+    PATH=<swipl bin>:$PATH PETTA_PATH=<your PeTTa checkout> \
+      <your python 3.12> -I scripts/mind-metta-parity.py
 """
 import json
 import os

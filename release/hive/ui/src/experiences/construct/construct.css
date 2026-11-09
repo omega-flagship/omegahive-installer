@@ -655,9 +655,8 @@
 .cx-cmd {
   position: relative;
   flex: none;
-  margin-left: 52px;
-  /* the host's OS clock sits at the right end of this row (shell/osClock.css) */
-  margin-right: max(0px, calc(var(--os-clock-room, 0px) - 10px));
+  /* Both corner reservations use the larger side, keeping the prompt on the page axis. */
+  margin-inline: max(52px, calc(var(--os-clock-room, 0px) - 10px));
   border: 1px solid var(--cx-line);
   background: rgba(1, 10, 5, 0.9);
   padding: 4px 10px 6px;
@@ -933,7 +932,8 @@
   margin-left: calc(50px + env(safe-area-inset-left));
 }
 .cx-chips::-webkit-scrollbar { display: none; }
-.is-phone .cx-cmd { margin-left: calc(50px + env(safe-area-inset-left)); margin-right: max(0px, calc(var(--os-clock-room, 0px) - max(6px, env(safe-area-inset-right)))); padding: 3px 8px 5px; }
+.is-phone .cx-shell { padding-inline: max(6px, env(safe-area-inset-left), env(safe-area-inset-right)); padding-bottom: calc(var(--sab, 0px) + 60px); }
+.is-phone .cx-cmd { margin-inline: 0; padding: 3px 8px 5px; }
 .is-phone .cx-prompt, .is-phone .cx-field input { font-size: 16px; }
 .is-phone .cx-prompt > span:not(.cx-field):not(:nth-last-child(2)) { display: none; }
 .is-phone .cx-ac { left: 0; min-width: 0; right: 0; max-width: none; }
@@ -995,7 +995,12 @@
 }
 .cx-ac-ask li {
   white-space: normal;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 1ch;
 }
+.cx-ac-ask li.is-mind { grid-template-columns: minmax(0, 1fr); }
+.cx-ac-ask .cx-ask-pays { grid-column: 1 / -1; padding-inline-start: 0; }
 .cx-ask-panel {
   padding: 4px 4px 2px;
   color: var(--cx-txt);
@@ -1051,6 +1056,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.is-phone .cx-hint { align-items: flex-start; white-space: normal; }
+.is-phone .cx-cmd:not(.is-answering) .cx-hint-copy { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .cx-ask-status .cx-key {
   margin-left: 0.5ch;
 }

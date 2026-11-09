@@ -29,8 +29,8 @@ export const Button = forwardRef<
   const sizes = size === 'lg' ? 'min-h-12 px-5 text-[15px]' : 'min-h-11 px-4 text-sm'
   const variants: Record<BtnVariant, string> = {
     primary: 'text-[var(--color-primary-ink)] font-semibold border border-control/50 hover:brightness-110',
-    ghost: 'text-ink-2 hover:text-ink hover:bg-white/[0.06]',
-    subtle: 'text-ink bg-white/[0.06] border border-line hover:bg-white/[0.1] hover:border-line-2',
+    ghost: 'text-ink-2 hover:text-ink hover:bg-tint/[0.06]',
+    subtle: 'text-ink bg-tint/[0.06] border border-line hover:bg-tint/[0.1] hover:border-line-2',
     danger: 'text-bad bg-bad/10 border border-bad/25 hover:bg-bad/15',
   }
   return (
@@ -52,8 +52,8 @@ export const IconButton = forwardRef<
       aria-label={label}
       title={label}
       className={cx(
-        'inline-flex size-11 shrink-0 items-center justify-center rounded-xl text-ink-2 transition-colors duration-150 hover:bg-white/[0.07] hover:text-ink active:scale-95',
-        active && 'bg-white/[0.09] text-ink',
+        'inline-flex size-11 shrink-0 items-center justify-center rounded-xl text-ink-2 transition-colors duration-150 hover:bg-tint/[0.07] hover:text-ink active:scale-95',
+        active && 'bg-tint/[0.09] text-ink',
         className,
       )}
       {...rest}
@@ -98,7 +98,7 @@ const STATUS_STYLE: Record<AgentStatus, { label: string; color: string }> = {
   starting: { label: 'Starting', color: '#fde68a' },
   created: { label: 'Created', color: '#c4b5fd' },
   stopped: { label: 'Stopped', color: '#9ca3af' },
-  error: { label: 'Error', color: '#fb7185' },
+  error: { label: 'Error', color: 'var(--color-bad)' },
 }
 
 export function StatusPill({ status, thinking }: { status: AgentStatus; thinking?: ThinkingPhase | null }) {
@@ -106,7 +106,7 @@ export function StatusPill({ status, thinking }: { status: AgentStatus; thinking
   const s = STATUS_STYLE[status] ?? { label: (status as string) === 'moved' ? 'Moved away' : String(status), color: '#9ca3af' }
   const label = status === 'awake' && thinking && thinking !== 'idle' ? (thinking === 'llm' ? 'Thinking' : 'Using skills') : s.label
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white/[0.04] px-2 py-0.5 text-[11px] font-medium text-ink-2">
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-tint/[0.04] px-2 py-0.5 text-[11px] font-medium text-ink-2">
       <span
         className={cx('size-1.5 rounded-full', (status === 'awake' || status === 'starting') && 'animate-pulse')}
         style={{ background: s.color, boxShadow: `0 0 8px ${s.color}` }}
@@ -118,7 +118,7 @@ export function StatusPill({ status, thinking }: { status: AgentStatus; thinking
 
 export function Kbd({ children }: { children: ReactNode }) {
   return (
-    <kbd className="inline-flex min-w-5 items-center justify-center rounded-md border border-line-2 bg-white/[0.05] px-1.5 py-0.5 font-mono text-[10px] text-ink-2">
+    <kbd className="inline-flex min-w-5 items-center justify-center rounded-md border border-line-2 bg-tint/[0.05] px-1.5 py-0.5 font-mono text-[10px] text-ink-2">
       {children}
     </kbd>
   )
@@ -166,7 +166,7 @@ export function Segmented<T extends string>({
   tour?: string
 }) {
   return (
-    <div role="radiogroup" aria-label={label} data-tour={tour} className={cx('relative inline-flex rounded-xl border border-line bg-white/[0.03] p-1', className)}>
+    <div role="radiogroup" aria-label={label} data-tour={tour} className={cx('relative inline-flex rounded-xl border border-line bg-tint/[0.03] p-1', className)}>
       {options.map((o) => {
         const on = o.value === value
         return (
@@ -186,7 +186,7 @@ export function Segmented<T extends string>({
             {on && (
               <m.span
                 layoutId={`seg-${label}`}
-                className="absolute inset-0 rounded-lg border border-control bg-white/[0.09]"
+                className="absolute inset-0 rounded-lg border border-control bg-tint/[0.09]"
                 transition={{ type: 'spring', stiffness: 500, damping: 38 }}
               />
             )}
@@ -204,8 +204,8 @@ export function Segmented<T extends string>({
 export function EmptyState({ icon = 'sparkles', title, body, action }: { icon?: IconName; title: string; body?: string; action?: ReactNode }) {
   return (
     <div className="flex flex-col items-center justify-center gap-3 px-6 py-10 text-center">
-      <div className="relative flex size-14 items-center justify-center rounded-2xl border border-line bg-white/[0.03] text-ink-3">
-        <div className="absolute inset-0 rounded-2xl" style={{ boxShadow: '0 0 40px -6px rgb(164 147 255 / 0.35)' }} />
+      <div className="relative flex size-14 items-center justify-center rounded-2xl border border-line bg-tint/[0.03] text-ink-3">
+        <div className="absolute inset-0 rounded-2xl" style={{ boxShadow: '0 0 40px -6px color-mix(in oklab, var(--color-accent) 35%, transparent)' }} />
         <Icon name={icon} size={24} />
       </div>
       <div className="font-display text-[15px] font-semibold text-ink">{title}</div>
@@ -242,12 +242,12 @@ export function TruthBars({ f, c, compact }: { f: number; c: number; compact?: b
   return (
     <div className={cx('grid items-center gap-x-2 gap-y-1 tabular-nums', compact ? 'text-[11px]' : 'text-xs')} style={{ gridTemplateColumns: 'auto 1fr auto' }}>
       <span className="text-ink-3">Likelihood</span>
-      <div className="relative h-1.5 rounded-full bg-white/[0.07]">
-        <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${f * 100}%`, background: 'linear-gradient(90deg, rgb(238 104 104), rgb(176 174 196), rgb(92 162 245))', backgroundSize: `${100 / Math.max(f, 0.01)}% 100%` }} />
+      <div className="relative h-1.5 rounded-full bg-tint/[0.07]">
+        <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${f * 100}%`, background: 'linear-gradient(90deg, var(--color-bad), var(--color-ink-2), rgb(92 162 245))', backgroundSize: `${100 / Math.max(f, 0.01)}% 100%` }} />
       </div>
       <span className="font-mono text-ink-2">{f.toFixed(2)}</span>
       <span className="text-ink-3">Confidence</span>
-      <div className="relative h-1.5 rounded-full bg-white/[0.07]">
+      <div className="relative h-1.5 rounded-full bg-tint/[0.07]">
         <div className="absolute inset-y-0 left-0 rounded-full bg-ink" style={{ width: `${c * 100}%`, opacity: 0.35 + c * 0.6, boxShadow: `0 0 ${4 + c * 10}px rgb(236 234 255 / ${c * 0.6})` }} />
       </div>
       <span className="font-mono text-ink-2">{c.toFixed(2)}</span>
@@ -272,7 +272,7 @@ export function Switch({ checked, onChange, label, hue = 252, disabled }: { chec
       <span
         className="relative inline-flex h-[26px] w-[44px] items-center rounded-full border transition-colors duration-200"
         style={{
-          background: checked ? hsl(hue, 90, 64, 0.85) : 'rgb(255 255 255 / 0.06)',
+          background: checked ? hsl(hue, 90, 64, 0.85) : 'color-mix(in oklab, var(--color-ink) 6%, transparent)',
           borderColor: checked ? hsl(hue, 100, 80, 0.6) : 'var(--color-control)',
           boxShadow: checked ? `0 0 16px ${hsl(hue, 100, 65, 0.45)}` : undefined,
         }}
@@ -290,8 +290,8 @@ export function Switch({ checked, onChange, label, hue = 252, disabled }: { chec
 
 const RISK: Record<'low' | 'medium' | 'high', { label: string; color: string; bg: string }> = {
   low: { label: 'Low risk', color: '#5eead4', bg: 'rgb(94 234 212 / 0.1)' },
-  medium: { label: 'Medium risk', color: '#fbbf24', bg: 'rgb(251 191 36 / 0.1)' },
-  high: { label: 'High risk', color: '#fb7185', bg: 'rgb(251 113 133 / 0.12)' },
+  medium: { label: 'Medium risk', color: 'var(--color-warn)', bg: 'color-mix(in oklab, var(--color-warn) 10%, transparent)' },
+  high: { label: 'High risk', color: 'var(--color-bad)', bg: 'color-mix(in oklab, var(--color-bad) 12%, transparent)' },
 }
 
 export function RiskChip({ risk, compact }: { risk: 'low' | 'medium' | 'high'; compact?: boolean }) {
@@ -343,7 +343,7 @@ export function ProgressRing({ value, total, size = 30, hue = 152, label }: { va
       aria-label={label ?? `${value} of ${total} done`}
     >
       <svg width={size} height={size} className="-rotate-90" aria-hidden="true">
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgb(255 255 255 / 0.1)" strokeWidth={2.5} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="color-mix(in oklab, var(--color-ink) 10%, transparent)" strokeWidth={2.5} />
         <m.circle
           cx={size / 2}
           cy={size / 2}
@@ -378,7 +378,7 @@ export function CountBadge({ n, className }: { n: number; className?: string }) 
         'pointer-events-none inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1 font-mono text-[10px] leading-none font-bold text-[#1a1003] tabular-nums',
         className,
       )}
-      style={{ background: 'linear-gradient(180deg, #ffd88a, #fbbf24)', boxShadow: '0 0 0 2px rgb(8 8 28), 0 0 12px rgb(251 191 36 / 0.7)' }}
+      style={{ background: 'linear-gradient(180deg, #ffd88a, #fbbf24)', boxShadow: '0 0 0 2px var(--color-abyss), 0 0 12px color-mix(in oklab, var(--color-warn) 70%, transparent)' }}
       aria-label={`${n} pending`}
     >
       {n > 99 ? '99+' : n}

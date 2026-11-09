@@ -1,6 +1,6 @@
 """First Light, host round R1a: a person's own onboarding progress, their "finish setting up" list, and the first hello.
 
-Plan: coordination/omegareview/PLATFORM_ONBOARDING_PLAN_R1.md (the owner approved it 2026-10-12, "Sure").
+Plan: PLATFORM_ONBOARDING_PLAN_R1.md (Jon approved it 2026-10-12, "Sure").
 
 - Progress belongs to the signed-in person (their principal, user:u_...), not the browser: it survives sign-out and a
   new device, and an identity change never sees another person's row. Only that person reads or writes it; there is no
@@ -279,6 +279,7 @@ class Onboarding:
     def preflight(self, mind):
         """Whether the mind could make one greeting call now, without side effects (no rate counter, no refusal record,
         no reservation): the model route's own gates run again, for real, on the call the mind makes."""
+        from .config import is_subscription
         from .gateway import GatewayError, split_model
         hive, gw = self.hive, self.gateway
         if gw is None:
@@ -291,6 +292,13 @@ class Onboarding:
             raise self._refuse("egress_refused" if exc.code == "egress_refused" else "no_model") from None
         if provider.local:
             return None   # local and mock models cost nothing
+        if is_subscription(provider_name):
+            # the owner's plan: no price and no paying key by design; ready exactly when the gate would admit it now
+            try:
+                gw.admit_subscription(mind, provider=provider_name)
+            except GatewayError:
+                raise self._refuse("no_model") from None
+            return None
         if not provider.priced(model) and not hive.settings.allow_unpriced:
             raise self._refuse("no_model")
         try:

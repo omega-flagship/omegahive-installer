@@ -66,16 +66,35 @@ def next_run(expr, after, tz="UTC"):
     """Next time strictly after ``after`` (aware datetime) matching the cron, in UTC."""
     spec = parse_cron(expr)
     zone = ZoneInfo(tz)
-    t = after.astimezone(zone).replace(second=0, microsecond=0) + datetime.timedelta(minutes=1)
-    for _ in range(366 * 24 * 60):
-        cron_dow = (t.weekday() + 1) % 7
+    after = after.astimezone(UTC)
+    day = after.astimezone(zone).date()
+    # A valid calendar schedule can cross a leap-century gap. One Gregorian400-year cycle covers every date and
+    # weekday combination; inspect dates, then selected hours/minutes, instead of scanning every intervening minute.
+    hours, minutes = sorted(spec["hour"]), sorted(spec["minute"])
+    for _ in range(146097 + 1):
+        cron_dow = (day.weekday() + 1) % 7
         if spec["dom_any"] or spec["dow_any"]:
-            day_ok = t.day in spec["dom"] and cron_dow in spec["dow"]
+            day_ok = day.day in spec["dom"] and cron_dow in spec["dow"]
         else:  # standard cron: either field may match
-            day_ok = t.day in spec["dom"] or cron_dow in spec["dow"]
-        if t.month in spec["month"] and day_ok and t.hour in spec["hour"] and t.minute in spec["minute"]:
-            return t.astimezone(UTC)
-        t += datetime.timedelta(minutes=1)
+            day_ok = day.day in spec["dom"] or cron_dow in spec["dow"]
+        if day.month in spec["month"] and day_ok:
+            candidates = set()
+            for hour in hours:
+                for minute in minutes:
+                    local = datetime.datetime.combine(day, datetime.time(hour, minute))
+                    for fold in (0, 1):
+                        candidate = local.replace(tzinfo=zone, fold=fold).astimezone(UTC)
+                        back = candidate.astimezone(zone)
+                        # A gap maps to a different wall time. A normal time has only fold0; an ambiguous time has
+                        # two real instants, each eligible strictly after the original UTC cutoff.
+                        if back.replace(tzinfo=None) == local and back.fold == fold and candidate > after:
+                            candidates.add(candidate)
+            if candidates:
+                # During a fold, local minute ordering is not UTC ordering (01:11 fold0 precedes01:00 fold1).
+                return min(candidates)
+        if day == datetime.date.max:
+            break
+        day += datetime.timedelta(days=1)
     raise CronError("cron never fires")
 
 

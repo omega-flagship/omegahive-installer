@@ -202,6 +202,108 @@ def test_same_bytes_are_stored_once(client, lab):
     unknown = client.post(url(lab["swarm"], second), headers=lab["ann"], json={"sha256": sha(png(shade=2)), "caption": "x"})
     assert unknown.status_code == 404 and unknown.json()["error"]["code"] == "figure_not_stored"
 
+def stored_files(hive):
+    return sorted(p.name for p in (hive.settings.data_dir / "evolve_figures").rglob("*") if p.is_file())
+
+
+def test_a_hash_alone_never_copies_a_figure_the_caller_cannot_read(client, lab):
+    hive, data = client.app.state.hive, png(shade=9)
+    assert client.post(url(lab["swarm"], lab["record"]), headers=lab["ann"], json=figure(data)).status_code == 200
+    # Carol contributes in her own swarm and cannot see Ann's: the hash alone gets the same answer as an unknown hash
+    carols = contribute(client, lab["carol"], lab["other"], title="Carol's")
+    r = client.post(url(lab["other"], carols), headers=lab["carol"], json={"sha256": sha(data), "caption": "Copied"})
+    assert r.status_code == 404 and r.json()["error"]["code"] == "figure_not_stored", r.text
+    assert hive.db.one("SELECT count(*) AS n FROM evolve_figures WHERE swarm_id = ?", (lab["other"],))["n"] == 0
+    assert client.get(url(lab["other"], carols, sha(data)), headers=lab["carol"]).status_code == 404
+    # with the bytes themselves she may attach them: she already holds them
+    assert client.post(url(lab["other"], carols), headers=lab["carol"], json=figure(data, caption="Mine")).status_code == 200
+    # Bob, who can read Ann's report, may reuse it by hash on a report in his own swarm
+    bobs_swarm = client.post("/api/swarms", headers=lab["bob"], json={"name": "Bob's lab"}).json()["id"]
+    bobs = contribute(client, lab["bob"], bobs_swarm, title="Bob's")
+    r = client.post(url(bobs_swarm, bobs), headers=lab["bob"], json={"sha256": sha(png(shade=9)), "caption": "Reused"})
+    assert r.status_code == 200, r.text
+    assert stored_files(hive) == [sha(data)]
+
+
+def test_refused_uploads_leave_no_bytes_behind(client, lab, monkeypatch):
+    hive, target = client.app.state.hive, url(lab["swarm"], lab["record"])
+    first = png(shade=0)
+    for shade in range(16):
+        assert client.post(target, headers=lab["ann"], json=figure(png(shade=shade), caption=f"F{shade}")).status_code == 200
+    kept = stored_files(hive)
+    for shade in (100, 101, 102):                                  # a full report refuses new figures before writing
+        r = client.post(target, headers=lab["ann"], json=figure(png(shade=shade)))
+        assert r.status_code == 409 and r.json()["error"]["code"] == "too_many_figures", r.text
+    assert stored_files(hive) == kept
+    # the same attachment again, on the full report, returns the attachment it already has
+    again = client.post(target, headers=lab["ann"], json=figure(first, caption="F0"))
+    assert again.status_code == 200 and again.json()["sha256"] == sha(first), again.text
+    # a store that fails part-way leaves neither a file nor a row
+    second = contribute(client, lab["ann"], lab["swarm"], title="Second")
+
+    def broken_put(digest, data):
+        tmp = hive.evolve_figures.store._path(digest).with_suffix(".tmp")
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_bytes(data[:10])
+        raise OSError("disk full")
+    monkeypatch.setattr(hive.evolve_figures.store, "put", broken_put)
+    with pytest.raises(OSError):
+        hive.evolve_figures.attach(lab["swarm"], second, "user:u_fig_ann", lambda report: True, sha(png(shade=200)),
+                                   "Lost", data=png(shade=200))
+    assert stored_files(hive) == kept
+    assert hive.db.one("SELECT 1 FROM evolve_figure_blobs WHERE sha256 = ?", (sha(png(shade=200)),)) is None
+    assert hive.db.one("SELECT count(*) AS n FROM evolve_figures WHERE record_id = ?", (second,))["n"] == 0
+
+def test_a_failed_uploads_cleanup_never_deletes_bytes_a_concurrent_attach_committed(client, lab, monkeypatch):
+    """Upload A fails and cleans up while upload B of the same bytes attaches to another report. B is held at the
+    point between A's check and A's delete; B's committed bytes must survive."""
+    import threading
+    hive, figs = client.app.state.hive, client.app.state.hive.evolve_figures
+    second = contribute(client, lab["ann"], lab["swarm"], title="Second")
+    data = png(shade=77)
+    real_put, real_delete = figs.store.put, figs.store.delete
+    deleting, b_done = threading.Event(), threading.Event()
+    calls = {"put": 0}
+
+    def put(digest, blob):
+        calls["put"] += 1
+        if calls["put"] == 1:
+            raise OSError("disk full")                 # A's write fails: its rows roll back and it cleans up
+        return real_put(digest, blob)
+
+    def delete(digest):
+        deleting.set()                                 # A has decided to delete: let B run now
+        b_done.wait(1.0)                               # B finishes here only if cleanup does not hold the lock
+        return real_delete(digest)
+
+    monkeypatch.setattr(figs.store, "put", put)
+    monkeypatch.setattr(figs.store, "delete", delete)
+    out = {}
+
+    def attach_b():
+        deleting.wait(5)
+        out["b"] = figs.attach(lab["swarm"], second, "user:u_fig_ann", lambda report: True, sha(data), "B", data=data)
+        b_done.set()
+
+    b = threading.Thread(target=attach_b)
+    b.start()
+    with pytest.raises(OSError):
+        figs.attach(lab["swarm"], lab["record"], "user:u_fig_ann", lambda report: True, sha(data), "A", data=data)
+    b.join(10)
+    assert out["b"]["sha256"] == sha(data)
+    assert figs.read(lab["swarm"], second, sha(data)) == data          # B's bytes are still there
+    assert hive.db.one("SELECT count(*) AS n FROM evolve_figures WHERE sha256 = ?", (sha(data),))["n"] == 1
+
+
+def test_a_closed_app_refuses_attach_as_not_found(client, lab):
+    hive = client.app.state.hive
+    hive.programs.disabled.add("omegaevolve")
+    try:
+        r = client.post(url(lab["swarm"], lab["record"]), headers=lab["ann"], json=figure(png()))
+        assert r.status_code == 404, r.text
+    finally:
+        hive.programs.disabled.discard("omegaevolve")
+
 
 # ---- reading ---------------------------------------------------------------------------------------
 

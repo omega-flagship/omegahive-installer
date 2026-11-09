@@ -41,7 +41,7 @@ CONFIRM_MAX_BYTES = 2 * 1024 * 1024   # a confirmed act's canonical payload (fil
 
 
 def named_person(principal):
-    """A signed-in person (Google invitee or webhost sign-in), never the loopback operator password."""
+    """A signed-in person (Google invitee or family sign-in), never the loopback operator password."""
     return isinstance(principal, str) and principal.startswith("user:") and principal != "user:operator"
 
 

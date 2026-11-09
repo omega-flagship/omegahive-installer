@@ -1,4 +1,4 @@
-"""Other people's personal minds stay out of everyone's default lists and live events, admins included (the owner, 2026-10-09:
+"""Other people's personal minds stay out of everyone's default lists and live events, admins included (Jon 2026-10-09:
 "I should only see my own user unless others give me permission to see"). Admins keep audit through an explicit
 ?include=personal on GET /api/swarms and GET /api/agents, and by id."""
 

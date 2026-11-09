@@ -6,6 +6,10 @@ records actual usage inside settlement. This module grants no call authority.
 import hashlib,json,re,time
 from decimal import Decimal,ROUND_CEILING,ROUND_FLOOR
 
+# A $0 model's admission floor (gateway.FREE_MODEL_RESERVE_USD). Not a worst case: such a hold, once unknown, is never
+# auto-settled at expiry and blocks that model until a person resolves it (sol R3 P1).
+FREE_FLOOR_MICROS=1
+
 def micros(value,rounding=ROUND_CEILING):
     amount=Decimal(str(value))
     if not amount.is_finite() or amount<0:raise ValueError('Finite nonnegative cost required')
@@ -15,10 +19,107 @@ def micros(value,rounding=ROUND_CEILING):
 # a key). Liabilities are counted by subject, so a rule that appears or changes after a call was reserved still sees it
 # (OmegaReview FIX-FIRST r2 P1: a hold made under hive:hard-total was invisible to a later hive:month).
 # own hive H1.1: keyuse:<hash> is a key-limit scope (key owner, key or *, grantee; ownhive.py), counted by subject like the rest.
-SUBJECT=re.compile(r'^(hive|swarm:s_[0-9a-f]{8}|agent:a_[0-9a-f]{8}|person:u_[0-9a-f]{8}|keyuse:[0-9a-f]{16}|key:(?:k_[0-9a-f]{8}|env:[a-z0-9_-]+)):(day|month|total|hard-total)$')
+SUBJECT=re.compile(r'^(hive|swarm:s_(?:[0-9a-f]{8}|[0-9a-f]{32})|agent:a_(?:[0-9a-f]{8}|[0-9a-f]{32})|person:u_(?:[0-9a-f]{8}|[0-9a-f]{32})|keyuse:[0-9a-f]{16}|key:(?:k_(?:[0-9a-f]{8}|[0-9a-f]{32})|env:[a-z0-9_-]+)):(day|month|total|hard-total)$')
 def subject_of(label):
-    m=SUBJECT.match(label)
+    m=SUBJECT.fullmatch(label)
     return m.group(1) if m else None
+
+
+def _delegated_pending_micros(db, controller_id, label, subject):
+    """Controller-only commitment from existing child and S5 books; no new ledger.
+
+    Admission callers hold Database.transaction's existing shared lock. Active
+    children retain their full unspent allocation; retired/released children keep
+    actual spend and unresolved calls. Child S5 holds are inside, never added on
+    top of the same funded allocation. Shared hive/swarm rows do not call this.
+    """
+    present = {r['name'] for r in db.all(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('mind_children','mind_reservations')")}
+    if not present:
+        return 0
+    if present != {'mind_children', 'mind_reservations'}:
+        raise ValueError('Incomplete delegated budget ledger')
+    rows = db.all("SELECT c.id AS child_id, r.id AS reservation_id, r.allocated_usd, r.released_at, "
+                  "a.id AS stored_child, a.spent_usd FROM mind_children c "
+                  "LEFT JOIN mind_reservations r ON r.child_id=c.id "
+                  "LEFT JOIN agents a ON a.id=c.id WHERE c.controller_id=?", (controller_id,))
+    if not rows:
+        return 0
+    from .budgets import period_start
+    start = period_start(label.rsplit(':', 1)[1])
+    total = 0
+    for row in rows:
+        if row['reservation_id'] is None or row['stored_child'] is None:
+            raise ValueError('Incomplete delegated child budget identity')
+        spent = micros(row['spent_usd'] or 0)
+        allocation = micros(row['allocated_usd'])
+        child_subject = 'agent:' + row['child_id']
+        child_scopes = tuple(child_subject + ':' + p for p in ('day', 'month', 'total', 'hard-total'))
+        held = db.one("SELECT COALESCE(SUM(r.maximum),0) AS m FROM cost_reservations r "
+                      "LEFT JOIN cost_reservation_details d ON d.reservation=r.id "
+                      "WHERE r.state IN ('reserved','dispatched','unknown') AND ("
+                      "json_extract(d.metadata,'$.agent')=? OR "
+                      "EXISTS (SELECT 1 FROM cost_reservation_subjects j WHERE j.reservation=r.id AND j.subject=?) OR "
+                      "EXISTS (SELECT 1 FROM cost_reservation_scopes s WHERE s.reservation=r.id AND s.scope IN (?,?,?,?)))",
+                      (row['child_id'], child_subject, *child_scopes))['m']
+        if held < 0:
+            raise ValueError('Invalid delegated cost liability')
+        if start is None:
+            charge = spent + held
+            if not row['released_at']:
+                charge = max(allocation, charge)
+        else:
+            # The original UTC window and usage source, plus any stored spend
+            # that cannot be placed in a recorded window (conservative).
+            usage = db.one("SELECT COALESCE(SUM(cost_usd),0) AS all_spent, "
+                           "COALESCE(SUM(CASE WHEN created_at>=? THEN cost_usd ELSE 0 END),0) AS period_spent "
+                           "FROM usage WHERE agent_id=?", (start, row['child_id']))
+            period_spent = micros(usage['period_spent']) + max(
+                0, spent - micros(usage['all_spent'], ROUND_FLOOR))
+            unspent = (max(0, allocation - micros(row['spent_usd'] or 0, ROUND_FLOOR))
+                       if not row['released_at'] else 0)
+            charge = period_spent + max(unspent, held)
+        total += charge
+    # Legacy/no-subject or explicit controller scopes can already count a known
+    # child's S5 hold. Deduct that overlap once; unattributable holds stay held.
+    overlap = db.one("SELECT COALESCE(SUM(r.maximum),0) AS m FROM cost_reservations r "
+                     "LEFT JOIN cost_reservation_details d ON d.reservation=r.id "
+                     "WHERE r.state IN ('reserved','dispatched','unknown') "
+                     "AND EXISTS (SELECT 1 FROM mind_children c WHERE c.controller_id=? AND ("
+                     "c.id=json_extract(d.metadata,'$.agent') OR "
+                     "EXISTS (SELECT 1 FROM cost_reservation_subjects cj WHERE cj.reservation=r.id AND cj.subject='agent:'||c.id) OR "
+                     "EXISTS (SELECT 1 FROM cost_reservation_scopes cs WHERE cs.reservation=r.id AND cs.scope IN "
+                     "('agent:'||c.id||':day','agent:'||c.id||':month','agent:'||c.id||':total','agent:'||c.id||':hard-total')))) AND ("
+                     "EXISTS (SELECT 1 FROM cost_reservation_scopes s WHERE s.reservation=r.id AND s.scope=?) OR "
+                     "EXISTS (SELECT 1 FROM cost_reservation_subjects j WHERE j.reservation=r.id AND j.subject IN (?, '*')) OR "
+                     "NOT EXISTS (SELECT 1 FROM cost_reservation_subjects j WHERE j.reservation=r.id))",
+                     (controller_id, label, subject))['m']
+    if overlap < 0 or overlap > total:
+        raise ValueError('Inconsistent delegated cost liability')
+    return total - overlap
+
+
+def pending_micros(db, label):
+    """The original open S5 liabilities plus this controller's existing delegation.
+
+    Shared with Minds.spawn so check+child insert and paid-call admission use the
+    same books under the same Database.transaction lock.
+    """
+    subject=subject_of(label)
+    open_=" r.state IN ('reserved','dispatched','unknown')"
+    if subject=='hive':
+        return db.one('SELECT COALESCE(SUM(r.maximum),0) AS total FROM cost_reservations r WHERE'+open_)['total']
+    exact=' EXISTS (SELECT 1 FROM cost_reservation_scopes s WHERE s.reservation=r.id AND s.scope=?)'
+    if subject is None:
+        return db.one('SELECT COALESCE(SUM(r.maximum),0) AS total FROM cost_reservations r WHERE'+open_+' AND'+exact,(label,))['total']
+    held = db.one('SELECT COALESCE(SUM(r.maximum),0) AS total FROM cost_reservations r WHERE'+open_+' AND ('+exact+
+                  " OR EXISTS (SELECT 1 FROM cost_reservation_subjects j WHERE j.reservation=r.id AND j.subject IN (?, '*'))"
+                  ' OR NOT EXISTS (SELECT 1 FROM cost_reservation_subjects j WHERE j.reservation=r.id))',
+                  (label,subject))['total']
+    if subject.startswith('agent:'):
+        held += _delegated_pending_micros(db, subject[6:], label, subject)
+    return held
+
 
 class BudgetExhausted(ValueError):
     """A reservation refused by one budget row: which row (its label), its limit, the recorded spend, the open holds
@@ -83,7 +184,7 @@ class Reservations:
                 meta,whole={},False
             agent=meta.get('agent')
             found=tx.execute('SELECT swarm_id FROM agents WHERE id=?',(agent,)).fetchone() if has_agents and isinstance(agent,str) else None
-            if found is not None and SUBJECT.match('agent:'+agent+':total'):
+            if found is not None and SUBJECT.fullmatch('agent:'+agent+':total'):
                 subjects.add('agent:'+agent)
                 if found[0]:subjects.add('swarm:'+found[0])
             else:
@@ -91,12 +192,12 @@ class Reservations:
             if 'payer' not in meta:
                 whole=False
             elif isinstance(meta['payer'],str) and meta['payer'].startswith('user:u_'):
-                if SUBJECT.match('person:'+meta['payer'][5:]+':month'):subjects.add('person:'+meta['payer'][5:])
+                if SUBJECT.fullmatch('person:'+meta['payer'][5:]+':month'):subjects.add('person:'+meta['payer'][5:])
                 else:whole=False
             if 'key' not in meta:
                 whole=whole and meta.get('kind')=='embeddings'   # embeddings never carried a key; chat and Ask always did
             elif meta['key']:
-                if isinstance(meta['key'],str) and SUBJECT.match('key:'+meta['key']+':month'):subjects.add('key:'+meta['key'])
+                if isinstance(meta['key'],str) and SUBJECT.fullmatch('key:'+meta['key']+':month'):subjects.add('key:'+meta['key'])
                 else:whole=False
             if not whole:
                 subjects.add('*');unattributed+=1
@@ -108,23 +209,18 @@ class Reservations:
                   "counted against every swarm, mind, person and key", flush=True)
         return done,unattributed
     def get(self,key):return self.db.one('SELECT * FROM cost_reservations WHERE id=?',(key,))
+    def free_unknown(self,model):
+        """Whether a $0 call to this model (held at the one-micro-dollar floor) has an unknown outcome (gateway.free_reserve)."""
+        return self.db.one("SELECT 1 FROM cost_reservations r JOIN cost_reservation_details d ON d.reservation=r.id "
+                           "WHERE r.state='unknown' AND r.maximum<=? AND json_extract(d.metadata,'$.model')=? LIMIT 1",(FREE_FLOOR_MICROS,model)) is not None
+    def settled(self,label):
+        """gateway r1a (plan §2.2): the settled cost, in USD, of every reservation recorded under this exact label (an Ask
+        turn's askturn:<id>, an Ask thread's askthread:<id>), in whatever way it settled (a late settle after a release
+        counts the same). Open holds are not counted: pending() counts those. The one source Sessions.thread_spent uses."""
+        return settled_usd(self.db,label)
     def pending(self,label):
-        """Micro-USD held by open reservations that a budget row applies to. By subject, whatever rows were in force when
-        each was reserved: every open liability is the hive's; a team, mind, person or key row counts every call
-        reserved for that subject, every hold marked '*' (not fully attributable) and every hold with no subjects at all (a
-        legacy hold not yet backfilled): the conservative side. A label with no known subject (an Ask turn's own cap)
-        counts exact-label holds only."""
-        subject=subject_of(label)
-        open_=" r.state IN ('reserved','dispatched','unknown')"
-        if subject=='hive':
-            return self.db.one('SELECT COALESCE(SUM(r.maximum),0) AS total FROM cost_reservations r WHERE'+open_)['total']
-        exact=' EXISTS (SELECT 1 FROM cost_reservation_scopes s WHERE s.reservation=r.id AND s.scope=?)'
-        if subject is None:
-            return self.db.one('SELECT COALESCE(SUM(r.maximum),0) AS total FROM cost_reservations r WHERE'+open_+' AND'+exact,(label,))['total']
-        return self.db.one('SELECT COALESCE(SUM(r.maximum),0) AS total FROM cost_reservations r WHERE'+open_+' AND ('+exact+
-                           " OR EXISTS (SELECT 1 FROM cost_reservation_subjects j WHERE j.reservation=r.id AND j.subject IN (?, '*'))"
-                           ' OR NOT EXISTS (SELECT 1 FROM cost_reservation_subjects j WHERE j.reservation=r.id))',
-                           (label,subject))['total']
+        """Micro-USD open S5 and delegated commitments for the existing budget subject."""
+        return pending_micros(self.db, label)
     def reserve(self,key,payload,maximum,budgets,metadata=None,dispatched=False,subjects=None):
         """budgets() -> [(scope+period identifier, limit USD, recorded spend USD)].
         subjects: what the call spends against (host_subjects); recorded with the liability so every later row about
@@ -178,6 +274,21 @@ class Reservations:
             row=self.get(key)
             if not row or row['state']!='reserved':raise ValueError('Dispatched liability cannot be released')
             self.db.execute("UPDATE cost_reservations SET state='released' WHERE id=?",(key,))
+    def release_unbilled(self,key,status):
+        """A sent call the provider refused in a way guaranteed unbilled (gateway.unbilled: an allowlisted provider and
+        status, e.g. OpenRouter 402, with no usage or cost in the body; never a timeout, 5xx or dropped connection):
+        its hold is released, with a resolution by 'hive:provider-refusal' naming the status. Only a reserved or dispatched row; an unknown one stays for a person (resolve). Returns True if released;
+        False if it was already released (a replay) or is in any other state, which is left untouched. A charge that
+        arrives anyway still settles (settle's late-after-release path) and is flagged."""
+        _resolutions(self.db)
+        with self.db.transaction():
+            row=self.get(key)
+            if not row or row['state'] not in {'reserved','dispatched'}:return False
+            self.db.execute("UPDATE cost_reservations SET state='released' WHERE id=?",(key,))
+            self.db.execute("INSERT OR IGNORE INTO cost_reservation_resolutions VALUES (?,?,?,?,?,?)",
+                            (key,'release',None,f'provider refused the call (HTTP {int(status)}); nothing was billed',
+                             'hive:provider-refusal',time.time()))
+            return True
     def settle(self,key,actual,record_usage,on_overrun=None):
         measured=micros(actual)
         with self.db.transaction():
@@ -214,32 +325,65 @@ class Reservations:
         return {'metadata':json.loads(row['metadata']),'observation':json.loads(row['observation']) if row['observation'] else None}
 
 
-def host_subjects(hive,agent_id,key_id=None,payer=None,own_key=False):
+def settled_usd(db,label):
+    """Reservations.settled without an instance (sessions.py reads it from the hive's database): one query, one source."""
+    if not db.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cost_reservation_scopes'"):return 0.0
+    n=db.one("SELECT COALESCE(SUM(r.actual),0) AS n FROM cost_reservations r JOIN cost_reservation_scopes c "
+             "ON c.reservation=r.id WHERE c.scope=? AND r.state='settled'",(label,))['n']
+    return n/1_000_000
+
+
+def host_subjects(hive,agent_id,key_id=None,payer=None,own_key=False,turn_bound=False):
     """Everything a call by this mind spends against, whether or not a rule on it exists yet: the hive, the mind, its
     team, the paying person (not on their own key, as Budgets.applicable) and the key."""
     fresh=hive._agent_row(agent_id)
     out=['hive','agent:'+fresh['id']]
     if fresh.get('swarm_id'):out.append('swarm:'+fresh['swarm_id'])
-    if payer and str(payer).startswith('user:u_') and not own_key:out.append('person:'+str(payer)[5:])
+    if payer and str(payer).startswith('user:u_') and (not own_key or turn_bound):
+        out.append('person:'+str(payer)[5:])   # gateway r1a: a turn-bound own-key call also counts under an admin's person rule
     if key_id:out.append('key:'+key_id)
     out.extend(hive.ownhive.subjects(key_id,payer))   # own hive H1.1: the call's key-limit scopes, limit or not, so a later limit counts it
     return out
 
 
-def host_budget_snapshot(hive,agent_id,key_id=None,payer=None,own_key=False):
+def host_use_check(hive,agent_id,key_id=None,payer=None,user=None):
+    """Call within Reservations.reserve's budgets callback, before any liability is accepted: the preflight's own use
+    authorization (OwnHive.use_check, from Budgets.check) read again now, for the same key, payer and calling person.
+    A person disabled or a grant revoked since admission leaves the payer unchanged on the hive's keys, so the payer
+    re-check alone would not see it; this raises the same 402 (no_key_grant, own_key_needed, ...) and nothing is held."""
+    hive.ownhive.use_check(hive._agent_row(agent_id),key_id,payer,user)
+
+
+def host_budget_snapshot(hive,agent_id,key_id=None,payer=None,own_key=False,turn_bound=False):
     """Host-owned current caps/spend; call within Reservations.reserve transaction.
 
     Shared by chat and future image/video/vision routes. Period labels exclude
     a particular calendar window so unresolved prior liabilities stay held.
+    turn_bound (gateway r1a, plan §2.6; only the personal-mind gateway passes True): the person's ONE monthly total
+    (Budgets.monthly_total) is always a row, and without one nothing is reserved (ValueError monthly_total_required).
     """
     fresh=hive._agent_row(agent_id)   # the stored spend, not the view's 6-place rounding (OmegaReview r6)
     rows={}
-    if hive.budgets.lifetime_cap_applies(fresh,None,payer,own_key):   # a $0 mind under a hive total is held by its auto limits instead (a personal mind: its person's allowance)
+    if hive.budgets.lifetime_cap_applies(fresh,None,payer,own_key,key_id,turn_bound):   # a $0 mind under a hive total is held by its auto limits instead (a personal mind: its person's allowance)
         rows["agent:"+fresh["id"]+":total"]=(fresh["budget_usd"] or 0,fresh["spent_usd"] or 0)
-    cap=hive.budgets.hard_cap()   # HIVE_BUDGET_USD only seeds a hive with no total on the Limits page (the owner 2026-10-07)
+    foundation=getattr(hive,'foundation',None)
+    ceiling=foundation.controller_ceiling(agent_id) if foundation is not None else None
+    if ceiling is not None:
+        label='agent:'+fresh['id']+':total'
+        # The same pure host-bound ceiling governs own calls and delegated admission.
+        # Lower existing own caps, including a governing zero, remain effective.
+        prior=rows.get(label)
+        rows[label]=(min(prior[0],ceiling) if prior else ceiling,fresh['spent_usd'] or 0)
+    cap=hive.budgets.hard_cap()   # HIVE_BUDGET_USD only seeds a hive with no total on the Limits page (Jon 2026-10-07)
     if cap:
         rows['hive:hard-total']=(cap,hive.budgets.hard_total_spent())
-    for scope,period,limit,origin in hive.budgets.applicable(fresh,key_id,payer,own_key):
+    found=list(hive.budgets.applicable(fresh,key_id,payer,own_key,turn_bound))
+    if turn_bound:
+        governing=hive.budgets.monthly_total(fresh,payer,own_key,key_id)
+        if governing is None:
+            raise ValueError('monthly_total_required')
+        found.append(governing)   # the governing row, named explicitly (r1.1 §C, T-MT3); merged below if already present
+    for scope,period,limit,origin in found:
         label=scope+':'+period
         spent=hive.budgets.spent(scope,period)
         if label in rows:limit=min(limit,rows[label][0])
@@ -287,7 +431,8 @@ def outstanding(reservations, states=("unknown", "dispatched", "reserved")):
                     "observation": json.loads(r["observation"]) if r["observation"] else None,
                     # Surface audit 20: hold age, auto-settle and whether a person may resolve it now
                     "dispatched_at": r["dispatched_at"], "unknown_at": r["unknown_at"], "resolvable": resolvable(r),
-                    "auto_settles_at": r["unknown_at"] + UNKNOWN_EXPIRY_SECONDS if r["unknown_at"] else None})
+                    "auto_settles_at": r["unknown_at"] + UNKNOWN_EXPIRY_SECONDS
+                    if r["unknown_at"] and r["maximum"] > FREE_FLOOR_MICROS else None})   # a $0 floor never auto-settles
     return out
 
 
@@ -350,8 +495,9 @@ def expire_unknown(reservations, record_usage_for, on_overrun=None, now=None, ma
     _resolutions(db)
     now = now or _time.time()
     done = []
-    for row in db.all("SELECT id, maximum, unknown_at FROM cost_reservations WHERE state='unknown' AND unknown_at IS NOT NULL AND unknown_at < ?",
-                      (now - max_age,)):
+    # a $0 model's floor is not a worst case: settling at it would hide a real charge and lift its block (sol R3 P1)
+    for row in db.all("SELECT id, maximum, unknown_at FROM cost_reservations WHERE state='unknown' AND unknown_at IS NOT NULL AND unknown_at < ? "
+                      "AND maximum > ?", (now - max_age, FREE_FLOOR_MICROS)):
         details = reservations.details(row["id"]) or {}
         with db.transaction():
             fresh = reservations.get(row["id"])

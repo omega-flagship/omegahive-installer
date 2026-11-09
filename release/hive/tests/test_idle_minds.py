@@ -129,9 +129,9 @@ def test_the_minds_reply_is_recorded_and_the_owner_reads_it(client):
     view = client.get(f"/api/agents/{a['id']}/health/idle").json()
     assert view["status"] == "asked" and view["question"].startswith("You've spent") and view["reply"] is None
     assert view["idle_calls_24h"] == 3 and view["idle_spend_24h"] == pytest.approx(0.12)
-    hive.record_agent_message(a["id"], {"text": "waiting for the owner's review of g_1", "conversation_id": f"c_{a['id']}"})
+    hive.record_agent_message(a["id"], {"text": "waiting for Jon's review of g_1", "conversation_id": f"c_{a['id']}"})
     view = client.get(f"/api/agents/{a['id']}/health/idle").json()
-    assert view["status"] == "replied" and view["reply"] == "waiting for the owner's review of g_1" and view["reply_at"]
+    assert view["status"] == "replied" and view["reply"] == "waiting for Jon's review of g_1" and view["reply_at"]
     assert view["history"][0]["status"] == "replied" and view["history"][0]["question_by"] == "hive:health"
     listed = client.get("/api/health/idle").json()
     item = next(m for m in listed["minds"] if m["id"] == a["id"])
@@ -259,15 +259,17 @@ def test_a_personal_minds_health_question_stays_in_its_persons_own_chat(monkeypa
         # the transcript: the person reads both; the operator and another admin read neither unless they audit
         url = f"/api/agents/{mind['id']}/messages"
         texts = lambda r: [m["text"] for m in r.json()]
-        assert any(t.startswith("[HEALTH-QUESTION") for t in texts(c.get(url, headers=ana)))
+        # people read Health's question plain and marked health_check (Peter on omegahive#50): found by its mark
+        marked = lambda r: [m for m in r.json() if m.get("health_check") is True]
+        assert marked(c.get(url, headers=ana)) and not any("HEALTH-QUESTION" in t for t in texts(c.get(url, headers=ana)))
         assert "synthetic: resting until Ana writes" in texts(c.get(url, headers=ana))
         for who in (op, cy):
             seen = texts(c.get(url, headers=who))
-            assert not any("HEALTH-QUESTION" in t for t in seen) and "synthetic: resting until Ana writes" not in seen
+            assert not marked(c.get(url, headers=who)) and "synthetic: resting until Ana writes" not in seen
             seen = texts(c.get(url + f"?conversation_id={own}", headers=who))
             assert seen == []
             audit = texts(c.get(url + "?include=all", headers=who))
-            assert any(t.startswith("[HEALTH-QUESTION") for t in audit) and "synthetic: resting until Ana writes" in audit
+            assert marked(c.get(url + "?include=all", headers=who)) and "synthetic: resting until Ana writes" in audit
         assert c.get(url + "?include=all", headers=ana).status_code == 403
         # live events: the person's frames reach her; not the operator, not another admin
         chat = [f for f in frames if f.startswith('{"type": "message"') and mind["id"] in f]
@@ -314,12 +316,12 @@ def test_a_shared_minds_health_question_naming_someone_stays_out_of_other_people
         q = health_messages(hive, mind["id"])[0]
         assert q["conversation_id"] == f"c_{mind['id']}" and "Ana wrote to you" in q["text"]
         url = f"/omegahive/api/agents/{mind['id']}/messages"
-        for who in (ana, bo):
-            assert not any("HEALTH-QUESTION" in m["text"] for m in c.get(url, headers=who).json())
+        for who in (ana, bo):   # by its mark: people read the question untagged (Peter on omegahive#50)
+            assert not any(m.get("health_check") or "HEALTH-QUESTION" in m["text"] for m in c.get(url, headers=who).json())
         frame = json.dumps({"type": "message", "message": hive.message_view(q)})
         assert hive.visibility.event_visible(Viewer(f"user:{bo_id}", False), frame) is False
         assert hive.visibility.event_visible(Viewer("user:operator", True), frame) is True    # the operator's own chat
-        assert any("HEALTH-QUESTION" in m["text"] for m in c.get(f"/api/agents/{mind['id']}/messages", headers=op).json())
+        assert any(m.get("health_check") for m in c.get(f"/api/agents/{mind['id']}/messages", headers=op).json())
         # other hive notes keep their old rule (test_mind_chat_identity)
         hive.enqueue_message(mind["id"], "[GOAL-NOTE] synthetic system note", None, "hive:goals")
         assert "[GOAL-NOTE] synthetic system note" in [m["text"] for m in c.get(url, headers=bo).json()]

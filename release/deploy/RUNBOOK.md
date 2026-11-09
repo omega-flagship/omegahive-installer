@@ -24,14 +24,11 @@ Everything lives in one place, run by one service account:
   cat /proc/sys/kernel/unprivileged_userns_clone
   ```
   The first must list `landlock`. The second must print `1`. If the file doesn't exist, that's also fine.
-  On Ubuntu 23.10 and later (including 24.04), AppArmor also restricts unprivileged user namespaces. Check
-  `cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns`: it must print `0`, or the hive's service account needs an
-  AppArmor profile that allows `userns`. Otherwise mind isolation fails with "Permission denied: /proc/self/setgroups".
 - **What isolation does.** Each mind runs in private user, network, process, IPC and mount namespaces. Landlock limits it to its own folder plus the runtime. Its only way out is a relay to the hive's own ports.
 - **If either requirement is missing,** the hive still runs, but it refuses to start minds (fail closed).
 - **Tested on the target server.** The isolation tests passed on the SingularityNET server (Ubuntu 22.04, kernel 5.15, Landlock ABI 1) as a normal user, with no root needed.
 - **Not included:**
-  - Atlas and OmegaTruth, which are private and stay on the owner's machine.
+  - Atlas and OmegaTruth, which are private and stay on Jon's Mac.
   - Any data from the Mac hive. The server starts empty.
 
 ## 1. Packages
@@ -111,6 +108,24 @@ sudo -iu omegahive bash -lc 'cd /opt/omegahive/app/hive/ui && npm ci && npm run 
 
    Keep comments on their own lines; systemd reads this file.
 3. In Google Cloud Console, add `https://YOUR.HOST/omegahive/api/auth/google/callback` to the OAuth client's redirect URIs.
+
+### Member passwords before Google sign-in
+
+On a non-J1 hive, an admin can use **People → Add a member with a password** while Google sign-in is not configured.
+Give the member their email and the password shown once; the hive keeps only its salted scrypt hash. Resetting or
+removing it ends that person's password sign-ins, and disabling them drops it. A password session always has member
+authority, including after a role promotion. The operator uses the hive password with the email field empty.
+
+Public member-password access additionally requires explicit `HIVE_PUBLIC_PASSWORD=1`. Once Google sign-in is
+configured, public member-password login and earlier member-password sessions are refused; the same email continues
+with Google as the same person. Public operator-password sessions remain refused in this fork. No live setting is
+changed by installing this code. J1 local-owner hives keep their one-time app sign-in and hide/refuse member passwords.
+
+Install the pinned `xkcdpass==1.30.0` from `hive/requirements.txt` with the deployment's ordinary dependency step.
+The packaged EFF long list must be present and readable at startup; the server refuses a missing or shortened list,
+including on a J1 host, rather than substitute a system dictionary. Do not install it into the running hive by hand
+as part of source review. Public guess counters are uniform for member and unknown emails and bounded in memory;
+their state restarts with the process and can be uniformly evicted when full. See the API Auth section for details.
 
 ## 5. Mind isolation
 

@@ -1,6 +1,6 @@
 /**
  * J3 r4.3 O3: the person's side of a live Studio session, as Platform's host plan proposes it
- * (coordination/omegareview/PLATFORM_J3R4_HOST_O1_O2_G1_PLAN.md §3.2–§5, contract r4.3 caf18e5b §2–§6).
+ * (PLATFORM_J3R4_HOST_O1_O2_G1_PLAN.md §3.2–§5, contract r4.3 caf18e5b §2–§6).
  *
  * Host R2+R3 routes are LIVE (eb006a94) but inert: Studio is OFF there and no host offers `capabilities.studio_sessions`,
  * so every client path stays closed (`studioCapable`, checked at each host call). R4 (L6 op ids) and R5 (steer, pause /
@@ -87,6 +87,7 @@ export interface LedgerBudget {
   monthly: MonthlyRow[]
 }
 export interface LedgerStop {
+  release_phase?: 'none' | 'prepared' | 'installed' | 'durable' | null
   state: 'none' | 'stopping' | 'stopped' | 'ended'
   fenced_at: string | null
   /** host R5 stop_view: reserved or dispatched calls under the session's label (null where a host sends none, as R3) */
@@ -105,6 +106,7 @@ export interface LedgerStop {
 }
 export interface PieceUploadView { seq: number; body_sha256: string; scene_ref: SceneRef | null; at: string | null }
 export interface Ledger {
+  credential_reason?: string | null
   session_id: string
   /** the host-minted P2a stream identity (Platform 2615: minted at G1, opaque, never from sid/proposal/mount/maker); null: not admitted yet → hold */
   stream_id: string | null
@@ -258,7 +260,7 @@ export interface OutcomeBody {
 /** host plan r1.2: {seq, body, scene_ref, edit_generation} plus the mount fields */
 export interface PieceBody extends MountWire { seq: number; body: string; scene_ref: SceneRef; edit_generation: number }
 export interface MountBody { expected_epoch: number | null; receiver_generation: number; stream_id: string; mount_id: string; attempt_id: string }
-export interface ControlBody { control_id: string; action: 'pause' | 'resume' | 'stop' | 'finish_stopping' }
+export interface ControlBody { control_id: string; action: 'pause' | 'resume' | 'stop' | 'finish_stopping' | 'repair_handoff' }
 /** host R5 steer answer's `studio` object: {session_id, seq, state:"queued", session_state} (studio_steer.direction) */
 /**
  * r1.10 (host R7 client contract): what the person chose for the card, sent to POST /api/studio/setup as `request`
@@ -418,6 +420,7 @@ function readStop(v: unknown): LedgerStop {
     release_stale: s.release_stale === true,
     message: hostWords(s.message),
     finish_stopping: s.finish_stopping === true,
+    release_phase: oneOf(s.release_phase, ['none', 'prepared', 'installed', 'durable'] as const),
   }
 }
 
@@ -448,6 +451,7 @@ export function readLedger(v: unknown, expectSession?: string): Ledger | null {
     stream_id: id(v.stream_id) ? v.stream_id : null,
     state,
     reason: str(v.state_reason ?? v.reason, 120),
+    credential_reason: str(v.credential_reason, 120),
     ask_turn_id: v.ask_turn_id,
     goal_id: v.goal_id,
     proposal_artifact_id: v.proposal_artifact_id,

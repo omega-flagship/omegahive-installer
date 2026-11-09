@@ -17,17 +17,17 @@ export const KIND: Record<Target['kind'], { label: string; icon: IconName; hue: 
  * One edit target. Surface request L: a target the host closed (next10 `closed_reason`) stays on the page and says why
  * in the host's words, with no Edit button at all. Without closed_reason (live 0aa6330) the card is as before.
  */
-export function TargetCard({ t }: { t: Target }) {
+export function TargetCard({ t, onOpen }: { t: Target; onOpen?: (id: string) => void }) {
   const hue = t.mind?.hue ?? KIND[t.kind].hue
   const reason = closedReason(t)
   const canOpen = targetOpenable(t)
   return (
-    <div className="flex flex-col rounded-2xl border border-line bg-white/[0.03] p-4 transition-colors hover:border-line-2" style={{ boxShadow: `0 20px 50px -34px ${hsl(hue, 100, 60, 0.6)}` }} aria-label={`Edit target ${t.label}`}>
+    <div className="flex flex-col rounded-2xl border border-line bg-tint/[0.03] p-4 transition-colors hover:border-line-2" style={{ boxShadow: `0 20px 50px -34px ${hsl(hue, 100, 60, 0.6)}` }} aria-label={`Edit target ${t.label}`}>
       <div className="flex items-start gap-3">
         {t.mind ? (
           <Orb hue={t.mind.hue} status={t.mind.status} size={34} />
         ) : (
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-line bg-black/25" style={{ color: hsl(hue, 100, 78) }}>
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-line bg-shade/25" style={{ color: hsl(hue, 100, 78) }}>
             <Icon name={KIND[t.kind].icon} size={17} />
           </span>
         )}
@@ -61,7 +61,7 @@ export function TargetCard({ t }: { t: Target }) {
           <span className="min-w-0 truncate text-[11.5px] text-ink-3" title={t.apply.note}>
             Apply: {t.apply.ready ? t.apply.how : `${t.apply.how} (coming)`}
           </span>
-          <Button variant="subtle" icon={canOpen ? 'edit' : t.private ? 'shield' : 'ban'} disabled={!canOpen} title={canOpen ? undefined : t.private ? `Private: ${t.owner} has to agree first` : 'Not under source control yet'} onClick={() => navigate({ name: 'code', target: t.id })} className="min-h-9 px-3 text-[12.5px]">
+          <Button variant="subtle" icon={canOpen ? 'edit' : t.private ? 'shield' : 'ban'} disabled={!canOpen} title={canOpen ? undefined : t.private ? `Private: ${t.owner} has to agree first` : 'Not under source control yet'} onClick={() => onOpen ? onOpen(t.id) : navigate({ name: 'code', target: t.id })} className="min-h-9 px-3 text-[12.5px]">
             {canOpen ? 'Edit code' : t.private ? 'Owner must agree' : 'No source control'}
           </Button>
         </div>

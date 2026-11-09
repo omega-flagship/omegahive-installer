@@ -67,7 +67,7 @@ export function ConfirmHost() {
   useModalContainment(box, { active: !!pending && active })
   if (!pending || !active) return null
   return (
-    <div className="xc-dress xc-backdrop fixed inset-0 z-[95] flex items-center justify-center bg-black/50 p-4" role="presentation" onClick={() => settle(false)}>
+    <div className="xc-dress xc-backdrop fixed inset-0 z-[95] flex items-center justify-center bg-shade/50 p-4" role="presentation" onClick={() => settle(false)}>
       <div ref={box} role="alertdialog" aria-modal="true" aria-label="Confirm" className="xc-frame w-full max-w-sm rounded-2xl border border-line bg-abyss p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <p className="text-[14px] text-ink [overflow-wrap:anywhere]">{pending.message}</p>
         <div className="mt-4 flex flex-wrap justify-end gap-2">

@@ -1,3 +1,5 @@
+import { healthCheck } from '../../lib/healthQuestion'
+import { HealthCheckLabel } from '../../ui/HealthCheckLabel'
 import { AnimatePresence, m } from 'framer-motion'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useDraft } from '../../experiences/drafts'
@@ -115,7 +117,7 @@ export function Chat({ agent }: { agent: Agent }) {
             <p className="mt-1 max-w-[260px] text-sm text-ink-3">Replies stream in live. Try one of these:</p>
             <div className="mt-4 flex flex-wrap justify-center gap-2">
               {SUGGESTIONS.map((s) => (
-                <button key={s} onClick={() => submit(s)} className="min-h-10 rounded-full border border-line bg-white/[0.04] px-3.5 text-[13px] text-ink-2 hover:border-line-2 hover:text-ink">
+                <button key={s} onClick={() => submit(s)} className="min-h-10 rounded-full border border-line bg-tint/[0.04] px-3.5 text-[13px] text-ink-2 hover:border-line-2 hover:text-ink">
                   {s}
                 </button>
               ))}
@@ -125,7 +127,7 @@ export function Chat({ agent }: { agent: Agent }) {
           <ol className="space-y-2.5">
             {messages.map((m, i) => {
               const prev = messages[i - 1]
-              const grouped = prev && prev.sender === m.sender && Date.parse(m.created_at) - Date.parse(prev.created_at) < 120_000
+              const grouped = prev && prev.sender === m.sender && healthCheck(prev) === healthCheck(m) && Date.parse(m.created_at) - Date.parse(prev.created_at) < 120_000
               return (
                 <Bubble
                   key={m.id}
@@ -145,7 +147,7 @@ export function Chat({ agent }: { agent: Agent }) {
                 <m.div
                   initial={{ opacity: 0, y: 8, scale: 0.97 }}
                   animate={{ opacity: p.status === 'sending' ? 0.7 : 1, y: 0, scale: 1 }}
-                  className={cx('max-w-[85%] rounded-2xl rounded-br-md px-3.5 py-2 text-[14px] leading-relaxed', p.status === 'failed' ? 'border border-bad/40 bg-bad/10' : 'bg-white/[0.1]')}
+                  className={cx('max-w-[85%] rounded-2xl rounded-br-md px-3.5 py-2 text-[14px] leading-relaxed', p.status === 'failed' ? 'border border-bad/40 bg-bad/10' : 'bg-tint/[0.1]')}
                 >
                   {p.text}
                 </m.div>
@@ -213,7 +215,7 @@ export function Chat({ agent }: { agent: Agent }) {
             {agent.status === 'asleep' ? `${shown(agent.name)} is asleep; a message will wake it.` : `${shown(agent.name)} is ${agent.status}; messages wait in the queue.`}
           </p>
         )}
-        <div className="flex items-end gap-2 rounded-2xl border border-line bg-black/25 p-1.5 pl-3.5 transition-colors focus-within:border-line-2">
+        <div className="flex items-end gap-2 rounded-2xl border border-line bg-shade/25 p-1.5 pl-3.5 transition-colors focus-within:border-line-2">
           <label htmlFor={`compose-${id}`} className="sr-only">
             Message {shown(agent.name)}
           </label>
@@ -232,7 +234,7 @@ export function Chat({ agent }: { agent: Agent }) {
             type="submit"
             whileTap={{ scale: 0.9 }}
             disabled={!text.trim()}
-            className="flex size-11 shrink-0 items-center justify-center rounded-xl text-[#0b0820] transition-opacity disabled:opacity-30"
+            className="flex size-11 shrink-0 items-center justify-center rounded-xl text-primary-ink transition-opacity disabled:opacity-30"
             style={{ background: `linear-gradient(180deg, ${hsl(agent.hue, 100, 84)}, ${hsl(agent.hue, 90, 68)})`, boxShadow: `0 6px 22px -6px ${hsl(agent.hue, 100, 60, 0.7)}` }}
             aria-label="Send message"
           >
@@ -270,7 +272,7 @@ export function Bubble({
     return (
       <m.li initial={fresh ? { opacity: 0, y: 8 } : false} animate={{ opacity: 1, y: 0 }} className={cx('flex flex-col', person.mine ? 'items-end' : 'items-start')} data-chat-sender={person.label}>
         {!grouped && !person.mine && <span className="mb-1 text-[11px] font-medium text-ink-2">{person.label}</span>}
-        <div className={cx('max-w-[85%] rounded-2xl px-3.5 py-2 text-[14px] leading-relaxed text-ink', person.mine ? 'rounded-br-md bg-white/[0.1]' : 'rounded-bl-md border border-line bg-white/[0.04]')}>{msg.text}</div>
+        <div className={cx('max-w-[85%] rounded-2xl px-3.5 py-2 text-[14px] leading-relaxed text-ink', person.mine ? 'rounded-br-md bg-tint/[0.1]' : 'rounded-bl-md border border-line bg-tint/[0.04]')}>{msg.text}</div>
         {!grouped && <time className="mt-1 text-[10px] text-ink-4">{person.mine ? `${person.label} · ` : ''}{clockTime(msg.created_at)}</time>}
       </m.li>
     )
@@ -286,6 +288,8 @@ export function Bubble({
               <button onClick={() => navigate({ name: 'dot', id: peerId })} className="font-medium text-ink-2 hover:text-ink">
                 {peerName(peerId)} <span className="text-ink-4">→ {shown(agent.name)}</span>
               </button>
+            ) : healthCheck(msg) ? (
+              <HealthCheckLabel />
             ) : (
               <span className="font-medium text-ink-2">
                 {shown(agent.name)}

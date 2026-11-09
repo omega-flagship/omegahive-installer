@@ -685,4 +685,100 @@ def test_the_install_status_applies_the_audience_first(x):
     assert x.client.put(f"/api/programs/{SOLO}/install/person-allow", headers=x.ann,
                         json={"person_allow": [BOB_P]}).status_code == 200
     assert status(x, SOLO, headers=x.bob)["installed"] is True
-    assert status(x, SOLO, headers=x.cy) == {"program": SOLO, "placement": "person", "installed": False}
+    # Ask-and-apps R1 (Dot ruling, consolidated item 5): outside the audience the app looks like no app at all
+    r = x.client.get(f"/api/programs/{SOLO}/install", headers=x.cy)
+    assert r.status_code == 404 and r.json()["error"]["code"] == "not_found"
+
+
+# ---- the deployer's install review (HIVE_APP_INSTALLS) ----------------------------------------------------------------
+
+def _fresh(x, app_id=SOLO):
+    x.hive.db.execute("DELETE FROM app_install_reviews WHERE program = ?", (app_id,))
+
+
+def test_deploy_install_makes_a_pinned_person_app_ready_with_no_admin_click(x, monkeypatch):
+    _fresh(x)
+    monkeypatch.setenv("HIVE_APP_INSTALLS", json.dumps({SOLO: {"placement": "person", "person_allow": "all"}}))
+    PersonApps(x.hive)                                           # what the deployer's restart constructs
+    assert x.hive.person_apps.deploy_installs() == []            # already current: nothing to do again
+    row = x.hive.db.one("SELECT * FROM app_install_reviews WHERE program = ?", (SOLO,))
+    assert row["by_person"] == "operator:deploy" and row["revoked_at"] is None
+    assert opened(x, SOLO, x.bob)["swarm_id"]
+
+
+def test_deploy_install_only_for_the_pinned_release_and_follows_an_update(x, monkeypatch):
+    _fresh(x)
+    monkeypatch.setenv("HIVE_APP_INSTALLS", json.dumps({SOLO: {"placement": "person"}}))
+    assert x.hive.person_apps.deploy_installs() == [SOLO]
+    first = x.hive.db.one("SELECT release_digest FROM app_install_reviews WHERE program = ?", (SOLO,))["release_digest"]
+    mount(x, monkeypatch, {**MANIFESTS, SOLO: {**MANIFESTS[SOLO], "version": "1.0.1"}})
+    failure(open_app(x, SOLO, x.bob), "release_changed")         # a new release is not the reviewed one ...
+    assert x.hive.person_apps.deploy_installs() == [SOLO]        # ... until the deployer's restart reviews it
+    row = x.hive.db.one("SELECT release_digest FROM app_install_reviews WHERE program = ?", (SOLO,))
+    assert row["release_digest"] != first
+    assert opened(x, SOLO, x.bob)["swarm_id"]
+
+
+def test_deploy_install_never_overrides_an_admin_revoke(x, monkeypatch):
+    assert x.client.delete(f"/api/programs/{SOLO}/install", headers=x.ann).status_code in (200, 204)
+    monkeypatch.setenv("HIVE_APP_INSTALLS", json.dumps({SOLO: {"placement": "person"}}))
+    assert x.hive.person_apps.deploy_installs() == []
+    assert x.hive.db.one("SELECT revoked_at FROM app_install_reviews WHERE program = ?", (SOLO,))["revoked_at"]
+    assert open_app(x, SOLO, x.bob).status_code == 409           # still refused (turned off and revoked)
+
+
+@pytest.mark.parametrize("spec", [
+    {"placement": "swarm"}, {"placement": "person", "use_in": []}, {"placement": "person", "person_allow": "everyone"}, [],
+])
+def test_deploy_install_refuses_anything_but_a_person_install(x, monkeypatch, spec):
+    _fresh(x)
+    monkeypatch.setenv("HIVE_APP_INSTALLS", json.dumps({SOLO: spec}))
+    assert x.hive.person_apps.deploy_installs() == []
+    failure(open_app(x, SOLO, x.bob), "not_reviewed")
+
+
+def test_deploy_install_refuses_swarm_apps_unpinned_apps_and_a_wider_audience(x, monkeypatch):
+    mount(x, monkeypatch, {**MANIFESTS, SOLO: {**MANIFESTS[SOLO], "person_allow": [BOB_P]}})
+    _fresh(x)
+    monkeypatch.setenv("HIVE_APP_INSTALLS", json.dumps({
+        SOLO: {"placement": "person", "person_allow": "all"},    # wider than the manifest's [BOB]
+        SHARED: {"placement": "person"}, "no-such-app": {"placement": "person"}}))
+    assert x.hive.person_apps.deploy_installs() == []
+    assert x.hive.db.one("SELECT 1 FROM app_install_reviews WHERE program = ?", (SOLO,)) is None
+
+
+def test_a_bad_setting_installs_nothing(x, monkeypatch):
+    _fresh(x)
+    monkeypatch.setenv("HIVE_APP_INSTALLS", "{not json")
+    assert x.hive.person_apps.deploy_installs() == []
+    failure(open_app(x, SOLO, x.bob), "not_reviewed")
+
+
+def test_deploy_install_never_re_widens_an_admin_restrict_same_release(x, monkeypatch):
+    r = x.client.put(f"/api/programs/{SOLO}/install/person-allow", headers=x.ann, json={"person_allow": [BOB_P]})
+    assert r.status_code == 200, r.text
+    monkeypatch.setenv("HIVE_APP_INSTALLS", json.dumps({SOLO: {"placement": "person", "person_allow": "all"}}))
+    assert x.hive.person_apps.deploy_installs() == []
+    row = x.hive.db.one("SELECT audience FROM app_install_reviews WHERE program = ?", (SOLO,))
+    assert json.loads(row["audience"]) == [BOB_P]
+
+
+def test_deploy_install_keeps_an_admin_restrict_across_an_update(x, monkeypatch):
+    r = x.client.put(f"/api/programs/{SOLO}/install/person-allow", headers=x.ann, json={"person_allow": [BOB_P]})
+    assert r.status_code == 200, r.text
+    mount(x, monkeypatch, {**MANIFESTS, SOLO: {**MANIFESTS[SOLO], "version": "1.0.1"}})
+    monkeypatch.setenv("HIVE_APP_INSTALLS", json.dumps({SOLO: {"placement": "person", "person_allow": "all"}}))
+    assert x.hive.person_apps.deploy_installs() == [SOLO]
+    row = x.hive.db.one("SELECT audience, by_person FROM app_install_reviews WHERE program = ?", (SOLO,))
+    assert json.loads(row["audience"]) == [BOB_P] and row["by_person"] == "operator:deploy"
+    assert opened(x, SOLO, x.bob)["swarm_id"]
+    failure(open_app(x, SOLO, x.cy), "not_available_to_you")
+
+
+def test_deploy_install_leaves_a_disabled_app_turned_off(x, monkeypatch):
+    x.hive.programs.set_enabled(SOLO, False, ANN_P)
+    _fresh(x)
+    monkeypatch.setenv("HIVE_APP_INSTALLS", json.dumps({SOLO: {"placement": "person"}}))
+    x.hive.person_apps.deploy_installs()
+    assert SOLO in x.hive.programs.disabled
+    failure(open_app(x, SOLO, x.bob), "app_turned_off")

@@ -1,5 +1,5 @@
 /**
- * The Code canvas's vibe request on the Ask's linkage intents (spec r3.6 §(a); host release main 39c0731) and Quinn's
+ * The Code canvas's vibe request on the Ask's linkage intents (spec r3.6 §(a); host release main 39c0731) and Jon's
  * apply-to-live-only ruling (2026-10-07), as behaviour over the simulator's invented code service and intents mirror:
  * the route order, the capability fallback, copy-apply on (no Accept, Undo works) and off (the confirm stays), and
  * never /api/requests. INVENTED DATA only; no hive.
@@ -124,7 +124,7 @@ describe('capability fallback: a hive without the route says so, and sends nothi
   })
 })
 
-// r4 [P1] (stand-in r3): the owner's rule is that the person accepts. Copy-apply on never stands in for that OK; a change the
+// r4 [P1] (stand-in r3): Jon's rule is that the person accepts. Copy-apply on never stands in for that OK; a change the
 // team puts in without it is said plainly, with Undo, and never shown as accepted.
 describe('r4: copy-apply on → still Accept and confirm; a change put in without your OK is labelled, with Undo', () => {
   // INVENTED: calculator.py's `return a - b`; "fix the sum" proposes `return a + b` (the same length, so the sim's

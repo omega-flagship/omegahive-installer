@@ -95,8 +95,8 @@ const SEEDS: Seed[] = [
     kind: 'owed',
     owed: (now) => [{ type: 'goal', goal_id: 'g_sim_runbook', title: 'Rewrite the on-call runbook', goal_status: 'claimed', since: iso(now - 4 * H) }],
     history: (now) => [
-      rec({ question_id: 'hq_sim_anvil2', kind: 'owed', question: '[HEALTH-QUESTION hq_sim_anvil2] You hold the task "Rewrite the on-call runbook" (g_sim_runbook) since an invented time: finish, hand off or release it?', question_at: iso(now - 40 * M), status: 'replied', reply: 'Waiting on Bellows for the budget section; I will finish the rest today.', reply_at: iso(now - 31 * M), idle_calls_24h: 6, idle_spend_24h: 0.1874 }),
-      rec({ question_id: 'hq_sim_anvil1', kind: 'idle', question: '[HEALTH-QUESTION hq_sim_anvil1] You’ve spent $0.42 over 3 hours with no input: sleep, or tell me what you’re waiting for?', question_at: iso(now - 30 * H), status: 'resolved', closed_at: iso(now - 29 * H), idle_calls_24h: 11, idle_spend_24h: 0.42 }),
+      rec({ question_id: 'hq_sim_anvil2', kind: 'owed', question: 'You hold the task "Rewrite the on-call runbook" (g_sim_runbook) since an invented time: finish, hand off or release it?', question_at: iso(now - 40 * M), status: 'replied', reply: 'Waiting on Bellows for the budget section; I will finish the rest today.', reply_at: iso(now - 31 * M), idle_calls_24h: 6, idle_spend_24h: 0.1874 }),
+      rec({ question_id: 'hq_sim_anvil1', kind: 'idle', question: 'You’ve spent $0.42 over 3 hours with no input: sleep, or tell me what you’re waiting for?', question_at: iso(now - 30 * H), status: 'resolved', closed_at: iso(now - 29 * H), idle_calls_24h: 11, idle_spend_24h: 0.42 }),
     ],
   },
   {
@@ -106,7 +106,7 @@ const SEEDS: Seed[] = [
     inputAgo: 5 * H,
     kind: 'owed',
     owed: (now) => [{ type: 'message', message_id: 'm_sim_vega1', conversation_id: 'c_a_vega01~user:p_ada', from: 'user:p_ada', from_name: 'Ada Brightwater', since: iso(now - 5 * H) }],
-    history: (now) => [rec({ question_id: 'hq_sim_vega1', kind: 'owed', question: '[HEALTH-QUESTION hq_sim_vega1] Ada Brightwater wrote to you at an invented time and has no reply yet: answer, or say what you are waiting for?', question_at: iso(now - 70 * M), status: 'asked', idle_calls_24h: 2, idle_spend_24h: 0.0391 })],
+    history: (now) => [rec({ question_id: 'hq_sim_vega1', kind: 'owed', question: 'Ada Brightwater wrote to you at an invented time and has no reply yet: answer, or say what you are waiting for?', question_at: iso(now - 70 * M), status: 'asked', idle_calls_24h: 2, idle_spend_24h: 0.0391 })],
   },
   { id: 'a_nori06', calls: 0, spend: 0, inputAgo: 7 * H, kind: 'silent', owed: () => [], history: () => [] },
   { id: 'a_mira04', calls: 0, spend: 0, inputAgo: 20 * M, kind: null, owed: () => [], history: () => [] },
@@ -119,7 +119,7 @@ export class SimIdleMinds {
   constructor(private host: SimIdleHost) {
     const now = host.now()
     for (const s of SEEDS) this.history.set(s.id, s.history(now))
-    this.history.set(PIP, [rec({ question_id: 'hq_sim_pip1', kind: 'silent', question: '[HEALTH-QUESTION hq_sim_pip1] You’ve been awake 2 hours with no input and no output: sleep, or tell me what you’re waiting for?', question_at: iso(now - 50 * M), status: 'asked' })])
+    this.history.set(PIP, [rec({ question_id: 'hq_sim_pip1', kind: 'silent', question: 'You’ve been awake 2 hours with no input and no output: sleep, or tell me what you’re waiting for?', question_at: iso(now - 50 * M), status: 'asked' })])
   }
 
   private pip(): SimIdleAgent {
@@ -228,7 +228,7 @@ export class SimIdleMinds {
           : seed && seed.calls > 0
             ? `You’ve spent $${seed.spend.toFixed(2)} over the last hours with no input: sleep, or tell me what you’re waiting for?`
             : 'You’ve been awake for hours with no input and no output: sleep, or tell me what you’re waiting for?'
-      hist.unshift(rec({ question_id: qid, kind: seed?.kind ?? 'idle', owed: seed?.owed(now) ?? [], question: `[HEALTH-QUESTION ${qid}] ${text}`, question_at: iso(now), question_by: me.principal, status: 'asked', idle_calls_24h: seed?.calls ?? 0, idle_spend_24h: seed?.spend ?? 0 }))
+      hist.unshift(rec({ question_id: qid, kind: seed?.kind ?? 'idle', owed: seed?.owed(now) ?? [], question: text, question_at: iso(now), question_by: me.principal, status: 'asked', idle_calls_24h: seed?.calls ?? 0, idle_spend_24h: seed?.spend ?? 0 }))
       this.history.set(id, hist.slice(0, 20))
     }
     return this.detail(id)

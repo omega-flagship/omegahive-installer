@@ -1,7 +1,7 @@
 """OI-13 r1.1 (stand-in P1): a person's key pays only for its owner, someone the owner granted, or a hive mind with no
 person behind it, whether the key is assigned to the mind or is the provider default. The gateway refuses anyone else
 with 402 own_key_needed before any reservation or dispatch, on chat, embeddings and media alike. Hive-held keys
-(environment keys, owner hive or the operator) are unchanged. the owner 2026-10-19: "everyone needs studio, they just need to
+(environment keys, owner hive or the operator) are unchanged. Jon 2026-10-19: "everyone needs studio, they just need to
 use their own keys".
 """
 import time
@@ -41,7 +41,7 @@ def g(client, fake):  # noqa: F811
     client.get("/api/providers/openrouter/catalog")            # prices for acme/alpha
     person(client, ANN, role="admin")                          # the first admin: the hive's owner
     person(client, BOB)
-    add_key(hive, K_ANN, f"user:{ANN}", "sk-or-ann-personal", default=True)   # Ann's own key is the provider default
+    add_key(hive, K_ANN, f"user:{ANN}", "sk-or-jon-personal", default=True)   # Ann's own key is the provider default
     swarm = hive.create_swarm("Lab")
     bob_mind = hive.create_agent("Bix", "omega", swarm["id"], MODEL, "", None, 1.0, None, None, f"user:{BOB}", "private", None)
     hive_mind = hive.create_agent("Hivey", "omega", swarm["id"], MODEL, "", None, 1.0, None, None, None, "private", None)
@@ -82,7 +82,7 @@ def test_a_grant_from_the_owner_lets_the_member_use_it(g):
     ann.ownhive.set_limit(Viewer(f"user:{ANN}", True), f"user:{BOB}", {"grantee": f"user:{BOB}", "key_id": K_ANN, "month_usd": 5})
     r = chat(g, g.bob_mind)
     assert r.status_code == 200, r.text
-    assert g.fake.chats[-1][0] == "sk-or-ann-personal"
+    assert g.fake.chats[-1][0] == "sk-or-jon-personal"
 
 
 def test_the_owner_and_a_hive_mind_are_allowed(g):
@@ -178,7 +178,7 @@ def test_embeddings_grant_with_room_reserves_and_records_against_the_key(emb):
     grant(emb, 5)
     r = embed(emb, emb.bob_mind)
     assert r.status_code == 200, r.text
-    assert len(emb.sent) == 1 and emb.sent[0][2] == "sk-or-ann-personal"
+    assert len(emb.sent) == 1 and emb.sent[0][2] == "sk-or-jon-personal"
     (res,) = emb.hive.db.all("SELECT id FROM cost_reservations")
     meta = emb.client.app.state.hive.db.one("SELECT metadata FROM cost_reservation_details WHERE reservation = ?", (res["id"],))
     import json

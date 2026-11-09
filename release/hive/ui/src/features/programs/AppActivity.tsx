@@ -81,7 +81,7 @@ export function AppAccess({ programId, name, onClose }: { programId: string; nam
               Where {name} runs
             </h2>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="flex size-10 items-center justify-center rounded-xl text-ink-3 hover:bg-white/[0.07] hover:text-ink">
+          <button type="button" onClick={onClose} aria-label="Close" className="flex size-10 items-center justify-center rounded-xl text-ink-3 hover:bg-tint/[0.07] hover:text-ink">
             <Icon name="x" size={18} />
           </button>
         </div>
@@ -140,12 +140,12 @@ function Activations({ programId, name, admin, onDeciding }: { programId: string
   return (
     <>
       <p className="mb-2 text-[12.5px] text-ink-3">An app works in a swarm only once a named admin activates it there. Activating gives no mind access by itself.</p>
-      <ul className="overflow-hidden rounded-xl border border-line bg-black/20">
+      <ul className="overflow-hidden rounded-xl border border-line bg-shade/20">
         {Object.values(swarms).map((s, i) => {
           const on = state(s.id)
           return (
             <li key={s.id} className={cx('flex items-center gap-3 px-3 py-2.5', i > 0 && 'border-t border-line')}>
-              <span className={cx('size-2 rounded-full', on ? 'bg-good' : 'bg-white/20')} aria-hidden="true" />
+              <span className={cx('size-2 rounded-full', on ? 'bg-good' : 'bg-tint/20')} aria-hidden="true" />
               <div className="min-w-0 flex-1 text-[13px]">
                 <div className="text-ink">{shown(s.name)}</div>
                 <div className="text-meta text-ink-4">{on ? `active · ${liveAtts(s.id).length} mind${liveAtts(s.id).length === 1 ? '' : 's'} attached` : rows.some((r) => r.swarm_id === s.id) ? 'deactivated' : 'never activated'}</div>
@@ -251,7 +251,7 @@ function Attachments({ programId, name, admin, onDeciding }: { programId: string
       {list.length === 0 ? (
         <p className="rounded-xl border border-dashed border-line px-3 py-3 text-center text-[12.5px] text-ink-4">No mind has been attached to {name}.</p>
       ) : (
-        <ul className="overflow-hidden rounded-xl border border-line bg-black/20">
+        <ul className="overflow-hidden rounded-xl border border-line bg-shade/20">
           {list.map((a, i) => (
             <li key={a.id} className={cx('flex items-start gap-3 px-3 py-2.5 text-[13px]', i > 0 && 'border-t border-line')}>
               <div className="min-w-0 flex-1">
@@ -283,13 +283,13 @@ function Attachments({ programId, name, admin, onDeciding }: { programId: string
         </ul>
       )}
       {admin && has(client, 'offerProgram') && has(client, 'attachProgram') && (
-        <div className="mt-3 rounded-xl border border-line bg-white/[0.02] p-3">
+        <div className="mt-3 rounded-xl border border-line bg-tint/[0.02] p-3">
           <div className="text-[13px] font-medium text-ink">Attach a mind</div>
           {candidates.length === 0 ? (
             <p className="mt-1 text-[12.5px] text-ink-4">{activeSwarms.size ? 'Every mind in the swarms where it is active is attached.' : `Activate ${name} in a swarm first.`}</p>
           ) : (
             <div className="mt-2 flex flex-wrap gap-2">
-              <select value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Mind to attach" className="min-h-10 min-w-[180px] flex-1 rounded-xl border border-line bg-black/30 px-2.5 text-[13px] text-ink outline-none focus:border-line-2">
+              <select value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Mind to attach" className="min-h-10 min-w-[180px] flex-1 rounded-xl border border-line bg-shade/30 px-2.5 text-[13px] text-ink outline-none focus:border-line-2">
                 <option value="">Choose a mind…</option>
                 {candidates.map((a) => (
                   <option key={a.id} value={a.id}>
@@ -450,7 +450,7 @@ function AttachDialog({ programId, name, mind, offer, onClose, onDone }: { progr
       )}
       <label className="block">
         <span className="text-[12px] text-ink-3">Ends after (days; empty for no end)</span>
-        <input inputMode="numeric" value={days} onChange={(e) => setDays(e.target.value.replace(/[^\d]/g, ''))} className="mt-1 min-h-10 w-28 rounded-xl border border-line bg-black/30 px-3 font-mono text-[13px] text-ink outline-none focus:border-line-2" />
+        <input inputMode="numeric" value={days} onChange={(e) => setDays(e.target.value.replace(/[^\d]/g, ''))} className="mt-1 min-h-10 w-28 rounded-xl border border-line bg-shade/30 px-3 font-mono text-[13px] text-ink outline-none focus:border-line-2" />
       </label>
     </DecisionDialog>
   )
@@ -471,7 +471,7 @@ export function ActivityList({ program, limit = 50, compact }: { program?: strin
   const rows: AppActivityRow[] = res.data ?? []
   if (!rows.length) return <p className="rounded-xl border border-dashed border-line px-3 py-3 text-center text-[12.5px] text-ink-4">No app actions yet.</p>
   return (
-    <ul className="overflow-hidden rounded-xl border border-line bg-black/20 text-[12.5px]">
+    <ul className="overflow-hidden rounded-xl border border-line bg-shade/20 text-[12.5px]">
       {rows.map((r, i) => (
         <li key={r.id} className={cx('flex items-start gap-2.5 px-3 py-2', i > 0 && 'border-t border-line')}>
           <span className={cx('mt-0.5 shrink-0 text-[11px] font-semibold', STATUS_TONE[r.status ?? 'pending'] ?? 'text-ink-3')}>{r.status ?? 'pending'}</span>

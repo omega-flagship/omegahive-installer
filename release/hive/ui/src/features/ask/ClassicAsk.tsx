@@ -7,7 +7,7 @@
  * Behaviour is the shared headless hook (useAskField); this file is only the look and the placement.
  */
 import { AnimatePresence, m } from 'framer-motion'
-import { useEffect, useId, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { guardComposing } from './keys'
 import { useReducedMotion } from '../../lib/hooks'
 import { useAskStore } from '../../store/ask'
@@ -21,9 +21,9 @@ import { money, shownMind } from './words'
 import type { Candidate } from '../../lib/intent'
 import { useAskBridge } from './bridge'
 import { SKIN_WORDS, type FloatingLook } from './skins'
-import { navigate } from '../../lib/router'
-import { AnswererChipButton, AnswererPicker } from './AnswererPicker'
-import { holdPopFlag, MIND_PANEL_BODY, POP_ROOM_VAR, popRoom, usePopDismiss } from './popDismiss'
+import { AnswererPicker } from './AnswererPicker'
+import { holdPopFlag, MIND_PANEL_BODY, POP_ROOM_VAR, popRoom } from './popDismiss'
+import { AskLeadMark } from '../../brand/AskLeadMark'
 
 const parts = (c: Candidate) =>
   c.parts.map((p, j) =>
@@ -44,7 +44,7 @@ const sentence = (c: Candidate) => c.parts.map((p) => p.t).join('')
 type SheetHeight = 'peek' | 'half' | 'full'
 
 /** Classic's capsule. */
-export function ClassicAsk(p: { place: Placement; experience: string; inputRef: RefObject<HTMLInputElement | null>; displayedOriginCurrent?: () => boolean }) {
+export function ClassicAsk(p: { place: Placement; experience: string; inputRef: RefObject<HTMLInputElement | null>; displayedOriginCurrent?: () => boolean; boxRef?: (box: HTMLDivElement | null) => void }) {
   return <FloatingAsk {...p} look="capsule" />
 }
 
@@ -74,9 +74,9 @@ function Mark({ look }: { look: FloatingLook }) {
   return <>✦</>
 }
 
-export function FloatingAsk({ place, experience, inputRef, look, displayedOriginCurrent }: { place: Placement; experience: string; inputRef: RefObject<HTMLInputElement | null>; look: FloatingLook; displayedOriginCurrent?: () => boolean }) {
+export function FloatingAsk({ place, experience, inputRef, look, displayedOriginCurrent, sharedDraft, boxRef }: { place: Placement; experience: string; inputRef: RefObject<HTMLInputElement | null>; look: FloatingLook; displayedOriginCurrent?: () => boolean; sharedDraft?: Parameters<typeof useAskField>[0]['draft']; boxRef?: (box: HTMLDivElement | null) => void }) {
   const words = SKIN_WORDS[look]
-  const field = useAskField({ experience })
+  const field = useAskField({ experience, draft: sharedDraft })
   const mayAct = () => !displayedOriginCurrent || displayedOriginCurrent()
   // A retained fallback choice must not capture a later Ask origin on invocation.
   // This invalidates the displayed origin locally; the native host remains authority.
@@ -110,9 +110,11 @@ export function FloatingAsk({ place, experience, inputRef, look, displayedOrigin
   const within = useFocusWithin()
   const focused = within.focused
   const [sheet, setSheet] = useState<SheetHeight>('half')
-  /** "Choose who answers" is open above the field (answerer.ts) */
-  const [choosing, setChoosing] = useState(false)
   const capsule = useRef<HTMLDivElement>(null)
+  const bindCapsule = useCallback((box: HTMLDivElement | null) => {
+    capsule.current = box
+    boxRef?.(box)
+  }, [boxRef])
   const sheetRef = useRef<HTMLDivElement>(null)
   // voice: the browser's own speech recognition, words into this field (useAskVoice, voice.ts)
   const voice = useAskVoice(f, inputRef, capsule)
@@ -136,8 +138,6 @@ export function FloatingAsk({ place, experience, inputRef, look, displayedOrigin
   const listening = v.listening
   const glassRef = useRef<HTMLDivElement>(null)
   const popRef = useRef<HTMLDivElement>(null)
-  // the answerer picker closes like the policy's panel does (useAskField): Esc anywhere, words typed outside the Ask
-  usePopDismiss(choosing, () => setChoosing(false))
 
   // Flux: the capsule is liquid glass (the shader refracts through it), and each new row in the thread pours into it
   // as a ripple. Presentation only, through the experience's bridge; nothing here reaches into the experience.
@@ -160,12 +160,10 @@ export function FloatingAsk({ place, experience, inputRef, look, displayedOrigin
   const listId = `${id}-list`
   const showList = focused && f.list.length > 0 && !f.panel && !v.notice
   const pinnedSide = place.mode === 'desktop' && pinned && threadOpen
-  const popOpen = showList || !!f.panel || !!v.notice || (choosing && !!f.chip && !threadOpen)
-  // what Enter may act on is what the pop shows (enter.ts AskSeen): a voice notice, then the answerer picker, replace
-  // the panel and the rows, in that order (the pop's own order below)
-  const picking = choosing && !!f.chip && !threadOpen
-  const rowsSeen = showList && !picking
-  useSeen(field.declareSeen, rowsSeen, focused && !!f.panel && !v.notice && !picking)
+  const popOpen = showList || !!f.panel || !!v.notice
+  // The voice notice and policy panel replace the rows in the pop's order.
+  const rowsSeen = showList
+  useSeen(field.declareSeen, rowsSeen, focused && !!f.panel && !v.notice)
   // mind-chat r1: what opens under the field never covers a mind's chat. While it is open and shares a column with an
   // open mind panel, the panel's content ends above it (popDismiss.popRoom → ui/Sheet --ask-pop-room); measured from
   // layout (the dock's top and the layer's height), never from the layer's entrance transform.
@@ -283,18 +281,13 @@ export function FloatingAsk({ place, experience, inputRef, look, displayedOrigin
     <>
       <AnimatePresence>{thread}</AnimatePresence>
 
-      <div ref={capsule} className="ask-dock" style={style} data-mode={place.mode} data-state={state} data-look={look} data-xc-keep-clear="" data-ask-capsule="" {...within.bind}>
+      <div ref={bindCapsule} className="ask-dock" style={style} data-mode={place.mode} data-state={state} data-look={look} data-xc-keep-clear="" data-ask-capsule="" {...within.bind}>
         {/* what opens under the field: suggestions, or the policy's choices, question or plain limit */}
         <AnimatePresence>
           {popOpen && (
             <m.div key="pop" ref={popRef} className="ask-pop" initial={reduced ? { opacity: 0 } : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: reduced ? 0 : 6 }} transition={reduced ? { duration: 0.1 } : { type: 'spring', stiffness: 520, damping: 38 }}>
               {v.notice ? (
                 <VoiceNoticeView v={v} className="ask-say" buttonClass="ask-choice" />
-              ) : choosing && f.chip && !threadOpen ? (
-                <div className="ask-say" role="group" aria-label="Choose who answers">
-                  <p>Who answers what you ask: choose a swarm, and its coordinator replies. It is kept as your default.</p>
-                  <AnswererPicker btnClass="ask-choice" onDone={() => setChoosing(false)} />
-                </div>
               ) : f.panel ? (
                 <PanelView f={f} />
               ) : (
@@ -324,17 +317,11 @@ export function FloatingAsk({ place, experience, inputRef, look, displayedOrigin
           )}
         </AnimatePresence>
 
-        {/* while the thread is open it has the floor (a refusal there carries the same picker): never over it */}
-        {f.chip && !f.answering && !threadOpen && (
-          <div className="ask-answerer-row">
-            <AnswererChipButton chip={f.chip} open={choosing} onToggle={() => { if (mayAct()) setChoosing((c) => !c) }} />
-          </div>
-        )}
         <div ref={glassRef} className="ask-capsule" data-state={state}>
           <span className="ask-aurora" aria-hidden />
           <span className="ask-stars" aria-hidden />
           <span className="ask-mark" aria-hidden>
-            <Mark look={look} />
+            <AskLeadMark experience={experience} typing={!!f.value} fallback={<Mark look={look} />} />
           </span>
           <div className="ask-field">
             <VoiceAnnouncer v={v} />
@@ -342,7 +329,7 @@ export function FloatingAsk({ place, experience, inputRef, look, displayedOrigin
               <VoiceListening v={v} className="ask-listening" toggleClass="ask-voice-pause" />
             ) : f.answering ? (
               <span className="ask-step" aria-live="off">
-                {words.step(shownMind(f.thread?.mind.name ?? f.answerer), f.step, f.step === 'sending')}
+                {words.step(shownMind(f.answerer), f.step, f.step === 'sending')}
               </span>
             ) : null}
             <input
@@ -373,23 +360,14 @@ export function FloatingAsk({ place, experience, inputRef, look, displayedOrigin
               disabled={displayedOriginCurrent ? !mayAct() : undefined}
             />
           </div>
-          <span id={`${id}-scope`} className="ask-chips">
+          <span id={`${id}-scope`} className="ask-chips ask-chips-scoped">
             <span className="ask-chip" title="Where you are asking from">
               {f.where}
             </span>
-            {answeringYou ? (
-              <button type="button" className="ask-chip ask-chip-mind" title="Your personal mind answers: open it" onClick={() => navigate({ name: 'me', view: 'mind' })} data-mind-chip="">
-                Answering: you
-                {spend ? ` · ${spend}` : ''}
-              </button>
-            ) : (
-              (f.answerer || spend) && (
-                <span className="ask-chip ask-chip-mind" title="Who answers: the swarm's orchestrator">
-                  {f.answerer ? shownMind(f.answerer) : ''}
-                  {spend ? ` · ${spend}` : ''}
-                </span>
-              )
-            )}
+            <span data-own-answerer={answeringYou || undefined}>
+              <AnswererPicker chip={f.chip ?? (f.answerer ? { kind: 'thread', name: shownMind(f.answerer) } : null)} answering={f.answering} may={mayAct} />
+              {spend && <span className="ask-chip" data-answerer-spend="">{spend}</span>}
+            </span>
           </span>
           <button type="button" className="ask-icon" onClick={() => { if (mayAct()) setThreadOpen(!threadOpen) }} aria-expanded={threadOpen} aria-label={threadOpen ? 'Hide the thread' : `Show the thread${rows ? ` (${rows} rows)` : ''}`}>
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden>

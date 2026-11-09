@@ -1,5 +1,5 @@
 /**
- * Presence (the owner, 2026-10-05: watch the orchestrator work live across experiences). Pure resolution of a presence
+ * Presence (Jon, 2026-10-05: watch the orchestrator work live across experiences). Pure resolution of a presence
  * target to what is on screen now, from the `data-presence-*` attributes the experiences put on their main entities,
  * nav targets and regions:
  *

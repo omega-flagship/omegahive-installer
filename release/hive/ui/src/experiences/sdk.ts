@@ -4,7 +4,7 @@
  * reviewed actions (send, wake/sleep, decide, create goal). Never call fetch or the client directly.
  */
 export type { Decision } from '../store/store'
-/** A surface's X (the owner 2026-10-08): home, with every experience's own panels closed (home:requested). */
+/** A surface's X (Jon 2026-10-08): home, with every experience's own panels closed (home:requested). */
 export { closeToHome, navigate, useRoute, useHomeRequested, type Route } from '../lib/router'
 export { shown } from '../lib/displayName'
 export { plural, pluralAtLeast } from '../lib/plural'
@@ -131,3 +131,10 @@ export { presenceRef } from '../lib/presence'
 export { addressAskMind, releaseAskAddress } from '../features/ask/useAskField'
 export { askOrigin, useAskStore } from '../store/ask'
 export { registerActHandler } from '../features/ask/handlers'
+
+/**
+ * CANDIDATE (one-experience r1): the shell's rest → awake → Pro. The shell owns the state; an experience reads it,
+ * draws each state its own way, and spreads `omegaGesture()` on its own Ω (shell/phase.ts).
+ */
+export { usePhase, omegaGesture, nextPhase, transitionOf, type ShellPhase, type PhaseEvent } from '../shell/phase'
+export type { PhaseRendererProps, ExperiencePhases } from './registry'

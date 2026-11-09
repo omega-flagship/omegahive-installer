@@ -8,7 +8,7 @@ import { has, need } from '../../lib/useResource'
 import { useHive } from '../../store/store'
 import { Button } from '../../ui/primitives'
 
-const inputClass = 'mt-1 min-h-11 w-full rounded-xl border border-line bg-black/30 px-3 text-[13px] text-ink outline-none focus:border-line-2'
+const inputClass = 'mt-1 min-h-11 w-full rounded-xl border border-line bg-shade/30 px-3 text-[13px] text-ink outline-none focus:border-line-2'
 
 /** An answer belongs to both this mounted view and the identity it was opened under. */
 function useGoogleBinding() {
@@ -99,7 +99,7 @@ function PersonalGoogle({ principal }: { principal: string }) {
     await read()
   })
   return (
-    <section className="rounded-2xl border border-line bg-white/[0.02] p-4" aria-labelledby="google-connection-h">
+    <section className="rounded-2xl border border-line bg-tint/[0.02] p-4" aria-labelledby="google-connection-h">
       <h2 id="google-connection-h" className="eyebrow">Your Google connection</h2>
       <p className="mt-2 text-[13px] text-ink-3">Calendar read-only: a permitted mind can read bounded event titles, times and busy/free information. It cannot create or change events. This is separate from signing in to this hive with Google.</p>
       {!supported ? <p className="mt-3 text-[13px] text-ink-3">This hive does not offer the Google connector yet.</p> : <>
@@ -157,7 +157,7 @@ function GoogleClientForm() {
     } catch { binding.commit(() => setWords('Google client configuration could not be confirmed. No credentials are shown in the response.')) }
     finally { working.current = false; binding.commit(() => setBusy(false)) }
   }
-  return <section className="rounded-2xl border border-line bg-white/[0.02] p-4" aria-labelledby="google-client-h">
+  return <section className="rounded-2xl border border-line bg-tint/[0.02] p-4" aria-labelledby="google-client-h">
     <h2 id="google-client-h" className="eyebrow">Google connector app configuration · admins</h2>
     <p className="mt-2 text-[13px] text-ink-3">Register a Google Web OAuth client for this hive’s public callback ending in /api/connectors/google/callback. Calendar is read-only. This configures the app; it does not connect anyone’s Google account or grant a mind access.</p>
     <form className="mt-3 space-y-3" onSubmit={(e) => void save(e)}>

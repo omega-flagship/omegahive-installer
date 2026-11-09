@@ -96,14 +96,19 @@ export function classifyClient(file = `${SRC}api/live.ts`, className = 'LiveClie
   find(sf)
   const out: ClientClasses = { writes: new Set(), reads: new Set(), none: new Set(), unknown: new Set(), transports: new Set() }
   if (!cls) return out
-  const members = new Map<string, { body: ts.Node; priv: boolean; params: string[] }>()
+  // each member's parameters, and the literal default of its `method` parameter if it has one
+  const members = new Map<string, { body: ts.Node; priv: boolean; params: string[]; methodDefault: string[] }>()
+  const methodDefault = (ps: ts.NodeArray<ts.ParameterDeclaration>) => {
+    const p = ps.find((x) => x.name.getText(sf) === 'method')
+    return p?.initializer ? literals(p.initializer).filter((v) => v === 'GET' || WRITE_VERBS.has(v)) : []
+  }
   for (const m of cls.members) {
     if (!m.name || !ts.isIdentifier(m.name)) continue
     const priv = !!(ts.getCombinedModifierFlags(m as ts.Declaration) & ts.ModifierFlags.Private)
-    if (ts.isMethodDeclaration(m) && m.body) members.set(m.name.text, { body: m.body, priv, params: m.parameters.map((p) => p.name.getText(sf)) })
+    if (ts.isMethodDeclaration(m) && m.body) members.set(m.name.text, { body: m.body, priv, params: m.parameters.map((p) => p.name.getText(sf)), methodDefault: methodDefault(m.parameters) })
     else if (ts.isPropertyDeclaration(m) && m.initializer) {
       const init = strip(m.initializer)
-      if (FUNC(init)) members.set(m.name.text, { body: init.body!, priv, params: init.parameters.map((p) => p.name.getText(sf)) })
+      if (FUNC(init)) members.set(m.name.text, { body: init.body!, priv, params: init.parameters.map((p) => p.name.getText(sf)), methodDefault: methodDefault(init.parameters) })
     }
   }
   const transports = new Set([...members].filter(([, m]) => m.params.includes('method')).map(([n]) => n))
@@ -117,7 +122,11 @@ export function classifyClient(file = `${SRC}api/live.ts`, className = 'LiveClie
         if (ts.isPropertyAccessExpression(e) && e.expression.kind === ts.SyntaxKind.ThisKeyword) {
           const callee = e.name.text
           if (transports.has(callee) && !transports.has(name)) {
-            const vs = n.arguments[0] ? literals(n.arguments[0]).filter((v) => v === 'GET' || WRITE_VERBS.has(v)) : []
+            // the verb is the argument at the transport's `method` parameter (request(method, …): the first; a helper like
+            // appLinkRequest(path, body, method = 'POST'): the third), or that parameter's literal default when omitted
+            const t = members.get(callee)!, at = t.params.indexOf('method')
+            const arg = n.arguments[at]
+            const vs = arg ? literals(arg).filter((v) => v === 'GET' || WRITE_VERBS.has(v)) : t.methodDefault
             if (vs.length) vs.forEach((v) => verbs.add(v)); else opaque = true
           } else if (members.has(callee)) calls.add(callee)
         } else if (ts.isIdentifier(e) && e.text === 'fetch') {
@@ -642,15 +651,73 @@ export function guardedWrites(at: string, guard: RegExp, writes: string[], sourc
   }
   walk(fn.body)
   const has = (from: number, to: number) => guard.test(text.slice(from, to))
+  /**
+   * An await that can't run before this call on any path: it sits in the other branch of an `if/else` or a `?:` that also
+   * holds the call (release baseline r1: `if (view) await view() else if (act) await act()`: the act follows no await)
+   */
+  const within = (n: ts.Node, outer: ts.Node | undefined) => !!outer && n.getStart(sf) >= outer.getStart(sf) && n.end <= outer.end
+  const exclusive = (a: ts.Node, call: ts.Node) => {
+    for (let x: ts.Node = a.parent; x && x !== fn; x = x.parent) {
+      if (ts.isIfStatement(x) && x.elseStatement) {
+        if ((within(a, x.thenStatement) && within(call, x.elseStatement)) || (within(a, x.elseStatement) && within(call, x.thenStatement))) return true
+      } else if (ts.isConditionalExpression(x)) {
+        if ((within(a, x.whenTrue) && within(call, x.whenFalse)) || (within(a, x.whenFalse) && within(call, x.whenTrue))) return true
+      }
+    }
+    return false
+  }
+  /**
+   * KNOWN LIMITS (Dot's ruling on the stand-in's R2, 4 Nov: this is a test lint, already stricter than the live code
+   * needs; no full control-flow analysis now). The dominance check below is structural, not a CFG, and still reports a
+   * write guarded in these shapes (each an it.todo in mutationChains.test.ts):
+   *  - an escape from the guard's own branch: `break` out of a loop or a switch case before the guard
+   *    (`do { await c.r(); if (b) break; if (!ok()) return } while (false); await c.w()`);
+   *  - a guard in a nested function that shares an enclosing node with the await (`const f = async () => { await c.r();
+   *    if (!ok()) return }; await c.w()`);
+   *  - loop-back paths: the loop fallback still reads the guard's text, so a guard inside a branch of the loop body counts
+   *    for the next iteration's write;
+   *  - a guard inside a try whose check can throw, with an empty catch that falls through to the write.
+   * A new allowance in one of these shapes must be read by hand.
+   */
+  /**
+   * A guard between `from` and the call that is on every path to it (stand-in on 4733c4aa: an opposite-branch guard must
+   * not count). From the guard up to the lowest node that also holds the call, every enclosing node must be a plain
+   * block: a guard inside a branch (an if's then/else, a ?: arm, a switch case, a loop body, a catch or a nested function)
+   * that doesn't hold the call protects only that branch.
+   */
+  // a catch whose try block always leaves (ends in return or throw) is the only way on past the try: not a branch
+  const exits = (b: ts.Block) => { const last = b.statements[b.statements.length - 1]; return !!last && (ts.isReturnStatement(last) || ts.isThrowStatement(last)) }
+  const onlyWayOn = (n: ts.Node) => ts.isCatchClause(n) && ts.isTryStatement(n.parent) && exits(n.parent.tryBlock)
+  const BRANCHY = (n: ts.Node) => ts.isIfStatement(n) || ts.isConditionalExpression(n) || ts.isCaseClause(n) || ts.isDefaultClause(n) || LOOP(n) || (ts.isCatchClause(n) && !onlyWayOn(n)) || FUNC(n)
+  const dominated = (call: ts.Node, from: number, to: number, after?: ts.Node) => {
+    const re = new RegExp(guard.source, guard.flags.replace('g', '') + 'g')
+    const slice = text.slice(from, to)
+    for (const m of slice.matchAll(re)) {
+      const at = from + m.index!
+      // the statement the guard begins
+      let g: ts.Node | undefined
+      const find = (n: ts.Node) => { if (n.getStart(sf) <= at && at < n.end) { if (ts.isStatement(n) && n.getStart(sf) === at) g = n; ts.forEachChild(n, find) } }
+      find(fn.body!)
+      if (!g) continue
+      // not in the other branch of an if/else or ?: that holds the call (or the await it follows)
+      let ok = !exclusive(g, call) && !(after && exclusive(g, after))
+      // a branch around the guard that doesn't hold the call is fine only if it holds the await the write follows: the
+      // path from that await to the write then passes the guard
+      for (let x: ts.Node = g.parent; ok && x && !within(call, x); x = x.parent) if (BRANCHY(x) && !(after && within(after, x))) ok = false
+      if (ok) return true
+    }
+    return false
+  }
   return sites.map((call) => {
     const start = call.getStart(sf)
     let loop: ts.Node | null = null
     for (let x: ts.Node = call.parent; x && x !== fn; x = x.parent) if (LOOP(x)) { loop = x; break }
     const body = loop ? (loop as ts.IterationStatement).statement : fn.body!
     const inBody = (a: ts.Node) => a.getStart(sf) >= body.getStart(sf) && a.end <= body.end
-    const before = awaits.filter((a) => a.end <= start && inBody(a))
+    const before = awaits.filter((a) => a.end <= start && inBody(a) && !exclusive(a, call))
     const from = before.length ? Math.max(...before.map((a) => a.end)) : body.getStart(sf)
-    let guarded = has(from, start)
+    const last = before.length ? before.reduce((a, b) => (b.end > a.end ? b : a)) : undefined
+    let guarded = dominated(call, from, start, last)
     if (!guarded && loop && !before.length) {
       // the previous turn's last await, then the loop's end; and before the loop, the last await (if any) to it
       const after = awaits.filter((a) => a.end > start && inBody(a))

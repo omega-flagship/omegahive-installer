@@ -1,5 +1,5 @@
 /**
- * Still placeholder r2 (stand-in r1 FIX-FIRST, coordination/omegareview/standin/STANDIN_STILL_PLACEHOLDER_R1_VERDICT_20261007.md):
+ * Still placeholder r2 (stand-in r1 FIX-FIRST, STANDIN_STILL_PLACEHOLDER_R1_VERDICT_20261007.md):
  * the question box's placeholder, rendered through Still's own Ask, at a phone width (390px) and a wide one (1440px),
  * idle and while an answer is writing, and across the 640px step (still.css's phone step) in both directions.
  *

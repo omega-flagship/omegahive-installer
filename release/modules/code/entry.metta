@@ -6,7 +6,7 @@
 
 (Module omegahive.code)
 (ModuleKind omegahive.code coding-organ)
-(ModuleVersion omegahive.code "0.1.0")
+(ModuleVersion omegahive.code "0.2.0")
 (ModuleEntrypoint omegahive.code "entry.metta")
 (ModuleOptional omegahive.code True)
 (ModuleDefaultEnabled omegahive.code True)
@@ -47,6 +47,7 @@
 (RuntimeConfig omegahive.code OMEGACODE_SRC "runtime-config")
 
 !(import! &self (car-atom (collapse (library OmegaClaw-Core ./modules/code/src/omega_code.py))))
+!(import! &self (car-atom (collapse (library OmegaClaw-Core ./modules/code/src/code_proposal.py))))
 !(import! &self (library OmegaClaw-Core ./modules/code/catalog.metta))
 !(import! &self (library OmegaClaw-Core ./modules/code/affordance.metta))
 !(import! &self (library OmegaClaw-Core ./modules/code/signatures.metta))
@@ -66,3 +67,31 @@
 (Provides omegahive.code (Skill code-proof-result))
 
 (Provides omegahive.code (Skill code-proof-check))
+
+; Request children retain proposals only; the person uses the existing Code decision route.
+(Provides omegahive.code (Skill code-proposal-context))
+(Provides omegahive.code (Skill code-helper-instruction))
+(Provides omegahive.code (Skill code-proposal-read))
+(Provides omegahive.code (Skill code-propose))
+
+(Provides omegahive.code (Skill code-test-prepare))
+(Provides omegahive.code (Skill code-test-run))
+(Provides omegahive.code (Skill code-test-result))
+
+(Provides omegahive.code (Skill code-mind-templates))
+
+(Provides omegahive.code (Skill code-mind-spawn))
+
+(Provides omegahive.code (Skill code-mind-prompt))
+
+(Provides omegahive.code (Skill code-mind-control))
+
+(Provides omegahive.code (Skill code-mind-status))
+
+(Provides omegahive.code (Skill code-mind-scan))
+
+(Provides omegahive.code (Skill code-mind-request))
+
+(Provides omegahive.code (Skill code-mind-retry))
+
+(Provides omegahive.code (Skill code-mind-work))

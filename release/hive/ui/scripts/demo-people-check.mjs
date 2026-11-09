@@ -7,30 +7,36 @@
 //   node scripts/demo-people-check.mjs <port> <outDir> [browserPath]
 // Exit 0 when every page showed its landmark, raised no page error and nothing matched; the receipt is <outDir>/demo-people-check.json.
 // Reusable: import { scanPage, PAGES } from this file in another smoke.
+import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 
-// The owner's real names are NOT stored in the repo. Set OMEGA_PRIVATE_OWNER_NAMES locally (comma list: first name, then
-// surnames or other forms) to guard the real ones; the default is invented and keeps the guard and its self-test meaningful.
-const OWNER_NAMES = (process.env.OMEGA_PRIVATE_OWNER_NAMES ?? "kip,thorne").split(",").map((s) => s.trim()).filter(Boolean)
-const [OWNER_FIRST, ...OWNER_OTHER] = OWNER_NAMES
-const OWNER = [new RegExp(`user:${OWNER_FIRST}\\b`, "i"), new RegExp(`\\b${OWNER_FIRST} (${OWNER_OTHER.join("|")})\\b`, "i"), new RegExp(`\\b${OWNER_FIRST}\\b`, "i")]
-// Names of real family members are NOT stored in the repo. Set OMEGA_PRIVATE_FAMILY_NAMES (comma list) locally to guard
-// the real ones; the default list is invented and keeps the guard and its self-test meaningful.
-const FAMILY_NAMES = (process.env.OMEGA_PRIVATE_FAMILY_NAMES ?? "odette,wren,cormac,maren,tessa,ines").split(",").map((s) => s.trim()).filter(Boolean)
-const FAMILY = new RegExp(`\\b(${FAMILY_NAMES.join("|")})\\b`, "i")
-const OWNER_CONTEXT = new RegExp(`\\b(${OWNER_NAMES.join("|")})\\b`, "i")
+const OWNER = [/user:jon\b/i, /\bjon(athan)? grove\b/i, /\bjon\b/i]
+// Real family names never sit in this tree, not even as digests (unsalted digests of first names are dictionary-
+// recoverable; privacy review 2026-11-09). They come only from the local OMEGA_PRIVATE_FAMILY_NAMES setting.
+const FAMILY_NAMES_LOCAL = (process.env.OMEGA_PRIVATE_FAMILY_NAMES ?? '').split(',').map((n) => n.trim().toLowerCase()).filter(Boolean)
+const WORD = /[A-Za-z0-9_]+/g
+const OWNER_CONTEXT = /\b(jon|jonathan|grove)\b/i
 const EMAIL = /[A-Za-z0-9._%+-]+@((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})/g
 const EXAMPLE_DOMAIN = /^example\.(org|com|net)$/i
 const ORG_DOMAIN = /singularitynet\.io/i
 const HOME_PATH = /\/Users\//
 
+const digests = new Map()
+const sha256hex = (s) => {
+  let d = digests.get(s)
+  if (d === undefined) digests.set(s, (d = createHash('sha256').update(s, 'utf8').digest('hex')))
+  return d
+}
+const FAMILY_SHA256 = new Set(FAMILY_NAMES_LOCAL.map((n) => sha256hex(n)))
+const hasFamilyName = (s) => (s.match(WORD) ?? []).some((w) => FAMILY_SHA256.has(sha256hex(w.toLowerCase())))
+
 const visible = (s) => s.normalize('NFKC').replace(/[\u00AD\u200B-\u200F\u2060\uFEFF]/g, '')
 export function refusal(raw) {
   for (const s of new Set([raw, visible(raw)])) {
     if (OWNER.some((re) => re.test(s))) return 'owner identity'
-    if (FAMILY.test(s) && OWNER_CONTEXT.test(s)) return 'family name with owner context'
+    if (hasFamilyName(s) && OWNER_CONTEXT.test(s)) return 'family name with owner context'
     if (ORG_DOMAIN.test(s)) return 'organisation domain'
     for (const m of s.matchAll(EMAIL)) if (!EXAMPLE_DOMAIN.test(m[1])) return 'email outside example domains'
     if (HOME_PATH.test(s)) return 'home path'

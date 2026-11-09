@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { askFlags, hsl, readAskFlags, shown, useHive, useReducedMotion, type Agent } from '../sdk'
+import { usePhase } from '../../shell/phase'
+import { useRoute } from '../../lib/router'
 import type { Named, World } from './intent'
 
 /** Ink tone of a mind's identity colour: muted enough to sit on paper. */
@@ -10,10 +12,16 @@ export const isAwake = (a: Pick<Agent, 'status'>) => a.status === 'awake' || a.s
 /** A clock that ticks (for "3 minutes ago" and the greeting). */
 export function useNow(ms = 20_000): number {
   const [now, setNow] = useState(() => Date.now())
+  const phaseHeld = usePhase((s) => s.phased && s.phase !== 'pro')
+  const route = useRoute()
+  const held = phaseHeld && route.name === 'hive'
+  const visible = useSyncExternalStore((cb) => { document.addEventListener('visibilitychange', cb); return () => document.removeEventListener('visibilitychange', cb) }, () => !document.hidden, () => false)
   useEffect(() => {
+    if (held || !visible) return
+    setNow(Date.now())
     const t = setInterval(() => setNow(Date.now()), ms)
     return () => clearInterval(t)
-  }, [ms])
+  }, [ms, held, visible])
   return now
 }
 

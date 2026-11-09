@@ -47,9 +47,9 @@ def done(fs):
 def test_a_stale_small_thread_cap_never_blocks_a_new_thread_on_the_mind(client, paid):  # noqa: F811
     hive, coord = paid["hive"], paid["coord"]
     s = script(client, Script("one", "two", cost=0.001))
-    thread_pref(client, paid["quinn"], 1)
-    ask(client, paid["quinn"], "op-lim-old", context=paid["ctx"], text="first")
-    assert done(wait(hive, "op-lim-old", closed, principal="user:u_quinn"))["outcome"] == "complete"
+    thread_pref(client, paid["jon"], 1)
+    ask(client, paid["jon"], "op-lim-old", context=paid["ctx"], text="first")
+    assert done(wait(hive, "op-lim-old", closed, principal="user:u_jon"))["outcome"] == "complete"
     spend_elsewhere(hive, coord, 1.5)   # the mind spends past the old thread's $1 since it opened
     hive.db.execute("UPDATE agents SET budget_usd = 100 WHERE id = ?", (coord["id"],))   # and its limit is raised
     thread_pref(client, paid["ann"], 5)
@@ -60,7 +60,7 @@ def test_a_stale_small_thread_cap_never_blocks_a_new_thread_on_the_mind(client, 
     # no thread's cap became the mind's rule: the mind is held by its own limit, each thread by its own cap
     assert cap(hive, coord) is None
     threads = hive.db.all("SELECT owner, cap_scope, budget_usd FROM work_sessions WHERE agent_id = ? AND status = 'active' ORDER BY created_at", (coord["id"],))
-    assert [(t["owner"], t["cap_scope"], t["budget_usd"]) for t in threads] == [("user:u_quinn", "thread", 1.0), ("user:u_ann", "thread", 5.0)]
+    assert [(t["owner"], t["cap_scope"], t["budget_usd"]) for t in threads] == [("user:u_jon", "thread", 1.0), ("user:u_ann", "thread", 5.0)]
 
 
 def test_live_shape_a_clamped_legacy_thread_neither_blocks_nor_hides_the_raised_limit(client, paid, monkeypatch):  # noqa: F811
@@ -70,10 +70,10 @@ def test_live_shape_a_clamped_legacy_thread_neither_blocks_nor_hides_the_raised_
     hive, coord = paid["hive"], paid["coord"]
     spend_elsewhere(hive, coord, 3.67)
     monkeypatch.setenv("HIVE_ASK_CONDUCTOR", "0")   # an earlier build: the mind answers, the thread composes into the rule
-    r = ask(client, paid["quinn"], "op-lim-legacy", text="old", context=paid["ctx"])
+    r = ask(client, paid["jon"], "op-lim-legacy", text="old", context=paid["ctx"])
     assert r.status_code == 202, r.text
     reply(hive, coord, r.json()["turn_id"] if "turn_id" in r.json() else r.json()["id"])
-    legacy = hive.db.one("SELECT * FROM work_sessions WHERE owner = 'user:u_quinn' AND status = 'active'")
+    legacy = hive.db.one("SELECT * FROM work_sessions WHERE owner = 'user:u_jon' AND status = 'active'")
     assert legacy.get("cap_scope") is None and cap(hive, coord) == 3.92   # $3.67 + the $0.25 thread
     # the person raises the mind's total limit on the Limits page
     assert client.post("/api/budgets", json={"scope": f"agent:{coord['id']}", "period": "total", "limit_usd": 18.91}).status_code == 200
@@ -92,7 +92,7 @@ def test_live_shape_a_clamped_legacy_thread_neither_blocks_nor_hides_the_raised_
     mind = next(m for m in page["minds"] if m["agent_id"] == coord["id"])
     total = next(r for r in mind["limits"] if r["key"] == f"agent:{coord['id']}:total" and r["period"] == "total")
     assert total["limit_usd"] == 18.91 and total["source"] == "set"
-    assert [(t["owner"], t["budget_usd"]) for t in mind["ask_threads"]] == [("user:u_quinn", 0.25), ("user:u_ann", 0.25)]
+    assert [(t["owner"], t["budget_usd"]) for t in mind["ask_threads"]] == [("user:u_jon", 0.25), ("user:u_ann", 0.25)]
     assert all(t["key"].startswith("askthread:") for t in mind["ask_threads"])
 
 
@@ -101,10 +101,10 @@ def test_a_legacy_conductor_thread_carries_only_its_own_spend_and_frees_the_mind
     its own scope with exactly what its own calls cost, and the mind's rule goes back to the person's own limit."""
     hive, coord = paid["hive"], paid["coord"]
     script(client, Script("one", "two", cost=0.004))
-    thread_pref(client, paid["quinn"], 0.03)
-    ask(client, paid["quinn"], "op-lim-legc", context=paid["ctx"])
-    assert done(wait(hive, "op-lim-legc", closed, principal="user:u_quinn"))["outcome"] == "complete"
-    old = hive.db.one("SELECT * FROM work_sessions WHERE owner = 'user:u_quinn' AND status = 'active'")
+    thread_pref(client, paid["jon"], 0.03)
+    ask(client, paid["jon"], "op-lim-legc", context=paid["ctx"])
+    assert done(wait(hive, "op-lim-legc", closed, principal="user:u_jon"))["outcome"] == "complete"
+    old = hive.db.one("SELECT * FROM work_sessions WHERE owner = 'user:u_jon' AND status = 'active'")
     with hive.db.transaction():   # as the earlier build left it: composed into the mind's total rule
         hive.db.execute("UPDATE work_sessions SET cap_scope = NULL WHERE id = ?", (old["id"],))
         hive.db.execute("DELETE FROM cost_reservation_scopes WHERE scope = ?", ("askthread:" + old["id"],))   # no such scope then
@@ -262,11 +262,11 @@ def test_a_session_installed_mind_rule_is_named_as_the_session(client, paid):  #
     """An ordinary work session on the mind still caps the whole mind (its calls can't be told apart); the stop says so."""
     hive, coord = paid["hive"], paid["coord"]
     hive.db.execute("UPDATE agents SET budget_usd = 100 WHERE id = ?", (coord["id"],))
-    r = client.post("/api/sessions", headers=paid["quinn"], json={"mind": coord["id"], "title": "work", "budget_usd": 0.001})
+    r = client.post("/api/sessions", headers=paid["jon"], json={"mind": coord["id"], "title": "work", "budget_usd": 0.001})
     assert r.status_code in (200, 201), r.text
     script(client, Script("never"))
-    ask(client, paid["quinn"], "op-lim-sess", context=paid["ctx"])
-    fs = wait(hive, "op-lim-sess", closed, principal="user:u_quinn")
+    ask(client, paid["jon"], "op-lim-sess", context=paid["ctx"])
+    fs = wait(hive, "op-lim-sess", closed, principal="user:u_jon")
     assert done(fs)["limit"]["kind"] == "session" and "Ending that session" in fs[-2]["text"]
 
 
@@ -310,7 +310,7 @@ def _hold(on, rid, usd, label, subjects=None):  # noqa: F811
     """An open (unknown-outcome) liability, as an earlier build's call left it."""
     res, coord = on["conductor"].reservations, on["coord"]
     res.reserve(rid, {"r": rid}, usd, lambda: [(label, 100, 0)], dispatched=True, subjects=subjects,
-                metadata={"agent": coord["id"], "payer": "user:u_quinn", "key": None, "kind": "ask-conductor"})
+                metadata={"agent": coord["id"], "payer": "user:u_jon", "key": None, "kind": "ask-conductor"})
     res.unknown(rid)
     return res
 
@@ -333,11 +333,11 @@ def test_mixed_history_migration_keeps_open_liabilities_under_the_threads_cap(cl
     scope carried $0 and dropped the hold, so a $0.40 call was then admitted ($1.20 against $1)."""
     hive, coord = paid["hive"], paid["coord"]
     monkeypatch.setenv("HIVE_ASK_CONDUCTOR", "0")
-    thread_pref(client, paid["quinn"], 1)
-    r = ask(client, paid["quinn"], "op-lim-mixed", text="old", context=paid["ctx"])
+    thread_pref(client, paid["jon"], 1)
+    r = ask(client, paid["jon"], "op-lim-mixed", text="old", context=paid["ctx"])
     assert r.status_code == 202, r.text
     reply(hive, coord, r.json()["turn_id"] if "turn_id" in r.json() else r.json()["id"])
-    thread = hive.db.one("SELECT * FROM work_sessions WHERE owner = 'user:u_quinn' AND status = 'active'")
+    thread = hive.db.one("SELECT * FROM work_sessions WHERE owner = 'user:u_jon' AND status = 'active'")
     res = _hold(paid, "legacy-mixed", 0.80, f"agent:{coord['id']}:total", subjects=["hive", "agent:" + coord["id"]])
     assert cap(hive, coord) == pytest.approx(float(thread["spent_at_start"]) + 1.0)
     assert hive.sessions.adopt_ask_threads() == [thread["id"]]
@@ -347,7 +347,7 @@ def test_mixed_history_migration_keeps_open_liabilities_under_the_threads_cap(cl
     assert hive.sessions.thread_held(hive.db.one("SELECT * FROM work_sessions WHERE id = ?", (thread["id"],))) == pytest.approx(0.80)
     # the hold settles at its real cost: counted once, as the thread's spend
     res.settle("legacy-mixed", 0.70, lambda: hive.record_usage(hive._agent_row(coord["id"]), "fakepaid/x",
-                                                               {"prompt_tokens": 1, "completion_tokens": 1, "cost_usd": 0.70}, payer="user:u_quinn"))
+                                                               {"prompt_tokens": 1, "completion_tokens": 1, "cost_usd": 0.70}, payer="user:u_jon"))
     moved = hive.db.one("SELECT * FROM work_sessions WHERE id = ?", (thread["id"],))
     assert hive.sessions.view(moved)["spent_usd"] == pytest.approx(0.70) and hive.sessions.thread_held(moved) == 0
     assert not _fits(paid, thread, 0.40) and _fits(paid, thread, 0.25)
@@ -356,10 +356,10 @@ def test_mixed_history_migration_keeps_open_liabilities_under_the_threads_cap(cl
 def test_a_conductor_threads_open_hold_is_counted_once_not_carried_at_its_worst_case(client, paid):  # noqa: F811
     hive, coord = paid["hive"], paid["coord"]
     script(client, Script("one", cost=0.004))
-    thread_pref(client, paid["quinn"], 1)
-    ask(client, paid["quinn"], "op-lim-hold", context=paid["ctx"])
-    assert done(wait(hive, "op-lim-hold", closed, principal="user:u_quinn"))["outcome"] == "complete"
-    old = hive.db.one("SELECT * FROM work_sessions WHERE owner = 'user:u_quinn' AND status = 'active'")
+    thread_pref(client, paid["jon"], 1)
+    ask(client, paid["jon"], "op-lim-hold", context=paid["ctx"])
+    assert done(wait(hive, "op-lim-hold", closed, principal="user:u_jon"))["outcome"] == "complete"
+    old = hive.db.one("SELECT * FROM work_sessions WHERE owner = 'user:u_jon' AND status = 'active'")
     turn = hive.db.one("SELECT id FROM ask_turns WHERE thread_id = ?", (old["id"],))
     with hive.db.transaction():   # as the earlier build left it
         hive.db.execute("UPDATE work_sessions SET cap_scope = NULL WHERE id = ?", (old["id"],))

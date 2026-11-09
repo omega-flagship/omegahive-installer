@@ -1,4 +1,4 @@
-"""The Coffee Room (the owner, 2026-10-06; coordination/PLATFORM_COFFEE_ROOM_PLAN_20261006.md): one room per hive where every
+"""The Coffee Room (Jon, 2026-10-06; PLATFORM_COFFEE_ROOM_PLAN_20261006.md): one room per hive where every
 person and every eligible mind meets; it wakes no one by itself; minds may leave one unprompted note an hour; any
 message can start a DM or a group that links back to it."""
 import json
@@ -183,9 +183,9 @@ def test_minds_never_receive_an_email_from_the_coffee_room(client):
 
 def test_the_privacy_notice_reaches_the_minds_prompt_text():
     from modules.channel_hive.src.hive_channel import _room_text
-    text = _room_text({"text": "hi", "room": {"name": "Coffee Room", "kind": "coffee"}, "sender_name": "Quinn",
+    text = _room_text({"text": "hi", "room": {"name": "Coffee Room", "kind": "coffee"}, "sender_name": "Jon",
                        "notice": "Everyone in the hive can read the Coffee Room; keep private memory out of it."})
-    assert "Everyone in the hive can read the Coffee Room" in text and text.rstrip().endswith("Quinn: hi")
+    assert "Everyone in the hive can read the Coffee Room" in text and text.rstrip().endswith("Jon: hi")
 
 
 def test_membership_follows_every_change_immediately(client):

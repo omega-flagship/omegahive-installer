@@ -1,5 +1,5 @@
 /**
- * r3 (stand-in Review FIX-FIRST on 0215895, coordination/omegareview/standin/STANDIN_canvas_VERDICT_20261006.md):
+ * r3 (stand-in Review FIX-FIRST on 0215895, STANDIN_canvas_VERDICT_20261006.md):
  * behavioural tests for its witnesses, through the code paths the canvas actually runs (VibeSession is what useVibe
  * renders; CapabilityReader is what useCodeFeatures renders; handleAskKey / handlePaletteKey are what AskHost and the
  * shell bind; fenceLayers is what the Editor draws). Each was shown to fail with its fix removed (receipts p3-*).
