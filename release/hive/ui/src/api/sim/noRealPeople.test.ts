@@ -32,17 +32,11 @@ import { describe, expect, it } from 'vitest'
 import { SimClient } from './SimClient'
 
 const OWNER: RegExp[] = [/user:jon\b/i, /\bjon(athan)? grove\b/i, /\bjon\b/i]
-// Family names are held only as SHA-256 digests of the lower-cased name, so this file never spells them out. A value
-// carries one when any whole word in it (a maximal run of WORD characters, exactly what a \b...\b/i regex matches),
-// lower-cased, hashes to a listed digest.
-const FAMILY_SHA256: ReadonlySet<string> = new Set([
-  '4b9e5c3f6ea3585cf24b7bbc5e577694158effa19ed61ff707f2a9ce9b208263',
-  '2138adb5a75a82642ac0eb51e530783d835f36691bb102959db917abfc736365',
-  '4b25923a4f31b83195ceb0d160e0a1a6d1556b5a2cd4c582ff40aa0498ae1578',
-  '358a3cd454c38404d1162e39500b2fca02ee644c45bc5a886af173579c1e9549',
-  '55579b557896d0ce1764c47fed644f9b35f58bad620674af23f356d80ed0c503',
-  '02b6bb0bd1c5831b8d08a2d88947ff5597aeebfa291a6516e10972ba4688dcd1',
-])
+// Real family names never sit in this tree, not even as digests: unsalted digests of first names are dictionary-recoverable
+// (privacy review 2026-11-09). They come only from the local OMEGA_PRIVATE_FAMILY_NAMES setting (comma-separated) on the
+// owner's own machine; without it the rule is still exercised with invented names below.
+const FAMILY_NAMES_LOCAL: string[] = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.OMEGA_PRIVATE_FAMILY_NAMES ?? '')
+  .split(',').map((n) => n.trim().toLowerCase()).filter(Boolean)
 const WORD = /[A-Za-z0-9_]+/g
 const OWNER_CONTEXT = /\b(jon|jonathan|grove)\b/i
 const EMAIL = /[A-Za-z0-9._%+-]+@((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})/g
@@ -62,6 +56,7 @@ const sha256hex = (s: string): string => {
   if (d === undefined) digests.set(s, (d = createHash('sha256').update(s, 'utf8').digest('hex')))
   return d
 }
+const FAMILY_SHA256: ReadonlySet<string> = new Set(FAMILY_NAMES_LOCAL.map((n) => sha256hex(n)))
 const hasFamilyName = (s: string, family: ReadonlySet<string>) => (s.match(WORD) ?? []).some((w) => family.has(sha256hex(w.toLowerCase())))
 
 const visible = (s: string) => s.normalize('NFKC').replace(/[\u00AD\u200B-\u200F\u2060\uFEFF]/g, '')
@@ -324,10 +319,8 @@ describe('demo/sim data carries none of the owner\u2019s identity markers', () =
   })
 
   it('family names are compared by digest only: whole words, any case, only with owner context', () => {
-    expect(FAMILY_SHA256.size).toBe(6)
-    // independent pin of the approved list (digests only; reviewed equal to the real names 2026-11-05): both copies must match it
-    expect([...FAMILY_SHA256].sort()).toEqual(['02b6bb0bd1c5831b8d08a2d88947ff5597aeebfa291a6516e10972ba4688dcd1', '2138adb5a75a82642ac0eb51e530783d835f36691bb102959db917abfc736365', '358a3cd454c38404d1162e39500b2fca02ee644c45bc5a886af173579c1e9549', '4b25923a4f31b83195ceb0d160e0a1a6d1556b5a2cd4c582ff40aa0498ae1578', '4b9e5c3f6ea3585cf24b7bbc5e577694158effa19ed61ff707f2a9ce9b208263', '55579b557896d0ce1764c47fed644f9b35f58bad620674af23f356d80ed0c503'])
-    for (const d of FAMILY_SHA256) expect(d).toMatch(/^[0-9a-f]{64}$/)
+    // no real name or digest is in the tree; with the local setting unset the real list is empty
+    if (!FAMILY_NAMES_LOCAL.length) expect(FAMILY_SHA256.size).toBe(0)
     // an invented family list, so the test never needs a real name: the same rule the real list is held to
     const invented = new Set([sha256hex('mia')])
     expect(refusal('Mia Grove', invented)).toBe('family name with owner context')
@@ -335,7 +328,7 @@ describe('demo/sim data carries none of the owner\u2019s identity markers', () =
     expect(refusal('Mia\u200B Grove', invented)).toBe('family name with owner context')
     expect(refusal('Mia Kowal', invented)).toBeNull()
     expect(refusal('Miami Grove', invented)).toBeNull()
-    expect(refusal('Mia Grove')).toBeNull() // not on the real list
+    if (!FAMILY_NAMES_LOCAL.includes('mia')) expect(refusal('Mia Grove')).toBeNull() // not on the real list
   })
 
   it('calls exported zero-argument fixture factories and records a read that throws (stand-in r2 P2)', async () => {
@@ -349,7 +342,8 @@ describe('demo/sim data carries none of the owner\u2019s identity markers', () =
     const script = Object.values(renderedCheck)[0]
     expect(script).toBeTruthy()
     for (const re of PATTERNS) expect(script).toContain(re.toString())
-    for (const d of FAMILY_SHA256) expect(script).toContain(`'${d}'`)
+    expect(script).toContain('OMEGA_PRIVATE_FAMILY_NAMES')
+    expect(script).not.toMatch(/'[0-9a-f]{64}'/)   // never a digest list in the tree
   })
 
   it.each(Object.entries(codeFiles))('source %s', (f, text) => {

@@ -24,7 +24,7 @@ import types
 import uuid
 
 SEED_PIN = (1627, "917fc8c77357ef076712e867e0f1026e8910fc0683b017f824111b2b5c62f0ee")
-CONTROL_PIN = (24048, 'a3bf9aae0c66a0f4c9811a69299f5fdd9116aff512a5779808b4a83f62a19ce1')
+CONTROL_PIN = (26928, '4366ca4b1fb02e3e148b66c8553e66f7a39ddd19fd4754c0251d0db0f81006d2')
 APPS = ("omegaassist", "omegadesign")
 MAX_BODY = 256 * 1024
 STOP = False

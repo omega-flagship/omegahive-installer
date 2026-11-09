@@ -13,17 +13,9 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 
 const OWNER = [/user:jon\b/i, /\bjon(athan)? grove\b/i, /\bjon\b/i]
-// Family names are held only as SHA-256 digests of the lower-cased name, so this file never spells them out. A value
-// carries one when any whole word in it (a maximal run of WORD characters, exactly what a \b...\b/i regex matches),
-// lower-cased, hashes to a listed digest.
-const FAMILY_SHA256 = new Set([
-  '4b9e5c3f6ea3585cf24b7bbc5e577694158effa19ed61ff707f2a9ce9b208263',
-  '2138adb5a75a82642ac0eb51e530783d835f36691bb102959db917abfc736365',
-  '4b25923a4f31b83195ceb0d160e0a1a6d1556b5a2cd4c582ff40aa0498ae1578',
-  '358a3cd454c38404d1162e39500b2fca02ee644c45bc5a886af173579c1e9549',
-  '55579b557896d0ce1764c47fed644f9b35f58bad620674af23f356d80ed0c503',
-  '02b6bb0bd1c5831b8d08a2d88947ff5597aeebfa291a6516e10972ba4688dcd1',
-])
+// Real family names never sit in this tree, not even as digests (unsalted digests of first names are dictionary-
+// recoverable; privacy review 2026-11-09). They come only from the local OMEGA_PRIVATE_FAMILY_NAMES setting.
+const FAMILY_NAMES_LOCAL = (process.env.OMEGA_PRIVATE_FAMILY_NAMES ?? '').split(',').map((n) => n.trim().toLowerCase()).filter(Boolean)
 const WORD = /[A-Za-z0-9_]+/g
 const OWNER_CONTEXT = /\b(jon|jonathan|grove)\b/i
 const EMAIL = /[A-Za-z0-9._%+-]+@((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})/g
@@ -37,6 +29,7 @@ const sha256hex = (s) => {
   if (d === undefined) digests.set(s, (d = createHash('sha256').update(s, 'utf8').digest('hex')))
   return d
 }
+const FAMILY_SHA256 = new Set(FAMILY_NAMES_LOCAL.map((n) => sha256hex(n)))
 const hasFamilyName = (s) => (s.match(WORD) ?? []).some((w) => FAMILY_SHA256.has(sha256hex(w.toLowerCase())))
 
 const visible = (s) => s.normalize('NFKC').replace(/[\u00AD\u200B-\u200F\u2060\uFEFF]/g, '')

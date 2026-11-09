@@ -298,5 +298,16 @@ class BootstrapTests(unittest.TestCase):
         self.assertNotIn('session', message)
         self.assertNotIn('sign-in secret', message)
 
+
+class ReleasePinTests(unittest.TestCase):
+    def test_pins_match_the_release_files_beside_bootstrap(self):
+        # bootstrap.py verifies these files by size and SHA256 before it uses them; a changed file needs a new pin.
+        import hashlib
+        here = Path(__file__).resolve().parent
+        for pin, name in ((bootstrap.CONTROL_PIN, 'control.py'), (bootstrap.SEED_PIN, 'studio-maker-template.json')):
+            raw = (here / name).read_bytes()
+            with self.subTest(name=name):
+                self.assertEqual(pin, (len(raw), hashlib.sha256(raw).hexdigest()))
+
 if __name__ == '__main__':
     unittest.main()

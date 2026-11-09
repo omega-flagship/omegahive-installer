@@ -6,7 +6,7 @@ the public install contract: local clone startup, module loader generation, and
 launcher files that do not embed private deployment state.
 """
 
-import hashlib
+import re
 import importlib.util
 import json
 import os
@@ -46,14 +46,6 @@ def load_doctor():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
-
-
-# Private family names, as (length, sha256 of the exact name); see test_public_prompt_has_no_private_operator_names.
-PRIVATE_NAME_SHA256 = (
-    (5, "5a28fa1fccb69b988973e02d1f11e68f601eafb869d9487396c2c1210aa3da9a"),
-    (4, "bf4fccd616251b678c56b9cb7a46819b1266853c180637642f5bc7d6b01f5554"),
-    (5, "b0a85d17fab0d378c93dfd178110aa1263cb931eb652f9f6b6dba86d02ba025a"),
-)
 
 
 class InstallerTests(unittest.TestCase):
@@ -813,15 +805,14 @@ class InstallerTests(unittest.TestCase):
             self.assertTrue(any(label == "Telegram webhook" and status == "FAIL" for status, label, _ in rows), rows)
 
     def test_public_prompt_has_no_private_operator_names(self):
+        # The real names to guard against stay in local configuration, never in the repo (the same variables as the
+        # UI's noRealPeople guard): OMEGA_PRIVATE_OWNER_NAMES and OMEGA_PRIVATE_FAMILY_NAMES, comma-separated.
         prompt = (ROOT / "memory" / "prompt.txt").read_text(encoding="utf-8")
-        for private_name in ["Jon", "Dad"]:
-            self.assertNotIn(private_name, prompt)
-        # Family names are held only as SHA-256 digests (length, hex) so the guard never spells them out; every
-        # substring of that length is hashed, so this is the same exact, case-sensitive substring check as above.
-        for length, digest in PRIVATE_NAME_SHA256:
-            windows = {prompt[i:i + length] for i in range(len(prompt) - length + 1)}
-            hit = [w for w in windows if hashlib.sha256(w.encode("utf-8")).hexdigest() == digest]
-            self.assertFalse(bool(hit), "a private family name appears in memory/prompt.txt")
+        self.assertNotRegex(prompt, r"\bDad\b")
+        private_names = [n.strip() for var in ("OMEGA_PRIVATE_OWNER_NAMES", "OMEGA_PRIVATE_FAMILY_NAMES")
+                         for n in os.environ.get(var, "").split(",") if n.strip()]
+        for private_name in private_names:
+            self.assertNotRegex(prompt, rf"\b{re.escape(private_name)}\b")
 
 
 if __name__ == "__main__":
