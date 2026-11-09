@@ -33,13 +33,15 @@ interface Tab {
   token: string | null
   handle: object
   events: Emitter<void>
+  principals: Map<string, string>
+  nativeMe?: SimClient['me']
 }
 const tabs = new WeakMap<SimClient, Tab>()
 
 function tab(seed: number): Tab {
   const sim = new SimClient({ seed, latency: false, autoStart: false, historyDays: 1 })
   made.push(sim)
-  const t: Tab = { sim, token: null, handle: {}, events: new Emitter<void>() }
+  const t: Tab = { sim, token: null, handle: {}, events: new Emitter<void>(), principals: new Map() }
   Object.assign(sim, {
     needsAuth: () => !t.token,
     authContext: () => t.handle,
@@ -56,7 +58,23 @@ let seeds = 900
  */
 export function testPerson(name: string, opts: { seed?: number; sameTab?: TestPerson } = {}): TestPerson {
   const t = opts.sameTab ? tabs.get(opts.sameTab.client)! : tab(opts.seed ?? ++seeds)
+  t.principals.set(`token-${name}`, `user:${name}`)
   return { name, client: t.sim, token: () => `token-${name}` }
+}
+
+/** Opt-in for tests that bind invented Ask principals while retaining SimClient's other host routes.
+ * Read the current credential at response time: same-client A→B→A reports A, B, A,
+ * rather than retaining whichever person installed a feature's Ask fixture last.
+ */
+export function reportTestPrincipal(p: TestPerson, principal = `user:${p.name}`): void {
+  const t = tabs.get(p.client)!
+  t.principals.set(p.token()!, principal)
+  if (t.nativeMe) return
+  const nativeMe = t.nativeMe = t.sim.me.bind(t.sim)
+  t.sim.me = async () => {
+    const me = await nativeMe()
+    return { ...me, principal: t.token ? t.principals.get(t.token) ?? me.principal : me.principal }
+  }
 }
 
 function presentCredential(p: TestPerson): void {

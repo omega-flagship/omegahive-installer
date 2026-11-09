@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { applyLookPatch, decide, lookCandidates, lookPatchProblem } from '../../lib/intent'
 import { NAME_MAX, tagged } from '../../lib/intent/look'
-import { legibilityProblems, wellFormed, ACCENTS, type AccentName } from '../../lib/intent/palette'
+import { legibilityProblems, wellFormed, isLightPage, ACCENTS, type AccentName } from '../../lib/intent/palette'
 import type { LookPatch } from '../../lib/intent/types'
 import { DEFAULT_VARIANT, SEED_VARIANTS, blockedReason } from '../../shell/uiVariant'
 import { buildLook, describeLook, settleLooks, shortName } from './describe'
@@ -171,8 +171,28 @@ describe('Kimi K3: a named accent is the hue named, or a plain no', () => {
     expect(applyLookPatch(base, patch, DEFAULT_VARIANT, SEED_VARIANTS).variant?.colors).toEqual(DEFAULT_VARIANT.colors)
     expect(lookPatchProblem(base, patch, DEFAULT_VARIANT)).toBe(settled.cannot[0].text)
   })
-  it.each(Object.keys(ACCENTS).filter((k) => !k.startsWith('deep-')) as AccentName[])('%s: the accent is exactly the named colour, from every base', (name) => {
-    for (const v of [DEFAULT_VARIANT, ...SEED_VARIANTS.filter((s) => !blockedReason(s))]) {
+  // the light-token round added a light look (Paper Studio): a bright named accent is exact on every dark base, and on a
+  // light page it is too light to read, so it is a plain no there (worded that way), and its deep version is exact
+  const usable = [DEFAULT_VARIANT, ...SEED_VARIANTS.filter((s) => !blockedReason(s))]
+  const darkBases = usable.filter((v) => !isLightPage(v.colors)), lightBases = usable.filter((v) => isLightPage(v.colors))
+  it('this build has dark looks and at least one light one', () => {
+    expect(darkBases.length).toBeGreaterThan(0)
+    expect(lightBases.map((v) => v.id)).toContain('paper')
+  })
+  it.each(Object.keys(ACCENTS).filter((k) => !k.startsWith('deep-')) as AccentName[])('%s: the accent is exactly the named colour on every dark base; on a light one, a plain no', (name) => {
+    for (const v of darkBases) {
+      const p = applyLookPatch({ variant: v, layout: null }, { kind: 'accent', accent: name }, DEFAULT_VARIANT, SEED_VARIANTS)
+      expect(p.variant!.colors.accent).toBe(ACCENTS[name])
+      expect(legibilityProblems(p.variant!.colors)).toEqual([])
+    }
+    for (const v of lightBases) {
+      const base = { variant: v, layout: null }
+      expect(lookPatchProblem(base, { kind: 'accent', accent: name }, DEFAULT_VARIANT)).toBe(`That ${name} is too light to read on this page; try a darker ${name}.`)
+      expect(applyLookPatch(base, { kind: 'accent', accent: name }, DEFAULT_VARIANT, SEED_VARIANTS).variant?.colors).toEqual(v.colors)
+    }
+  })
+  it.each((Object.keys(ACCENTS) as AccentName[]).filter((k) => k.startsWith('deep-')))('%s: exactly the named colour on a light page', (name) => {
+    for (const v of lightBases) {
       const p = applyLookPatch({ variant: v, layout: null }, { kind: 'accent', accent: name }, DEFAULT_VARIANT, SEED_VARIANTS)
       expect(p.variant!.colors.accent).toBe(ACCENTS[name])
       expect(legibilityProblems(p.variant!.colors)).toEqual([])

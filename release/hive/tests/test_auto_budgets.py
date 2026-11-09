@@ -1,5 +1,5 @@
 """Automatic limits from the hive total, in the host: Budgets.applicable / overview, admission and reservations, the
-env-as-seed rule (the owner, 2026-10-07), session and request defaults, and the limits API (PLATFORM_AUTO_BUDGET_LIMITS_PLAN)."""
+env-as-seed rule (Jon 2026-10-07), session and request defaults, and the limits API (PLATFORM_AUTO_BUDGET_LIMITS_PLAN)."""
 
 import pytest
 
@@ -78,7 +78,7 @@ def test_every_mind_is_a_month_default_not_a_pool(client):
     assert over["every-mind"]["spent_usd"] == 0
 
 
-# ---- server settings only seed a hive with no total (the owner, 2026-10-07) -------------------------------------------------
+# ---- server settings only seed a hive with no total (Jon 2026-10-07) -------------------------------------------------
 
 def chat(client, agent, max_tokens=50):
     _fake_chat(_gateway(client), delay=0)   # never a real provider call
@@ -320,7 +320,7 @@ def test_auto_candidates_lists_old_defaults_and_writes_nothing(client):
     noted = client.post("/api/swarms", json={"name": "Noted"}).json()
     inert = client.post("/api/swarms", json={"name": "Inert"}).json()
     old = set_rule(client, f"swarm:{other['id']}", "month", 500)
-    client.post("/api/budgets", json={"scope": f"swarm:{noted['id']}", "period": "month", "limit_usd": 500, "note": "Quinn chose"})
+    client.post("/api/budgets", json={"scope": f"swarm:{noted['id']}", "period": "month", "limit_usd": 500, "note": "Jon chose"})
     set_rule(client, f"swarm:{inert['id']}", "month", 0)
     s = client.post("/api/sessions", json={"mind": c["id"], "title": "Machinery", "budget_usd": 5}).json()
     before = (h.db.all("SELECT * FROM budgets ORDER BY id"), h.db.all("SELECT id, budget_usd FROM agents ORDER BY id"))

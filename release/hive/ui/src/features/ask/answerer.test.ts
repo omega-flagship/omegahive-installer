@@ -3,7 +3,7 @@ import { createElement, createRef, type ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 
 /**
- * Who answers (the owner, 2026-10-08: the cloud Ask answered 409 no_mind and the page let him think it "has no model"):
+ * Who answers (Jon, 2026-10-08: the cloud Ask answered 409 no_mind and the page let him think it "has no model"):
  * the host's exact words for no_mind / no_orchestrator with "Choose who answers" right there; choosing saves the
  * default Ask swarm and sends the same words once more; the bar says who answers before the first send; and the
  * person's own mind (Platform P2) is read when the host has it, inert until then. INVENTED data, no network, no model.
@@ -16,13 +16,14 @@ vi.stubGlobal('window', win)
 vi.stubGlobal('localStorage', storage)
 
 const { useHive } = await import('../../store/store')
-const { threadRows, useAskStore } = await import('../../store/ask')
+const { askOrigin, threadRows, useAskStore } = await import('../../store/ask')
 const { AskRefusal } = await import('../../api/ask')
-const { answererChip, chipWords, withPreselected, resendContext, HOST_SAY, CHOOSE_WHO, CHANGE_WHO } = await import('./answerer')
+const { answererChip, chipWords, planAsk, withPreselected, resendContext, HOST_SAY, CHOOSE_WHO, CHANGE_WHO } = await import('./answerer')
 const { REFUSAL_WORDS } = await import('./words')
 const { ThreadLog } = await import('./Thread')
 const { FloatingAsk } = await import('./ClassicAsk')
 const { AnswererInline, AnswererChipButton } = await import('./AnswererPicker')
+const { answererChoice } = await import('./answererChoice')
 type AskBody = import('../../api/ask').AskBody
 type AskSettings = import('../../api/ask').AskSettings
 type HiveClient = import('../../api/client').HiveClient
@@ -167,33 +168,28 @@ describe('before the first send: the bar says who answers', () => {
     expect(answererChip({ settings: settingsOf(null), personal: null, pageSwarm: 's_kelp' })).toBeNull()
     expect(answererChip({ settings: settingsOf(null), personal: null, to: 'a_vega01' })).toBeNull()
   })
-  it('the person’s own mind’s chip is a link to that mind (#/me/mind), named for what it opens; the others stay buttons', () => {
+  it('the own-mind chip is one picker button; resting is accessible without a visible gate', () => {
     const own = renderToStaticMarkup(createElement(AnswererInline, { chip: { kind: 'personal', name: 'Deneb', resting: true }, answering: false }))
-    expect(own).toMatch(/^<div class="ask-answerer-inline"><a [^>]*href="#\/me\/mind"/)
-    expect(own).toContain('aria-label="Answering: you (Deneb) · resting: open your mind"')
+    expect(own).toContain('aria-label="Answering: you (Deneb), your mind, resting. Asking wakes it. Change who answers"')
     expect(own).toContain('data-answerer-chip="personal"')
-    // beside it, one "Change" button (r2): the same picker the chip used to open, keyboard reachable as a native button
     expect(own.match(/<button/g)).toHaveLength(1)
-    expect(own).toMatch(/<\/a><button type="button" class="ask-chip ask-chip-answerer" data-answerer-change="" aria-label="Change who answers" aria-expanded="false"[^>]*>Change<\/button>/)
+    expect(own).not.toContain('href=')
+    expect(own).toContain('>Answering: you (Deneb) <span aria-hidden="true">▾</span>')
+    expect(own).not.toContain('>resting<')
     for (const chip of [{ kind: 'choose' as const }, { kind: 'one' as const, swarm: lyra }]) {
       const html = renderToStaticMarkup(createElement(AnswererInline, { chip, answering: false }))
       expect(html).toContain('<button type="button"')
       expect(html).toContain('aria-expanded="false"')
-      expect(html).not.toContain('href=')
     }
   })
-  it('the own-mind chip’s "Change" opens the picker: it is the toggle, and shows whether it is open', () => {
+  it('the own-mind picker button is the toggle and exposes its expansion state', () => {
     const onToggle = vi.fn()
     const chip = { kind: 'personal' as const, name: 'Deneb', resting: false }
-    const tree = AnswererChipButton({ chip, open: false, onToggle }) as ReactElement<{ children: ReactElement<{ onClick?: () => void; 'aria-label'?: string; href?: string }>[] }>
-    const [link, change] = tree.props.children
-    expect(link.props.href).toBe('#/me/mind')
-    expect(link.props.onClick).toBeUndefined()
-    expect(change.props['aria-label']).toBe(CHANGE_WHO)
-    change.props.onClick!()
+    const tree = AnswererChipButton({ chip, open: false, onToggle }) as ReactElement<{ onClick: () => void; 'aria-label': string }>
+    expect(tree.props['aria-label']).toBe(`Answering: you (Deneb), your mind. ${CHANGE_WHO}`)
+    tree.props.onClick()
     expect(onToggle).toHaveBeenCalledTimes(1)
-    expect(renderToStaticMarkup(createElement(AnswererChipButton, { chip, open: true, onToggle }))).toContain('aria-label="Change who answers" aria-expanded="true"')
-    expect(CHANGE_WHO).toBe('Change who answers')
+    expect(renderToStaticMarkup(createElement(AnswererChipButton, { chip, open: true, onToggle }))).toContain('aria-expanded="true"')
   })
   it('the chip draws its words (the floating bar, Professional and Still share it); the floating Ask is still there', () => {
     const html = renderToStaticMarkup(createElement(AnswererInline, { chip: { kind: 'choose' }, answering: false }))
@@ -259,5 +255,127 @@ describe('the person’s own mind (Platform P2), inert until the host has it', (
     expect(resendContext(ctx, 'no_mind', 's_lyra')).toBe(ctx)
     expect(resendContext(ctx, 'mind_asleep', 's_lyra')).toBe(ctx)
     expect(resendContext({ private: true }, 'no_orchestrator', 's_lyra')).toEqual({ private: true })
+  })
+})
+
+it('an unresolved own-mind lookup never becomes a choose wall or a preselected swarm', () => {
+  const settings = settingsOf(null, [lyra])
+  expect(answererChip({ settings, personal: undefined })).toEqual({ kind: 'loading' })
+  const plan = planAsk(ctx, { settings, personal: undefined, swarmOf: () => undefined, thread: null, carry: null, threadOpen: false })
+  expect(plan.context).not.toHaveProperty('swarm_id')
+  expect(plan.chip).toEqual({ kind: 'loading' })
+  const fallback = planAsk({ ...ctx, swarm_id: 's_unavailable' }, { settings, personal: undefined, swarmOf: () => undefined, thread: null, carry: null, threadOpen: false })
+  expect(fallback.context).not.toHaveProperty('swarm_id')
+  expect(answererChip({ settings, personal: null })).toEqual({ kind: 'one', swarm: lyra })
+})
+it('own-chip filled dot requires confirmed awake; resting and unknown remain hollow', () => {
+  for (const status of ['awake', 'asleep', 'starting', undefined]) {
+    const chip = answererChip({ settings: settingsOf(null), personal: { id: 'a_deneb2', name: 'Deneb', status } })!
+    const markup = renderToStaticMarkup(createElement(AnswererChipButton, { chip, open: false, onToggle: () => {} }))
+    expect(markup).toContain(`data-awake="${status === 'awake'}"`)
+    if (!status) expect(markup).not.toContain('your mind, awake')
+  }
+})
+
+it('a scoped choice is not replaced by the inferred eligible fallback', () => {
+  const plan = planAsk({ ...ctx, swarm_id: 's_explicit' }, { settings: settingsOf('s_lyra'), personal: null, swarmOf: () => undefined, thread: null, carry: null, threadOpen: false, explicitChoice: true })
+  expect(plan.context).toMatchObject({ swarm_id: 's_explicit' })
+  expect(plan).not.toHaveProperty('through')
+  expect(plan.note).toBeNull()
+})
+
+describe('scoped choice through the actual Ask store', () => {
+  it('sends the chosen swarm once without writing a preference or falling back to the sole eligible swarm', async () => {
+    const h = host({ eligible: [lyra] })
+    await start(h.client)
+    const origin = askOrigin()
+    answererChoice.select({ kind: 'swarm', swarm: 's_chosen', name: 'Chosen' }, origin.ok)
+    await useAskStore.getState().send('hello', { ...ctx, swarm_id: 's_page' })
+    expect(h.posts).toHaveLength(1)
+    expect(h.posts[0].context).toMatchObject({ swarm_id: 's_chosen' })
+    expect(h.puts).toEqual([])
+    expect(useAskStore.getState().settings?.swarm_id).toBeNull()
+    useAskStore.getState().setThreadOpen(false)
+    expect(answererChoice.get()).toBeNull()
+  })
+  it('preserves the exact private body despite a local swarm choice', async () => {
+    const h = host()
+    await start(h.client)
+    answererChoice.select({ kind: 'swarm', swarm: 's_chosen', name: 'Chosen' }, askOrigin().ok)
+    await useAskStore.getState().send('private hello', { private: true })
+    expect(h.posts[0].context).toEqual({ private: true })
+    expect(h.puts).toEqual([])
+  })
+  it('reset invalidates a local choice before any subsequent person can use it', async () => {
+    const h = host()
+    await start(h.client)
+    answererChoice.select({ kind: 'swarm', swarm: 's_chosen', name: 'Chosen' }, askOrigin().ok)
+    useAskStore.getState().reset()
+    expect(answererChoice.get()).toBeNull()
+    expect(h.posts).toEqual([])
+    expect(h.puts).toEqual([])
+  })
+})
+
+it('an explicit default save does not claim a refused retry was admitted', async () => {
+  const h = host({ refuse: 'no_mind' })
+  await start(h.client)
+  await useAskStore.getState().send('Keep these words', ctx)
+  const op = h.posts[0].operation_id
+  vi.mocked(h.client.ask!).mockRejectedValueOnce(new AskRefusal(409, 'no_mind', 'Still no answerer'))
+  expect(await useAskStore.getState().chooseAnswerer('s_kelp', op)).toBe('saved-not-sent')
+  expect(useAskStore.getState().turns[op].resent).toBe(false)
+  expect(h.puts).toEqual([{ swarm_id: 's_kelp' }])
+})
+
+describe('explicit saved default supersedes a scoped refusal recipient before repair', () => {
+  for (const reason of ['no_orchestrator', 'no_mind', 'mind_asleep'] as const) it(`${reason}: A local → refusal → B default sends B and retains its actual accepted mind`, async () => {
+    const h = host()
+    await start(h.client)
+    const accepted = { ...thread, id: 'ses_kelp', mind: { id: 'a_coral5', name: 'Coral' } }
+    vi.mocked(h.client.ask!).mockImplementationOnce(async (body) => { h.posts.push(body); throw new AskRefusal(409, reason, 'invented repairable refusal') })
+      .mockImplementationOnce(async (body) => { h.posts.push(body); return { operation_id: body.operation_id, turn_id: 't_kelp', thread: accepted, state: 'accepted' as const } })
+    answererChoice.select({ kind: 'swarm', swarm: 's_lyra', name: 'Lyra' }, askOrigin().ok)
+    await useAskStore.getState().send('Keep these exact words', ctx)
+    const oldOp = h.posts[0].operation_id
+    expect(h.posts[0].context).toMatchObject({ swarm_id: 's_lyra' })
+    expect(answererChoice.get()).toMatchObject({ swarm: 's_lyra' })
+    expect(await useAskStore.getState().chooseAnswerer('s_kelp', oldOp)).toBe('resent')
+    expect(h.posts).toHaveLength(2)
+    expect(h.posts[1].context).toMatchObject({ swarm_id: 's_kelp' })
+    expect(h.posts[1].text).toBe('Keep these exact words')
+    expect(h.puts).toEqual([{ swarm_id: 's_kelp' }])
+    expect(answererChoice.get()).toBeNull()
+    expect(useAskStore.getState().turns[oldOp].resentMind).toEqual({ id: 'a_coral5', name: 'Coral' })
+  })
+  it('ordinary sends keep their local choice when no explicit default is saved', async () => {
+    const h = host(); await start(h.client)
+    answererChoice.select({ kind: 'swarm', swarm: 's_lyra', name: 'Lyra' }, askOrigin().ok)
+    await useAskStore.getState().send('Ordinary request', ctx)
+    expect(h.posts[0].context).toMatchObject({ swarm_id: 's_lyra' })
+    expect(answererChoice.get()).toMatchObject({ swarm: 's_lyra' })
+    expect(h.puts).toEqual([])
+  })
+  it('a failed default save keeps the existing local choice and sends nothing', async () => {
+    const h = host(); await start(h.client)
+    answererChoice.select({ kind: 'swarm', swarm: 's_lyra', name: 'Lyra' }, askOrigin().ok)
+    vi.mocked(h.client.setAskSettings!).mockRejectedValueOnce(new Error('invented save failure'))
+    expect(await useAskStore.getState().chooseAnswerer('s_kelp')).toBe('failed')
+    expect(answererChoice.get()).toMatchObject({ swarm: 's_lyra' })
+    expect(h.posts).toEqual([])
+  })
+})
+
+describe('native answerer grammar without an invented admitted thread', () => {
+  it('labels a resolved plan without calling it the current thread', () => {
+    expect(chipWords({ kind: 'planned', name: 'Invented Vega' })).toBe('Answering: Invented Vega')
+  })
+  it('keeps the same named recipient in terminal, office and paper grammar', async () => {
+    const { nativeAnswererWords } = await import('./answerer')
+    const chip = { kind: 'personal' as const, name: 'Invented Ada', resting: true }
+    expect(nativeAnswererWords(chip, 'construct')).toBe('answering: invented ada')
+    expect(nativeAnswererWords(chip, 'professional')).toBe('Answering: Invented Ada')
+    expect(nativeAnswererWords(chip, 'still')).toBe('Asking Invented Ada · change')
+    expect(nativeAnswererWords({ kind: 'loading' }, 'construct')).toBe('finding who answers…')
   })
 })

@@ -1,0 +1,47 @@
+/* The one add-your-key step: inline, in the theme's own tokens (each look supplies them). */
+.ok-sheet {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--color-accent) 7%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-accent) 30%, transparent);
+  max-width: 100%;
+  min-width: 0;
+}
+.ok-title { margin: 0; font-weight: 600; font-size: 13.5px; }
+.ok-note { margin: 0; font-size: 12px; color: var(--color-ink-3); }
+.ok-note[data-own-key-saved] { color: var(--color-good); }
+.ok-field { display: grid; gap: 4px; font-size: 12px; min-width: 0; }
+.ok-field > span:first-child { color: var(--color-ink-2, var(--color-ink-3)); }
+.ok-field small { color: var(--color-ink-3); font-size: 11.5px; }
+.ok-field input {
+  font: inherit;
+  font-size: 13px;
+  min-height: 32px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in oklab, var(--color-primary-top) 25%, transparent);
+  background: color-mix(in oklab, var(--color-ink) 4%, transparent);
+  color: inherit;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+.ok-field input:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.ok-money { display: flex; align-items: center; gap: 4px; max-width: 160px; }
+.ok-error { margin: 0; font-size: 12px; color: var(--color-warn); }
+.ok-row { display: flex; flex-wrap: wrap; gap: 6px 8px; }
+.ok-btn {
+  font: inherit;
+  font-size: 12.5px;
+  min-height: 30px;
+  padding: 4px 14px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  color: inherit;
+}
+.ok-btn[data-tone='primary'] { background: color-mix(in oklab, var(--color-accent) 85%, transparent); color: #12112a; font-weight: 600; }
+.ok-btn:disabled { opacity: 0.55; cursor: default; }

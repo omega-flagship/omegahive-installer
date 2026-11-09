@@ -36,7 +36,7 @@ export function IsolationChip({ agentId, status }: { agentId: string; status: Ag
       aria-label={`${label}. ${title}`}
       className={cx(
         'inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium',
-        safe ? 'border-good/30 bg-good/[0.07] text-good' : 'border-line bg-white/[0.04] text-ink-3',
+        safe ? 'border-good/30 bg-good/[0.07] text-good' : 'border-line bg-tint/[0.04] text-ink-3',
       )}
     >
       <Icon name={safe ? 'shield' : 'info'} size={10} />

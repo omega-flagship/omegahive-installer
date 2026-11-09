@@ -12,6 +12,10 @@ class EventBus:
     def __init__(self):
         self._loop: asyncio.AbstractEventLoop | None = None
         self._queues: set[asyncio.Queue] = set()
+        self._listeners = []   # in-process observers (repo maps 1.2): called with (kind, payload); must only enqueue
+
+    def listen(self, callback):
+        self._listeners.append(callback)
 
     def bind(self, loop):
         self._loop = loop
@@ -34,6 +38,11 @@ class EventBus:
             queue.put_nowait(frame)
 
     def publish(self, kind, /, **payload):
+        for listener in list(self._listeners):
+            try:
+                listener(kind, payload)
+            except Exception:   # noqa: BLE001  (an observer never breaks a publication)
+                pass
         frame = json.dumps(dict(type=kind, at=now(), **payload))
         loop = self._loop
         if loop is None:

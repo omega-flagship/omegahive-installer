@@ -10,7 +10,7 @@ import { iconOr, type IconName } from '../ui/iconPaths'
  */
 
 /**
- * The work words (Motivations above Tasks, coordination/omegaui/MOTIVATIONS_TASKS_HOST_DESIGN_20261005.md): the old
+ * The work words (Motivations above Tasks, MOTIVATIONS_TASKS_HOST_DESIGN_20261005.md): the old
  * Goals and Boards pair became Motivations (the why) above Tasks (the work; Boards is now a view of Tasks).
  */
 export const TERMS = {
@@ -91,9 +91,10 @@ export const NAV_SECTIONS: NavSection[] = [
     icon: 'swarms',
     items: [
       { key: 'swarms', label: 'Swarms', blurb: 'Groups of minds with one purpose; archived swarms too', icon: 'swarms', route: { name: 'swarms' }, match: ['swarms', 'swarm', 'launch', 'lifecycle'], keys: ['G', 'S'], feature: 'swarms.see', places: [{ key: 'launch', label: 'Start a swarm', route: { name: 'launch' } }, { key: 'archived', label: 'Archived swarms', route: { name: 'swarms' }, reveal: '#archived-h', admin: true }] },
-      { key: 'explore', label: 'Explore', blurb: 'Every mind and swarm, filtered and grouped your way', icon: 'compass', route: { name: 'explore' }, match: ['explore'], keys: ['G', 'X'], feature: 'work.explore', places: [{ key: 'groups', label: 'My Explore groups', route: { name: 'explore' }, reveal: '[data-my-groups-toggle]' }] },
+      { key: 'explore', label: 'Explore', blurb: 'Every mind and swarm, filtered and grouped your way', icon: 'compass', route: { name: 'explore' }, match: ['explore'], keys: ['G', 'X'], feature: 'work.explore', places: [{ key: 'groups', label: 'My Explore groups', route: { name: 'explore' }, reveal: '[data-tour="my-groups"] button' }] },
       { key: 'roles', label: 'Roles', blurb: 'Job descriptions for minds', icon: 'roles', route: { name: 'roles' }, match: ['roles'], keys: ['G', 'R'], feature: 'build.roles' },
       { key: 'models', label: 'Models', blurb: 'AI providers and the models minds think with', icon: 'cpu', route: { name: 'models' }, match: ['models'], keys: ['G', 'M'], feature: 'build.models' },
+      { key: 'tools', label: 'Tools', blurb: 'Skills of thought minds can use, and which minds have them', icon: 'spark', route: { name: 'tools' }, match: ['tools'], feature: 'build.tools' },
       { key: 'people', label: 'People', blurb: 'Who can use this hive, and invitations', icon: 'people', route: { name: 'people' }, match: ['people'], keys: ['G', 'O'], admin: true, feature: 'people.manage' },
       { key: 'connect', label: 'Add an outside agent', blurb: 'Bring Claude Code, Codex or any MCP client into a swarm', icon: 'plug', route: { name: 'connect' }, match: ['connect'], keys: ['G', 'A'], admin: true, feature: 'minds.outside', places: [{ key: 'invites', label: 'Outside-agent invitations', route: { name: 'connect' }, reveal: '#invites-h', admin: true }] },
     ],

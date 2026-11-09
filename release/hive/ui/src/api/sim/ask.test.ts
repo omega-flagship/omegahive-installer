@@ -3,7 +3,7 @@ import { SimAsk } from './ask'
 import type { AskEvent } from '../ask'
 import type { Agent, Goal, Swarm } from '../types'
 
-/** SIM ONLY: the invented host plays the built host's shapes (platform/ask-p1 6100794) and the owner's routing ruling. */
+/** SIM ONLY: the invented host plays the built host's shapes (platform/ask-p1 6100794) and Jon's routing ruling. */
 const agents = [
   { id: 'a_vega01', name: 'Vega', status: 'awake', swarm_id: 's_lyra' },
   { id: 'a_altr03', name: 'Altair', status: 'asleep', swarm_id: 's_lyra' },

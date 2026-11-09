@@ -152,31 +152,31 @@ export function StartGroup({ message, room, onClose }: { message: RoomMessage; r
     }
   }
   return (
-    <div ref={box} className="xc-dress xc-backdrop fixed inset-0 z-[60] flex items-end justify-center bg-black/50 p-0 md:items-center md:p-6" role="dialog" aria-modal="true" aria-labelledby="coffee-group-h" onClick={onClose}>
+    <div ref={box} className="xc-dress xc-backdrop fixed inset-0 z-[60] flex items-end justify-center bg-shade/50 p-0 md:items-center md:p-6" role="dialog" aria-modal="true" aria-labelledby="coffee-group-h" onClick={onClose}>
       <div className="xc-frame xc-flush-b glass-strong w-full max-w-lg space-y-4 rounded-t-3xl sheet-solid-98 p-5 md:rounded-3xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2">
           <CoffeeMark size={16} />
           <h2 id="coffee-group-h" className="flex-1 font-display text-[18px] font-semibold">Start a group</h2>
           <IconButton icon="x" label="Close" onClick={onClose} />
         </div>
-        <blockquote className="rounded-xl border border-line bg-white/[0.03] px-3 py-2 text-[12.5px] text-ink-3">
+        <blockquote className="rounded-xl border border-line bg-tint/[0.03] px-3 py-2 text-[12.5px] text-ink-3">
           <span className="font-medium text-ink-2">{who}:</span> {plainText(message.text).length > 160 ? `${plainText(message.text).slice(0, 160)}…` : plainText(message.text)}
         </blockquote>
         <p className="text-[12px] text-ink-3">A private group for the people and minds you pick. It keeps a link back to this message.</p>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name the group" aria-label="Group name"
-          className="min-h-10 w-full rounded-xl border border-line bg-black/25 px-3 text-[14px] text-ink" />
+          className="min-h-10 w-full rounded-xl border border-line bg-shade/25 px-3 text-[14px] text-ink" />
         <div>
           <div className="flex items-baseline gap-2 pb-1.5">
             <h3 className="eyebrow flex-1">Invite from the Coffee Room</h3>
             <span className="text-[11.5px] text-ink-4" aria-live="polite">{chosen.length} picked</span>
           </div>
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find someone" aria-label="Find people and minds"
-            className="mb-1.5 min-h-9 w-full rounded-xl border border-line bg-black/25 px-3 text-[13px] text-ink" />
+            className="mb-1.5 min-h-9 w-full rounded-xl border border-line bg-shade/25 px-3 text-[13px] text-ink" />
           <ul className="thin-scroll max-h-56 space-y-0.5 overflow-y-auto" aria-label="People and minds">
             {options.map((m) => (
               <li key={m.member}>
                 <button onClick={() => toggle(m.member)} aria-pressed={chosen.includes(m.member)}
-                  className={cx('flex min-h-10 w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px]', chosen.includes(m.member) ? 'bg-accent/20 text-ink' : 'text-ink-2 hover:bg-white/[0.05]')}>
+                  className={cx('flex min-h-10 w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px]', chosen.includes(m.member) ? 'bg-accent/20 text-ink' : 'text-ink-2 hover:bg-tint/[0.05]')}>
                   <Icon name={isMind(m.member) ? 'mind' : 'user'} size={14} className="text-ink-3" />
                   <span className="min-w-0 flex-1 truncate">{memberName(m)}</span>
                   <span className="text-[11px] text-ink-4">{isMind(m.member) ? 'mind' : 'person'}{m.member === message.sender ? ' · said this' : ''}</span>
@@ -275,7 +275,7 @@ export function CoffeeMembershipView({ agent, admin, swarm, confirm, patch, done
       {/* askConfirm shows nothing without a host, and the mind's Model tab mounts none: the switch brings its own */}
       {admin && <ConfirmHost />}
       <h3 id="coffee-h" className="eyebrow mb-2">Coffee Room</h3>
-      <div className="flex items-center gap-3 rounded-xl border border-line bg-white/[0.02] px-3 py-2">
+      <div className="flex items-center gap-3 rounded-xl border border-line bg-tint/[0.02] px-3 py-2">
         <CoffeeMark size={14} />
         <div className="min-w-0 flex-1">
           <p className="text-[13px] text-ink">{state.label}</p>

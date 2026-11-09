@@ -46,7 +46,7 @@ def w(client, monkeypatch):
     monkeypatch.setattr(hive.health, "mind_id", lambda: None)
     x = World()
     x.hive, x.running, x.tokens, x.client = hive, running, tokens, client
-    x.quinn, x.ann, x.mia = person(hive, "u_quinn"), person(hive, "u_ann"), person(hive, "u_mia", role="member")
+    x.jon, x.ann, x.mia = person(hive, "u_jon"), person(hive, "u_ann"), person(hive, "u_mia", role="member")
     origin = client.post("/api/swarms", json={"name": "Code local", "visibility": "public"}).json()
     x.team = client.post("/api/swarms", json={"name": "Coders", "visibility": "public"}).json()
     x.foreign = client.post("/api/swarms", json={"name": "Others", "visibility": "public"}).json()
@@ -62,8 +62,8 @@ def w(client, monkeypatch):
         {"template_id": "native-b", "model_id": "mock/echo", "max_allocation_usd": 0.3, "controls": ["stop", "retire"],
          "lifecycle_modes": ["ongoing"], "teams": [x.team["id"]]}])
     assert hive.minds.template_errors == []
-    x.task = asyncio.run(hive.goals.create(origin["id"], "Edit code: synthetic", created_by="user:u_quinn"))
-    x.grant = hive.services.grant(x.task["id"], "user:u_quinn", "edit", None, 120, by="user:u_quinn")
+    x.task = asyncio.run(hive.goals.create(origin["id"], "Edit code: synthetic", created_by="user:u_jon"))
+    x.grant = hive.services.grant(x.task["id"], "user:u_jon", "edit", None, 120, by="user:u_jon")
     # One instruction lifetime per world, read from the clock once: a retry re-sends the same body, so every
     # instruction(w) is the same request unless a test overrides it (MesTTo flake: a per-call until crossed a second).
     x.until = later(hours=2)
@@ -82,7 +82,7 @@ def instruction(w, **over):
 
 
 def submit(w, headers=None, **over):
-    return w.client.post("/api/requests", headers=headers or w.quinn, json=instruction(w, **over))
+    return w.client.post("/api/requests", headers=headers or w.jon, json=instruction(w, **over))
 
 
 def spawn_body(rq, team, **over):
@@ -179,12 +179,12 @@ def test_only_a_named_admin_person_submits_an_instruction(w):
     assert set(body) == {"request_id", "receiving_goal", "lease_id", "state", "budget", "until"}
     assert body["state"] == "accepted" and body["budget"] == {"root": body["request_id"], "limit_usd": 0.8}
     req = w.hive.collab.get_request(body["request_id"])
-    assert req["from_principal"] == "user:u_quinn" and req["from_goal"] == w.task["id"] and req["from_swarm"] == w.origin["id"]
+    assert req["from_principal"] == "user:u_jon" and req["from_goal"] == w.task["id"] and req["from_swarm"] == w.origin["id"]
     assert req["to_swarm"] == w.team["id"] and req["budget_root"] == body["request_id"]
     goal = w.hive.goals.get(body["receiving_goal"])
     assert json.loads(goal["binding"])["request_id"] == body["request_id"] and goal["assignee"] == w.ctl["id"]
     lease = w.hive.db.one("SELECT * FROM mind_leases WHERE id = ?", (body["lease_id"],))
-    assert lease["issued_by"] == "user:u_quinn" and lease["controller_id"] == w.ctl["id"] and lease["grant_id"] == w.grant["id"]
+    assert lease["issued_by"] == "user:u_jon" and lease["controller_id"] == w.ctl["id"] and lease["grant_id"] == w.grant["id"]
 
 
 def test_instruction_replay_is_byte_identical_and_a_changed_body_conflicts(w):
@@ -197,7 +197,7 @@ def test_instruction_replay_is_byte_identical_and_a_changed_body_conflicts(w):
     assert w.client.post("/api/requests", headers=w.ann, json=instruction(w, title="Something else")).json()["error"]["code"] != \
         "operation_conflict"                                                          # operation ids are per person
     # the original answer survives cancellation and grant revocation
-    w.client.post(f"/api/requests/{first.json()['request_id']}/cancel", headers=w.quinn)
+    w.client.post(f"/api/requests/{first.json()['request_id']}/cancel", headers=w.jon)
     w.hive.services.revoke_grant(w.task["id"], w.grant["id"])
     assert submit(w).content == first.content
 
@@ -247,17 +247,17 @@ def test_instruction_wire_limits_and_refusals_create_nothing(w, over, code):
 def test_origin_fields_are_exact(w, field, value):
     body = instruction(w)
     body["origin"][field] = value
-    assert w.client.post("/api/requests", headers=w.quinn, json=body).json()["error"]["code"] == "bad_request"
+    assert w.client.post("/api/requests", headers=w.jon, json=body).json()["error"]["code"] == "bad_request"
 
 
 def test_instruction_origin_destination_and_budget_checks(w):
     other = asyncio.run(w.hive.goals.create(w.origin["id"], "Ann's task", created_by="user:u_ann"))
-    w.hive.services.grant(other["id"], "user:u_quinn", "edit", None, 60, by="user:u_ann")
+    w.hive.services.grant(other["id"], "user:u_jon", "edit", None, 60, by="user:u_ann")
     origin = dict(instruction(w)["origin"], task_id=other["id"])
     assert submit(w, origin=origin).json()["error"]["code"] == "origin_not_held"            # opened by someone else
     w.hive.services.revoke_grant(w.task["id"], w.grant["id"])
     assert submit(w).json()["error"]["code"] == "grant_inactive"
-    w.hive.services.grant(w.task["id"], "user:u_quinn", "edit", None, 60, by="user:u_quinn")
+    w.hive.services.grant(w.task["id"], "user:u_jon", "edit", None, 60, by="user:u_jon")
     assert submit(w, to_swarm=w.origin["id"]).json()["error"]["code"] == "bad_request"   # not the task's own swarm
     w.client.put(f"/api/swarms/{w.foreign['id']}/services", json={"kinds": []})
     assert submit(w, to_swarm=w.foreign["id"]).json()["error"]["code"] == "not_offered"
@@ -339,7 +339,7 @@ def test_spawn_retry_returns_the_same_child_and_reservation(w):
                           json={k: v for k, v in spawn_body(rq["request_id"], w.team).items() if k not in ("model_id", "lifecycle_limits")})
     assert again.status_code == 201 and again.content == first.content and counts(w.hive) == before   # absent == explicit null
     assert spawn(w, rq["request_id"], allocation_usd=0.1).json()["error"]["code"] == "operation_conflict"
-    w.client.post(f"/api/requests/{rq['request_id']}/cancel", headers=w.quinn)
+    w.client.post(f"/api/requests/{rq['request_id']}/cancel", headers=w.jon)
     assert spawn(w, rq["request_id"]).content == first.content                     # a recorded success outlives the request
     assert spawn(w, rq["request_id"], operation_id="op-spawn-0002").json()["error"]["code"] == "request_closed"
 
@@ -390,9 +390,9 @@ def test_spawn_admission_lease_budget_and_child_bounds(w):
 def test_spawn_needs_a_live_lease_whose_issuer_is_still_an_admin(w):
     enabled(w)
     rq = accepted(w)
-    w.hive.db.execute("UPDATE people SET role = 'member' WHERE id = 'u_quinn'")
+    w.hive.db.execute("UPDATE people SET role = 'member' WHERE id = 'u_jon'")
     assert spawn(w, rq["request_id"]).json()["error"]["code"] == "lease_required"
-    w.hive.db.execute("UPDATE people SET role = 'admin' WHERE id = 'u_quinn'")
+    w.hive.db.execute("UPDATE people SET role = 'admin' WHERE id = 'u_jon'")
     w.hive.db.execute("UPDATE mind_leases SET until = ? WHERE id = ?", ("2000-01-01T00:00:00.000Z", rq["lease_id"]))
     assert spawn(w, rq["request_id"]).json()["error"]["code"] == "lease_required"
 
@@ -518,7 +518,7 @@ def test_cancelling_one_request_pauses_only_its_children(w):
     two = accepted(w, operation_id="op-request-2")
     a = spawn(w, one["request_id"]).json()["child_id"]
     b = spawn(w, two["request_id"], operation_id="op-spawn-0002").json()["child_id"]
-    assert w.client.post(f"/api/requests/{one['request_id']}/cancel", headers=w.quinn).status_code == 200
+    assert w.client.post(f"/api/requests/{one['request_id']}/cancel", headers=w.jon).status_code == 200
     sa, sb = child_status(w, a), child_status(w, b)
     assert (sa["state"], sa["paused_reason"]) == ("paused", "request_cancelled") and a not in w.running
     assert (sb["state"], sb["paused_reason"]) == ("running" if b in w.hive.connections else "starting", None) and b in w.running
@@ -700,12 +700,12 @@ def test_people_read_a_teams_children_by_visibility(w):
     page = w.client.get(f"/api/teams/{w.team['id']}/children", headers=w.ann).json()
     assert [c["child_id"] for c in page["children"]] == [child] and "next_cursor" in page
     assert page["children"][0]["prompts"][0]["text"].startswith("Read the instruction")       # an admin may read the request
-    w.hive.db.execute("UPDATE swarms SET visibility = 'private', owner = 'user:u_quinn' WHERE id = ?", (w.origin["id"],))
+    w.hive.db.execute("UPDATE swarms SET visibility = 'private', owner = 'user:u_jon' WHERE id = ?", (w.origin["id"],))
     member = w.client.get(f"/api/teams/{w.team['id']}/children", headers=w.mia).json()
     assert member["children"][0]["state"] and "text" not in member["children"][0]["prompts"][0]   # sees the team, not the request
     w.hive.db.execute("UPDATE swarms SET visibility = 'shared', shared_with = '[\"user:u_mia\"]' WHERE id = ?", (w.origin["id"],))
     assert "text" in w.client.get(f"/api/teams/{w.team['id']}/children", headers=w.mia).json()["children"][0]["prompts"][0]
-    w.hive.db.execute("UPDATE swarms SET visibility = 'private', owner = 'user:u_quinn' WHERE id = ?", (w.team["id"],))
+    w.hive.db.execute("UPDATE swarms SET visibility = 'private', owner = 'user:u_jon' WHERE id = ?", (w.team["id"],))
     assert w.client.get(f"/api/teams/{w.team['id']}/children", headers=w.mia).status_code == 404
 
 
@@ -715,7 +715,7 @@ def team_templates(w, sid, headers):
 
 def test_people_read_a_teams_registered_templates_without_a_lease(w):
     before = counts(w.hive)
-    for who in (w.quinn, w.mia):                                     # an admin and a plain member who sees the team
+    for who in (w.jon, w.mia):                                     # an admin and a plain member who sees the team
         out = team_templates(w, w.team["id"], who)
         assert out.status_code == 200, out.text
         page = out.json()
@@ -737,11 +737,11 @@ def test_the_person_template_read_matches_the_mind_read_field_for_field(w):
 
 
 def test_the_person_template_read_hides_teams_the_person_cannot_see(w):
-    w.hive.db.execute("UPDATE swarms SET visibility = 'private', owner = 'user:u_quinn' WHERE id = ?", (w.team["id"],))
+    w.hive.db.execute("UPDATE swarms SET visibility = 'private', owner = 'user:u_jon' WHERE id = ?", (w.team["id"],))
     hidden, missing = team_templates(w, w.team["id"], w.mia), team_templates(w, "s_00000000", w.mia)
     assert hidden.status_code == missing.status_code == 404
     assert hidden.json() == missing.json()                         # a private team's existence is not revealed
-    assert team_templates(w, w.team["id"], w.quinn).status_code == 200      # its owner (here also an admin) still reads it
+    assert team_templates(w, w.team["id"], w.jon).status_code == 200      # its owner (here also an admin) still reads it
     assert team_templates(w, "s_00000000", w.ann).json()["error"]["code"] == "not_found"   # an admin, no such team
     w.hive.db.execute("UPDATE swarms SET visibility = 'shared', shared_with = '[\"user:u_mia\"]' WHERE id = ?", (w.team["id"],))
     assert team_templates(w, w.team["id"], w.mia).status_code == 200
@@ -775,7 +775,7 @@ def test_child_status_events_reach_only_people_who_see_the_team(w):
     frame = json.dumps({"type": "mind.updated", "swarm_id": w.team["id"], "child": w.hive.minds.child_view(row)})
     mia = Viewer("user:u_mia", False)
     assert w.hive.visibility.event_visible(mia, frame)
-    w.hive.db.execute("UPDATE swarms SET visibility = 'private', owner = 'user:u_quinn' WHERE id = ?", (w.team["id"],))
+    w.hive.db.execute("UPDATE swarms SET visibility = 'private', owner = 'user:u_jon' WHERE id = ?", (w.team["id"],))
     assert not w.hive.visibility.event_visible(mia, frame)
 
 
@@ -791,15 +791,15 @@ def test_people_clean_up_children_admin_or_lease_issuer_only(w):
     foreign = w.client.post(f"/api/teams/{w.foreign['id']}/children/{child}/control", headers=w.ann,
                             json={"operation_id": "op-human-0001", "action": "stop"})
     assert foreign.status_code == 404
-    w.hive.db.execute("UPDATE people SET role = 'member' WHERE id = 'u_quinn'")                  # the issuer, no longer an admin
+    w.hive.db.execute("UPDATE people SET role = 'member' WHERE id = 'u_jon'")                  # the issuer, no longer an admin
     w.hive.db.execute("UPDATE mind_leases SET until = ? WHERE id = ?", ("2000-01-01T00:00:00.000Z", rq["lease_id"]))
-    out = act(w.quinn, "stop", "op-human-0001")
+    out = act(w.jon, "stop", "op-human-0001")
     assert out.status_code == 202 and out.json()["observed"] is None
-    assert act(w.quinn, "stop", "op-human-0001").content == out.content
-    assert act(w.quinn, "retire", "op-human-0001").json()["error"]["code"] == "operation_conflict"
+    assert act(w.jon, "stop", "op-human-0001").content == out.content
+    assert act(w.jon, "retire", "op-human-0001").json()["error"]["code"] == "operation_conflict"
     assert act(w.ann, "retire", "op-human-0001").status_code == 202                           # person-scoped ids
     st = child_status(w, child)
-    assert st["state"] == "retired" and [(c["action"], c["by"]) for c in st["controls"]] == [("stop", "user:u_quinn"), ("retire", "user:u_ann")]
+    assert st["state"] == "retired" and [(c["action"], c["by"]) for c in st["controls"]] == [("stop", "user:u_jon"), ("retire", "user:u_ann")]
     assert st["controls"][0]["observed"]["state"] == "stopped"
 
 
@@ -827,10 +827,10 @@ def test_a_child_gets_a_host_issued_delegated_capability_whose_status_is_live(w)
     assert (claims["task_id"], claims["swarm_id"], claims["repository_id"]) == (w.task["id"], w.origin["id"], "synthetic")
     assert claims["grant_id"] == w.grant["id"] and claims["exp"] - claims["iat"] <= 900
     assert claims["delegated"] == {"request_id": rq["request_id"], "controller_id": w.ctl["id"], "execution_goal": rq["receiving_goal"],
-                                   "issuer": "user:u_quinn", "origin_scope": {"scope_id": "sc_1", "scope_digest": DIGEST, "generation": 1}}
+                                   "issuer": "user:u_jon", "origin_scope": {"scope_id": "sc_1", "scope_digest": DIGEST, "generation": 1}}
     status = lambda: w.client.get(f"/api/services/capabilities/{claims['id']}", headers=svc).json()
     assert status()["active"] is True and status()["claims"] == claims
-    w.client.post(f"/api/requests/{rq['request_id']}/cancel", headers=w.quinn)
+    w.client.post(f"/api/requests/{rq['request_id']}/cancel", headers=w.jon)
     assert status() == {**status(), "active": False, "reason": "request_closed"}
     again = w.client.post("/api/agent/code/capability", headers=mine, json={"delegated": True})
     assert again.status_code == 403 and again.json()["error"]["reason"] == "request_closed"
@@ -878,7 +878,7 @@ def test_another_member_or_a_mind_cannot_cancel_and_nothing_changes(w):
     url = f"/api/requests/{rq['request_id']}/cancel"
     out = w.client.post(url, headers=w.mia)                                       # a member who sees both swarms
     assert out.status_code == 403 and out.json()["error"]["code"] == "forbidden"
-    w.hive.db.execute("UPDATE swarms SET visibility = 'private', owner = 'user:u_quinn' WHERE id = ?", (w.origin["id"],))
+    w.hive.db.execute("UPDATE swarms SET visibility = 'private', owner = 'user:u_jon' WHERE id = ?", (w.origin["id"],))
     assert w.client.post(url, headers=w.mia).status_code == 404                     # one who cannot see the request
     assert w.client.post(url, headers=agent_headers(w.ctl)).status_code == 401      # a mind's token is not a session
     assert w.client.post(url, headers=agent_headers(w.helper)).status_code == 401
@@ -892,9 +892,9 @@ def test_the_issuer_cancels_even_after_losing_admin(w):
     enabled(w)
     rq = accepted(w)
     child = spawn(w, rq["request_id"]).json()["child_id"]
-    w.hive.db.execute("UPDATE people SET role = 'member' WHERE id = 'u_quinn'")
-    out = w.client.post(f"/api/requests/{rq['request_id']}/cancel", headers=w.quinn)
-    assert out.status_code == 200 and out.json()["by"] == "user:u_quinn"
+    w.hive.db.execute("UPDATE people SET role = 'member' WHERE id = 'u_jon'")
+    out = w.client.post(f"/api/requests/{rq['request_id']}/cancel", headers=w.jon)
+    assert out.status_code == 200 and out.json()["by"] == "user:u_jon"
     assert child_status(w, child)["paused_reason"] == "request_cancelled"
 
 
@@ -902,7 +902,7 @@ def test_an_admin_cancels_a_request_they_did_not_issue(w):
     enabled(w)
     rq = accepted(w)
     child = spawn(w, rq["request_id"]).json()["child_id"]
-    w.hive.db.execute("UPDATE swarms SET visibility = 'private', owner = 'user:u_quinn' WHERE id IN (?, ?)", (w.origin["id"], w.team["id"]))
+    w.hive.db.execute("UPDATE swarms SET visibility = 'private', owner = 'user:u_jon' WHERE id IN (?, ?)", (w.origin["id"], w.team["id"]))
     out = w.client.post(f"/api/requests/{rq['request_id']}/cancel", headers=w.ann)
     assert out.status_code == 200 and out.json()["by"] == "user:u_ann"
     assert child_status(w, child)["paused_reason"] == "request_cancelled"
@@ -1081,7 +1081,7 @@ def test_a_person_release_then_a_late_charge_never_overspends(w):
     child = spawn(w, rq["request_id"]).json()["child_id"]
     calls = call(w, child, "call-1", "unknown")
     retire(w, child)
-    resolve(calls, "call-1", "release", "provider shows no charge", "user:u_quinn")
+    resolve(calls, "call-1", "release", "provider shows no charge", "user:u_jon")
     asyncio.run(w.hive.minds.reconcile())
     assert allocated(w, rq) == 0.0
     settle(w, calls, "call-1", child, 0.07)                                              # the provider answers after all
@@ -1097,7 +1097,7 @@ def test_a_late_charge_is_held_again_before_the_next_spawn_without_waiting_for_r
     child = spawn(w, rq["request_id"], allocation_usd=0.3).json()["child_id"]
     calls = call(w, child, "call-1", "unknown", usd=0.2)
     retire(w, child)
-    resolve(calls, "call-1", "release", "no charge seen", "user:u_quinn")
+    resolve(calls, "call-1", "release", "no charge seen", "user:u_jon")
     asyncio.run(w.hive.minds.reconcile())
     assert allocated(w, rq) == 0.0
     settle(w, calls, "call-1", child, 0.2)                                               # late: $0.20 really was spent
@@ -1138,8 +1138,8 @@ def test_prompts_are_one_to_8192_bytes_of_valid_utf8_never_truncated(w, text, ok
 
 
 def test_an_unencodable_title_or_instruction_is_refused_not_a_server_error(w):
-    assert raw_post(w, "/api/requests", w.quinn, instruction(w, title="\ud800")).json()["error"]["code"] == "bad_request"
-    assert raw_post(w, "/api/requests", w.quinn, instruction(w, instruction="ok \udfff")).json()["error"]["code"] == "bad_request"
+    assert raw_post(w, "/api/requests", w.jon, instruction(w, title="\ud800")).json()["error"]["code"] == "bad_request"
+    assert raw_post(w, "/api/requests", w.jon, instruction(w, instruction="ok \udfff")).json()["error"]["code"] == "bad_request"
     enabled(w)
     rq = accepted(w)
     child = spawn(w, rq["request_id"]).json()["child_id"]
@@ -1196,7 +1196,7 @@ def test_team_control_gates_the_person_before_revealing_whether_a_team_exists(w)
     for url in (real, fake):                                                           # the local operator: same answer
         out = w.client.post(url, json=body)
         assert out.status_code == 403 and out.json()["error"]["code"] == "person_required"
-    w.hive.db.execute("UPDATE swarms SET visibility = 'private', owner = 'user:u_quinn' WHERE id = ?", (w.team["id"],))
+    w.hive.db.execute("UPDATE swarms SET visibility = 'private', owner = 'user:u_jon' WHERE id = ?", (w.team["id"],))
     hidden, missing = w.client.post(real, headers=w.mia, json=body), w.client.post(fake, headers=w.mia, json=body)
     assert hidden.status_code == missing.status_code == 404 and hidden.json()["error"]["code"] == missing.json()["error"]["code"]
     assert w.client.post(fake, headers=w.ann, json=body).status_code == 404               # an admin, no such team
@@ -1216,7 +1216,7 @@ def test_the_request_view_shows_the_envelope_shrink_as_children_spend(w):
     call(w, child, "call-1", "dispatched", usd=0.03)
     b = view()
     assert (b["allocated_usd"], b["spent_usd"], b["held_usd"], b["remaining_usd"]) == (0.2, 0.05, 0.03, 0.72)
-    person = [r for r in w.client.get("/api/requests", headers=w.quinn).json() if r["id"] == rq["request_id"]][0]["budget"]
+    person = [r for r in w.client.get("/api/requests", headers=w.jon).json() if r["id"] == rq["request_id"]][0]["budget"]
     assert person["remaining_usd"] == 0.72                                                 # the person sees it too
 
 
@@ -1224,7 +1224,7 @@ def test_a_cancel_pause_is_in_the_childs_audit_trail(w):
     enabled(w)
     rq = accepted(w)
     child = spawn(w, rq["request_id"]).json()["child_id"]
-    w.client.post(f"/api/requests/{rq['request_id']}/cancel", headers=w.quinn)
+    w.client.post(f"/api/requests/{rq['request_id']}/cancel", headers=w.jon)
     assert control(w, child, "stop", "op-stop-00001").status_code == 202
     st = child_status(w, child)
     assert [(c["action"], c["by"]) for c in st["controls"]] == [("pause", "host:request_cancelled"), ("stop", f"agent:{w.ctl['id']}")]
@@ -1237,7 +1237,7 @@ def test_a_delegated_capability_is_bound_to_the_exact_grant_its_lease_was_issued
     child = spawn(w, rq["request_id"]).json()["child_id"]
     claims = w.client.post("/api/agent/code/capability", headers={"Authorization": f"Bearer {w.tokens[child]}"},
                            json={"delegated": True}).json()["claims"]
-    second = w.hive.services.grant(w.task["id"], "user:u_quinn", "edit", None, 120, by="user:u_quinn")   # also active
+    second = w.hive.services.grant(w.task["id"], "user:u_jon", "edit", None, 120, by="user:u_jon")   # also active
     assert w.hive.minds.delegated_reason(claims) is None
     assert w.hive.minds.delegated_reason({**claims, "grant_id": second["id"]}) == "grant_withdrawn"
 
@@ -1314,3 +1314,166 @@ def test_a_spawn_holds_the_fence_and_the_childs_lock_from_insert_through_start(w
     assert seen["writers_at_finish"] == 1 and seen["writers"] >= 1     # the start nests its own fence inside
     assert seen["owned"] is True and seen["others_blocked"] is True
     assert w.hive._swarm_writers.get(w.team["id"], 0) == 0   # released once it is done
+
+
+def test_receiving_goal_says_where_to_start_but_never_holds_the_instruction(w):
+    enabled(w)
+    out = submit(w).json()
+    goal = w.hive.db.one("SELECT detail, swarm_id FROM goals WHERE id = ?", (out["receiving_goal"],))
+    assert "Make add() handle negatives." not in goal["detail"]
+    assert f"code-mind-work {out['request_id']} {w.team['id']}" in goal["detail"]
+    # Jon: the set-energy-mode line patched a symptom (8e8da86e); the engine fixes the cause. The controller-mind path
+    # stays an unpatched fallback, so the line is gone from every brief.
+    assert "set-energy-mode" not in goal["detail"] and '"' not in goal["detail"]
+
+
+# ---- child result handoff: a request child's retained proposal id reaches its controller on its work goal ----------
+
+SUGG = "suggestion_" + "c" * 32
+
+
+def work_goal(w, rq, title="propose the fix"):
+    """The controller holds the receiving goal and creates the child's work goal under it."""
+    assert w.client.post(f"/api/agent/goals/{rq['receiving_goal']}/claim", headers=agent_headers(w.ctl)).status_code == 200
+    out = w.client.post("/api/agent/goals", headers=agent_headers(w.ctl), json={"title": title, "parent_id": rq["receiving_goal"]})
+    assert out.status_code == 200, out.text
+    return out.json()["id"]
+
+
+def child_submits(w, child, goal_id, body):
+    """What hive-goal-claim + hive-goal-propose send for the child (modules/hive/src/hive_commons.goal_propose)."""
+    h = {"Authorization": f"Bearer {w.tokens[child]}"}
+    claimed = w.client.post(f"/api/agent/goals/{goal_id}/claim", headers=h)
+    assert claimed.status_code in (200, 409), claimed.text
+    try:
+        proposal = json.loads(body)
+    except ValueError:
+        proposal = {"text": body}
+    return w.client.post(f"/api/agent/goals/{goal_id}/result", headers=h,
+                         json={"status": "done", "result": body, "data": {"binding_digest": None, "proposal": proposal}})
+
+
+def test_a_childs_proposal_id_reaches_its_controller_without_any_message(w):
+    enabled(w)
+    rq = accepted(w)
+    child = spawn(w, rq["request_id"], lifecycle_mode="deliver").json()["child_id"]
+    goal = work_goal(w, rq)
+    before = w.hive.db.one("SELECT COUNT(*) AS n FROM messages WHERE direction = 'out'")["n"]
+    body = json.dumps({"proposal_id": SUGG})
+    assert child_submits(w, child, goal, body).status_code == 200
+    # no wake message was sent or needed: the result lives on the work goal (a lost message loses nothing)
+    assert w.hive.db.one("SELECT COUNT(*) AS n FROM messages WHERE direction = 'out'")["n"] == before
+    st = child_status(w, child)
+    assert [(r["goal_id"], r["status"], r["proposal_ref"]) for r in st["progress"]["results"]] == [(goal, "done", SUGG)]
+    # the controller's receiving goal is untouched: the child never claims or closes it
+    receiving = w.hive.goals.get(rq["receiving_goal"])
+    assert (receiving["status"], receiving["claimed_by"]) == ("claimed", w.ctl["id"])
+    # the scan path (team selector) carries it too
+    page = w.client.get("/api/agent/minds/status", headers=agent_headers(w.ctl), params={"team_id": w.team["id"]}).json()
+    assert page["children"][0]["progress"]["results"][0]["proposal_ref"] == SUGG
+    # replay: the identical submission is accepted again and changes nothing
+    digest = st["progress"]["results"][0]["result_digest"]
+    assert child_submits(w, child, goal, body).status_code == 200
+    again = child_status(w, child)["progress"]["results"]
+    assert [(r["goal_id"], r["proposal_ref"], r["result_digest"]) for r in again] == [(goal, SUGG, digest)]
+    # a different second submission is refused; the first result stays
+    assert child_submits(w, child, goal, json.dumps({"proposal_id": "suggestion_" + "d" * 32})).status_code == 409
+    assert child_status(w, child)["progress"]["results"][0]["proposal_ref"] == SUGG
+
+
+def test_a_stopped_child_keeps_its_submitted_proposal_ref(w):
+    enabled(w)
+    rq = accepted(w)
+    child = spawn(w, rq["request_id"], lifecycle_mode="deliver").json()["child_id"]
+    goal = work_goal(w, rq)
+    assert child_submits(w, child, goal, f"Proposal retained: {SUGG}, not applied.").status_code == 200   # plain text
+    asyncio.run(w.hive.minds.reconcile())
+    st = child_status(w, child)
+    assert (st["state"], st["paused_reason"]) == ("paused", "limit_reached")
+    assert control(w, child, "stop", "op-stop-0001").status_code == 202
+    asyncio.run(w.hive.minds.reconcile())
+    st = child_status(w, child)
+    assert st["state"] in ("stop_requested", "stopped")
+    assert [r["proposal_ref"] for r in st["progress"]["results"]] == [SUGG]
+
+
+def test_the_ref_is_controller_only_and_never_from_other_work(w):
+    enabled(w)
+    rq = accepted(w)
+    child = spawn(w, rq["request_id"]).json()["child_id"]
+    # a goal outside this request's work: never shown, whatever it names
+    other = w.client.post("/api/agent/goals", headers=agent_headers(w.ctl), json={"title": "unrelated"}).json()["id"]
+    assert child_submits(w, child, other, json.dumps({"proposal_id": SUGG})).status_code == 200
+    assert child_status(w, child)["progress"]["results"] == []
+    goal = work_goal(w, rq)
+    assert child_submits(w, child, goal, json.dumps({"proposal_id": SUGG})).status_code == 200
+    # another controller (the foreign team's) cannot read this child at all
+    out = w.client.get("/api/agent/minds/status", headers=agent_headers(w.fctl), params={"child_id": child})
+    assert out.status_code == 403
+    # the human team projection and shared mind events keep their existing shape (no ref)
+    page = w.client.get(f"/api/teams/{w.team['id']}/children", headers=w.ann).json()
+    assert "proposal_ref" not in page["children"][0]["progress"]["results"][0]
+    row = w.hive.db.one("SELECT * FROM mind_children WHERE id = ?", (child,))
+    assert "proposal_ref" not in w.hive.minds.child_view(row)["progress"]["results"][0]
+
+
+@pytest.mark.parametrize("result,data,ref", [
+    ("x", {"proposal": {"proposal_id": SUGG}}, SUGG),
+    ("x", {"proposal": {"suggestion_id": SUGG}}, SUGG),
+    ("x", {"proposal_id": SUGG}, SUGG),
+    (f"retained {SUGG} for review", None, SUGG),
+    ("x", {"proposal": {"text": f"id {SUGG}"}}, SUGG),
+    (f"{SUGG} and {SUGG}", None, SUGG),                                       # the same id twice is one id
+    (f"{SUGG} or suggestion_{'d' * 32}", None, None),                          # two different ids: no guess
+    ("x", {"proposal": {"proposal_id": "suggestion_XYZ"}}, None),             # not a bounded opaque id
+    ("x", {"proposal": {"proposal_id": SUGG + "0"}}, None),
+    (f"id {SUGG}0 is longer", None, None),                                    # a longer token is not that id
+    ("nothing here", None, None),
+])
+def test_proposal_ref_reads_one_bounded_suggestion_id(result, data, ref):
+    goal = {"result": result, "result_data": json.dumps(data) if data is not None else None}
+    assert minds_module.Minds.proposal_ref(goal) == ref
+
+
+def test_a_retained_proposal_is_test_source_only_from_this_requests_controller_or_its_own_child(w):
+    """code_test_intents._source_refs: besides request, controller, workspace, scope and digest, the proposal's author
+    is the request's controller or a child that controller spawned for this same request."""
+    from hive.core import code_test_intents as cti
+    enabled(w)
+    rq = accepted(w)
+    child = spawn(w, rq["request_id"]).json()["child_id"]
+    req = w.hive.minds._request(rq["request_id"])
+    lease = {"controller_id": w.ctl["id"], "issued_by": "user:u_jon"}
+    origin = {"workspace_id": "ws_" + "1" * 32, "task_id": w.task["id"], "repository_id": "synthetic",
+              "scope_id": "sc_1", "scope_digest": DIGEST, "generation": 1}
+    context = (req, lease, origin, None, {"swarm_id": w.origin["id"]})
+
+    class Refused(Exception):
+        pass
+
+    intents = type("I", (), {"hive": w.hive, "_err": staticmethod(lambda status, code, msg: Refused(code))})()
+
+    def raw(author):
+        record = {"id": SUGG, "workspace_id": origin["workspace_id"], "digest": "e" * 64, "author": author}
+        content = {"digest": "f" * 64, "binding": {"workspace_id": origin["workspace_id"], "task_id": origin["task_id"],
+                                                   "generation": 1, "tree_digest": "a" * 64}}
+        provenance = {"schema": "omegacode-request-proposal-v1", "workspace_id": origin["workspace_id"], "proposal_id": SUGG,
+                      "proposal_digest": record["digest"], "author": author, "origin_task_id": origin["task_id"],
+                      "origin_swarm_id": w.origin["id"], "repository_id": "synthetic",
+                      "delegated": {"request_id": req["id"], "controller_id": w.ctl["id"], "execution_goal": req["receiving_goal"],
+                                    "issuer": "user:u_jon", "origin_scope": {"scope_id": "sc_1", "scope_digest": DIGEST, "generation": 1}}}
+        value = {"record": record, "content": content, "decisions": [], "currency": "current",
+                 "request_binding": {"content": provenance, "digest": minds_module.sha(minds_module.canonical(provenance)).removeprefix("sha256:")}}
+        return json.dumps(value).encode()
+
+    request = {"request_id": req["id"], "proposal_id": SUGG}
+    for author in (child, w.ctl["id"]):
+        refs = cti._source_refs(intents, request, context, raw(author))
+        assert refs["proposal"]["proposal_id"] == SUGG
+    for author in (w.helper["id"], w.fctl["id"], "a_unknown"):          # not this request's child or controller
+        with pytest.raises(Refused):
+            cti._source_refs(intents, request, context, raw(author))
+    # a child of this controller but spawned for another request is refused too
+    w.hive.db.execute("UPDATE mind_children SET request_id = 'rq_other' WHERE id = ?", (child,))
+    with pytest.raises(Refused):
+        cti._source_refs(intents, request, context, raw(child))

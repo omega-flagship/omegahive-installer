@@ -15,6 +15,7 @@ import { shortIds } from './ident'
 import { lookCandidates } from './look'
 import { deleteSwarmCandidates } from './swarmDelete'
 import { hiveMapCandidates } from './hiveMap'
+import { uiPartsCandidates } from './uiParts'
 import type { Candidate, Chip, Effect, IntentAct, IntentScope, Named, Suggestion, World } from './types'
 import { CONSEQUENTIAL, understand } from './understand'
 import { vocabularyFor } from './vocab'
@@ -26,6 +27,7 @@ export { registerVocabulary, vocabularyFor } from './vocab'
 export { examples, ghost, unsupported, CONSEQUENTIAL } from './understand'
 export { deleteSwarmCandidates } from './swarmDelete'
 export { hiveMapCandidates, type MapHive, type MapOp } from './hiveMap'
+export { uiPartsCandidates, type PartsAct, type PartRole } from './uiParts'
 
 /** Feature ids that live on one mind's or one swarm's page (experiences/targets.ts), so they need a subject. */
 export type ScopedFeatures = Record<string, 'mind' | 'swarm'>
@@ -39,7 +41,7 @@ export function effectOf(act: IntentAct | undefined): Effect | undefined {
   if (act.do === 'look') return 'look'
   // a swarm with its minds: only ever opens its warning (swarmDelete.ts)
   if (act.do === 'deleteSwarm') return 'open-decision'
-  if (act.do === 'map') return 'view'
+  if (act.do === 'map' || act.do === 'parts') return 'view'
   if (CONSEQUENTIAL.has(act.do as never)) return 'own-action'
   if (act.do === 'feature' || act.do === 'scoped') {
     const f = featureById(act.id)
@@ -109,6 +111,10 @@ export function resolve(text: string, scope: IntentScope, world: World, scoped: 
 
   // ---- the hive map's own words: "show me Ada's hive", "zoom out", "tidy the hives" (view only; hiveMap.ts)
   out.push(...hiveMapCandidates(raw, world))
+
+  // ---- the UI's named parts: "what plays the apps role here", "list the parts" (read-only; uiParts.ts)
+  // CANDIDATE: dev and the surface-preview build only (the same constant expression as experiences/registry UNREVIEWED_ALLOWED)
+  if (import.meta.env.PROD ? import.meta.env.MODE === 'surface-preview' : true) out.push(...uiPartsCandidates(raw))
 
   // ---- Still's understanding, with a confidence and an effect for each suggestion
   for (const s of understand(raw, world) as Suggestion[]) {

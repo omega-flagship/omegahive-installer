@@ -22,12 +22,6 @@ const otherTabSets = (token: string | null) => {
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 const outcome = (p: Promise<unknown>) => p.then((v) => ({ ok: v }), (e: unknown) => ({ err: e }))
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve() }
-/**
- * CI (Node 22, PR19 run 39471553172): a real Response's body read can take more than flush()'s 8 microtask turns, so the
- * kind check had not finished when the socket was asserted. Wait for the socket itself: microtask AND macrotask turns,
- * bounded; a socket that never opens still fails the assertion that follows. No assertion or timeout is changed.
- */
-const socketMade = async () => { for (let i = 0; i < 50 && FakeSocket.made.length === 0; i++) { await flush(); await new Promise((r) => setTimeout(r, 0)) } }
 
 beforeEach(() => {
   listeners = []
@@ -336,7 +330,7 @@ describe('localowner-ui r1.1 (J1b): the bearer never enters an address, and a lo
     expect(FakeSocket.made).toHaveLength(0)
     expect(methodsAsks()).toHaveLength(1)
     expect(methodsAsks()[0].auth).toBeNull()          // the kind check carries no credential
-    release[0](methods(true)); await socketMade()
+    release[0](methods(true)); await flush()
     expect(FakeSocket.made).toHaveLength(1)
     expect(FakeSocket.made[0].url.searchParams.get('token')).toBeNull()
   })
@@ -345,7 +339,7 @@ describe('localowner-ui r1.1 (J1b): the bearer never enters an address, and a lo
     vi.stubGlobal('WebSocket', SendingSocket)
     const c = new LiveClient('https://hive.invalid')
     const seen = states(c)
-    c.connect(); release[0](methods(true)); await socketMade()
+    c.connect(); release[0](methods(true)); await flush()
     const ws = FakeSocket.made[0] as SendingSocket
     ws.onopen!()
     expect(ws.sentFrames[0]).toBe(JSON.stringify({ type: 'auth', token: 'tok-a-invented' }))
@@ -359,7 +353,7 @@ describe('localowner-ui r1.1 (J1b): the bearer never enters an address, and a lo
     vi.stubGlobal('WebSocket', SendingSocket)
     const c = new LiveClient('https://hive.invalid')
     const seen = states(c)
-    c.connect(); release[0](methods(false)); await socketMade()
+    c.connect(); release[0](methods(false)); await flush()
     const ws = FakeSocket.made[0] as SendingSocket
     expect(ws.url.searchParams.get('token')).toBe('tok-a-invented')
     ws.onopen!()

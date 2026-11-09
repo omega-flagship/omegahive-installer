@@ -58,6 +58,15 @@ export function appTheme(program: Pick<Program, 'id' | 'app'> | undefined, sourc
   return (program.app?.theme as AppTheme | undefined) ?? null
 }
 
+/** The share of an app's own surface that keeps the look's text readable on the blend (at most 0.6). Pure. */
+export function appWeight(surfaceHex: string, base: UiVariant['colors']): number {
+  for (const t of [0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0]) {
+    const s = mix(surfaceHex, base.abyss, t)
+    if ((!HEX.test(base.ink) || contrast(base.ink, s) >= 7) && (!HEX.test(base['ink-3']) || contrast(base['ink-3'], s) >= 4.5)) return t
+  }
+  return 0
+}
+
 /**
  * CSS variables for an app inside a look. The look's text colours stay (they already pass its floors); the app's
  * surface is blended 60/40 into the look's so the two read as one family; app accents that would fall below 3:1 on
@@ -66,8 +75,11 @@ export function appTheme(program: Pick<Program, 'id' | 'app'> | undefined, sourc
 export function appVars(theme: AppTheme, look: UiVariant): Record<string, string> {
   const base = look.colors
   const surfaceHex = HEX.test(theme.surface) ? theme.surface : base.abyss
-  const surface = mix(surfaceHex, base.abyss, 0.6)
-  const deep = mix(surfaceHex, base.void, 0.5)
+  // as much of the app's own colour as the look's text allows: 60/40 where the app and the look agree (a dark app in a dark
+  // look), stepping toward the look's surface until its ink keeps 7:1 and its faintest text 4.5:1 (a dark app in a light look)
+  const app = appWeight(surfaceHex, base)
+  const surface = mix(surfaceHex, base.abyss, app)
+  const deep = mix(surfaceHex, base.void, app * 0.83)
   const accent = HEX.test(theme.accent) && contrast(theme.accent, surface) >= 3 ? theme.accent : base.accent
   const accent2 = HEX.test(theme.accent_2) && contrast(theme.accent_2, surface) >= 3 ? theme.accent_2 : base['accent-2']
   const primaryInk = contrast(deep, accent) >= 4.5 ? deep : '#000000'
@@ -117,7 +129,11 @@ export interface AppLook {
 
 /** Everything a page needs to wear an app's identity in the current look. */
 export function useAppLook(program: Pick<Program, 'id' | 'app'> | undefined): AppLook | null {
-  const look = useLook()
+  return appLookIn(program, useLook())
+}
+
+/** The same, for many apps at once (a list of cards): the look already read, no hook per app. */
+export function appLookIn(program: Pick<Program, 'id' | 'app'> | undefined, look: ReturnType<typeof useLook>): AppLook | null {
   const source: AppIdentitySource = look.current?.apps ?? 'owner'
   const theme = appTheme(program, source)
   if (!theme || !program) return null

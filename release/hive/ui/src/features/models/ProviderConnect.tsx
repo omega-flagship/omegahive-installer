@@ -7,12 +7,7 @@ import { money } from '../../lib/format'
 import { useHive } from '../../store/store'
 import { Icon } from '../../ui/Icon'
 import { Button } from '../../ui/primitives'
-
-const HELP: Record<string, { where: string; prefix: string; url: string }> = {
-  openrouter: { where: 'openrouter.ai → Keys', prefix: 'sk-or-', url: 'https://openrouter.ai/settings/keys' },
-  anthropic: { where: 'console.anthropic.com → API keys', prefix: 'sk-ant-', url: 'https://console.anthropic.com/settings/keys' },
-  openai: { where: 'platform.openai.com → API keys', prefix: 'sk-', url: 'https://platform.openai.com/api-keys' },
-}
+import { HELP } from './modelUtil'
 
 /**
  * Paste a provider key. It is verified against the provider and kept in the hive; minds and this UI
@@ -42,9 +37,9 @@ export function ProviderConnect({ provider, hue = 252, onDone, autoFocus, compac
 
   const showForm = !provider.connected || replacing
   return (
-    <div className={cx('rounded-2xl border border-line bg-white/[0.03] p-3', compact ? '' : 'md:p-4')} style={{ boxShadow: `0 20px 50px -30px ${hsl(hue, 100, 60, 0.5)}` }}>
+    <div className={cx('rounded-2xl border border-line bg-tint/[0.03] p-3', compact ? '' : 'md:p-4')} style={{ boxShadow: `0 20px 50px -30px ${hsl(hue, 100, 60, 0.5)}` }}>
       <div className="flex items-start gap-3">
-        <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-xl border border-line bg-black/25" style={provider.connected ? { color: hsl(hue, 100, 78) } : undefined}>
+        <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-xl border border-line bg-shade/25" style={provider.connected ? { color: hsl(hue, 100, 78) } : undefined}>
           <Icon name={provider.connected ? 'link' : 'token'} size={18} />
         </span>
         <div className="min-w-0 flex-1">
@@ -90,7 +85,7 @@ export function ProviderConnect({ provider, hue = 252, onDone, autoFocus, compac
                 placeholder={help ? `${help.prefix}…` : 'API key'}
                 value={key}
                 onChange={(e) => setKeyText(e.target.value)}
-                className="min-h-11 min-w-0 flex-1 basis-full sm:basis-0 rounded-xl border border-line bg-black/25 px-3 font-mono text-[13px] text-ink outline-none placeholder:text-ink-4 focus:border-line-2"
+                className="min-h-11 min-w-0 flex-1 basis-full sm:basis-0 rounded-xl border border-line bg-shade/25 px-3 font-mono text-[13px] text-ink outline-none placeholder:text-ink-4 focus:border-line-2"
               />
               <Button type="submit" variant="primary" hue={hue} disabled={!key.trim() || busy} icon={busy ? undefined : 'link'}>
                 {busy ? 'Checking…' : replacing ? 'Replace' : 'Connect'}
@@ -143,7 +138,7 @@ export function StatusChip({ provider }: { provider: ProviderStatus }) {
   const on = provider.connected
   const color = on ? '#4ade80' : '#8a89b3'
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white/[0.04] px-2 py-0.5 text-[11px] font-medium text-ink-2">
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-tint/[0.04] px-2 py-0.5 text-[11px] font-medium text-ink-2">
       <span className="size-1.5 rounded-full" style={{ background: color, boxShadow: on ? `0 0 8px ${color}` : undefined }} />
       {on ? (provider.local || !provider.needs_key ? 'Ready' : 'Connected') : 'Not connected'}
     </span>

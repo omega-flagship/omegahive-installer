@@ -1021,4 +1021,21 @@ unknown claims never execute/retry; late old-frame results cannot use host route
 A persisted `app_ask: true` view/event marker prevents historical automatic legacy
 side effects from being replayed as host actions after reload.
 
-See `P1_APP_ASK.md` for limits, races and recovery.
+See `P1_APP_ASK.md` for limits, races, recovery and the scoped 2026-10-24 local
+qualification. The corrected uncommitted 25-source composition on P2r2 parent
+`cc5870c67dbeea2a9c377965e0a403f62a43c906` passed 1,377 of 1,386 cases across
+54 related Python files, with nine skips, zero failures/errors and 47 warnings
+retained. All 35 P1, six ordinary Sessions, 37 key-lock and 93 P2 cases passed;
+all 995 prior P2 and 1,372 failed-attempt identities remained. Two named native
+arithmetic controls and the exact test-only nested startup condition passed.
+The separate UI result passed typecheck, all four files (81 tests, including all
+35 P1 cases) and production build. Owned cleanup was checked independently.
+
+The backend first-run five-failure result and UI CLI/import failures remain
+recorded. Nine skips and the UI chunk-size warning remain visible. Memory data
+are sampled cooperative observations, with source staging outside RSS sampling;
+full limits and evidence pins are in `P1_APP_ASK.md`. Actual browser/frame lease,
+ACK, act-claim, privacy/navigation and E2E/product/release behavior remain
+unqualified. No owner acceptance, merge or deployment follows from these local
+results. These two validation-document edits preserve all 23 qualified code/test
+bodies exactly and perform no behavior rerun.

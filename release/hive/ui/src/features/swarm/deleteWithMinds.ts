@@ -3,7 +3,7 @@ import { ApiError, type SwarmCounts, type SwarmDeletePreview, type SwarmDeleteRe
 import { STALE, type EpochBinding } from '../../lib/identityEpoch'
 
 /**
- * Delete a swarm together with its minds (the owner 2026-10-07, "Do it" 2026-10-08), the pure part: the host's read-only
+ * Delete a swarm together with its minds (Jon 2026-10-07, "Do it" 2026-10-08), the pure part: the host's read-only
  * preview (GET /api/swarms/{id}/delete-preview) read and put in plain words, the typed-name gate, and every result and
  * refusal in plain words. Nothing here ever sends the plain DELETE to find out what a swarm holds. The host counts
  * `goals`; people read them as tasks, so every sentence here says tasks. The dialog (SwarmDeleteDialog.tsx) and the

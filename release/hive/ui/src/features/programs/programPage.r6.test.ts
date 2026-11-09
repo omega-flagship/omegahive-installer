@@ -49,6 +49,17 @@ vi.mock('./ProgramForm', () => ({
 const menu = vi.hoisted(() => ({ sections: [] as { title?: string; items: { label: string; run: () => void }[] }[] }))
 // r7.1: a seam in the REAL askConfirmBound: `afterYes` runs right after a bound question has resolved "yes" and
 // before the page's own continuation runs, so a test can change the identity in exactly that gap
+const code = vi.hoisted(() => ({ pending: null as null | (() => void), requested: 0 }))
+vi.mock('../flow/FlowPage', () => ({ FlowStudio: () => createElement('div', { 'data-flow-studio-fixture': '' }, 'Flow studio fixture'), default: () => null }))
+vi.mock('../createPlan/PlanCanvas', () => ({ default: () => createElement('div', { 'data-plan-canvas-fixture': '' }, 'Make fixture') }))
+vi.mock('../code/CreateCodeBench', () => ({ default: (props: { departure: { current: ((leave: () => void) => void) | null }; onBack: () => void }) => {
+  useEffect(() => {
+    const guard = (leave: () => void) => { code.pending = leave; code.requested++ }
+    props.departure.current = guard
+    return () => { if (props.departure.current === guard) props.departure.current = null }
+  }, [props.departure])
+  return createElement('div', { 'data-code-bench-fixture': '' }, 'Code bench fixture')
+} }))
 const seam = vi.hoisted(() => ({ afterYes: null as null | (() => void) }))
 vi.mock('../../lib/identityEpoch', async (orig) => {
   const real = await orig<typeof import('../../lib/identityEpoch')>()
@@ -61,6 +72,20 @@ vi.mock('../../lib/identityEpoch', async (orig) => {
   }
 })
 vi.mock('./AppActivity', () => ({ AppAccess: () => null }))
+// Draw live R3: the press's Ask turn (held open by a test) and the picker (counted), with every other test unchanged
+const draw = vi.hoisted(() => ({ record: null as null | ((...a: unknown[]) => Promise<unknown>), begin: null as null | ((...a: unknown[]) => Promise<void>), words: null as null | string }))
+vi.mock('../studioLive/store', async (orig) => {
+  const real = await orig<typeof import('../studioLive/store')>()
+  return {
+    ...real,
+    recordDrawTurn: (...a: Parameters<typeof real.recordDrawTurn>) => (draw.record ? draw.record(...a) : real.recordDrawTurn(...a)) as ReturnType<typeof real.recordDrawTurn>,
+    beginLiveStudio: (...a: Parameters<typeof real.beginLiveStudio>) => (draw.begin ? draw.begin(...a) : real.beginLiveStudio(...a)),
+  }
+})
+vi.mock('../ask/useAskField', async (orig) => {
+  const real = await orig<typeof import('../ask/useAskField')>()
+  return { ...real, askFieldWords: () => draw.words ?? real.askFieldWords() }
+})
 vi.mock('../../experiences/OmegaMenu', () => ({ OmegaMenu: (p: { sections: typeof menu.sections }) => { menu.sections = p.sections; return null } }))
 vi.mock('../../ui/useModalContainment', () => ({ useModalContainment: () => undefined }))
 vi.mock('../../ui/primitives', () => ({
@@ -112,12 +137,12 @@ const SWARM = 's_invented'
 const A: CreationReference = { artifact_id: 'art_invented_a', revision: 1, digest: `sha256:${'a'.repeat(64)}` }
 const B: CreationReference = { artifact_id: 'art_invented_b', revision: 2, digest: `sha256:${'b'.repeat(64)}` }
 
-async function hive(client: object) {
+async function hive(client: object, app = APP) {
   const { useHive } = await import('../../store/store')
   useHive.setState({
     client: client as never,
-    programs: [{ id: APP, name: 'Invented canvas', description: '', enabled: true, ui: { entry: 'index.html' } }] as never,
-    programDetails: { [APP]: { describe: null } } as never,
+    programs: [{ id: app, name: 'Invented canvas', description: '', enabled: true, ui: { entry: 'index.html' } }] as never,
+    programDetails: { [app]: { describe: null } } as never,
     swarms: { [SWARM]: { id: SWARM, name: 'Invented swarm', description: '', hue: 120, member_ids: [], created_at: '2026-10-01T00:00:00Z' } } as never,
     agents: {},
   })
@@ -152,6 +177,12 @@ async function mount(props: { source?: CreationReference; view?: 'graph' | 'stud
 }
 
 const mounted: (() => Promise<void>)[] = []
+// whether the app frame sits under a hidden part: MeTTa places it (program-stage) and the part that holds it is hidden
+// under another view (hidden-when), so the hidden mark is on a wrapper above the frame, not always its parent
+const hiddenAbove = (n: MiniNode): boolean => {
+  for (let at = n.parentNode; at; at = at.parentNode) if (at.hasAttribute('hidden')) return true
+  return false
+}
 // r7.1: the page's module graph is imported once here, with room for a loaded machine, so no test pays the cold import
 // in its own 5 s (under load the first test took 7.9 s and every later one then failed behind it)
 beforeAll(async () => {
@@ -170,6 +201,8 @@ beforeEach(async () => {
 afterEach(async () => {
   // a failed case never leaves its page (and its ConfirmHost) mounted for the next one
   for (const u of mounted.splice(0)) await u()
+  const { useStudioLive } = await import('../studioLive/store')
+  useStudioLive.setState({ ledger: null })
   vi.restoreAllMocks()
 })
 
@@ -209,7 +242,7 @@ describe('item 6: the unsaved-edits question, on the mounted page', () => {
     expect(frames[0]).toMatchObject({ alive: true, source: A })
     const frame = p.container.findAll((n) => n.hasAttribute('data-frame'))
     expect(frame).toHaveLength(1)
-    expect(frame[0].parentNode!.getAttribute('hidden')).toBeNull()   // the graph view did not take its place
+    expect(hiddenAbove(frame[0])).toBe(false)   // the graph view did not take its place
     expect(p.dialogs()).toHaveLength(0)                             // and nothing asks again
     await p.unmount()
   })
@@ -224,7 +257,7 @@ describe('item 6: the unsaved-edits question, on the mounted page', () => {
     expect(navigations).toEqual([])
     expect(frames.at(-1)).toMatchObject({ alive: true, source: B })
     const frame = p.container.findAll((n) => n.hasAttribute('data-frame'))
-    expect(frame[0].parentNode!.getAttribute('hidden')).not.toBeNull()   // under the graph view
+    expect(hiddenAbove(frame[0])).toBe(true)   // under the graph view
     await p.unmount()
   })
 
@@ -307,7 +340,7 @@ describe('followups-r7 item 1: a same-client re-init while the question is open'
     expect(frames[0]).toMatchObject({ alive: true, source: A })    // the new creation was not opened
     const frame = p.container.findAll((n) => n.hasAttribute('data-frame'))
     expect(frame).toHaveLength(1)
-    expect(frame[0].parentNode!.getAttribute('hidden')).toBeNull() // the graph view did not open
+    expect(hiddenAbove(frame[0])).toBe(false) // the graph view did not open
   }
 
   it('the open question is answered no at once: nothing left on screen to answer for the earlier identity', async () => {
@@ -358,7 +391,7 @@ describe('followups-r7 item 1: a same-client re-init while the question is open'
       })
       await p.act(flush)
       const frame = p.container.findAll((n) => n.hasAttribute('data-frame'))
-      const graph = frame.length > 0 && frame[0].parentNode!.getAttribute('hidden') !== null
+      const graph = frame.length > 0 && hiddenAbove(frame[0])
       const opened = frames.at(-1)?.source === B
       expect({ k, graph, opened: opened }).toEqual({ k, graph: opened, opened })   // both or neither
       // r7.1: the route ends as what is on screen: acted, it already says B + graph (no navigation); stopped, the one
@@ -399,7 +432,7 @@ describe('followups-r7.1: the route after a re-init, and the View menu switch', 
   const reinit = async (useHive: Awaited<ReturnType<typeof hive>>, c: object) => { await useHive.getState().init(c as never) }
   const graphShown = (p: Awaited<ReturnType<typeof mount>>) => {
     const frame = p.container.findAll((n) => n.hasAttribute('data-frame'))
-    return frame.length > 0 && frame[0].parentNode!.getAttribute('hidden') !== null
+    return frame.length > 0 && hiddenAbove(frame[0])
   }
 
   it('route: after the re-init the URL matches what is on screen, through one fresh reconciliation', async () => {
@@ -469,14 +502,17 @@ describe('followups-r7.1: the route after a re-init, and the View menu switch', 
     return { useHive, p }
   }
   const choose = async (p: Awaited<ReturnType<typeof mount>>, label: string) => {
-    const item = menu.sections.find((s) => s.title === 'View')!.items.find((i) => i.label === label)!
+    // Legacy route/test vocabulary stays Studio; the design app's visible View label is Create.
+    const currentLabel = label === 'Studio' ? 'Create' : label
+    const item = menu.sections.find((s) => s.title === 'View')!.items.find((i) => i.label === currentLabel)!
+    expect(item).toBeDefined()
     await p.act(async () => item.run())
     await p.act(flush)
   }
   const SWITCH_LABEL = 'Discard and switch'
 
   // ---- j3r43-o3 r1.13: view=studio (a live Studio session's canvas) mounts the app's OWN native frame on that source
-  const studioChecked = () => menu.sections.find((x) => x.title === 'View')!.items.find((i) => i.label === 'Studio') as unknown as { checked: boolean }
+  const studioChecked = () => menu.sections.find((x) => x.title === 'View')!.items.find((i) => i.label === 'Create') as unknown as { checked: boolean }
   async function formApp() {
     const useHive = await hive(sameClient())
     useHive.setState({
@@ -585,5 +621,240 @@ describe('followups-r7.1: the route after a re-init, and the View menu switch', 
     expect(outcomes.at(-1)).toBe('switched')
     // and the outcome changes once, at the commit (kept … kept, switched … switched)
     expect(outcomes.join(',')).toMatch(/^(kept,)*kept(,switched)+$/)
+  })
+})
+
+describe('C5: live drawing menu availability', () => {
+  it('a previously available Create menu reports a fresh refusal without preparing work', async () => {
+    const client = {
+      mode: 'sim' as const,
+      studioSession: vi.fn(), studioPiece: vi.fn(), studioOutcome: vi.fn(), studioControl: vi.fn(),
+      studioMount: vi.fn(), studioMountHeartbeat: vi.fn(), studioUnmount: vi.fn(), studioMountReadback: vi.fn(),
+      studioRecordIntent: vi.fn(), askSubmitIntent: vi.fn(), askSteer: vi.fn(), studioSetupProposal: vi.fn(),
+    }
+    const setup = client.studioSetupProposal
+    const useHive = await hive(client)
+    useHive.setState({
+      programs: [{ id: 'omegadesign', name: 'Invented Create', description: '', enabled: true, ui: { entry: 'index.html' } }] as never,
+      programDetails: { omegadesign: { describe: null } } as never,
+    })
+    const previousToast = useHive.getState().toast
+    const toast = vi.fn()
+    useHive.setState({ toast })
+    let p: Awaited<ReturnType<typeof mount>> | null = null
+    try {
+      p = await mount({ id: 'omegadesign' })
+      await p.act(flush)
+      expect(p.container.findAll((n) => n.getAttribute('data-drawing-entry') === 'available')).toHaveLength(1)
+      const item = menu.sections.flatMap((section) => section.items).find((i) => i.label === 'Draw live in Create…')
+      expect(item).toBeDefined()
+      // Change the client in place, without a render: activation must not trust the displayed availability.
+      delete (client as Partial<typeof client>).studioSetupProposal
+      await p.act(async () => item!.run())
+      // said under the Draw live button, never as a toast (Jon, 4 Nov: a refusal must be visible where he pressed)
+      expect(toast).not.toHaveBeenCalled()
+      expect(p.container.findAll((n) => n.getAttribute('data-drawing-note') !== null).map((n) => n.textContent)).toEqual(['This page cannot prepare the drawing confirmation on this hive.'])
+      expect(setup).not.toHaveBeenCalled()
+      for (const method of Object.values(client)) if (typeof method === 'function') expect(method).not.toHaveBeenCalled()
+      expect(navigations).toEqual([])
+    } finally {
+      await p?.unmount()
+      useHive.setState({ toast: previousToast })
+    }
+  })
+})
+
+
+const createLedger = (): import('../studioLive/api').Ledger => ({
+  session_id: 'ss_invented', stream_id: 'stream_invented', state: 'active', reason: null,
+  ask_turn_id: 'turn_invented', goal_id: 'goal_invented', proposal_artifact_id: 'proposal_invented',
+  maker_id: 'maker_invented', swarm_id: 'swarm_invented', program_id: 'omegadesign', scene_id: null,
+  payer: null, model: null, steps: [], directions: [], piece: null, piece_state: null, piece_source: null, mount_epoch: null,
+  budget: { cap: 1, spent: 0, held: 0, unknown: 0, step_cap: 0.25, step_spent: 0, step_seconds: 0, monthly: [] },
+  stop: { state: 'none', fenced_at: null, in_flight: 0, unknown_usd: 0, cancel_ack: null, maker_released: null,
+    stop_failed: false, release_stale: false, message: null, finish_stopping: false },
+})
+
+describe('Create code host, actual ProgramPage with declared child/frame doubles', () => {
+  it.each(['Works in', 'home switch'] as const)('%s delegates departure; Cancel keeps the bench and accepting navigates once', async action => {
+    const other = 's_other'
+    const store = await hive({ programHomes: async () => ({ homes: [{ swarm_id: other, why: 'configured' }] }) }, 'omegadesign')
+    store.setState({ swarms: { ...store.getState().swarms, [other]: { ...store.getState().swarms[SWARM], id: other, name: 'Other home' } } })
+    const p = await mount({ id: 'omegadesign', view: 'studio' })
+    await p.act(flush)
+    await p.act(async () => { menu.sections.flatMap(s => s.items).find(i => i.label === 'Code')!.run() })
+    await p.act(flush)
+    const choose = () => {
+      if (action === 'Works in') menu.sections.find(s => s.title === 'Works in')!.items.find(i => i.label === 'Other home')!.run()
+      else press(p.button('Other home')!)
+    }
+    const before = code.requested
+    await p.act(async () => { choose() })
+    expect(code.requested).toBe(before + 1)
+    expect(navigations).toEqual([])
+    // The declared child guard cancels by withholding the continuation. Actual dirty-draft Cancel is separately
+    // exercised through Workbench in CreateCodeBench.mounted.test.tsx; this tests the parent's two entry points.
+    code.pending = null
+    expect(p.container.findAll(n => n.hasAttribute('data-code-bench-fixture'))).toHaveLength(1)
+    expect(frames[0].alive).toBe(true)
+    await p.act(async () => { choose() })
+    expect(code.requested).toBe(before + 2)
+    expect(navigations).toEqual([])
+    await p.act(async () => { code.pending!() })
+    expect(navigations).toEqual([{ name: 'program', id: 'omegadesign', swarm: other }])
+  })
+  it('keeps the actual drawing subtree mounted and routes parent Back through the child departure guard', async () => {
+    await hive({}, 'omegadesign')
+    const p = await mount({ id: 'omegadesign', view: 'studio' })
+    const { useStudioLive } = await import('../studioLive/store')
+    await p.act(async () => { useStudioLive.setState({ ledger: createLedger(), local: 'receiving' }) })
+    expect(frames).toHaveLength(1)
+    await p.act(async () => { menu.sections.flatMap(s => s.items).find(i => i.label === 'Code')!.run() })
+    await p.act(flush)
+    expect(p.container.findAll(n => n.hasAttribute('data-code-bench-fixture'))).toHaveLength(1)
+    expect(frames).toHaveLength(1)
+    expect(frames[0].alive).toBe(true)
+    const stops = p.container.findAll(n => n.tagName === 'BUTTON' && n.textContent === 'Stop')
+    expect(stops).toHaveLength(1)
+    let stopParent = stops[0].parentNode
+    while (stopParent && stopParent !== p.container) { expect(stopParent.hasAttribute('hidden')).toBe(false); stopParent = stopParent.parentNode }
+    const frame = p.container.findAll(n => n.hasAttribute('data-frame'))[0]
+    let parent = frame.parentNode
+    let hidden = false
+    while (parent && parent !== p.container) { hidden ||= parent.hasAttribute('hidden'); parent = parent.parentNode }
+    expect(hidden).toBe(true)
+    const before = code.requested
+    await p.act(async () => { menu.sections.flatMap(s => s.items).find(i => i.label === 'Graph')!.run() })
+    expect(code.requested).toBe(before + 1)
+    expect(p.container.findAll(n => n.hasAttribute('data-code-bench-fixture'))).toHaveLength(1)
+    expect(frames[0].alive).toBe(true)
+    await p.act(async () => { code.pending!() })
+    expect(p.container.findAll(n => n.hasAttribute('data-code-bench-fixture'))).toHaveLength(0)
+    expect(frames).toHaveLength(1)
+    expect(frames[0].alive).toBe(true)
+  })
+  it('an old departure cannot switch the new identity after a same-client re-init', async () => {
+    const store = await hive({}, 'omegadesign')
+    const p = await mount({ id: 'omegadesign', view: 'studio' })
+    await p.act(async () => { menu.sections.flatMap(s => s.items).find(i => i.label === 'Code')!.run() })
+    await p.act(flush)
+    await p.act(async () => { menu.sections.flatMap(s => s.items).find(i => i.label === 'Graph')!.run() })
+    const old = code.pending!
+    await p.act(async () => { store.setState({ inits: store.getState().inits + 1 }) })
+    await p.act(async () => { old() })
+    expect(p.container.findAll(n => n.hasAttribute('data-code-bench-fixture'))).toHaveLength(1)
+  })
+})
+
+describe('Draw live R3: the page continuation after the Ask turn (Dot FIX-FIRST on f7deb7e2)', () => {
+  const liveClient = () => ({
+    mode: 'live' as const,
+    studioSession: vi.fn(), studioPiece: vi.fn(), studioOutcome: vi.fn(), studioControl: vi.fn(),
+    studioMount: vi.fn(), studioMountHeartbeat: vi.fn(), studioUnmount: vi.fn(), studioMountReadback: vi.fn(),
+    studioRecordIntent: vi.fn(), askSubmitIntent: vi.fn(), askSteer: vi.fn(), studioSetupProposal: vi.fn(),
+  })
+  const TURN = { operation_id: 'op_invented', title: 'a fox', detail: 'a fox', max_steps: 8, window_minutes: 20 }
+  async function page() {
+    const useHive = await hive(liveClient())
+    useHive.setState({ programs: [{ id: 'omegadesign', name: 'Invented Create', description: '', enabled: true, ui: { entry: 'index.html' } }] as never, programDetails: { omegadesign: { describe: null } } as never })
+    const { useAskStore } = await import('../../store/ask')
+    useAskStore.setState({ settings: { swarm_id: null, thread_budget_usd: 5, capabilities: { conductor: true, memory: true, studio_sessions: true, studio_directions: true } } } as never)
+    const p = await mount({ id: 'omegadesign' })
+    await p.act(flush)
+    const item = () => menu.sections.flatMap((s) => s.items).find((i) => i.label === 'Draw live in Create…')!
+    return { useHive, p, item }
+  }
+  let release: (v: unknown) => void = () => {}
+  let begun: unknown[][] = []
+  let records = 0
+  beforeEach(() => {
+    begun = []; records = 0
+    draw.words = 'a fox'
+    draw.record = () => { records++; return new Promise((res) => { release = res }) }
+    draw.begin = async (...a) => { begun.push(a) }
+  })
+  afterEach(() => { draw.record = null; draw.begin = null; draw.words = null })
+
+  it('repeat presses while the first is in flight are one press: one Ask turn, one picker', async () => {
+    const { p, item } = await page()
+    expect(p.container.findAll((n) => n.getAttribute('data-drawing-entry') === 'available')).toHaveLength(1)
+    await p.act(async () => { item().run(); item().run() })
+    const entry = p.container.findAll((n) => n.tagName === 'BUTTON' && n.textContent === 'Sending your request…')
+    expect(entry).toHaveLength(1)                                   // the entry waits, disabled, while the press runs
+    expect(entry[0].getAttribute('disabled')).not.toBeNull()
+    await p.act(async () => { item().run() })                       // the menu while busy joins the same press
+    await p.act(async () => { release({ turn: TURN }); await flush() })
+    expect(records).toBe(1)
+    expect(begun).toEqual([['omegadesign', TURN]])
+  })
+
+  it('an identity change between the Ask turn resolving and the page continuing opens nothing', async () => {
+    const { useHive, p, item } = await page()
+    await p.act(async () => { item().run() })
+    await p.act(async () => {
+      release({ turn: TURN })
+      useHive.setState({ session: 'someone-else' })              // before the continuation runs
+      await flush()
+    })
+    expect(begun).toEqual([])
+  })
+
+  it('a new Ask thread between resolve and continuation opens nothing; the empty-Ask path is fenced the same way', async () => {
+    const { p, item } = await page()
+    const { useAskStore } = await import('../../store/ask')
+    await p.act(async () => { item().run() })
+    await p.act(async () => { release({ turn: TURN }); useAskStore.setState((s) => ({ epoch: s.epoch + 1 }) as never); await flush() })
+    expect(begun).toEqual([])
+    // the empty-Ask path: a recorded turn reused, then the identity changes before the continuation
+    draw.words = ''
+    draw.record = async () => { records++; return { turn: TURN } }
+    useAskStore.setState({ log: [{ kind: 'turn', op: 'op_invented' }], turns: { op_invented: { op: 'op_invented', you: 'a fox', state: 'done' } } } as never)
+    const { useHive } = await import('../../store/store')
+    await p.act(async () => { item().run(); useHive.setState({ session: 'yet-another' }); await flush() })
+    expect(begun).toEqual([])
+  })
+})
+
+
+describe('Create shows its benches side by side (Jon 11-05: code and studio together; 10-31: Flow is a bench kind)', () => {
+  it('the Create page names itself Create and shows Studio, Code and Flow at the top; each opens its bench there', async () => {
+    const useHive = await hive({ mode: 'sim' })
+    useHive.setState({ programs: [{ id: 'omegadesign', name: 'OmegaDesign', description: '', enabled: true, ui: { entry: 'index.html' } }] as never, programDetails: { omegadesign: { describe: null } } as never })
+    const p = await mount({ id: 'omegadesign' })
+    await p.act(flush)
+    const benchTab = (label: string) => p.container.findAll((n) => n.getAttribute('role') === 'tab' && n.textContent === label)
+    // MeTTa composes the bench tabs (program.metta, the tabs block): one tablist named Create benches
+    const bar = p.container.findAll((n) => n.getAttribute('role') === 'tablist' && n.getAttribute('aria-label') === 'Create benches')
+    expect(bar).toHaveLength(1)
+    const tabs = p.container.findAll((n) => n.getAttribute('role') === 'tab').map((n) => [n.textContent, n.getAttribute('aria-selected')])
+    expect(tabs).toEqual([['Studio', 'true'], ['Make', 'false'], ['Code', 'false'], ['Flow', 'false']])
+    expect(p.container.findAll((n) => n.getAttribute('aria-label') === 'Create app')).toHaveLength(1)
+    const codeTab = benchTab('Code')[0]
+    await p.act(async () => { press(codeTab); await flush() })
+    expect(benchTab('Code')[0].getAttribute('aria-selected')).toBe('true')
+    // Flow: leaving Code asks the code bench first (its departure guard), then the Flow studio opens in Create
+    const fixtures = (attr: string) => p.container.findAll((n) => n.hasAttribute(attr)).length
+    code.pending = null
+    await p.act(async () => { press(benchTab('Flow')[0]); await flush() })
+    expect(code.pending, 'leaving Code asks the code bench first').toBeTruthy()
+    await p.act(async () => { code.pending!(); code.pending = null; await flush() })
+    const sel = () => p.container.findAll((n) => n.getAttribute('role') === 'tab').map((n) => n.getAttribute('aria-selected'))
+    expect(sel()).toEqual(['false', 'false', 'false', 'true'])
+    expect(fixtures('data-flow-studio-fixture')).toBe(1)
+    expect(fixtures('data-code-bench-fixture')).toBe(0)
+    // and back to Studio: the Flow studio goes, the app's own canvas shows again
+    await p.act(async () => { press(benchTab('Studio')[0]); await flush() })
+    expect(sel()).toEqual(['true', 'false', 'false', 'false'])
+    expect(fixtures('data-flow-studio-fixture')).toBe(0)
+    // Make: the plan canvas opens in Create, over the app's own canvas (kept, hidden)
+    await p.act(async () => { press(benchTab('Make')[0]); await flush() })
+    expect(sel()).toEqual(['false', 'true', 'false', 'false'])
+    expect(fixtures('data-plan-canvas-fixture')).toBe(1)
+  })
+  it('other apps have no bench bar', async () => {
+    await hive({ mode: 'sim' })
+    const p = await mount({})
+    await p.act(flush)
+    expect(p.container.findAll((n) => n.getAttribute('aria-label') === 'Create benches')).toHaveLength(0)
   })
 })

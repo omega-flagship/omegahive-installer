@@ -13,7 +13,7 @@
  * - **The route is the Ask's linkage intents** (spec r3.6 §(a); host release main 39c0731; ./vibeRoute): the person's
  *   words become an Ask turn, one `code.request` intent is recorded on it and submitted (team controller → suggest-only
  *   child → retained proposal on the person's scope), and the proposal is read when it arrives. Never /api/requests.
- * - **Apply-to-live only** (the owner, 2026-10-07): where the host's copy-apply is switched on, the controller puts the
+ * - **Apply-to-live only** (Jon, 2026-10-07): where the host's copy-apply is switched on, the controller puts the
  *   proposal into the person's workspace copy itself; the canvas shows it and offers Undo, with no Accept step. Where it
  *   is off (or cannot be read), the existing Accept + confirm stays and the card says why. No host gate is bypassed.
  * - **One person.** Every write after an await is bound to the identity it started under (lib/identityEpoch
@@ -110,7 +110,7 @@ export interface VibeState {
   /** an Undo in flight or refused (its operation id is reused on a retry, so it is never done twice) */
   undo: { op: string; busy: boolean; note: string | null; retry: boolean } | null
   /**
-   * How the shown proposal lands (r4 [P1], the owner: the person accepts): `confirm` it changes nothing until the person
+   * How the shown proposal lands (r4 [P1], Jon: the person accepts): `confirm` it changes nothing until the person
    * accepts and confirms, always, whatever the host's copy-apply switch; `unknown` it may already be in the copy (the
    * journal could not be read). A change the team put in without that OK is the `applied` phase, `unconsented`.
    */
@@ -325,7 +325,7 @@ export class VibeSession {
       for (const h of read.content.hunks) if (hunkStates(read).get(h.id)?.kind === 'open') staged = stage(read, staged, h.id, 'accept').staged
       const result: VibeResult = { request: mine, instruction: said, scope, file: { path: file.path, digest: file.digest }, read, integrity: { digest: read.record.digest, ...check }, placed: placed.placed, elsewhere: placed.elsewhere, sent: sentReq }
       if (!put({ result, staged })) return
-      // 5. The owner: the person accepts. Always the plain summary, then Accept → confirm; the host's copy-apply switch never
+      // 5. Jon: the person accepts. Always the plain summary, then Accept → confirm; the host's copy-apply switch never
       //    stands in for that OK (r4 [P1]). Where the host could put a change in by itself, watch for it and say so.
       if (!put({ lands: 'confirm' })) return
       this.play(result.placed, who(read.record.author), reduced, 'review')

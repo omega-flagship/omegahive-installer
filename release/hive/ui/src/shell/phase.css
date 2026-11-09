@@ -1,0 +1,51 @@
+/*
+ * shell/phase.ts (CANDIDATE, one-experience r1). The shell's own parts in each state, while a phased experience is in
+ * front (html[data-shell-phase] is set only then). Nothing is remounted: the one Ask keeps its draft, thread and focus
+ * history; at rest it is only hidden, and a key typed at rest wakes the view and lands in it.
+ */
+@keyframes shell-phase-out {
+  from { opacity: 1; visibility: visible; }
+  to { opacity: 0; visibility: hidden; }
+}
+@keyframes shell-phase-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+/* rest: only the experience's Ω and its question */
+html[data-shell-phase='rest'] #ask,
+html[data-shell-phase='rest'] .ask-skip,
+html[data-shell-phase='rest'] .os-clock,
+html[data-shell-phase='rest'] [data-tour='experience-escape'] {
+  animation: shell-phase-out 0.32s ease both;
+  pointer-events: none;
+}
+html[data-shell-phase='rest'] #ask > * {
+  pointer-events: none;
+}
+/* awake: the field arrives (fill `backwards`: once in, the Ask's own opacity rules, e.g. under a modal, apply again) */
+/* awake: the field arrives after the Ω has answered (≈ r1.4's sequence: Ω, name, field, apps, chrome) */
+html[data-shell-phase='awake'] #ask {
+  animation: shell-phase-in 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) 0.42s backwards;
+}
+html[data-shell-phase='awake'] .os-clock,
+html[data-shell-phase='awake'] [data-tour='experience-escape'] {
+  animation: shell-phase-in 0.5s ease 0.8s backwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-shell-phase] #ask,
+  html[data-shell-phase] #ask *,
+  html[data-shell-phase] .ask-skip,
+  html[data-shell-phase] .os-clock,
+  html[data-shell-phase] [data-tour='experience-escape'] {
+    animation: none !important;
+    transition: none !important;
+  }
+  /* A zero-duration, fill-both visibility animation can retain its hidden frame during the
+     synchronous AskPort wake. Reduced motion uses the state directly so the first key can focus. */
+  html[data-shell-phase='rest'] #ask,
+  html[data-shell-phase='rest'] .ask-skip,
+  html[data-shell-phase='rest'] .os-clock,
+  html[data-shell-phase='rest'] [data-tour='experience-escape'] {
+    visibility: hidden;
+  }
+}

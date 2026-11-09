@@ -35,7 +35,14 @@ export interface SkinWords {
   thread: ThreadVariant
 }
 
-const plain = (who: string, step: string | undefined, sending: boolean) => `${who} is ${sending ? 'reading your request' : `thinking · ${step ?? 'working'}`}`
+/** No receipt/reading claim while the native wake is still before dispatch. */
+const wakeStep = (who: string, step: string | undefined, look: FloatingLook): string | null => {
+  if (step === 'preparing') return ''
+  if (step !== 'waking') return null
+  return look === 'transmission' ? `Uplink · waking ${who}…`
+    : look === 'terminal' ? `${who.toLowerCase()}@hive waking…` : `Waking ${who}…`
+}
+const plain = (who: string, step: string | undefined, sending: boolean) => wakeStep(who, step, 'capsule') ?? `${who} is ${sending ? 'reading your request' : `thinking · ${step ?? 'working'}`}`
 
 export const SKIN_WORDS: Record<FloatingLook, SkinWords> = {
   capsule: {
@@ -51,7 +58,7 @@ export const SKIN_WORDS: Record<FloatingLook, SkinWords> = {
     placeholder: 'Transmit…',
     placeholderShort: 'Transmit…',
     answeringPlaceholder: 'Transmit to steer it…',
-    step: (who, step, sending) => (sending ? `Uplink · ${who} receiving` : `Receiving · ${who} · ${step ?? 'working'}`),
+    step: (who, step, sending) => wakeStep(who, step, 'transmission') ?? (sending ? `Uplink · ${who} receiving` : `Receiving · ${who} · ${step ?? 'working'}`),
     thread: 'transmission',
   },
   liquid: {
@@ -59,7 +66,7 @@ export const SKIN_WORDS: Record<FloatingLook, SkinWords> = {
     placeholder: 'Pour in a request…',
     placeholderShort: 'Pour a request…',
     answeringPlaceholder: 'Keep pouring: it listens…',
-    step: (who, step, sending) => (sending ? `${who} is taking it in` : `${who} is stirring · ${step ?? 'working'}`),
+    step: (who, step, sending) => wakeStep(who, step, 'liquid') ?? (sending ? `${who} is taking it in` : `${who} is stirring · ${step ?? 'working'}`),
     thread: 'liquid',
   },
   terminal: {
@@ -67,7 +74,7 @@ export const SKIN_WORDS: Record<FloatingLook, SkinWords> = {
     placeholder: 'type a command, or just ask',
     placeholderShort: 'ask…',
     answeringPlaceholder: 'type to steer it…',
-    step: (who, step, sending) => `${who.toLowerCase()}@hive ${sending ? 'connecting' : step ?? 'working'}…`,
+    step: (who, step, sending) => wakeStep(who, step, 'terminal') ?? `${who.toLowerCase()}@hive ${sending ? 'connecting' : step ?? 'working'}…`,
     thread: 'terminal',
   },
   note: {
@@ -75,7 +82,7 @@ export const SKIN_WORDS: Record<FloatingLook, SkinWords> = {
     placeholder: 'Write a note to the hive…',
     placeholderShort: 'Write a note…',
     answeringPlaceholder: 'Add a note to steer it…',
-    step: (who, step, sending) => (sending ? `${who} is reading your note` : `${who} is writing · ${step ?? 'working'}`),
+    step: (who, step, sending) => wakeStep(who, step, 'note') ?? (sending ? `${who} is reading your note` : `${who} is writing · ${step ?? 'working'}`),
     thread: 'note',
   },
 }

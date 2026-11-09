@@ -604,7 +604,7 @@ def test_the_mind_skill_uses_the_hive_route_and_never_the_vendor(monkeypatch):
     spec.loader.exec_module(imagegen)
     monkeypatch.setenv("HIVE_LLM_URL", "http://127.0.0.1:8700/llm/v1")
     monkeypatch.setenv("HIVE_LLM_TOKEN", "mind-token")
-    monkeypatch.setenv("XAI_API_KEY", "dummy-should-not-be-used")
+    monkeypatch.setenv("XAI_API_KEY", "xai-should-not-be-used")
     seen = []
 
     def urlopen(req, timeout=None):
@@ -848,7 +848,7 @@ def test_well_formed_unused_parameters_are_admitted(m):
 # ---- media r2 (PLATFORM_MEDIA_PIN_R1 stand-in FIX-FIRST: four P1s) -------------------------------------------------
 
 def _design_jpeg():
-    """Design's reproducer fixture (coordination/omegadesign/poc/onboarding_jpeg_completeness_r1_20261017): a synthetic
+    """Design's reproducer fixture (onboarding_jpeg_completeness_r1_20261017): a synthetic
     128x128 RGB pattern at quality 90, and the same file with only 25/50/75 % of its scan kept, then terminated."""
     import io
     from PIL import Image

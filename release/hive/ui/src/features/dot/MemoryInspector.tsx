@@ -132,7 +132,7 @@ export function MemoryInspector({ agent }: { agent: Agent }) {
                     <span className="font-display text-[15px] font-semibold tabular-nums">{s.atoms}</span>
                   </div>
                   <div className="mt-1.5 flex items-center gap-2">
-                    <span className="h-1 flex-1 overflow-hidden rounded-full bg-white/[0.07]">
+                    <span className="h-1 flex-1 overflow-hidden rounded-full bg-tint/[0.07]">
                       <m.span className="block h-full rounded-full" initial={{ width: 0 }} animate={{ width: `${(s.atoms / max) * 100}%` }} style={{ background: hsl(agent.hue, 95, 70) }} />
                     </span>
                     <span className="text-[10px] text-ink-4">{bytes(s.bytes)}</span>
@@ -156,7 +156,7 @@ export function MemoryInspector({ agent }: { agent: Agent }) {
               </span>
             )}
           </div>
-          <label className="mb-2 flex min-h-11 items-center gap-2 rounded-xl border border-line bg-black/25 px-3 focus-within:border-line-2">
+          <label className="mb-2 flex min-h-11 items-center gap-2 rounded-xl border border-line bg-shade/25 px-3 focus-within:border-line-2">
             <Icon name="search" size={16} className="text-ink-4" />
             <span className="sr-only">Search atoms</span>
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search atoms, e.g. vega or episode" className="min-w-0 flex-1 bg-transparent font-mono text-[13px] text-ink outline-none placeholder:font-sans placeholder:text-ink-4" autoCapitalize="off" spellCheck={false} />
@@ -177,7 +177,7 @@ export function MemoryInspector({ agent }: { agent: Agent }) {
           ) : atoms && atoms.list.length === 0 ? (
             <p className="rounded-xl border border-dashed border-line px-3 py-6 text-center text-[13px] text-ink-4">{query ? `No atoms match “${query}”.` : 'This space is empty.'}</p>
           ) : (
-            <ul className={cx('overflow-hidden rounded-xl border border-line bg-black/20 transition-opacity', loading && 'opacity-60')}>
+            <ul className={cx('overflow-hidden rounded-xl border border-line bg-shade/20 transition-opacity', loading && 'opacity-60')}>
               {atoms?.list.map((a, i) => <AtomRow key={`${a.index}:${a.text}`} agent={agent} space={space} atom={a} first={i === 0} />)}
             </ul>
           )}

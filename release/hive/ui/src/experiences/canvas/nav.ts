@@ -34,7 +34,7 @@ export function wayFor(f: Feature): CanvasWay | null {
 /** Everything the Hive panel lists. */
 export const HIVE_ENTRIES: Feature[] = FEATURES.filter((f) => wayFor(f) !== null)
 
-/** Also on the toolbar: start a swarm, new mind (the owner, 2026-10-05). */
+/** Also on the toolbar: start a swarm, new mind (Jon, 2026-10-05). */
 export const TOOLBAR = ['swarms.launch', 'minds.create']
 
 export const NAV_FEATURES: string[] = [...new Set([...HIVE_ENTRIES.map((f) => f.id), ...TOOLBAR])]

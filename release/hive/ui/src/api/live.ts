@@ -10,6 +10,7 @@ import {
   isIdentityChanged,
   type AuthMethods,
   type Invite,
+  type MemberPassword,
   type Me,
   type Person,
   Emitter,
@@ -18,8 +19,9 @@ import {
   type EventListener,
   type HiveClient,
 } from './client'
+import { createBrowserMindGateway } from '../features/browserIter/gateway'
 import { draftConflict } from './appDrafts'   // Surface: studio slice 2
-import { chooseCodeTeam, parseTeamTemplates } from './askIntents'   // Surface: the Code team for a vibe request
+import { chooseCodeTeam, parseRequestLimits, parseTeamTemplates } from './askIntents'   // Surface: the Code team for a vibe request
 import { checkHoldBody } from '../features/updates/updates'
 import { endsHiveSession, parseErrorBody } from './relayedError'   // Surface: the hive envelope, including relayed OmegaCode errors
 import { readIdleDetail, readIdleOverview } from './idleMinds'   // Surface: Health's idle minds (Platform idle-minds r2)
@@ -140,9 +142,30 @@ export class LiveClient implements HiveClient {
   private authIdentity: object = {}
   /** the principal `me()` last resolved under this client (null: none yet, or reset with the credential) */
   private principal: string | null = null
+  private principalContext: object | null = null
+  private principalReads = 0
   private authEvents = new Emitter<void>()
 
+  /** In-memory reconciliation only: reuse the already observed principal, never a token.
+   * Stable across client objects; a reset/unread principal has no provable scope. */
+  retainedMutationScope = (): { host: string; principal: string } | null => {
+    if (!this.principal || this.principalReads !== 0 || this.principalContext !== this.authIdentity) return null
+    try {
+      const url = new URL(this.base || '/', typeof location === 'undefined' ? undefined : location.origin)
+      if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password || url.search || url.hash) return null
+      return { host: url.origin + url.pathname.replace(/\/+$/, ''), principal: this.principal }
+    } catch { return null }
+  }
+
   authContext = (): object => this.authIdentity
+  browserMindGateway = () => {
+    const at = this.authIdentity
+    if (!this.token) throw new Error('Sign in to use your browser mind')
+    return createBrowserMindGateway({
+      base: this.base, sessionToken: this.token, current: () => at === this.authIdentity,
+      readTurn: operation => this.askTurn(operation),
+    })
+  }
   /**
    * professional-release r1.1 (stand-in P1): a request records the sign-in it was sent under; when the sign-in changed
    * before its answer is delivered, the answer (success or failure) is not delivered: ApiError 409 `identity_changed`.
@@ -163,6 +186,7 @@ export class LiveClient implements HiveClient {
     this.token = token
     this.authIdentity = {}
     this.principal = null
+    this.principalContext = null
     this.authEvents.emit()
   }
 
@@ -271,8 +295,8 @@ export class LiveClient implements HiveClient {
     return !this.token
   }
 
-  async login(password: string): Promise<void> {
-    const res = await this.request<{ token: string }>('POST', '/api/auth/login', { password }, false)
+  async login(password: string, email?: string): Promise<void> {
+    const res = await this.request<{ token: string }>('POST', '/api/auth/login', email ? { email, password } : { password }, false)
     this.replaceToken(res.token)
   }
 
@@ -365,6 +389,8 @@ export class LiveClient implements HiveClient {
 
   getHive = () => this.request<HiveInfo>('GET', '/api/hive')
   tools = () => this.request<import('./types').ToolsCatalogue>('GET', '/api/tools')
+  reportMissingBlocks = (items: { ui_release: string; screen: string; wanted: string; drawn_as: string | null }[]) =>
+    this.request<unknown>('POST', '/api/screens/missing', { items })
   getModels = () => this.request<ModelOption[]>('GET', '/api/models')
   listSwarms = (opts: { archived?: boolean } = {}) => this.request<Swarm[]>('GET', opts.archived ? '/api/swarms?archived=1' : '/api/swarms')
   createSwarm = (body: CreateSwarmBody) => this.request<Swarm>('POST', '/api/swarms', body)
@@ -582,40 +608,51 @@ export class LiveClient implements HiveClient {
     this.request<{ model: string; endpoints: ModelEndpoint[] }>('GET', `/api/providers/openrouter/endpoints/${modelId.split('/').map(enc).join('/')}`).then((r) => r.endpoints)
 
   listKeys = () => this.request<KeyInfo[]>('GET', '/api/keys')
-  addKey = (body: { provider: string; key: string; label?: string; default?: boolean }) => this.request<KeyInfo>('POST', '/api/keys', body)
+  addKey = (body: { provider: string; key: string; label?: string; default?: boolean; month_usd?: number }) => this.request<KeyInfo & { monthly_total_applied?: boolean; monthly_total_usd?: number | null }>('POST', '/api/keys', body)
   updateKey = (id: string, body: { label?: string; default?: boolean }) => this.request<KeyInfo>('PATCH', `/api/keys/${enc(id)}`, body)
   refreshKey = (id: string) => this.request<KeyInfo>('POST', `/api/keys/${enc(id)}/refresh`, {})
   removeKey = (id: string) => this.request<{ ok: true; unassigned: number }>('DELETE', `/api/keys/${enc(id)}`)
 
   me = async (): Promise<Me> => {
     const context = this.authIdentity
-    // its own contract (lib/readMe re-reads on auth_context_changed): request()'s identity_changed is that case here
-    const result = await this.request<Me>('GET', '/api/auth/me').catch((e: unknown) => {
-      if (isIdentityChanged(e)) throw new ApiError(409, 'auth_context_changed', 'Sign-in changed while reading identity')
+    this.principalReads++
+    this.principalContext = null // do not reuse cached identity while a fresh read is unsettled
+    try {
+      // its own contract (lib/readMe re-reads on auth_context_changed): request()'s identity_changed is that case here
+      const result = await this.request<Me>('GET', '/api/auth/me').catch((e: unknown) => {
+        if (isIdentityChanged(e)) throw new ApiError(409, 'auth_context_changed', 'Sign-in changed while reading identity')
+        throw e
+      })
+      if (context !== this.authIdentity) throw new ApiError(409, 'auth_context_changed', 'Sign-in changed while reading identity')
+      // r1.2 (Kimi r1.1 #1): the identity is the PRINCIPAL, not only the bearer. A different principal under the same
+      // handle (a cookie-only hive_signin switch, which changes no token here) is a new identity: a new handle, the
+      // listeners told (the store and the identity epoch drop the earlier person's state), and this read is re-made
+      const principal = typeof result?.principal === 'string' ? result.principal : null
+      if (principal !== null && this.principal !== null && principal !== this.principal) {
+        // The update BEFORE the emit is load-bearing (re-entrancy): a listener that reacts by calling me() again reads
+        // the new principal as current and does not recurse into this branch.
+        this.principal = principal
+        this.principalContext = null
+        this.authIdentity = {}
+        // followups-r8 (stand-in r1.2 P2): the socket opened under the earlier handle drops every frame from now on
+        // (onmessage's openedUnder check), and connect() keeps it while it exists: reopen it under the new handle, as a
+        // token change does, so live updates resume for the person now signed in
+        if (this.ws) this.reopenEvents()
+        this.authEvents.emit()
+        throw new ApiError(409, 'auth_context_changed', 'Sign-in changed while reading identity')
+      }
+      if (principal !== null) this.principal = principal
+      this.principalContext = principal !== null ? context : null
+      return result
+    } catch (e) {
+      if (context === this.authIdentity) this.principalContext = null
       throw e
-    })
-    if (context !== this.authIdentity) throw new ApiError(409, 'auth_context_changed', 'Sign-in changed while reading identity')
-    // r1.2 (Kimi r1.1 #1): the identity is the PRINCIPAL, not only the bearer. A different principal under the same
-    // handle (a cookie-only hive_signin switch, which changes no token here) is a new identity: a new handle, the
-    // listeners told (the store and the identity epoch drop the earlier person's state), and this read is re-made
-    const principal = typeof result?.principal === 'string' ? result.principal : null
-    if (principal !== null && this.principal !== null && principal !== this.principal) {
-      // The update BEFORE the emit is load-bearing (re-entrancy): a listener that reacts by calling me() again reads
-      // the new principal as current and does not recurse into this branch.
-      this.principal = principal
-      this.authIdentity = {}
-      // followups-r8 (stand-in r1.2 P2): the socket opened under the earlier handle drops every frame from now on
-      // (onmessage's openedUnder check), and connect() keeps it while it exists: reopen it under the new handle, as a
-      // token change does, so live updates resume for the person now signed in
-      if (this.ws) this.reopenEvents()
-      this.authEvents.emit()
-      throw new ApiError(409, 'auth_context_changed', 'Sign-in changed while reading identity')
-    }
-    if (principal !== null) this.principal = principal
-    return result
+    } finally { this.principalReads-- }
   }
   uiPrefs = () => this.request<UiPrefsResponse>('GET', '/api/me/ui')
   // compare-and-set (platform/ui-prefs-revision): X-UI-Base-Rev carries the host rev this write expects (uiRevHeaders)
+  /** The apps this person can open (Ask-and-apps contract R1.1 §3; hive/core/my_apps.py). */
+  myApps = () => this.request<{ apps: import('../features/apps/myApps').MyAppRow[] }>('GET', '/api/me/apps')
   setUiPrefs = (prefs: UiPrefs, opts: UiPrefsWriteOptions = {}) => this.request<UiPrefsResponse>('PUT', '/api/me/ui', prefs, true, uiRevHeaders(opts))
   resetUiPrefs = (opts: UiPrefsWriteOptions = {}) => this.request<UiPrefsResponse>('DELETE', '/api/me/ui', undefined, true, uiRevHeaders(opts))
   invitePreview = (token: string) => this.request<{ email_hint: string; name: string; role: string; expires_at: number }>('GET', `/api/auth/invite/${enc(token)}`, undefined, false)
@@ -649,7 +686,7 @@ export class LiveClient implements HiveClient {
   idleMind = async (agentId: string, opts: { includePersonal?: boolean } = {}) => readIdleDetail(await this.request<unknown>('GET', `/api/agents/${enc(agentId)}/health/idle${opts.includePersonal ? '?include=personal' : ''}`))
   remindIdle = async (agentId: string) => readIdleDetail(await this.request<unknown>('POST', `/api/agents/${enc(agentId)}/health/remind`))
   health = (swarmId?: string) => this.request<import('./types').HealthOverview>('GET', swarmId ? `/api/health?swarm_id=${enc(swarmId)}` : '/api/health')
-  listPeople = () => this.request<{ people: Person[]; invites: Invite[]; google_ready: boolean }>('GET', '/api/people')
+  listPeople = () => this.request<{ people: Person[]; invites: Invite[]; google_ready: boolean; member_passwords?: boolean }>('GET', '/api/people')
   rooms = () => this.request<import('./types').Room[]>('GET', '/api/rooms')
   room = (id: string) => this.request<import('./types').Room>('GET', `/api/rooms/${enc(id)}`)
   createRoom = (body: { kind: import('./types').RoomKind; name?: string; topic?: string; members: string[]; visibility?: string; origin?: import('./types').RoomOrigin }) => this.request<import('./types').Room>('POST', '/api/rooms', body)
@@ -690,6 +727,14 @@ export class LiveClient implements HiveClient {
   }
   askTurn = (op: string, after = 0) => this.askRequest<import('./ask').AskTurnState>('GET', `/api/ask/${enc(op)}?after=${Math.max(0, Math.floor(after))}&limit=100`)
   askStop = (op: string) => this.askRequest<unknown>('POST', `/api/ask/${enc(op)}/stop`, {})
+  askBrowserDone = async (op: string, outcome: import('./ask').BrowserOutcome): Promise<import('./ask').BrowserAskClosed> => {
+    const r = await this.askRequest<import('./ask').BrowserAskClosed>('POST', `/api/ask/${enc(op)}/done`, { outcome })
+    // A malformed successful close is unknown, not permission to delete the original pending records.
+    if (!r || r.operation_id !== op || typeof r.turn_id !== 'string' || !r.turn_id || r.route !== 'browser_mind' || (r.state !== 'done' && r.state !== 'refused')) {
+      throw new ApiError(0, 'answer_unreadable', 'The hive answered, but this browser turn’s close is not confirmed.')
+    }
+    return r
+  }
   askTakeover = (op: string) => this.askRequest<import('./ask').AskTakeover>('POST', `/api/ask/${enc(op)}/takeover`, { reason: 'user_took_over' })
   askSettings = () => this.askRequest<import('./ask').AskSettings>('GET', '/api/me/ask')
   setAskSettings = (body: import('./ask').AskSettingsPut) => this.askRequest<import('./ask').AskSettings>('PUT', '/api/me/ask', body)
@@ -706,6 +751,7 @@ export class LiveClient implements HiveClient {
   // The Ask's linkage intents (host 39c0731 app.py:1495-1527). Record and submit are §G person routes: the browser's own
   // Origin, the Bearer header and application/json; submit sends an empty object (the host accepts none or {}).
   askRecordIntent = (op: string, body: import('./askIntents').IntentRecordBody) => this.request<unknown>('POST', `/api/ask/${enc(op)}/intents`, body)
+  askRecordCodeTestIntent = (op: string, body: import('../features/code/testIntent').CodeTestIntentBody) => this.request<unknown>('POST', `/api/ask/${enc(op)}/intents`, body)
   askSubmitIntent = (id: string) => this.request<unknown>('POST', `/api/ask/intents/${enc(id)}/submit`, {})
   // J3 r4.3 O3: Platform's PROPOSED live Studio session routes (host plan §3.2–§3.3). Not on live yet: the page calls them
   // only when GET /api/me/ask says capabilities.studio_sessions (features/studioLive/api.ts studioCapable).
@@ -744,7 +790,8 @@ export class LiveClient implements HiveClient {
   codeTeamOffer = async (): Promise<import('./askIntents').CodeTeamOffer> => {
     const team = await chooseCodeTeam(() => this.listSwarms(), (id) => this.swarmServices(id))
     const raw = await this.request<unknown>('GET', `/api/teams/${enc(team.id)}/templates`)
-    return { to_swarm: team.id, team_name: team.name, template_ids: parseTeamTemplates(raw, team.id) }
+    const limits = parseRequestLimits(raw)
+    return { to_swarm: team.id, team_name: team.name, template_ids: parseTeamTemplates(raw, team.id), ...(limits ? { limits } : {}) }
   }
   // copy-apply consent (Platform 66312cd): §G person route (Origin, Bearer, JSON), a closed body
   proposalConsent = (requestId: string, suggestionId: string, decision: 'accept' | 'decline', suggestionDigest: string) => this.request<unknown>('POST', `/api/requests/${enc(requestId)}/proposals/${enc(suggestionId)}/${decision}`, { suggestion_digest: suggestionDigest })
@@ -814,6 +861,9 @@ export class LiveClient implements HiveClient {
   invite = (body: { email: string; name?: string; role?: string; days?: number }) => this.request<Invite & { link: string }>('POST', '/api/invites', body)
   revokeInvite = (id: string) => this.request<Invite>('DELETE', `/api/invites/${enc(id)}`)
   updatePerson = (id: string, body: { role?: string; disabled?: boolean }) => this.request<Person>('PATCH', `/api/people/${enc(id)}`, body)
+  addMember = (body: { email: string; name?: string }) => this.request<MemberPassword>('POST', '/api/people/members', body)
+  resetMemberPassword = (id: string) => this.request<MemberPassword>('POST', `/api/people/${enc(id)}/password`)
+  removeMemberPassword = (id: string) => this.request<{ person: Person; ended_sessions: number }>('DELETE', `/api/people/${enc(id)}/password`)
   clearGoogleIdentity = (id: string) => this.request<Person>('PATCH', `/api/people/${enc(id)}`, { clear_google_identity: true })
   createHarnessInvite = (body: { harness: string; name: string; swarm_id: string; role_id?: string | null; ttl_minutes?: number }) =>
     this.request<import('../features/harness/ConnectHarness').HarnessInvite>('POST', '/api/harness-invites', body)
@@ -833,6 +883,21 @@ export class LiveClient implements HiveClient {
     this.request<import('./types').ConnectionAgreement>('POST', `/api/connections/${enc(id)}/${action}`, { ...(days === undefined ? {} : { days }), ...(action === 'revoke' && reason !== undefined ? { reason } : {}) })
   listRequests = () => this.request<import('./types').CollabRequest[]>('GET', '/api/requests')
   cancelRequest = (id: string) => this.request<{ cancelled: unknown; by: string }>('POST', `/api/requests/${enc(id)}/cancel`, {})
+  requestController = (id: string) => this.request<unknown>('GET', `/api/requests/${enc(id)}/controller`)
+  requestApply = (id: string) => this.request<unknown>('POST', `/api/requests/${enc(id)}/controller/apply`, {})
+  requestChanges = (id: string, text: string) => this.request<unknown>('POST', `/api/requests/${enc(id)}/controller/changes`, { text })
+  requestDiscard = (id: string) => this.request<unknown>('POST', `/api/requests/${enc(id)}/controller/discard`, {})
+  codeControllerPrefs = () => this.request<unknown>('GET', '/api/me/code-controller')
+  setCodeControllerPrefs = (body: { review_policy: 'review-required' | 'review-waivable' }) => this.request<unknown>('PUT', '/api/me/code-controller', body)
+  // Create's plan (features/createPlan/contract.ts; the host's plan engine, create_plan_engine.py)
+  createPlanStart = (sentence: string) => this.request<unknown>('POST', '/api/create/plans', { sentence })
+  createPlans = () => this.request<unknown>('GET', '/api/create/plans')
+  createPlan = (planId: string) => this.request<unknown>('GET', `/api/create/plans/${enc(planId)}`)
+  createPlanPreview = (planId: string) => this.request<unknown>('GET', `/api/create/plans/${enc(planId)}/preview`)
+  createPlanAnswer = (planId: string, q: string, text: string) => this.request<unknown>('POST', `/api/create/plans/${enc(planId)}/answers`, { q, text })
+  createPlanDeploy = (planId: string) => this.request<unknown>('POST', `/api/create/plans/${enc(planId)}/deploy`, {})
+  createPlanStop = (planId: string) => this.request<unknown>('POST', `/api/create/plans/${enc(planId)}/stop`, {})
+  createPlanFile = (planId: string, path: string, ckpt: string) => this.request<unknown>('GET', `/api/create/plans/${enc(planId)}/files?path=${enc(path)}&ckpt=${enc(ckpt)}`)
   codeTargets = () => this.request<import('../features/code/CodePage').Target[]>('GET', '/api/code/targets')
   codeAttach = (task: string, workspace: string, repository: string) => this.request<import('../features/code/CodePage').Opened>('POST', '/api/code/attach', { task_id: task, workspace_id: workspace, repository_id: repository })
   codeTree = (target: string) => this.request<{ target: string; commit: string; subdir: string; files: string[]; truncated: boolean }>('GET', `/api/code/targets/${enc(target)}/tree`)

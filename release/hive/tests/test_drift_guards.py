@@ -112,7 +112,7 @@ def test_waiting_pauses_the_lease_and_heartbeat_resumes(client):
     swarm, (a, b) = make_swarm_and_agents(client)
     g = goal(client, swarm)
     claim(client, a, g)
-    waiting = result(client, a, g, "waiting", "sent Quinn the draft; waiting on his reply").json()
+    waiting = result(client, a, g, "waiting", "sent Jon the draft; waiting on his reply").json()
     assert waiting["status"] == "waiting" and waiting["lease_until"] is None
     assert asyncio.run(client.app.state.hive.goals.expire()) == []
     assert client.post(f"/api/agent/goals/{g['id']}/heartbeat", headers=agent_headers(b)).status_code == 409

@@ -43,7 +43,7 @@ export default function AssetsPage({ swarm }: { swarm?: string }) {
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-2 text-[12.5px] text-ink-3">
             Swarm
-            <select value={swarm ?? ''} onChange={(e) => navigate({ name: 'assets', swarm: e.target.value || undefined }, { replace: true })} className="min-h-10 rounded-xl border border-line bg-black/30 px-2.5 text-[13px] text-ink outline-none focus:border-line-2">
+            <select value={swarm ?? ''} onChange={(e) => navigate({ name: 'assets', swarm: e.target.value || undefined }, { replace: true })} className="min-h-10 rounded-xl border border-line bg-shade/30 px-2.5 text-[13px] text-ink outline-none focus:border-line-2">
               <option value="">Every swarm</option>
               {Object.values(swarms).map((s) => (
                 <option key={s.id} value={s.id}>
@@ -66,7 +66,7 @@ export default function AssetsPage({ swarm }: { swarm?: string }) {
           unsupported={{ body: 'This hive or the demo does not store files yet.' }}
         >
           {(list) => (
-            <ul className="overflow-hidden rounded-2xl border border-line bg-white/[0.02]">
+            <ul className="overflow-hidden rounded-2xl border border-line bg-tint/[0.02]">
               {list.map((a, i) => (
                 <AssetRow key={a.sha256} asset={a} first={i === 0} stores={stores.data ?? []} onChange={(next) => res.mutate((l) => (l ?? []).map((x) => (x.sha256 === next.sha256 ? next : x)))} live={(sha) => res.data?.find((x) => x.sha256 === sha)} />
               ))}
@@ -94,9 +94,9 @@ function Upload({ stores, swarm, onDone }: { stores: AssetStore[]; swarm?: strin
   useUnsaved(!!file)
   const target = stores.find((s) => s.name === store)
   const refused = localOnly && target && target.kind !== 'local'
-  const sel = 'mt-1 min-h-11 w-full rounded-xl border border-line bg-black/30 px-3 text-[13px] text-ink outline-none focus:border-line-2'
+  const sel = 'mt-1 min-h-11 w-full rounded-xl border border-line bg-shade/30 px-3 text-[13px] text-ink outline-none focus:border-line-2'
   return (
-    <div className="rounded-2xl border border-line bg-white/[0.03] p-4" data-unsaved-scope="asset-upload">
+    <div className="rounded-2xl border border-line bg-tint/[0.03] p-4" data-unsaved-scope="asset-upload">
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="sm:col-span-2">
           <Button variant="subtle" icon="plus" onClick={() => input.current?.click()}>
@@ -202,7 +202,7 @@ function AssetRow({ asset: a, first, stores, onChange, live }: { asset: Asset; f
   return (
     <li className={cx('px-4 py-3', !first && 'border-t border-line')}>
       <div className="flex items-start gap-3">
-        <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl border border-line bg-white/[0.04] text-ink-3">
+        <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl border border-line bg-tint/[0.04] text-ink-3">
           <Icon name={a.mime.startsWith('image/') ? 'sparkles' : 'doc'} size={16} />
         </span>
         <div className="min-w-0 flex-1">
@@ -252,13 +252,13 @@ function AssetRow({ asset: a, first, stores, onChange, live }: { asset: Asset; f
               Clean up…
             </Button>
           )}
-          <button onClick={() => setOpen(!open)} aria-expanded={open} className="min-h-9 rounded-lg px-2.5 text-[12px] text-ink-3 hover:bg-white/[0.06] hover:text-ink">
+          <button onClick={() => setOpen(!open)} aria-expanded={open} className="min-h-9 rounded-lg px-2.5 text-[12px] text-ink-3 hover:bg-tint/[0.06] hover:text-ink">
             {canTransfer ? 'Stores and history' : 'History'}
           </button>
         </div>
       </div>
       {open && (
-        <div className="mt-2 ml-11 space-y-2 rounded-xl border border-line bg-black/20 px-3 py-2.5 text-[12.5px]">
+        <div className="mt-2 ml-11 space-y-2 rounded-xl border border-line bg-shade/20 px-3 py-2.5 text-[12.5px]">
           <div className="font-mono text-[11px] text-ink-4 [overflow-wrap:anywhere]">sha256 {a.sha256}</div>
           {canTransfer && (
             <div className="flex flex-wrap items-center gap-1.5">

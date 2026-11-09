@@ -128,8 +128,8 @@ export default function ConnectHarness() {
                 {KINDS.map((k) => {
                   const on = k.id === kind
                   return (
-                    <button key={k.id} onClick={() => pickKind(k.id)} aria-pressed={on} className={cx('flex items-start gap-3 rounded-2xl border p-3.5 text-left transition-all', on ? 'bg-white/[0.07]' : 'border-line bg-white/[0.02] hover:border-line-2')} style={on ? { borderColor: hsl(k.hue, 90, 70, 0.55), boxShadow: `0 12px 40px -18px ${hsl(k.hue, 100, 60, 0.7)}` } : undefined}>
-                      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-line bg-black/25" style={{ color: hsl(k.hue, 100, 78) }}>
+                    <button key={k.id} onClick={() => pickKind(k.id)} aria-pressed={on} className={cx('flex items-start gap-3 rounded-2xl border p-3.5 text-left transition-all', on ? 'bg-tint/[0.07]' : 'border-line bg-tint/[0.02] hover:border-line-2')} style={on ? { borderColor: hsl(k.hue, 90, 70, 0.55), boxShadow: `0 12px 40px -18px ${hsl(k.hue, 100, 60, 0.7)}` } : undefined}>
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-line bg-shade/25" style={{ color: hsl(k.hue, 100, 78) }}>
                         <Icon name={k.icon} size={17} />
                       </span>
                       <span className="min-w-0">
@@ -144,11 +144,11 @@ export default function ConnectHarness() {
             <section className="grid grid-cols-[minmax(0,1fr)] gap-3 md:grid-cols-2">
               <label className="block">
                 <span className="eyebrow">Its name in the hive</span>
-                <input value={name} onChange={(e) => setName(e.target.value)} maxLength={32} className="mt-2 min-h-11 w-full rounded-xl border border-line bg-black/25 px-3 font-display text-[16px] text-ink outline-none focus:border-line-2" />
+                <input value={name} onChange={(e) => setName(e.target.value)} maxLength={32} className="mt-2 min-h-11 w-full rounded-xl border border-line bg-shade/25 px-3 font-display text-[16px] text-ink outline-none focus:border-line-2" />
               </label>
               <label className="block">
                 <span className="eyebrow">Swarm</span>
-                <select value={swarm} onChange={(e) => setSwarm(e.target.value)} className="mt-2 min-h-11 w-full rounded-xl border border-line bg-black/25 px-2.5 text-[14px] text-ink outline-none focus:border-line-2">
+                <select value={swarm} onChange={(e) => setSwarm(e.target.value)} className="mt-2 min-h-11 w-full rounded-xl border border-line bg-shade/25 px-2.5 text-[14px] text-ink outline-none focus:border-line-2">
                   {swarmList.map((s) => (
                     <option key={s.id} value={s.id}>
                       {shown(s.name)}
@@ -164,7 +164,7 @@ export default function ConnectHarness() {
               </div>
               <label className="block">
                 <span className="eyebrow">Join code expires in</span>
-                <select value={days} onChange={(e) => setDays(e.target.value)} className="mt-2 min-h-11 w-full rounded-xl border border-line bg-black/25 px-2.5 text-[14px] text-ink outline-none focus:border-line-2">
+                <select value={days} onChange={(e) => setDays(e.target.value)} className="mt-2 min-h-11 w-full rounded-xl border border-line bg-shade/25 px-2.5 text-[14px] text-ink outline-none focus:border-line-2">
                   {['0.042', '1', '3', '7'].map((d) => (
                     <option key={d} value={d}>
                       {d === '0.042' ? '1 hour' : `${d} day${d === '1' ? '' : 's'}`}
@@ -187,7 +187,7 @@ export default function ConnectHarness() {
         ) : (
           <AnimatePresence mode="wait">
             <m.div key={invite.status} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
-              <div className="flex items-center gap-4 rounded-2xl border border-line bg-white/[0.04] p-4" style={{ boxShadow: `0 24px 60px -34px ${hsl(meta.hue, 100, 60, 0.7)}` }}>
+              <div className="flex items-center gap-4 rounded-2xl border border-line bg-tint/[0.04] p-4" style={{ boxShadow: `0 24px 60px -34px ${hsl(meta.hue, 100, 60, 0.7)}` }}>
                 <Orb hue={meta.hue} size={44} status={invite.status === 'connected' ? 'awake' : 'starting'} />
                 <div className="min-w-0 flex-1">
                   <div className="font-display text-lg font-semibold">
@@ -250,10 +250,10 @@ export default function ConnectHarness() {
 
 function Snippet({ label, text, copied, onCopy, wrap }: { label: string; text: string; copied: boolean; onCopy: () => void; wrap?: boolean }) {
   return (
-    <div className="rounded-2xl border border-line bg-black/30">
+    <div className="rounded-2xl border border-line bg-shade/30">
       <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-1.5">
         <span className="text-[11.5px] text-ink-3">{label}</span>
-        <button onClick={onCopy} className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11.5px] text-ink-2 hover:bg-white/[0.06]">
+        <button onClick={onCopy} className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11.5px] text-ink-2 hover:bg-tint/[0.06]">
           <Icon name={copied ? 'check' : 'copy'} size={12} /> {copied ? 'Copied' : 'Copy'}
         </button>
       </div>

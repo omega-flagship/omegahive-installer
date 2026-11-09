@@ -1,5 +1,5 @@
 /**
- * "From your swarm talk": collect the person's swarm conversations the hive holds for their personal mind (the owner,
+ * "From your swarm talk": collect the person's swarm conversations the hive holds for their personal mind (Jon,
  * 2026-10-08: "it should remember like I would"), keep them in this browser's memory, and only then let the hive
  * delete them. The order is the whole point (Platform P1, personal_inbox): READ a page, WRITE it into the browser
  * memory store, wait for that storage transaction to COMPLETE, then ACK exactly the copies it settled. A copy that was

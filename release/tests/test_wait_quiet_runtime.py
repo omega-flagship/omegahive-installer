@@ -17,6 +17,7 @@ import json
 import os
 import pathlib
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
@@ -87,6 +88,32 @@ class FakeModel:
 class ChosenWaitShapeTests(unittest.TestCase):
     """The loop's reading of a response (helper.chosen_wait_seconds) and its one call site; no runtime needed."""
 
+    def test_model_authored_format_wait_is_normal_and_transport_remains_sixty(self):
+        sys.path.insert(0, str(ROOT / "src"))
+        import helper
+        for source, expected in (("wait \"LLM-FORMAT-ERROR retry\"", 0),
+                                 ("wait \"LLM-PROVIDER-ERROR retry\"", 60),
+                                 ("wait \"LLM-FORMAT-ERRORISH\"", 0),
+                                 ('send "LLM-FORMAT-ERROR"', -1)):
+            with self.subTest(source=source):
+                self.assertEqual(helper.chosen_wait_seconds(helper.model_response_commands(source)), expected)
+
+    def test_malformed_or_empty_batches_execute_no_prefix_commands(self):
+        sys.path.insert(0, str(ROOT / "src"))
+        import helper
+        for source in ('', 'read-file', 'send "valid prefix"\nread-file', 'read-file\nsend "valid suffix"'):
+            with self.subTest(source=source):
+                parsed = helper.model_response_commands(source)
+                self.assertTrue(parsed.startswith('((wait "LLM-FORMAT-ERROR'), parsed)
+                self.assertEqual(helper.chosen_wait_seconds(parsed, "format", 1), 2)
+                self.assertNotIn('valid prefix', parsed)
+                self.assertNotIn('valid suffix', parsed)
+        # A quoted diagnostic word is ordinary command data, not a malformed top-level call.
+        source = 'send "(syntax-error invented)"'
+        self.assertEqual(helper.model_response_commands(source), helper.signature_balance_parentheses(source))
+        loop = (ROOT / 'src/loop.metta').read_text()
+        self.assertIn('(lib_llm_ext.callProviderCommands (provider) $send (maxOutputToken))', loop)
+
     def test_only_a_pure_wait_ends_the_turns(self):
         sys.path.insert(0, str(ROOT / "src"))
         import helper
@@ -98,7 +125,7 @@ class ChosenWaitShapeTests(unittest.TestCase):
                  '((send "hi") (wait "for reply"))': -1, '((query "x"))': -1, '()': -1, '(Error x y)': -1, '': -1,
                  # the shapes the runtime actually prints (agent.log "RESPONSE:"), pinned by the runtime tests below:
                  # an unquoted `wait 30 reason` arrives as one quoted rest-text argument
-                 '((wait "30 nothing owed, waiting for the owner"))': 30, '((wait "30"))': 30,
+                 '((wait "30 nothing owed, waiting for Jon"))': 30, '((wait "30"))': 30,
                  # the runtime's own provider-error wait (lib_llm_ext.callProvider): a 60 s back-off (Kimi r1 K8)
                  '((wait "LLM-PROVIDER-NOT-AVAILABLE provider=Hive missing=HIVE_LLM_TOKEN; configure the key"))': 60,
                  '((wait "LLM-PROVIDER-UNKNOWN provider=x; choose a configured provider and restart"))': 60,
@@ -109,7 +136,7 @@ class ChosenWaitShapeTests(unittest.TestCase):
 
     def test_the_loop_honors_the_choice_after_each_response(self):
         loop = (ROOT / "src" / "loop.metta").read_text()
-        self.assertIn("($_ (honor-chosen-wait $sexpr)))", loop)
+        self.assertIn("($_ (honor-chosen-wait $sexpr $retryKind)))", loop)
         self.assertIn("(= (honor-chosen-wait $sexpr)", loop)
         self.assertIn("(change-state! &loops 0)", loop.split("(= (honor-chosen-wait $sexpr)")[1].split("(= (omegaclaw)")[0])
 
@@ -147,16 +174,27 @@ class WaitQuietRuntimeTests(unittest.TestCase):
                    PATH=os.pathsep.join([os.path.dirname(sys.executable), os.environ.get("PATH", "")]))
         self.log = open(self.tmp / "agent.log", "w")
         proc = subprocess.Popen(["sh", str(pathlib.Path(PETTA) / "run.sh"), str(self.tmp / "run.metta"), "--silent"],
-                                cwd=self.tmp, env=env, stdout=self.log, stderr=subprocess.STDOUT)
+                                cwd=self.tmp, env=env, stdout=self.log, stderr=subprocess.STDOUT, start_new_session=True)
         self.addCleanup(self._stop, proc)
-        self.assertTrue(wait_for(lambda: self.hub.connections, timeout=180), self._tail("agent never connected"))
+        self.proc = proc
+        wait_for(lambda: self.hub.connections or proc.poll() is not None, timeout=180)
+        self.assertTrue(self.hub.connections, self._tail("agent never connected"))
         return proc
 
     def _stop(self, proc):
+        # run.sh spawns swipl. Kill the fixture's own process group so the interpreter cannot outlive its shell.
+        # The channel daemon already watches that interpreter and exits when its parent is gone.
         if proc.poll() is None:
-            proc.kill()
-            proc.wait()
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        proc.wait()
         self.log.close()
+
+    def _await_runtime(self, predicate, why, timeout):
+        wait_for(lambda: predicate() or self.proc.poll() is not None, timeout=timeout)
+        self.assertTrue(predicate(), self._tail(why))
 
     def _tail(self, why):
         try:
@@ -182,7 +220,7 @@ class WaitQuietRuntimeTests(unittest.TestCase):
     def _message(self, seq, text):
         """Push to the channel's live connection (its daemon may reconnect while the runtime finishes booting)."""
         frame = json.dumps({"type": "user_message", "seq": seq,
-                            "text": json.dumps({"hive": 1, "sender": "user:quinn", "conversation_id": "c-1", "text": text})})
+                            "text": json.dumps({"hive": 1, "sender": "user:jon", "conversation_id": "c-1", "text": text})})
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             try:
@@ -193,7 +231,7 @@ class WaitQuietRuntimeTests(unittest.TestCase):
         self.fail(self._tail("no live hub connection to deliver on"))
 
     def test_a_chosen_wait_makes_no_calls_until_input_or_expiry(self):
-        model = FakeModel("wait 30 nothing owed, waiting for the owner")
+        model = FakeModel("wait 30 nothing owed, waiting for Jon")
         self.addCleanup(model.shutdown)
         self._boot(model)
         self.assertEqual(model.count(), 0, "a clean boot listens without spending model turns")
@@ -215,7 +253,7 @@ class WaitQuietRuntimeTests(unittest.TestCase):
         time.sleep(9)
         self.assertEqual(model.count(), 3, self._tail(f"calls after new input: {model.count()}"))
         # the three calls are the first message, the wait's expiry and the second message: none at boot
-        self._pin_shape('((wait "30 nothing owed, waiting for the owner"))', 30)
+        self._pin_shape('((wait "30 nothing owed, waiting for Jon"))', 30)
 
     def test_a_clean_boot_with_no_input_makes_no_calls(self):
         """Kimi r1 K1: the no-input soak. A booted mind with no input and its wake not yet due makes no model call at
@@ -233,6 +271,25 @@ class WaitQuietRuntimeTests(unittest.TestCase):
         self.assertGreaterEqual(after - before, 4, self._tail("the loop did not keep iterating during the soak"))
         self.assertEqual((model.count(), shapes), (0, []), self._tail("no call and no response with no input"))
 
+    def test_a_malformed_response_retries_soon_without_executing_its_valid_prefix(self):
+        model = FakeModel('send "INVENTED_PREFIX_MUST_NOT_RUN"\nread-file')
+        self.addCleanup(model.shutdown)
+        self._boot(model)
+        self._message(1, 'try an invented malformed response')
+        self.assertTrue(wait_for(lambda: model.count() >= 2, timeout=30), self._tail('no short format retry'))
+        elapsed = model.calls[1] - model.calls[0]
+        self.assertGreaterEqual(elapsed, 1)
+        self.assertLess(elapsed, 15)
+        shapes, _ = self._response_shapes()
+        self.assertTrue(shapes, self._tail('no parsed response'))
+        self.assertTrue(all(row.startswith('((wait "LLM-FORMAT-ERROR') for row in shapes), self._tail('wrong response category'))
+        self.assertNotIn('INVENTED_PREFIX_MUST_NOT_RUN', '\n'.join(shapes))
+        frames = []
+        while not self.hub.received.empty():
+            frames.append(self.hub.received.get_nowait())
+        self.assertNotIn('INVENTED_PREFIX_MUST_NOT_RUN', json.dumps(frames))
+        print(f'native PeTTa malformed-response retry interval: {elapsed:.3f}s; prefix was not sent')
+
     def test_a_provider_error_wait_retries_after_a_short_back_off(self):
         """Kimi r1 K8: with no usable provider the runtime answers its own wait "LLM-PROVIDER-..."; that is not the
         mind's choice, so it is tried again after 60 s, not after the full wake interval (900 s), and not every 3 s."""
@@ -241,7 +298,7 @@ class WaitQuietRuntimeTests(unittest.TestCase):
         self._boot(model, provider="NoSuchProvider")
         self._message(1, "are you there?")
         responses = lambda: self._response_shapes()[0]
-        self.assertTrue(wait_for(lambda: len(responses()) >= 1, timeout=60), self._tail("the message never got a turn"))
+        self._await_runtime(lambda: len(responses()) >= 1, "the message never got a turn", 60)
         first = time.monotonic()
         self.assertTrue(responses()[0].startswith('((wait "LLM-PROVIDER-UNKNOWN'), self._tail("not the provider wait"))
         time.sleep(45)
@@ -251,6 +308,33 @@ class WaitQuietRuntimeTests(unittest.TestCase):
         time.sleep(9)
         self.assertEqual(len(responses()), 2, self._tail("the retry did not rest again"))
         self.assertEqual(model.count(), 0)
+
+    def test_persistent_incomplete_batches_exhaust_three_fast_retries_across_wakes(self):
+        model = FakeModel('send "INVENTED_PREFIX_MUST_NOT_RUN"\nread-file "unterminated_quote_')
+        self.addCleanup(model.shutdown)
+        self._boot(model)
+        self._message(1, 'try an invented persistently incomplete batch')
+        self._await_runtime(lambda: model.count() >= 4, 'three fast retries did not happen', 45)
+        time.sleep(15)
+        self.assertEqual(model.count(), 4, self._tail('format retry budget did not survive the wake'))
+        shapes, _ = self._response_shapes()
+        self.assertTrue(all(row.startswith('((wait "LLM-FORMAT-ERROR') for row in shapes), self._tail('raw repair admitted a command'))
+        frames = []
+        while not self.hub.received.empty():
+            frames.append(self.hub.received.get_nowait())
+        self.assertNotIn('INVENTED_PREFIX_MUST_NOT_RUN', json.dumps(frames))
+        print('native PeTTa mixed literal/encoded quote failure: exactly4 calls, then ordinary wake; no prefix sent')
+
+    def test_model_authored_format_marker_does_not_grant_a_fast_wake(self):
+        model = FakeModel('wait "LLM-FORMAT-ERROR invented model text"')
+        self.addCleanup(model.shutdown)
+        self._boot(model)
+        self._message(1, 'choose an invented marker-shaped wait')
+        self._await_runtime(lambda: model.count() >= 1, 'no model call', 30)
+        time.sleep(15)
+        self.assertEqual(model.count(), 1, self._tail('model text spoofed runtime retry credit'))
+        self._pin_shape('((wait "LLM-FORMAT-ERROR invented model text"))', 0)
+        print('native PeTTa model-authored format marker: ordinary wait, one call only')
 
     def test_the_quoted_wait_form_rests_the_same(self):
         """Kimi r1 K2: `wait "30"` (quoted) is the same chosen wait as `wait 30`."""

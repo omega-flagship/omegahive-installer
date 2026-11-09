@@ -208,18 +208,18 @@ const Node = memo(function Node({
         width: box.w,
         height: box.h,
         zIndex: focus ? 3 : selected ? 2 : 1,
-        background: slot ? 'repeating-linear-gradient(135deg, rgb(253 164 175 / 0.06) 0 8px, transparent 8px 16px), rgb(12 10 32)' : CARD,
+        background: slot ? 'repeating-linear-gradient(135deg, rgb(253 164 175 / 0.06) 0 8px, transparent 8px 16px), var(--color-abyss)' : CARD,
         borderColor: selected
-          ? 'rgb(110 231 255 / 0.85)'
+          ? 'color-mix(in oklab, var(--color-accent-2) 85%, transparent)'
           : slot
             ? 'rgb(253 164 175 / 0.5)'
             : focus
               ? `color-mix(in srgb, ${r.color} 55%, transparent)`
               : affected
-                ? 'rgb(251 191 36 / 0.45)'
+                ? 'color-mix(in oklab, var(--color-warn) 45%, transparent)'
                 : 'var(--color-line)',
         boxShadow: selected
-          ? '0 0 0 1px rgb(110 231 255 / 0.5), 0 0 30px -6px rgb(110 231 255 / 0.6)'
+          ? '0 0 0 1px color-mix(in oklab, var(--color-accent-2) 50%, transparent), 0 0 30px -6px color-mix(in oklab, var(--color-accent-2) 60%, transparent)'
           : focus
             ? `0 18px 50px -18px rgb(0 0 0 / 0.8), 0 0 46px -12px ${r.color}`
             : '0 10px 30px -18px rgb(0 0 0 / 0.8)',

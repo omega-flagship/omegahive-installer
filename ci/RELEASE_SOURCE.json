@@ -1,0 +1,17 @@
+{
+  "schema": "omegahive-installer-release-source/1",
+  "source_repository": "https://github.com/PhysixSNET/omegahive",
+  "source_branch": "dev/latest",
+  "source_commit": "6b5a96c1cc338923efd9c93673ca092121db7ea8",
+  "source_tree": "e122202bf4f3050b782599ebef5f47e4fc5dbb78",
+  "how": "release/ = the flagship-mirror strip of source_commit (mirror_export.py: current allowlist + deny scan, CLEAN, 2815 files) plus the installer-owned release/deploy/linux unchanged from main. The strip drops paths the mirror no longer allowlists but dev/latest still carries (hive/ui/screenshots, internal docs/handoff, docs/review, docs/retired, docs/omegadots, examples, tutorials).",
+  "strip_manifest_sha256": "6bbc896d1e1434cd1a12aa82212f16d04b0e104c84a1d2f9eff5737821769574",
+  "allowlist_sha256": "31a4ffc728fdaf7ae0388edafbe7e4249c46fd8426c7894c26fd824493270a61",
+  "deny_patterns_sha256": "0ff16a05bfed9e02efe34ea25223b6392e27186e946174c8f27b85207857e390",
+  "ui_prebuilt": "ci/linux-x86/inputs/ui-dist-r3.* built from release/hive/ui (npm ci --ignore-scripts && npm run build, node v26.0.0)",
+  "apps": {
+    "omegaassist": "r6.1 (PhysixSNET/omegaassist dev/latest 6842954c), unchanged",
+    "omegadesign": "Studio 0.4.22 (PhysixSNET/omegadesign dev/latest 8cb0409d), same 67-file release layout as 0.4.20"
+  },
+  "core_lock_addition": "xkcdpass==1.30.0 (hive/requirements.txt), wheel 3653a4a1..., sdist 8a3a6b60..."
+}

@@ -54,13 +54,9 @@ class Flows:
 
     @contextlib.contextmanager
     def transaction(self):
-        with self.db._lock:
-            self.db._conn.execute('BEGIN IMMEDIATE')
-            try:
-                yield
-                self.db._conn.execute('COMMIT')
-            except BaseException:
-                self.db._conn.execute('ROLLBACK');raise
+        # One transaction/callback/rollback authority, including nesting under an existing host transaction.
+        with self.db.transaction():
+            yield
 
     def access(self,session,swarm_id,write=False,expired_ok=False):
         if write:self.hive.require_open_swarm(swarm_id)   # nothing new is published or run in a retired swarm
@@ -68,16 +64,17 @@ class Flows:
         # who is disabled, demoted or no longer owns the swarm still stops it.
         fresh=self.db.one('SELECT * FROM sessions WHERE token_hash=?',(session.get('token_hash'),))
         principal=(fresh or {}).get('principal')
-        if not fresh or fresh.get('kind')!='sso' or not isinstance(principal,str) or not principal.startswith('user:u_') or (not expired_ok and fresh.get('expires_at') and fresh['expires_at']<=time.time()):
+        if not fresh or fresh.get('kind') not in {'sso','member_password'} or not isinstance(principal,str) or not principal.startswith('user:u_') or (not expired_ok and fresh.get('expires_at') and fresh['expires_at']<=time.time()):
             raise self.error(401,'named_person_required','a current named person session is required')
         person=self.db.one('SELECT * FROM people WHERE id=?',(principal[5:],))
         if not person or person['disabled'] or person['role'] not in {'admin','member'}:
             raise self.error(403,'actor_revoked','the actor is no longer enabled')
+        is_admin=person['role']=='admin' and fresh['kind']=='sso'
         swarm=self.db.one('SELECT * FROM swarms WHERE id=?',(swarm_id,))
         from .visibility import Viewer
-        if not swarm or not Viewer(principal,person['role']=='admin').sees(swarm):
+        if not swarm or not Viewer(principal,is_admin).sees(swarm):
             raise self.error(404,'not_found','no such flow scope')
-        if write and person['role']!='admin' and swarm.get('owner')!=principal:
+        if write and not is_admin and swarm.get('owner')!=principal:
             raise self.error(403,'flow_owner_required','only the swarm owner or a named admin may change or run flows')
         return principal
 

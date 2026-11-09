@@ -1,19 +1,6 @@
-# Documentation
+# OmegaClaw Documentation
 
-## OmegaHive (start here)
-
-- [START_HERE.md](./START_HERE.md) — repositories and tiers, what is real today, reading order
-- [../STATUS.md](../STATUS.md) and [STATUS.md](./STATUS.md) — what works, test counts, the dated done/to-do log
-- [FEATURES.md](./FEATURES.md), [MODULARITY.md](./MODULARITY.md), [COMPATIBILITY.md](./COMPATIBILITY.md)
-- [EARLIER_EXPERIMENTS.md](./EARLIER_EXPERIMENTS.md) — earlier builds' results and what it would take to bring them in
-- [reasoning-deviations.md](./reasoning-deviations.md) — where NAL/PLN differ from the references
-- [theory/](./theory/README.md) and [handoff/](./handoff/platform/README.md)
-- [CODE_TOURS.md](./CODE_TOURS.md): guided walks through the code (also as VS Code CodeTour files in `.tours/`). Hands-on exercises are in [`../examples/`](../examples/README.md)
-- Diagrams and schematics for the whole platform: the `omegahive-schematics` repo. The onboarding tracks are in `omegahive-start-here/onboarding/`
-
-## OmegaClaw core
-
-The rest of this directory documents the OmegaClaw core runtime that native minds run on. Most user-facing pages
+This directory contains the documentation for OmegaClaw. Most user-facing pages
 are sibling files; review artifacts and retired experiments live in
 subdirectories so the first-pass docs stay readable. Filename prefixes identify
 the main section:
@@ -33,7 +20,7 @@ If you are new, read the Introduction in order, then pick tutorials that match w
 Start here to understand what OmegaClaw is, the hybrid reasoning thesis, how the pieces fit together, and how to get it running.
 
 - [introduction.md](./introduction.md) — What OmegaClaw is, the hybrid thesis, architecture, core vocabulary, design goals, and honest limits (merged conceptual intro).
-- [installation instruction](/docs/omegaclaw-core.md#installation) — Manual MeTTa setup, environment variables, API keys.
+- [installation instruction](/README.md#installation) — Manual MeTTa setup, environment variables, API keys.
 
 ---
 
@@ -56,9 +43,8 @@ Numbered in suggested reading order. Each tutorial is self-contained.
 
 ### Reasoning engines and orchestration
 
-- [reference-lib-nal.md](./reference-lib-nal.md) — NAL rules with truth formulas, reachability and probe-checked numbers
-- [reference-lib-pln.md](./reference-lib-pln.md) — Modus ponens, abduction, revision; reachability and current limits
-- [reasoning-deviations.md](./reasoning-deviations.md) — Deviations from Wang/ONA and PLN/OpenCog; open questions for the domain author
+- [reference-lib-nal.md](./reference-lib-nal.md) — NAL rules with truth formulas; confirmed vs. non-functional patterns
+- [reference-lib-pln.md](./reference-lib-pln.md) — Modus Ponens, abduction, revision; current limits
 - [reference-lib-ona.md](./reference-lib-ona.md) — OpenNARS for Applications — planned real-time / temporal engine (experimental, not installed by default)
 - [reference-orchestration.md](./reference-orchestration.md) — Engine selection, stopping criteria, action thresholds, defense stack
 - [reference-failure-modes.md](./reference-failure-modes.md) — Documented failures, error rates, mitigations
@@ -90,7 +76,7 @@ User-facing MeTTa skills the agent invokes. Each page follows the template **Sig
 
 Use these when reviewing the v0.01a readiness branch against the original core.
 
-- [omegaclaw-core.md](./omegaclaw-core.md) — Main walkthrough of what changed, why, how it is implemented, and where to inspect it.
+- [../README.md](../README.md) — Main walkthrough of what changed, why, how it is implemented, and where to inspect it.
 - [review/patch-series/README.md](./review/patch-series/README.md) — Chronological patch-family map for core maintainers.
 - [review/clean-patch-boundary.md](./review/clean-patch-boundary.md) — What belongs in core, optional modules, and local deployment state.
 - [review/dependency-boundary-audit.md](./review/dependency-boundary-audit.md) — Dependency and runtime-state boundary notes.

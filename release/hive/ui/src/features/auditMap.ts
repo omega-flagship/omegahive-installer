@@ -1,5 +1,5 @@
 /**
- * Every capability row of the classic UI audit (coordination/omegaui/CLASSIC_UI_AUDIT_20261005.md, rows 1–49) and the
+ * Every capability row of the classic UI audit (CLASSIC_UI_AUDIT_20261005.md, rows 1–49) and the
  * registry features that carry it, so a capability cannot silently fall out of the registry (Review B2). Rows that are
  * not person-facing say so explicitly.
  */

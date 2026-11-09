@@ -1,4 +1,4 @@
-"""Off, and Wake all (the owner 2026-10-05). Off records which minds were meant to be awake, then stops every mind through
+"""Off, and Wake all (Jon 2026-10-05). Off records which minds were meant to be awake, then stops every mind through
 stop_all; On wakes exactly those that still can. Stop all records the same snapshot, so Wake all restores from it.
 
 One snapshot is pending at a time: a later Off or Stop all adds the minds then awake to it and never replaces the set
@@ -117,6 +117,20 @@ class Power:
             why = []
 
             def ready(fresh, why=why):
+                # Old pending snapshots can predate infrastructure-aware Off.
+                # This runs under lifecycle's original mind lock, before start.
+                if any(b["agent_id"] == mind for b in self.hive.foundation_infrastructure_bindings()):
+                    why.append("foundation infrastructure; use its original request admission")
+                    return False
+                foundation = getattr(self.hive, "foundation", None)
+                if (foundation is not None and getattr(foundation, "hive", None) is self.hive
+                        and getattr(foundation, "db", None) is self.hive.db):
+                    from .foundation import CODE, REVIEW
+                    exists = self.hive.db.one("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'person_minds'")
+                    if exists and self.hive.db.one("SELECT 1 FROM person_minds WHERE agent_id = ? AND purpose IN (?, ?)",
+                                                  (mind, CODE, REVIEW)):
+                        why.append("foundation binding changed; repair required")
+                        return False
                 swarm = self.hive.db.one("SELECT archived_at FROM swarms WHERE id = ?", (fresh.get("swarm_id"),))
                 why.append("swarm archived" if swarm and swarm["archived_at"] else "moved" if fresh.get("moved_to")
                            else None if fresh["status"] in ("stopped", "asleep") else fresh["status"])

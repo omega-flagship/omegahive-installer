@@ -122,10 +122,16 @@ class EvolveFigures:
             raise FigureError(400, "bad_request", f"{field} must be plain text without control characters")
         return value
 
-    def attach(self, swarm_id, record_id, by, may_attach, sha256, caption, source_locator=None, data=None):
+    def attach(self, swarm_id, record_id, by, may_attach, sha256, caption, source_locator=None, data=None, may_read_swarm=None):
         """Store (when `data` is given) and attach one figure to a recorded report. `may_attach(report)` is the caller's
         authorization (contributor or admin). Repeating the same attachment returns it; the same figure with different
-        words on the same report is refused. Never writes `evolve_records`."""
+        words on the same report is refused. Never writes `evolve_records`.
+
+        Without `data`, a stored figure is reused by its hash only when `may_read_swarm(swarm_id)` admits the caller to
+        a swarm with a report that already holds it; otherwise the answer is the same as for a hash never stored, so a
+        hash alone never copies, or reveals, a figure the caller cannot read. Every check (including the per-report
+        limit) runs before any byte is written, and new bytes reach the store only as the last step of the transaction
+        (removed again if it does not commit), so a refused upload leaves nothing behind."""
         report = self.report(swarm_id, record_id)
         if report is None:
             raise FigureError(404, "not_found", "no such report")
@@ -143,26 +149,56 @@ class EvolveFigures:
             if hashlib.sha256(bytes(data)).hexdigest() != sha:
                 raise FigureError(400, "hash_mismatch", "the bytes do not match the declared sha256")
             size = png_size(data)
-        with self.db.transaction():
-            blob = self.db.one("SELECT * FROM evolve_figure_blobs WHERE sha256 = ?", (sha,))
-            if blob is None:
-                if data is None:
+        written = False
+        try:
+            with self.db.transaction():
+                prior = self.db.one("SELECT * FROM evolve_figures WHERE record_id = ? AND sha256 = ?", (report["id"], sha))
+                if prior:
+                    if prior["caption"] != caption or prior["source_locator"] != locator:
+                        raise FigureError(409, "already_attached", "this figure is already attached with other words")
+                    return self.view(prior, self.blob(sha))
+                count = self.db.one("SELECT count(*) AS n FROM evolve_figures WHERE record_id = ?", (report["id"],))["n"]
+                if count >= MAX_PER_REPORT:
+                    raise FigureError(409, "too_many_figures", f"a report holds at most {MAX_PER_REPORT} figures")
+                blob = self.db.one("SELECT * FROM evolve_figure_blobs WHERE sha256 = ?", (sha,))
+                if data is None and (blob is None or not self._readable_elsewhere(sha, may_read_swarm)):
                     raise FigureError(404, "figure_not_stored", "send the figure's bytes (content_base64) the first time")
-                self.store.put(sha, bytes(data))     # content-addressed: a leftover after a rollback is harmless
-                self.db.execute("INSERT INTO evolve_figure_blobs VALUES (?,?,?,?,?,?)",
-                                (sha, len(data), size[0], size[1], by, now()))
-            prior = self.db.one("SELECT * FROM evolve_figures WHERE record_id = ? AND sha256 = ?", (report["id"], sha))
-            if prior:
-                if prior["caption"] != caption or prior["source_locator"] != locator:
-                    raise FigureError(409, "already_attached", "this figure is already attached with other words")
-                return self.view(prior, self.blob(sha))
-            count = self.db.one("SELECT count(*) AS n FROM evolve_figures WHERE record_id = ?", (report["id"],))["n"]
-            if count >= MAX_PER_REPORT:
-                raise FigureError(409, "too_many_figures", f"a report holds at most {MAX_PER_REPORT} figures")
-            self.db.execute("INSERT INTO evolve_figures VALUES (?,?,?,?,?,?,?,?)",
-                            (report["id"], report["swarm_id"], sha, caption, locator, count, by, now()))
-            row = self.db.one("SELECT * FROM evolve_figures WHERE record_id = ? AND sha256 = ?", (report["id"], sha))
+                if blob is None:
+                    self.db.execute("INSERT INTO evolve_figure_blobs VALUES (?,?,?,?,?,?)",
+                                    (sha, len(data), size[0], size[1], by, now()))
+                self.db.execute("INSERT INTO evolve_figures VALUES (?,?,?,?,?,?,?,?)",
+                                (report["id"], report["swarm_id"], sha, caption, locator, count, by, now()))
+                row = self.db.one("SELECT * FROM evolve_figures WHERE record_id = ? AND sha256 = ?", (report["id"], sha))
+                if blob is None:
+                    written = True
+                    self.store.put(sha, bytes(data))   # last: everything above has passed, and the rows commit with it
+        except BaseException:
+            if written:
+                self._discard(sha)
+            raise
         return self.view(row, self.blob(sha))
+
+    def _readable_elsewhere(self, sha, may_read_swarm):
+        """Whether the caller may read a report that already holds this figure (any swarm it is attached in)."""
+        if may_read_swarm is None:
+            return False
+        swarms = self.db.all("SELECT DISTINCT swarm_id FROM evolve_figures WHERE sha256 = ?", (sha,))
+        return any(may_read_swarm(r["swarm_id"]) for r in swarms)
+
+    def _discard(self, sha):
+        """Remove bytes this attach wrote when its rows did not commit (and any partial write); never raises.
+
+        Decided and done under the database lock, as attach stores its bytes, so a concurrent attach of the same hash
+        either committed first (its rows are seen here and its bytes stay) or stores them again after this. Bytes that
+        any row references are never deleted."""
+        try:
+            with self.db.transaction():
+                if (self.db.one("SELECT 1 FROM evolve_figure_blobs WHERE sha256 = ?", (sha,)) is None
+                        and self.db.one("SELECT 1 FROM evolve_figures WHERE sha256 = ?", (sha,)) is None):
+                    self.store.delete(sha)
+                    self.store._path(sha).with_suffix(".tmp").unlink(missing_ok=True)
+        except Exception:
+            pass
 
     # ---- reading ---------------------------------------------------------------------------------
 

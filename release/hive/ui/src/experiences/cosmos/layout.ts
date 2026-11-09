@@ -1,4 +1,5 @@
 import type { Agent, Swarm } from '../sdk'
+import { groupHelpers, type HelperGroup } from '../../scene/helperGroups'
 
 /** Deterministic randomness: the same hive always draws the same galaxy. */
 export function seeded(seed: number) {
@@ -46,6 +47,10 @@ export interface PlanetLayout {
   size: number
   /** Wanderers: drift anchor. */
   anchor: V3
+  /** A team's folded request helpers (scene/helperGroups): one small, dim world that opens to show them. */
+  group?: HelperGroup
+  /** A request helper's label ("Helper <n>"), never its template id. */
+  label?: string
 }
 
 export interface CosmosLayout {
@@ -57,9 +62,21 @@ export interface CosmosLayout {
   extent: number
 }
 
+/** A folded helper group's world: smaller than any mind's. */
+export const GROUP_SIZE = 0.26
+
 export const kindSize = (a: Agent) => (a.kind === 'omega' ? 0.62 : a.kind === 'iter' ? 0.46 : 0.34)
 
-export function buildLayout(swarms: Record<string, Swarm>, agents: Record<string, Agent>): CosmosLayout {
+/**
+ * The galaxy's layout. Finished request helpers fold into one quiet world per team (scene/helperGroups groupHelpers,
+ * the same rule the classic map draws by): `helpers.expanded` names the open groups, `helpers.reveal` a mind that must
+ * stay drawn (the one open), `helpers.now` the time it is judged at.
+ */
+export function buildLayout(swarms: Record<string, Swarm>, all: Record<string, Agent>, helpers: { now?: number; expanded?: ReadonlySet<string>; reveal?: string | null } = {}): CosmosLayout {
+  const folded = groupHelpers(Object.values(all), helpers.now ?? Date.now(), helpers)
+  const agents: Record<string, Agent> = {}
+  for (const a of folded.shown) agents[a.id] = a
+  const groupOf = new Map(folded.groups.map((g) => [g.teamId, g]))
   const list = Object.values(swarms).sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
   const systems: SystemLayout[] = []
   const planets: PlanetLayout[] = []
@@ -88,9 +105,17 @@ export function buildLayout(swarms: Record<string, Swarm>, agents: Record<string
         node: prng() * Math.PI * 2,
         size,
         anchor: center,
+        ...(a.name !== all[id]?.name ? { label: a.name } : {}),
       })
       placed.add(id)
     })
+    const g = groupOf.get(s.id)
+    if (g) {
+      // the folded helpers: a small world on the next orbit out, slow, never pulsing (Scene GroupWorld)
+      const prng = seeded(hashStr(g.id))
+      orbit += members.length ? 1.15 + GROUP_SIZE * 1.4 : 0
+      planets.push({ id: g.id, systemId: s.id, orbit, speed: 0.3 / Math.pow(orbit, 1.5), phase: prng() * Math.PI * 2, incline: (prng() - 0.5) * 0.16, node: prng() * Math.PI * 2, size: GROUP_SIZE, anchor: center, group: g })
+    }
     const belt = orbit + 1.9
     systems.push({ id: s.id, name: s.name, hue: s.hue, center, members, belt, frame: belt * 2.3 + 7 })
   })
@@ -109,6 +134,7 @@ export function buildLayout(swarms: Record<string, Swarm>, agents: Record<string
       node: prng() * Math.PI * 2,
       size: kindSize(a),
       anchor: [Math.cos(ang) * r, 5 + (prng() - 0.5) * 10, Math.sin(ang) * r],
+      ...(a.name !== all[a.id]?.name ? { label: a.name } : {}),
     })
   })
   const systemById: Record<string, SystemLayout> = {}

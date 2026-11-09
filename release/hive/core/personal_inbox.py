@@ -1,4 +1,4 @@
-"""Held copies for a person's browser memory (personal minds P1 item 4; the owner, 2026-10-08: "the memory lives in the browser").
+"""Held copies for a person's browser memory (personal minds P1 item 4; Jon, 2026-10-08: "the memory lives in the browser").
 
 When a swarm's coordinator answers a person's Ask turn (the ordinary, non-conductor path: Ask.reply -> Ask._close with an
 answer), a copy of that exchange (the person's words and the final answer) is held here for that person only, until
@@ -6,7 +6,7 @@ their browser collects it into its local memory and acknowledges it; then it is 
 - not a hive message, not in any mind's history, traces, rooms or memory; no event is published; the personal mind is
   not woken, takes no turn and no model is called;
 - read and acknowledged only by its person (GET /api/me/mind/inbox, POST /api/me/mind/inbox/ack); there is no admin
-  read of the content (the owner's transparency ruling allows metadata only, and no admin view of this exists to extend);
+  read of the content (Jon's transparency ruling allows metadata only, and no admin view of this exists to extend);
 - never for a private app or swarm (the page's {private: true}, or conductor.names_private on the program, route,
   swarm names, or a swarm that is a private app's home); never for an exchange with the person's own personal mind;
 - one per turn; each at most ITEM_BYTES (truncated, flagged); per person at most MAX_ITEMS and MAX_BYTES, the oldest

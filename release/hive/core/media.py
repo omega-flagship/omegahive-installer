@@ -46,6 +46,7 @@ import time
 from decimal import Decimal
 
 from . import jpeg_complete
+from .cost_reservations import host_use_check
 from .db import now
 
 PROVIDER = "openrouter"
@@ -678,6 +679,7 @@ class MediaRoute:
                 raise ValueError("session changed during admission")
             if self.hive.payer_for(self.hive.agent(agent["id"]), key_owner) != (payer, own_key):
                 raise ValueError("payer changed during admission")
+            host_use_check(self.hive, agent["id"], key_id, payer)   # money port r1.2: access removed since admission
             return self.snapshot(self.hive, agent["id"], key_id, payer, own_key)
         metadata = {"agent": agent["id"], "model": model_label, "payer": payer, "key": key_id, "kind": "media:" + op}
         try:

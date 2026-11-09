@@ -1,5 +1,5 @@
 /**
- * The personal mind as a softly lit glass figure (Classic; the owner picked direction B, mock-up personal-mind/classic.html):
+ * The personal mind as a softly lit glass figure (Classic; Jon picked direction B, mock-up personal-mind/classic.html):
  * memory as a cloud in the head, energy as a core in the chest, light running to the hands while it acts, and a halo
  * for its version. Pure SVG, drawn from the presence and a few counts; decorative motion only, and none at all under
  * reduced motion (the page's own setting or the system's): the states then differ by light alone.
@@ -75,9 +75,9 @@ export function GlassFigure({ name, presence, remembers, acting, versioned, widt
     >
       <defs>
         <linearGradient id={`${u}body`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="rgba(185,174,255,.26)" />
-          <stop offset=".55" stopColor="rgba(185,174,255,.26)" stopOpacity=".6" />
-          <stop offset="1" stopColor="rgba(110,231,255,.07)" />
+          <stop offset="0" stopColor="color-mix(in oklab, var(--color-primary-top) 26%, transparent)" />
+          <stop offset=".55" stopColor="color-mix(in oklab, var(--color-primary-top) 26%, transparent)" stopOpacity=".6" />
+          <stop offset="1" stopColor="color-mix(in oklab, var(--color-accent-2) 7%, transparent)" />
         </linearGradient>
         <linearGradient id={`${u}sheen`} x1="0" y1="0" x2="1" y2="0">
           <stop offset="0" stopColor="#fff" stopOpacity=".16" />
@@ -86,8 +86,8 @@ export function GlassFigure({ name, presence, remembers, acting, versioned, widt
           <stop offset="1" stopColor="#fff" stopOpacity=".07" />
         </linearGradient>
         <linearGradient id={`${u}rim`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="rgba(200,190,255,.55)" />
-          <stop offset="1" stopColor="rgba(200,190,255,.55)" stopOpacity=".25" />
+          <stop offset="0" stopColor="color-mix(in oklab, var(--color-primary-top) 55%, transparent)" />
+          <stop offset="1" stopColor="color-mix(in oklab, var(--color-primary-top) 55%, transparent)" stopOpacity=".25" />
         </linearGradient>
         <linearGradient id={`${u}halo`} x1="0" y1="0" x2="1" y2="0">
           <stop offset="0" stopColor="#6ee7ff" />
@@ -138,7 +138,7 @@ export function GlassFigure({ name, presence, remembers, acting, versioned, widt
           </g>
         </g>
       )}
-      <path d={BODY} fill="rgba(4,4,15,.35)" />
+      <path d={BODY} fill="color-mix(in oklab, var(--color-void) 35%, transparent)" />
       <path d={BODY} fill={r('body')} opacity={light.body} />
       <g clipPath={r('clip')}>
         <rect x="0" y="-10" width="400" height="910" fill={r('sheen')} />

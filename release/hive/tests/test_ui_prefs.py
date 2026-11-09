@@ -16,7 +16,8 @@ from hive.core.config import load_settings
 from hive.core.db import now
 from hive.core.hive import token_hash
 from hive.core.programs import check_app
-from hive.core.ui_prefs import check_variant
+from hive.core import theme_rules
+from hive.core.ui_prefs import ALPHA_KEYS, check_variant
 
 PETTA = os.environ.get("PETTA_PATH", str(pathlib.Path.home() / "PeTTa"))
 pytestmark = pytest.mark.skipif(not pathlib.Path(PETTA, "src", "main.pl").exists(), reason="needs PeTTa")
@@ -85,7 +86,9 @@ def test_requires_sign_in(hive):
 
 @pytest.mark.parametrize("mutate, needle", [
     (lambda v: v["colors"].__setitem__("ink", v["colors"]["void"]), "ink on void"),
-    (lambda v: v["colors"].__setitem__("ink-4", "#222222"), "ink-4 on void"),
+    (lambda v: v["colors"].__setitem__("ink-4", "#161009"), "ink-4 on void"),
+    (lambda v: v["colors"].__setitem__("ink", None), "colors.ink"),
+    (lambda v: v["colors"].update({"ink": "#000000", "void": None, "abyss": None}), "colors.void"),
     (lambda v: v["colors"].__setitem__("accent", "url(https://evil.example/x)"), "colors.accent"),
     (lambda v: v["colors"].__setitem__("glass", "rgb(0 0 0 / 0.5); background:url(x)"), "colors.glass"),
     (lambda v: v["fonts"].__setitem__("sans", "x; } body { background: url(https://evil.example)"), "fonts.sans"),
@@ -101,6 +104,35 @@ def test_refuses_unreadable_or_non_data_variants(hive, mutate, needle):
     r = c.put("/api/me/ui", headers=admin, json={"variant": v})
     assert r.status_code == 400 and needle in r.text
     assert c.get("/api/me/ui", headers=admin).json()["prefs"] is None
+
+
+def test_a_look_the_rules_can_repair_is_accepted_as_the_browser_wears_it(hive):
+    """One source (theme.rules.json): the host refuses only what still falls short after the rules' repair."""
+    c, admin, _ = hive
+    v = copy.deepcopy(seeds()[0])
+    v["colors"]["ink-4"] = "#222222"                       # 1.2:1 on void, but a lighter ink-4 reads: repaired, not refused
+    assert theme_rules.check_look(v["colors"]) == []
+    assert c.put("/api/me/ui", headers=admin, json={"variant": v}).status_code == 200
+
+
+def test_host_and_browser_read_one_rules_file():
+    assert set(ALPHA_KEYS) == set(theme_rules.RULES["translucent"])
+    assert {(x["token"], x["against"]) for x in theme_rules.CHECKS} >= {("ink", "void"), ("primary-ink", "accent")}
+    # the two-way repair (Dot R1.1 #3): on a mid-grey ground, ink passes on the far side
+    grey = dict(seeds()[0]["colors"], void="#666666", abyss="#666666", ink="#aaaaaa")
+    assert [f for f in theme_rules.check_look(grey) if f["token"] == "ink"] == []
+
+
+def test_contrast_fails_closed_and_decides_on_the_exact_ratio():
+    base = dict(seeds()[0]["colors"])
+    nul = theme_rules.check_look(dict(base, ink=None))
+    assert any(f["token"] == "ink" and f["ratio"] is None for f in nul)
+    assert theme_rules.check_look(dict(base, ink="#000000", void=None, abyss=None))
+    assert check_variant(dict(seeds()[0], colors=dict(base, ink=None)))
+    # 2.9997:1 rounds to 3.00 but is below the 3:1 floor: decided exactly, as the browser does (themeCheck.ts)
+    assert 2.9995 < theme_rules.contrast("#725180", "#080822") < 3.0
+    edge = theme_rules.check_look({**base, "void": "#04040f", "abyss": "#080822", "accent-2": "#725180"})
+    assert not [f for f in edge if f["token"] == "accent-2"]   # repaired, not passed as 3.00
 
 
 def test_refuses_unknown_body_keys_and_oversize(hive):

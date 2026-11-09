@@ -3,7 +3,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 
 /**
- * Witness for Quinn's 2026-10-08 report (the cloud Ask answered 409 no_mind; nothing on the page showed how to fix it).
+ * Witness for Jon's 2026-10-08 report (the cloud Ask answered 409 no_mind; nothing on the page showed how to fix it).
  * Written against modules that already exist at 8739049, so it fails there and passes with the fix. INVENTED data.
  */
 vi.stubGlobal('window', { location: { hash: '#/', search: '', pathname: '/' }, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), addEventListener() {}, removeEventListener() {}, innerWidth: 1440, innerHeight: 900 })

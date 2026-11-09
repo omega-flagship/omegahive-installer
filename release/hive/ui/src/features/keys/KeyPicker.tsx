@@ -29,7 +29,7 @@ export function KeyPicker({ provider, value, onChange, hue = 252 }: { provider: 
         </button>
       </div>
       {keys && mine.length === 0 ? (
-        <button onClick={() => navigate({ name: 'me' })} className="flex w-full items-center gap-3 rounded-xl border border-dashed border-line px-3 py-2.5 text-left text-[13px] text-ink-2 hover:border-line-2 hover:bg-white/[0.03]">
+        <button onClick={() => navigate({ name: 'me' })} className="flex w-full items-center gap-3 rounded-xl border border-dashed border-line px-3 py-2.5 text-left text-[13px] text-ink-2 hover:border-line-2 hover:bg-tint/[0.03]">
           <Icon name="plus" size={15} className="text-ink-3" />
           <span className="min-w-0 flex-1">Add a key for this provider</span>
         </button>
@@ -57,11 +57,11 @@ function Option({ on, hue, onClick, title, sub }: { on: boolean; hue: number; on
       role="radio"
       aria-checked={on}
       onClick={onClick}
-      className={cx('flex min-h-11 items-center gap-2 rounded-xl border px-3 text-left transition-all', on ? 'bg-white/[0.08]' : 'border-line bg-white/[0.02] hover:border-line-2')}
+      className={cx('flex min-h-11 items-center gap-2 rounded-xl border px-3 text-left transition-all', on ? 'bg-tint/[0.08]' : 'border-line bg-tint/[0.02] hover:border-line-2')}
       style={on ? { borderColor: hsl(hue, 90, 70, 0.55), boxShadow: `0 0 0 1px ${hsl(hue, 90, 70, 0.25)} inset` } : undefined}
     >
       <span className={cx('flex size-4 shrink-0 items-center justify-center rounded-full border', on ? 'border-transparent' : 'border-line-2')} style={on ? { background: hsl(hue, 100, 75) } : undefined}>
-        {on && <span className="size-1.5 rounded-full bg-[#0b0820]" />}
+        {on && <span className="size-1.5 rounded-full bg-primary-ink" />}
       </span>
       <span className="min-w-0">
         <span className="block truncate text-[12.5px] text-ink">{title}</span>

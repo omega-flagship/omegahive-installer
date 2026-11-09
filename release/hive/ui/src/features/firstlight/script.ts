@@ -1,5 +1,5 @@
 /**
- * First Light R2: the onboarding journey's script, as DATA (storyboard and script R0.1, approved by the owner 2026-10-13, with
+ * First Light R2: the onboarding journey's script, as DATA (storyboard and script R0.1, approved by Jon 2026-10-13, with
  * his visibility ruling of the same day). R2 plays beats 1 (arrive), 2 (your look), 3 (your keys and your limits) and
  * 8 (hello); R3 adds 5 (your apps), 6 (your Ask) and the hand-off into an app after hello. Beats 4 (tools) and 7 (tour)
  * come in later rounds and show as "comes later" on the marks, never as skipped. `r2` on a beat means "in this round".
@@ -11,7 +11,7 @@
  *  - the key is pasted on the person's own keys (#/me), where a key is theirs (`owner`), not on Models (the hive's key).
  *
  * Nothing in a step decides, spends or changes the hive. The only screen actions are the guided demos' own (go to a
- * page, open the Change UI gallery). Every real choice (a role, a look, a key, a limit, Wake) is the person's own press.
+ * page, open the Change experience gallery). Every real choice (a role, a look, a key, a limit, Wake) is the person's own press.
  *
  * Voice: not in this round. Captions only, always on (FL_VOICE is false; the voice comes later via the hive's own
  * provider route).

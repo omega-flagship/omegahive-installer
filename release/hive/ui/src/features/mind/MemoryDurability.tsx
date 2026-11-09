@@ -145,7 +145,7 @@ export function MemoryDurability({ compact = false }: { compact?: boolean }) {
       <p className="mt-0.5 text-[12.5px] text-ink-3">Clearing this browser’s data clears this memory too. Save it to a file on your computer, and restore it from there.</p>
       <p className="mt-0.5 text-[12px] text-ink-4" data-mind-forget-scope="">Forget everything clears what’s remembered; your “Use my swarm talk in answers” choice stays as you set it. Clearing this browser’s data clears both.</p>
       {nudge && !pending && (
-        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-line-2 bg-white/[0.04] px-3 py-2 text-[12.5px] text-ink-2" role="status" data-mind-nudge="">
+        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-line-2 bg-tint/[0.04] px-3 py-2 text-[12.5px] text-ink-2" role="status" data-mind-nudge="">
           <span className="min-w-0 flex-1">Some of what your mind remembers isn’t saved to a file yet.</span>
           <Button variant="ghost" className="min-h-8 px-2.5 text-[12px]" onClick={() => (dismissNudge(owner, mem), bump((n) => n + 1))}>
             Not now
@@ -219,7 +219,7 @@ export function MemoryDurability({ compact = false }: { compact?: boolean }) {
         </div>
       )}
       {pending && (
-        <div className="mt-3 rounded-lg border border-line-2 bg-white/[0.04] p-3" role="group" aria-label="What restoring would change" data-mind-preview="">
+        <div className="mt-3 rounded-lg border border-line-2 bg-tint/[0.04] p-3" role="group" aria-label="What restoring would change" data-mind-preview="">
           <p className="text-[13px] text-ink">Restoring “{pending.name}” (saved {new Date(pending.file.exported_at).toLocaleDateString()}) would:</p>
           <ul className="mt-1.5 list-disc space-y-0.5 pl-5 text-[12.5px] text-ink-2">
             {planWords(pending.plan).map((w) => (

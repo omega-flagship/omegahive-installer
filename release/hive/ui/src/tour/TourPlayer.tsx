@@ -15,6 +15,7 @@ import { beatPreparer, type ReportRow } from './prepare'
 import { browserSpeech, englishVoices, loadVoices, pickVoice, speechSupported } from './speech'
 import { KEYS, readKey, writeKey } from './storage'
 import { shown } from '../lib/displayName'
+import { timeJump } from '../brand/timeJump'
 
 // ---------------------------------------------------------------- geometry
 
@@ -325,6 +326,7 @@ export default function TourPlayer({ request }: { request: TourRequest }) {
       } else if (e.key === 'ArrowLeft' && !typing) {
         e.preventDefault()
         e.stopImmediatePropagation()
+        timeJump('back')
         dispatch({ type: 'prev' })
       } else if (!inPlayer) {
         // no app shortcuts while the tour drives the app; keys inside the player work as usual
@@ -468,7 +470,7 @@ export default function TourPlayer({ request }: { request: TourRequest }) {
                   unavailable={unavailable}
                   captions={captions}
                   setCaptions={(v) => (setCaptions(v), writeKey(KEYS.captions, v ? null : 'off'))}
-                  onRestart={() => (setPanel(null), dispatch({ type: 'restart' }))}
+                  onRestart={() => (setPanel(null), timeJump('start'), dispatch({ type: 'restart' }))}
                   mobile={mobile}
                 />
               )}
@@ -478,15 +480,15 @@ export default function TourPlayer({ request }: { request: TourRequest }) {
         <div className="glass-strong rounded-[20px] px-2 pt-2 pb-1.5 md:px-2.5" data-tour-player="">
           <Progress chapters={chapters} totals={totals} frac={frac} current={s?.chapter ?? 0} onPick={(i) => dispatch({ type: 'goto', chapter: i })} />
           <div className="mt-1.5 flex items-center gap-0.5 md:gap-1">
-            <Ctl icon="stepBack" label="Previous chapter (←)" onClick={() => dispatch({ type: 'prev' })} disabled={loading} />
+            <Ctl icon="stepBack" label="Previous chapter (←)" onClick={() => (timeJump('back'), dispatch({ type: 'prev' }))} disabled={loading} />
             <button
               ref={playBtn}
               onClick={() => dispatch({ type: 'toggle' })}
               disabled={loading}
               aria-label={s?.status === 'playing' ? 'Pause (Space)' : 'Play (Space)'}
               title={s?.status === 'playing' ? 'Pause (Space)' : 'Play (Space)'}
-              className="flex size-11 shrink-0 items-center justify-center rounded-full text-[#0b0820] transition-transform active:scale-95 disabled:opacity-50"
-              style={{ background: 'linear-gradient(180deg, #e9e4ff, #b7a8ff)', boxShadow: '0 0 0 1px rgb(255 255 255 / 0.3) inset, 0 6px 22px -6px rgb(164 147 255 / 0.9)' }}
+              className="flex size-11 shrink-0 items-center justify-center rounded-full text-primary-ink transition-transform active:scale-95 disabled:opacity-50"
+              style={{ background: 'linear-gradient(180deg, #e9e4ff, #b7a8ff)', boxShadow: '0 0 0 1px color-mix(in oklab, var(--color-ink) 30%, transparent) inset, 0 6px 22px -6px color-mix(in oklab, var(--color-accent) 90%, transparent)' }}
             >
               <Icon name={s?.status === 'playing' ? 'pause' : 'play'} size={18} strokeWidth={2.6} />
             </button>
@@ -495,7 +497,7 @@ export default function TourPlayer({ request }: { request: TourRequest }) {
               onClick={() => setPanel(panel === 'chapters' ? null : 'chapters')}
               aria-expanded={panel === 'chapters'}
               aria-haspopup="dialog"
-              className="ml-1 flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl px-2 text-left transition-colors hover:bg-white/[0.06]"
+              className="ml-1 flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl px-2 text-left transition-colors hover:bg-tint/[0.06]"
               title="Chapters"
             >
               <span className="min-w-0 flex-1">
@@ -520,11 +522,11 @@ export default function TourPlayer({ request }: { request: TourRequest }) {
               aria-haspopup="dialog"
               aria-label={`Speed ${rate}× and voice`}
               title="Speed and voice"
-              className={cx('flex h-11 min-w-11 shrink-0 items-center justify-center rounded-xl px-1.5 font-mono text-[12px] font-semibold text-ink-2 transition-colors hover:bg-white/[0.07] hover:text-ink', panel === 'settings' && 'bg-white/[0.08] text-ink')}
+              className={cx('flex h-11 min-w-11 shrink-0 items-center justify-center rounded-xl px-1.5 font-mono text-[12px] font-semibold text-ink-2 transition-colors hover:bg-tint/[0.07] hover:text-ink', panel === 'settings' && 'bg-tint/[0.08] text-ink')}
             >
               {rate}×
             </button>
-            {!mobile && <Ctl icon="replay" label="Restart the tour" onClick={() => dispatch({ type: 'restart' })} disabled={loading} />}
+            {!mobile && <Ctl icon="replay" label="Restart the tour" onClick={() => (timeJump('start'), dispatch({ type: 'restart' }))} disabled={loading} />}
             <Ctl icon="x" label="Close the tour (Esc)" onClick={() => finish('closed')} />
           </div>
         </div>
@@ -542,7 +544,7 @@ export default function TourPlayer({ request }: { request: TourRequest }) {
         className="pointer-events-none fixed top-0 left-0 z-[81] transition-[opacity] duration-200"
         style={{
           opacity: 0,
-          boxShadow: '0 0 0 1.5px rgb(110 231 255 / 0.9), 0 0 0 5px rgb(110 231 255 / 0.12), 0 0 36px 4px rgb(110 231 255 / 0.32), 0 0 0 200vmax rgb(3 3 14 / 0.6)',
+          boxShadow: '0 0 0 1.5px color-mix(in oklab, var(--color-accent-2) 90%, transparent), 0 0 0 5px color-mix(in oklab, var(--color-accent-2) 12%, transparent), 0 0 36px 4px color-mix(in oklab, var(--color-accent-2) 32%, transparent), 0 0 0 200vmax color-mix(in oklab, var(--color-void) 60%, transparent)',
         }}
         aria-hidden="true"
       />
@@ -566,7 +568,7 @@ export default function TourPlayer({ request }: { request: TourRequest }) {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, transition: { duration: 0.14 } }}
               transition={{ duration: 0.22 }}
-              className="pointer-events-auto max-w-[640px] rounded-2xl bg-[#05050f]/88 px-4 py-2.5 text-center shadow-[0_10px_40px_-10px_rgb(0_0_0/0.9)] ring-1 ring-white/[0.08] backdrop-blur-md md:px-5 md:py-3"
+              className="pointer-events-auto max-w-[640px] rounded-2xl bg-[#05050f]/88 px-4 py-2.5 text-center shadow-[0_10px_40px_-10px_rgb(0_0_0/0.9)] ring-1 ring-tint/[0.08] backdrop-blur-md md:px-5 md:py-3"
               role="status"
             >
               <p className="text-[14px] leading-snug text-ink-3 md:text-[15px]">{skipped.note}</p>
@@ -578,7 +580,7 @@ export default function TourPlayer({ request }: { request: TourRequest }) {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, transition: { duration: 0.14 } }}
               transition={{ duration: 0.22 }}
-              className="pointer-events-auto max-w-[640px] rounded-2xl bg-[#05050f]/88 px-4 py-2.5 text-center shadow-[0_10px_40px_-10px_rgb(0_0_0/0.9)] ring-1 ring-white/[0.08] backdrop-blur-md md:px-5 md:py-3"
+              className="pointer-events-auto max-w-[640px] rounded-2xl bg-[#05050f]/88 px-4 py-2.5 text-center shadow-[0_10px_40px_-10px_rgb(0_0_0/0.9)] ring-1 ring-tint/[0.08] backdrop-blur-md md:px-5 md:py-3"
               aria-live="polite"
             >
               <Caption text={caption} spokenTo={voiceOn ? spokenTo : -1} />
@@ -602,7 +604,7 @@ function Ctl({ icon, label, onClick, disabled, active }: { icon: IconName; label
       title={label}
       aria-pressed={active}
       className={cx(
-        'flex size-11 shrink-0 items-center justify-center rounded-xl transition-colors hover:bg-white/[0.07] hover:text-ink disabled:opacity-40 disabled:hover:bg-transparent',
+        'flex size-11 shrink-0 items-center justify-center rounded-xl transition-colors hover:bg-tint/[0.07] hover:text-ink disabled:opacity-40 disabled:hover:bg-transparent',
         active === false ? 'text-ink-4' : 'text-ink-2',
       )}
     >
@@ -627,8 +629,8 @@ function Progress({ chapters, totals, frac, current, onPick }: { chapters: Chapt
   const lefts = totals.map((_, i) => totals.slice(0, i).reduce((a, b) => a + b, 0) / total)
   return (
     <div className="relative mx-1 flex h-4 items-center" role="group" aria-label="Tour progress">
-      <div className="absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 overflow-hidden rounded-full bg-white/[0.09]">
-        <div className="h-full rounded-full transition-[width] duration-700 ease-out" style={{ width: `${Math.max(0, Math.min(1, frac)) * 100}%`, background: 'linear-gradient(90deg, #a493ff, #6ee7ff)', boxShadow: '0 0 10px rgb(110 231 255 / 0.6)' }} />
+      <div className="absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 overflow-hidden rounded-full bg-tint/[0.09]">
+        <div className="h-full rounded-full transition-[width] duration-700 ease-out" style={{ width: `${Math.max(0, Math.min(1, frac)) * 100}%`, background: 'linear-gradient(90deg, #a493ff, #6ee7ff)', boxShadow: '0 0 10px color-mix(in oklab, var(--color-accent-2) 60%, transparent)' }} />
       </div>
       {chapters.map((c, i) => {
         const left = lefts[i]
@@ -643,7 +645,7 @@ function Progress({ chapters, totals, frac, current, onPick }: { chapters: Chapt
             title={c.title}
           >
             {i > 0 && <span className="absolute top-1/2 left-0 h-2 w-[2px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#08081c]" aria-hidden="true" />}
-            <span className="absolute inset-x-0 top-1/2 h-[7px] -translate-y-1/2 rounded-full opacity-0 transition-opacity group-hover:bg-white/[0.08] group-hover:opacity-100" aria-hidden="true" />
+            <span className="absolute inset-x-0 top-1/2 h-[7px] -translate-y-1/2 rounded-full opacity-0 transition-opacity group-hover:bg-tint/[0.08] group-hover:opacity-100" aria-hidden="true" />
           </button>
         )
       })}
@@ -668,8 +670,8 @@ function ChapterList({ chapters, totals, current, only, onPick }: { chapters: Ch
           const on = i === current
           return (
             <li key={c.id}>
-              <button onClick={() => onPick(i)} aria-current={on ? 'step' : undefined} className={cx('flex min-h-12 w-full items-center gap-3 rounded-xl px-3 py-1.5 text-left transition-colors', on ? 'bg-white/[0.08]' : 'hover:bg-white/[0.05]')}>
-                <span className={cx('flex size-6 shrink-0 items-center justify-center rounded-full font-mono text-[11px] tabular-nums', on ? 'bg-accent text-[#0b0820]' : 'border border-line-2 text-ink-3')}>{i + 1}</span>
+              <button onClick={() => onPick(i)} aria-current={on ? 'step' : undefined} className={cx('flex min-h-12 w-full items-center gap-3 rounded-xl px-3 py-1.5 text-left transition-colors', on ? 'bg-tint/[0.08]' : 'hover:bg-tint/[0.05]')}>
+                <span className={cx('flex size-6 shrink-0 items-center justify-center rounded-full font-mono text-[11px] tabular-nums', on ? 'bg-accent text-primary-ink' : 'border border-line-2 text-ink-3')}>{i + 1}</span>
                 <span className="min-w-0 flex-1">
                   <span className={cx('block truncate text-[13.5px] font-medium', on ? 'text-ink' : 'text-ink-2')}>{c.title}</span>
                   <span className="block truncate text-[11.5px] text-ink-4">{c.blurb}</span>
@@ -712,9 +714,9 @@ function Settings({
     <div className="space-y-3.5 p-3.5" role="dialog" aria-label="Speed and voice">
       <div>
         <div className="eyebrow mb-2">Speed</div>
-        <div role="radiogroup" aria-label="Speed" data-unsaved-ignore="" className="flex gap-1 rounded-xl border border-line bg-white/[0.03] p-1">
+        <div role="radiogroup" aria-label="Speed" data-unsaved-ignore="" className="flex gap-1 rounded-xl border border-line bg-tint/[0.03] p-1">
           {RATES.map((r) => (
-            <button key={r} role="radio" aria-checked={r === rate} onClick={() => setRate(r)} className={cx('min-h-9 flex-1 rounded-lg font-mono text-[12.5px] transition-colors', r === rate ? 'bg-white/[0.1] text-ink ring-1 ring-line-2' : 'text-ink-3 hover:text-ink')}>
+            <button key={r} role="radio" aria-checked={r === rate} onClick={() => setRate(r)} className={cx('min-h-9 flex-1 rounded-lg font-mono text-[12.5px] transition-colors', r === rate ? 'bg-tint/[0.1] text-ink ring-1 ring-line-2' : 'text-ink-3 hover:text-ink')}>
               {r}×
             </button>
           ))}
@@ -732,7 +734,7 @@ function Settings({
             value={voiceUri ?? ''}
             onChange={(e) => setVoice(e.target.value)}
             aria-label="Voice"
-            className="min-h-11 w-full appearance-none rounded-xl border border-line bg-black/30 px-3 text-[14px] text-ink outline-none focus:border-line-2"
+            className="min-h-11 w-full appearance-none rounded-xl border border-line bg-shade/30 px-3 text-[14px] text-ink outline-none focus:border-line-2"
           >
             {voices.slice(0, 24).map((v) => (
               <option key={v.voiceURI} value={v.voiceURI} className="bg-[#0b0b22]">

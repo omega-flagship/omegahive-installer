@@ -77,7 +77,7 @@
   opacity: 0.55;
 }
 .fl-mark[data-state='blocked'] .fl-dot {
-  border-color: var(--color-warn, #fbbf24);
+  border-color: var(--color-warn);
   border-right-color: transparent;
 }
 .fl-mark[data-state='later'] .fl-dot {
@@ -136,7 +136,6 @@
 .fl-panel {
   position: fixed;
   left: 50%;
-  translate: -50% 0;
   width: min(620px, calc(100vw - 32px));
   max-height: 66vh;
   overflow-y: auto;
@@ -155,6 +154,8 @@
   font-size: 14px;
   line-height: 1.45;
 }
+/* Legacy beat panels are centered with a half-width shift; U1 is a grid item. */
+.fl-panel:not(.fl-u1-panel) { translate: -50% 0; }
 .fl-panel[hidden] {
   display: none;
 }
@@ -195,8 +196,8 @@
   margin-bottom: 8px !important;
   padding: 7px 10px;
   border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--color-warn, #fbbf24) 70%, transparent);
-  background: color-mix(in srgb, var(--color-warn, #fbbf24) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warn) 70%, transparent);
+  background: color-mix(in srgb, var(--color-warn) 16%, transparent);
   color: var(--xc-ink);
   font-size: 13px;
 }
@@ -221,7 +222,7 @@
   color: var(--xc-accent);
 }
 .fl-state-tag[data-state='blocked'] {
-  color: var(--color-warn, #fbbf24);
+  color: var(--color-warn);
 }
 .fl-state-tag[data-state='skipped'] {
   border-style: dashed;
@@ -255,7 +256,7 @@
 .fl-bar > span {
   display: block;
   height: 100%;
-  background: var(--color-warn, #fbbf24);
+  background: var(--color-warn);
 }
 .fl-pays,
 .fl-small {
@@ -452,4 +453,159 @@
 textarea.fl-input {
   resize: vertical;
   min-height: 44px;
+}
+body[data-firstlight-u1-active] #root header { visibility: hidden; pointer-events: none; }
+/* The original, origin-bound Universal Ask remains usable. Its input owns a
+   fixed strip, while the welcome owns the separate area above it. No clone or
+   alternative submit handler is introduced. Its existing intent, status
+   and confirmation UI remain visible; no unseen choice is substituted. */
+body[data-firstlight-u1-active] #ask {
+  position: fixed !important;
+  inset: auto !important;
+  left: 0 !important;
+  right: 0 !important;
+  margin-inline: auto !important;
+  bottom: max(12px, env(safe-area-inset-bottom)) !important;
+  transform: none !important;
+  width: min(600px, calc(100vw - 24px)) !important;
+  height: 48px !important;
+  z-index: 58 !important;
+  pointer-events: auto;
+  color: var(--xc-ink);
+}
+body[data-firstlight-u1-active] #ask :has(input[role='combobox']) {
+  position: static !important;
+  inset: auto !important;
+  translate: none !important;
+  transform: none !important;
+  width: auto !important;
+  max-width: none !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+body[data-firstlight-u1-active] #ask input[role='combobox'] {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 48px !important;
+  box-sizing: border-box;
+  visibility: visible;
+  padding: 10px 16px !important;
+  border: 1px solid var(--xc-edge) !important;
+  border-radius: 16px !important;
+  background: var(--xc-surface) !important;
+  color: var(--xc-ink) !important;
+  pointer-events: auto !important;
+  font: inherit;
+}
+body[data-firstlight-u1-active] #ask .ask-mark,
+body[data-firstlight-u1-active] #ask .ask-aurora,
+body[data-firstlight-u1-active] #ask .ask-stars,
+body[data-firstlight-u1-active] #ask .ask-chips,
+body[data-firstlight-u1-active] #ask .ask-icon,
+body[data-firstlight-u1-active] #ask .ask-answerer-row,
+body[data-firstlight-u1-active] #ask .ask-answerer-inline,
+body[data-firstlight-u1-active] #ask .sl-cards,
+body[data-firstlight-u1-active] #ask .pr-card-head,
+body[data-firstlight-u1-active] #ask .pr-ask-line > button,
+body[data-firstlight-u1-active] .ask-skip { display: none !important; }
+body[data-firstlight-u1-active] #ask .pr-ask-options { position: absolute; bottom: calc(100% + 8px); width: 100%; max-height: min(240px, 40dvh); overflow-y: auto; background: var(--xc-surface); }
+
+/* U1 is a single, viewport-bounded composition. The scrim separates it from
+   the underlying Ask; no measured Ask offset can collapse a Duo-height card. */
+.fl-u1-scrim {
+  position: fixed;
+  inset: 0;
+  pointer-events: auto;
+  background: radial-gradient(ellipse at 24% 42%, color-mix(in srgb, var(--xc-accent) 18%, transparent), transparent 58%), color-mix(in srgb, var(--xc-bg, #151923) 76%, transparent);
+  backdrop-filter: blur(8px);
+}
+.fl-u1-scene {
+  position: fixed;
+  inset: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) calc(max(12px, env(safe-area-inset-bottom)) + 76px) max(16px, env(safe-area-inset-left));
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(0, 540px);
+  justify-content: center;
+  align-items: center;
+  gap: clamp(24px, 4vw, 64px);
+  min-height: 0;
+}
+.fl-u1-scrim[hidden], .fl-u1-scene[hidden] { display: none; }
+.fl-u1-omega { width: 100%; max-height: 220px; color: var(--xc-accent); filter: drop-shadow(0 8px 36px color-mix(in srgb, var(--xc-accent) 24%, transparent)); }
+.fl-u1-panel {
+  position: relative;
+  left: auto;
+  top: auto;
+  bottom: auto;
+  transform: none;
+  width: 100%;
+  max-height: 100%;
+  min-height: 0;
+  padding: clamp(16px, 2.2vw, 26px);
+  border-radius: 22px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+  box-shadow: 0 20px 80px #0005;
+}
+.fl-u1-body { display: grid; gap: 12px; min-width: 0; font-size: 14px; line-height: 1.45; }
+.fl-u1-body h2 { margin: 2px 0 0; font-size: 22px; font-weight: 700; letter-spacing: -.025em; line-height: 1.12; }
+.fl-u1-body p { margin: 0; }
+.fl-u1-eyebrow { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--xc-ink-2); }
+.fl-u1-fields { display: grid; gap: 12px; min-width: 0; }
+.fl-u1-fields > * { min-width: 0; }
+.fl-field-help { font-size: 11px; line-height: 1.35; color: var(--xc-ink-2); }
+.fl-u1-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.fl-u1-actions > [data-tone='primary'] { flex: 1 1 180px; }
+.fl-u1-actions > :not([data-tone='primary']) { flex: 0 1 auto; }
+.fl-u1-body .fl-input { padding: 8px 10px; min-height: 38px; }
+.fl-u1-body textarea.fl-input { height: 60px; min-height: 60px; }
+.fl-u1-body .fl-btn { min-height: 44px; padding: 8px 12px; }
+.fl-u1-body .fl-btn[data-tone='primary'] { font-weight: 650; background: var(--xc-accent); color: var(--xc-accent-ink, #fff); border-color: transparent; box-shadow: 0 4px 14px color-mix(in srgb, var(--xc-accent) 22%, transparent); }
+.fl-u1-thinking { display: grid; gap: 8px; min-width: 0; }
+.fl-u1-body details > summary { cursor: pointer; overflow-wrap: anywhere; list-style: none; }
+.fl-u1-body details > summary::-webkit-details-marker { display: none; }
+.fl-u1-body details > summary::after { content: '+'; margin-left: .5em; color: var(--xc-ink-2); }
+.fl-u1-body details[open] > summary::after { content: '−'; }
+.fl-u1-thinking > details:first-child > summary { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.fl-u1-thinking > details:first-child > summary::after { content: none; }
+.fl-u1-thinking > details:first-child > summary > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.fl-change { flex: none; color: var(--xc-accent); font-size: 12px; }
+.fl-u1-body details[open] > *:not(summary) { margin-top: 8px; }
+.fl-u1-body .fl-chips { display: grid; grid-template-columns: 1fr 1fr; min-width: 0; }
+.fl-u1-body .fl-chips > * { min-width: 0; white-space: normal; }
+.fl-u1-body blockquote { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fl-u1-readback { white-space: pre-wrap; overflow-wrap: anywhere; }
+.fl-u1-spending { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.fl-u1-spending > p { flex: 1 1 240px; }
+.fl-u1-month { color: var(--xc-accent); }
+.fl-u1-month[open] { flex: 1 1 100%; }
+.fl-u1-month > summary::after { content: none !important; }
+.fl-u1-consent { display: grid; gap: 4px; color: var(--xc-ink-2); font-size: 12px; }
+@media (min-width: 600px) {
+  .fl-u1-fields { grid-template-columns: minmax(120px, .8fr) minmax(180px, 1.4fr); align-items: start; }
+}
+@media (max-width: 760px) {
+  .fl-u1-scene { grid-template-columns: minmax(0, 540px); grid-template-rows: auto minmax(0, 1fr); gap: 12px; align-items: center; }
+  .fl-u1-omega { width: 80px; height: 80px; justify-self: center; }
+  .fl-u1-panel { align-self: start; }
+}
+/* Compact cover and Duo layouts keep one bounded scrolling card, never overlap
+   the page's Ask. Browser captures still decide fold/viewport acceptance. */
+@media (max-height: 620px) {
+  .fl-u1-scene { inset: 12px 12px calc(max(12px, env(safe-area-inset-bottom)) + 76px); }
+  .fl-u1-panel { padding: 14px 18px; border-radius: 18px; }
+  .fl-u1-body { gap: 8px; font-size: 13px; line-height: 1.35; }
+  .fl-u1-body h2 { font-size: 22px; }
+  .fl-u1-body textarea.fl-input { height: 48px; min-height: 48px; }
+}
+@media (max-width: 420px) {
+  .fl-u1-scene { inset: 10px 10px calc(max(12px, env(safe-area-inset-bottom)) + 76px); }
+  .fl-u1-panel { padding: 14px; border-radius: 18px; }
+  .fl-u1-body { gap: 10px; font-size: 13px; }
+  .fl-u1-fields { gap: 10px; }
 }

@@ -54,6 +54,17 @@ class Redactor:
                     self._values.add(value)
                     self._ordered_values = tuple(sorted(self._values, key=len, reverse=True))
 
+    def unregister(self, value):
+        """gateway r1c (plan §2.6): a value that no longer needs scrubbing (a revoked or expired mind token) is dropped,
+        so the set does not grow with every token the hive ever minted. Unknown values are ignored."""
+        value = str(value or "").strip()
+        with self._lock:
+            self._values.discard(value)
+
+    def holds(self, value):
+        with self._lock:
+            return str(value or "").strip() in self._values
+
     def registered(self):
         with self._lock:
             return len(self._values)
@@ -78,6 +89,10 @@ REDACTOR = Redactor()
 
 def register(value):
     REDACTOR.register(value)
+
+
+def unregister(value):
+    REDACTOR.unregister(value)
 
 
 def scrub(text):
@@ -320,22 +335,18 @@ def enable():
     install_logging()
 
 
+PROVIDER_CATEGORY = {401: "auth", 403: "auth", 402: "billing", 404: "not_found", 408: "timeout", 413: "too_large",
+                     422: "bad_request", 400: "bad_request", 429: "rate_limited"}
+
+
+def provider_category(status):
+    """A provider's answer status as this hive names it (never anything the provider wrote)."""
+    status = int(status)
+    return PROVIDER_CATEGORY.get(status) or ("unavailable" if status >= 500 else "provider_error")
+
+
 def provider_error_text(name, response):
-    """What a provider's failed answer may say (r2 F: status and code only, in the local-owner hive): the HTTP status
-    and the provider's own error code or type, never its free text. Other hives keep the first 200 characters."""
-    if not REDACTOR.enabled:
-        return f"{name} answered {response.status_code}: {response.text[:200]}"
-    code = None
-    try:
-        data = response.json()
-        error = data.get("error") if isinstance(data, dict) else None
-        if isinstance(error, dict):
-            code = error.get("code") or error.get("type")
-        elif isinstance(error, str):
-            code = None
-    except Exception:
-        code = None
-    code = str(code)[:40] if code is not None else None
-    if code and not re.fullmatch(r"[A-Za-z0-9_.\-]{1,40}", code):
-        code = None
-    return f"{name} answered {response.status_code}" + (f" ({code})" if code else "")
+    """What a provider's failed answer may say, on every hive (keyview R8, sol and Kimi on 1edef3b4): its HTTP status and
+    this hive's own category for it, never the provider's text or its own error code (both can echo ids, account
+    names or a fragment of the key itself)."""
+    return f"{name} answered {response.status_code} ({provider_category(response.status_code)})"

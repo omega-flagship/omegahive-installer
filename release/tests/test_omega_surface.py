@@ -106,7 +106,7 @@ class HelperSurfaceTests(unittest.TestCase):
             helper.persistent_fact_atom("Omega prefers rich-send 0.9"),
             helper.persistent_note_atom("omega-formatting use-base64-for-newlines 0.9"),
             helper.persistent_rule_atom("pin-focused | requires | attention-status-check | 0.9"),
-            helper.world_fact_atom("Quinn primary-human Omega 0.95"),
+            helper.world_fact_atom("Jon primary-human Omega 0.95"),
             helper.belief_claim_atom("omega attention-mode pin-is-not-body 0.95 0.9"),
             helper.agenda_goal_atom("cleanup-tests active high protect-fragile-surfaces"),
             helper.event_note_atom("tests regression surface-added 0.9"),
@@ -153,7 +153,7 @@ class HelperSurfaceTests(unittest.TestCase):
             helper.persistent_fact_atom("Omega learned wait-skill high"),
             helper.persistent_note_atom("syntax use-test-metta high"),
             helper.persistent_rule_atom("pin-focused | requires | attention-status-check | high"),
-            helper.world_fact_atom("Quinn primary-human Omega likely"),
+            helper.world_fact_atom("Jon primary-human Omega likely"),
             helper.belief_claim_atom("omega attention-mode pin-is-working-memory often 0.9"),
             helper.belief_claim_atom("omega attention-mode pin-is-working-memory 0.95 sure"),
             helper.assimilation_event_atom(
@@ -434,7 +434,7 @@ class ArchitectureSurfaceTests(unittest.TestCase):
         self.assertIn("(set-loop-energy 30 20 3 300 $reason)", skills)
         self.assertIn("(set-loop-energy 12 8 3 300 $reason)", skills)
         energy_affordance = (ROOT / "src" / "skill_affordance_energy.metta").read_text(encoding="utf-8")
-        prompt = (ROOT / "src" / "base_prompt.txt").read_text(encoding="utf-8")
+        prompt = (ROOT / "memory" / "prompt.txt").read_text(encoding="utf-8")
         self.assertIn("warm is the default quiet cognition mode", energy_affordance)
         self.assertIn("asleep means dormant rest-only", energy_affordance)
         self.assertIn("During active human-requested work", prompt)
@@ -617,6 +617,37 @@ class ArchitectureSurfaceTests(unittest.TestCase):
             if errors:
                 failures[str(path.relative_to(ROOT))] = errors
         self.assertEqual({}, failures)
+
+    def test_glucose_app_is_external_readable_affordance(self):
+        lib = (ROOT / "lib_omegaclaw_core.metta").read_text(encoding="utf-8")
+        body = (ROOT / "lib_omegaclaw_body.metta").read_text(encoding="utf-8")
+        skills = skill_implementation_source()
+        skill_catalog = skill_catalog_source()
+        self.assertNotIn("./src/glucose.py", lib)
+        self.assertIn("./modules/loader.metta", body)
+        self.assertNotIn("./modules/health_glucose/entry.metta", (ROOT / "modules" / "loader.metta").read_text(encoding="utf-8"))
+        self.assertIn("glucose-app-status", skills)
+        self.assertIn("observe target", skill_catalog)
+        self.assertIn("observe-glucose person", skill_catalog)
+        self.assertIn("glucose-history person count", skill_catalog)
+        self.assertIn("glucose-rings person", skill_catalog)
+        self.assertNotIn("insulin", skills.lower())
+        with enabled_module_loader("health_glucose", "sense_router"):
+            self.assertEqual(helper.balance_parentheses("observe-glucose Patient"), '((observe-glucose "Patient"))')
+            self.assertEqual(helper.balance_parentheses("observe gameboy"), '((observe "gameboy"))')
+            self.assertEqual(helper.balance_parentheses("glucose-history Patient 12"), '((glucose-history "Patient" 12))')
+            self.assertEqual(
+                helper.balance_parentheses("set-glucose-watch Patient 4 15 20 whatsapp visible ring only"),
+                '((set-glucose-watch "Patient" 4 15 20 "whatsapp" "visible ring only"))',
+            )
+        self.assertIn("body-status", skills)
+        self.assertIn("restart-self", skills)
+        self.assertIn("reboot-self", skills)
+        self.assertIn("video-config-status", skills)
+        self.assertIn("assimilate-event", skills)
+        self.assertIn("assimilate-world", skills)
+        self.assertIn("assimilate-belief", skills)
+        self.assertIn("assimilate-persistent", skills)
 
     def test_web_control_is_a_channel_not_a_decision_layer(self):
         lib = (ROOT / "lib_omegaclaw_core.metta").read_text(encoding="utf-8")

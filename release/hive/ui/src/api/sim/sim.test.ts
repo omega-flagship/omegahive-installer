@@ -204,7 +204,8 @@ describe('SimClient', () => {
     expect(swarms.length).toBeGreaterThanOrEqual(2)
     expect(swarms.length).toBeLessThanOrEqual(3)
     expect(agents.length).toBeGreaterThanOrEqual(8)
-    expect(agents.length).toBeLessThanOrEqual(14)
+    // twelve seeded minds, plus the Code team's seven invented request helpers (SimClient seedHelpers)
+    expect(agents.length).toBeLessThanOrEqual(21)
     for (const s of swarms) {
       for (const id of s.member_ids) expect(agents.find((a) => a.id === id)?.swarm_id).toBe(s.id)
       expect((await sim.listBeliefs(s.id)).length).toBeGreaterThan(5)

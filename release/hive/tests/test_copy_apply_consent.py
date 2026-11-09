@@ -37,7 +37,7 @@ def test_happy_path_accept_then_capability_exactly_once(cw):
     out = consent(cw, rq)
     assert out.status_code == 200, out.text
     view = out.json()
-    assert view["decision"] == "accept" and view["principal"] == "user:u_quinn" and view["controller_id"] == cw.ctl["id"]
+    assert view["decision"] == "accept" and view["principal"] == "user:u_jon" and view["controller_id"] == cw.ctl["id"]
     assert (view["request_id"], view["suggestion_id"], view["suggestion_digest"]) == (rq["request_id"], SUGGESTION, SUGGESTION_DIGEST)
     assert view["consent_id"].startswith("cns_") and view["expires_in"] == 600 and view["expires_at"].endswith("Z")
     first = raw(cw, rq)
@@ -59,7 +59,7 @@ def test_consent_from_another_person_or_the_operator_is_refused(cw):
     operator = cw.client.post(f"/api/requests/{rq['request_id']}/proposals/{SUGGESTION}/accept", headers=ORIGIN,
                               json={"suggestion_digest": SUGGESTION_DIGEST})     # the hive password session
     assert operator.status_code == 403 and error(operator)["code"] == "person_required"
-    no_origin = cw.client.post(f"/api/requests/{rq['request_id']}/proposals/{SUGGESTION}/accept", headers=cw.quinn,
+    no_origin = cw.client.post(f"/api/requests/{rq['request_id']}/proposals/{SUGGESTION}/accept", headers=cw.jon,
                                json={"suggestion_digest": SUGGESTION_DIGEST})
     assert no_origin.status_code == 403 and error(no_origin)["code"] == "origin_required"
     assert consents(cw) == []
@@ -85,7 +85,7 @@ def test_a_consent_names_the_requests_controller_and_no_other_mind_spends_it(cw)
 ])
 def test_consent_body_is_closed_and_exact(cw, path, payload, code):
     rq = request(cw)
-    out = cw.client.post(f"/api/requests/{rq['request_id']}" + path, headers={**cw.quinn, **ORIGIN}, json=payload)
+    out = cw.client.post(f"/api/requests/{rq['request_id']}" + path, headers={**cw.jon, **ORIGIN}, json=payload)
     assert error(out)["code"] == code, out.text
     assert consents(cw) == []
 
@@ -94,7 +94,7 @@ def test_consent_for_a_missing_request_or_a_closed_one(cw):
     out = consent(cw, {"request_id": "rq_missing"})
     assert out.status_code == 404
     rq = request(cw)
-    cw.client.post(f"/api/requests/{rq['request_id']}/cancel", headers=cw.quinn)
+    cw.client.post(f"/api/requests/{rq['request_id']}/cancel", headers=cw.jon)
     out = consent(cw, rq)
     assert out.status_code == 409 and error(out)["code"] == "request_closed"
 
@@ -274,7 +274,7 @@ def test_services_issue_pairs_copy_apply_with_its_consent_claim(cw):
             cw.hive.services.issue("svc_code", actions=["proposal-apply"], **common, **extra)
         assert refused.value.code == "bad_purpose", extra
     with pytest.raises(Exception) as refused:                                                  # a consent claim alone
-        cw.hive.services.issue("svc_code", actions=["read"], actor="user:u_quinn", kind="human", task_id=cw.task["id"],
+        cw.hive.services.issue("svc_code", actions=["read"], actor="user:u_jon", kind="human", task_id=cw.task["id"],
                                swarm_id=cw.origin["id"], repository_id="synthetic", grant_id=cw.grant["id"], copy_apply_consent=good)
     assert refused.value.code == "bad_purpose"
 
@@ -373,7 +373,7 @@ def test_replacement_and_withdrawal_hold_across_a_restart_and_a_replay(cw):
         b_cap = replay.json()["claims"]
         assert b_cap["copy_apply_consent"]["consent_id"] == b["consent_id"]
         assert status_on(again, cw, a_cap)["active"] is False and status_on(again, cw, b_cap["id"])["active"] is True
-        out = again.post(f"/api/requests/{rq['request_id']}/proposals/{SUGGESTION}/decline", headers={**cw.quinn, **ORIGIN},
+        out = again.post(f"/api/requests/{rq['request_id']}/proposals/{SUGGESTION}/decline", headers={**cw.jon, **ORIGIN},
                          json={"suggestion_digest": SUGGESTION_DIGEST})
         assert out.status_code == 200, out.text
     with restarted(cw) as again:                                        # withdrawn, and still withdrawn after a restart

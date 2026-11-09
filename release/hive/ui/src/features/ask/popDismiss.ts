@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type RefObject } from 'react'
 
 /**
  * What opens under the Ask's field ("Did you mean…", a clarifying question, a limit, the answerer picker) is the Ask's
@@ -15,6 +15,11 @@ export function closesPop(e: { type: string; key?: string }, inAsk: boolean): bo
   if (e.type === 'keydown') return e.key === 'Escape'
   if (e.type === 'input') return !inAsk
   return false
+}
+
+/** Scoped chooser: pointer presses outside its own boundary also dismiss it. */
+export function closesScopedPop(e: { type: string; key?: string }, inAsk: boolean, inChooser: boolean): boolean {
+  return closesPop(e, inAsk) || (e.type === 'pointerdown' && !inChooser)
 }
 
 /**
@@ -36,7 +41,7 @@ export function holdPopFlag(): () => void {
 }
 
 /** Esc and typing elsewhere close the layer while it is open (`close` is called at most once per event). */
-export function usePopDismiss(open: boolean, close: () => void): void {
+export function usePopDismiss(open: boolean, close: (event?: Event) => void, boundary?: RefObject<HTMLElement | null>): void {
   const fn = useRef(close)
   useEffect(() => {
     fn.current = close
@@ -45,23 +50,27 @@ export function usePopDismiss(open: boolean, close: () => void): void {
     if (!open) return
     const release = holdPopFlag()
     const on = (e: Event) => {
-      const t = e.target instanceof Element ? e.target : null
-      if (!closesPop({ type: e.type, key: (e as KeyboardEvent).key }, !!t?.closest(ASK_OWN))) return
+      const t = typeof Element !== 'undefined' && e.target instanceof Element ? e.target : null
+      const input = { type: e.type, key: (e as KeyboardEvent).key }
+      const inAsk = !!t?.closest(ASK_OWN)
+      if (!(boundary ? closesScopedPop(input, inAsk, !!t && !!boundary.current?.contains(t)) : closesPop(input, inAsk))) return
       // Esc is spent here: the layer closes first, before a sheet or page under it hears it (lib/hooks escape stack)
       if (e.type === 'keydown') e.preventDefault()
-      fn.current()
+      fn.current(e)
     }
     // a test's or a headless host's stub window may have no listeners at all: then nothing is watched
     const w = typeof window !== 'undefined' && typeof window.addEventListener === 'function' ? window : null
     const d = typeof document !== 'undefined' && typeof document.addEventListener === 'function' ? document : null
     w?.addEventListener('keydown', on, true)
     d?.addEventListener('input', on, true)
+    if (boundary) d?.addEventListener('pointerdown', on, true)
     return () => {
       release()
       w?.removeEventListener('keydown', on, true)
       d?.removeEventListener('input', on, true)
+      if (boundary) d?.removeEventListener('pointerdown', on, true)
     }
-  }, [open])
+  }, [open, boundary])
 }
 
 export interface Box {

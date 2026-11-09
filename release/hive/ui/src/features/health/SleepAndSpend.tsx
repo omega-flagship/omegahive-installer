@@ -31,7 +31,7 @@ export function SleepAndSpend() {
   const where = (id: string | null) => (id && swarms[id] ? ` · ${shown(swarms[id].name)}` : '')
 
   return (
-    <section aria-labelledby="ss-h" className="space-y-4 rounded-2xl border border-line bg-white/[0.03] p-4" data-tour="health-sleep-spend">
+    <section aria-labelledby="ss-h" className="space-y-4 rounded-2xl border border-line bg-tint/[0.03] p-4" data-tour="health-sleep-spend">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h2 id="ss-h" className="eyebrow">Sleep and spend</h2>
         <span className="text-[12.5px] text-ink-3">
@@ -90,7 +90,7 @@ export function SleepAndSpend() {
         ) : (
           <ul className="space-y-1.5" aria-label="Recent refusals">
             {refused.map(({ agent, refusal, why }) => (
-              <li key={agent.id} className="rounded-xl border border-line bg-black/20 px-3 py-2 text-[12.5px] leading-snug">
+              <li key={agent.id} className="rounded-xl border border-line bg-shade/20 px-3 py-2 text-[12.5px] leading-snug">
                 <span className="font-medium text-ink">{shown(agent.name)}</span>
                 <span className="text-ink-4"> · {refusal.count} refused · last {ago(refusal.at, now)}</span>
                 <div className="text-ink-3">{why}</div>
@@ -110,7 +110,7 @@ export function SleepAndSpend() {
             {spend.top.map((t) => (
               <li key={t.id} className="flex items-center gap-2 text-[12px]">
                 <span className="w-24 shrink-0 truncate text-ink-2">{shown(t.name)}</span>
-                <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
+                <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-tint/[0.06]">
                   <span className="block h-full rounded-full" style={{ width: `${t.budget > 0 ? Math.min(100, (t.spent / t.budget) * 100) : 100}%`, background: t.budget > 0 && t.spent >= t.budget ? 'var(--color-warn)' : 'var(--color-accent)' }} />
                 </span>
                 <span className="shrink-0 text-ink-3 tabular-nums">{money(t.spent)}{t.budget > 0 ? ` of ${money(t.budget)}` : ' · no cap'}</span>

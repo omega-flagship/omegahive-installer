@@ -655,7 +655,9 @@ class Supervisor:
         # existing callers takes these locks and the pass blocks per mind exactly as before.
         studio = getattr(self.hive, "studio", None)
         skip_busy = bool(getattr(studio, "enabled", False))
-        for listed in self.hive.db.all("SELECT id FROM agents WHERE deleted = 0 AND kind != 'module'"):
+        # Only desired-awake rows can have reconciliation effects. The fresh
+        # re-read under the original mind lock below remains decisive.
+        for listed in self.hive.db.all("SELECT id FROM agents WHERE deleted = 0 AND kind != 'module' AND desired = 'awake'"):
             if not skip_busy:
                 with self.lock(listed["id"]):
                     self._reconcile_logged(listed["id"])

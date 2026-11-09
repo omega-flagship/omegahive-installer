@@ -1,10 +1,10 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { GuestLimit, HelloCard, Wake } from './FirstLightLayer'
+import { AskCard, GuestLimit, HelloCard, Wake } from './FirstLightLayer'
 import { panelParts } from './panel'
 import { freshBeats } from './journey'
-import type { Hello, MonthlyLimit } from './host'
+import { DEFAULT_ASK_PURPOSE, type Hello, type MonthlyLimit } from './host'
 import { stepsFor, type FlPath } from './script'
 import type { Run } from './store'
 
@@ -27,6 +27,33 @@ function run(path: FlPath, over: Partial<Run> = {}, facts: Partial<Run['facts']>
   }
 }
 const at = (r: Run, id: string): Run => ({ ...r, i: r.steps.findIndex((s) => s.id === id) })
+
+describe('beat 6 purpose proposal', () => {
+  const card = (how: string | null) => {
+    const r = at(run('owner', {}, { askHow: how }), '6.1')
+    return renderToStaticMarkup(createElement(AskCard, { run: r, step: r.steps[r.i] }))
+  }
+  it('renders the exact default as an editable value after a known-empty read', () => {
+    const html = card('')
+    expect(html).toContain(`>${DEFAULT_ASK_PURPOSE}</textarea>`)
+    expect(html.match(/<textarea[^>]*>/)?.[0]).not.toContain('disabled')
+    expect(text(html)).toContain('Its purpose')
+    expect(html).not.toContain('<form')
+  })
+  it('does not offer the default for an unknown read', () => {
+    const html = card(null)
+    expect(html).not.toContain(DEFAULT_ASK_PURPOSE)
+    expect(html.match(/<textarea[^>]*>/)?.[0]).toContain('disabled')
+    expect(text(html)).toContain('Saving its name keeps them unchanged.')
+  })
+  it('shows an existing short purpose whole and leaves long or multiline words off the editable field', () => {
+    expect(card('Help with our garden.')).toContain('>Help with our garden.</textarea>')
+    for (const how of ['x'.repeat(900), 'two\nlines']) {
+      expect(card(how)).not.toContain('<textarea')
+      expect(text(card(how))).toContain('saving here keeps them.')
+    }
+  })
+})
 
 describe('the guest band: on every beat of the guest path (1, 3 and 8 included)', () => {
   it('says whose hive, whose key and the limit, on beats 1, 3 and 8', () => {

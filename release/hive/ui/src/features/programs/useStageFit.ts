@@ -1,10 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import {
-  cleanInsets, frameInsets, framedPadding, frameReserved, noticeLane, NOTICE_GAP, NO_RESERVED, sameInsets, sameReserved, ZERO_INSETS,
+  cleanInsets, frameInsets, framedNoticeFit, frameReserved, NOTICE_GAP, NO_RESERVED, sameInsets, sameReserved, ZERO_INSETS,
   type Box, type Insets, type Reserved,
 } from '../../lib/frameFit'
-import { setAppStage } from '../../shell/appStage'
+import { createAppStagePublisher } from '../../shell/appStage'
 import { laneClockRoom } from '../../shell/clockModel'
+import { readAskRoom } from '../ask/askRoom'
+import { useScene } from '../../scene/sceneStore'
 
 export interface StageFit {
   /** Framed: the host's own padding around the frame (device insets, and the bottom lane for Ω and notices). */
@@ -30,6 +32,7 @@ function readDeviceInsets(probe: HTMLElement): Insets {
 export function useStageFit(frame: RefObject<HTMLIFrameElement | null>, layout: 'framed' | 'full', ready: boolean): StageFit {
   const [fit, setFit] = useState<StageFit>(INITIAL)
   const measureNow = useRef<(() => void) | null>(null)
+  const askReservation = useScene((state) => state.insetSources.ask)
   useLayoutEffect(() => {
     if (!ready || typeof window === 'undefined') return
     const probe = document.createElement('div')
@@ -40,8 +43,11 @@ export function useStageFit(frame: RefObject<HTMLIFrameElement | null>, layout: 
     let raf = 0
     let watchedOmega: Element | null = null
     let watchedClock: Element | null = null
+    let disposed = false
+    const stage = createAppStagePublisher()
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => schedule()) : null
     const measure = () => {
+      if (disposed) return
       raf = 0
       const el = frame.current
       const viewport = { width: window.innerWidth, height: window.innerHeight }
@@ -62,17 +68,18 @@ export function useStageFit(frame: RefObject<HTMLIFrameElement | null>, layout: 
         if (clockEl) ro?.observe(clockEl, { box: 'border-box' })
         watchedClock = clockEl
       }
-      const padding = layout === 'framed' ? framedPadding(viewport, device, omega) : ZERO_INSETS
+      // The OS clock holds the lane's right end. The single Ask-room owner supplies its measured dock reservation.
+      const clockRoom = layout === 'framed' ? laneClockRoom(viewport.width, clockEl?.getBoundingClientRect(), NOTICE_GAP) : 0
+      const framed = layout === 'framed' ? framedNoticeFit(viewport, device, omega, clockRoom, readAskRoom()) : null
+      const padding = framed?.padding ?? ZERO_INSETS
       const f = el ? box(el.getBoundingClientRect()) : null
       const insets = f ? frameInsets(f, viewport, device) : ZERO_INSETS
       const reserved = f ? frameReserved(f, omega) : NO_RESERVED
       setFit((prev) => (sameInsets(prev.padding, padding) && sameInsets(prev.insets, insets) && sameReserved(prev.reserved, reserved) ? prev : { padding, insets, reserved }))
-      // the OS clock (shell/OsClock) holds the lane's right end, mirroring Ω at its left
-      const clockRoom = layout === 'framed' ? laneClockRoom(viewport.width, clockEl?.getBoundingClientRect(), NOTICE_GAP) : 0
-      setAppStage(layout === 'framed' ? { mode: 'framed', lane: noticeLane(device, omega, undefined, clockRoom) } : { mode: 'full', top: device.top + 8 })
+      stage.set(framed ? { mode: 'framed', lane: framed.lane } : { mode: 'full', top: device.top + 8 })
     }
     const schedule = () => {
-      if (!raf) raf = requestAnimationFrame(measure)
+      if (!disposed && !raf) raf = requestAnimationFrame(measure)
     }
     measureNow.current = schedule
     measure()
@@ -81,6 +88,8 @@ export function useStageFit(frame: RefObject<HTMLIFrameElement | null>, layout: 
     window.addEventListener('orientationchange', schedule)
     window.visualViewport?.addEventListener('resize', schedule)
     return () => {
+      disposed = true
+      stage.release()
       if (raf) cancelAnimationFrame(raf)
       measureNow.current = null
       ro?.disconnect()
@@ -90,12 +99,12 @@ export function useStageFit(frame: RefObject<HTMLIFrameElement | null>, layout: 
       probe.remove()
     }
   }, [frame, layout, ready])
+  // Ask updates schedule this lifetime's measurement; they never reacquire/promote its stage publisher.
+  useLayoutEffect(() => { measureNow.current?.() }, [askReservation])
   // the padding just applied moves the frame (a move alone does not resize it): measure once more
   const p = fit.padding
   useLayoutEffect(() => {
     measureNow.current?.()
   }, [p.top, p.right, p.bottom, p.left])
-  // the notices go back to their usual place when the app stage goes
-  useEffect(() => () => setAppStage(null), [])
   return fit
 }

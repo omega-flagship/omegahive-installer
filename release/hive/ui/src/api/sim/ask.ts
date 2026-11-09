@@ -1,6 +1,6 @@
 /**
  * SIM ONLY. The universal Ask's host side, played in the browser with an invented answering mind (Surface universal
- * Ask phase 1). It follows UNIVERSAL_ASK_HOST_CONTRACT_DRAFT_20261005 and the owner's ruling: the swarm's orchestrator
+ * Ask phase 1). It follows UNIVERSAL_ASK_HOST_CONTRACT_DRAFT_20261005 and Jon's ruling: the swarm's orchestrator
  * (coordinator) answers: the addressed mind's swarm, else the page's swarm, else the person's default swarm, else
  * `no_orchestrator`. Every word it says is invented here; nothing reaches a model or a provider.
  *
@@ -161,6 +161,15 @@ export class SimAsk {
     this.flags = { conductor: f.conductor, memory: f.conductor && f.memory }
   }
 
+  /**
+   * SIM: the host's code_test_intents capability (core/ask.py: code_project_tests.execution_available). On where the
+   * invented Code team is (it runs a proposal's sandbox test); `?simtest=off` plays a hive without it. Undefined: absent.
+   */
+  private codeTests: boolean | undefined = undefined
+  setCodeTests(on: boolean | undefined): void {
+    this.codeTests = on
+  }
+
   coordinatorBusyNext(): void {
     this.busyNext = true
   }
@@ -191,7 +200,7 @@ export class SimAsk {
   getSettings(): AskSettings {
     const all = this.d.swarms().filter((s) => !s.archived_at && s.coordinator_id).map((s) => this.choice(s.id)!)
     const eligible = this.answer.one ? all.filter((s) => s.id === 's_lyra') : all
-    return { swarm_id: this.settings.swarm_id, swarm: this.choice(this.settings.swarm_id), thread_budget_usd: this.settings.thread_budget_usd, max_thread_budget_usd: 5, eligible, capabilities: { ...this.flags } }
+    return { swarm_id: this.settings.swarm_id, swarm: this.choice(this.settings.swarm_id), thread_budget_usd: this.settings.thread_budget_usd, max_thread_budget_usd: 5, eligible, capabilities: { ...this.flags, ...(this.codeTests !== undefined ? { code_test_intents: this.codeTests } : {}) } }
   }
   setSettings(b: AskSettingsPut): AskSettings {
     const keys = Object.keys(b ?? {})
@@ -347,7 +356,7 @@ export class SimAsk {
     }))
   }
 
-  /** Who answers (the owner's ruling): the coordinator of the addressed mind's swarm, the page's swarm, or the default swarm. */
+  /** Who answers (Jon's ruling): the coordinator of the addressed mind's swarm, the page's swarm, or the default swarm. */
   private orchestrator(body: AskBody): { mind: Agent; swarm: Swarm; about: Agent | null; actingAs?: { mind_id: string; name: string } } {
     const agents = this.d.agents()
     const swarms = this.d.swarms()
@@ -676,7 +685,7 @@ export class SimAsk {
       extra.push([400, { phase: 'dispatched', intent_id: `int_${t.turnId.slice(-6)}`, intent_kind: 'code.task', to: { kind: 'service', ref: 'svc_code', name: 'Code' }, label: body.text.slice(0, 120).replace(/[<>]/g, '') }])
       answer = 'I handed it to Code. Its progress shows on the task.'
     } else if (/\b(tour|show me around|walk me through)\b/.test(text)) {
-      // five moves, alternating instant and animated (the owner, 2026-10-05: as often as it chooses, animated if it wants)
+      // five moves, alternating instant and animated (Jon, 2026-10-05: as often as it chooses, animated if it wants)
       const stops: [string, string, string][] = [['#/goals', 'Tasks', 'work.goals'], ['#/usage', 'Usage', 'money.usage'], ['#/swarms', 'Swarms', 'swarms.see'], ['#/approvals', 'Decisions', 'decide.approvals'], ['#/health', 'Health', 'watch.health']]
       const animated = /\banimat|fancy|smooth/.test(text)
       stops.forEach(([route, label, feature], i) => {

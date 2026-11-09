@@ -1,4 +1,4 @@
-"""Own hive, round H1 (hive/core/ownhive.py; PLATFORM_OWN_HIVE_CONNECTIONS_PLAN_R1.md, the owner 2026-10-13).
+"""Own hive, round H1 (hive/core/ownhive.py; PLATFORM_OWN_HIVE_CONNECTIONS_PLAN_R1.md, Jon 2026-10-13).
 
 One owner per hive (migrated from the first admin, no access changes); limits on your own keys, for you and for each
 grant, enforced at call time through Budgets and the reservation snapshot; public/private with a pays setting; "use my
@@ -267,7 +267,7 @@ def test_own_key_pays_for_a_visitor_with_a_key_of_their_own(world, client):  # n
     payer, own = hive.payer_for(agent, f"user:{ZED}")
     assert own is True
     hive.budgets.check(agent, 5.0, key_id, payer, own)                 # their own money: no use refusal
-    # OI-13 r1.1 (the owner 2026-10-19, replacing "a legacy member's mind is never switched"): the default here is the owner's
+    # OI-13 r1.1 (Jon 2026-10-19, replacing "a legacy member's mind is never switched"): the default here is the owner's
     # own key, which may not pay for Bob, so Bob's mind is switched to his own key too
     bmind = hive.create_agent("B", "omega", world["swarm"]["id"], None, "", None, 0.0, None, None, f"user:{BOB}", "private", None)
     add_key(hive, "k_000000bb", f"user:{BOB}")
@@ -321,7 +321,11 @@ def test_ask_for_a_limit_and_the_owner_approves_adjusts_or_declines(world, clien
     assert code(r) == "not_found"                                    # Bob cannot see the private Vega: not found
     client.put(f"/api/agents/{world['mind']['id']}/visibility", headers=world["owner"], json={"visibility": "public"})
     r = client.post("/api/me/limit-requests", headers=world["bob"], json={"amount_usd": 10, "agent_id": world["mind"]["id"]})
-    assert r.json()["owner"] == f"user:{OWNER}" and r.json()["key_id"] == "k_0000000a"
+    assert r.status_code == 200 and r.json()["id"].startswith("lr_")
+    # sol on 6dc7a837: it goes to the owner of the key that pays, but Bob is never told whose key or which one
+    assert "owner" not in r.json() and "key_id" not in r.json() and "k_0000000a" not in r.text
+    row = hive.db.one("SELECT owner, key_id FROM limit_requests WHERE id = ?", (r.json()["id"],))
+    assert (row["owner"], row["key_id"]) == (f"user:{OWNER}", "k_0000000a")   # the routing itself is unchanged
 
 
 # ---- 5. First Light ------------------------------------------------------------------------------------------------------
@@ -354,7 +358,7 @@ def test_first_light_monthly_limit_is_your_own_or_your_invite(world, client):  #
 # ---- H1.1 (stand-in FIX-FIRST and Kimi follow-ups) -------------------------------------------------------------------
 
 def test_h11_pre_h1_member_on_an_admins_personal_key_is_billed_as_at_base(world, client):  # noqa: F811
-    """Item 3, superseded by OI-13 r1.1 (stand-in P1; the owner 2026-10-19 "everyone needs studio, they just need to use
+    """Item 3, superseded by OI-13 r1.1 (stand-in P1; Jon 2026-10-19 "everyone needs studio, they just need to use
     their own keys"): a member from before H1 chatting on an admin's personal key is no longer billed to the admin. With
     no grant the call is refused (402 own_key_needed) before anything is reserved (a grant admits it: test_key_owner_oi13_
     gateway.py). The H1.1 accounting functions below (applicable, snapshot, record_usage) are themselves unchanged."""
@@ -662,3 +666,245 @@ def test_h13_a_hold_whose_scopes_cannot_be_worked_out_is_counted_everywhere(worl
     assert "*" not in good and any(x.startswith("keyuse:") for x in good)   # one bad row never costs the others theirs
     monkeypatch.setattr(OwnHive, "subjects", real)
     _second_hold_refused(client, world)
+
+
+# ---- money port r1: holes found while preparing the upstream branches ------------------------------------------------
+
+def test_mp_a_use_invitation_is_bound_to_the_owner_who_sent_it(world, client):  # noqa: F811
+    """A $999 use invitation from the owner, then an ownership recovery: accepting it is refused (410
+    invitation_stale), grants nothing on the new owner's keys and leaves no person row. The new owner's own invitation
+    works."""
+    from hive.core.people import SignInError
+    hive = world["hive"]
+    hive.people.invite("late@example.test", "Late", "member", 7, by=f"user:{OWNER}", kind="use", limit_usd=999)
+    new_owner = person(client, "u_6e6e6e6e", role="admin")
+    assert client.patch(f"/api/people/{OWNER}", json={"disabled": True}).status_code == 200
+    assert client.post("/api/hive/own/claim", headers=new_owner, json={}).json()["owner"] == "user:u_6e6e6e6e"
+    with pytest.raises(SignInError) as e:
+        with hive.db.transaction():
+            hive.people.accept_invite_for_verified_email("late@example.test", "Late")
+    assert e.value.code == "invitation_stale" and e.value.status == 410
+    assert hive.db.one("SELECT COUNT(*) AS n FROM key_limits WHERE month_usd = 999")["n"] == 0
+    assert hive.db.one("SELECT 1 FROM people WHERE email = 'late@example.test'") is None   # rolled back with it
+    hive.people.invite("fresh@example.test", "Fresh", "member", 7, by="user:u_6e6e6e6e", kind="use", limit_usd=2)
+    guest = hive.people.accept_invite_for_verified_email("fresh@example.test", "Fresh")
+    row = hive.db.one("SELECT owner, month_usd FROM key_limits WHERE grantee = ?", (f"user:{guest['id']}",))
+    assert row["owner"] == "user:u_6e6e6e6e" and row["month_usd"] == 2
+
+
+def test_mp_a_guest_past_their_grant_is_held_to_the_visitor_limit(world, client):  # noqa: F811
+    """A guest whose grant was revoked, on a public hive-key swarm with a $0.50 visitor limit: a $1 call is refused
+    under that limit, never admitted. With no visitor limit set, the guest has no allowance and is refused outright."""
+    hive, sw, mind = world["hive"], world["swarm"], world["mind"]
+    hive.keyring.ring["defaults"]["openrouter"] = "k_0000000a"
+    _view, guest = make_guest(client, hive, limit=3.0)
+    payer = f"user:{guest['id']}"
+    grant = hive.db.one("SELECT id FROM key_limits WHERE grantee = ?", (payer,))
+    assert client.delete(f"/api/me/key-limits/{grant['id']}", headers=world["owner"]).status_code == 200
+    client.put(f"/api/swarms/{sw['id']}/visibility", headers=world["owner"], json={"visibility": "public", "pays": "hive-key"})
+    client.put("/api/hive/own", headers=world["owner"], json={"visitor_month_usd": 0.5})
+    agent = dict(hive.agent(mind["id"]), options={})
+    c, d = refused(hive.budgets.check, agent, 1.0, "env:openrouter", payer, False)
+    assert c == "spend_limit" and d["scope"] == f"person:{guest['id']}" and d["limit_usd"] == 0.5
+    hive.budgets.check(agent, 0.4, "env:openrouter", payer, False)              # within the visitor limit
+    client.put("/api/hive/own", headers=world["owner"], json={"visitor_month_usd": None})
+    c, _ = refused(hive.budgets.check, agent, 0.01, "env:openrouter", payer, False)
+    assert c == "no_key_grant"
+
+
+def _sign_in_again(client, pid):  # noqa: F811
+    """A fresh sign-in session for an existing person (a demotion ends their sessions)."""
+    import secrets
+    from hive.core.app import token_hash
+    token = secrets.token_urlsafe(24)
+    client.app.state.hive.db.insert("sessions", {"token_hash": token_hash(token), "created_at": now(), "kind": "sso",
+                                                 "principal": f"user:{pid}"})
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_mp_a_demoted_owner_never_commits_the_owners_money(world, client):  # noqa: F811
+    """The owner demoted to member is still the recorded owner (until a claim) but no longer acts as one: no limit, no
+    grant (none of $100 on the hive's env:openrouter key), no revocation, no approval, no hive-key pays, no hive
+    settings: 403 owner_only, nothing written. Promoted back, they do all of it."""
+    hive, sw = world["hive"], world["swarm"]
+    grant = client.post("/api/me/key-limits/grants", headers=world["owner"],
+                        json={"grantee": f"user:{BOB}", "key_id": "env:openrouter", "month_usd": 1}).json()
+    rid = client.post("/api/me/limit-requests", headers=world["bob"], json={"amount_usd": 100}).json()["id"]
+    assert client.patch(f"/api/people/{OWNER}", json={"role": "member"}).status_code == 200   # their sessions end
+    assert hive.ownhive.owner() == f"user:{OWNER}"
+    demoted = _sign_in_again(client, OWNER)
+    before = hive.db.one("SELECT COUNT(*) AS n FROM key_limits")["n"]
+    r = client.post("/api/me/key-limits/grants", headers=demoted,
+                    json={"grantee": f"user:{BOB}", "key_id": "env:openrouter", "month_usd": 100})
+    assert code(r) == "owner_only"
+    r = client.put("/api/me/key-limits/self", headers=demoted, json={"key_id": "env:openrouter", "month_usd": 100})
+    assert code(r) == "owner_only"
+    assert hive.db.one("SELECT COUNT(*) AS n FROM key_limits")["n"] == before
+    assert code(client.delete(f"/api/me/key-limits/{grant['id']}", headers=demoted)) == "owner_only"
+    assert hive.db.one("SELECT revoked_at FROM key_limits WHERE id = ?", (grant["id"],))["revoked_at"] is None
+    r = client.post(f"/api/me/limit-requests/{rid}/decide", headers=demoted, json={"decision": "approve"})
+    assert code(r) == "owner_only"
+    assert hive.db.one("SELECT status FROM limit_requests WHERE id = ?", (rid,))["status"] == "pending"
+    assert hive.db.one("SELECT month_usd FROM key_limits WHERE id = ?", (grant["id"],))["month_usd"] == 1
+    assert code(client.put(f"/api/swarms/{sw['id']}/visibility", headers=demoted, json={"pays": "hive-key"})) == "owner_only"
+    assert code(client.put("/api/hive/own", headers=demoted, json={"visibility": "public"})) == "owner_only"
+    assert client.get("/api/hive/own", headers=demoted).json()["you_are_owner"] is False
+    assert client.patch(f"/api/people/{OWNER}", json={"role": "admin"}).status_code == 200   # an admin again: the owner
+    r = client.post(f"/api/me/limit-requests/{rid}/decide", headers=demoted, json={"decision": "adjust", "amount_usd": 2})
+    assert r.status_code == 200 and r.json()["status"] == "adjusted"
+    assert client.delete(f"/api/me/key-limits/{grant['id']}", headers=demoted).status_code == 200
+
+
+def _keyed_mind(client, owner_principal):  # noqa: F811
+    """A mind on the owner's stored key (an owner-held key, as an agent's own chat call uses), whose calls are for
+    `owner_principal`. Returns the mind (with its agent token) and the provider calls the fake gateway saw."""
+    from hive.tests.test_core_api import make_swarm_and_agents
+    from hive.tests.test_cost_reservations import MODEL, _fake_chat, _gateway
+    hive = client.app.state.hive
+    add_key(hive, "k_000000b0", f"user:{OWNER}", provider="anthropic")
+    _, (mind,) = make_swarm_and_agents(client, n=1, model=MODEL, budget_usd=10)
+    hive.db.execute("UPDATE agents SET owner = ?, options = ? WHERE id = ?",
+                    (owner_principal, '{"key": "k_000000b0"}', mind["id"]))
+    calls = []
+    gw = _gateway(client)
+    _fake_chat(gw)
+    real = gw.chat
+
+    async def counted(agent, body):
+        calls.append(agent["id"])
+        return await real(agent, body)
+    gw.chat = counted
+    return mind, calls
+
+
+def _chat(client, mind):  # noqa: F811
+    from hive.tests.test_core_api import agent_headers
+    return client.post("/llm/v1/chat/completions", headers=agent_headers(mind),
+                       json={"messages": [{"role": "user", "content": "hi"}], "max_tokens": 50})
+
+
+def _spent(hive):
+    return hive.db.one("SELECT COALESCE(SUM(cost_usd), 0) AS s FROM usage")["s"]
+
+
+@pytest.mark.parametrize("with_grant", [False, True])
+def test_mp_a_disabled_guests_mind_is_refused_on_the_chat_route(world, client, with_grant):  # noqa: F811
+    """A disabled guest's mind keeps its agent token, but its chat call on the owner's stored key is refused (402
+    no_key_grant), with or without a live grant: never billed to the key's owner, nothing spent, no provider call."""
+    hive = world["hive"]
+    _view, guest = make_guest(client, hive, limit=3.0)
+    payer = f"user:{guest['id']}"
+    if not with_grant:
+        grant = hive.db.one("SELECT id FROM key_limits WHERE grantee = ?", (payer,))
+        client.delete(f"/api/me/key-limits/{grant['id']}", headers=world["owner"])
+    mind, calls = _keyed_mind(client, payer)
+    assert client.patch(f"/api/people/{guest['id']}", json={"disabled": True}).status_code == 200
+    assert hive.payer_for(hive._agent_row(mind["id"]), f"user:{OWNER}") == (payer, False)   # never the key owner's
+    before = _spent(hive)
+    r = _chat(client, mind)
+    assert r.status_code == 402 and code(r) == "no_key_grant", r.text
+    assert calls == [] and _spent(hive) == before
+
+
+def test_mp_a_removed_members_and_an_unknown_persons_minds_are_refused(world, client):  # noqa: F811
+    """A member from before H1 needs a grant on an admin's own key (OI-13); granted and enabled, their call runs and is
+    held to the grant. Once removed (disabled), their mind's call is refused, grant and all, and so is one for a person
+    the hive does not know: never billed to the key's owner."""
+    hive = world["hive"]
+    mind, calls = _keyed_mind(client, f"user:{BOB}")
+    r = _chat(client, mind)
+    assert r.status_code == 402 and code(r) == "own_key_needed" and calls == []      # OI-13, unchanged
+    client.post("/api/me/key-limits/grants", headers=world["owner"],
+                json={"grantee": f"user:{BOB}", "key_id": "k_000000b0", "month_usd": 5})
+    assert _chat(client, mind).status_code == 200 and len(calls) == 1              # enabled and granted: runs
+    assert hive.db.one("SELECT payer FROM usage ORDER BY id DESC LIMIT 1")["payer"] == f"user:{BOB}"
+    assert client.patch(f"/api/people/{BOB}", json={"disabled": True}).status_code == 200
+    assert hive.payer_for(hive._agent_row(mind["id"]), f"user:{OWNER}") == (f"user:{BOB}", False)
+    before = _spent(hive)
+    r = _chat(client, mind)
+    assert r.status_code == 402 and code(r) == "no_key_grant" and len(calls) == 1 and _spent(hive) == before
+    hive.db.execute("UPDATE agents SET owner = 'user:u_deadbeef' WHERE id = ?", (mind["id"],))   # nobody in this hive
+    assert hive.payer_for(hive._agent_row(mind["id"]), f"user:{OWNER}") == ("user:u_deadbeef", False)
+    r = _chat(client, mind)
+    assert r.status_code == 402 and code(r) == "no_key_grant" and len(calls) == 1 and _spent(hive) == before
+
+
+def test_mp_a_disabled_person_is_refused_before_any_grant_on_the_hive_key(world, client):  # noqa: F811
+    """A disabled person with a live grant on the hive's environment key, on a public hive-key swarm: use_check refuses
+    them first (402 no_key_grant), before grants or the public terms."""
+    hive, sw, mind = world["hive"], world["swarm"], world["mind"]
+    client.put(f"/api/swarms/{sw['id']}/visibility", headers=world["owner"], json={"visibility": "public", "pays": "hive-key"})
+    client.post("/api/me/key-limits/grants", headers=world["owner"],
+                json={"grantee": f"user:{BOB}", "key_id": "env:openrouter", "month_usd": 5})
+    agent = dict(hive.agent(mind["id"]), options={})
+    hive.budgets.check(agent, 0.01, "env:openrouter", f"user:{BOB}", False)     # enabled: the grant holds them
+    assert client.patch(f"/api/people/{BOB}", json={"disabled": True}).status_code == 200
+    c, _ = refused(hive.budgets.check, agent, 0.01, "env:openrouter", f"user:{BOB}", False)
+    assert c == "no_key_grant"
+
+
+# ---- money port r1.1 (Dot's rulings) ------------------------------------------------------------------------------------
+
+def test_mp11_a_disabled_owners_minds_stop_spending_at_once(world, client):  # noqa: F811
+    """The recorded owner, disabled: access is None as for anyone disabled, so their own minds are refused on their own
+    personal key and on the hive's env key alike (402 no_key_grant). A hive mind with no person behind it is not theirs."""
+    hive, mind = world["hive"], world["mind"]
+    assert hive.ownhive.owner() == f"user:{OWNER}"                              # stored before the change
+    agent = hive.agent(mind["id"])
+    hive.budgets.check(agent, 0.01, "k_0000000a", f"user:{OWNER}", True)          # enabled: their own use
+    assert client.patch(f"/api/people/{OWNER}", json={"disabled": True}).status_code == 200
+    assert hive.ownhive.owner() == f"user:{OWNER}" and hive.ownhive.access(f"user:{OWNER}") is None
+    for key_id, own in (("k_0000000a", True), ("env:openrouter", False)):
+        c, _ = refused(hive.budgets.check, agent, 0.01, key_id, f"user:{OWNER}", own)
+        assert c == "no_key_grant", key_id
+    hive.budgets.check(dict(agent, owner=None), 0.01, "env:openrouter", "hive", False)
+
+
+def test_mp11_a_demoted_owner_is_a_member_on_the_hive_keys(world, client):  # noqa: F811
+    """The recorded owner, demoted to member: no longer 'owner' but the member their row says, so the member rules apply
+    on the hive's env key (here the member default, already spent), where as an admin owner none did."""
+    hive, mind = world["hive"], world["mind"]
+    assert hive.ownhive.owner() == f"user:{OWNER}"                              # stored before the change
+    agent = dict(hive.agent(mind["id"]), options={})
+    spend(hive, mind["id"], f"user:{OWNER}", 50.0, "env:openrouter")
+    hive.budgets.check(agent, 1.0, "env:openrouter", f"user:{OWNER}", False)     # an admin: no member allowance
+    assert client.patch(f"/api/people/{OWNER}", json={"role": "member"}).status_code == 200
+    assert hive.ownhive.access(f"user:{OWNER}") == "legacy"
+    c, d = refused(hive.budgets.check, agent, 1.0, "env:openrouter", f"user:{OWNER}", False)
+    assert c == "spend_limit" and d["scope"] == f"person:{OWNER}", d
+
+
+def test_mp11_a_demoted_owner_keeps_control_of_their_own_personal_key(world, client):  # noqa: F811
+    """A demoted owner still limits and grants from a key they added themselves (k_0000000a), and revokes those, but
+    not the hive's env keys, nor '*' (all their keys, which includes the hive's): 403 owner_only."""
+    hive = world["hive"]
+    assert hive.ownhive.owner() == f"user:{OWNER}"                              # stored before the demotion
+    assert client.patch(f"/api/people/{OWNER}", json={"role": "member"}).status_code == 200
+    demoted = _sign_in_again(client, OWNER)
+    r = client.put("/api/me/key-limits/self", headers=demoted, json={"key_id": "k_0000000a", "month_usd": 3})
+    assert r.status_code == 200 and r.json()["key_id"] == "k_0000000a", r.text
+    g = client.post("/api/me/key-limits/grants", headers=demoted,
+                    json={"grantee": f"user:{BOB}", "key_id": "k_0000000a", "month_usd": 1})
+    assert g.status_code == 200, g.text
+    assert client.delete(f"/api/me/key-limits/{g.json()['id']}", headers=demoted).status_code == 200
+    for key_id in ("env:openrouter", "*"):
+        r = client.put("/api/me/key-limits/self", headers=demoted, json={"key_id": key_id, "month_usd": 3})
+        assert code(r) == "owner_only", key_id
+        r = client.post("/api/me/key-limits/grants", headers=demoted,
+                        json={"grantee": f"user:{BOB}", "key_id": key_id, "month_usd": 1})
+        assert code(r) == "owner_only", key_id
+    assert hive.db.one("SELECT COUNT(*) AS n FROM key_limits WHERE key_id != 'k_0000000a'")["n"] == 0
+
+
+def test_mp12_key_limits_lists_the_hives_stored_keys_only_to_the_owner_acting_as_owner(world, client):  # noqa: F811
+    """GET /api/me/key-limits: the hive's own stored keys (owner 'hive', or none) are listed to the owner acting as owner;
+    demoted, they see only the keys they added themselves."""
+    hive = world["hive"]
+    add_key(hive, "k_0000000f", "hive")                                         # a hive key, held by the owner
+    assert hive.ownhive.owner() == f"user:{OWNER}"
+    keys = {k["id"] for k in client.get("/api/me/key-limits", headers=world["owner"]).json()["keys"]}
+    assert keys == {"k_0000000a", "k_0000000f"}
+    assert client.patch(f"/api/people/{OWNER}", json={"role": "member"}).status_code == 200
+    demoted = _sign_in_again(client, OWNER)
+    keys = {k["id"] for k in client.get("/api/me/key-limits", headers=demoted).json()["keys"]}
+    assert keys == {"k_0000000a"}

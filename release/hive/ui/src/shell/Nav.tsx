@@ -188,7 +188,7 @@ const sectionBadge = (s: NavModelSection, badgeOf: (it: NavItem) => number) => s
 
 const ORB_STYLE = {
   background: 'radial-gradient(circle at 35% 30%, #ffffff, var(--look-orb-mid, #c8bcff) 40%, var(--look-orb-end, #8f7bff) 100%)',
-  boxShadow: '0 0 0 1px rgb(255 255 255 / 0.3) inset, 0 10px 34px -6px var(--look-orb-glow, rgb(143 123 255 / 0.85))',
+  boxShadow: '0 0 0 1px color-mix(in oklab, var(--color-ink) 30%, transparent) inset, 0 10px 34px -6px var(--look-orb-glow, rgb(143 123 255 / 0.85))',
 }
 
 function CreateButton({ big, wide }: { big?: boolean; wide?: boolean }) {
@@ -201,7 +201,7 @@ function CreateButton({ big, wide }: { big?: boolean; wide?: boolean }) {
         data-tour="nav-create"
         aria-label="Create a new mind"
         title="New mind (N)"
-        className={cx('flex h-11 w-full items-center gap-3 rounded-xl px-1.5 text-left text-[14px] font-semibold text-ink transition-colors hover:bg-white/[0.06]', on && 'bg-white/[0.08]')}
+        className={cx('flex h-11 w-full items-center gap-3 rounded-xl px-1.5 text-left text-[14px] font-semibold text-ink transition-colors hover:bg-tint/[0.06]', on && 'bg-tint/[0.08]')}
       >
         <span className="flex size-8 shrink-0 items-center justify-center rounded-[10px] text-[var(--look-orb-ink,#0d0a24)]" style={ORB_STYLE}>
           <Icon name="plus" size={18} strokeWidth={2.2} />
@@ -220,7 +220,7 @@ function CreateButton({ big, wide }: { big?: boolean; wide?: boolean }) {
       className={cx(
         'group relative flex shrink-0 items-center justify-center rounded-2xl text-[var(--look-orb-ink,#0d0a24)] transition-transform active:scale-95',
         big ? 'size-[52px] -translate-y-1.5' : 'size-11',
-        on && 'ring-2 ring-white/40',
+        on && 'ring-2 ring-tint/40',
       )}
       style={ORB_STYLE}
     >
@@ -240,8 +240,8 @@ function SearchButton({ wide }: { wide: boolean }) {
       aria-keyshortcuts="Meta+K Control+K /"
       title="Search and commands (⌘K)"
       className={cx(
-        'flex shrink-0 items-center rounded-xl text-ink-2 transition-colors hover:bg-white/[0.06] hover:text-ink pointer-coarse:min-h-11',
-        wide ? 'h-9 w-full gap-3 border border-line bg-white/[0.03] px-2.5 text-left text-[13.5px]' : 'size-10 justify-center pointer-coarse:size-11',
+        'flex shrink-0 items-center rounded-xl text-ink-2 transition-colors hover:bg-tint/[0.06] hover:text-ink pointer-coarse:min-h-11',
+        wide ? 'h-9 w-full gap-3 border border-line bg-tint/[0.03] px-2.5 text-left text-[13.5px]' : 'size-10 justify-center pointer-coarse:size-11',
       )}
     >
       <Icon name="search" size={wide ? 17 : 19} className="shrink-0" />
@@ -382,7 +382,7 @@ function Rail() {
             aria-label={expanded ? 'Hide menu labels' : 'Show menu labels'}
             aria-pressed={expanded}
             title={expanded ? 'Hide labels' : 'Show labels'}
-            className="flex size-9 shrink-0 items-center justify-center rounded-xl text-ink-3 transition-colors hover:bg-white/[0.06] hover:text-ink pointer-coarse:size-11"
+            className="flex size-9 shrink-0 items-center justify-center rounded-xl text-ink-3 transition-colors hover:bg-tint/[0.06] hover:text-ink pointer-coarse:size-11"
           >
             <Icon name={expanded ? 'panelClose' : 'panelOpen'} size={18} />
           </button>
@@ -440,12 +440,12 @@ function SectionHeader({ s, expanded, controls, badge, onToggle, onFold }: { s: 
   if (!expanded) {
     // icon rail: a folded section is its icon (open it), an open one a slim divider (fold it)
     return s.collapsed ? (
-      <button data-nav-focus="" onClick={onToggle} onKeyDown={keys} aria-expanded={false} aria-controls={controls} aria-label={label} title={`${s.section.label} (open)`} className="relative mt-1.5 flex size-10 shrink-0 items-center justify-center rounded-xl border border-dashed border-line text-ink-3 hover:bg-white/[0.06] hover:text-ink pointer-coarse:size-11">
+      <button data-nav-focus="" onClick={onToggle} onKeyDown={keys} aria-expanded={false} aria-controls={controls} aria-label={label} title={`${s.section.label} (open)`} className="relative mt-1.5 flex size-10 shrink-0 items-center justify-center rounded-xl border border-dashed border-line text-ink-3 hover:bg-tint/[0.06] hover:text-ink pointer-coarse:size-11">
         <Icon name={s.section.icon} size={18} />
         <CountBadge n={badge} className="absolute -top-0.5 -right-0.5" />
       </button>
     ) : (
-      <button data-nav-focus="" onClick={onToggle} onKeyDown={keys} aria-expanded={true} aria-controls={controls} aria-label={s.section.label} title={`${s.section.label} (fold)`} className="group my-0.5 flex h-4 w-10 shrink-0 items-center justify-center rounded-md hover:bg-white/[0.06] pointer-coarse:h-11 pointer-coarse:w-11">
+      <button data-nav-focus="" onClick={onToggle} onKeyDown={keys} aria-expanded={true} aria-controls={controls} aria-label={s.section.label} title={`${s.section.label} (fold)`} className="group my-0.5 flex h-4 w-10 shrink-0 items-center justify-center rounded-md hover:bg-tint/[0.06] pointer-coarse:h-11 pointer-coarse:w-11">
         <span className="h-px w-7 bg-line group-hover:bg-line-2" aria-hidden="true" />
       </button>
     )
@@ -458,7 +458,7 @@ function SectionHeader({ s, expanded, controls, badge, onToggle, onFold }: { s: 
       aria-expanded={!s.collapsed}
       aria-controls={controls}
       aria-label={label}
-      className="rail-group mt-1 flex h-7 w-full shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-left text-[11.5px] font-medium text-ink-3 transition-colors hover:bg-white/[0.04] hover:text-ink-2 pointer-coarse:min-h-11"
+      className="rail-group mt-1 flex h-7 w-full shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-left text-[11.5px] font-medium text-ink-3 transition-colors hover:bg-tint/[0.04] hover:text-ink-2 pointer-coarse:min-h-11"
     >
       <span className="flex-1">{s.section.label}</span>
       {s.collapsed && <CountBadge n={badge} className="relative" />}
@@ -475,7 +475,7 @@ function HiddenToggle({ n, open, expanded, label, onClick }: { n: number; open: 
       aria-pressed={open}
       aria-label={`${open ? 'Hide' : 'Show'} ${n} hidden in ${label}`}
       title={`${open ? 'Hide' : 'Show'} hidden (${n})`}
-      className={cx('shrink-0 rounded-lg text-[11.5px] text-ink-3 hover:bg-white/[0.04] hover:text-ink-2 pointer-coarse:min-h-11', expanded ? 'h-7 w-full px-2.5 text-left' : 'h-6 w-10')}
+      className={cx('shrink-0 rounded-lg text-[11.5px] text-ink-3 hover:bg-tint/[0.04] hover:text-ink-2 pointer-coarse:min-h-11', expanded ? 'h-7 w-full px-2.5 text-left' : 'h-6 w-10')}
     >
       {expanded ? `${open ? 'Hide' : 'Show'} hidden (${n})` : `+${n}`}
     </button>
@@ -586,13 +586,13 @@ function BarButton({ it, dock, active, badge = 0, extra, onShow, onHide, more }:
         'relative flex shrink-0 items-center justify-center rounded-xl transition-[color,background-color,transform] duration-150',
         dock ? 'size-11' : 'size-10 pointer-coarse:size-11',
         dock && !reduced && 'hover:-translate-y-1 hover:scale-110',
-        active ? 'text-ink' : 'text-ink-3 hover:bg-white/[0.06] hover:text-ink',
+        active ? 'text-ink' : 'text-ink-3 hover:bg-tint/[0.06] hover:text-ink',
       )}
     >
       {active && (
         <m.span
           layoutId={reduced ? undefined : 'bar-active'}
-          className="absolute inset-0 rounded-xl border border-line-2 bg-white/[0.08]"
+          className="absolute inset-0 rounded-xl border border-line-2 bg-tint/[0.08]"
           transition={{ type: 'spring', stiffness: 500, damping: 36 }}
         />
       )}
@@ -648,14 +648,14 @@ function RailButton({
       className={cx(
         'relative flex shrink-0 items-center rounded-xl transition-colors',
         expanded ? 'rail-item h-9 w-full gap-3 px-2.5 text-left text-[13.5px] pointer-coarse:min-h-11' : 'size-10 justify-center pointer-coarse:size-11',
-        active ? 'text-ink' : 'text-ink-2 hover:bg-white/[0.06] hover:text-ink',
+        active ? 'text-ink' : 'text-ink-2 hover:bg-tint/[0.06] hover:text-ink',
         dim && 'opacity-60',
       )}
     >
       {active && (
         <m.span
           layoutId={reduced ? undefined : 'rail-active'}
-          className="absolute inset-0 rounded-xl border border-line-2 bg-white/[0.08]"
+          className="absolute inset-0 rounded-xl border border-line-2 bg-tint/[0.08]"
           transition={{ type: 'spring', stiffness: 500, damping: 36 }}
         />
       )}
@@ -697,10 +697,10 @@ function ProfileButton({ expanded, active, onShow, onHide }: { expanded: boolean
       className={cx(
         'flex shrink-0 items-center rounded-xl transition-colors',
         expanded ? 'h-10 min-w-0 flex-1 gap-2.5 px-1.5 text-left text-[13px] pointer-coarse:min-h-11' : 'size-10 justify-center pointer-coarse:size-11',
-        active ? 'bg-white/[0.08] text-ink' : 'text-ink-2 hover:bg-white/[0.06] hover:text-ink',
+        active ? 'bg-tint/[0.08] text-ink' : 'text-ink-2 hover:bg-tint/[0.06] hover:text-ink',
       )}
     >
-      <span className={cx('flex size-7 shrink-0 items-center justify-center rounded-full border bg-white/[0.04]', active ? 'border-line-2' : 'border-line')}>
+      <span className={cx('flex size-7 shrink-0 items-center justify-center rounded-full border bg-tint/[0.04]', active ? 'border-line-2' : 'border-line')}>
         <Icon name="user" size={15} />
       </span>
       {expanded && <span className="min-w-0 flex-1 truncate">{ME_ITEM.label}</span>}
@@ -718,7 +718,7 @@ function LabDot({ inline }: { inline?: boolean }) {
   return (
     <span
       className={cx('pointer-events-none size-2 shrink-0 rounded-full', inline ? 'relative' : 'absolute top-1.5 right-1.5', health.state === 'running' && 'animate-pulse')}
-      style={{ background: color, boxShadow: `0 0 0 2px rgb(8 8 28), 0 0 8px ${color}` }}
+      style={{ background: color, boxShadow: `0 0 0 2px var(--color-abyss), 0 0 8px ${color}` }}
       title={label}
       aria-hidden="true"
     />
@@ -826,7 +826,7 @@ export function MoreSheet({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="xc-dress contents">
-      <m.div ref={scrim} className="fixed inset-0 z-40 bg-black/50" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} aria-hidden="true" />
+      <m.div ref={scrim} className="fixed inset-0 z-40 bg-shade/50" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} aria-hidden="true" />
       <m.div
         ref={ref}
         role="dialog"
@@ -847,11 +847,11 @@ export function MoreSheet({ onClose }: { onClose: () => void }) {
               onClose()
               setPalette(true)
             }}
-            className="flex min-h-11 items-center gap-1.5 rounded-xl px-3 text-[13px] text-ink-2 hover:bg-white/[0.06]"
+            className="flex min-h-11 items-center gap-1.5 rounded-xl px-3 text-[13px] text-ink-2 hover:bg-tint/[0.06]"
           >
             <Icon name="search" size={16} /> Search
           </button>
-          <button onClick={onClose} className="flex size-11 items-center justify-center rounded-xl text-ink-3 hover:bg-white/[0.06] hover:text-ink" aria-label="Close">
+          <button onClick={onClose} className="flex size-11 items-center justify-center rounded-xl text-ink-3 hover:bg-tint/[0.06] hover:text-ink" aria-label="Close">
             <Icon name="x" size={18} />
           </button>
         </div>
@@ -878,7 +878,7 @@ export function MoreSheet({ onClose }: { onClose: () => void }) {
                     onClick={() => nav.toggleSection(s)}
                     aria-expanded={!s.collapsed}
                     aria-controls={id}
-                    className="flex min-h-11 w-full items-center gap-2 rounded-xl px-3 text-left text-[12.5px] font-medium text-ink-3 hover:bg-white/[0.04]"
+                    className="flex min-h-11 w-full items-center gap-2 rounded-xl px-3 text-left text-[12.5px] font-medium text-ink-3 hover:bg-tint/[0.04]"
                   >
                     <span className="flex-1">{s.section.label}</span>
                     {s.collapsed && <CountBadge n={badge} />}
@@ -891,7 +891,7 @@ export function MoreSheet({ onClose }: { onClose: () => void }) {
                     {s.moreApps > 0 && <p className="px-3 pb-1 text-[12px] text-ink-3">{s.moreApps} more in All apps</p>}
                     {reveal && s.hidden.map((it) => row(it, true))}
                     {s.hidden.length > 0 && (
-                      <button data-nav-focus="" onClick={() => nav.toggleHiddenShown(s.section.id)} aria-pressed={reveal} className="flex min-h-11 w-full items-center rounded-xl px-3 text-left text-[12.5px] text-ink-3 hover:bg-white/[0.04]">
+                      <button data-nav-focus="" onClick={() => nav.toggleHiddenShown(s.section.id)} aria-pressed={reveal} className="flex min-h-11 w-full items-center rounded-xl px-3 text-left text-[12.5px] text-ink-3 hover:bg-tint/[0.04]">
                         {reveal ? 'Hide' : 'Show'} hidden ({s.hidden.length})
                       </button>
                     )}
@@ -921,9 +921,9 @@ function SheetRow({ it, active, badge = 0, dim, onClick, more = {} }: { it: NavI
       data-presence-feature={it.feature}
       aria-current={active ? 'page' : undefined}
       aria-label={`${it.label}${badge ? `, ${badge} waiting` : ''}${dim ? ' (hidden)' : ''}`}
-      className={cx('flex min-h-14 w-full items-center gap-3 rounded-2xl px-3 text-left transition-colors [-webkit-touch-callout:none]', active ? 'bg-white/[0.08]' : 'hover:bg-white/[0.05] active:bg-white/[0.07]', dim && 'opacity-60')}
+      className={cx('flex min-h-14 w-full items-center gap-3 rounded-2xl px-3 text-left transition-colors [-webkit-touch-callout:none]', active ? 'bg-tint/[0.08]' : 'hover:bg-tint/[0.05] active:bg-tint/[0.07]', dim && 'opacity-60')}
     >
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-line bg-white/[0.03] text-ink-2">
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-line bg-tint/[0.03] text-ink-2">
         <ItemIcon it={it} size={18} />
       </span>
       <span className="min-w-0 flex-1">

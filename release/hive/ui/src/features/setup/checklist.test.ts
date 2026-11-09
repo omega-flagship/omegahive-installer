@@ -2,11 +2,24 @@ import { describe, expect, it } from 'vitest'
 import type { KeyInfo, ProviderStatus, Swarm } from '../../api/types'
 import { dismissKey, doneCount, isDismissed, setDismissed, setupSteps } from './checklist'
 
-const prov = (connected: boolean): ProviderStatus => ({ name: 'p', label: 'Prov', local: false, needs_key: true, connected, source: null, key_hint: '', key_env: '', base_url: '', models: [] })
+const prov = (connected: boolean): ProviderStatus => ({ name: 'p', label: 'Prov', local: false, needs_key: true, connected, configured: connected, readiness: connected ? 'answered' : 'unverified', answer_ready: connected, source: null, key_hint: '', key_env: '', base_url: '', models: [] })
 const key = (def: boolean): KeyInfo => ({ id: 'k', provider: 'p', provider_label: 'Prov', label: 'main', owner: 'user:operator', hint: '…1234', default: def, created_at: null, spent_usd: 0, minds: [] })
 const swarm = (archived = false): Swarm => ({ id: 's', name: 'S', description: '', hue: 1, member_ids: [], created_at: '', archived_at: archived ? 'x' : null })
 
 describe('first-run checklist (audit row 49)', () => {
+  it('legacy configured local and mock are not answered merely because they exist; only strict current answer evidence counts', () => {
+    const local = { ...prov(false), name: 'local', label: 'Model on this computer', local: true, needs_key: false }
+    const mock = { ...prov(true), name: 'mock', label: 'Offline', local: true, needs_key: false }
+    const test = { ...prov(true), name: 'test', test_only: true }
+    for (const providers of [[local], [mock], [test], [{ ...prov(true), answer_ready: 1 as unknown as boolean }], [{ ...prov(true), readiness: 'unverified' as const, answer_ready: false }]]) {
+      const s = setupSteps({ admin: false, providers, swarms: [] })[0]
+      expect(s.state).toBe('todo')
+      expect(s.found).toBe('No provider has answered yet.')
+    }
+    const answered = setupSteps({ admin: false, providers: [{ ...local, connected: true, configured: true, readiness: 'answered', answer_ready: true }], swarms: [] })[0]
+    expect(answered.state).toBe('done')
+    expect(answered.found).toBe('Connected: Model on this computer')
+  })
   it('ticks each step from the hive’s own state', () => {
     const s = setupSteps({ admin: true, providers: [prov(true)], keys: [key(true)], budgets: [{ id: 'b', scope: 'hive', period: 'month', limit_usd: 50, spent_usd: 0, note: '', origin: 'rule' }], swarms: [swarm()], people: { people: 1, invites: 0 } })
     expect(s.map((x) => [x.id, x.state])).toEqual([['provider', 'done'], ['payer', 'done'], ['limit', 'done'], ['swarm', 'done'], ['invite', 'done']])

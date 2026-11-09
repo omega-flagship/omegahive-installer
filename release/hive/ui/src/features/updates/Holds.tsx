@@ -62,11 +62,11 @@ export function PlaceHold({ target, existing, onClose, onDone }: { target: HoldT
     >
       <label className="block">
         <span className="text-[12px] text-ink-3">Why it must not be interrupted (shown to everyone who updates)</span>
-        <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} maxLength={600} placeholder="The nightly contract review is running until about 6pm." className="mt-1 w-full resize-y rounded-xl border border-line bg-black/30 px-3 py-2 text-[13px] text-ink outline-none focus:border-line-2" />
+        <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} maxLength={600} placeholder="The nightly contract review is running until about 6pm." className="mt-1 w-full resize-y rounded-xl border border-line bg-shade/30 px-3 py-2 text-[13px] text-ink outline-none focus:border-line-2" />
       </label>
       <label className="block">
         <span className="text-[12px] text-ink-3">Ends (your time; leave empty to hold until released)</span>
-        <input type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} aria-invalid={!parsed.ok} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-black/30 px-3 text-[13px] text-ink outline-none focus:border-line-2" />
+        <input type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} aria-invalid={!parsed.ok} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-shade/30 px-3 text-[13px] text-ink outline-none focus:border-line-2" />
         {!parsed.ok && <span className="mt-1 block text-meta text-bad">{parsed.why}</span>}
       </label>
     </DecisionDialog>

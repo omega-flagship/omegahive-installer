@@ -3,11 +3,11 @@ import { useEffect, useMemo, useState } from 'react'
 import type { AgentOptions, ModelEndpoint, RouteSort } from '../../api/types'
 import { hsl } from '../../lib/color'
 import { cx } from '../../lib/cx'
-import { ago } from '../../lib/format'
 import { useHive } from '../../store/store'
 import { Icon } from '../../ui/Icon'
 import { Button, Segmented, Skeleton, Switch } from '../../ui/primitives'
 import { ProviderConnect } from './ProviderConnect'
+import { CatalogFooter } from './CatalogFooter'
 import { buildRows, contextLabel, priceLabel, providerLabel, searchRows, type PickRow } from './modelUtil'
 import { shown } from '../../lib/displayName'
 
@@ -108,7 +108,7 @@ export function ModelPicker({
         )}
       </AnimatePresence>
 
-      <div className="flex min-h-11 items-center gap-2 rounded-xl border border-line bg-black/25 px-3 focus-within:border-line-2">
+      <div className="flex min-h-11 items-center gap-2 rounded-xl border border-line bg-shade/25 px-3 focus-within:border-line-2">
         <Icon name="search" size={16} className="shrink-0 text-ink-4" />
         <input
           value={query}
@@ -121,14 +121,14 @@ export function ModelPicker({
           className="min-w-0 flex-1 bg-transparent py-2 text-[14px] text-ink outline-none placeholder:text-ink-4"
         />
         {query && (
-          <button onClick={() => setQuery('')} aria-label="Clear search" className="flex size-7 items-center justify-center rounded-lg text-ink-3 hover:bg-white/[0.06] hover:text-ink">
+          <button onClick={() => setQuery('')} aria-label="Clear search" className="flex size-7 items-center justify-center rounded-lg text-ink-3 hover:bg-tint/[0.06] hover:text-ink">
             <Icon name="x" size={14} />
           </button>
         )}
       </div>
 
       {openrouter && !openrouter.connected && !connecting && (
-        <button onClick={() => setConnecting('openrouter')} className="flex w-full items-center gap-3 rounded-xl border border-dashed border-line px-3 py-2.5 text-left text-[13px] text-ink-2 transition-colors hover:border-line-2 hover:bg-white/[0.03]">
+        <button onClick={() => setConnecting('openrouter')} className="flex w-full items-center gap-3 rounded-xl border border-dashed border-line px-3 py-2.5 text-left text-[13px] text-ink-2 transition-colors hover:border-line-2 hover:bg-tint/[0.03]">
           <Icon name="link" size={16} className="shrink-0 text-ink-3" />
           <span className="min-w-0 flex-1">
             <span className="block">Connect OpenRouter</span>
@@ -149,7 +149,7 @@ export function ModelPicker({
         <div className="flex items-center gap-2 rounded-xl border border-warn/25 bg-warn/[0.06] px-3 py-2 text-[12px] text-warn">
           <Icon name="alert" size={14} />
           <span className="min-w-0 flex-1">{catalogError}</span>
-          <Button variant="ghost" className="min-h-8 px-2 text-[12px]" onClick={() => void loadCatalog(true)}>
+          <Button variant="ghost" className="min-h-8 px-2 text-[12px]" onClick={() => void loadCatalog(catalog?.can_refresh === true)}>
             Retry
           </Button>
         </div>
@@ -179,7 +179,7 @@ export function ModelPicker({
                 role="radio"
                 aria-checked={on}
                 onClick={() => pick(row)}
-                className={cx('flex min-h-12 w-full items-center gap-3 px-3 py-2 text-left transition-colors', on ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04]')}
+                className={cx('flex min-h-12 w-full items-center gap-3 px-3 py-2 text-left transition-colors', on ? 'bg-tint/[0.07]' : 'hover:bg-tint/[0.04]')}
               >
                 <Radio on={on} hue={hue} />
                 <span className="min-w-0 flex-1">
@@ -213,7 +213,7 @@ export function ModelPicker({
           )
         })}
         {results.length > limit && (
-          <button onClick={() => setLimit(limit + PAGE * 2)} className="flex min-h-11 w-full items-center justify-center gap-1.5 border-t border-line text-[12.5px] text-ink-3 hover:bg-white/[0.04] hover:text-ink">
+          <button onClick={() => setLimit(limit + PAGE * 2)} className="flex min-h-11 w-full items-center justify-center gap-1.5 border-t border-line text-[12.5px] text-ink-3 hover:bg-tint/[0.04] hover:text-ink">
             Show {Math.min(PAGE * 2, results.length - limit)} more of {results.length}
             <Icon name="chevron" size={13} className="rotate-90" />
           </button>
@@ -221,14 +221,7 @@ export function ModelPicker({
       </div>
 
       {openrouter?.connected && catalog && (
-        <div className="flex items-center justify-between gap-2 px-1 text-[11px] text-ink-4">
-          <span>
-            {catalog.models.length} OpenRouter models · prices {ago(new Date(catalog.fetched_at * 1000).toISOString())}
-          </span>
-          <button onClick={() => void loadCatalog(true)} disabled={catalogState === 'loading'} className="inline-flex items-center gap-1 text-ink-3 hover:text-ink disabled:opacity-50">
-            <Icon name="reset" size={12} className={cx(catalogState === 'loading' && 'animate-spin-slow')} /> Refresh
-          </button>
-        </div>
+        <CatalogFooter catalog={catalog} loading={catalogState === 'loading'} onRefresh={() => void loadCatalog(true)} />
       )}
     </div>
   )
@@ -266,7 +259,7 @@ function RouteEditor({ modelId, options, hue, onChange }: { modelId: string; opt
   }
 
   return (
-    <div className="border-t border-line bg-black/20 px-3 py-3">
+    <div className="border-t border-line bg-shade/20 px-3 py-3">
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="eyebrow">Served by</span>
         {order.length > 0 && (
@@ -294,11 +287,11 @@ function RouteEditor({ modelId, options, hue, onChange }: { modelId: string; opt
                 onClick={() => toggle(e)}
                 aria-pressed={on}
                 title={`${e.name}${e.uptime != null ? ` · ${e.uptime.toFixed(1)}% up` : ''}${e.latency_ms != null ? ` · ${Math.round(e.latency_ms)} ms` : ''}`}
-                className={cx('flex min-h-9 items-center gap-2 rounded-xl border px-2.5 text-left transition-all', on ? 'bg-white/[0.08]' : 'border-line bg-white/[0.02] hover:border-line-2')}
+                className={cx('flex min-h-9 items-center gap-2 rounded-xl border px-2.5 text-left transition-all', on ? 'bg-tint/[0.08]' : 'border-line bg-tint/[0.02] hover:border-line-2')}
                 style={on ? { borderColor: hsl(hue, 90, 70, 0.55), boxShadow: `0 0 0 1px ${hsl(hue, 90, 70, 0.25)} inset` } : undefined}
               >
                 {on && (
-                  <span className="flex size-4 items-center justify-center rounded-full font-mono text-[10px] font-bold text-[#0b0820]" style={{ background: hsl(hue, 100, 78) }}>
+                  <span className="flex size-4 items-center justify-center rounded-full font-mono text-[10px] font-bold text-primary-ink" style={{ background: hsl(hue, 100, 78) }}>
                     {idx + 1}
                   </span>
                 )}
@@ -338,7 +331,7 @@ function Chip({ on, hue, dim, onClick, label, count, lead, trail }: { on: boolea
       role="radio"
       aria-checked={on}
       onClick={onClick}
-      className={cx('flex min-h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[12.5px] font-medium whitespace-nowrap transition-colors', on ? 'text-ink' : dim ? 'border-line text-ink-4 hover:text-ink-2' : 'border-line bg-white/[0.03] text-ink-2 hover:border-line-2 hover:text-ink')}
+      className={cx('flex min-h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[12.5px] font-medium whitespace-nowrap transition-colors', on ? 'text-ink' : dim ? 'border-line text-ink-4 hover:text-ink-2' : 'border-line bg-tint/[0.03] text-ink-2 hover:border-line-2 hover:text-ink')}
       style={on ? { borderColor: hsl(hue, 90, 70, 0.6), background: hsl(hue, 90, 60, 0.14) } : undefined}
     >
       {lead}
@@ -352,13 +345,13 @@ function Chip({ on, hue, dim, onClick, label, count, lead, trail }: { on: boolea
 function Radio({ on, hue }: { on: boolean; hue: number }) {
   return (
     <span className={cx('flex size-4 shrink-0 items-center justify-center rounded-full border', on ? 'border-transparent' : 'border-line-2')} style={on ? { background: hsl(hue, 100, 75), boxShadow: `0 0 10px ${hsl(hue, 100, 65, 0.7)}` } : undefined}>
-      {on && <span className="size-1.5 rounded-full bg-[#0b0820]" />}
+      {on && <span className="size-1.5 rounded-full bg-primary-ink" />}
     </span>
   )
 }
 
 function Badge({ children, tone }: { children: React.ReactNode; tone?: 'good' | 'warn' }) {
   return (
-    <span className={cx('rounded-md border px-1.5 py-px text-[10px] leading-4', tone === 'good' ? 'border-good/30 bg-good/10 text-good' : tone === 'warn' ? 'border-warn/30 bg-warn/10 text-warn' : 'border-line bg-white/[0.04] text-ink-3')}>{children}</span>
+    <span className={cx('rounded-md border px-1.5 py-px text-[10px] leading-4', tone === 'good' ? 'border-good/30 bg-good/10 text-good' : tone === 'warn' ? 'border-warn/30 bg-warn/10 text-warn' : 'border-line bg-tint/[0.04] text-ink-3')}>{children}</span>
   )
 }

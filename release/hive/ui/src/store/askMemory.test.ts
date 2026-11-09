@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
- * The Ask's own memory, wired through the Ask store (the owner, 2026-10-07: kept by the browser; the hive stores nothing).
+ * The Ask's own memory, wired through the Ask store (Jon 2026-10-07: kept by the browser; the hive stores nothing).
  * A hand-made client plays the host: live memory frames with their item, the stored stub read back after a reconnect,
  * a conductor-off hive refusing memory_notes, and a private app's page.
  */
 const loc = { hash: '#/', search: '', pathname: '/' }
-vi.stubGlobal('window', { location: loc, matchMedia: () => ({ matches: false }) })
+vi.stubGlobal('window', Object.assign(new EventTarget(), { location: loc, matchMedia: () => ({ matches: false }) }))
 
 const { ApiError } = await import('../api/client')
 const { checkAskEvent } = await import('../api/ask')
@@ -78,15 +78,15 @@ describe('memory frames: checked, kept the moment they arrive, said in the turn'
   it('a live frame is kept before the thread draws it, shows as a row, and is recalled into the next turn with its id', async () => {
     const client = fakeClient()
     await start(client)
-    const op = await ask('call me Quinn', client)
+    const op = await ask('call me Jon', client)
     expect(sent[0].memory_notes).toBeUndefined() // nothing known yet: no notes
-    deliver(frame(op, 2, mem('Call them Quinn', 'name')))
-    expect(askMemory.getView().beliefs.map((b) => b.statement)).toEqual(['Call them Quinn'])
-    expect(rows().some((r) => r.kind === 'note' && r.text === 'Remembered in this browser: Call them Quinn')).toBe(true)
+    deliver(frame(op, 2, mem('Call them Jon', 'name')))
+    expect(askMemory.getView().beliefs.map((b) => b.statement)).toEqual(['Call them Jon'])
+    expect(rows().some((r) => r.kind === 'note' && r.text === 'Remembered in this browser: Call them Jon')).toBe(true)
     done(op, 3)
     await ask('what should you call me', client)
     const notes = sent[1].memory_notes as { id: string; text: string }[]
-    expect(notes).toEqual([{ id: askMemory.getView().beliefs[0].id, text: 'name: Call them Quinn' }])
+    expect(notes).toEqual([{ id: askMemory.getView().beliefs[0].id, text: 'name: Call them Jon' }])
     expect(askMemory.getView().beliefs[0].uses).toBe(1)
     expect(askMemory.getView().hive).toBe('learning')
   })
@@ -189,20 +189,20 @@ describe('memory frames: checked, kept the moment they arrive, said in the turn'
     await start(client)
     frames[op] = frames[op].filter((e) => e.phase !== 'done')
     await useAskStore.getState().rejoin(op)
-    deliver(frame(op, 2, mem('Call them Quinn', 'name')))
+    deliver(frame(op, 2, mem('Call them Jon', 'name')))
     expect(askMemory.getView().beliefs).toEqual([])
     expect(rows().some((r) => r.kind === 'note' && r.text === 'Not remembered: when this turn began is not known here.')).toBe(true)
   })
   it('after a reconnect, a stub this browser never had is one lost line, said in the turn; a kept one is not', async () => {
     const client = fakeClient()
     await start(client)
-    const op = await ask('call me Quinn and I prefer short answers', client)
-    deliver(frame(op, 2, mem('Call them Quinn', 'name')))
+    const op = await ask('call me Jon and I prefer short answers', client)
+    deliver(frame(op, 2, mem('Call them Jon', 'name')))
     frame(op, 3, mem('Prefers short answers'), true) // missed live: only its stub is on the host
     deliver(frame(op, 4, { phase: 'done', outcome: 'complete' }))
     await vi.waitFor(() => expect(rows().some((r) => r.text === LOST_WORDS)).toBe(true))
     expect(askMemory.getView().trace.filter((t) => t.kind === 'lost')).toHaveLength(1)
-    expect(askMemory.getView().beliefs.map((b) => b.statement)).toEqual(['Call them Quinn'])
+    expect(askMemory.getView().beliefs.map((b) => b.statement)).toEqual(['Call them Jon'])
   })
 })
 
@@ -224,9 +224,9 @@ describe('memory_notes: only where the hive takes them, never from a private pag
     await start(client)
     askMemory.receive({ turn_id: 'tx', seq: 1, op: 'remember', digest: 'd', item: { statement: 'Prefers short answers', kind: 'preference', truth: { frequency: 1, confidence: 0.8 } } }, { privatePage: false, since: askMemory.turnMark() })
     loc.hash = '#/programs/atlas'
-    const op = await ask('call me Quinn', client, { private: true })
+    const op = await ask('call me Jon', client, { private: true })
     expect(sent[0].memory_notes).toBeUndefined()
-    deliver(frame(op, 2, mem('Call them Quinn', 'name')))
+    deliver(frame(op, 2, mem('Call them Jon', 'name')))
     expect(askMemory.getView().beliefs.map((b) => b.statement)).toEqual(['Prefers short answers'])
     expect(rows().some((r) => r.text === 'Not remembered: this page is private.')).toBe(true)
   })

@@ -87,11 +87,11 @@ def test_the_effective_confirm_reaches_the_browser_on_describe(client, tmp_path,
 
 def test_a_confirm_action_needs_a_token_and_a_valid_one_works_once(client, tmp_path, monkeypatch):
     sw, entry = mount(client, tmp_path, monkeypatch)
-    quinn = person(client, "u_quinn", "member")
+    jon = person(client, "u_jon", "member")
     body = {"swarm_id": sw, "action": "send", "items": ["i1"], "params": {"to": "Zoë"}}
-    act = lambda b, who=quinn: client.post("/api/programs/confirmer/act", headers=who, json=b)
+    act = lambda b, who=jon: client.post("/api/programs/confirmer/act", headers=who, json=b)
     assert code(act(body)) == (403, "confirm_required")
-    good = confirmed(client, quinn, "confirmer", body)
+    good = confirmed(client, jon, "confirmer", body)
     assert act(good).status_code == 200
     assert code(act(good)) == (403, "confirm_invalid")                        # single use
     got = entry["module"].GOT
@@ -100,21 +100,21 @@ def test_a_confirm_action_needs_a_token_and_a_valid_one_works_once(client, tmp_p
 
 def test_a_token_binds_action_payload_person_session_and_time(client, tmp_path, monkeypatch):
     sw, entry = mount(client, tmp_path, monkeypatch)
-    quinn, ann = person(client, "u_quinn", "member"), person(client, "u_ann", "member")
+    jon, ann = person(client, "u_jon", "member"), person(client, "u_ann", "member")
     hive = client.app.state.hive
-    quinn2 = {"Authorization": "Bearer second"}                                 # Quinn in a second session
+    jon2 = {"Authorization": "Bearer second"}                                 # Jon in a second session
     from hive.core.hive import token_hash
     from hive.core.db import now
-    hive.db.insert("sessions", {"token_hash": token_hash("second"), "created_at": now(), "kind": "sso", "principal": "user:u_quinn"})
+    hive.db.insert("sessions", {"token_hash": token_hash("second"), "created_at": now(), "kind": "sso", "principal": "user:u_jon"})
     body = {"swarm_id": sw, "action": "send", "items": ["i1"], "params": {"n": 1}}
-    act = lambda b, who=quinn: client.post("/api/programs/confirmer/act", headers=who, json=b)
-    tok = lambda: confirmed(client, quinn, "confirmer", body)["confirm_token"]
+    act = lambda b, who=jon: client.post("/api/programs/confirmer/act", headers=who, json=b)
+    tok = lambda: confirmed(client, jon, "confirmer", body)["confirm_token"]
     assert code(act(dict(body, action="save", idempotency_key="k1", confirm_token=tok()))) == (403, "confirm_invalid")
     assert code(act(dict(body, params={"n": 2}, confirm_token=tok()))) == (403, "confirm_invalid")
     assert code(act(dict(body, items=[], confirm_token=tok()))) == (403, "confirm_invalid")
     assert code(act(dict(body, base_revision="r0", confirm_token=tok()))) == (403, "confirm_invalid")
     assert code(act(dict(body, confirm_token=tok()), who=ann)) == (403, "confirm_invalid")
-    assert code(act(dict(body, confirm_token=tok()), who=quinn2)) == (403, "confirm_invalid")
+    assert code(act(dict(body, confirm_token=tok()), who=jon2)) == (403, "confirm_invalid")
     other = client.post("/api/swarms", json={"name": "Other", "visibility": "public"}).json()["id"]
     assert code(act(dict(body, swarm_id=other, confirm_token=tok()))) == (403, "confirm_invalid")
     assert code(act(dict(body, confirm_token="hct_made-up"))) == (403, "confirm_invalid")
@@ -135,11 +135,11 @@ def test_actions_without_confirm_need_no_token(client, tmp_path, monkeypatch):
 
 def test_person_activity_is_always_confirmed_and_a_retry_of_the_same_intent_may_reuse_its_token(client, tmp_path, monkeypatch):
     sw, entry = mount(client, tmp_path, monkeypatch)
-    quinn = person(client, "u_quinn", "member")
-    act = lambda b: client.post("/api/programs/confirmer/act", headers=quinn, json=b)
+    jon = person(client, "u_jon", "member")
+    act = lambda b: client.post("/api/programs/confirmer/act", headers=jon, json=b)
     body = {"swarm_id": sw, "action": "save", "items": ["i1"], "params": {"t": "x"}, "idempotency_key": "intent-1"}
     assert code(act(body)) == (403, "confirm_required")
-    good = confirmed(client, quinn, "confirmer", body)
+    good = confirmed(client, jon, "confirmer", body)
     assert act(good).status_code == 200
     again = act(good)                                                         # the answer was lost; the host retries
     assert again.status_code == 200 and entry["module"].GOT[-1][3] is True   # a recovery: no second effect
@@ -225,24 +225,24 @@ def test_a_failed_intent_is_never_rerun_under_its_spent_token(client, tmp_path, 
     """Review B1 (d556a5b): effect, then an exception, then the identical retry with the spent token, before and after
     expiry: no second delivery. Another attempt needs a fresh confirm from the person."""
     sw, entry = mount(client, tmp_path, monkeypatch, FAILS_AFTER_EFFECT)
-    quinn = person(client, "u_quinn", "member")
-    act = lambda b: client.post("/api/programs/confirmer/act", headers=quinn, json=b)
+    jon = person(client, "u_jon", "member")
+    act = lambda b: client.post("/api/programs/confirmer/act", headers=jon, json=b)
     body = {"swarm_id": sw, "action": "save", "items": ["i1"], "params": {}, "idempotency_key": "same-intent"}
-    good = confirmed(client, quinn, "confirmer", body)
+    good = confirmed(client, jon, "confirmer", body)
     assert act(good).status_code == 500 and len(entry["module"].GOT) == 1
     assert client.app.state.hive.db.one("SELECT status FROM program_actions WHERE idempotency_key = 'same-intent'")["status"] == "failed"
     assert code(act(good)) == (403, "confirm_invalid")                        # before expiry
     client.app.state.hive.db.execute("UPDATE confirm_tokens SET expires_at = expires_at - 121")
     assert code(act(good)) == (403, "confirm_invalid")                        # after expiry
     assert len(entry["module"].GOT) == 1
-    assert act(confirmed(client, quinn, "confirmer", body)).status_code == 500  # a new explicit confirm may try again
+    assert act(confirmed(client, jon, "confirmer", body)).status_code == 500  # a new explicit confirm may try again
     assert len(entry["module"].GOT) == 2 and entry["module"].GOT[-1][3] is not True
 
 
 def test_the_review_probe_scenario(client, tmp_path, monkeypatch):
-    """Review's probe (receipts-local/omegareview-confirm-d556a5b/review-probe.py), verbatim in effect."""
+    """Review's probe (review-probe.py), verbatim in effect."""
     sw, entry = mount(client, tmp_path, monkeypatch, FAILS_AFTER_EFFECT)
-    who = person(client, "u_quinn", "member")
+    who = person(client, "u_jon", "member")
     good = confirmed(client, who, "confirmer", {"swarm_id": sw, "action": "save", "items": ["i1"], "params": {}, "idempotency_key": "same-intent"})
     assert client.post("/api/programs/confirmer/act", headers=who, json=good).status_code == 500
     client.app.state.hive.db.execute("UPDATE confirm_tokens SET expires_at = expires_at - 121")
@@ -252,10 +252,10 @@ def test_the_review_probe_scenario(client, tmp_path, monkeypatch):
 
 def test_a_done_intent_recovers_under_its_spent_token_even_after_expiry_and_nothing_else_does(client, tmp_path, monkeypatch):
     sw, entry = mount(client, tmp_path, monkeypatch)
-    quinn = person(client, "u_quinn", "member")
-    act = lambda b: client.post("/api/programs/confirmer/act", headers=quinn, json=b)
+    jon = person(client, "u_jon", "member")
+    act = lambda b: client.post("/api/programs/confirmer/act", headers=jon, json=b)
     body = {"swarm_id": sw, "action": "save", "items": ["i1"], "params": {"t": 1}, "idempotency_key": "k-done"}
-    good = confirmed(client, quinn, "confirmer", body)
+    good = confirmed(client, jon, "confirmer", body)
     first = act(good)
     assert first.status_code == 200
     client.app.state.hive.db.execute("UPDATE confirm_tokens SET expires_at = expires_at - 121")
@@ -270,12 +270,12 @@ def test_a_done_intent_recovers_under_its_spent_token_even_after_expiry_and_noth
 def test_concurrent_presentations_of_one_token_spend_it_once(client, tmp_path, monkeypatch):
     import threading
     sw, _ = mount(client, tmp_path, monkeypatch)
-    quinn = person(client, "u_quinn", "member")
+    jon = person(client, "u_jon", "member")
     hive = client.app.state.hive
     body = {"swarm_id": sw, "action": "send", "items": [], "params": {}}
-    token = confirmed(client, quinn, "confirmer", body)["confirm_token"]
-    session = hive.db.one("SELECT token_hash FROM sessions WHERE principal = 'user:u_quinn'")["token_hash"]
-    actor = {"principal": "user:u_quinn"}
+    token = confirmed(client, jon, "confirmer", body)["confirm_token"]
+    session = hive.db.one("SELECT token_hash FROM sessions WHERE principal = 'user:u_jon'")["token_hash"]
+    actor = {"principal": "user:u_jon"}
     wins, gate = [], threading.Barrier(8)
 
     def go(i):
@@ -323,18 +323,18 @@ def test_one_size_limit_for_a_confirmed_payload_at_mint_and_at_act(client, tmp_p
 def test_a_rerun_after_failure_tells_the_program_the_prior_try_failed(client, tmp_path, monkeypatch):
     """Kimi r2 #4: ctx.command.prior_failed only on the re-delivery of a failed intent under a fresh confirm."""
     sw, entry = mount(client, tmp_path, monkeypatch, FAILS_AFTER_EFFECT)
-    quinn = person(client, "u_quinn", "member")
+    jon = person(client, "u_jon", "member")
     body = {"swarm_id": sw, "action": "save", "items": ["i1"], "params": {}, "idempotency_key": "pf"}
-    client.post("/api/programs/confirmer/act", headers=quinn, json=confirmed(client, quinn, "confirmer", body))
-    client.post("/api/programs/confirmer/act", headers=quinn, json=confirmed(client, quinn, "confirmer", body))
+    client.post("/api/programs/confirmer/act", headers=jon, json=confirmed(client, jon, "confirmer", body))
+    client.post("/api/programs/confirmer/act", headers=jon, json=confirmed(client, jon, "confirmer", body))
     (_, _, first, _), (_, _, second, _) = entry["module"].GOT
     assert "prior_failed" not in first and second["prior_failed"] is True and second["record_id"] == first["record_id"]
 
 
 def test_a_recovery_never_says_prior_failed(client, tmp_path, monkeypatch):
     sw, entry = mount(client, tmp_path, monkeypatch)
-    quinn = person(client, "u_quinn", "member")
-    good = confirmed(client, quinn, "confirmer", {"swarm_id": sw, "action": "save", "items": ["i1"], "params": {}, "idempotency_key": "rc"})
-    client.post("/api/programs/confirmer/act", headers=quinn, json=good)
-    client.post("/api/programs/confirmer/act", headers=quinn, json=good)
+    jon = person(client, "u_jon", "member")
+    good = confirmed(client, jon, "confirmer", {"swarm_id": sw, "action": "save", "items": ["i1"], "params": {}, "idempotency_key": "rc"})
+    client.post("/api/programs/confirmer/act", headers=jon, json=good)
+    client.post("/api/programs/confirmer/act", headers=jon, json=good)
     assert [("prior_failed" in g[2], g[3]) for g in entry["module"].GOT] == [(False, None), (False, True)]

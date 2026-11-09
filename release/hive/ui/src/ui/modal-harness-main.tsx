@@ -1,10 +1,12 @@
 /* eslint-disable react-refresh/only-export-components -- a Vite entry, not a module others import */
 import '@fontsource-variable/inter'
 import '../index.css'
+import '../forms/lifeMap/lifemap.css'
 import '../experiences/still/still.css'
 import { AnimatePresence, LazyMotion, MotionConfig } from 'framer-motion'
-import { StrictMode, useEffect, useRef, useState, type ReactNode } from 'react'
+import { StrictMode, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
+import type { ActionResult, Program } from '../api/types'
 import type { SimClient } from '../api/sim/SimClient'
 import { useEscape } from '../lib/hooks'
 import { useHive } from '../store/store'
@@ -25,11 +27,17 @@ import { HiveDirectory } from '../experiences/HiveDirectory'
 import { DecisionInspect } from '../experiences/canvas/Inspect'
 import { Sheet as StillSheet } from '../experiences/still/Sheets'
 import { Reading } from '../experiences/still/Reading'
+import { FORMS } from '../forms/contract'
+import { fixtureDescribe, fixtureGraph, fixtureProgram } from '../forms/caseFile/fixture'
+import { useAtlas } from '../forms/lifeMap/useAtlas'
+import { ATLAS_DESCRIBE, sampleGraph } from '../forms/lifeMap/sample'
+import { ConsentDialog } from '../forms/lifeMap/parts'
+import { AskModal, Modal } from '../forms/lifeMap/panels'
 
 /**
  * Dev-only mounted harness for modal containment (Review A2/B1/E1), a separate Vite entry: /modal-harness.html.
  * Every modal dialog in the UI is mounted over a page with background controls, using the real components and
- * hooks. Data is the in-browser simulator; nothing leaves the page, no hive is
+ * hooks. Data is the in-browser simulator and the forms' synthetic fixtures; nothing leaves the page, no hive is
  * contacted. scripts/.omegaui/modal-containment.mjs drives it in Brave headless.
  */
 
@@ -65,9 +73,11 @@ const probe: Probe = {
 ;(window as unknown as { __modal: Probe }).__modal = probe
 const ran = (k: string) => (probe.ran[k] = (probe.ran[k] ?? 0) + 1)
 
+const atlasProgram: Program = { id: 'atlas', name: 'Atlas', version: 'harness', description: 'Invented harness program.', icon: 'flask', capabilities: [], source: 'harness', enabled: true, error: null }
+
 function Btn({ id, children, onClick }: { id: string; children: ReactNode; onClick: () => void }) {
   return (
-    <button id={id} type="button" onClick={onClick} style={{ padding: '6px 10px', margin: 3, borderRadius: 8, border: '1px solid #444', background: '#15152a', color: '#eceaff', font: '13px system-ui' }}>
+    <button id={id} type="button" onClick={onClick} style={{ padding: '6px 10px', margin: 3, borderRadius: 8, border: '1px solid #444', background: '#15152a', color: 'var(--color-ink)', font: '13px system-ui' }}>
       {children}
     </button>
   )
@@ -96,6 +106,52 @@ function StillHost({ children, onClose }: { children: ReactNode; onClose: () => 
     </div>
   )
 }
+
+function LifeMapConsent({ which, onClose }: { which: 'consent' | 'ask' | 'one'; onClose: () => void }) {
+  const [graph] = useState(() => sampleGraph())
+  const target = graph.items.find((i) => i.kind === 'hypothesis')?.id ?? graph.items[0].id
+  const atlas = useAtlas({
+    program: atlasProgram,
+    graph,
+    describe: ATLAS_DESCRIBE,
+    grammar: 'classic',
+    focus: () => {},
+    viewer: { isOwner: true },
+    act: async (): Promise<ActionResult> => {
+      ran('lifemap-consent')
+      return { status: 'done', message: 'synthetic only' }
+    },
+  })
+  const opened = useRef(false)
+  useEffect(() => {
+    if (opened.current) return
+    opened.current = true
+    if (which === 'consent') atlas.request('investigate', [target])
+    if (which === 'ask') atlas.setPanel('ask')
+  })
+  // the consent and the Ask modal close themselves through the atlas; tell the harness when they have
+  const was = useRef(false)
+  const showing = which === 'consent' ? !!atlas.draft : which === 'ask' ? atlas.panel === 'ask' : true
+  useEffect(() => {
+    if (showing) was.current = true
+    else if (was.current) onClose()
+  })
+  return (
+    <div className="lm" data-grammar="classic" style={{ position: 'fixed', inset: 0, zIndex: 50, pointerEvents: 'none' }}>
+      <div style={{ pointerEvents: 'auto' }}>
+        {which === 'consent' && <ConsentDialog atlas={atlas} />}
+        {which === 'ask' && atlas.panel === 'ask' && <AskModal atlas={atlas} openMap={() => {}} />}
+        {which === 'one' && (
+          <Modal title="One control" onClose={onClose}>
+            <p className="lm-note">Only the close button can take focus here.</p>
+          </Modal>
+        )}
+      </div>
+    </div>
+  )
+}
+
+const CaseForm = FORMS['case-file']
 
 function Harness({ sim }: { sim: SimClient }) {
   const [open, setOpen] = useState<string | null>(null)
@@ -157,6 +213,9 @@ function Harness({ sim }: { sim: SimClient }) {
         <Btn id="open-app-picker-error" onClick={o('app-picker-error')}>AppPicker error</Btn>
         {program && <AppAccessButton programId={program.id} name={program.name} />}
         {swarm && <SwarmSettingsButton swarm={swarm} />}
+        <Btn id="open-lifemap-consent" onClick={o('lifemap-consent')}>Atlas consent</Btn>
+        <Btn id="open-lifemap-ask" onClick={o('lifemap-ask')}>Atlas Ask modal</Btn>
+        <Btn id="open-lifemap-one" onClick={o('lifemap-one')}>Atlas modal, one control</Btn>
         <Btn id="open-hive-directory" onClick={o('hive-directory')}>HiveDirectory</Btn>
         <Btn id="open-canvas-inspect" onClick={o('canvas-inspect')}>Canvas inspect</Btn>
         <Btn id="open-still-sheet" onClick={o('still-sheet')}>Still sheet</Btn>
@@ -168,6 +227,11 @@ function Harness({ sim }: { sim: SimClient }) {
         <Btn id="open-welcome" onClick={() => useIntro.getState().showWelcome()}>Welcome</Btn>
         <Btn id="open-help" onClick={() => useIntro.getState().setHelp(true)}>Help sheet</Btn>
         <Btn id="open-zero" onClick={o('zero')}>Primitive, nothing focusable</Btn>
+      </section>
+      <section aria-label="Case file (synthetic fixture, Still grammar)" style={{ marginTop: 12, height: 520, overflow: 'auto', background: '#f6f0e3' }}>
+        <Suspense fallback={null}>
+          <CaseForm program={fixtureProgram} describe={fixtureDescribe} graph={fixtureGraph} grammar="still" focus={() => {}} act={async () => (ran('case-sheet'), { status: 'done', message: 'synthetic only' })} />
+        </Suspense>
       </section>
 
       <ConfirmHost />
@@ -208,6 +272,7 @@ function Harness({ sim }: { sim: SimClient }) {
           onCancel={close}
         />
       )}
+      {open?.startsWith('lifemap-') && <LifeMapConsent which={open === 'lifemap-consent' ? 'consent' : open === 'lifemap-ask' ? 'ask' : 'one'} onClose={close} />}
       {open === 'hive-directory' && (
         <div style={{ position: 'fixed', left: 0, bottom: 0, zIndex: 80 }}>
           <HiveDirectory experience="classic" onClose={close} />

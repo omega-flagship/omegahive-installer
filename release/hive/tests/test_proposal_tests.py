@@ -304,7 +304,7 @@ def test_B1_B20_create_bind_reissue_claims(pw):
     assert re.fullmatch(r"pt_[0-9a-f]{24}", pt["test_id"])
     assert pt == {"purpose": "proposal-test", "stage": "prepare", "test_id": pt["test_id"], "request_id": pw.rq["request_id"],
                   "lease_id": pw.rq["lease_id"], "controller_id": pw.ctl["id"], "execution_goal": pw.rq["receiving_goal"],
-                  "issuer": "user:u_quinn", "origin_scope": {"scope_id": "scope_1", "scope_digest": SCOPE_DIGEST, "generation": 1},
+                  "issuer": "user:u_jon", "origin_scope": {"scope_id": "scope_1", "scope_digest": SCOPE_DIGEST, "generation": 1},
                   "proposal": proposal(), "parent": {"workspace_id": WS, "generation": 1, "tree_digest": TREE},
                   "fork": {"workspace_id": None, "preparation_digest": None},
                   "allowance": {"until": lease["until"], "per_launch_max_runtime_seconds": 600,
@@ -489,7 +489,7 @@ def test_B11_bind_authentication_digest_replay_and_fork(pw):
 def test_B12_P4_a_first_bind_after_withdrawal_binds_nothing(pw):
     claims = created(pw)
     test_id = claims["proposal_test"]["test_id"]
-    pw.client.post(f"/api/requests/{pw.rq['request_id']}/cancel", headers=pw.quinn)
+    pw.client.post(f"/api/requests/{pw.rq['request_id']}/cancel", headers=pw.jon)
     out = bind(pw, test_id, bind_body(claims))
     assert out.status_code == 403 and error(out)["code"] == "capability_withdrawn" and error(out)["reason"] == "request_closed"
     assert pw.hive.db.one("SELECT preparation FROM proposal_tests WHERE id = ?", (test_id,))["preparation"] is None
@@ -502,7 +502,7 @@ def test_P2_a_committed_bind_replays_byte_for_byte_after_any_withdrawal(pw, with
     first = bind(pw, test_id, bind_body(claims))
     assert first.status_code == 201
     if withdraw == "cancel":
-        pw.client.post(f"/api/requests/{pw.rq['request_id']}/cancel", headers=pw.quinn)
+        pw.client.post(f"/api/requests/{pw.rq['request_id']}/cancel", headers=pw.jon)
     elif withdraw == "lease_expired":
         pw.hive.db.execute("UPDATE mind_leases SET until = ? WHERE id = ?", (past(minutes=1), pw.rq["lease_id"]))
     elif withdraw == "capability_expired":
@@ -564,7 +564,7 @@ def test_B13_B45_a_result_claim_survives_origin_losses_but_reaches_no_hold(pw):
     assert pt["fork"] == {"workspace_id": FORK, "preparation_digest": PREP} and 0 < result["exp"] - result["iat"] <= 900
     pw.hive.services.revoke_grant(pw.task["id"], pw.grant["id"])                 # the real revocation sweep
     pw.hive.db.execute("UPDATE goals SET status = 'done' WHERE id = ?", (pw.task["id"],))
-    pw.client.post(f"/api/requests/{pw.rq['request_id']}/cancel", headers=pw.quinn)
+    pw.client.post(f"/api/requests/{pw.rq['request_id']}/cancel", headers=pw.jon)
     pw.hive.db.execute("UPDATE mind_leases SET until = ? WHERE id = ?", (past(minutes=1), pw.rq["lease_id"]))
     st = status(pw, result["id"])
     assert st["active"] is True and st["reason"] is None and st["stage"] == "result"
@@ -620,7 +620,7 @@ def test_B46_a_result_claim_ends_with_the_tests_seven_day_window(pw):
 
 def test_B50_the_generic_checks_still_apply_outside_the_result_stage(pw):
     test_id, run = prepared(pw)
-    plain = pw.hive.services.issue("svc_code", actor="user:u_quinn", kind="human", task_id=pw.task["id"], swarm_id=pw.origin["id"],
+    plain = pw.hive.services.issue("svc_code", actor="user:u_jon", kind="human", task_id=pw.task["id"], swarm_id=pw.origin["id"],
                                    repository_id="synthetic", actions=["read"], grant_id=pw.grant["id"])["claims"]
     pw.hive.db.execute("UPDATE goal_grants SET expires_at = 1 WHERE id = ?", (pw.grant["id"],))
     assert status(pw, run["id"])["reason"] == "grant_withdrawn" and status(pw, plain["id"])["reason"] == "grant_withdrawn"
@@ -633,9 +633,9 @@ def test_B50_the_generic_checks_still_apply_outside_the_result_stage(pw):
 
 
 @pytest.mark.parametrize("cause,reason", [
-    (lambda w: w.client.post(f"/api/requests/{w.rq['request_id']}/cancel", headers=w.quinn), "request_closed"),
+    (lambda w: w.client.post(f"/api/requests/{w.rq['request_id']}/cancel", headers=w.jon), "request_closed"),
     (lambda w: w.hive.db.execute("UPDATE mind_leases SET until = ? WHERE id = ?", (past(minutes=1), w.rq["lease_id"])), "lease_expired"),
-    (lambda w: w.hive.db.execute("UPDATE people SET role = 'member' WHERE id = 'u_quinn'"), "lease_revoked"),
+    (lambda w: w.hive.db.execute("UPDATE people SET role = 'member' WHERE id = 'u_jon'"), "lease_revoked"),
     (lambda w: w.client.patch(f"/api/swarms/{w.team['id']}", json={"coordinator_id": w.helper["id"]}), "not_controller"),
 ])
 def test_run_claim_status_follows_the_lease_request_and_controller(pw, cause, reason):
@@ -888,7 +888,7 @@ def test_B38_W12_overrun_charges_actual_and_closes_the_test(pw):
 # ---- b.6 replay after withdrawal and recovery (B39-B41, B28, B29) -----------------------------------------------------
 
 @pytest.mark.parametrize("withdraw", [
-    lambda w: w.client.post(f"/api/requests/{w.rq['request_id']}/cancel", headers=w.quinn),
+    lambda w: w.client.post(f"/api/requests/{w.rq['request_id']}/cancel", headers=w.jon),
     lambda w: w.hive.db.execute("UPDATE mind_leases SET until = ? WHERE id = ?", (past(minutes=1), w.rq["lease_id"])),
     lambda w: w.hive.services.revoke_grant(w.task["id"], w.grant["id"]),
 ])
@@ -909,7 +909,7 @@ def test_B39_B40_B28_admission_replay_after_withdrawal_and_no_new_key(one_hold, 
 
 def test_B41_B29_lost_hold_id_recovered_by_key_then_released(one_hold):
     w = one_hold
-    w.client.post(f"/api/requests/{w.rq['request_id']}/cancel", headers=w.quinn)        # the withdrawal comes after the commit
+    w.client.post(f"/api/requests/{w.rq['request_id']}/cancel", headers=w.jon)        # the withdrawal comes after the commit
     found = by_key(w, w.test_id, "launch-0001").json()
     assert found["hold"]["hold_id"] == w.hold_id and found["observations"] == []
     replay = admit(w, w.test_id, w.run["id"], key="launch-0001")
@@ -1179,7 +1179,7 @@ def test_fix1_request_cancel_ends_the_test_in_the_cancel_transaction_and_keeps_i
     """C9/C10 host side, b.6: the host-owned cause ends the test withdrawn:<reason>; the hold is unchanged."""
     w = one_hold
     before = hold_row(w, w.hold_id)
-    w.client.post(f"/api/requests/{w.rq['request_id']}/cancel", headers=w.quinn)
+    w.client.post(f"/api/requests/{w.rq['request_id']}/cancel", headers=w.jon)
     assert ended(w, w.test_id) == "withdrawn:request_closed"          # persisted by the hook, before any status call
     assert hold_row(w, w.hold_id) == before
     st = status(w, w.run["id"])
@@ -1200,7 +1200,7 @@ def test_fix1_grant_revoke_ends_the_tests_on_that_grant(one_hold):
 
 @pytest.mark.parametrize("cause,reason", [
     (lambda w: w.hive.db.execute("UPDATE mind_leases SET until = ? WHERE id = ?", (past(minutes=1), w.rq["lease_id"])), "lease_expired"),
-    (lambda w: w.hive.db.execute("UPDATE people SET role = 'member' WHERE id = 'u_quinn'"), "lease_revoked"),
+    (lambda w: w.hive.db.execute("UPDATE people SET role = 'member' WHERE id = 'u_jon'"), "lease_revoked"),
     (lambda w: w.hive.db.execute("UPDATE goal_grants SET expires_at = 1 WHERE id = ?", (w.grant["id"],)), "grant_withdrawn"),
     (lambda w: w.client.patch(f"/api/swarms/{w.team['id']}", json={"coordinator_id": w.helper["id"]}), "not_controller"),
 ])
@@ -1238,7 +1238,7 @@ def test_fix1_a_lazy_withdrawal_is_persisted_even_when_the_touching_call_is_refu
 def test_fix1_the_result_window_counts_from_the_withdrawal(one_hold):
     """b.8: result is issued up to 7 days after ended_at; a withdrawn test now has an ended_at."""
     w = one_hold
-    w.client.post(f"/api/requests/{w.rq['request_id']}/cancel", headers=w.quinn)
+    w.client.post(f"/api/requests/{w.rq['request_id']}/cancel", headers=w.jon)
     assert ended(w, w.test_id) == "withdrawn:request_closed"
     result = reissue(w, w.test_id, "result")
     assert result.status_code == 200, result.text
@@ -1288,9 +1288,9 @@ def test_fix3_a_valid_timestamp_is_kept_verbatim(one_hold):
 # ---- r3: stand-in FIX-FIRST and Kimi label findings on 4972170 ---------------------------------------------------------
 
 CAUSES = {
-    "cancel": lambda w: w.client.post(f"/api/requests/{w.rq['request_id']}/cancel", headers=w.quinn),
+    "cancel": lambda w: w.client.post(f"/api/requests/{w.rq['request_id']}/cancel", headers=w.jon),
     "lease_expiry": lambda w: w.hive.db.execute("UPDATE mind_leases SET until = ? WHERE id = ?", (past(minutes=1), w.rq["lease_id"])),
-    "demotion": lambda w: w.hive.db.execute("UPDATE people SET role = 'member' WHERE id = 'u_quinn'"),
+    "demotion": lambda w: w.hive.db.execute("UPDATE people SET role = 'member' WHERE id = 'u_jon'"),
     "grant_revoke": lambda w: w.hive.services.revoke_grant(w.task["id"], w.grant["id"]),
     "grant_expiry": lambda w: w.hive.db.execute("UPDATE goal_grants SET expires_at = 1 WHERE id = ?", (w.grant["id"],)),
     "task_close": lambda w: w.hive.goals.update(w.task["id"], {"status": "done"}),
@@ -1349,10 +1349,10 @@ def test_r3_K2_replacement_is_stamped_before_a_controller_change(pw):
 @pytest.mark.parametrize("later", ["demotion", "controller"])
 def test_r3_K3_the_persisted_ending_drives_the_status_reason(one_hold, later):
     w = one_hold
-    w.client.post(f"/api/requests/{w.rq['request_id']}/cancel", headers=w.quinn)
+    w.client.post(f"/api/requests/{w.rq['request_id']}/cancel", headers=w.jon)
     assert ended(w, w.test_id) == "withdrawn:request_closed"
     if later == "demotion":
-        w.hive.db.execute("UPDATE people SET role = 'member' WHERE id = 'u_quinn'")
+        w.hive.db.execute("UPDATE people SET role = 'member' WHERE id = 'u_jon'")
     else:
         w.client.patch(f"/api/swarms/{w.team['id']}", json={"coordinator_id": w.helper["id"]})
     st = status(w, w.run["id"])
@@ -1363,7 +1363,7 @@ def test_r3_K3_the_persisted_ending_drives_the_status_reason(one_hold, later):
 def test_r3_K3_a_demotion_ending_and_its_status_agree(one_hold):
     import asyncio
     w = one_hold
-    w.hive.db.execute("UPDATE people SET role = 'member' WHERE id = 'u_quinn'")
+    w.hive.db.execute("UPDATE people SET role = 'member' WHERE id = 'u_jon'")
     asyncio.run(w.hive.minds.reconcile())
     assert ended(w, w.test_id) == "withdrawn:lease_revoked" and status(w, w.run["id"])["reason"] == "lease_revoked"
 
@@ -1386,7 +1386,7 @@ def test_r3_kimi_a_test_ends_with_the_grant_it_was_created_under(one_hold):
     """Leases are never re-pointed to another grant in production; the fixture re-points one to prove the test is bound
     to its creation grant A: revoking A ends it although the lease now names B."""
     w = one_hold
-    b = w.hive.services.grant(w.task["id"], "user:u_quinn", "edit", None, 120, by="user:u_quinn")
+    b = w.hive.services.grant(w.task["id"], "user:u_jon", "edit", None, 120, by="user:u_jon")
     w.hive.db.execute("UPDATE mind_leases SET grant_id = ? WHERE id = ?", (b["id"], w.rq["lease_id"]))
     assert w.hive.db.one("SELECT grant_id FROM proposal_tests WHERE id = ?", (w.test_id,))["grant_id"] == w.grant["id"]
     w.hive.services.revoke_grant(w.task["id"], w.grant["id"])
@@ -1397,7 +1397,7 @@ def test_r3_kimi_a_test_ends_with_the_grant_it_was_created_under(one_hold):
 def test_r3_kimi_creation_grant_expiry_is_caught_lazily(one_hold):
     import asyncio
     w = one_hold
-    b = w.hive.services.grant(w.task["id"], "user:u_quinn", "edit", None, 120, by="user:u_quinn")
+    b = w.hive.services.grant(w.task["id"], "user:u_jon", "edit", None, 120, by="user:u_jon")
     w.hive.db.execute("UPDATE mind_leases SET grant_id = ? WHERE id = ?", (b["id"], w.rq["lease_id"]))
     w.hive.db.execute("UPDATE goal_grants SET expires_at = 1 WHERE id = ?", (w.grant["id"],))
     asyncio.run(w.hive.minds.reconcile())

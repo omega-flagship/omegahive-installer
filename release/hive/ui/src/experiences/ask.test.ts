@@ -73,7 +73,7 @@ describe('ASK-1.2: one engine (lib/intent), vocabulary only', () => {
 })
 
 describe('the announcer is hidden for sight and read aloud (Kimi r3 #3)', () => {
-  it('index.css carries a global .sr-only rule (not only a form’s scoped one), and the announcer uses it', () => {
+  it('index.css carries a global .sr-only rule (not only case-file’s scoped one), and the announcer uses it', () => {
     const css = read('index.css')
     expect(css).toMatch(/\/\* screen-reader-only text \(global\) \*\/\n\.sr-only \{ position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect\(0, 0, 0, 0\); white-space: nowrap; border: 0; \}\s*$/)
     expect(read('features/ask/VoiceParts.tsx')).toMatch(/className="sr-only" role="status" aria-live="assertive"/)
@@ -301,9 +301,9 @@ describe('ASK-1 phase 2: Cosmos, Flux and Construct, each in its own grammar, on
   const ccss = read('experiences/construct/construct.css')
 
   it('every skin is the shared hook and store: no skin forks the Ask (one useAskField; nothing but the store sends)', () => {
-    expect(floating).toMatch(/useAskField\(\{ experience \}\)/)
+    expect(floating).toMatch(/useAskField\(\{ experience, draft: sharedDraft \}\)/)
     // uifix-r2.2: Construct's `ask <words>` rides the same hook (forcedAsk), never a send of its own
-    expect(cmdLine).toMatch(/useAskField\(\{ experience: 'construct', forcedAsk, onDispatch: echoDispatch \}\)/)
+    expect(cmdLine).toMatch(/useAskField\(\{ experience: 'construct', forcedAsk, onDispatch: echoDispatch, draft: sharedDraft, active: native \}\)/)
     for (const src of [floating, cmdLine]) {
       expect(src).not.toMatch(/askSend|client\.ask|\.ask\(/)
       expect(src).not.toMatch(/create<|zustand/)
@@ -324,14 +324,14 @@ describe('ASK-1 phase 2: Cosmos, Flux and Construct, each in its own grammar, on
     expect(SKIN_WORDS.liquid.thread).toBe('liquid')
     expect(SKIN_WORDS.terminal.thread).toBe('terminal')
     expect(SKIN_WORDS.note.thread).toBe('note')
-    expect(host).toMatch(/<FloatingAsk place=\{place\} experience=\{experience\} inputRef=\{inputRef\} look=\{floating!\} \/>/)
+    expect(host).toMatch(/<FloatingAsk place=\{place\} experience=\{experience\} inputRef=\{inputRef\} look=\{floating!\} boxRef=\{setFloatingBox\} \/>/)
   })
   it('Construct: the prompt IS the Ask; commands parse first, anything else falls through to the Ask', () => {
     for (const c of ['ls minds', 'help', 'wake vega', '> hello', 'ask what is new', 'ask']) expect(isCommandText(c), c).toBe(true)
     for (const c of ['show me my goals', 'make it calmer', 'what is Vega doing', 'vega hello', 'hel']) expect(isCommandText(c), c).toBe(false)
     expect(COMMANDS.some((c) => c.name === 'ask')).toBe(true)
     // its own landmark (dropped while a page covers it: then the host's floating line is the one Ask), combobox, data-ask-input
-    expect(cmdLine).toMatch(/<section aria-label=\{covered \? undefined : 'Ask'\} data-ask-zone=""/)
+    expect(cmdLine).toMatch(/<section aria-hidden=\{!native \|\| undefined\} aria-label=\{covered \? undefined : 'Ask'\} data-ask-zone=""/)
     expect(cmdLine).toMatch(/role="combobox"/)
     expect(cmdLine).toMatch(/role="listbox" aria-label="What this will do"/)
     expect(cmdLine).toMatch(/aria-label=\{sentence\(c\)\}/)
@@ -368,7 +368,7 @@ describe('ASK-1 phase 2: Cosmos, Flux and Construct, each in its own grammar, on
     expect(host).toMatch(/if \(skin === 'liquid'\) return <FluxPresence \/>/)
     expect(host).toMatch(/if \(skin === 'command-line'\) return <ConstructPresence \/>/)
     expect(host).toMatch(/if \(skin === 'note'\) return <CanvasPresence \/>/)
-    expect(host).toMatch(/\{!underModal && <SkinPresence skin=\{skin\} \/>\}/)
+    expect(host).toMatch(/\{!inApp && !underModal && <SkinPresence skin=\{skin\} \/>\}/)
     // every experience marks its minds, its swarms (where shown) and where decisions wait
     const cosmos = read('experiences/cosmos/index.tsx') + read('experiences/cosmos/Labels.tsx')
     const flux = read('experiences/flux/index.tsx')
@@ -469,13 +469,15 @@ describe('keep-clear: inside an experience the Ask never covers the chrome it as
   })
   it('AskHost measures the kept-clear chrome (not its own marks, not Ω) and lifts the floating skins; the Ask is itself kept clear', () => {
     const host = read('features/ask/AskHost.tsx')
-    expect(host).toMatch(/document\.querySelectorAll\('\[data-xc-keep-clear\]'\)/)
-    expect(host).toMatch(/el\.closest\('\.ask-root, \[data-omega-button\]'\)/)
-    expect(host).toMatch(/placeInExperience\(\{[\s\S]*?clockLeft \}, keep\.boxes, keep\.sab\)/)
+    // the measures themselves live in askMeasure.ts, their one owner (3 Nov); AskHost uses them
+    const measure = read('features/ask/askMeasure.ts')
+    expect(measure).toMatch(/document\.querySelectorAll\('\[data-xc-keep-clear\]'\)/)
+    expect(measure).toMatch(/el\.closest\('\.ask-root, \[data-omega-button\]'\)/)
+    expect(host).toMatch(/placeInExperience\(\{[\s\S]*?clockLeft, pageAxis: route\.name === 'hive', axisShift: [^}]*\}, keep\.boxes, keep\.sab\)/)
     expect(read('features/ask/placement.ts')).toMatch(/const lifted = liftClear\(base, boxes, vp, sab\)/)
     // only chrome actually on top counts (a route drawn over the experience covers it), looked at through the Ask itself
-    expect(host).toMatch(/document\.elementsFromPoint\?\.\(cx, cy\)/)
-    expect(host).toMatch(/useKeepClear\(experience !== 'classic' && skin !== 'phase-2'\)/)
+    expect(measure).toMatch(/document\.elementsFromPoint\?\.\(cx, cy\)/)
+    expect(host).toMatch(/useKeepClear\(experience !== 'classic' && skin !== 'phase-2', still\)/)
     expect(read('features/ask/ClassicAsk.tsx')).toMatch(/className="ask-dock"[^>]*data-xc-keep-clear=""/)
   })
 })

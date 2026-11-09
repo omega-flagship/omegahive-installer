@@ -1,6 +1,6 @@
 {
   "schema": "surface-vendored-design-native-1",
-  "origin": "omegadesign release 0.4.4-sharing, tools/",
+  "origin": "~/OmegaDot/.runtime/omegadesign-release/0.4.4-sharing/tools/",
   "design_version": "0.4.4-sharing",
   "lock": "tools/bundle.lock.json",
   "copied_byte_exact": true,

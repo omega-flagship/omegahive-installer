@@ -1,3 +1,4 @@
+import { healthCheck } from '../../lib/healthQuestion'
 import { m } from 'framer-motion'
 import { useDraft } from '../drafts'
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
@@ -299,15 +300,17 @@ export function MindsPane({ boot }: { boot: number }) {
 
 // ------------------------------------------------------------------ 3 session
 
+// the Omega mark (brand/markOutline), traced as half-block art
 const ART = [
-  '        ▄▄▄██████▄▄▄        ',
-  '     ▄██▀▀        ▀▀██▄     ',
-  '    ██▀              ▀██    ',
-  '   ██                  ██   ',
-  '   ██                  ██   ',
-  '    ██▄              ▄██    ',
-  '  ▄▄▄▀██▄          ▄██▀▄▄▄  ',
-  '  ▀▀▀▀▀▀▀          ▀▀▀▀▀▀▀  ',
+  '        ▄▄▄██▀▀▀▀▀███           ',
+  '    ▄▄█▀▀     ▄▄████████▄▄▄     ',
+  '  ▄█▀       ▄█▀  ▀▀█▄     ▀▀█▄  ',
+  '▄█▀        █▀       ▀█       ▀█ ',
+  '██        ▀█         █        ██',
+  '▀█         █▄       ▄█       ▄█▀',
+  '  ▀▄▄       ▀█▄▄   ▄█     ▄▄█▀  ',
+  ' ▄▄███████▄▄▄▄▄█████▄▄▄▄███▄▄▄██',
+  '██▄▄▄▄▄▄▄▄▄▄████████████████▄▄█▀',
 ]
 
 export function SessionPane({ boot, phone }: { boot: number; phone: boolean }) {
@@ -515,8 +518,8 @@ export function Session({ agent, phone }: { agent: Agent; phone: boolean }) {
         {messages.map((msg) => {
           const peer = msg.sender.startsWith('agent:') && msg.sender !== `agent:${id}` ? agents[msg.sender.slice(6)] : null
           const mine = msg.direction === 'out'
-          const who = mine ? slug(agent.name) : peer ? slug(peer.name) : 'you'
-          return <MsgLine key={msg.id} text={msg.text} at={msg.created_at} who={who} kind={mine ? 'mind' : peer ? 'peer' : 'you'} fresh={!!fresh[msg.id] && mine} />
+          const who = healthCheck(msg) ? 'health-check' : mine ? slug(agent.name) : peer ? slug(peer.name) : 'you'
+          return <MsgLine key={msg.id} text={msg.text} at={msg.created_at} who={who} kind={mine ? 'mind' : peer || healthCheck(msg) ? 'peer' : 'you'} fresh={!!fresh[msg.id] && mine} />
         })}
         {pend.map((p) => (
           <div key={p.tempId} className="cx-msg is-you">

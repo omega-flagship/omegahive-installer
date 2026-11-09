@@ -1,4 +1,4 @@
-"""Sign-in through the companion webhost, the public gate, and spending limits at every level."""
+"""Sign-in through the family webhost, the public gate, and spending limits at every level."""
 
 import json
 import os
@@ -39,11 +39,11 @@ def webhost(tmp, sessions, users):
 def hive(monkeypatch):
     tmp = tempfile.mkdtemp(prefix="hive-sso-")
     later = int(time.time()) + 3600
-    root = webhost(tmp, {"tok-quinn": {"username": "quinn", "expires": later}, "tok-maren": {"username": "maren", "expires": later},
-                         "tok-old": {"username": "quinn", "expires": int(time.time()) - 5}},
-                   {"quinn": {"role": "admin", "name": "Owen Quill"}, "maren": {"role": "member", "name": "Maren"}})
+    root = webhost(tmp, {"tok-jon": {"username": "jon", "expires": later}, "tok-mia": {"username": "mia", "expires": later},
+                         "tok-old": {"username": "jon", "expires": int(time.time()) - 5}},
+                   {"jon": {"role": "admin", "name": "Jon Grove"}, "mia": {"role": "family", "name": "Mia"}})
     monkeypatch.setenv("HIVE_SSO_STATE_DIR", str(root))
-    monkeypatch.setenv("HIVE_SSO_USERS", "quinn")
+    monkeypatch.setenv("HIVE_SSO_USERS", "jon")
     settings = load_settings(data_dir=pathlib.Path(tmp) / "hive", admin_password="pw", petta_path=PETTA, offline=True,
                              base_path="/omegahive", allow_unpriced=False)
     app = create_app(settings, supervisor=FakeSupervisor(), reconcile_seconds=0)
@@ -59,12 +59,12 @@ def test_signed_in_allowed_person_gets_a_public_session(hive):
     methods = hive.get("/omegahive/api/auth/methods").json()
     assert methods["public"] is True and methods["password"] is False
     assert methods["sso"]["enabled"] and methods["sso"]["login_url"] == "/login?next=/omegahive/"
-    r = sso(hive, "tok-quinn")
-    assert r.status_code == 200 and r.json()["user"]["username"] == "quinn"
+    r = sso(hive, "tok-jon")
+    assert r.status_code == 200 and r.json()["user"]["username"] == "jon"
     token = r.json()["token"]
     headers = {"Authorization": f"Bearer {token}"}
     assert hive.get("/omegahive/api/hive", headers=headers).json()["name"] == "OmegaHive"
-    assert hive.get("/omegahive/api/auth/me", headers=headers).json()["principal"] == "user:quinn"
+    assert hive.get("/omegahive/api/auth/me", headers=headers).json()["principal"] == "user:jon"
     with hive.websocket_connect(f"/omegahive/api/events?token={token}") as ws:
         assert json.loads(ws.receive_text())["type"] == "hello"
     assert hive.post("/omegahive/api/auth/logout", headers=headers).json() == {"ok": True, "sessions_kept": 0}   # host-identity r1.1
@@ -76,11 +76,11 @@ def test_others_are_refused(hive):
         r = sso(hive, cookie)
         assert r.status_code == 401 and r.json()["error"]["code"] == "sso_required"
         assert r.json()["error"]["login_url"] == "/login?next=/omegahive/"
-    # signed in to the companion webhost, but neither a listed admin nor invited to this hive
-    r = sso(hive, "tok-maren")
+    # signed in to the family host, but neither a listed admin nor invited to this hive
+    r = sso(hive, "tok-mia")
     assert r.status_code == 403 and r.json()["error"]["code"] == "not_invited"
     # a cookie alone is never an API credential
-    assert hive.get("/omegahive/api/hive", headers={"Cookie": "omega_session=tok-quinn"}).status_code == 401
+    assert hive.get("/omegahive/api/hive", headers={"Cookie": "omega_session=tok-jon"}).status_code == 401
 
 
 def test_public_requests_cannot_reach_agent_routes_or_traverse(hive):
@@ -89,7 +89,7 @@ def test_public_requests_cannot_reach_agent_routes_or_traverse(hive):
     assert hive.get("/omegahive/api/agent/goals").status_code == 404
     assert hive.get("/omegahive/agent-hub").status_code == 404
     # the operator's own routes that merely start with "agent" are not agent routes
-    token = sso(hive, "tok-quinn").json()["token"]
+    token = sso(hive, "tok-jon").json()["token"]
     for route in ("/omegahive/api/agents", "/omegahive/api/hive", "/omegahive/api/swarms", "/omegahive/api/models",
                   "/omegahive/api/programs", "/omegahive/api/approvals", "/omegahive/api/lab/suites", "/omegahive/api/keys",
                   "/omegahive/api/providers", "/omegahive/api/budgets", "/omegahive/api/usage"):
@@ -105,7 +105,7 @@ def test_public_requests_cannot_reach_agent_routes_or_traverse(hive):
 
 
 def test_expired_session_is_refused(hive):
-    token = sso(hive, "tok-quinn").json()["token"]
+    token = sso(hive, "tok-jon").json()["token"]
     app = hive.app
     db = app.state.hive.db
     db.execute("UPDATE sessions SET expires_at = ? WHERE kind = 'sso'", (time.time() - 1,))
@@ -174,48 +174,48 @@ def test_prefix_without_slash_redirects(hive):
 def _named_hive(monkeypatch, linked=True, disabled=0):
     tmp = tempfile.mkdtemp(prefix="hive-sso-named-")
     later = int(time.time()) + 3600
-    quinn = {"role": "admin", "name": "Owen Quill", "google_email": "Owen@Example.org"}
+    jon = {"role": "admin", "name": "Jon Grove", "google_email": "Jon@Example.org"}
     if linked:
-        quinn["google_linked_at"] = later - 7200
-    root = webhost(tmp, {"tok-quinn": {"username": "quinn", "expires": later}}, {"quinn": quinn})
+        jon["google_linked_at"] = later - 7200
+    root = webhost(tmp, {"tok-jon": {"username": "jon", "expires": later}}, {"jon": jon})
     monkeypatch.setenv("HIVE_SSO_STATE_DIR", str(root))
-    monkeypatch.setenv("HIVE_SSO_USERS", "quinn")
+    monkeypatch.setenv("HIVE_SSO_USERS", "jon")
     settings = load_settings(data_dir=pathlib.Path(tmp) / "hive", admin_password="pw", petta_path=PETTA, offline=True,
                              base_path="/omegahive", allow_unpriced=False)
     app = create_app(settings, supervisor=FakeSupervisor(), reconcile_seconds=0)
-    app.state.hive.db.insert("people", {"id": "u_quinn0001", "email": "owen@example.org", "name": "Owen", "role": "admin",
+    app.state.hive.db.insert("people", {"id": "u_jon0001", "email": "jon@example.org", "name": "Jon", "role": "admin",
                                         "invited_by": "test", "created_at": "2026-10-04T00:00:00Z", "last_seen_at": None,
                                         "disabled": disabled})
     return app
 
 
-def test_webhost_login_with_a_verified_linked_google_address_is_the_named_person(monkeypatch):
+def test_family_login_with_a_verified_linked_google_address_is_the_named_person(monkeypatch):
     with TestClient(_named_hive(monkeypatch)) as client:
-        r = sso(client, "tok-quinn")
-        assert r.status_code == 200 and r.json()["user"]["id"] == "u_quinn0001"
+        r = sso(client, "tok-jon")
+        assert r.status_code == 200 and r.json()["user"]["id"] == "u_jon0001"
         me = client.get("/omegahive/api/auth/me", headers={"Authorization": f"Bearer {r.json()['token']}"}).json()
-        assert me["principal"] == "user:u_quinn0001"
+        assert me["principal"] == "user:u_jon0001"
 
 
-def test_unlinked_address_or_disabled_person_stays_the_webhost_username(monkeypatch):
+def test_unlinked_address_or_disabled_person_stays_the_family_username(monkeypatch):
     for kwargs in ({"linked": False}, {"disabled": 1}):
         with TestClient(_named_hive(monkeypatch, **kwargs)) as client:
-            r = sso(client, "tok-quinn")
-            assert r.status_code == 200 and r.json()["user"]["username"] == "quinn"
+            r = sso(client, "tok-jon")
+            assert r.status_code == 200 and r.json()["user"]["username"] == "jon"
 
 
-def test_a_live_invite_is_accepted_through_the_verified_webhost_sign_in(monkeypatch):
+def test_a_live_invite_is_accepted_through_the_verified_family_sign_in(monkeypatch):
     tmp = tempfile.mkdtemp(prefix="hive-sso-invite-")
     later = int(time.time()) + 3600
-    root = webhost(tmp, {"tok-ly": {"username": "maren", "expires": later}},
-                   {"maren": {"role": "member", "name": "Maren", "google_email": "Maren@Example.org", "google_linked_at": later - 60}})
+    root = webhost(tmp, {"tok-ly": {"username": "mia", "expires": later}},
+                   {"mia": {"role": "family", "name": "Mia", "google_email": "Mia@Example.org", "google_linked_at": later - 60}})
     monkeypatch.setenv("HIVE_SSO_STATE_DIR", str(root))
-    monkeypatch.setenv("HIVE_SSO_USERS", "quinn")
+    monkeypatch.setenv("HIVE_SSO_USERS", "jon")
     settings = load_settings(data_dir=pathlib.Path(tmp) / "hive", admin_password="pw", petta_path=PETTA, offline=True,
                              base_path="/omegahive", allow_unpriced=False)
     app = create_app(settings, supervisor=FakeSupervisor(), reconcile_seconds=0)
     hive_ = app.state.hive
-    hive_.db.insert("invites", {"id": "i_ly", "email": "maren@example.org", "name": "Maren", "role": "member",
+    hive_.db.insert("invites", {"id": "i_ly", "email": "mia@example.org", "name": "Mia", "role": "member",
                                 "token_hash": "x", "created_by": "user:operator", "created_at": "2026-10-04T00:00:00Z",
                                 "expires_at": time.time() + 3600, "accepted_at": None, "accepted_by": None, "revoked_at": None})
     with TestClient(app) as client:

@@ -201,7 +201,7 @@ export function Constellation({
           const { sx, sy } = stretch(W, H)
           return (
             <g key={c}>
-              <ellipse cx={W / 2} cy={H / 2} rx={R * sx} ry={R * sy} fill="none" stroke="rgb(180 180 255 / 0.08)" />
+              <ellipse cx={W / 2} cy={H / 2} rx={R * sx} ry={R * sy} fill="none" stroke="color-mix(in oklab, var(--color-primary-top) 8%, transparent)" />
               <text x={W / 2} y={H / 2 - R * sy - 5} textAnchor="middle" className="fill-ink-4 font-mono" fontSize="10" opacity={0.6}>
                 c {c.toFixed(1)}
               </text>
@@ -300,7 +300,7 @@ export function ConstellationLegend({ className, tour }: { className?: string; t
         <span>Brightness: how much evidence</span>
         <span className="flex items-center gap-1" aria-hidden="true">
           {[0.2, 0.5, 0.9].map((c) => (
-            <span key={c} className="rounded-full bg-white" style={{ width: 4 + c * 6, height: 4 + c * 6, opacity: 0.3 + c * 0.7, boxShadow: `0 0 ${c * 10}px rgb(255 255 255 / ${c})` }} />
+            <span key={c} className="rounded-full bg-ink" style={{ width: 4 + c * 6, height: 4 + c * 6, opacity: 0.3 + c * 0.7, boxShadow: `0 0 ${c * 10}px color-mix(in oklab, var(--color-ink) ${Math.round(c * 100)}%, transparent)` }} />
           ))}
         </span>
         <span>brighter, nearer the core</span>

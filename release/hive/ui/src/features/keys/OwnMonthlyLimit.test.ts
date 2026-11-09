@@ -107,7 +107,7 @@ describe('Design 145800Z #2: the box is keyed by the identity epoch, which moves
   })
 })
 
-describe('Dot (the owner’s three 409s): a refused key is said plainly and in place', async () => {
+describe('Dot (Jon’s three 409s): a refused key is said plainly and in place', async () => {
   const { addKeyRefusalWords } = await import('./ownLimit')
   const { ApiError } = await import('../../api/client')
   it('duplicate_key names what happened and the way on; bad_key and others say themselves', () => {
@@ -116,7 +116,7 @@ describe('Dot (the owner’s three 409s): a refused key is said plainly and in p
     expect(addKeyRefusalWords(new ApiError(500, 'internal', 'boom'), 'OpenRouter')).toBe('The key was not added: boom')
   })
   it('the form keeps the refusal on screen and will not send the same refused key again (source)', async () => {
-    const src = ((await import(/* @vite-ignore */ 'node:' + 'fs')) as unknown as { readFileSync(p: string | URL, e: 'utf8'): string }).readFileSync(new URL('./ProfilePage.tsx', import.meta.url), 'utf8')
+    const src = ((await import(/* @vite-ignore */ 'node:' + 'fs')) as unknown as { readFileSync(p: string | URL, e: 'utf8'): string }).readFileSync(new URL('./AddKeyForm.tsx', import.meta.url), 'utf8')
     expect(src).toContain("if (!secret.trim() || busy || refused?.secret === secret.trim()) return")
     expect(src).toContain('disabled={!secret.trim() || busy || refused?.secret === secret.trim()}')
     expect(src).toContain('data-add-key-refused=""')

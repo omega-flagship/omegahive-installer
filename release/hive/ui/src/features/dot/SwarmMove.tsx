@@ -20,7 +20,7 @@ export function SwarmMove({ agentId }: { agentId: string }) {
       <h3 id="swarm-move-h" className="eyebrow mb-2">Swarm</h3>
       <select
         aria-labelledby="swarm-move-h"
-        className="w-full rounded-xl border border-line bg-white/[0.04] px-3 py-2 text-[13px] text-ink disabled:opacity-60"
+        className="w-full rounded-xl border border-line bg-tint/[0.04] px-3 py-2 text-[13px] text-ink disabled:opacity-60"
         value={agent.swarm_id ?? ''}
         disabled={busy || running}
         onChange={async (e) => {

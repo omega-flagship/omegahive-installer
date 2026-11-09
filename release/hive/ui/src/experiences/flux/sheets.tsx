@@ -1,4 +1,5 @@
-import { AnimatePresence, m } from 'framer-motion'
+import { useVisibleAuthority } from '../../lib/useVisibleAuthority'
+import { AnimatePresence, m, useIsPresent } from 'framer-motion'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { Feature } from '../../features/registry'
 import { SurenessMeter } from './SurenessMeter'
@@ -25,6 +26,12 @@ const when = (iso: string | null | undefined) => {
 const time = (iso: string) => {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+export function useFluxGoalAuthority() {
+  const { sheetOwner } = useFlux()
+  const goalOwner = useMemo(() => ({ ...sheetOwner, matches: (value: unknown) => (value as SheetState | null)?.page === 'goals' }), [sheetOwner])
+  return useVisibleAuthority('hive-pro', useIsPresent(), 'flux-task-sheet', goalOwner)
 }
 
 const TITLES: Record<SheetPage, string> = {
@@ -332,6 +339,7 @@ function Goals({ start, motivation }: { start: string; motivation: string }) {
   // Review D1: done, cancel and re-open are decisions on the goal as it was when asked, confirmed in the shared dialog.
   // Held here, not in the row, so a goal that moves lists while the dialog is open still shows why it was refused.
   const [deciding, setDeciding] = useState<{ seen: Goal; to: Goal['status']; session: string } | null>(null)
+  const decisionCurrent = useFluxGoalAuthority()
   useEffect(() => {
     for (const id of sid ? [sid] : Object.keys(swarms)) void useHive.getState().loadGoals(id).catch(() => undefined)
   }, [sid, swarms])
@@ -387,7 +395,7 @@ function Goals({ start, motivation }: { start: string; motivation: string }) {
         </ul>
         <OpenLink label="Tasks" onClick={() => openClassic({ name: 'tasks', ...(sid ? { swarm: sid } : {}), ...(mo ? { motivation: mo } : {}) })} />
       </Scroll>
-      <AnimatePresence>{deciding && <GoalDecision seen={deciding.seen} to={deciding.to} session={deciding.session} onClose={() => setDeciding(null)} restoreFocus={goalsHome} />}</AnimatePresence>
+      <AnimatePresence>{deciding && <GoalDecision current={decisionCurrent} seen={deciding.seen} to={deciding.to} session={deciding.session} onClose={() => setDeciding(null)} restoreFocus={goalsHome} />}</AnimatePresence>
     </>
   )
 }
@@ -970,7 +978,7 @@ function Help() {
     ['Drips at the top', 'Decisions waiting on you'],
     ['Whispers', 'New beliefs, tasks and trouble, as they happen'],
     ['The pill', 'Home, decisions, new mind, start a swarm, everything'],
-    ['Ω', 'Change UI, and the way back to the Classic hive'],
+    ['The Omega mark, bottom left', 'Change experience, and the way back to the Classic hive'],
   ]
   return (
     <Scroll>

@@ -36,11 +36,12 @@ export function useAskSend() {
  * under, for the person who asked (store/ask `admit`); a failed, unsupported, capped or held steer, a refusal, an
  * unknown admission or a change of person rejects, and no intent is recorded. Never "whatever turn is open".
  */
-export async function admittedTurn(text: string, context: AskContext, where?: string): Promise<string> {
+export async function admittedTurn(text: string, context: AskContext, where?: string, openThread = true): Promise<string> {
   const binding = bindEpoch()
   const st = useAskStore.getState()
-  st.setThreadOpen(true)
-  const a = await st.admit(text, context, { where })
+  // Create's Code bench shows the work in its own stream: the words still go in the person's thread, which stays as it was
+  if (openThread) st.setThreadOpen(true)
+  const a = await st.admit(text, context, { where, ...(openThread ? {} : { quiet: true }) })
   if (!binding.current()) throw new AskRefusal(409, 'not_admitted', 'The person changed while these words were being sent; nothing was handed over.')
   if (!a.admitted) throw new AskRefusal(409, a.reason, ADMISSION_WORDS[a.reason])
   return a.op
@@ -56,15 +57,16 @@ const ADMISSION_WORDS: Record<Exclude<AskAdmission, { admitted: true }>['reason'
   not_admitted: 'Your words were not taken by the Ask, so nothing was handed over.',
 }
 
-export function useAskTurn() {
+export function useAskTurn(o: { openThread?: boolean } = {}) {
+  const openThread = o.openThread !== false
   const route = useRoute()
   const experience = experienceById(useLook().current?.experience).id
   return useCallback(
     (text: string): Promise<string> => {
       const where = whereOf(route, experience)
-      return admittedTurn(text, askContext(route, experience, where), where)
+      return admittedTurn(text, askContext(route, experience, where), where, openThread)
     },
-    [route, experience],
+    [route, experience, openThread],
   )
 }
 

@@ -3,7 +3,7 @@ import { errorMessage, type ResourceState } from './useResource'
 
 /**
  * Who is signed in, without guessing: a password session is the hive's operator (an admin); a Google session
- * shows the role the hive reports; if the hive cannot say, the role is "unknown", never assumed.
+ * or a member's hive-made password (T-101) shows the role the hive reports; if the hive cannot say, the role is "unknown", never assumed.
  */
 export function identityLine(me: ResourceState<Me>): string {
   if (me.status === 'loading') return 'Checking who you are…'
@@ -15,6 +15,7 @@ export function identityLine(me: ResourceState<Me>): string {
     : m.signin === 'google' ? 'Signed in with Google'
     : m.signin === 'password' ? 'Signed in on the hive’s own machine'
     // r1.1 (stand-in P2): an older host that doesn't say how never gets "Google" guessed (a local install is sso-kind)
+    : m.kind === 'member_password' ? 'Signed in with a hive password'
     : m.kind === 'sso' ? 'Signed in' : 'Signed in on the hive’s own machine'
   const role = m.kind === 'password' ? 'Operator (admin)' : m.role === 'admin' ? 'Admin' : m.role === 'member' ? 'Member' : 'role unknown'
   return `${m.person?.email ? `${m.person.email} · ` : ''}${how} · ${role}`

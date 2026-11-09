@@ -4,7 +4,8 @@ import { isDemoClient } from '../features/showreel/hook'
 import { useEscape, useIsDesktop, useReducedMotion } from '../lib/hooks'
 import { useHive } from '../store/store'
 import { Icon, type IconName } from '../ui/Icon'
-import { OmegaMark } from '../ui/OmegaMark'
+import { LivingMark } from '../brand/LivingMark'
+import { useLook } from '../shell/uiVariant'
 import { Kbd } from '../ui/primitives'
 import { CHAPTERS } from './chapters'
 import { useIntro } from './introStore'
@@ -44,7 +45,7 @@ export function Welcome() {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0, transition: { duration: 0.3 } }}
       transition={{ duration: 0.6 }}
-      style={{ background: 'radial-gradient(120% 85% at 50% 38%, rgb(4 4 15 / 0.05), rgb(4 4 15 / 0.55) 55%, rgb(3 3 12 / 0.86))' }}
+      style={{ background: 'radial-gradient(120% 85% at 50% 38%, color-mix(in oklab, var(--color-void) 5%, transparent), color-mix(in oklab, var(--color-void) 55%, transparent) 55%, color-mix(in oklab, var(--color-void) 86%, transparent))' }}
     >
       <m.section
         ref={box}
@@ -59,7 +60,7 @@ export function Welcome() {
         className="glass-strong relative w-full overflow-hidden rounded-t-[28px] px-5 pt-6 md:max-w-[540px] md:rounded-[28px] md:px-8 md:pt-8 md:pb-7"
         style={desktop ? undefined : { paddingBottom: 'calc(var(--sab) + 18px)' }}
       >
-        <div className="pointer-events-none absolute -top-36 left-1/2 size-[420px] -translate-x-1/2 rounded-full opacity-70" style={{ background: 'radial-gradient(circle, rgb(164 147 255 / 0.28), transparent 65%)' }} aria-hidden="true" />
+        <div className="pointer-events-none absolute -top-36 left-1/2 size-[420px] -translate-x-1/2 rounded-full opacity-70" style={{ background: 'radial-gradient(circle, color-mix(in oklab, var(--color-accent) 28%, transparent), transparent 65%)' }} aria-hidden="true" />
         <div className="relative">
           <BrandMark />
           <div className="eyebrow mt-5">Welcome to</div>
@@ -76,7 +77,7 @@ export function Welcome() {
                 initial={{ opacity: 0, y: reduced ? 0 : 6 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.45 + i * 0.05 }}
-                className="inline-flex min-h-8 items-center gap-1.5 rounded-full border border-line bg-white/[0.04] py-1 pr-3 pl-2 text-[12.5px] text-ink-2"
+                className="inline-flex min-h-8 items-center gap-1.5 rounded-full border border-line bg-tint/[0.04] py-1 pr-3 pl-2 text-[12.5px] text-ink-2"
               >
                 <Icon name={f.icon} size={14} className="text-accent" />
                 {f.label}
@@ -95,15 +96,15 @@ export function Welcome() {
             <button
               ref={primary}
               onClick={() => answer('tour')}
-              className="relative flex min-h-13 flex-1 items-center justify-center gap-2.5 rounded-2xl px-5 text-[15px] font-semibold text-[#0b0820] transition-[transform,filter] hover:brightness-110 active:scale-[0.98]"
-              style={{ background: 'linear-gradient(180deg, #ece7ff, #b3a3ff)', boxShadow: '0 0 0 1px rgb(255 255 255 / 0.3) inset, 0 12px 36px -8px rgb(164 147 255 / 0.85)' }}
+              className="relative flex min-h-13 flex-1 items-center justify-center gap-2.5 rounded-2xl px-5 text-[15px] font-semibold text-primary-ink transition-[transform,filter] hover:brightness-110 active:scale-[0.98]"
+              style={{ background: 'linear-gradient(180deg, #ece7ff, #b3a3ff)', boxShadow: '0 0 0 1px color-mix(in oklab, var(--color-ink) 30%, transparent) inset, 0 12px 36px -8px color-mix(in oklab, var(--color-accent) 85%, transparent)' }}
             >
-              <span className="flex size-7 items-center justify-center rounded-full bg-[#0b0820]/10">
+              <span className="flex size-7 items-center justify-center rounded-full bg-primary-ink/10">
                 <Icon name="play" size={14} strokeWidth={2.6} />
               </span>
-              <span className="whitespace-nowrap">Watch the tour <span className="font-medium text-[#0b0820]/65">(about 2 min)</span></span>
+              <span className="whitespace-nowrap">Watch the tour <span className="font-medium text-primary-ink/65">(about 2 min)</span></span>
             </button>
-            <button onClick={() => answer('explore')} className="flex min-h-13 items-center justify-center gap-2 rounded-2xl border border-line bg-white/[0.04] px-5 text-[15px] font-medium text-ink-2 transition-colors hover:border-line-2 hover:text-ink md:flex-none">
+            <button onClick={() => answer('explore')} className="flex min-h-13 items-center justify-center gap-2 rounded-2xl border border-line bg-tint/[0.04] px-5 text-[15px] font-medium text-ink-2 transition-colors hover:border-line-2 hover:text-ink md:flex-none">
               Explore on my own
             </button>
           </div>
@@ -111,7 +112,7 @@ export function Welcome() {
             <button
               type="button"
               onClick={() => answer('showreel')}
-              className="mt-2 flex min-h-13 w-full items-center justify-center gap-2 rounded-2xl border border-line bg-white/[0.04] px-5 text-[15px] font-medium text-ink-2 transition-colors hover:border-line-2 hover:text-ink"
+              className="mt-2 flex min-h-13 w-full items-center justify-center gap-2 rounded-2xl border border-line bg-tint/[0.04] px-5 text-[15px] font-medium text-ink-2 transition-colors hover:border-line-2 hover:text-ink"
               data-welcome-showreel=""
             >
               <Icon name="play" size={14} strokeWidth={2.6} />
@@ -134,7 +135,8 @@ export function Welcome() {
 }
 
 function BrandMark() {
-  return <OmegaMark className="size-12 text-ink" />
+  const experience = useLook().current?.experience ?? 'classic'   // the welcome wears the experience it is shown in
+  return <LivingMark look={experience} className="size-12" />
 }
 
 // ---------------------------------------------------------------- help sheet
@@ -216,13 +218,13 @@ export function HelpSheet() {
             <div className="eyebrow">Help</div>
             <h2 className="font-display text-[22px] font-semibold tracking-tight">Find your way around</h2>
           </div>
-          <button onClick={close} className="-mr-2 flex size-11 items-center justify-center rounded-xl text-ink-2 hover:bg-white/[0.07] hover:text-ink" aria-label="Close help">
+          <button onClick={close} className="-mr-2 flex size-11 items-center justify-center rounded-xl text-ink-2 hover:bg-tint/[0.07] hover:text-ink" aria-label="Close help">
             <Icon name="x" size={20} />
           </button>
         </header>
         <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-5 pb-6">
-          <section className="relative overflow-hidden rounded-[20px] border border-line bg-white/[0.03] p-4" aria-label="Guided tour">
-            <div className="pointer-events-none absolute -top-20 -right-10 size-56 rounded-full" style={{ background: 'radial-gradient(circle, rgb(164 147 255 / 0.22), transparent 70%)' }} aria-hidden="true" />
+          <section className="relative overflow-hidden rounded-[20px] border border-line bg-tint/[0.03] p-4" aria-label="Guided tour">
+            <div className="pointer-events-none absolute -top-20 -right-10 size-56 rounded-full" style={{ background: 'radial-gradient(circle, color-mix(in oklab, var(--color-accent) 22%, transparent), transparent 70%)' }} aria-hidden="true" />
             <div className="relative flex flex-wrap items-center gap-3">
               <div className="min-w-0 flex-1 basis-56">
                 <div className="font-display text-[16px] font-semibold">The guided tour</div>
@@ -231,8 +233,8 @@ export function HelpSheet() {
               <button
                 ref={first}
                 onClick={() => startTour({})}
-                className="flex min-h-11 items-center gap-2 rounded-xl px-4 text-[14px] font-semibold text-[#0b0820] hover:brightness-110"
-                style={{ background: 'linear-gradient(180deg, #ece7ff, #b3a3ff)', boxShadow: '0 8px 26px -8px rgb(164 147 255 / 0.85)' }}
+                className="flex min-h-11 items-center gap-2 rounded-xl px-4 text-[14px] font-semibold text-primary-ink hover:brightness-110"
+                style={{ background: 'linear-gradient(180deg, #ece7ff, #b3a3ff)', boxShadow: '0 8px 26px -8px color-mix(in oklab, var(--color-accent) 85%, transparent)' }}
               >
                 <Icon name="play" size={15} strokeWidth={2.6} />
                 Replay the tour
@@ -240,8 +242,8 @@ export function HelpSheet() {
             </div>
             <div className="relative mt-3 flex flex-wrap gap-1.5" aria-label="Start at a chapter">
               {CHAPTERS.map((c, i) => (
-                <button key={c.id} onClick={() => startTour({ chapter: c.id })} className="inline-flex min-h-8 items-center gap-1.5 rounded-full border border-line bg-black/20 py-0.5 pr-2.5 pl-1 text-[12px] text-ink-2 transition-colors hover:border-line-2 hover:text-ink" title={c.blurb}>
-                  <span className="flex size-5 items-center justify-center rounded-full bg-white/[0.07] font-mono text-[10px] text-ink-3">{i + 1}</span>
+                <button key={c.id} onClick={() => startTour({ chapter: c.id })} className="inline-flex min-h-8 items-center gap-1.5 rounded-full border border-line bg-shade/20 py-0.5 pr-2.5 pl-1 text-[12px] text-ink-2 transition-colors hover:border-line-2 hover:text-ink" title={c.blurb}>
+                  <span className="flex size-5 items-center justify-center rounded-full bg-tint/[0.07] font-mono text-[10px] text-ink-3">{i + 1}</span>
                   {c.title}
                 </button>
               ))}

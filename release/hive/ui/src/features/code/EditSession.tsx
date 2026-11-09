@@ -72,11 +72,11 @@ export function usePrincipal(): string | null | undefined {
 }
 
 /** The page shown instead of the workbench when the repository isn't editable in the hive. */
-export function NotEditableState({ refusal, label, made }: { refusal: NotEditable; label: string; made?: { task_id: string; grant_id: string } | null }) {
+export function NotEditableState({ refusal, label, made, onBack }: { refusal: NotEditable; label: string; made?: { task_id: string; grant_id: string } | null; onBack?: () => void }) {
   const t = notEditableText(refusal, label, made)
   return (
     <div role="alert" aria-label="Not editable in the hive">
-      <EmptyState icon="ban" title={t.title} body={t.body} action={<Button onClick={() => navigate({ name: 'code' })}>Back to the targets list</Button>} />
+      <EmptyState icon="ban" title={t.title} body={t.body} action={<Button onClick={onBack ?? (() => navigate({ name: 'code' }))}>Back to the targets list</Button>} />
     </div>
   )
 }
@@ -87,7 +87,7 @@ export function NotEditableState({ refusal, label, made }: { refusal: NotEditabl
  * #/code/<target> before anything is open: reuse the saved task (deliberately, and only once its grant checks out) or
  * start a new one (confirmed). `notice` is why the workbench came back here (its grant was refused).
  */
-export function StartEditing({ targetId, notice, onOpened }: { targetId: string; notice?: string | null; onOpened: (o: Opened, origin: Origin) => void }) {
+export function StartEditing({ targetId, notice, onOpened, embedded }: { targetId: string; notice?: string | null; onOpened: (o: Opened, origin: Origin) => void; embedded?: { onBack: () => void } }) {
   const client = useHive((s) => s.client)
   const principal = usePrincipal()
   // the targets list (or why it did not load) belongs to the client it was read through
@@ -144,21 +144,22 @@ export function StartEditing({ targetId, notice, onOpened }: { targetId: string;
   }
   const reason = target ? closedReason(target) : null
   const droppedNote = dropped && (
-    <p role="status" aria-label="Saved task not offered" className="rounded-lg border border-line bg-white/[0.03] px-3 py-2 text-[12.5px] text-ink-2 [overflow-wrap:anywhere]">
+    <p role="status" aria-label="Saved task not offered" className="rounded-lg border border-line bg-tint/[0.03] px-3 py-2 text-[12.5px] text-ink-2 [overflow-wrap:anywhere]">
       {dropped.why} This browser has forgotten task {mono(dropped.task_id)}; it is still in Tasks.
     </p>
   )
-  return (
-    <Page title={target?.label ?? 'Code'} eyebrow="Code · choose how to edit" label="Start editing" onBack={() => navigate({ name: 'code' })} onClose={() => navigate({ name: 'hive' })}>
+  const back = embedded?.onBack ?? (() => navigate({ name: 'code' }))
+  const content = (
+    <>
       <div className="mx-auto max-w-2xl space-y-4 px-4 py-4 md:px-6" aria-label="How to edit">
         {err ? <EmptyState icon="alert" title="Targets did not load" body={err} />
           : !targets ? <p className="text-[13px] text-ink-4">Loading…</p>
           : !target ? <EmptyState icon="alert" title="No such edit target" body={targetId} />
-          : refused ? <NotEditableState refusal={refused} label={target.label} />
+          : refused ? <NotEditableState refusal={refused} label={target.label} onBack={embedded?.onBack} />
           : !openable ? (
             <>
               <div role="status" aria-label="Cannot be edited here">
-                <EmptyState icon="ban" title={reason ? 'This repository isn’t editable in the hive' : 'This target cannot be opened for editing'} body={reason ? `${target.label} can’t be opened for editing: ${reason}. Nothing is offered here.` : `${target.label} can’t be opened for editing now (${target.private ? `private: ${target.owner} has to agree first` : 'not under source control'}).`} action={<Button onClick={() => navigate({ name: 'code' })}>Back to the targets list</Button>} />
+                <EmptyState icon="ban" title={reason ? 'This repository isn’t editable in the hive' : 'This target cannot be opened for editing'} body={reason ? `${target.label} can’t be opened for editing: ${reason}. Nothing is offered here.` : `${target.label} can’t be opened for editing now (${target.private ? `private: ${target.owner} has to agree first` : 'not under source control'}).`} action={<Button onClick={back}>Back to the targets list</Button>} />
               </div>
               {/* a definite grant judgement applies here too: say that the entry was forgotten */}
               {droppedNote}
@@ -176,7 +177,7 @@ export function StartEditing({ targetId, notice, onOpened }: { targetId: string;
               )}
               {droppedNote}
               {saved && !dropped && judged && (
-                <section aria-label="Saved in this browser" className="space-y-2 rounded-2xl border border-line bg-white/[0.03] p-4">
+                <section aria-label="Saved in this browser" className="space-y-2 rounded-2xl border border-line bg-tint/[0.03] p-4">
                   <h2 className="eyebrow">Saved in this browser</h2>
                   <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 text-[13px]">
                     <dt className="text-ink-3">Task</dt><dd className="break-all">{mono(saved.task_id)}</dd>
@@ -192,7 +193,7 @@ export function StartEditing({ targetId, notice, onOpened }: { targetId: string;
                   </div>
                 </section>
               )}
-              <section aria-label="Start a new edit task" className="space-y-2 rounded-2xl border border-line bg-white/[0.03] p-4">
+              <section aria-label="Start a new edit task" className="space-y-2 rounded-2xl border border-line bg-tint/[0.03] p-4">
                 <h2 className="eyebrow">New task</h2>
                 <p className="text-[12.5px] text-ink-3">The hive makes a new task “Edit code: {target.label}” and a new 12-hour edit grant for you. You confirm it first.</p>
                 <Button variant="primary" icon="plus" onClick={() => setAsking(true)}>Start a new edit task</Button>
@@ -202,8 +203,12 @@ export function StartEditing({ targetId, notice, onOpened }: { targetId: string;
       </div>
       {/* never for a target that cannot be opened, or once the hive said it isn't editable */}
       <AnimatePresence>{asking && target && openable && !refused && <StartTaskDialog target={target} principal={principal} current={saved && offer ? { task_id: saved.task_id, grant_id: saved.grant_id, inUse: false } : null} onStarted={(o) => onOpened(o, 'new')} onRefused={(r) => { setRefused(r); setAsking(false) }} onClose={() => setAsking(false)} />}</AnimatePresence>
-    </Page>
+    </>
   )
+  return embedded ? <section aria-label="Start editing" className="h-full overflow-y-auto">
+    <div className="flex items-center gap-3 px-4 pt-3"><Button onClick={back}>Back to projects</Button><h2>{target?.label ?? 'Start editing'}</h2></div>
+    {content}
+  </section> : <Page title={target?.label ?? 'Code'} eyebrow="Code · choose how to edit" label="Start editing" onBack={back} onClose={() => navigate({ name: 'hive' })}>{content}</Page>
 }
 
 // ------------------------------------------------------------------------------------------------ start dialog

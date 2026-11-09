@@ -78,3 +78,12 @@ describe('the thread renders every kind of row in every grammar, as plain text',
     })
   }
 })
+
+it('every floating composer avoids a receipt/reading claim until waking has finished', () => {
+  for (const words of Object.values(SKIN_WORDS)) {
+    expect(words.step('Ada', 'preparing', false)).toBe('')
+    expect(words.step('Ada', 'waking', false).toLowerCase()).toContain('waking')
+    expect(words.step('Ada', 'waking', false)).not.toMatch(/reading|receiving|taking it in|writing/i)
+  }
+  expect(SKIN_WORDS.capsule.step('Ada', 'sending', true)).toBe('Ada is reading your request')
+})

@@ -8,6 +8,7 @@ import { Button } from '../ui/primitives'
 import { useCovered } from '../ui/overlays'
 import { useGuideShowing } from '../features/guided/reading'
 import { useIntro } from './introStore'
+import { useFlDoor } from '../features/firstlight/door'
 import { hintHeight, placeHint, type Box } from './place'
 import { mapLabelBoxes } from '../scene/mapLabels'
 import { readAskRoom } from '../features/ask/askRoom'
@@ -105,7 +106,8 @@ export function ViewInfo({ view, className, size = 'md' }: { view: ViewKey; clas
   const card = useRef<HTMLDivElement>(null)
   // the welcome, the tour, or a guided demo on screen (its caption and controls, any step; guided/reading): the hint waits
   const demo = useGuideShowing()
-  const busy = useIntro((s) => s.welcome || !!s.tour) || demo
+  const firstLight = useFlDoor((state) => !!state.asked)
+  const busy = useIntro((s) => s.welcome || !!s.tour) || demo || firstLight
   // a sheet or menu this button is not inside is open: the hint belongs to the view beneath, so it waits (ui/overlays)
   const covered = useCovered(btn)
   const startTour = useIntro((s) => s.startTour)
@@ -162,6 +164,7 @@ export function ViewInfo({ view, className, size = 'md' }: { view: ViewKey; clas
     setOpen((o) => !o)
   }
 
+  if (firstLight) return null
   return (
     <>
       <button
@@ -172,9 +175,9 @@ export function ViewInfo({ view, className, size = 'md' }: { view: ViewKey; clas
         title="What's this?"
         data-tour={`info-${view}`}
         className={cx(
-          'relative inline-flex shrink-0 items-center justify-center rounded-xl text-ink-3 transition-colors hover:bg-white/[0.07] hover:text-ink',
+          'relative inline-flex shrink-0 items-center justify-center rounded-xl text-ink-3 transition-colors hover:bg-tint/[0.07] hover:text-ink',
           size === 'sm' ? 'size-9' : 'size-11',
-          cardOpen && 'bg-white/[0.08] text-ink',
+          cardOpen && 'bg-tint/[0.08] text-ink',
           className,
         )}
       >
@@ -202,7 +205,7 @@ export function ViewInfo({ view, className, size = 'md' }: { view: ViewKey; clas
                   <div className="eyebrow">What's this?</div>
                   <h2 className="mt-1 font-display text-[17px] font-semibold tracking-tight text-ink">{help.title}</h2>
                 </div>
-                <button onClick={() => setOpen(false)} className="-mt-1 -mr-1.5 flex size-9 items-center justify-center rounded-lg text-ink-3 hover:bg-white/[0.06] hover:text-ink" aria-label="Close">
+                <button onClick={() => setOpen(false)} className="-mt-1 -mr-1.5 flex size-9 items-center justify-center rounded-lg text-ink-3 hover:bg-tint/[0.06] hover:text-ink" aria-label="Close">
                   <Icon name="x" size={16} />
                 </button>
               </div>
@@ -224,7 +227,7 @@ export function ViewInfo({ view, className, size = 'md' }: { view: ViewKey; clas
                     setOpen(false)
                     startTour({})
                   }}
-                  className="min-h-10 rounded-xl px-3 text-[13px] font-medium text-ink-3 transition-colors hover:bg-white/[0.06] hover:text-ink"
+                  className="min-h-10 rounded-xl px-3 text-[13px] font-medium text-ink-3 transition-colors hover:bg-tint/[0.06] hover:text-ink"
                 >
                   Full tour
                 </button>
@@ -246,7 +249,7 @@ export function ViewInfo({ view, className, size = 'md' }: { view: ViewKey; clas
               <button onClick={toggle} className="min-h-9 min-w-0 flex-1 text-left text-[12.5px] leading-snug text-ink-2 hover:text-ink">
                 {help.hint} <span className="font-semibold whitespace-nowrap text-accent-2">What's this?</span>
               </button>
-              <button onClick={() => setHint(false)} className="flex size-9 shrink-0 items-center justify-center rounded-xl text-ink-4 hover:bg-white/[0.06] hover:text-ink" aria-label="Dismiss hint">
+              <button onClick={() => setHint(false)} className="flex size-9 shrink-0 items-center justify-center rounded-xl text-ink-4 hover:bg-tint/[0.06] hover:text-ink" aria-label="Dismiss hint">
                 <Icon name="x" size={14} />
               </button>
             </m.div>

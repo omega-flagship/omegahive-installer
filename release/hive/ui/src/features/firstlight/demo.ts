@@ -162,11 +162,10 @@ export class DemoHost implements FlHost {
     return this.how
   }
   async saveAsk(_mindId: string, shape: AskShape, write: BoundWrite): Promise<MindRef> {
-    return write(async () => {
-      this.mindRef = { ...this.mindRef, name: shape.name }
-      if (shape.how !== null) this.how = shape.how
-      return { ...this.mindRef, status: this.woke !== null ? 'awake' : 'asleep' }
-    })
+    await write(async () => { this.mindRef = { ...this.mindRef, name: shape.name } })
+    if (shape.how !== null) await write(async () => { this.how = shape.how! })
+    await write(async () => undefined) // invented preferences acknowledgement, never a host write
+    return { ...this.mindRef, status: this.woke !== null ? 'awake' : 'asleep' }
   }
   async helloGet(): Promise<Hello | null> {
     return this.hello(false)

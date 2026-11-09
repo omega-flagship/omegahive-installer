@@ -36,9 +36,17 @@ class World:
 
 
 @pytest.fixture()
-def g(client, monkeypatch):  # noqa: F811
+def g(client, monkeypatch, tmp_path):  # noqa: F811
     hive = client.app.state.hive
+    # the run route (POST /v1/runs) is a native start: after the grant checks this file is about, it also needs the
+    # repository registered and the operator's trusted-native service config (code.py _require_native_start_policy)
+    monkeypatch.setattr(hive.code, "repos", {"synthetic": {"path": str(hive.code.platform_root)}})
+    config = tmp_path / "code-service.json"
+    config.write_text(json.dumps({"repositories": {"synthetic": {"path": str(hive.code.platform_root)}}}))
+    monkeypatch.setenv("HIVE_CODE_SERVICE_CONFIG", str(config))
     monkeypatch.setattr(Code, "_loaded_release_mismatch", lambda self: None)
+    import hive.core.code as code_module   # relay-proof transport is covered against real listeners in the interop tests
+    monkeypatch.setattr(code_module, "RELAY_PROOF_RELEASES", frozenset())
     token = secrets.token_urlsafe(16)
     hive.db.insert("services", {"id": "svc_code", "name": "omegacode", "version": "1", "address": "http://127.0.0.1:8724",
                                 "contract": "omegacode/1", "surfaces": "[]", "capabilities": "[]",

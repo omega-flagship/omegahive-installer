@@ -1,4 +1,4 @@
-"""Who pays, and each person's allowance (the owner, 2026-10-04: $50/month per member; own keys are theirs)."""
+"""Who pays, and each person's allowance (Jon 2026-10-04: $50/month per family member; own keys are theirs)."""
 import pytest
 
 from hive.core.db import now

@@ -21,6 +21,9 @@ export function parse(c: string): RGBA {
     const full = h.length === 3 ? [...h].map((x) => x + x).join('') : h
     return [parseInt(full.slice(0, 2), 16), parseInt(full.slice(2, 4), 16), parseInt(full.slice(4, 6), 16), 1]
   }
+  // color-mix(in <space>, <colour> P%, transparent): that colour at P% alpha (the light-token round writes alpha this way)
+  const cm = s.match(/^color-mix\(in [a-z]+,\s*(.+?)\s+([\d.]+)%,\s*transparent\)$/)
+  if (cm) { const [r, g, b, a] = parse(cm[1]); return [r, g, b, a * Number(cm[2]) / 100] }
   const m = s.match(/^(rgba?|hsla?)\((.*)\)$/)
   if (!m) throw new Error(`unparsed colour ${c}`)
   const parts = m[2].split(/[\s,/]+/).filter(Boolean)

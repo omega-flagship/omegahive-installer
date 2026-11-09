@@ -24,14 +24,20 @@ interface Allow {
   path: number
   /** the check that stands between the last await and each of `before` (in `in`, when it is another function) */
   guard: { re: RegExp; before: string[]; in?: string }
+  /**
+   * writes that are deliberate releases, not acts (closing what this same code opened, through the client it opened it
+   * with): exempt from the guard, each pinned by name and line with its reason, and checked to still be there
+   */
+  release?: { name: string; line: number; why: string }[]
   why: string
 }
 const ALLOW: Allow[] = [
   { at: 'features/mind/inbox.ts:collectInbox', writes: ['myMindInboxAck*'], path: 4,
     guard: { re: /if \(!binding\.current\(\)\) return/, before: ['myMindInboxAck'] },
     why: 'its own identity binding: `if (!binding.current()) return stale` is the statement right before each ack in the loop' },
-  { at: 'lib/hostConfirm.ts:runConfirmed', writes: ['confirmAct', 'programAct', 'recheckRunning', 'checkOnce', 'recheckRunning'], path: 4,
-    guard: { re: /if \(!alive\(\)\) return/, before: ['confirmAct', 'programAct', 'checkOnce'] },
+  // release baseline r1: the act is sent through personStartedProgramAct (P12/P13 R6), with the same alive() guard
+  { at: 'lib/hostConfirm.ts:runConfirmed', writes: ['confirmAct', 'personStartedProgramAct', 'recheckRunning', 'checkOnce', 'recheckRunning'], path: 4,
+    guard: { re: /if \(!alive\(\)\) return/, before: ['confirmAct', 'personStartedProgramAct', 'checkOnce'] },
     why: '`alive()` (client, session, app, swarm, dialog) is checked synchronously right before the mint, the act and the recovery check; a token minted across a change is discarded unsent; recheckRunning checks it itself (its own allowance)' },
   { at: 'lib/hostConfirm.ts:recheckRunning', writes: ['checkOnce*'], path: 2,
     guard: { re: /if \(!alive\(\)\) return/, before: ['checkOnce'] },
@@ -42,20 +48,42 @@ const ALLOW: Allow[] = [
   { at: 'features/code/canvas/vibeRoute.ts:recordAndSubmit', writes: ['askRecordIntent', 'askSubmitIntent'], path: 2,
     guard: { re: /if \(!stillWanted\(\)\) return/, before: ['askSubmitIntent'] },
     why: '`stillWanted()` (vibeSession `live`: same request AND binding.current()) is checked synchronously right before the submit' },
+  // Code mount a018643c: the same retained operation is recorded and submitted; Dot150958 accepted this guard.
+  { at: 'features/code/testIntent.ts:resumeCodeTest', writes: ['askRecordCodeTestIntent', 'askSubmitIntent'], path: 2,
+    guard: { re: /if \(!current\(\)\) return/, before: ['askSubmitIntent'] },
+    why: '`current()` (the original person, candidate/draft and capability binding) is checked after the record await and synchronously before submitting that same retained intent, including explicit recovery' },
   { at: 'features/code/canvas/vibeSession.ts:ask', writes: ['codeProxy', 'codeSuggestionScope', 'recordAndSubmit'], path: 2,
     guard: { re: /if \(!put\(\{ phase: \{ kind: 'working', step: '\w+' \} \}\)\) return/, before: ['recordAndSubmit'] },
     why: 'found by the helper-effect scan: the scope (one of two exclusive writes) then recordAndSubmit; `put` commits through binding.commit for this request only and the run returns when it is refused, right before the hand-off' },
+  // release baseline r1: the embedded app Ask (lib/appAsk.ts, its lease generation)
+  // the first write is the card: AppAsk's port reads an app-link entry's card with appLinkEntryCard (a POST)
+  { at: 'lib/appAsk.ts:create', writes: ['programAskCard', 'programAskConsent', 'programAskFrame'], path: 3,
+    guard: { re: /if \(!valid\(\)/, before: ['programAskConsent', 'programAskFrame'] },
+    why: '`valid()` (same open serial, not disposed, the same person, the app visible) is checked synchronously right before the consent write and again right before the frame request' },
+  { at: 'lib/appAsk.ts:tick', writes: ['programAskPresence', 'programAskOp', 'op'], path: 2,
+    guard: { re: /if \(!this\.holds\(t\)/, before: ['op'] },
+    why: 'presence and poll are exclusive branches, each under a fresh ticket(); after a poll the unsubscribe is sent only if `this.holds(t)` (same serial and generation, still active), and op() takes its own ticket' },
+  // release baseline r1: the app frame (found once appLink* were classified; the binding checks added this round)
+  { at: 'features/programs/AppFrame.tsx:receive', writes: ['appLinkCheck', 'appLinkCheckFrame', 'attachFrame', 'programView', 'programAct'], path: 2,
+    guard: { re: /if \(disposed \|\| !releaseCurrent \|\| !docBinding\.current\(\)\) return/, before: ['attachFrame', 'programView', 'programAct'] },
+    why: 'the entry or frame consent check (two exclusive POSTs that read) is followed, before any app write, by `disposed || !releaseCurrent || !docBinding.current()` (the same sign-in, document and release); on the app-ready path the same check stands right before attachFrame' },
+  { at: 'features/programs/AppLinks.tsx:<anonymous@49>', writes: [], path: 0,
+    guard: { re: /if \(!alive \|\| !binding\.current\(\)\)/, before: ['appLinkClose'] },
+    why: 'registering the frame: when the answer comes back after the binding was lost (or the mount ended), the frame just created is closed at once (appLinkClose of its own id, through the client it was opened with), so no frame outlives the sign-in that opened it; nothing is done for anyone else',
+    release: [{ name: 'appLinkClose', line: 68, why: 'the effect\'s unmount: this mount\'s own frame (the id its registration returned) is closed through the client that opened it, whatever the sign-in is now; a release, never an act for anyone' }] },
   // store/ask.ts: Ask's thread binding (snapshot().ok(): bound thread, epoch, session, inits, client and sign-in)
   { at: 'store/ask.ts:check', writes: ['ask', 'admitted'], path: 2,
     guard: { re: /if \(!snap\.ok\(\)\) return/, before: ['ask', 'admitted'] },
     why: 'store/ask.ts thread binding: the same request is sent again (same operation_id, never a second admission) only after `snap.ok()`; its admission is applied only after it again' },
-  { at: 'store/ask.ts:send', writes: ['ask', 'check'], path: 2,
-    guard: { re: /if \(!snap\.ok\(\)\) return/, before: ['check'] },
-    why: 'store/ask.ts thread binding: an answer that is not known is checked by its own id only after `snap.ok()`' },
+  // release baseline r1: store/ask.ts:send is a single write now (deliver, one path), no longer a chain: its allowance went
   // live-pins r1: was @873; j0-fixes r1 (db7133ec) added 17 lines above it in store/ask.ts. `release` (its doc and body)
   // is byte-identical to followups-r8's: same writes, same path, same guard.
   // ask-send-r1: was @890; AskRow.spentUsd (2 lines, the refused row's reported turn spend) was added above it
-  { at: 'store/ask.ts:<anonymous@892>', writes: ['steerTo*'], path: 2,
+  // release baseline r1: was @892; later rounds added lines above it in store/ask.ts; the loop is the same
+  // browser Ask route 7948bb49: was @963; the route's lines above it moved it; the loop is the same
+  // Browser Ask fix-forwards 1fd14a78 add 14 lines above this otherwise unchanged held-word loop.
+  // create-code r1: was @1077; AskOpts' `quiet` flag (2 lines) was added above it; the loop is the same
+  { at: 'store/ask.ts:<anonymous@1079>', writes: ['steerTo*'], path: 2,
     guard: { re: /if \(!holds\(\)\) return/, before: ['steerTo'] },
     why: 'store/ask.ts thread binding: held words are steered one at a time, each only while `holds()` (snap.ok() and the turn still there)' },
   { at: 'store/ask.ts:apply', writes: ['revertSeq*'], path: 2,
@@ -88,7 +116,29 @@ describe('the mutation sets are derived, and pinned', () => {
     // Studio maker and returns the card; used only behind the capability, from the app page's "Draw live")
     // j3r43-o3 r1.13: 158 = 157 plus studioMaker (POST /api/studio/setup with body {}: the person's own maker and its
     // Studio space, before their saved canvases are listed; behind the capability)
-    expect(client.writes.size).toBe(158)
+    // release baseline r1 (on 1ee2bb15 + Create 7abe7aab): 188 = 158 plus 20 new writes, and the 10 appLink* members,
+    // which go through the private appLinkRequest(path, body, method = 'POST'): the scanner now reads a transport's verb
+    // at its `method` parameter, or that parameter's default (they were unclassified before). The 20: askActClaim,
+    // askClaim, askHandover, configureGoogleConnector, consentAppSwarm, disconnectGoogleConnector, hostProgramAct,
+    // installProgram, openPersonApp, programAskClose, programAskConsent, programAskFrame, programAskOp,
+    // programAskPresence, programAskRevoke, releaseNotices, resetPersonApp, setGoogleConnectorMind, setNoticeSettings,
+    // startGoogleConnector. None moved out of `writes`.
+    // browser Ask route 7948bb49: 189 = 188 plus askBrowserDone (the browser turn's done, /api/ask/{op}/done)
+    // Code mount a018643c: 190 = 189 plus askRecordCodeTestIntent (POST to the original retained-intent route).
+    // base 5a8abdf1 (already 194, the pin had drifted): 194 = 190 plus reportMissingBlocks, addMember,
+    // resetMemberPassword and removeMemberPassword (each a POST/DELETE write added after e6a59fea)
+    // create-code r1 (host 826b23a0): 197 = 194 plus requestApply, requestChanges and requestDiscard (the engine's person
+    // routes: POST /api/requests/{id}/controller/apply | changes | discard)
+    // create-code r3.12 (host 12f4292f): 198 = 197 plus setCodeControllerPrefs (PUT /api/me/code-controller: the person's
+    // own review setting for new Code requests; written through bindOperation().write in canvas/work/reviewPolicy)
+    // create-plan r1 (provisional routes, features/createPlan/contract.ts): 202 = 198 plus createPlanStart (POST
+    // /api/create/plans {sentence}: starts a plan), createPlanAnswer (POST …/{id}/answers: the person answers a question),
+    // createPlanDeploy (POST …/{id}/deploy: the person's deploy go) and createPlanStop (POST …/{id}/stop: the person stops it)
+    expect(client.writes.size).toBe(202)
+    for (const m of ['createPlanStart', 'createPlanAnswer', 'createPlanDeploy', 'createPlanStop']) expect(client.writes.has(m), m).toBe(true)
+    for (const m of ['requestApply', 'requestChanges', 'requestDiscard', 'setCodeControllerPrefs']) expect(client.writes.has(m), m).toBe(true)
+    expect(client.writes.has('askRecordCodeTestIntent')).toBe(true)
+    for (const m of ['appLinkFrame', 'appLinkRedeem', 'programAskFrame', 'configureGoogleConnector']) expect(client.writes.has(m), m).toBe(true)
     expect(client.writes.has('studioSetupProposal')).toBe(true)
     expect(client.writes.has('studioMaker')).toBe(true)
     // live-pins r1: 124 = followups-r8's 122, plus budgetLimitsView (j0-fixes r1: GET /api/budgets/limits) and connect
@@ -96,7 +146,20 @@ describe('the mutation sets are derived, and pinned', () => {
     // connect is a read now, and leaves `none`). No member moved into or out of `writes`.
     // j3r43-o3 r1.3: 126 = 124 plus studioSession (the ledger GET) and studioMountReadback (GET …/mount?attempt_id=)
     // r1.14b: 127 = 126 plus myKeyLimits (GET /api/me/key-limits: the Me page's own-key monthly total)
-    expect(client.reads.size).toBe(127)
+    // release baseline r1: 135 = 127 plus appSwarmCard, askPresentation, googleConnector, myApps, myNotices, mySpendDays,
+    // programAskCard and programInstall (each a GET)
+    // browser Ask route 7948bb49: 136 = 135 plus browserMindGateway (GET, the gateway's configuration)
+    // create-code r1: 137 = 136 plus requestController (GET /api/requests/{id}/controller, the engine's view)
+    // create-code r3.12 (host 12f4292f): 138 = 137 plus codeControllerPrefs (GET /api/me/code-controller)
+    // create-plan r1: 140 = 138 plus createPlan (GET /api/create/plans/{id}, the plan view) and createPlanFile (GET
+    // …/{id}/files?path=&ckpt=, a file as of a checkpoint)
+    // create-plan wire (host engine 7331307a, create_plan_engine.py): 142 = 140 plus createPlans (GET /api/create/plans:
+    // the person's plans, so the bench resumes a running one) and createPlanPreview (GET …/{id}/preview: the current
+    // preview's verified files for the app frame). Both GETs; no member moved into or out of `writes`.
+    expect(client.reads.size).toBe(142)
+    for (const m of ['createPlan', 'createPlanFile', 'createPlans', 'createPlanPreview']) expect(client.reads.has(m), m).toBe(true)
+    expect(client.reads.has('requestController')).toBe(true)
+    expect(client.reads.has('codeControllerPrefs')).toBe(true)
     expect(client.reads.has('budgetLimitsView')).toBe(true)
     expect(client.reads.has('myKeyLimits')).toBe(true)
     // scanner r1 (Kimi live-pins r1): read certifies verbs only, not side effects. open() also re-asks the methods on
@@ -104,17 +167,28 @@ describe('the mutation sets are derived, and pinned', () => {
     // see api/identityChanged.test.ts's pre-kind pin, which turns this into a write the moment open() sends anything else first.
     expect(client.reads.has('connect')).toBe(true)
     expect(client.unknown).toEqual(new Set())
-    expect([...client.none].sort()).toEqual(['authContext', 'disconnect', 'dispose', 'flowStudioUrl', 'needsAuth', 'onAuthChange', 'onConnection', 'subscribe'])
+    // retainedMutationScope: reads the client's own fields (host, principal), sends nothing
+    expect([...client.none].sort()).toEqual(['authContext', 'disconnect', 'dispose', 'flowStudioUrl', 'needsAuth', 'onAuthChange', 'onConnection', 'retainedMutationScope', 'subscribe'])
     expect([...client.transports].sort()).toEqual(['codeProxy', 'repoMapRequest'])
     for (const m of ['logout', 'saveExploreView', 'personalMindHello', 'codeProxy', 'repoMapRequest', 'patchOnboarding', 'setOwnKeyLimit', 'askForLimit']) expect(client.writes.has(m), m).toBe(true)
   })
   it('the store: 40 actions; the helper-derived members: exactly these', () => {
     expect(store.size).toBe(40)
     expect([...effects.members].filter((m) => !mutations.has(m)).sort()).toEqual([
-      'applyCompletion', 'applyRename', 'deleteThread', 'demoAddKey', 'heartbeat', 'helloGet', 'helloWake', 'mount', 'newThread', 'reinit', 'rename',
-      'setDefaultSwarm', 'setOwnLimit', 'setThreadLimit', 'steerTo', 'turnOff', 'unmount', 'wakeAll', 'writeProgress',
+      'accept', 'applyCompletion', 'applyRename', 'burn', 'consume', 'deleteThread', 'demoAddKey', 'handback', 'heartbeat', 'helloGet', 'helloWake', 'mount', 'navigate', 'newThread',
+      'op', 'programAskCard', 'reinit', 'revoke', 'setDefaultSwarm', 'setOwnLimit', 'setThreadLimit', 'steerTo', 'turnOff', 'unmount', 'useModel', 'wakeAll', 'writeLimit', 'writeProgress',
+      // create-code r1: useModel is First Light's "Think with your … plan" (firstlight/host.ts): one patchAgent of the
+      // owner's own mind's model, sent only through store.thinkWith's bound operation (op.write)
+      // MeTTa screens R6: `rename` left: the Me page's key rename was a helper named rename around updateKey; the
+      // composed page calls the same store action, updateKey, from its press handler (features/keys/ProfilePage.tsx)
+      // own-key one-step (Jon 11-05): writeLimit is the add-your-key sheet's PUT /api/me/key-limits/self, sent only
+      // through keys/ownLimit.saveOwnLimit's bound operation (features/ownKey/addOwnKey.ts)
       // j3r43-o3 r1.3: mount / heartbeat / unmount are the Studio mount lease's deps (features/studioLive/store.ts → mount.ts),
       // each one host write through the session's bound frame operation
+      // release baseline r1: accept, handback, revoke (the Ask's claim and handover helpers), op (lib/appAsk.ts's ticketed
+      // programAskOp), navigate (app links, through appLink* now that they are classified) and programAskCard (AppAsk's
+      // port, which reads an app-link entry's card with appLinkEntryCard, a POST); consume and burn (lib/appLinkRestore's
+      // steps: the entry's presentation spend, AppFrame's restore after consent, re-checked and tested in its own test)
     ])
   })
 })
@@ -134,7 +208,13 @@ describe('every multi-write chain goes through the bound operation (lib/boundOpe
       expect(sig(c!), `changed: ${a.at}`).toEqual(a.writes)
       expect(c!.path, `path changed: ${a.at}`).toBe(a.path)
       expect(a.why.length, a.at).toBeGreaterThan(40)
-      const checks = guardedWrites(a.guard.in ?? a.at, a.guard.re, a.guard.before)
+      const all = guardedWrites(a.guard.in ?? a.at, a.guard.re, a.guard.before)
+      const released = (g: { name: string; line: number }) => a.release?.some((r) => r.name === g.name && r.line === g.line)
+      for (const r of a.release ?? []) {
+        expect(all.some((g) => g.name === r.name && g.line === r.line), `release moved or gone: ${a.at} ${r.name}:${r.line}`).toBe(true)
+        expect(r.why.length, `${a.at} release`).toBeGreaterThan(40)
+      }
+      const checks = all.filter((g) => !released(g))
       expect(new Set(checks.map((g) => g.name)), a.at).toEqual(new Set(a.guard.before))
       for (const g of checks) expect(g.guarded, `${a.at}: ${g.name} at line ${g.line} has no guard right before it`).toBe(true)
     }
@@ -149,7 +229,7 @@ describe('every multi-write chain goes through the bound operation (lib/boundOpe
       const src = fs.readFileSync(`${SRC}${at.slice(0, at.lastIndexOf(':'))}`, 'utf8')
       const removed = src.replace(new RegExp(a.guard.re.source, 'g'), 'if (false) return')
       expect(removed, a.at).not.toBe(src)
-      const checks = guardedWrites(at, a.guard.re, a.guard.before, removed)
+      const checks = guardedWrites(at, a.guard.re, a.guard.before, removed).filter((g) => !a.release?.some((r) => r.name === g.name && r.line === g.line))
       expect(checks.length, a.at).toBeGreaterThan(0)
       expect(checks.some((g) => !g.guarded), `${a.at}: still passes with its guard removed`).toBe(true)
     }
@@ -166,7 +246,7 @@ describe('every multi-write chain goes through the bound operation (lib/boundOpe
     const fsName = 'node:fs'
     const fs = (await import(/* @vite-ignore */ fsName)) as { readFileSync(p: string, e: 'utf8'): string }
     const SRC = new URL('.', import.meta.url).pathname
-    const at = 'store/ask.ts:<anonymous@892>'
+    const at = 'store/ask.ts:<anonymous@1079>'
     const re = /if \(!holds\(\)\) return/
     const src = fs.readFileSync(`${SRC}store/ask.ts`, 'utf8')
     // the loop-head guard is the one directly before steerTo (steerTo → continue comes back to it, never to the one after send)
@@ -204,6 +284,38 @@ describe('every multi-write chain goes through the bound operation (lib/boundOpe
     expect(g('for (const x of xs) {\n  if (!x) continue\n  await c.w(x)\n  if (!ok()) return\n}')).toEqual([true])
   })
 
+  it('scanner (release baseline r1): an await in the other branch of an if/else or ?: does not precede the write', () => {
+    const g = (body: string) => guardedWrites('f.ts:f', /if \(!ok\(\)\) return/, ['w'], `async function f() {\n${body}\n}`).map((x) => x.guarded)
+    // exclusive branches: neither write follows the other's await; each is guarded by the check before the if
+    expect(g('await c.r()\nif (!ok()) return\nif (a) await c.w(1)\nelse if (b) await c.w(2)')).toEqual([true, true])
+    expect(g('await c.r()\nif (!ok()) return\nconst v = a ? await c.w(1) : await c.w(2)')).toEqual([true, true])
+    // the same calls in sequence: the second follows the first's await, unguarded
+    expect(g('await c.r()\nif (!ok()) return\nawait c.w(1)\nawait c.w(2)')).toEqual([true, false])
+    // an await earlier in the same branch still counts
+    expect(g('if (!ok()) return\nif (a) { await c.r(); await c.w(1) } else await c.w(2)')).toEqual([false, true])
+    // a guard in the opposite branch protects only its own branch (stand-in on 4733c4aa)
+    expect(g('await c.r()\nif (a) { if (!ok()) return; await c.w(1) } else if (b) { await c.w(2) }')).toEqual([true, false])
+    // nor does a guard inside a branch that doesn't hold the write, before it
+    expect(g('await c.r()\nif (a) { if (!ok()) return }\nawait c.w(1)')).toEqual([false])
+    // a guard in a catch counts only when the try always leaves (the catch is then the only way on)
+    expect(g('try { await c.r(); return 1 } catch (e) { if (!ok()) return }\nawait c.w(1)')).toEqual([true])
+    expect(g('try { await c.r() } catch (e) { if (!ok()) return }\nawait c.w(1)')).toEqual([false])
+    // a guard after the await inside the same branch counts on that path (appAsk create's consent branch)
+    expect(g('if (!ok()) return\nif (a) { await c.r(); if (!ok()) return }\nawait c.w(1)')).toEqual([true])
+    // but not when the guard is in a sibling branch of that await
+    expect(g('if (a) { if (b) { await c.r() } else { if (!ok()) return } }\nawait c.w(1)')).toEqual([false])
+    // a guard in a plain block that holds the write still counts
+    expect(g('await c.r()\n{ if (!ok()) return }\nawait c.w(1)')).toEqual([true])
+  })
+
+  // Known limits of the structural dominance check (stand-in R2 on 89c65400; Dot: documented, not fixed now; the
+  // testkit's KNOWN LIMITS comment). Each of these is still reported guarded though a path skips the guard.
+  it.todo('known limit: `do { await c.r(); if (b) break; if (!ok()) return } while (false); await c.w()` (break out of the loop before the guard)')
+  it.todo('known limit: `switch (a) { case 1: await c.r(); if (b) break; if (!ok()) return; break; default: break } await c.w()` (break out of the case)')
+  it.todo('known limit: `const f = async () => { await c.r(); if (!ok()) return }; await c.w()` (a guard in a nested function)')
+  it.todo('known limit: `for (;;) { await c.w(); await c.r(); if (a) { if (!ok()) return } }` (loop-back: the next iteration skips the guard)')
+  it.todo('known limit: `await c.r(); try { if (!ok()) return } catch (e) {} await c.w()` (a throwing check falls through the catch)')
+
   it('the chains these rounds bind are bound: every write through op.write or a helper that binds its own', () => {
     for (const at of ['features/launch/LaunchSwarm.tsx:launch']) {
       const c = chains.find((x) => x.at === at)!
@@ -211,12 +323,15 @@ describe('every multi-write chain goes through the bound operation (lib/boundOpe
       expect(c.writes.every((w) => w.bound), at).toBe(true)
     }
     const life = chains.filter((c) => c.at.startsWith('features/lifecycle/LifecyclePage.tsx:') && isChain(c))
-    expect(life.flatMap((c) => c.writes.map((w) => w.name)).sort()).toEqual(['createPolicy', 'issueLease', 'sendMessage'])
+    // MeTTa screens R6: each Lifecycle press is a named action wrapping an anonymous bound operation, and the scan reports
+    // both, so each write is listed twice; the distinct writes are the same three, and every one is still bound
+    expect([...new Set(life.flatMap((c) => c.writes.map((w) => w.name)))].sort()).toEqual(['createPolicy', 'issueLease', 'sendMessage'])
     expect(life.every((c) => c.writes.every((w) => w.bound))).toBe(true)
     expect(chains.filter((c) => c.at.startsWith('features/explore/ExplorePage.tsx:') && c.thens.length)).toEqual([])
     // followups-r8 (Kimi FL-R2 #1): First Light's limit → progress, and its other two-write acts
     const fl = (name: string) => chains.find((c) => c.at === `features/firstlight/store.ts:${name}`)!
-    expect(sig(fl('setMonthly'))).toEqual(['setOwnLimit', 'save', 'refreshSetup'])
+    // release baseline r1: setMonthly sends more steps now, every one through op.write or a bound helper
+    expect(sig(fl('setMonthly'))).toEqual(['write', 'write', 'dispatchOwnLimit', 'write', 'save'])
     for (const name of ['setMonthly', 'tick', 'wake', 'primeDemo']) {
       expect(isChain(fl(name)), name).toBe(true)
       expect(fl(name).writes.every((w) => w.bound), name).toBe(true)

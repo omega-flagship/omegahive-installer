@@ -31,6 +31,7 @@ import collections
 import contextlib
 import json
 import logging
+import os
 import random
 import re
 import threading
@@ -102,6 +103,15 @@ def within(narrow, wide):
     return wide == "all" or (narrow != "all" and set(narrow) <= set(wide))
 
 
+def narrowest(a, b):
+    """The smaller of two audiences ("all" or a list): their intersection."""
+    if a == "all":
+        return b
+    if b == "all":
+        return a
+    return sorted(set(a) & set(b))
+
+
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
@@ -117,6 +127,7 @@ class PersonApps:
         self._rate_guard = threading.Lock()
         self._created = collections.deque(maxlen=CREATIONS_PER_MINUTE)   # bounded: start times within the last minute
         self._pending = 0
+        self.deploy_installs()
 
     # ---- failures and who may ask ---------------------------------------------------------------------------------
 
@@ -193,6 +204,64 @@ class PersonApps:
         self.hive.events.publish("program.install_reviewed", program=program_id, placement=placement)
         return self.status(program_id, admin=True)
 
+    def deploy_installs(self):
+        """HIVE_APP_INSTALLS: the deployer's install review, for person apps only. It is set beside HIVE_APP_PINS by the
+        operator who deploys a reviewed, pinned release (the same act as the pin), so a person app is ready on install
+        with no second admin click. Each entry is {"placement": "person", "person_allow": ...} (audience may only
+        narrow the manifest's). Recorded as by "operator:deploy" for exactly the verified release. Never overrides an
+        admin's revoke, and never widens: a revoked or current review is left as it is. Without the setting nothing is
+        created (startup alone is never a review). An admin's disable is not changed either: a disabled app
+        stays turned off for every open (_authorized), reviewed or not."""
+        raw = os.environ.get("HIVE_APP_INSTALLS")
+        if not raw:
+            return []
+        try:
+            wanted = json.loads(raw)
+        except ValueError:
+            wanted = None
+        if not isinstance(wanted, dict):
+            log.warning("HIVE_APP_INSTALLS is not a JSON object; no deploy installs applied")
+            return []
+        done = []
+        for program_id, spec in wanted.items():
+            if not isinstance(spec, dict) or set(spec) - {"placement", "person_allow"} or spec.get("placement") != "person":
+                log.warning("HIVE_APP_INSTALLS[%s]: only {placement: person, person_allow} is accepted", program_id)
+                continue
+            try:
+                asked = audience(spec["person_allow"]) if spec.get("person_allow") is not None else "all"
+            except ValueError:
+                log.warning("HIVE_APP_INSTALLS[%s]: bad person_allow", program_id)
+                continue
+            with self.hive.person_swarms._program_lock(program_id):
+                verified = self.hive.programs.verified_release(program_id)
+                if verified is None or verified["placement"] != "person" or len(verified["templates"]) > 1:
+                    log.warning("HIVE_APP_INSTALLS[%s]: not a pinned, loaded person app; not installed", program_id)
+                    continue
+                if not within(asked, verified["person_allow"]):
+                    log.warning("HIVE_APP_INSTALLS[%s]: the audience may only narrow what the app declares", program_id)
+                    continue
+                row = self._review(program_id)
+                if row is not None and (row["revoked_at"] or self._current(row, verified) is not None):
+                    continue                                     # an admin's revoke stands; a current review is kept
+                # an earlier review's audience (an admin's restrict) carries over to the new release: never widened
+                allowed = narrowest(asked, json.loads(row["audience"])) if row is not None else asked
+                allowed = narrowest(allowed, verified["person_allow"])
+                if not allowed:
+                    log.warning("HIVE_APP_INSTALLS[%s]: nobody left in the audience; not installed", program_id)
+                    continue
+                # revoked_at/revoked_by are deliberately NOT cleared here (unlike review()): a deploy never un-revokes
+                self.db.execute(
+                    "INSERT INTO app_install_reviews (program, release_digest, placement, deps, audience, by_person, at, "
+                    "revoked_at, revoked_by) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL) ON CONFLICT(program) DO UPDATE SET "
+                    "release_digest = excluded.release_digest, placement = excluded.placement, deps = excluded.deps, "
+                    "audience = excluded.audience, by_person = excluded.by_person, at = excluded.at",
+                    (program_id, verified["release_digest"], "person", canonical(self._deps(verified)),
+                     canonical(allowed), "operator:deploy", now()))
+            self.hive.events.publish("program.install_reviewed", program=program_id, placement="person")
+            log.info("HIVE_APP_INSTALLS: %s installed for %s (release %s)", program_id, allowed, verified["release_digest"])
+            done.append(program_id)
+        return done
+
     def restrict(self, actor, program_id, data):
         """The admin narrows who may use a person app; fenced at once (every open, admission and paid call reads it)."""
         self.hive.app_attachments.admin(actor)
@@ -232,6 +301,10 @@ class PersonApps:
         """What the install screen shows. Members see only the placement and whether it is installed for them (audience
         first: someone outside a person app's audience sees it as not installed)."""
         entry = self.hive.programs.get(program_id)
+        if not admin and entry.get("placement") == "person":
+            from .my_apps import in_audience     # Ask-and-apps R1: outside the audience, the app looks like no app at all
+            if not in_audience(self.hive, principal, program_id):
+                raise self.hive.error(404, "not_found", f"no program {program_id}")
         verified = self.hive.programs.verified_release(program_id)
         row = self._review(program_id)
         installed = self._current(row, verified) is not None
@@ -264,7 +337,7 @@ class PersonApps:
         entry = self.hive.programs.programs.get(program_id)
         return bool(entry) and entry.get("placement") == "person"
 
-    def _authorized(self, principal, program_id):
+    def _authorized(self, principal, program_id, ready=True):
         """(verified release, review) for this person and app, or a fixed failure. Audience first: a person outside it
         learns nothing more about the app's state."""
         entry = self.hive.programs.programs.get(program_id)
@@ -283,6 +356,10 @@ class PersonApps:
         verified = self.hive.programs.verified_release(program_id)
         if self._current(row, verified) is None:
             raise self.failure("release_changed")
+        if not ready:   # discovery (/api/me/apps): the loaded state only, no integrity re-hash and no events
+            if (self.hive.programs.programs.get(program_id) or {}).get("error"):
+                raise self.failure("release_changed")
+            return verified, row
         try:
             self.hive.programs._ready(program_id)
         except Exception:   # noqa: BLE001  (refused or moved since: the release no longer stands)

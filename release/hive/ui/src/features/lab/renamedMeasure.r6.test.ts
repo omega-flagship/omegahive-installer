@@ -8,7 +8,7 @@ import { MetricTile } from './parts'
 import { compareRuns } from './stallCompare'
 
 /**
- * followups-r6 item 10 (the owner): minds were once called "dots", and the host renames its bench strings. It sends
+ * followups-r6 item 10 (Jon): minds were once called "dots", and the host renames its bench strings. It sends
  * `legacy_names` on a metric and `renamed_from` on an old record served under the new name. Measures pair on `name`
  * alone, so a renamed measure is ONE measure; the old name shows only as a quiet "formerly …" detail. INVENTED data.
  */

@@ -1,14 +1,17 @@
 import { PersonSwarmConsentHost } from './PersonSwarmConsent'
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { closePage, navigate, sameCreation, type CreationReference } from '../../lib/router'
 import { sessionKey } from '../../store/programSession'
 import { useHive } from '../../store/store'
 import { ConfirmHost } from '../../ui/confirm'
 import { askConfirmBound, bindEpoch, onIdentityChange } from '../../lib/identityEpoch'
 import { AppAccess } from './AppActivity'
-import { OmegaMenu, type OmegaSection } from '../../experiences/OmegaMenu'
+import { OmegaMenu } from '../../experiences/OmegaMenu'
 import { useEscape } from '../../lib/hooks'
-import { Button, EmptyState } from '../../ui/primitives'
+import { Screen } from '../../screens/Screen'
+import { useCompose } from '../../screens/useCompose'
+import type { Compose, ScreenFacts, ScreenPlan } from '../../screens/screenSpace'
+import { appPage, closedPage, menuSections, type ClosedState } from './appPage'
 import ProgramHost from './ProgramHost'
 import { DISCARD_LABEL, DISCARD_QUESTION, followViewLink, oneQuestion } from './viewLink'
 import { ProgramForm } from './ProgramForm'
@@ -24,13 +27,18 @@ import { useAskStore } from '../../store/ask'
 import { appRouting } from './pickSwarm'
 import { CoordinatorNotice } from './CoordinatorNotice'
 import { lookupHomes, type HomesState } from './homesLookup'
-import { studioCapable } from '../studioLive/api'
-import { beginLiveStudio, focusAsk, noteFrameDirty, prepFromAsk } from '../studioLive/store'
-import { SETUP_NEEDS_TURN_WORDS } from '../studioLive/refusals'
+import { DrawingEntry, drawingAvailability } from '../studioLive/drawingUi'
+import { focusAsk, noteFrameDirty, prepFromAsk } from '../studioLive/store'
+import { drawLive } from '../studioLive/drawLive'
+import { askFieldWords, subscribeAskFieldWords } from '../ask/useAskField'
 import { StudioLiveBar } from '../studioLive/DirectingStudio'
 import { PersonAppOpener, type PersonAppState } from '../../lib/personAppOpen'
 import { useIdentityEpoch } from '../../lib/epochBound'
-import { ACTION_LABEL, PERSON_APP_REASONS, type PersonAppReason } from '../../api/personApps'
+import { useAlive } from '../../lib/boundOperation'
+
+const CreateCodeBench = lazy(() => import('../code/CreateCodeBench'))
+const FlowStudio = lazy(() => import('../flow/FlowPage').then((m) => ({ default: m.FlowStudio })))
+const PlanCanvas = lazy(() => import('../createPlan/PlanCanvas'))
 
 const HOMES_PENDING: HomesState = { kind: 'pending' }
 const PERSON_OPENING: PersonAppState = { kind: 'opening' }
@@ -66,38 +74,72 @@ export default function ProgramPage(props: ProgramPageProps) {
   return <AppUnavailable state={programsLoaded ? 'unlisted' : programsError ? 'unreadable' : 'opening'} retry={() => void loadPrograms().catch(() => undefined)} />
 }
 
+/**
+ * The plans this page's screens were composed into, kept across mounts (the same look and facts always compose the
+ * same plan): useCompose keeps its answers per mount, and an app page is mounted afresh for every app and every
+ * identity, so opening one again asks MeTTa nothing new. A plan that could not be composed (the plain unavailable
+ * notice, which has no title) is never kept. Up to KEPT plans, oldest dropped.
+ */
+const KEPT = 128
+const kept = new Map<string, ScreenPlan>()
+function useKeptCompose(look: string): Compose {
+  const compose = useCompose(look)
+  return useCallback((screen: string, facts: ScreenFacts) => {
+    const key = `${look}|${screen}|${JSON.stringify(facts)}`
+    const hit = kept.get(key)
+    if (hit) return hit
+    const plan = compose(screen, facts)
+    if (plan.title !== null) {
+      if (kept.size >= KEPT) kept.delete(kept.keys().next().value as string)
+      kept.set(key, plan)
+    }
+    return plan
+  }, [compose, look])
+}
+
+/** What the page for an app this person may not open says as its heading (screen readers), by where it stands. */
+const CLOSED_TITLE: Record<ClosedState, string> = {
+  opening: 'Opening the app',
+  unreadable: 'The apps list could not be read',
+  unlisted: "This app isn't available to you here",
+}
+
+/**
+ * How the composed parts sit in a page that fills the screen. Each class only places what MeTTa composed: a part's
+ * wrapper the renderer leaves empty takes no room, the space-y spacing gives way to these, and nothing here decides
+ * whether a part shows.
+ * - CHROME, above the app: the composed notes and tabs get the page's margins and sit over the app's motif; islands
+ *   bring their own.
+ * - STAGE, the app's place: a surface (marked data-fill) fills it; the states before the app opens sit centred; the
+ *   dialogs and Ω (fixed, drawn by their islands) take no room.
+ * - CLOSED, the page for an app that is not available: the Stop on top, the state centred, Ω fixed.
+ */
+const FLOW = '[&>[data-screen-part]]:mb-0 [&>[data-screen-row]]:mb-0 [&>[data-screen-part]:empty]:hidden'
+const CHROME = `shrink-0 ${FLOW} [&>:not([data-block=island])]:relative [&>:not([data-block=island])]:z-[1] [&>:not([data-block=island])]:mx-3 [&>:not([data-block=island])]:mt-3`
+const STAGE = `flex h-full flex-col justify-center gap-4 ${FLOW} [&>[data-screen-part]:has(>[data-fill])]:min-h-0 [&>[data-screen-part]:has(>[data-fill])]:flex-1 [&>[data-block=island]:not(:has(>[data-fill]))]:contents [&>:not([data-block=island])]:self-center [&>:not([data-block=island])]:px-6`
+const CLOSED = `flex h-full flex-col items-center gap-4 ${FLOW} [&>[data-block=island]]:self-stretch [&>[data-block=island]:first-child]:mb-auto [&>[data-screen-part]:empty+*]:mt-auto [&>[data-block=island]:last-child]:mt-auto [&>:not([data-block=island])]:px-6`
+
 /** The page for an app this person may not open here, or not yet known to be one they may: no name, no app controls. */
-export function AppUnavailable({ state, retry }: { state: 'opening' | 'unlisted' | 'unreadable'; retry?: () => void }) {
+export function AppUnavailable({ state, retry }: { state: ClosedState; retry?: () => void }) {
   const leave = () => closePage(() => navigate({ name: 'programs' }))
   useEscape(leave)
-  const lookExperience = experienceById(useLook().current?.experience).id
-  const title = state === 'opening' ? 'Opening the app' : state === 'unreadable' ? 'The apps list could not be read' : "This app isn't available to you here"
+  const look = experienceById(useLook().current?.experience).id
+  const compose = useKeptCompose(look)
+  const plan = useMemo(() => compose('program-closed', closedPage(state, !!retry).facts), [compose, state, retry])
   return (
-    <section aria-label="App" data-presence-region="app" data-app-unavailable={state} className="fixed inset-x-0 top-0 z-[30] flex h-dvh flex-col overflow-hidden" style={{ background: 'linear-gradient(180deg, rgb(10 10 32 / 0.97), rgb(6 6 22 / 0.99))' }}>
-      <h1 className="sr-only">{title}</h1>
-      <StudioLiveBar inline />
-      <div className="relative min-h-0 flex-1">
-        {state === 'opening' ? (
-          <div className="grid h-full place-items-center text-[13px] text-ink-3">Opening the app…</div>
-        ) : (
-          <div className="grid h-full place-items-center p-6">
-            <EmptyState
-              icon={state === 'unlisted' ? 'shield' : 'apps'}
-              title={title}
-              body={state === 'unlisted'
-                ? "This hive doesn't offer that app to you. Your Apps page shows every app you can open."
-                : 'Try again, or go to your Apps page.'}
-              action={
-                <div className="flex flex-wrap justify-center gap-2">
-                  {state === 'unreadable' && retry && <Button variant="primary" onClick={retry}>Try again</Button>}
-                  <Button onClick={leave}>Back to Apps</Button>
-                </div>
-              }
-            />
-          </div>
-        )}
-      </div>
-      <OmegaMenu heading="Apps" context={lookExperience} sections={[{ items: [{ label: 'Back to Apps', run: leave }] }]} />
+    <section aria-label="App" data-presence-region="app" data-app-unavailable={state} className="fixed inset-x-0 top-0 z-[30] flex h-dvh flex-col overflow-hidden" style={{ background: 'linear-gradient(180deg, color-mix(in oklab, var(--color-abyss) 97%, transparent), color-mix(in oklab, var(--color-void) 99%, transparent))' }}>
+      <h1 className="sr-only">{CLOSED_TITLE[state]}</h1>
+      <Screen plan={plan} className={CLOSED} host={{
+        data: {},
+        islands: {
+          'studio-live': <StudioLiveBar inline />,
+          'omega-menu': <OmegaMenu heading="Apps" context={look} sections={[{ items: [{ label: 'Back to Apps', run: leave }] }]} />,
+        },
+        onAction: (action) => {
+          if (action === 'retry') retry?.()
+          else if (action === 'leave') leave()
+        },
+      }} />
     </section>
   )
 }
@@ -128,6 +170,20 @@ function ListedProgramPage({ id, swarm, source, view }: ProgramPageProps) {
   const personSwarm = personApp && personState.kind === 'ready' ? personState.swarmId : null
   const askingHelpers = personApp && personState.kind === 'ready' && personState.helpers === 'consent'
   const current = personApp ? (swarm && swarm === personSwarm ? swarm : null) : swarm && swarms[swarm] ? swarm : null
+  // Create's bench (Jon 10-31: one app, Code/Design/Flow as bench kinds): Studio is the app's own canvas
+  const [bench, setBench] = useState<'studio' | 'make' | 'code' | 'flow'>('studio')
+  const codeShown = id === 'omegadesign' && !!current && bench === 'code'
+  const flowShown = id === 'omegadesign' && !!current && bench === 'flow'
+  // Make: one sentence to a planned, built, checked thing (features/createPlan)
+  const makeShown = id === 'omegadesign' && !!current && bench === 'make'
+  const setCodeOpen = (open: boolean) => setBench(open ? 'code' : 'studio')
+  const codeDeparture = useRef<((leave: () => void) => void) | null>(null)
+  const leaveCode = (leave: () => void) => {
+    const binding = bindEpoch()
+    const done = () => { binding.commit(leave) }
+    if (codeShown && codeDeparture.current) codeDeparture.current(done)
+    else done()
+  }
   const title = useHive((s) => (current ? s.programSessions[sessionKey(id, current)]?.graph?.title : undefined))
 
   // Where the app works (configured, activated, opened before): open there, never on whichever swarm sorts first.
@@ -225,16 +281,18 @@ function ListedProgramPage({ id, swarm, source, view }: ProgramPageProps) {
   const exit = () => navigate({ name: 'programs' })
   const sw = current ? swarms[current] : null
   const look = useAppLook(program)
-  const name = program ? shown(program.name) : 'the app'   // listed (ProgramPage above): never the route's id
+  // listed (ProgramPage above): never the route's id; the Studio app is Create (Jon 10-31, 11-05: one Create app)
+  const name = id === 'omegadesign' ? 'Create' : program ? shown(program.name) : 'the app'
   const [access, setAccess] = useState(false)
-  const leave = () => closePage(exit)
+  const leave = () => leaveCode(() => closePage(exit))
   const back = () => {
+    if (codeShown || flowShown) { leaveCode(() => setCodeOpen(false)); return }
     if (access) return
     if (current) programBackOrExit(sessionKey(id, current), leave)
     else leave()
   }
   useEscape(back)
-  // Apps are UIs in their own right (the owner): they take the whole screen in their own form and identity; only Ω remains.
+  // Apps are UIs in their own right (Jon): they take the whole screen in their own form and identity; only Ω remains.
   // switching away from a form that holds unsaved edits asks first (the same rule as opening another creation)
   // Bound to the identity epoch (followups-r7.1, stand-in r7: a late yes after a same-client re-init switched the view
   // and unmounted the native form, losing its canvas document and history): an identity change answers the question no
@@ -296,39 +354,95 @@ function ListedProgramPage({ id, swarm, source, view }: ProgramPageProps) {
     // only a new ask from the route runs this
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownLink])
-  const formLabel = form === 'design-canvas' ? 'Canvas' : 'App'
-  const viewSection: OmegaSection | null =
-    current && (program?.ui || form)
-      ? {
-          title: 'View',
-          items: [
-            ...(form ? [{ label: formLabel, checked: !graph && !(program?.ui && own), run: () => switchView(false, false) }] : []),
-            ...(program?.ui ? [{ label: form ? 'Studio' : 'App', checked: !graph && (!form || own), run: () => switchView(false, true) }] : []),
-            { label: 'Graph', checked: graph, run: () => switchView(true, own) },
-          ],
-        }
-      : null
-  const swarmSection: OmegaSection | null =
-    sorted.length > 1 && !personApp ? { title: 'Works in', items: sorted.map((s) => ({ label: shown(s.name), checked: s.id === current, run: () => navigate({ name: 'program', id, swarm: s.id }) })) } : null
   // J3 r4.3 O3: start live drawing in Studio, from what the Ask prepared (the setup card in the Ask thread). Only where
   // the host says it has live Studio sessions and something prepared the card (today: the simulator only).
   const askSettings = useAskStore((s) => s.settings)
-  const liveStudio = !!current && !!program?.ui && id === 'omegadesign' && studioCapable(client as never, askSettings) && !!client?.studioSetupProposal
-  const startLive = () => {
-    if (!current || !client?.studioSetupProposal) return
-    // r1.13: the live card draws on one of the person's SAVED canvases in their own Studio space (picked from a list read
-    // through the host); the intent is recorded on their Ask turn (live). The simulator has its own Ask.
-    const turn = client.mode === 'sim' ? null : prepFromAsk()
-    if (client.mode !== 'sim' && !turn) { useHive.getState().toast({ tone: 'info', title: 'Studio starts from your Ask', body: SETUP_NEEDS_TURN_WORDS, action: { label: 'Ask what to draw', run: focusAsk } }); focusAsk(); return }
-    useAskStore.getState().setThreadOpen(true)
-    void beginLiveStudio(id, turn)
+  const askLog = useAskStore((s) => s.log)
+  const askTurns = useAskStore((s) => s.turns)
+  const drawingTurn = useMemo(() => prepFromAsk(), [askLog, askTurns])
+  // the words still in the Ask: Draw live asks them first (recordDrawTurn), so typing and pressing Draw live just works
+  const askWords = useSyncExternalStore(subscribeAskFieldWords, askFieldWords, () => '')
+  const drawing = drawingAvailability(client as never, askSettings, !!current, !!program?.ui, !!drawingTurn, !!askWords)
+  // what Draw live could not do, said here under its button (never a toast); cleared by the next press
+  const [drawNote, setDrawNote] = useState<string | null>(null)
+  const [drawBusy, setDrawBusy] = useState(false)
+  // a press belongs to this page while it is shown: leaving it (or this page going away) cancels it, silently
+  const drawAlive = useAlive()
+  const drawAbort = useRef<AbortController | null>(null)
+  useEffect(() => () => drawAbort.current?.abort(), [])
+  const startLive = async () => {
+    if (id !== 'omegadesign') return
+    setDrawNote(null)
+    const currentClient = useHive.getState().client
+    const precheck = drawingAvailability(currentClient as never, useAskStore.getState().settings, !!current, !!program?.ui, !!prepFromAsk(), !!askFieldWords())
+    if (!precheck.available || !currentClient?.studioSetupProposal) { setDrawNote(precheck.reason ?? 'Live drawing is unavailable here.'); return }
+    drawAbort.current ??= new AbortController()
+    setDrawBusy(true)
+    // one press, from the Ask turn to the picker (studioLive/drawLive): a second press joins it; it carries this press's
+    // person and thread to the moment the picker opens
+    const r = await drawLive({ programId: id, alive: drawAlive, signal: drawAbort.current.signal, sim: currentClient?.mode === 'sim' })
+    if (!drawAlive()) return
+    setDrawBusy(false)
+    if ('reason' in r) setDrawNote(r.reason)
   }
-  const appSection: OmegaSection = {
-    items: [
-      { label: `Leave ${name}`, run: leave },
-      ...(liveStudio ? [{ label: 'Draw live with a mind…', run: startLive }] : []),
-      ...(client && ('programActivations' in client || 'programActivity' in client) ? [{ label: 'Where it runs…', run: () => setAccess(true) }] : []),
-    ],
+  const canAccess = !!client && ('programActivations' in client || 'programActivity' in client)
+  // where the page stands, as facts and values for MeTTa (appPage.ts, program.metta): it composes the notes over the
+  // app, the states before it opens, which of the app's own surfaces show, and the app's Ω entries
+  const homesKnown = useMemo(() => (homes ?? []).filter((h) => swarms[h.swarm_id]).map((h) => ({ id: h.swarm_id, name: shown(swarms[h.swarm_id].name) })), [homes, swarms])
+  const page = useMemo(() => appPage({
+    name, swarm: current, swarmName: current ? shown(swarms[current]?.name) : '', ui: !!program?.ui, form, create: id === 'omegadesign',
+    person: personApp, personState, view: { graph, own, code: codeShown, flow: flowShown, make: makeShown, access }, canAccess, homesState, homesKnown, pick,
+    choices: choices.map((s) => ({ id: s.id, name: shown(s.name) })), swarms: sorted.map((s) => ({ id: s.id, name: shown(s.name) })),
+  }), [name, current, swarms, program?.ui, form, id, personApp, personState, graph, own, codeShown, flowShown, makeShown, access, canAccess, homesState, homesKnown, pick, choices, sorted])
+  const compose = useKeptCompose(lookExperience)
+  const chrome = useMemo(() => compose('program', page.facts), [compose, page])
+  const stage = useMemo(() => compose('program-stage', page.facts), [compose, page])
+  const menuPlan = useMemo(() => compose('program-menu', page.facts), [compose, page])
+  const swarmOf = (item: Record<string, unknown>) => (typeof item.id === 'string' ? item.id : '')
+  // what a press asks for: from a composed part, or from one of the app's Ω entries
+  const press = (action: string, item: Record<string, unknown> = {}) => {
+    if (action === 'leave') leave()
+    else if (action === 'retry-homes') setAttempt((n) => n + 1)
+    else if (action === 'settings') navigate({ name: 'settings' })
+    else if (action === 'person-reopen' || action === 'person-try') void liveOpener?.open()
+    else if (action === 'person-setup') void liveOpener?.open(true)
+    else if (action === 'person-helpers') liveOpener?.askHelpers()
+    else if (action === 'bench-code') leaveCode(() => setCodeOpen(!codeShown))
+    else if (action === 'bench-flow') leaveCode(() => setBench(flowShown ? 'studio' : 'flow'))
+    else if (action === 'bench-make') leaveCode(() => setBench(makeShown ? 'studio' : 'make'))
+    else if (action === 'draw-live') void startLive()
+    else if (action === 'access') setAccess(true)
+    else if (action === 'view-form') leaveCode(() => { setCodeOpen(false); switchView(false, false) })
+    else if (action === 'view-own') leaveCode(() => { setCodeOpen(false); switchView(false, true) })
+    else if (action === 'view-graph') leaveCode(() => { setCodeOpen(false); switchView(true, own) })
+    else if ((action === 'home' || action === 'works-in') && swarmOf(item)) leaveCode(() => navigate({ name: 'program', id, swarm: swarmOf(item) }))
+    else if (action === 'choose' && swarmOf(item)) navigate({ name: 'program', id, swarm: swarmOf(item) })
+  }
+  const entries = useMemo(() => menuSections(menuPlan, page.data), [menuPlan, page])
+  // the app's own surfaces, each offered with what it needs to draw; whether and where each shows is MeTTa's
+  // (program-stage). The frame stays mounted, hidden, under the graph and the benches, so the app keeps its state.
+  const surfaces = current ? {
+    'app-frame': <div data-fill="" className="h-full"><AppFrame key={`${id}-${current}-${JSON.stringify(opened ?? null)}`} programId={id} swarmId={current} source={opened} onDirty={onDirty} onBack={back} /></div>,
+    'app-form': form && program ? <div data-fill="" className="h-full"><ProgramForm key={`${id}-${current}-form`} form={form} program={program} swarmId={current} grammar={grammar} source={opened} onDirty={onDirty} openOwn={program.ui ? openOwn : undefined} onExit={leave} /></div> : null,
+    'app-graph': <div data-fill="" className="h-full overflow-y-auto pt-3"><ProgramHost key={`${id}-${current}`} programId={id} swarmId={current} variant="page" onExit={leave} /></div>,
+    'code-bench': <div data-fill="" className="h-full"><Suspense fallback={<p role="status" className="p-4">Opening Code…</p>}>
+      <CreateCodeBench key={`${id}-${current}-${epoch}`} onBack={() => setCodeOpen(false)} departure={codeDeparture} />
+    </Suspense></div>,
+    'flow-bench': <div data-fill="" className="h-full overflow-y-auto" data-flow-bench=""><Suspense fallback={<p role="status" className="p-4">Opening Flow…</p>}>
+      <FlowStudio key={`${id}-${current}-${epoch}-flow`} />
+    </Suspense></div>,
+    'make-bench': <div data-fill="" className="h-full overflow-y-auto" data-make-bench=""><Suspense fallback={<p role="status" className="p-4">Opening Make…</p>}>
+      <PlanCanvas key={`${id}-${current}-${epoch}-make`} />
+    </Suspense></div>,
+  } : {}
+  const host = {
+    data: page.data,
+    onAction: (action: string) => press(action),
+    onOpen: (target: string, item: Record<string, unknown>) => press(target, item),
+    // Create's bench tabs: pressing the bench already shown does nothing
+    onInput: (bind: string, value: string) => {
+      if (bind === 'bench' && value !== page.data.bench && (value === 'studio' || value === 'make' || value === 'code' || value === 'flow')) leaveCode(() => setBench(value))
+    },
   }
   return (
     <section
@@ -337,129 +451,33 @@ function ListedProgramPage({ id, swarm, source, view }: ProgramPageProps) {
       data-app={look ? id : undefined}
       data-app-type={look?.type}
       className="fixed inset-x-0 top-0 z-[30] flex h-dvh flex-col overflow-hidden"
-      style={{ ...look?.style, background: 'linear-gradient(180deg, var(--look-page-a, rgb(10 10 32 / 0.97)), var(--look-page-b, rgb(6 6 22 / 0.99)))' }}
+      style={{ ...look?.style, background: 'linear-gradient(180deg, var(--look-page-a, color-mix(in oklab, var(--color-abyss) 97%, transparent)), var(--look-page-b, color-mix(in oklab, var(--color-void) 99%, transparent)))' }}
     >
-      {look && look.motif !== 'none' && <div className="app-motif" data-motif={look.motif} aria-hidden="true" />}
+      {/* the app's identity: its motif behind the page (an app without one shows none) */}
+      <div className="app-motif" data-motif={look?.motif ?? 'none'} aria-hidden="true" />
       <h1 className="sr-only">{title ?? name}</h1>
-      {current && homes && homes.length > 0 && !homes.some((h) => h.swarm_id === current) && (
-        <div className="relative z-[1] m-3 flex flex-wrap items-center gap-2 rounded-xl border border-warn/25 bg-warn/[0.06] px-3 py-2 text-[12.5px] text-ink-2">
-          <span>{name} is not set up in {shown(swarms[current]?.name)}. It works in:</span>
-          {homes.filter((h) => swarms[h.swarm_id]).map((h) => (
-            <button key={h.swarm_id} onClick={() => navigate({ name: 'program', id, swarm: h.swarm_id })} className="rounded-lg border border-line px-2 py-0.5 text-ink hover:bg-white/[0.06]">
-              {shown(swarms[h.swarm_id].name)}
-            </button>
-          ))}
-        </div>
-      )}
-      {/* never land on a swarm whose coordinator is asleep without saying so: a request there is not answered on its own */}
-      {!personApp && <CoordinatorNotice swarm={sw} agents={agents} />}
-      {current && personState.kind === 'ready' && <PersonAppReadyNotes name={name} state={personState} opener={liveOpener} />}
-      {/* J3 r4.3 O3: the one Stop, in this page's flow above the app (never over its toolbar); hidden when no session */}
-      <StudioLiveBar inline />
+      <Screen plan={chrome} className={CHROME} host={{
+        ...host,
+        islands: {
+          'coordinator': <CoordinatorNotice swarm={sw} agents={agents} />,
+          'studio-live': <StudioLiveBar inline />,
+          'drawing-entry': <DrawingEntry availability={drawing} start={() => void startLive()} ask={focusAsk} note={drawNote} busy={drawBusy} />,
+        },
+      }} />
       <div className="relative min-h-0 flex-1">
-        {/* the app frame stays mounted under Graph, so switching views keeps the app's state (platform 03e49a7) */}
-        {current && program?.ui && (!form || own) && (
-          <div hidden={graph} className="h-full"><AppFrame key={`${id}-${current}-${JSON.stringify(opened ?? null)}`} programId={id} swarmId={current} source={opened} onDirty={onDirty} onBack={back} /></div>
-        )}
-        {current && program?.ui && !graph && (!form || own) ? null : current && form && program && !graph ? (
-          <ProgramForm key={`${id}-${current}-form`} form={form} program={program} swarmId={current} grammar={grammar} source={opened} onDirty={onDirty} openOwn={program.ui ? openOwn : undefined} onExit={leave} />
-        ) : current ? (
-          <div className="h-full overflow-y-auto pt-3"><ProgramHost key={`${id}-${current}`} programId={id} swarmId={current} variant="page" onExit={leave} /></div>
-        ) : personApp ? (
-          <PersonAppHostState name={name} state={personState} opener={liveOpener} leave={leave} />
-        ) : homesState.kind === 'failed' ? (
-          <div className="grid h-full place-items-center p-6">
-            <EmptyState
-              icon="alert"
-              title={`Couldn't check where ${name} works`}
-              body={homesState.denied
-                ? `This hive did not let you see where ${name} is set up. Nothing was opened. Try again, or pick a swarm from Ω → Works in.`
-                : `The hive did not answer where ${name} is set up. Nothing was opened. Try again, or pick a swarm from Ω → Works in.`}
-              action={<Button variant="primary" onClick={() => setAttempt((n) => n + 1)}>Try again</Button>}
-            />
-          </div>
-        ) : homes && homes.length === 0 ? (
-          <div className="grid h-full place-items-center p-6">
-            {/* P14: a real failure only (an admin installs a swarm app with "Use in"); one action */}
-            <EmptyState
-              icon="apps"
-              title={`${name} isn't turned on in a swarm you can use`}
-              body="An admin turns this app on for swarms when they install it. Ask an admin, or pick a swarm from Ω → Works in."
-              action={<Button onClick={leave}>Back to Apps</Button>}
-            />
-          </div>
-        ) : pick === null ? (
-          <div className="grid h-full place-items-center p-6">
-            <EmptyState
-              icon="swarms"
-              title={`Choose where to open ${name}`}
-              body={homesState.kind === 'absent'
-                ? `Couldn't tell where it's set up. ${name} works inside a swarm${choices.length ? '; pick one.' : '. Pick one from Ω → Works in.'}`
-                : choices.length
-                ? `${name} works inside a swarm. Pick one you can use.`
-                : `There is no swarm here that you can use for ${name} yet. Ask its owner, or pick one from Ω → Works in.`}
-              action={choices.length ? (
-                <div className="flex flex-wrap justify-center gap-2">
-                  {choices.map((s) => <Button key={s.id} onClick={() => navigate({ name: 'program', id, swarm: s.id })}>{shown(s.name)}</Button>)}
-                </div>
-              ) : undefined}
-            />
-          </div>
-        ) : (
-          <div className="grid h-full place-items-center text-[13px] text-ink-3">Opening {name}…</div>
-        )}
+        <Screen plan={stage} className={STAGE} host={{
+          ...host,
+          islands: {
+            ...surfaces,
+            'omega-menu': <OmegaMenu heading={`${name}${sw ? ` · ${shown(sw.name)}` : ''}`} context={lookExperience} sections={entries.map((x) => ({ ...x, items: x.items.map(({ action, item, ...entry }) => ({ ...entry, run: () => press(action, item) })) }))} />,
+            'app-access': <AppAccess programId={id} name={name} onClose={() => setAccess(false)} />,
+            'confirm': <ConfirmHost />,
+            'consent': <PersonSwarmConsentHost key={`${id}-${current}-${JSON.stringify(opened ?? null)}`} programId={id} swarmId={current} generation={`${current ?? ''}\0${JSON.stringify(opened ?? null)}`}
+              spaceLine={askingHelpers ? personState.spaceLine ?? undefined : undefined}
+              onSettle={askingHelpers ? liveOpener?.settled : undefined} />,
+          },
+        }} />
       </div>
-      <OmegaMenu heading={`${name}${sw ? ` · ${shown(sw.name)}` : ''}`} context={lookExperience} sections={[appSection, ...(viewSection ? [viewSection] : []), ...(swarmSection ? [swarmSection] : [])]} />
-      {access && <AppAccess programId={id} name={name} onClose={() => setAccess(false)} />}
-      <ConfirmHost />
-      {(!personApp || (current && personState.kind === 'ready' && personState.helpers !== 'key' && personState.helpers !== 'declined')) && (
-        <PersonSwarmConsentHost key={`${id}-${current}-${JSON.stringify(opened ?? null)}`} programId={id} swarmId={current} generation={`${current ?? ''}\0${JSON.stringify(opened ?? null)}`}
-          spaceLine={askingHelpers ? personState.spaceLine ?? undefined : undefined}
-          onSettle={askingHelpers ? liveOpener?.settled : undefined} />
-      )}
     </section>
-  )
-}
-
-/** P14: banners over the open app, never instead of it: the host key card, helpers turned down, the privacy line. */
-export function PersonAppReadyNotes({ name, state, opener }: { name: string; state: Extract<PersonAppState, { kind: 'ready' }>; opener: PersonAppOpener | null }) {
-  const key = state.helpers === 'key' || state.needs.length > 0
-  return (
-    <div className="relative z-[1] mx-3 mt-2 flex flex-wrap items-center gap-2 text-[12px] text-ink-3" data-person-app-ready="">
-      {key && (
-        <span className="flex flex-wrap items-center gap-2 rounded-xl border border-warn/25 bg-warn/[0.06] px-3 py-1.5 text-ink-2" data-host-key-card="">
-          {name}'s helpers run on your own AI key{state.needs.includes('monthly_total') ? ', within a monthly total you set' : ''}. Opening it costs nothing; they stay unavailable until then.
-          <button type="button" onClick={() => navigate({ name: 'settings' })} className="rounded-lg border border-line px-2 py-0.5 text-ink hover:bg-white/[0.06]">Add your AI key</button>
-          <button type="button" onClick={() => void opener?.open()} className="rounded-lg border border-line px-2 py-0.5 text-ink hover:bg-white/[0.06]">I've added it</button>
-        </span>
-      )}
-      {state.helpers === 'declined' && (
-        <span className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-white/[0.04] px-3 py-1.5 text-ink-2" data-person-app-declined="">
-          Your helpers are off. Nothing was set up, so helper features are unavailable.
-          <button type="button" onClick={() => opener?.askHelpers()} className="rounded-lg border border-line px-2 py-0.5 text-ink hover:bg-white/[0.06]">Set up helpers</button>
-        </span>
-      )}
-      <span data-person-app-private="">{PRIVATE_NOTE}</span>
-    </div>
-  )
-}
-
-const PRIVATE_NOTE = 'Private to you; hive admins can audit.'
-
-/** P14: what a person app's page shows until its context is open: opening, or one failure. */
-export function PersonAppHostState({ name, state, opener, leave }: { name: string; state: PersonAppState; opener: PersonAppOpener | null; leave: () => void }) {
-  if (state.kind === 'failed') return <PersonAppFailure reason={state.reason} opener={opener} leave={leave} />
-  return <div className="grid h-full place-items-center text-[13px] text-ink-3">Opening {name}…</div>
-}
-
-/** One approved reason in fixed words, with its one host action. Nothing from the answer is shown. */
-export function PersonAppFailure({ reason, opener, leave }: { reason: PersonAppReason; opener: PersonAppOpener | null; leave: () => void }) {
-  const { text, action } = PERSON_APP_REASONS[reason]
-  const run = action === 'try_again' ? () => void opener?.open() : action === 'set_up_again' ? () => void opener?.open(true) : leave
-  return (
-    <div className="grid h-full place-items-center p-6" data-person-app-failure={reason}>
-      <EmptyState icon={reason === 'not_available_to_you' ? 'shield' : 'alert'} title={text}
-        action={<Button variant={action === 'back' || action === 'ask_admin' ? undefined : 'primary'} onClick={run}>{ACTION_LABEL[action]}</Button>} />
-    </div>
   )
 }

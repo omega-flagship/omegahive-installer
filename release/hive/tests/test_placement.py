@@ -1,4 +1,4 @@
-"""Minds move between hives: export, import with the same id, tombstone, and back again (the owner, 2026-10-04)."""
+"""Minds move between hives: export, import with the same id, tombstone, and back again (Jon, 2026-10-04)."""
 import io
 import json
 import tarfile
@@ -39,14 +39,14 @@ def client():  # noqa: F811  (the cloud hive, with token-writing supervisor)
 
 @pytest.fixture
 def home():
-    """A second hive (Maren's home hive) in its own data directory."""
+    """A second hive (Mia's home hive) in its own data directory."""
     with TestClient(_hive(pathlib.Path(tempfile.mkdtemp(prefix="hive-test-")))) as c:
         c.headers["Authorization"] = "Bearer " + c.post("/api/auth/login", json={"password": "pw"}).json()["token"]
         yield c
 
 
 def mind_in_swarm(c, name="Helper"):
-    swarm = c.post("/api/swarms", json={"name": "Household", "visibility": "public"}).json()
+    swarm = c.post("/api/swarms", json={"name": "Family", "visibility": "public"}).json()
     mind = c.post("/api/agents", json={"name": name, "kind": "omega", "swarm_id": swarm["id"]}).json()
     return swarm, mind
 
@@ -57,7 +57,7 @@ def test_a_mind_moves_home_and_back_with_its_memory(client, home):
     ws = cloud.settings.data_dir / "agents" / mind["id"]
     (ws / "memory").mkdir(parents=True, exist_ok=True)
     (ws / "memory" / "history.metta").write_text("(remember tea)")
-    cloud.db.insert("messages", {"id": "m_1", "agent_id": mind["id"], "conversation_id": "c", "direction": "in", "sender": "user:quinn",
+    cloud.db.insert("messages", {"id": "m_1", "agent_id": mind["id"], "conversation_id": "c", "direction": "in", "sender": "user:jon",
                                  "text": "hello", "created_at": "2026-10-04T00:00:00Z"})
     body = json.loads((ws / "memory" / "runtime" / "body" / "host.json").read_text())
     assert body["placement"] == "cloud" and body["hive_id"] == cloud.placement.identity()["id"]
@@ -68,7 +68,7 @@ def test_a_mind_moves_home_and_back_with_its_memory(client, home):
     assert "workspace/token" not in names and "workspace/memory/history.metta" in names
     assert not any(n.startswith("workspace/memory/runtime/body") for n in names)
 
-    home.patch("/api/hive/identity", json={"name": "Maren's computer", "home": True})
+    home.patch("/api/hive/identity", json={"name": "Mia's computer", "home": True})
     home_swarm = home.post("/api/swarms", json={"name": "Home", "visibility": "public"}).json()
     arrived = home.post(f"/api/agents/import?swarm_id={home_swarm['id']}", content=r.content)
     assert arrived.status_code == 200, arrived.text
@@ -80,9 +80,9 @@ def test_a_mind_moves_home_and_back_with_its_memory(client, home):
     assert json.loads((hws / "memory" / "runtime" / "body" / "host.json").read_text())["placement"] == "home"
     assert [m["text"] for m in home.get(f"/api/agents/{mind['id']}/messages").json()] == ["hello"]
 
-    settled = client.post(f"/api/agents/{mind['id']}/settle", json={"to_hive": hhive.placement.identity()["id"], "to_name": "Maren's computer",
+    settled = client.post(f"/api/agents/{mind['id']}/settle", json={"to_hive": hhive.placement.identity()["id"], "to_name": "Mia's computer",
                                                                     "manifest_sha256": r.headers["x-manifest-sha256"]}).json()
-    assert settled["moved_to_name"] == "Maren's computer" and settled["status"] == "moved"
+    assert settled["moved_to_name"] == "Mia's computer" and settled["status"] == "moved"
     assert client.post(f"/api/agents/{mind['id']}/start").json()["error"]["code"] == "moved"
     assert client.post(f"/api/agents/{mind['id']}/export").status_code == 409
 
@@ -138,6 +138,170 @@ def _rebundle(bundle, edit_manifest, extra_files=None):
             info.size = len(data)
             out.addfile(info, io.BytesIO(data))
     return buf.getvalue()
+
+
+def test_new_imports_require_canonical_ids_before_creating_any_workspace(client, home):
+    _, mind = mind_in_swarm(client)
+    good = client.post(f"/api/agents/{mind['id']}/export").content
+    swarm = home.post("/api/swarms", json={"name": "Destination"}).json()
+    hive = home.app.state.hive
+    root = hive.settings.data_dir / "agents"
+    before = sorted(p.name for p in root.iterdir()) if root.exists() else []
+    suffixes = ["a" * n for n in [7, *range(9, 32), 33]] + ["g" * 32, "A" * 8, "A" * 32, "١" * 32, "ａ" * 32,
+        "a" * 32 + "\n", "a" * 32 + "\t", "a" * 32 + " ", "legacy1"]
+    for suffix in suffixes:
+        target = "a_" + suffix
+        changed = _rebundle(good, lambda manifest: manifest["mind"].update(id=target))
+        response = home.post(f"/api/agents/import?swarm_id={swarm['id']}", content=changed)
+        assert response.status_code == 400 and response.json()["error"]["code"] == "bad_bundle", (repr(target), response.text)
+        assert hive.db.one("SELECT 1 FROM agents WHERE id = ?", (target,)) is None
+        assert (sorted(p.name for p in root.iterdir()) if root.exists() else []) == before
+
+
+def test_a_canonical_long_id_can_be_imported_without_rewriting_the_source(client, home):
+    _, mind = mind_in_swarm(client)
+    good = client.post(f"/api/agents/{mind['id']}/export").content
+    swarm = home.post("/api/swarms", json={"name": "Destination"}).json()
+    target = "a_" + "a" * 32
+    changed = _rebundle(good, lambda manifest: manifest["mind"].update(id=target))
+    response = home.post(f"/api/agents/import?swarm_id={swarm['id']}", content=changed)
+    assert response.status_code == 200, response.text
+    assert response.json()["agent"]["id"] == target
+    assert client.app.state.hive.agent(mind["id"])["id"] == mind["id"]
+
+
+@pytest.mark.parametrize("target,accepted", [("a_legacy1", True), ("a_K", False), ("a_ABCD1234", False)])
+def test_existing_legacy_rows_remain_readable_and_only_safe_exact_ids_can_return(client, home, target, accepted):
+    _, mind = mind_in_swarm(client)
+    good = client.post(f"/api/agents/{mind['id']}/export").content
+    swarm = home.post("/api/swarms", json={"name": "Destination"}).json()
+    hive = home.app.state.hive
+    # Historical row fixture only. Production never rewrites an existing identity to make it canonical.
+    row = dict(client.app.state.hive.db.one("SELECT * FROM agents WHERE id = ?", (mind["id"],)))
+    row.update(id=target, swarm_id=swarm["id"], moved_to="historical-source", moved_to_name="Historical source")
+    hive.db.insert("agents", row)
+    before = hive.db.one("SELECT * FROM agents WHERE id = ?", (target,))
+    changed = _rebundle(good, lambda manifest: manifest["mind"].update(id=target))
+    if accepted:
+        import hashlib
+        manifest, _ = hive.placement.read_bundle(changed)
+        out = dict(client.app.state.hive.db.one("SELECT * FROM mind_moves WHERE agent_id = ? AND direction = 'out'", (mind["id"],)))
+        out.update(id="mv_matching_legacy", agent_id=target,
+                   manifest_sha256=hashlib.sha256(json.dumps(manifest, indent=1).encode()).hexdigest())
+        hive.db.insert("mind_moves", out)
+    response = home.post(f"/api/agents/import?swarm_id={swarm['id']}", content=changed)
+    assert response.status_code == (200 if accepted else 400), response.text
+    assert hive.agent(target)["id"] == target
+    if not accepted:
+        assert hive.db.one("SELECT * FROM agents WHERE id = ?", (target,)) == before
+        assert not (hive.settings.data_dir / "agents" / target).exists()
+
+
+def test_a_new_canonical_id_cannot_replace_another_legacy_rows_aliased_workspace(client, home):
+    _, mind = mind_in_swarm(client)
+    good = client.post(f"/api/agents/{mind['id']}/export").content
+    swarm = home.post("/api/swarms", json={"name": "Destination"}).json()
+    hive = home.app.state.hive
+    alias, target = "a_" + "A" * 32, "a_" + "a" * 32
+    row = dict(client.app.state.hive.db.one("SELECT * FROM agents WHERE id = ?", (mind["id"],)))
+    row.update(id=alias, swarm_id=swarm["id"], moved_to="historical-source", moved_to_name="Historical source")
+    hive.db.insert("agents", row)
+    directory = hive.settings.data_dir / "agents" / alias
+    directory.mkdir(parents=True)
+    sentinel = directory / "owner-sentinel"
+    sentinel.write_text("Existing historical workspace must stay intact")
+    if not (directory.parent / target).exists():
+        pytest.skip("requires a filesystem that aliases these two spellings")
+    changed = _rebundle(good, lambda manifest: manifest["mind"].update(id=target))
+    response = home.post(f"/api/agents/import?swarm_id={swarm['id']}", content=changed)
+    assert response.status_code == 409 and response.json()["error"]["code"] == "workspace_identity_conflict"
+    assert sentinel.read_text() == "Existing historical workspace must stay intact"
+    assert hive.db.one("SELECT 1 FROM agents WHERE id = ?", (target,)) is None
+    assert hive.db.one("SELECT * FROM agents WHERE id = ?", (alias,)) == row
+
+
+@pytest.mark.parametrize("alias", ["a_" + "A" * 8, "a_" + "ａ" * 8])
+def test_recorded_alias_without_a_directory_refuses_prospective_import(client, home, alias):
+    _, mind = mind_in_swarm(client)
+    bundle = client.post(f"/api/agents/{mind['id']}/export").content
+    swarm = home.post("/api/swarms", json={"name": "Destination"}).json()
+    hive, target = home.app.state.hive, "a_" + "a" * 8
+    row = dict(client.app.state.hive.db.one("SELECT * FROM agents WHERE id = ?", (mind["id"],)))
+    row.update(id=alias, swarm_id=swarm["id"], moved_to="historical-source")
+    hive.db.insert("agents", row)
+    changed = _rebundle(bundle, lambda manifest: manifest["mind"].update(id=target))
+    response = home.post(f"/api/agents/import?swarm_id={swarm['id']}", content=changed)
+    assert response.status_code == 409 and response.json()["error"]["code"] == "workspace_identity_conflict"
+    assert hive.db.one("SELECT * FROM agents WHERE id = ?", (alias,)) == row
+    assert hive.db.one("SELECT 1 FROM agents WHERE id = ?", (target,)) is None
+    assert not (hive.settings.data_dir / "agents" / target).exists()
+
+
+def test_alias_added_during_staging_is_rechecked_under_the_installation_guard(client, home, monkeypatch):
+    _, mind = mind_in_swarm(client)
+    bundle = client.post(f"/api/agents/{mind['id']}/export").content
+    swarm = home.post("/api/swarms", json={"name": "Destination"}).json()
+    hive, target, alias = home.app.state.hive, "a_" + "a" * 8, "a_" + "A" * 8
+    row = dict(client.app.state.hive.db.one("SELECT * FROM agents WHERE id = ?", (mind["id"],)))
+    row.update(id=alias, swarm_id=swarm["id"], moved_to="historical-source")
+    mkdir, inserted = pathlib.Path.mkdir, []
+    def interleave(path, *args, **kwargs):
+        result = mkdir(path, *args, **kwargs)
+        if path.name.startswith("." + target + ".staged-") and not inserted:
+            hive.db.insert("agents", row)
+            inserted.append(True)
+        return result
+    monkeypatch.setattr(pathlib.Path, "mkdir", interleave)
+    changed = _rebundle(bundle, lambda manifest: manifest["mind"].update(id=target))
+    response = home.post(f"/api/agents/import?swarm_id={swarm['id']}", content=changed)
+    assert inserted and response.status_code == 409, response.text
+    assert hive.db.one("SELECT 1 FROM agents WHERE id = ?", (target,)) is None
+    assert hive.db.one("SELECT * FROM agents WHERE id = ?", (alias,)) == row
+    assert not list((hive.settings.data_dir / "agents").glob("." + target + ".staged-*"))
+    assert not (hive.settings.data_dir / "agents" / target).exists()
+
+
+def test_installation_rename_is_inside_the_existing_database_write_transaction(client, home, monkeypatch):
+    import os
+    _, mind = mind_in_swarm(client)
+    bundle = client.post(f"/api/agents/{mind['id']}/export").content
+    swarm = home.post("/api/swarms", json={"name": "Destination"}).json()
+    hive = home.app.state.hive
+    rename, observed = os.rename, []
+    def guarded(source, target, *args, **kwargs):
+        if ".staged-" in pathlib.Path(source).name:
+            observed.append(hive.db._conn.in_transaction)
+            assert hive.db._conn.in_transaction
+        return rename(source, target, *args, **kwargs)
+    monkeypatch.setattr(os, "rename", guarded)
+    response = home.post(f"/api/agents/import?swarm_id={swarm['id']}", content=bundle)
+    assert response.status_code == 200, response.text
+    assert observed == [True]
+
+
+@pytest.mark.parametrize("departed", [False, True])
+def test_legacy_return_requires_departure_evidence_even_when_its_row_is_deleted(client, home, departed):
+    _, mind = mind_in_swarm(client)
+    bundle = client.post(f"/api/agents/{mind['id']}/export").content
+    swarm = home.post("/api/swarms", json={"name": "Destination"}).json()
+    hive, target = home.app.state.hive, "a_legacydeparture"
+    row = dict(client.app.state.hive.db.one("SELECT * FROM agents WHERE id = ?", (mind["id"],)))
+    row.update(id=target, swarm_id=swarm["id"], moved_to=None, moved_to_name=None, deleted=1)
+    hive.db.insert("agents", row)
+    if departed:
+        out = dict(client.app.state.hive.db.one("SELECT * FROM mind_moves WHERE agent_id = ? AND direction = 'out'", (mind["id"],)))
+        import hashlib
+        changed = _rebundle(bundle, lambda manifest: manifest["mind"].update(id=target))
+        manifest, _ = hive.placement.read_bundle(changed)
+        out.update(id="mv_historical_departure", agent_id=target,
+                   manifest_sha256=hashlib.sha256(json.dumps(manifest, indent=1).encode()).hexdigest())
+        hive.db.insert("mind_moves", out)
+    changed = _rebundle(bundle, lambda manifest: manifest["mind"].update(id=target))
+    response = home.post(f"/api/agents/import?swarm_id={swarm['id']}", content=changed)
+    assert response.status_code == (200 if departed else 400), response.text
+    if not departed:
+        assert hive.db.one("SELECT * FROM agents WHERE id = ?", (target,)) == row
+        assert not (hive.settings.data_dir / "agents" / target).exists()
 
 
 def test_a_bundle_cannot_grant_authority_or_touch_other_minds(client, home):
@@ -221,6 +385,32 @@ def _workspace(hive, agent_id):
 
 def _leftovers(hive, agent_id):
     return sorted(p.name for p in _workspace(hive, agent_id).parent.iterdir() if p.name.startswith(f".{agent_id}.staged-"))
+
+
+def test_a_namespace_change_after_old_workspace_moves_aside_refuses_and_restores_it(client, home, monkeypatch):
+    import os
+    _, mind, back = _moved_home_and_back_bundle(client, home)
+    hive = client.app.state.hive
+    root = _workspace(hive, mind["id"])
+    sentinel = root / "old-workspace-sentinel"
+    sentinel.write_text("Invented old workspace must be restored")
+    before = hive.db.one("SELECT * FROM agents WHERE id = ?", (mind["id"],))
+    alias = "a_" + "".join(chr(ord(char) + 0xFEE0) for char in mind["id"][2:])
+    alias_row = dict(before, id=alias)
+    rename, injected = os.rename, []
+    def interleave(source, target, *args, **kwargs):
+        result = rename(source, target, *args, **kwargs)
+        if pathlib.Path(source) == root and ".before-" in pathlib.Path(target).name and not injected:
+            hive.db.insert("agents", alias_row)
+            injected.append(True)
+        return result
+    monkeypatch.setattr(os, "rename", interleave)
+    response = client.post("/api/agents/import", content=back)
+    assert injected and response.status_code == 409, response.text
+    assert sentinel.read_text() == "Invented old workspace must be restored"
+    assert hive.db.one("SELECT * FROM agents WHERE id = ?", (mind["id"],)) == before
+    assert hive.db.one("SELECT 1 FROM agents WHERE id = ?", (alias,)) is None  # injected write rolled back too
+    assert _leftovers(hive, mind["id"]) == []
 
 
 def test_a_stale_import_never_touches_the_workspace(client, home, monkeypatch):

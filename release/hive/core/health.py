@@ -12,12 +12,47 @@ import re
 import time
 
 from .db import latest_stamp, new_id, now, parse_stamp, stamp_of
-from .rooms import COFFEE as ROOM_COFFEE, TEAM as ROOM_TEAM
+from .rooms import COFFEE as ROOM_COFFEE, HEALTH_SENDER, TEAM as ROOM_TEAM
 
-HEALTH_SENDER = "hive:health"           # who Health is in a mind's messages
 HEALTH_QUESTION = "health_question"     # the event of Health's idle question: never counted as the mind's input
 HEALTH_QUESTION_TAG = "[HEALTH-QUESTION "   # how its text starts (hive.py: never shown as a hive note in another's chat)
 log = logging.getLogger("hive")
+
+def for_people(sender, text):
+    """The words of a message as people read them: Health's question without its id tag. The tag is for the mind (it
+    names the question the mind answers) and stays on the mind's own message; a room copy, which people read, has none."""
+    text = str(text or "")
+    if sender == HEALTH_SENDER and text.startswith(HEALTH_QUESTION_TAG):
+        end = text.find("]", len(HEALTH_QUESTION_TAG))
+        if end != -1:
+            return text[end + 1:].lstrip()
+    return text
+
+
+def people_message(view):
+    """A message as a person reads it (Peter on omegahive#50): only a verified Health question (Hive.message_view marked
+    it health_check, from its stored event, never from its text) loses its id tag. Anything else, a mind or a person
+    quoting the tag included, is returned exactly as it was. The stored row and what minds receive keep the tag."""
+    if isinstance(view, dict) and view.get("health_check") is True and view.get("sender") == HEALTH_SENDER:
+        return {**view, "text": for_people(HEALTH_SENDER, view.get("text"))}
+    return view
+
+
+def people_frame(text):
+    """A serialized event frame as a person's socket (/api/events) receives it: a "message" event carrying a verified
+    Health question, its text through people_message; every other frame byte for byte. Decided by parsing the frame (Kimi
+    on 7cf0ca57: never by how a field happens to be spelled in it); Health's sender name is only the cheap pre-check."""
+    if HEALTH_SENDER not in text:
+        return text
+    try:
+        event = json.loads(text)
+    except ValueError:
+        return text
+    if not isinstance(event, dict) or event.get("type") != "message" or not isinstance(event.get("message"), dict):
+        return text
+    message = people_message(event["message"])
+    return text if message is event["message"] else json.dumps({**event, "message": message})
+
 
 # kind -> (severity, what it means, what to do)
 KINDS = {
@@ -490,7 +525,7 @@ class IdleWatch:
             return q["id"]
         return await self.ask(row, by)
 
-    # ---- views (hive/core/app.py routes; shapes in coordination/omegareview/PLATFORM_IDLE_MINDS_R1_SHAPES.md) -----
+    # ---- views (hive/core/app.py routes; shapes in PLATFORM_IDLE_MINDS_R1_SHAPES.md) -----
 
     def view(self, row, history=False):
         facts = self.facts(row)

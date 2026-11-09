@@ -76,7 +76,7 @@ def test_policy_rule_writes_follow_current_member_and_admin_authority(client):
     from hive.tests.test_member_rules_p3c import person as current_person
 
     hive = client.app.state.hive
-    ann_id, quinn_id = "u_0a0a0a0a", "u_0c0c0c0c"
+    ann_id, jon_id = "u_0a0a0a0a", "u_0c0c0c0c"
     ann = current_person(client, ann_id)  # positive SSO fixture, including a future expiry
     ann_principal = "user:" + ann_id
     sw = client.post("/api/swarms", headers=ann, json={"name": "Ann's"}).json()
@@ -98,12 +98,15 @@ def test_policy_rule_writes_follow_current_member_and_admin_authority(client):
     assert hive.db.one("SELECT granted_by FROM policy_rules WHERE id = ?", (rule["id"],))["granted_by"] == "user:operator"
     assert client.delete(f"/api/policy/{rule['id']}", headers=ann).status_code == 403
     assert hive.db.one("SELECT id FROM policy_rules WHERE id = ?", (rule["id"],)) is not None
-    # A current named admin and the stored hive owner can write hive-wide rules.
-    quinn = current_person(client, quinn_id, role="admin")
-    r = client.post("/api/policy", headers=quinn, json={"scope": "hive", "skill": "net*", "mode": "ask"})
-    assert r.status_code == 200 and r.json()["granted_by"] == "user:" + quinn_id
+    # A current named admin and the stored hive owner, while still an enabled admin, can write hive-wide rules.
+    jon = current_person(client, jon_id, role="admin")
+    r = client.post("/api/policy", headers=jon, json={"scope": "hive", "skill": "net*", "mode": "ask"})
+    assert r.status_code == 200 and r.json()["granted_by"] == "user:" + jon_id
     hive.ownhive.ensure_owner()
     hive.db.execute("UPDATE hive_owner SET owner = ? WHERE id = 1", (ann_principal,))
+    # money port r1.1 (Dot): a recorded owner who is not an admin (demoted) has no owner powers
+    assert client.delete(f"/api/policy/{rule['id']}", headers=ann).status_code == 403
+    hive.db.execute("UPDATE people SET role = 'admin' WHERE id = ?", (ann_id,))
     assert client.delete(f"/api/policy/{rule['id']}", headers=ann).status_code == 200
     r = client.post("/api/policy", headers=ann, json={"scope": "hive", "skill": "x*", "mode": "deny"})
     assert r.status_code == 200 and r.json()["granted_by"] == ann_principal
@@ -128,14 +131,14 @@ def test_track_record_needs_sight_of_the_mind(client):
 
 def _anns_work(client, w):
     """Ann: an open Ask turn on the coordinator (its thread is her work session) and an ordinary session on a third
-    mind. the owner: an ordinary session on the worker, which must outlive Ann leaving."""
+    mind. Jon: an ordinary session on the worker, which must outlive Ann leaving."""
     third = client.post("/api/agents", json={"name": "Third", "swarm_id": w["swarm"]["id"]}).json()
     client.put(f"/api/agents/{third['id']}/visibility", json={"visibility": "shared", "shared_with": ["user:u_ann"]})
     turn = ask(client, w["ann"], "op-leave-01", context={"swarm_id": w["swarm"]["id"]})
     assert turn.status_code == 202, turn.text
     s = client.post("/api/sessions", headers=w["ann"], json={"mind": third["id"], "title": "Ann's", "budget_usd": 1})
     assert s.status_code == 200, s.text
-    j = client.post("/api/sessions", headers=w["quinn"], json={"mind": w["worker"]["id"], "title": "the owner's", "budget_usd": 1})
+    j = client.post("/api/sessions", headers=w["jon"], json={"mind": w["worker"]["id"], "title": "Jon's", "budget_usd": 1})
     assert j.status_code == 200, j.text
     hive = w["hive"]
     assert hive.payer_for(hive.agent(w["coord"]["id"]))[0] == "user:u_ann"
@@ -149,8 +152,8 @@ def _assert_ann_gone(w, third, turn):
     assert hive.db.all("SELECT id FROM work_sessions WHERE owner = 'user:u_ann' AND status = 'active'") == []
     assert hive.payer_for(hive.agent(w["coord"]["id"]))[0] != "user:u_ann"
     assert hive.payer_for(hive.agent(third["id"]))[0] != "user:u_ann"
-    # the owner's work and the minds themselves are untouched
-    assert len(hive.db.all("SELECT id FROM work_sessions WHERE owner = 'user:u_quinn' AND status = 'active'")) == 1
+    # Jon's work and the minds themselves are untouched
+    assert len(hive.db.all("SELECT id FROM work_sessions WHERE owner = 'user:u_jon' AND status = 'active'")) == 1
     assert hive.agent(w["coord"]["id"])["status"] == "awake"
 
 
@@ -234,9 +237,13 @@ def test_a_member_cannot_change_a_role_that_carries_rules(client):
     assert r.status_code == 200 and hive.agent(w["worker"]["id"])["role_id"] == plain["id"]
     assert client.patch(f"/api/agents/{w['worker']['id']}", headers=ann, json={"role_id": None}).status_code == 200
     assert [r["granted_by"] for r in before] == ["user:operator"]                     # the admin's assignment, recorded
-    # the hive's owner (not an admin) may, and is recorded as the grantor
+    # the hive's owner may while still an enabled admin (money port r1.1, Dot: a demoted owner may not), and is
+    # recorded as the grantor
     hive.ownhive.ensure_owner()
     hive.db.execute("UPDATE hive_owner SET owner = 'user:u_ann' WHERE id = 1")
+    r = client.patch(f"/api/agents/{w['worker']['id']}", headers=ann, json={"role_id": loose["id"]})
+    assert r.status_code == 403 and _role_rules(hive, w["worker"]["id"]) == []
+    hive.db.execute("UPDATE people SET role = 'admin' WHERE id = 'u_ann'")
     assert client.patch(f"/api/agents/{w['worker']['id']}", headers=ann, json={"role_id": loose["id"]}).status_code == 200
     assert [(r["mode"], r["granted_by"]) for r in _role_rules(hive, w["worker"]["id"])] == [("allow", "user:u_ann")]
 
@@ -257,9 +264,9 @@ def test_a_member_creates_minds_only_with_a_prompt_only_role(client):
     # an admin's new mind gets the role's rules, recorded with the admin as grantor; a role edit records its editor
     _, (a,) = make_swarm_and_agents(client, n=1, role_id=loose["id"])
     assert [(r["mode"], r["granted_by"]) for r in _role_rules(hive, a["id"])] == [("allow", "user:operator")]
-    quinn = person(client, "u_quinn", role="admin")
-    assert client.patch(f"/api/roles/{loose['id']}", headers=quinn, json={"rules": [{"skill": "write-file", "mode": "ask"}]}).status_code == 200
-    assert [(r["mode"], r["granted_by"]) for r in _role_rules(hive, a["id"])] == [("ask", "user:u_quinn")]
+    jon = person(client, "u_jon", role="admin")
+    assert client.patch(f"/api/roles/{loose['id']}", headers=jon, json={"rules": [{"skill": "write-file", "mode": "ask"}]}).status_code == 200
+    assert [(r["mode"], r["granted_by"]) for r in _role_rules(hive, a["id"])] == [("ask", "user:u_jon")]
 
 
 def test_app_attachment_rules_record_who_attached(client, monkeypatch):

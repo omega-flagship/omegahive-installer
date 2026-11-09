@@ -489,7 +489,12 @@ def test_the_reconcile_loop_runs_the_per_candidate_idle_pass():
     """app.py's loop calls sleep_idle_minds (TF1): the wiring, not only the method, is pinned."""
     import inspect
     from hive.core import app as app_module
-    source = inspect.getsource(app_module.create_app)
+    factory = getattr(app_module, "_create_app", app_module.create_app)
+    if factory is not app_module.create_app:
+        # Resource ownership wraps the actual routed factory; do not inspect
+        # an orphan helper or mistake the wrapper for the reconcile body.
+        assert "return _create_app(" in inspect.getsource(app_module.create_app)
+    source = inspect.getsource(factory)
     assert "run_in_threadpool(hive.sleep_idle_minds)" in source
     assert "hive.lifecycle, agent_id, \"sleep\"" not in source
 

@@ -1,4 +1,4 @@
-"""Own hive, round H1 (coordination/omegareview/PLATFORM_OWN_HIVE_CONNECTIONS_PLAN_R1.md, approved by the owner 2026-10-13).
+"""Own hive, round H1 (PLATFORM_OWN_HIVE_CONNECTIONS_PLAN_R1.md, approved by Jon 2026-10-13).
 
 A hive is one person's hive. This module holds the four things H1 adds; nothing here crosses to another hive (H2/H3).
 
@@ -6,7 +6,9 @@ A hive is one person's hive. This module holds the four things H1 adds; nothing 
    changing anyone's access: the earliest-created enabled admin becomes the owner (``via = "first-admin"``), stored the
    first time anything asks. A hive with no named admin yet is owned by the loopback operator (``user:operator``, not
    stored, so the first admin to arrive becomes the owner). Admins keep every right they had (H1 changes no one's
-   access, the owner's row included); ownership transfer and protection come with the rebuilt hives.
+   access, the owner's row included); ownership transfer and protection come with the rebuilt hives. The owner acts as
+   owner (anything that commits the owner's money) only while they are still an enabled admin (acts_as_owner): a
+   demoted owner keeps the row until a claim, never its powers.
 
 2. Limits on your own keys. A person sets monthly limits on the provider keys THEY own (a key's ``owner``; keys with no
    person owner, the hive's environment keys and the old operator-set keys, are the hive owner's): one limit for their
@@ -17,7 +19,7 @@ A hive is one person's hive. This module holds the four things H1 adds; nothing 
    hold them like any other limit. A grant replaces the member default for that person on that owner's keys; the
    member default (HIVE_MEMBER_MONTHLY_USD, admin rules) stays only as the compatibility fallback.
 
-3. Visibility (the owner, verbatim: "minds and swarms and hives can be set as public or private and have access granted within
+3. Visibility (Jon, verbatim: "minds and swarms and hives can be set as public or private and have access granted within
    both public and private ... anything private would be invite only - anything public would either be 'access but use
    own key' or 'access with hives key' depending on permissions"). Minds and swarms keep visibility.py's levels (private,
    shared = private with access grants, public) and gain ``pays``: ``own-key`` or ``hive-key``. The hive itself is
@@ -59,10 +61,11 @@ LATER_KINDS = {"join": "H2 (hive-to-hive connections)", "move-out": "H4"}
 ACCESS = ("guest", "public")            # people.access; NULL = in the hive before H1 (today's access, unchanged)
 DECISIONS = ("approve", "adjust", "decline")
 MAX_LIMIT = 1_000_000.0
-LIMIT_ID = re.compile(r"^kl_[0-9a-f]{8}$")
+LIMIT_ID = re.compile(r"^kl_(?:[0-9a-f]{8}|[0-9a-f]{32})$")
 PERSON = re.compile(r"^user:u_[A-Za-z0-9_-]{1,40}$")
-KEY_ID = re.compile(r"^(\*|k_[0-9a-f]{8}|env:[a-z0-9_-]+)$")
-HOLD_KEY = re.compile(r"^(k_[0-9a-f]{8}|env:[a-z0-9_-]+)$")
+from .keyids import KEY_ID as KEY_GRAMMAR
+KEY_ID = re.compile(r"^(\*|" + KEY_GRAMMAR + r")$")   # keyids: the one grammar
+HOLD_KEY = re.compile(r"^(" + KEY_GRAMMAR + r")$")
 
 SCHEMA = [
     """CREATE TABLE IF NOT EXISTS hive_owner (id INTEGER PRIMARY KEY CHECK (id = 1), owner TEXT NOT NULL, via TEXT NOT NULL,
@@ -196,8 +199,31 @@ class OwnHive:
     def is_owner(self, principal):
         return bool(principal) and principal == self.owner()
 
+    def acts_as_owner(self, viewer):
+        """The owner, still an enabled admin of this hive: their session carries admin rights (role_of reads the row on
+        every request) and their row says so. The loopback operator owns a hive with no admin yet, and acts as owner in
+        an admin session. A demoted or disabled owner is still recorded as owner until a claim, but never acts as one."""
+        principal = getattr(viewer, "principal", None)
+        if not self.is_owner(principal) or not getattr(viewer, "admin", False):
+            return False
+        if principal == "user:operator":
+            return True
+        person = self._person(principal)
+        return bool(person) and not person.get("disabled") and person.get("role") == "admin"
+
     def require_owner(self, viewer):
-        if not self.is_owner(getattr(viewer, "principal", None)):
+        if not self.acts_as_owner(viewer):
+            raise self._error(403, "owner_only")
+
+    def require_owner_session(self, viewer, key_id):
+        """Anything that commits the hive's money (limits, grants, revocations and approvals on the hive's own keys: the
+        environment keys and any key with no person owner, and so on '*', all the owner's keys) needs the owner acting
+        as owner, as require_owner: a demoted owner's principal is refused (403 owner_only). A key the owner added
+        themselves stays theirs to limit and grant from whatever their role, like anyone's own key."""
+        principal = getattr(viewer, "principal", None)
+        if not self.is_owner(principal) or self.acts_as_owner(viewer):
+            return
+        if key_id == "*" or self.key_person(key_id) != principal:
             raise self._error(403, "owner_only")
 
     def require_person_or_owner(self, viewer):
@@ -261,7 +287,7 @@ class OwnHive:
         return {"owner": owner, "owner_name": (person or {}).get("name") or None,
                 "via": row["via"] if row and row["owner"] == owner else "operator",
                 "set_at": row["set_at"] if row and row["owner"] == owner else None, **self.settings(),
-                "you_are_owner": owner == getattr(viewer, "principal", None),
+                "you_are_owner": self.acts_as_owner(viewer),
                 "your_access": self.access(getattr(viewer, "principal", None))}
 
     def set_settings(self, viewer, data):
@@ -305,14 +331,19 @@ class OwnHive:
 
     def access(self, principal):
         """'owner', 'legacy' (in the hive before H1, or anyone who is not a named person: today's rules), 'guest',
-        'public', or None for a disabled or unknown person."""
-        if principal and principal == self.owner():
+        'public', or None for a disabled or unknown person. The recorded owner is 'owner' only while an enabled admin
+        (the operator, for a hive with no admin yet): disabled, they are None like anyone disabled; demoted, they are the
+        member their row says (the grants and member rules apply), until someone claims the hive."""
+        owner = self.owner()
+        if principal and principal == owner and not principal.startswith("user:u_"):
             return "owner"
         if not isinstance(principal, str) or not principal.startswith("user:u_"):
             return "legacy"
         person = self._person(principal)
         if person is None or person.get("disabled"):
             return None
+        if principal == owner and person.get("role") == "admin":
+            return "owner"
         return person.get("access") or "legacy"
 
     def key_person(self, key_id):
@@ -359,6 +390,13 @@ class OwnHive:
                            f"AND key_id IN ({', '.join('?' for _ in keys)}) ORDER BY created_at", (owner, grantee, *keys))
         return self._active(rows)
 
+    def total_row(self, owner):
+        """gateway r1a (plan §2.6, r1.2): the key owner's ONE total monthly limit, their own limit on ALL their keys
+        (grantee 'self', key '*'; PUT /api/me/key-limits/self, or POST /api/keys with month_usd), if live; else None. A
+        limit on one key is not it: it counts only that key (spent)."""
+        rows = self._grant_rows(owner, None, "self") if isinstance(owner, str) and owner else []
+        return rows[0] if rows else None
+
     def grantee_for(self, key_id, payer):
         """Whose limit on the key's owner's keys a call counts under: 'self' (the owner's own use) for the owner, a hive
         mind of the hive owner's, anyone who is not a named person, and anyone in the hive before H1 with no grant from
@@ -401,7 +439,7 @@ class OwnHive:
             if key is None:
                 if "key" not in meta and meta.get("kind") != "embeddings":
                     return ["*"]
-            elif not isinstance(key, str) or not HOLD_KEY.match(key):
+            elif not isinstance(key, str) or not HOLD_KEY.fullmatch(key):
                 return ["*"]
             subjects = self.subjects(key, payer)
             return subjects if subjects and all(isinstance(x, str) for x in subjects) else ["*"]
@@ -508,13 +546,76 @@ class OwnHive:
                 "active": not row["revoked_at"] and (not row["ends_at"] or row["ends_at"] > now())}
 
     def _check_key(self, owner, key_id):
-        if not isinstance(key_id, str) or not KEY_ID.match(key_id):
+        if not isinstance(key_id, str) or not KEY_ID.fullmatch(key_id):
             raise self._error(400, "bad_request", "key_id is a key id, or * for all your keys")
         if key_id != "*":
             keyring = getattr(self.hive, "keyring", None)
             known = key_id in ((keyring.ring.get("keys") if keyring else None) or {}) or key_id.startswith("env:")
             if not known or self.key_owner(key_id) != owner:
                 raise self._error(403, "key_owner_only")
+
+    def check_total(self, owner, month_usd, viewer=None):
+        """POST /api/keys with month_usd (gateway r1a): refuse, before the key is stored, a total that set_limit would
+        refuse (who may set a limit on their own keys; the owner check on '*'; the amount). Every check set_limit makes
+        for this row runs here first (composed r2, Dot's ruling: never a key stored and then a 403), so write_total's
+        set_limit can then fail only on storage (503 limit_not_raised) or a total changed meanwhile."""
+        if not isinstance(owner, str) or not (owner.startswith("user:u_") or owner == self.owner()):
+            raise self._error(403, "key_owner_only")
+        if viewer is not None:
+            self._check_key(owner, "*")
+            self.require_owner_session(viewer, "*")   # money port ruling 3: '*' spans the hive's keys for the recorded owner
+        try:
+            _money(month_usd)
+        except ValueError:
+            raise self._error(400, "bad_limit") from None
+
+    def write_total(self, viewer, month_usd, seen=None):
+        """POST /api/keys with month_usd (gateway r1ab.5, Dot's ruling on the stand-in r1ab.4 P1s): the owner's all-keys
+        total, decided and written in ONE transaction against the live row, so no decision is ever stale.
+        - First call (seen None): written only if it narrows the live row (no end, and month_usd <= its amount); else
+          nothing is written and the request writes it last, as a raise.
+        - Last call (seen: the live row as the first call read it): written only if that row is unchanged since. Anyone
+          who set a total meanwhile (lower, equal or higher) set it in a request of their own: theirs stands.
+        Returns (written, seen). A return means committed: set_limit's notices are queued inside this transaction, and
+        db.transaction runs them after the commit with their failures caught, so only a failure before the commit
+        raises here."""
+        owner = getattr(viewer, "principal", None)
+        month = _money(month_usd)   # check_total has refused a bad amount already
+        with self.db.transaction():
+            live = self.db.one("SELECT * FROM key_limits WHERE owner = ? AND key_id = '*' AND grantee = 'self' "
+                               "AND revoked_at IS NULL", (owner,))
+            mark = live and (live["id"], live["month_usd"], live["ends_at"], live["updated_at"])
+            if seen is None:
+                write = bool(live) and live["ends_at"] is None and month <= float(live["month_usd"])
+            else:
+                write = mark == seen[0]
+            if write:
+                self.set_limit(viewer, "self", {"key_id": "*", "month_usd": month})
+        return write, (mark,)
+
+    def set_total_if(self, viewer, data):
+        """PUT /api/me/key-limits/self with expected_month_usd (own-key one-step, sol on b7de1e5b): the caller's ONE
+        all-keys total, written only if the live total is still the one they were shown (a number, or null for "none set
+        yet"), decided and written in ONE transaction against the live row, as write_total is. Anyone who set a total in
+        between set it in a request of their own: theirs stands, and the caller is told what it is now (409
+        limit_changed, details.monthly_total_usd) so they can consent again. Without expected_month_usd: set_limit as is."""
+        owner = getattr(viewer, "principal", None)
+        if data.get("key_id", "*") != "*":
+            raise self._error(400, "bad_request", "expected_month_usd is for the all-keys total (key_id '*') only")
+        expected = data.get("expected_month_usd")
+        if expected is not None:
+            try:
+                expected = _money(expected)
+            except ValueError:
+                raise self._error(400, "bad_limit") from None
+        with self.db.transaction():
+            live = self.db.one("SELECT * FROM key_limits WHERE owner = ? AND key_id = '*' AND grantee = 'self' "
+                               "AND revoked_at IS NULL", (owner,))
+            now = round(float(live["month_usd"]), 6) if live else None
+            if now != expected:
+                raise self._error(409, "limit_changed", "Your monthly limit changed since it was shown.",
+                                  {"monthly_total_usd": now})
+            return self.set_limit(viewer, "self", {k: v for k, v in data.items() if k != "expected_month_usd"})
 
     def set_limit(self, viewer, grantee, data, source="owner"):
         """Create or replace the caller's limit on their own key(s) for `grantee` ('self' or a person). One live row per
@@ -525,6 +626,7 @@ class OwnHive:
         data = data if isinstance(data, dict) else {}
         key_id = data.get("key_id", "*")
         self._check_key(owner, key_id)
+        self.require_owner_session(viewer, key_id)
         if grantee != "self":
             if not isinstance(grantee, str) or not PERSON.match(grantee) or grantee == owner:
                 raise self._error(400, "bad_request", "grant to a person by principal, e.g. user:u_ab12")
@@ -567,9 +669,10 @@ class OwnHive:
 
     def revoke_limit(self, viewer, limit_id):
         """DELETE /api/me/key-limits/{id}: the owner ends a limit or grant at once (a revoked grant leaves no access)."""
-        row = self.db.one("SELECT * FROM key_limits WHERE id = ?", (limit_id,)) if LIMIT_ID.match(str(limit_id)) else None
+        row = self.db.one("SELECT * FROM key_limits WHERE id = ?", (limit_id,)) if LIMIT_ID.fullmatch(str(limit_id)) else None
         if row is None or row["owner"] != getattr(viewer, "principal", None):
             raise self._error(404, "not_found", "no such limit of yours")
+        self.require_owner_session(viewer, row["key_id"])
         links = getattr(self.hive, "app_links", None)
         if links is not None and row["grantee"] == "self" and row["revoked_at"] is None:
             links.limits_changed(row["owner"])
@@ -583,8 +686,9 @@ class OwnHive:
         me = getattr(viewer, "principal", None)
         keyring = getattr(self.hive, "keyring", None)
         records = ((keyring.ring.get("keys") if keyring else None) or {}).values()
+        hive_keys = self.acts_as_owner(viewer)   # the hive's own stored keys: only to the owner acting as owner (r1.2)
         keys = [{"id": r["id"], "provider": r["provider"], "label": r["label"], "hint": keyring.hint(r.get("secret") or "")}
-                for r in records if self.key_owner(r["id"]) == me]
+                for r in records if self.key_owner(r["id"]) == me and (hive_keys or self.key_person(r["id"]) == me)]
         given = [self.limit_view(r) for r in self.db.all("SELECT * FROM key_limits WHERE owner = ? AND revoked_at IS NULL "
                                                           "ORDER BY created_at", (me,))]
         received = [self.limit_view(r) for r in self.db.all("SELECT * FROM key_limits WHERE grantee = ? AND revoked_at IS NULL "
@@ -593,7 +697,9 @@ class OwnHive:
             r["keys"] = "all" if r.pop("key_id") == "*" else "one"
         return {"principal": me, "access": self.access(me), "keys": keys,
                 "own": [g for g in given if g["grantee"] == "self"], "grants": [g for g in given if g["grantee"] != "self"],
-                "received": received}
+                "received": received,
+                # the figure the one add-your-key step suggests for a first monthly total (OwnHive.key_setup)
+                "suggested_month_usd": self.hive.budgets.default_allowance()}
 
     # ---- 3. visibility: who pays for public access --------------------------------------------------------------------
 
@@ -615,7 +721,7 @@ class OwnHive:
         return hive["pays"] if hive["visibility"] == "public" else None
 
     def person_key_check(self, agent, key_id, user=None):
-        """OI-13 r1.1 (the owner 2026-10-19: "everyone needs studio, they just need to use their own keys"): a person's own key,
+        """OI-13 r1.1 (Jon 2026-10-19: "everyone needs studio, they just need to use their own keys"): a person's own key,
         assigned to the mind or the provider default it falls back to, pays only for that person, someone they granted a
         limit on it, or a hive mind with no person behind it. Anyone else is refused (402 own_key_needed) before any
         reservation or dispatch, however payer_for would bill the call. Guests and public visitors are held by the H1
@@ -630,23 +736,35 @@ class OwnHive:
             return
         if self._grant_rows(holder, key_id, user):
             return
-        raise self._error(402, "own_key_needed", details={"scope": "use", "pays": "own-key"})
+        model = str(agent.get("model") or "")
+        provider = model.partition("/")[0] if "/" in model else None
+        raise self._error(402, "own_key_needed", details={"scope": "use", "pays": "own-key", **self.key_setup(user, provider)})
 
     def use_check(self, agent, key_id, payer, user=None):
         """Refuse (402) a paid call on a key its payer may not use. Called by Budgets.check, so every paid route, the
         reservation-free preflight included, runs it before any limit."""
-        self.person_key_check(agent, key_id, user)   # OI-13 r1.1: never another person's key, whoever payer_for bills
         owner, person = self.key_owner(key_id), self._payer_person(payer)
-        if person == owner or not isinstance(person, str) or not person.startswith("user:u_"):
+        named = isinstance(person, str) and person.startswith("user:u_")
+        access = self.access(person) if named else None
+        if named and access is None and person == payer:
+            # disabled or unknown: nobody pays for them, a live grant or their own key included (Hive.payer_for); a
+            # disabled owner too. A hive mind with no person behind it ('hive') is not theirs and is unaffected.
+            raise self._error(402, "no_key_grant", details={"scope": "use", "owner": owner})
+        if person == owner or not named:
+            self.person_key_check(agent, key_id, user)   # OI-13 r1.1: never another person's key, whoever payer_for bills
             return
+        self.person_key_check(agent, key_id, user)   # OI-13 r1.1: never another person's key, whoever payer_for bills
         if self._grant_rows(owner, key_id, person):
             return                                           # a grant: its limit applies (Budgets.applicable)
-        access = self.access(person)
         if access in ("legacy", "owner"):
             return                                           # in the hive before H1: today's rules, unchanged
         terms = self.pays_for(agent)
         if terms == "hive-key" and owner == self.owner():
-            return                                           # public, on the hive's key: the visitor limit applies
+            # public, on the hive's key: the visitor limit applies (Budgets.member_allowance). A guest whose grant was
+            # revoked or ended is held to it too; with no visitor limit set, a guest has no allowance and is refused.
+            if access == "guest" and self.settings()["visitor_month_usd"] is None:
+                raise self._error(402, "no_key_grant", details={"scope": "use", "owner": owner})
+            return
         if terms == "own-key":
             raise self._error(402, "own_key_required", details={"scope": "use", "pays": "own-key"})
         raise self._error(402, "no_key_grant", details={"scope": "use", "owner": owner})
@@ -698,25 +816,41 @@ class OwnHive:
 
     def accepted(self, invite, person_id, new_person):
         """people.py, inside the acceptance transaction: a use invitation makes the person a guest (when it made or
-        re-enabled their row) and grants them the invite's monthly limit on all the owner's keys."""
+        re-enabled their row) and grants them the invite's monthly limit on all the owner's keys. The invitation is bound
+        to the owner who issued it (its created_by): if that person is no longer the owner (an ownership claim, or the
+        first admin arriving after the operator invited), it is refused (410 invitation_stale) before anything of its
+        own is written, and the caller's transaction rolls back the person row, so it never spends a new owner's money."""
         if (invite.get("kind") or "member") != "use":
             return
+        from .people import SignInError
         if invite.get("limit_usd") is None:   # H1.1: never a silent $0 grant; clean_invite requires one at creation
-            from .people import SignInError
             raise SignInError(410, "invite_unavailable", "this invitation has no limit set; ask for a new one")
+        owner = self.owner()
+        if invite.get("created_by") != owner:
+            raise SignInError(410, "invitation_stale", "the person who sent this invitation no longer owns this hive; "
+                                                       "ask the owner for a new one")
         principal = "user:" + person_id
         if new_person:
             self.db.execute("UPDATE people SET access = 'guest' WHERE id = ?", (person_id,))
-        owner = self.owner()
         if owner == principal:
             return
         self._write_limit(owner, "*", principal, float(invite["limit_usd"]), None, f"invite:{invite['id']}",
-                          "use my hive", invite.get("created_by") or owner)
+                          "use my hive", owner)
 
     # ---- asking for a limit -------------------------------------------------------------------------------------------
 
-    def request_view(self, row):
-        return dict(row)
+    def request_view(self, row, viewer=None):
+        """A limit request as `viewer` may see it (sol on 6dc7a837): the asked owner, whose key it is, and an admin see the
+        whole row. The asker of a request about a mind sees it by its opaque id without the paying key's id or its owner (it
+        routes to whoever holds the mind's paying key, which may be another member's personal key: that routing stays
+        inside the hive). One they addressed to a person themselves is theirs already: that person, and key_id '*'."""
+        out = dict(row)
+        if viewer is None or getattr(viewer, "admin", False) or getattr(viewer, "principal", None) == row.get("owner"):
+            return out
+        if row.get("agent_id"):   # asked about a mind: whose key pays for it, and which, stays inside the hive
+            out.pop("key_id", None)
+            out.pop("owner", None)
+        return out
 
     def ask(self, viewer, data):
         """POST /api/me/limit-requests: ask a key owner for a monthly limit. Names a mind (whose paying key's owner is
@@ -750,7 +884,7 @@ class OwnHive:
                "amount_usd": amount, "note": str(data.get("note") or "")[:300], "status": "pending", "created_at": now()}
         self.db.insert("limit_requests", row)
         self.hive.events.publish("person_request.created", request={"id": row["id"], "kind": "limit", "requested_by": me})
-        return self.request_view(self.db.one("SELECT * FROM limit_requests WHERE id = ?", (row["id"],)))
+        return self.request_view(self.db.one("SELECT * FROM limit_requests WHERE id = ?", (row["id"],)), viewer)
 
     def _mind_key(self, row):
         """The key that pays for a mind's calls: its assigned key, else its provider's default (never a secret)."""
@@ -769,7 +903,7 @@ class OwnHive:
         me = getattr(viewer, "principal", None)
         asked = self.db.all("SELECT * FROM limit_requests WHERE requested_by = ? ORDER BY created_at DESC LIMIT 200", (me,))
         to_me = self.db.all("SELECT * FROM limit_requests WHERE owner = ? ORDER BY created_at DESC LIMIT 200", (me,))
-        return {"asked": [self.request_view(r) for r in asked], "to_decide": [self.request_view(r) for r in to_me]}
+        return {"asked": [self.request_view(r, viewer) for r in asked], "to_decide": [self.request_view(r, viewer) for r in to_me]}
 
     def decide(self, viewer, request_id, data):
         """POST /api/me/limit-requests/{id}/decide (the asked owner only): approve (the amount asked), adjust (amount_usd
@@ -777,6 +911,7 @@ class OwnHive:
         row = self.db.one("SELECT * FROM limit_requests WHERE id = ?", (request_id,))
         if row is None or row["owner"] != getattr(viewer, "principal", None):
             raise self._error(404, "not_found", "no such request to you")
+        self.require_owner_session(viewer, row["key_id"])
         data = data if isinstance(data, dict) else {}
         decision = data.get("decision")
         if decision not in DECISIONS:
@@ -804,9 +939,19 @@ class OwnHive:
                          now(), granted, limit_id, row["id"]))
         self.hive.events.publish("person_request.updated", request={"id": row["id"], "kind": "limit",
                                                                     "requested_by": row["requested_by"]})
-        return self.request_view(self.db.one("SELECT * FROM limit_requests WHERE id = ?", (row["id"],)))
+        return self.request_view(self.db.one("SELECT * FROM limit_requests WHERE id = ?", (row["id"],)), viewer)
 
     # ---- First Light (onboarding.py) ----------------------------------------------------------------------------------
+
+    def key_setup(self, principal, provider):
+        """What the one add-your-key step needs (Jon 11-05: members bring their own key, in one friendly step), carried in
+        an own_key_needed refusal's details: the provider and its name, whether the person already has their ONE monthly
+        total (then none is asked for), and the figure to suggest when they don't (the member default allowance)."""
+        from .providers import LABELS
+        has_total = self.total_row(principal) is not None if isinstance(principal, str) and principal else False
+        return {"provider": provider, "provider_label": LABELS.get(provider, str(provider or "").title() or None),
+                "has_total": has_total,
+                "suggested_month_usd": None if has_total else self.hive.budgets.default_allowance()}
 
     def setup_limit(self, principal, own_keys):
         """The monthly_limit item's truth for First Light, or None for today's (allowance) item: a person with keys of

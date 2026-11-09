@@ -17,7 +17,7 @@ import type { Share } from './types'
 
 /**
  * Who can read this mind's private memory, what it can read of others, who is asking, and every read: all on view,
- * any of it revocable (the owner's ruling: no true secrets; "check the logs"). Minds ask, offer and answer themselves; a person
+ * any of it revocable (Jon's ruling: no true secrets; "check the logs"). Minds ask, offer and answer themselves; a person
  * sees everything and can end any share.
  */
 export function MemorySharing({ agent }: { agent: Agent }) {
@@ -41,7 +41,7 @@ export function MemorySharing({ agent }: { agent: Agent }) {
   const canRevoke = has(client, 'revokeShare')
 
   return (
-    <section aria-labelledby="sharing-h" className="rounded-xl border border-line bg-white/[0.02] p-3" data-tour="memory-sharing">
+    <section aria-labelledby="sharing-h" className="rounded-xl border border-line bg-tint/[0.02] p-3" data-tour="memory-sharing">
       <div className="flex items-baseline justify-between gap-2">
         <h3 id="sharing-h" className="eyebrow">
           Sharing
@@ -149,7 +149,7 @@ function Group({ title, note, list, side, onRevoke, now, agentId }: { title?: st
     <div>
       {title && <h4 className="mb-1 text-[12px] font-medium text-ink-2">{title}</h4>}
       {note && <p className="mb-1.5 text-meta text-ink-4">{note}</p>}
-      <ul className="overflow-hidden rounded-lg border border-line bg-black/20">
+      <ul className="overflow-hidden rounded-lg border border-line bg-shade/20">
         {list.map((s, i) => (
           <ShareRow key={s.id} share={s} side={side === 'either' ? (s.owner_id === agentId ? 'reader' : 'owner') : side} onRevoke={onRevoke} first={i === 0} now={now} />
         ))}
@@ -193,7 +193,7 @@ function ShareRow({ share: s, side, onRevoke, first, now }: { share: Share; side
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {s.reads > 0 && (
-            <button onClick={() => setOpen(!open)} aria-expanded={open} className="min-h-9 rounded-lg px-2 text-[12px] text-ink-3 hover:bg-white/[0.06] hover:text-ink">
+            <button onClick={() => setOpen(!open)} aria-expanded={open} className="min-h-9 rounded-lg px-2 text-[12px] text-ink-3 hover:bg-tint/[0.06] hover:text-ink">
               Reads
             </button>
           )}
@@ -219,7 +219,7 @@ function Reads({ share }: { share: Share }) {
   const client = useHive((s) => s.client)
   const res = useResource(() => need(client, 'shareReads', 'Read history')(share.id), { context: share.id, key: share.reads })
   return (
-    <div className="mx-3 mb-2 rounded-lg border border-line bg-black/25 px-3 py-2 text-meta">
+    <div className="mx-3 mb-2 rounded-lg border border-line bg-shade/25 px-3 py-2 text-meta">
       {res.status === 'loading' ? (
         <span className="text-ink-4">Loading reads…</span>
       ) : res.status === 'unsupported' ? (

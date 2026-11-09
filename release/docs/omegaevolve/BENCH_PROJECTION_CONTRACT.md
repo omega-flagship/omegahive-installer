@@ -1,5 +1,3 @@
-> **Closed Source for Product Consideration.** These notes document Evolve (`hive/plugins/omegaevolve`), a closed folder in this repository. Shared privately with the SingularityNET team. Do not publish, redistribute or relicense as open source. See `hive/plugins/omegaevolve/CLOSED_SOURCE.md`.
-
 # Evolve and Bench projection contract
 
 `ProgramContext.evolve_snapshot(focus)` is the graph input. It carries immutable

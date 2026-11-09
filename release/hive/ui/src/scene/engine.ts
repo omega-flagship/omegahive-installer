@@ -21,8 +21,20 @@ let backdrop: [string, string, string] = DEFAULT_BACKDROP
 export function setSceneBackdrop(stops: [string, string, string] | null): void {
   backdrop = stops ?? DEFAULT_BACKDROP
 }
+/** The look's text inks for words drawn into the scene (names, counts); a light look draws them dark (light-token round R1). */
+const DEFAULT_INK = { ink: '#ecebff', ink2: '#bebfe4', bad: '#ffaaaf' }
+let sceneInk = DEFAULT_INK
+export function setSceneInk(ink: { ink: string; ink2: string; bad: string } | null): void {
+  sceneInk = ink ?? DEFAULT_INK
+}
+/** one of the scene's inks at an alpha, as a canvas colour */
+const ink = (which: keyof typeof DEFAULT_INK, a: number) => {
+  const h = sceneInk[which]
+  return /^#[0-9a-f]{6}$/i.test(h) ? `rgba(${parseInt(h.slice(1, 3), 16)},${parseInt(h.slice(3, 5), 16)},${parseInt(h.slice(5, 7), 16)},${a})` : h
+}
 
-export type HitTarget = { kind: 'dot'; id: string } | { kind: 'core'; id: string }
+/** `group`: a team's folded request helpers (scene/helperGroups), id = the group's id (helperGroupId). */
+export type HitTarget = { kind: 'dot'; id: string } | { kind: 'core'; id: string } | { kind: 'group'; id: string }
 
 export interface EngineCallbacks {
   onHover(target: HitTarget | null): void
@@ -46,6 +58,20 @@ export interface SceneData {
    * Absent: every swarm is in the cloud hive.
    */
   universe?: SceneUniverse
+  /**
+   * A team's finished request helpers, folded into one quiet orb near the team (scene/helperGroups groupHelpers): its
+   * id (helperGroupId), team, how many, the words drawn under it, and whether it is open (its helpers are then in
+   * `agents`). Absent: none.
+   */
+  helperGroups?: SceneHelperGroup[]
+}
+
+export interface SceneHelperGroup {
+  id: string
+  teamId: string
+  count: number
+  label: string
+  expanded: boolean
 }
 
 export interface SceneUniverse {
@@ -136,6 +162,8 @@ interface Dot {
   trailAt: number
   /** not drawn this frame: its swarm is a point of light, or its galaxy is a point or off screen */
   culled?: boolean
+  /** a folded group of finished request helpers (scene/helperGroups): small, dim, slow, never pulses */
+  group?: boolean
 }
 
 interface Mote {
@@ -272,6 +300,10 @@ const STATUS_SIZE: Record<AgentStatus, number> = {
   stopped: 0.62,
   error: 1,
 }
+/** A folded helper group's orb: smaller and dimmer than a sleeping mind, and all but still (it never pulses). */
+const GROUP_SIZE = 0.6
+const GROUP_GLOW = 0.24
+const GROUP_SPEED = 0.04
 const STATUS_SPEED: Record<AgentStatus, number> = {
   awake: 1,
   starting: 1.6,
@@ -314,6 +346,8 @@ export class HiveEngine {
   private dimmed = false
   /** True while a full page covers the scene: the loop is stopped, not just throttled. */
   private paused = false
+  private readonly drawingHolds = new Set<symbol>()
+  private destroyed = false
   private pauseTimer: ReturnType<typeof setTimeout> | undefined
 
   // camera
@@ -386,7 +420,7 @@ export class HiveEngine {
   // ================================================================== lifecycle
 
   start(): void {
-    if (this.running) return
+    if (this.running || this.destroyed || this.paused || this.drawingHolds.size || document.hidden) return
     this.running = true
     this.last = performance.now()
     this.raf = requestAnimationFrame(this.frame)
@@ -410,10 +444,37 @@ export class HiveEngine {
   }
 
   get isPaused(): boolean {
-    return this.paused
+    return this.paused || this.drawingHolds.size > 0
+  }
+
+  /** An owned hold for a view covering the map. Other pause/resume owners cannot
+   * restart it until every hold is released; late cleanup cannot revive a destroyed engine. */
+  holdDrawing(): () => void {
+    if (this.destroyed) return () => undefined
+    const firstHold = this.drawingHolds.size === 0
+    const owner = Symbol('drawing hold')
+    this.drawingHolds.add(owner)
+    this.stop()
+    if (firstHold) this.drawStill() // also paint under a page's pause; drawStill guards hidden/destroyed
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.drawingHolds.delete(owner)
+      if (!this.destroyed && !this.isPaused && !document.hidden) this.start()
+    }
+  }
+
+  /** Compute current screen positions before painting a still, including before the first animation frame. */
+  private drawStill(): void {
+    if (this.destroyed || document.hidden) return
+    this.update(0)
+    this.render()
   }
 
   destroy(): void {
+    this.destroyed = true
+    this.drawingHolds.clear()
     clearTimeout(this.pauseTimer)
     this.stop()
     document.removeEventListener('visibilitychange', this.onVisibility)
@@ -422,7 +483,8 @@ export class HiveEngine {
 
   private onVisibility = () => {
     if (document.hidden) this.stop()
-    else if (!this.paused) this.start()
+    else if (this.isPaused) this.drawStill()
+    else this.start()
   }
 
   resize(): void {
@@ -439,7 +501,7 @@ export class HiveEngine {
     // (followups-r6); a camera the person moved stays where they put it
     if (was.w !== this.w || was.h !== this.h) this.refit()
     // resizing clears the canvas: redraw the covered (paused) scene once
-    if (this.paused) this.render()
+    if (this.isPaused && !document.hidden) this.drawStill()
   }
 
   setReducedMotion(v: boolean): void {
@@ -586,6 +648,27 @@ export class HiveEngine {
         dot.tasks = 0
       })
     }
+    // folded request helpers: one quiet orb per team, on an inner orbit of its own (scene/helperGroups)
+    for (const g of d.helperGroups ?? []) {
+      if (!this.cores.has(g.teamId)) continue
+      seen.add(g.id)
+      const h = hash(g.id)
+      let dot = this.dots.get(g.id)
+      if (!dot) {
+        dot = {
+          id: g.id, name: g.label, hue: this.cores.get(g.teamId)!.hue, swarmId: g.teamId, status: 'asleep', thinking: null, group: true,
+          orbitR: 30 + h * 6, tilt: 0.95 + h * 0.5, node: hash(g.id + 'n') * TAU, angle: hash(g.id + 'a') * TAU, speed: GROUP_SPEED,
+          wobble: hash(g.id + 'w') * TAU, glow: GROUP_GLOW, size: GROUP_SIZE, ring: 0, errorMix: 0, hover: 0, birth: 1, dying: 0,
+          glitchUntil: 0, glitchX: 0, phase: h * TAU, tasks: 0, taskVis: 0, asking: 0, askVis: 0, wake: 0,
+          x: 0, y: 0, z: 0, sx: 0, sy: 0, sr: 0, ox: 0, oy: 0, trail: new Float64Array(TRAIL_FRAMES * 3), trailAt: 0,
+        }
+        this.dots.set(g.id, dot)
+      }
+      dot.name = g.label
+      dot.hue = this.cores.get(g.teamId)!.hue
+      dot.swarmId = g.teamId
+      dot.dying = 0
+    }
     if (d.claims) {
       // The store pushes data before the event reaches handleEvent, so only goals the engine has
       // never seen are seeded here; transitions of known goals are left for handleEvent to compare.
@@ -598,6 +681,23 @@ export class HiveEngine {
     for (const [id, dot] of this.dots) if (!seen.has(id) && dot.dying === 0) dot.dying = 0.0001
     this.wanderCore.members = bySwarm.get('__wander')?.length ?? 0
     this.synced = d.agents.length > 0 || this.synced
+    // A held view has no animation step to settle new data or retire removed minds. Paint the
+    // current shown set on a data change, never keep an earlier viewer's map until Pro resumes.
+    if (this.drawingHolds.size) {
+      for (const [id, dot] of this.dots) {
+        if (!seen.has(id)) this.dots.delete(id)
+        else dot.birth = 1
+      }
+      if (this.selected && !seen.has(this.selected)) this.setSelected(null, false)
+      if (this.follow && !seen.has(this.follow)) { this.follow = null; this.dotFly = null }
+      if ((this.hoverTarget?.kind === 'dot' || this.hoverTarget?.kind === 'group') && !seen.has(this.hoverTarget.id)) this.setHover(null)
+      for (const [goalId, agentId] of this.claimSeen) {
+        if ((agentId && !seen.has(agentId)) || (d.claims && !Object.hasOwn(d.claims, goalId))) this.claimSeen.delete(goalId)
+      }
+      for (const core of this.cores.values()) { core.x = core.tx; core.y = core.ty }
+      this.cam = { ...this.camT }
+      this.drawStill()
+    }
   }
 
   private syncMotes(c: Core, beliefs: Record<string, Belief> | undefined) {
@@ -790,9 +890,11 @@ export class HiveEngine {
   land(hive: string | null, instant = false): void {
     if (hive && this.galaxies.length > 1 && this.flyToGalaxy(hive)) {
       if (instant) this.cam = { ...this.camT }
+      if (instant && this.isPaused) this.drawStill()
       return
     }
     this.overview(instant)
+    if (instant && this.isPaused) this.drawStill()
   }
 
   /** The galaxies on the map, as the viewer may read them (ids of shown hives only; never a placeholder). */
@@ -950,6 +1052,7 @@ export class HiveEngine {
 
   /** The swarm labels' screen boxes (CSS px), as drawLabels draws them: DOM hints stay off them (scene/mapLabels). */
   labelBoxes(): LabelBox[] {
+    if (this.drawingHolds.size) return []
     return [...this.cores.values()].filter((c) => this.swarmLabelled(c)).map((c) => swarmLabelBox(c.sx, c.sy, this.cam.z, c.name.toUpperCase(), `${plural(c.motes.length, 'belief')} · ${plural(c.members, 'mind')}`))
   }
 
@@ -1335,7 +1438,7 @@ export class HiveEngine {
       }
       const r = Math.max(slop, d.sr * 1.6)
       if (dist < r && dist < bestD) {
-        best = { kind: 'dot', id: d.id }
+        best = d.group ? { kind: 'group', id: d.id } : { kind: 'dot', id: d.id }
         bestD = dist
       }
     }
@@ -1352,15 +1455,18 @@ export class HiveEngine {
   private frame = (now: number) => {
     if (!this.running) return
     this.raf = requestAnimationFrame(this.frame)
-    let dt = (now - this.last) / 1000
+    // A busy compositor can dispatch a queued timestamp older than resume's
+    // performance.now(). Never rewind animation ages or the frame accumulator.
+    const stamp = Math.max(now, this.last)
+    let dt = (stamp - this.last) / 1000
     if (this.fpsCap) {
       this.frameAcc += dt
-      this.last = now
+      this.last = stamp
       if (this.frameAcc < 1 / this.fpsCap) return
       dt = this.frameAcc
       this.frameAcc = 0
     } else {
-      this.last = now
+      this.last = stamp
     }
     dt = Math.min(dt, 0.1)
     this.time += dt
@@ -1464,17 +1570,17 @@ export class HiveEngine {
     const motion = this.reduced ? 0.35 : 1
     for (const [id, d] of this.dots) {
       const core = (d.swarmId && this.cores.get(d.swarmId)) || this.wanderCore
-      const spd = STATUS_SPEED[d.status]
+      const spd = d.group ? GROUP_SPEED : STATUS_SPEED[d.status]
       d.speed = damp(d.speed, spd, 1.5, dt)
       d.angle += dt * d.speed * (26 / d.orbitR) * 0.55 * motion
-      d.glow = damp(d.glow, STATUS_GLOW[d.status], 2.2, dt)
-      d.size = damp(d.size, STATUS_SIZE[d.status], 3, dt)
+      d.glow = damp(d.glow, d.group ? GROUP_GLOW : STATUS_GLOW[d.status], 2.2, dt)
+      d.size = damp(d.size, d.group ? GROUP_SIZE : STATUS_SIZE[d.status], 3, dt)
       d.ring = damp(d.ring, d.thinking && d.thinking !== 'idle' ? 1 : 0, 5, dt)
       d.errorMix = damp(d.errorMix, d.status === 'error' ? 1 : 0, 4, dt)
       d.taskVis = damp(d.taskVis, Math.min(3, d.tasks), 3, dt)
       d.askVis = damp(d.askVis, d.asking, 4, dt)
       d.wake = Math.max(0, d.wake - dt * 0.55)
-      const hovered = (this.hoverTarget?.kind === 'dot' && this.hoverTarget.id === id) || this.selected === id
+      const hovered = ((this.hoverTarget?.kind === 'dot' || this.hoverTarget?.kind === 'group') && this.hoverTarget.id === id) || this.selected === id
       d.hover = damp(d.hover, hovered ? 1 : 0, 10, dt)
       if (d.birth < 1) d.birth = Math.min(1, d.birth + dt / (this.reduced ? 1.2 : 2.4))
       if (d.dying > 0) {
@@ -1638,7 +1744,8 @@ export class HiveEngine {
 
     // ---- labels
     ctx.globalCompositeOperation = 'source-over'
-    this.drawLabels(sorted)
+    if (this.drawingHolds.size) this.galaxyLabelRects = []
+    else this.drawLabels(sorted)
 
     ctx.globalAlpha = 1
     if (this.dimmed) {
@@ -1913,6 +2020,16 @@ export class HiveEngine {
           ctx.fillRect(sx - r * 4 + gx * 2, yy, r * 8 * Math.random(), 1)
         }
       }
+    }
+
+    // a folded helper group: a faint, still ring around a small dim core (no breath, no motion of its own)
+    if (d.group) {
+      ctx.globalAlpha = (0.32 + d.hover * 0.4) * fade
+      ctx.strokeStyle = `hsl(${d.hue} 30% 74%)`
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.arc(sx, sy, r * 2.6 + 3, 0, TAU)
+      ctx.stroke()
     }
 
     // stopped dots show as a hollow ring
@@ -2254,15 +2371,17 @@ export class HiveEngine {
     const z = this.cam.z
     ctx.textAlign = 'center'
     ctx.textBaseline = 'top'
+    // Words in the scene are drawn solid, in the look's text tokens: the theme's rules guarantee those read against the
+    // ground only at full opacity, so hierarchy comes from ink vs ink-2, never from stacking alphas (light-token R1.1).
     // galaxy names, above each outline (hidden while a galaxy is under 14 px across)
     const rects: typeof this.galaxyLabelRects = []
     if (this.galaxies.length > 1) {
       for (const g of this.galaxies) {
         if (!g.visible || g.sr < 14) continue
-        ctx.globalAlpha = 0.95
+        ctx.globalAlpha = 1
         const px = g.cloud ? 13 : 11
         ctx.font = `600 ${px}px "Space Grotesk Variable", "Space Grotesk", system-ui, sans-serif`
-        ctx.fillStyle = g.cloud ? 'rgba(236,236,255,0.95)' : 'rgba(220,224,255,0.85)'
+        ctx.fillStyle = g.cloud ? ink('ink', 1) : ink('ink2', 1)
         setSpacing(ctx, '0.14em')
         const text = g.label.toUpperCase()
         const top = g.sy - g.sr - GALAXY_LABEL_LIFT
@@ -2278,9 +2397,9 @@ export class HiveEngine {
     const pcr = pc ? pc.r * z + 60 : 0
     if (pc && pcc && pc.r * z >= 14 && pcc.x > -pcr && pcc.y > -pcr && pcc.x < this.w + pcr && pcc.y < this.h + pcr) {
       const s = this.toScreen(pc.x, pc.y - pc.r)
-      ctx.globalAlpha = 0.7
+      ctx.globalAlpha = 1
       ctx.font = `600 11px "Space Grotesk Variable", "Space Grotesk", system-ui, sans-serif`
-      ctx.fillStyle = 'rgba(200,202,228,0.8)'
+      ctx.fillStyle = ink('ink2', 1)
       setSpacing(ctx, '0.14em')
       ctx.fillText('PRIVATE', s.x, s.y - 26)
       setSpacing(ctx, '0px')
@@ -2290,14 +2409,14 @@ export class HiveEngine {
       if (!this.swarmLabelled(c)) continue
       const zs = Math.pow(z, 0.8)
       const y = c.sy + 70 * zs + 8
-      ctx.globalAlpha = 0.9
+      ctx.globalAlpha = 1
       ctx.font = `600 ${z < 0.6 ? 11 : 12}px "Space Grotesk Variable", "Space Grotesk", system-ui, sans-serif`
-      ctx.fillStyle = 'rgba(236,236,255,0.92)'
+      ctx.fillStyle = ink('ink', 1)
       setSpacing(ctx, '0.18em')
       ctx.fillText(c.name.toUpperCase(), c.sx, y)
       setSpacing(ctx, '0px')
       ctx.font = `500 10px "Inter Variable", Inter, system-ui, sans-serif`
-      ctx.fillStyle = 'rgba(190,192,230,0.7)'
+      ctx.fillStyle = ink('ink2', 1)
       ctx.fillText(`${plural(c.motes.length, 'belief')} · ${plural(c.members, 'mind')}`, c.sx, y + 16)
     }
     // dot names
@@ -2316,8 +2435,10 @@ export class HiveEngine {
         const ty = core.sy + 70 * Math.pow(z, 0.8) + 8
         if (Math.abs(d.sx - core.sx) < 70 && ly > ty - 14 && ly < ty + 30) continue
       }
-      ctx.globalAlpha = a * (d.birth < 1 ? d.birth : 1)
-      ctx.fillStyle = d.status === 'error' ? 'rgba(255,170,175,1)' : 'rgba(232,234,255,1)'
+      // a settled name is solid; a quieter (far, dim) dot uses ink-2. The zoom fade-in and a new dot's birth are motion
+      // (brief transitions to that solid state), so the floor applies to where they land, not to each frame on the way
+      ctx.globalAlpha = (base < 1 && d.hover < 1 ? a : 1) * (d.birth < 1 ? d.birth : 1)
+      ctx.fillStyle = d.status === 'error' ? ink('bad', 1) : ink(a >= 0.6 ? 'ink' : 'ink2', 1)
       ctx.fillText(d.name, d.sx, ly)
     }
   }

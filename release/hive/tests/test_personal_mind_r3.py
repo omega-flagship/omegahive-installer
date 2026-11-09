@@ -1,6 +1,6 @@
 """Personal minds P2 r3: a personal mind's Ask turn keeps no content on the host (stand-in BLOCKING on P1+P2 r2).
 
-the owner 2026-10-08: personal-mind memory and history live in the person's browser only; the hive keeps identity, routing,
+Jon 2026-10-08: personal-mind memory and history live in the person's browser only; the hive keeps identity, routing,
 billing and version (and held swarm copies until the browser collects them). These tests drive the real Ask path:
 POST /api/ask admits a personal-mind turn and the conductor completes it against a scripted model (no network). Then:
 - every file under the hive's data directory (hive.db and its WAL, personal_inbox.db, logs, JSONL archives) and every
@@ -102,12 +102,12 @@ def test_an_admin_who_is_another_person_reads_no_personal_turn_content_on_any_ro
     hive, m = w["hive"], _markers()
     body, _s = _personal_turn(client, w, m, "op-r3-admin-01")
     room = hive.db.one("SELECT room_id FROM work_sessions WHERE id = ?", (body["thread"]["id"],))["room_id"]
-    quinn = w["quinn"]
+    jon = w["jon"]
     reads = {
-        "audit": client.get("/api/ask/audit", headers=quinn),
-        "audit_person": client.get("/api/ask/audit", headers=quinn, params={"principal": "user:u_ann"}),
-        "audit_turn": client.get(f"/api/ask/audit/{body['turn_id']}", headers=quinn),
-        "room": client.get(f"/api/rooms/{room}/messages", headers=quinn),
+        "audit": client.get("/api/ask/audit", headers=jon),
+        "audit_person": client.get("/api/ask/audit", headers=jon, params={"principal": "user:u_ann"}),
+        "audit_turn": client.get(f"/api/ask/audit/{body['turn_id']}", headers=jon),
+        "room": client.get(f"/api/rooms/{room}/messages", headers=jon),
         "operator_audit": client.get(f"/api/ask/audit/{body['turn_id']}"),   # the loopback operator (admin) too
     }
     for name, r in reads.items():
@@ -135,7 +135,7 @@ def test_content_written_by_an_older_build_is_still_refused_on_every_read(client
                     (legacy, json.dumps({"route": legacy}), body["turn_id"]))
     hive.db.execute("UPDATE ask_events SET frame = json_set(frame, '$.text', ?) WHERE turn_id = ? AND json_extract(frame, '$.phase') = 'answer'",
                     (legacy, body["turn_id"]))
-    for r in (client.get("/api/ask/audit", headers=w["quinn"]), client.get(f"/api/ask/audit/{body['turn_id']}", headers=w["quinn"]),
+    for r in (client.get("/api/ask/audit", headers=w["jon"]), client.get(f"/api/ask/audit/{body['turn_id']}", headers=w["jon"]),
               client.get("/api/ask/op-r3-legacy-1", headers=w["ann"])):
         assert r.status_code == 200 and legacy not in r.text
 
@@ -157,7 +157,7 @@ def test_a_steer_on_a_closed_personal_turn_keeps_no_words(client, monkeypatch):
     assert _scan(hive, [steer, *m.values()]) == {}
 
 
-# a personal turn's dispatch and intents work as any turn's (the owner, 2026-10-09): test_personal_ask_control.py
+# a personal turn's dispatch and intents work as any turn's (Jon 2026-10-09): test_personal_ask_control.py
 
 
 def test_with_the_conductor_off_an_awake_personal_mind_is_never_asked_through_the_hub(client, monkeypatch):
@@ -186,7 +186,7 @@ def test_a_swarm_turn_is_unchanged(client, monkeypatch):
     wait(hive, "op-r3-swarm-01", closed)
     t = hive.db.one("SELECT * FROM ask_turns WHERE operation_id = 'op-r3-swarm-01'")
     assert t["personal"] == 0 and t["text"] == "for the swarm" and t["answer_message_id"]
-    audit = client.get(f"/api/ask/audit/{t['id']}", headers=w["quinn"]).json()
+    audit = client.get(f"/api/ask/audit/{t['id']}", headers=w["jon"]).json()
     assert audit["text"] == "for the swarm" and any(f.get("text") == "the swarm's answer" for f in audit["events"]), [(f["phase"], f.get("text")) for f in audit["events"]]
 
 

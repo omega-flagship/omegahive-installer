@@ -1,11 +1,13 @@
 """The new installer hive, round R1a (boot/source, host side).
 
-Plan of record: coordination/omegacode/NEW_HIVE_REPOMAP_AND_DONE_GATE_PLAN_R1_1.md (sha256 1a506b59) §1, §3, §4, §10 (R1),
+Plan of record: NEW_HIVE_REPOMAP_AND_DONE_GATE_PLAN_R1_1.md (sha256 1a506b59) §1, §3, §4, §10 (R1),
 §12, as amended by NEW_HIVE_REPOMAP_AND_DONE_GATE_PLAN_R1_2_1_NEW_USER_ADDENDUM.md §A/§B (the operation-scoped coding
 barrier replaces the blanket bootstrap paid-work hold).
 
-Everything here is inert unless the data folder carries the required-feature marker AND HIVE_LOCAL_OWNER=1. A hive
-without the marker (every hive today) never constructs NewHive; a marker without HIVE_LOCAL_OWNER=1 refuses to start.
+The required-feature bootstrap and coding barrier remain inert unless the data folder carries the required-feature
+marker AND HIVE_LOCAL_OWNER=1. An unmarked hive never constructs NewHive; a marker without HIVE_LOCAL_OWNER=1 refuses
+to start. InstalledMapCoordinator separately reuses the source collector/preparer for every hive, without granting
+work, completing bootstrap or weakening those original requirements.
 
 - The installed-source manifest collector (``collect_sources``): only regular, canonical, manifest-listed files inside
   the verified release source root, with exact size and sha256; refuses escapes, links anywhere in the tree, secret-like
@@ -636,6 +638,275 @@ def prepare_map(sources: Sources, adapter: ExtractorAdapter):
         raise SourceRefused("envelope_invalid", "the envelope's canonical bytes do not give its loader digest")
     return Prepared(m.repo, m.sha, m.sha256, receipt_bytes, receipt_sha, envelope_bytes, envelope_sha,
                     "sha256:" + envelope_sha, final["state"], counts)
+
+
+class _InstalledMapStopped(Exception):
+    pass
+
+
+class InstalledMapCoordinator:
+    """One lifespan-owned, tokenless installed-map preparation, never work admission.
+
+    Required-feature installations retain their original NewHive preparation and
+    unpinned map contract. Legacy installations use the same free functions. No
+    bootstrap completion, owner, session or coding-readiness state is changed.
+    """
+
+    def __init__(self, hive, environ=None):
+        environ = os.environ if environ is None else environ
+        self.hive = hive
+        self.required = getattr(hive, "newhive", None)
+        self.running_build = getattr(getattr(hive, "updates", None), "running_build", None) \
+            if self.required is None else None   # captured boot identity, never a later Git/CWD lookup
+        self.paths = tuple(getattr(self.required, name, "") for name in
+                           ("manifest_path", "source_root", "extractor_dir")) if self.required is not None else \
+            tuple(environ.get(name, "") for name in (ENV_RELEASE_MANIFEST, ENV_RELEASE_SOURCE, ENV_EXTRACTOR))
+        # Capture this running package's checkout root at boot, not CWD, a
+        # later Git HEAD, caller input or the manifest's claimed SHA.
+        try:
+            self._running_checkout = pathlib.Path(__file__).resolve().parents[2]
+        except (OSError, RuntimeError, ValueError, IndexError):
+            self._running_checkout = None  # refuse self-map, never prevent Hive startup
+        self._lock, self._stop = threading.Lock(), threading.Event()
+        self._started, self._running, self._complete = False, False, False
+        self._version = 0
+        self._state, self._error = "pending", None
+        self._target, self._previous, self._last_good = None, (), None
+        self._receipt_stored = self._envelope_stored = self._persisted = False
+        self._map_state = None
+
+    def _set(self, **values):
+        with self._lock:
+            for name, value in values.items():
+                setattr(self, "_" + name, value)
+            self._version += 1
+
+    def _guard(self):
+        if self._stop.is_set():
+            raise _InstalledMapStopped()
+
+    @staticmethod
+    def _public_ref(row):
+        return {"repo": row["repo"], "sha": row["sha"]} if row else None
+
+    def _require_contained_source(self, paths):
+        try:
+            source = pathlib.Path(canonical_abs(paths[1])).resolve(strict=True)
+            if self._running_checkout is None or not source.is_relative_to(self._running_checkout) or not source.is_dir():
+                raise SourceRefused("source_root", "the installed source is outside this running checkout")
+        except (OSError, RuntimeError, ValueError):
+            raise SourceRefused("source_root", "the installed source root is unavailable") from None
+
+    def _remember_previous(self, protect=False):
+        # Read paths and do filesystem resolution before acquiring the DB lock.
+        # Still remember eligible old maps on refusal, without pinning/loading.
+        paths, source_error = self.paths, None
+        if all(type(path) is str and path for path in paths):
+            try:
+                self._require_contained_source(paths)
+            except SourceRefused as exc:
+                source_error = exc
+        with self.hive.db._lock:
+            self._remember_previous_locked(protect and source_error is None)
+        if source_error is not None:
+            raise source_error
+
+    def _remember_previous_locked(self, protect):
+        # Callers hold the existing DB lock; this helper performs no filesystem
+        # resolution. The load caller resolves paths before its outer lock too.
+        rows = self.hive.db.all("SELECT repo, sha, digest, pinned FROM repo_maps WHERE repo = ? "
+                                "AND state IN ('ready', 'partial') AND visibility = 'hive' ORDER BY rowid DESC",
+                                (REPO_ID,))
+        if self.required is not None:
+            protected = self.required.retained_revisions(REPO_ID)
+            rows = [row for row in rows if row["sha"] in protected]
+        elif protect:
+            for row in rows:
+                if not row["pinned"]:
+                    pinned = self.hive.repo_maps._pin_retained_revision(row["repo"], row["sha"], row["digest"])
+                    if (pinned.get("repo"), pinned.get("sha"), pinned.get("digest"), pinned.get("pinned")) != \
+                            (row["repo"], row["sha"], row["digest"], True):
+                        raise SourceRefused("map_conflict", "the previous map pin did not match")
+        self._set(previous=tuple(self._public_ref(row) for row in rows))
+
+    def _native(self, ref):
+        if ref is None:
+            return "unavailable"
+        try:
+            # Eligibility is checked before even querying native mount metadata.
+            # The DB lock also excludes a concurrent row replacement during this read.
+            with self.hive.db._lock:
+                row = self.hive.db.one("SELECT visibility FROM repo_maps WHERE repo = ? AND sha = ?",
+                                       (ref["repo"], ref["sha"]))
+                if row is None or row["visibility"] != "hive":
+                    return "unavailable"
+                state = self.hive.repo_maps.space(ref["repo"], ref["sha"]).get("status")
+        except Exception:
+            return "unknown"
+        return state if state in ("queued", "mounting", "mounted", "failed", "incomplete", "unmounted") else "unknown"
+
+    def status(self):
+        with self._lock:
+            target = dict(self._target) if self._target else None
+            previous = tuple(dict(ref) for ref in self._previous)
+            state, error = self._state, self._error
+            stored, map_state = self._persisted, self._map_state
+            version = self._version
+        native = self._native(target) if stored else "unavailable"
+        previous_good = next((ref for ref in previous if self._native(ref) == "mounted"), None)
+        # These are the loader's existing native-state observations, not a new
+        # interpreter probe and never the required-feature coding-ready boolean.
+        with self._lock:
+            if version != self._version:
+                # A concurrent publication/failure/stop invalidates these native
+                # observations. Report progress conservatively, never stale ready.
+                target = dict(self._target) if self._target else None
+                state, error, stored, map_state = self._state, self._error, self._persisted, self._map_state
+                native, previous_good = "unknown", None
+            if self._last_good is None and previous_good is not None:
+                self._last_good = previous_good
+            if self._complete and error is None and map_state in ("ready", "partial") and native == "mounted":
+                self._last_good = target
+                state = "ready"
+            elif self._complete and error is None:
+                if native in ("queued", "mounting"):
+                    state = native
+                elif native in ("failed", "incomplete"):
+                    state, error = "error", "mount_failed"
+                elif map_state not in ("ready", "partial"):
+                    state, error = "error", "map_unavailable"
+                else:
+                    state = "persisted"
+            return {"state": state, "error_code": error, "running": self._running,
+                    "target": target, "map_state": map_state, "native_state": native,
+                    "receipt_persisted": self._receipt_stored, "envelope_persisted": self._envelope_stored,
+                    "persisted": stored, "last_good": dict(self._last_good) if self._last_good else None,
+                    "required_feature_gate": "unchanged" if self.required is not None else "not_installed"}
+
+    def stop(self):
+        self._stop.set()
+        with self._lock:
+            if self._running:
+                self._state = "stopping"
+                self._version += 1
+
+    def worker_failed(self):
+        self._set(state="error", error="worker_failed", running=False)
+
+    @staticmethod
+    def _manifest_current(path, expected):
+        if _sha(read_manifest(path)) != expected:
+            raise SourceRefused("manifest_changed", "the installed source manifest changed")
+
+    def _store(self, raw, expected, name):
+        self._guard()
+        assets = self.hive.assets
+        # Keep the existing placement lock, uploader metadata and privacy rules.
+        # Never traverse placements with Assets.read or trigger pending remote cleanup.
+        with assets._placement:
+            local = assets.stores.get("local")
+            if local is None or local.kind != "local":
+                raise SourceRefused("retained_artifact_missing", "the local asset backend is unavailable")
+            existing = self.hive.db.one("SELECT * FROM assets WHERE sha256 = ?", (expected,))
+            if existing and existing["local_only"] and assets._remote(json.loads(existing["placements"])):
+                raise SourceRefused("retained_artifact_missing", "the asset has pending remote cleanup")
+            result = assets.put(raw, "application/json", "hive:installed-source", name=name, store="local")
+            if result.get("sha256") != expected:
+                raise SourceRefused("retained_artifact_missing", "the stored map artifact did not match")
+            retained = local.get(expected)
+            if retained != raw or _sha(retained) != expected:
+                raise SourceRefused("retained_artifact_missing", "the retained map artifact did not match")
+
+    def run_once(self):
+        with self._lock:
+            if self._started:
+                return
+            self._started, self._running, self._state = True, True, "preparing"
+            self._version += 1
+        stage = "binding"
+        try:
+            self._remember_previous()
+            self._guard()
+            if not all(type(path) is str and path for path in self.paths):
+                self._set(state="unavailable", error="release_inputs_missing")
+                return
+            if self.required is None and (type(self.running_build) is not str or not HEX40.fullmatch(self.running_build)):
+                self._set(state="unavailable", error="release_identity_unavailable")
+                return
+            manifest_path, source_root, extractor_dir = self.paths
+            binding = parse_manifest(read_manifest(manifest_path))
+            if self.required is None and binding.sha != self.running_build:
+                self._set(state="error", error="release_identity_mismatch")
+                return
+            if self.required is not None and (getattr(self.required, "binding", None) is None
+                    or (binding.sha256, binding.repo, binding.sha) !=
+                    (self.required.binding.sha256, self.required.binding.repo, self.required.binding.sha)):
+                raise SourceRefused("manifest_changed", "the original installer binding changed")
+            self._set(target={"repo": binding.repo, "sha": binding.sha})
+            stage = "prepare"
+            if self.required is not None:
+                prepared = self.required.prepare(fresh=True)  # original lock/source/hold checks
+            else:
+                sources = collect_sources(source_root, binding)
+                adapter = load_pinned_extractor(extractor_dir, (binding.extractor or {}).get("files"))
+                prepared = prepare_map(sources, adapter)
+            if (prepared.manifest_sha256, prepared.repo, prepared.sha) != (binding.sha256, binding.repo, binding.sha):
+                raise SourceRefused("manifest_changed", "the preparation changed its installed binding")
+            self._guard()
+            self._manifest_current(manifest_path, binding.sha256)
+            self._set(state="persisting", map_state=prepared.state)
+            stage = "assets"
+            self._store(prepared.receipt_bytes, prepared.receipt_sha256, "Installed source map receipt")
+            self._set(receipt_stored=True)
+            self._guard()
+            self._manifest_current(manifest_path, binding.sha256)
+            self._store(prepared.envelope_bytes, prepared.envelope_sha256, "Installed source map")
+            self._set(envelope_stored=True)
+            self._guard()
+            self._manifest_current(manifest_path, binding.sha256)
+            stage = "load"
+            self._set(state="loading")
+            self._guard()  # a stop during the final manifest read starts no new load
+            # Resolve the captured source tuple before the outer DB lock; the
+            # same lock still covers visibility, protection and load/retention.
+            paths = self.paths
+            self._require_contained_source(paths)
+            with self.hive.db._lock:
+                existing = self.hive.db.one("SELECT * FROM repo_maps WHERE repo = ? AND sha = ?",
+                                            (prepared.repo, prepared.sha))
+                if existing is not None and existing["visibility"] != "hive":
+                    raise SourceRefused("map_conflict", "the retained map is not public")
+                self._remember_previous_locked(protect=True)
+                self._guard()
+                result = self.hive.repo_maps.load(json.loads(prepared.envelope_bytes), "hive:installed-source",
+                                                  visibility="hive", pinned=self.required is None)
+                if (result.get("repo"), result.get("sha"), result.get("digest")) != \
+                        (prepared.repo, prepared.sha, prepared.map_digest):
+                    raise SourceRefused("map_conflict", "the loaded map did not match")
+                if result.get("visibility_unchanged") and result.get("visibility") != "hive":
+                    raise SourceRefused("map_conflict", "the retained map visibility is unchanged")
+                if self.required is None and result.get("unchanged") is True \
+                        and result.get("pinned_unchanged") is True and result.get("pinned") is False:
+                    self._guard()
+                    pinned = self.hive.repo_maps._pin_retained_revision(prepared.repo, prepared.sha, prepared.map_digest)
+                    if (pinned.get("repo"), pinned.get("sha"), pinned.get("digest")) != \
+                            (prepared.repo, prepared.sha, prepared.map_digest) or pinned.get("pinned") is not True:
+                        raise SourceRefused("map_conflict", "the retained map pin did not match")
+                elif self.required is not None and result.get("pinned_unchanged") and result.get("pinned") is True:
+                    raise SourceRefused("map_conflict", "the required-feature map pin is unchanged")
+                self._set(persisted=True)
+            self._guard()
+            self._manifest_current(manifest_path, binding.sha256)
+            self._guard()
+            self._set(state="persisted", complete=True)
+        except _InstalledMapStopped:
+            self._set(state="stopped")
+        except Exception as exc:
+            code = exc.code if type(exc) is SourceRefused and exc.code in BEGIN_REASON_CODES else stage + "_failed"
+            self._set(state="error", error=code)
+            log.warning("installed source map: %s", code)   # no paths, private rows or exception text
+        finally:
+            self._set(running=False)
 
 
 # ---- the required-feature marker ------------------------------------------------------------------------------------

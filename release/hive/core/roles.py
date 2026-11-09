@@ -236,7 +236,7 @@ class Roles:
     def _apply_rules(self, agent_id, by):
         row = self.db.one("SELECT * FROM agents WHERE id = ?", (agent_id,))
         policy = self.hive.policy
-        for rule in policy.rules():
+        for rule in policy.all_rules():
             if rule["scope"] == f"agent:{agent_id}" and str(rule.get("note", "")).startswith("role:"):
                 by = by or rule.get("granted_by")
                 self.db.execute("DELETE FROM policy_rules WHERE id = ?", (rule["id"],))
@@ -250,7 +250,7 @@ class Roles:
     def _applied(self, agent_id):
         """The side effects of a role change, after its rules are committed and outside the lock."""
         row = self.db.one("SELECT * FROM agents WHERE id = ?", (agent_id,))
-        self.hive.events.publish("policy.updated", rules=self.hive.policy.rules())
+        self.hive.events.publish("policy.updated", **self.hive.policy.rule_views())
         if self.hive.supervisor and row:
             self.hive.supervisor.reconfigure(self.hive.agent(agent_id))
         self.hive.emit_agent(agent_id)

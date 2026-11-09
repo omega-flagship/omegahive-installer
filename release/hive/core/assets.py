@@ -127,7 +127,8 @@ class S3Store:
 
     def delete(self, digest):
         path = self._path(digest)
-        self.http.delete(self.endpoint + path, headers=self._sign("DELETE", path, "UNSIGNED-PAYLOAD", {}))
+        r = self.http.delete(self.endpoint + path, headers=self._sign("DELETE", path, "UNSIGNED-PAYLOAD", {}))
+        r.raise_for_status()
 
 
 class Assets:
@@ -242,7 +243,11 @@ class Assets:
 
     def put(self, data: bytes, mime, by, owner_swarm=None, name="", local_only=False, store="local"):
         with self._placement:
-            return self._put(data, mime, by, owner_swarm, name, local_only, store)
+            out = self._put(data, mime, by, owner_swarm, name, local_only, store)
+        # repo maps 1.2 (repomap_live.py): what was stored, never its bytes; after a surrounding transaction commits
+        notice = {"sha256": out.get("sha256"), "owner_swarm": owner_swarm, "by": by}
+        self.hive.db.after_commit(lambda: self.hive.events.publish("asset.stored", **notice))
+        return out
 
     def _put(self, data, mime, by, owner_swarm, name, local_only, store):
         if not isinstance(data, (bytes, bytearray)) or not data:

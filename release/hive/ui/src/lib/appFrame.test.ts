@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appDocument, frameCsp, framePrefix, isFrameSender, revisionFrame, subscriptionTarget } from './appFrame'
+import { appDocument, frameCsp, inlineAssets, framePrefix, isFrameSender, revisionFrame, subscriptionTarget } from './appFrame'
 import { htmlReason, partsReason } from './appFrameParts'
 
 const ch = '12345678-1234-1234-1234-123456789abc'
@@ -23,6 +23,38 @@ describe('app frame document', () => {
     expect(isFrameSender({ origin: 'https://evil.test', source: win, data: { channel: ch } }, win, ch)).toBe(false)
     expect(isFrameSender({ origin: 'null', source: {} as Window, data: { channel: ch } }, win, ch)).toBe(false)
     expect(isFrameSender({ origin: 'null', source: win, data: { channel: 'other' } }, win, ch)).toBe(false)
+  })
+})
+
+describe('app frame assets (the host frame_document rule)', () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>'
+  const b64 = (t: string) => btoa(String.fromCharCode(...new TextEncoder().encode(t)))
+  const bundle = {
+    'index.html': '<html><head><link rel="stylesheet" href="./style.css"></head><body><img src="./icon.svg" alt=""><img src=\'./img/dot.svg\'><a href="./missing.svg">x</a><script type="module" src="./app.js"></script></body></html>',
+    'style.css': 'body { background: url(./icon.svg) } .f { src: url("./fonts/a.txt") } .g { background: url(\'./nope.svg\') }',
+    'app.js': 'void 0',
+    'icon.svg': svg,
+    'img/dot.svg': '<svg/>',
+    'fonts/a.txt': 'é',
+    'checks/acceptance.mjs': 'secret',
+  }
+  it('inlines ./ references from index.html and style.css as data: URIs, within the same CSP', () => {
+    const d = appDocument(bundle, 'https://hive.example.test', ch, ch).html
+    expect(d).toContain(`src="data:image/svg+xml;base64,${b64(svg)}"`)
+    expect(d).toContain(`src="data:image/svg+xml;base64,${b64('<svg/>')}"`)
+    expect(d).toContain(`url("data:image/svg+xml;base64,${b64(svg)}")`)
+    expect(d).toContain(`url("data:text/plain;base64,${b64('é')}")`)
+    expect(d).toContain('img-src data: blob:')
+    expect(d).not.toContain('./icon.svg')
+  })
+  it('leaves references to files the bundle lacks, and never inlines the frame\'s own files or checks/', () => {
+    const d = appDocument({ ...bundle, 'index.html': bundle['index.html'].replace('</body>', '<img src="./checks/acceptance.mjs"></body>') }, 'https://hive.example.test', ch, ch).html
+    expect(d).toContain('href="./missing.svg"')
+    expect(d).toContain("url('./nope.svg')")
+    expect(d).toContain('src="./checks/acceptance.mjs"')
+    expect(d).not.toContain(b64('secret'))
+    expect(d).toContain(`<script type="module" nonce="${ch}">void 0</script>`)
+    expect(inlineAssets('<script src="./app.js"></script>', bundle, false, new Set(['app.js']))).toBe('<script src="./app.js"></script>')
   })
 })
 

@@ -72,6 +72,7 @@ class _Interpreter:
 
     _instance = None
     _lock = threading.Lock()
+    _startup_path_lock = threading.Lock()  # Short cooperative path edits only.
 
     @classmethod
     def get(cls, petta_path):
@@ -85,14 +86,36 @@ class _Interpreter:
         self._jobs: queue.Queue = queue.Queue()
         self._ready = threading.Event()
         self._error = None
+        self._path_cleanup_state = "NOT_ATTEMPTED"
         threading.Thread(target=self._worker, name="hive-petta", daemon=True).start()
         self._ready.wait(60)
         if self._error:
-            raise SpaceError(f"PeTTa failed to start: {self._error}")
+            suffix = ("" if self._path_cleanup_state == "REMOVED" else
+                      f" (path cleanup: {self._path_cleanup_state})")
+            raise SpaceError(f"PeTTa failed to start: {self._error}{suffix}")
+
+    def _remove_failed_startup_path(self, paths, entry):
+        if paths is None or entry is None:
+            return "NOT_INSERTED"
+        try:
+            with _Interpreter._startup_path_lock:
+                if sys.path is not paths:
+                    return "REPLACED"
+                matches = [i for i, item in enumerate(paths) if item is entry]
+                if len(matches) != 1:
+                    return "MISSING" if not matches else "AMBIGUOUS"
+                del paths[matches[0]]  # Cooperative indexed deletion, not atomic rollback.
+                return "UNREMOVED" if any(item is entry for item in paths) else "REMOVED"
+        except BaseException:
+            return "UNKNOWN"  # Preserve the original startup error; no retry.
 
     def _worker(self):
+        paths = entry = None
         try:
-            sys.path.insert(0, str(pathlib.Path(self.petta_path) / "python"))
+            entry = str(pathlib.Path(self.petta_path) / "python")
+            paths = sys.path
+            with _Interpreter._startup_path_lock:
+                paths.insert(0, entry)
             os.environ.setdefault("LANG", "C.UTF-8")
             from petta import PeTTa
 
@@ -100,6 +123,7 @@ class _Interpreter:
             metta.load_metta_file(str(LIB_HIVE))
         except Exception as exc:  # pragma: no cover - environment failure
             self._error = exc
+            self._path_cleanup_state = self._remove_failed_startup_path(paths, entry)
             self._ready.set()
             return
         self._ready.set()

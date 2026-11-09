@@ -14,6 +14,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import { createPortal } from 'react-dom'
 import { useReducedMotion } from '../../lib/hooks'
 import { navigate } from '../../lib/router'
+import { useHive } from '../../store/store'
 import { useLook } from '../../shell/uiVariant'
 import { askUnderModal } from '../ask/placement'
 import { liveEnv } from '../guided/store'
@@ -25,11 +26,14 @@ import { panelParts } from './panel'
 import { COMPANY_SEPARATE, canShowGreeting, cents, fillLine, helloView, limitLine, payerLine, usd } from './honest'
 import { markWords, nextIndex, waitsForPerson } from './journey'
 import { BEATS, choicesFor, type FlStep, type FlTarget } from './script'
-import { ASK_HOW_MAX, ASK_NAME_MAX, askToSave, personaEditable, startApp } from './host'
-import { factsOf, stepOf, useFirstLight, whoOf, type Run } from './store'
+import { ASK_HOW_MAX, ASK_NAME_MAX, askPurposeValue, askToSave, personaEditable, startApp } from './host'
+import { factsOf, firstLightLimitLine, stepOf, useFirstLight, whoOf, type Run } from './store'
 import './firstlight.css'
+import { SingleScreen } from './SingleScreen'
+import { profileSaveCopy } from './conditionalCopy'
+import { FirstLightMark } from './FirstLightMark'
 
-/** the Change UI sheet's width on a desktop (shell/ChangeUi: Sheet width 520) */
+/** the Change experience sheet's width on a desktop (shell/ChangeUi: Sheet width 520) */
 const GALLERY_W = 520
 const ASK_SEL = '#ask .ask-capsule, #ask .ask-still-line, .still .st-ask'
 
@@ -79,9 +83,9 @@ function useMeasure(run: Run | null, controls: HTMLElement | null, probe: HTMLEl
   const [under, setUnder] = useState(false)
   const step = stepOf(run)
   useEffect(() => {
-    if (!run || !step) return
+    if (!run || (!step && !run.u1)) return
     const read = () => {
-      const el = findTarget(step.target, run, controls)
+      const el = findTarget(step?.target, run, controls)
       const r = el?.getBoundingClientRect()
       setBox((b) => (r && r.width > 0 ? (b && Math.abs(b.left - r.left) < 1 && Math.abs(b.top - r.top) < 1 && Math.abs(b.width - r.width) < 1 && Math.abs(b.height - r.height) < 1 ? b : { left: r.left, top: r.top, width: r.width, height: r.height }) : null))
       const a = document.querySelector(ASK_SEL)?.getBoundingClientRect()
@@ -104,6 +108,7 @@ function useMeasure(run: Run | null, controls: HTMLElement | null, probe: HTMLEl
 export default function FirstLightLayer({ experience }: { experience: string }) {
   const asked = useFlDoor((s) => s.asked)
   const run = useFirstLight((s) => s.run)
+  const providers = useHive((s) => s.providers)
   const look = useLook()
   const reducedSystem = useReducedMotion()
   const reduced = reducedSystem || look.motion === 'none'
@@ -119,7 +124,7 @@ export default function FirstLightLayer({ experience }: { experience: string }) 
     opener.current = document.activeElement
     seen.current = false
     // not playable here (no hive yet, or the invented demo asked for on a real hive): the door closes, nothing shows
-    void useFirstLight.getState().start(asked).then((ok) => {
+    void useFirstLight.getState().start({ ...asked, singleScreen: asked.mode === 'live' && !asked.beat }).then((ok) => {
       if (!ok) useFlDoor.getState().close()
     })
   }, [asked])
@@ -138,10 +143,36 @@ export default function FirstLightLayer({ experience }: { experience: string }) 
 
   useAuto(run)
   const { box, ask, under } = useMeasure(run, controls, probe)
-  const waitingHello = !!run && run.steps[run.i]?.beat === 'hello' && !run.facts.greeted && run.hello.postedAt !== null
+  const singleScreen = !!run?.u1
+  // U1 is a welcome over the working hive, not a second active interface.
+  // Its portal and the usable Universal Ask portal remain outside #root.
+  useLayoutEffect(() => {
+    if (!singleScreen || under) return
+    const root = document.getElementById('root')
+    const inert = root?.inert
+    const prior = document.body.getAttribute('data-firstlight-u1-active')
+    if (root) root.inert = true
+    document.body.setAttribute('data-firstlight-u1-active', '')
+    return () => {
+      if (root) root.inert = inert ?? false
+      if (prior === null) document.body.removeAttribute('data-firstlight-u1-active')
+      else document.body.setAttribute('data-firstlight-u1-active', prior)
+    }
+  }, [singleScreen, under])
+  const waitingHello = !!run && (run.u1 || run.steps[run.i]?.beat === 'hello') && !run.facts.greeted && run.hello.postedAt !== null
   const now = useClock(waitingHello)
 
   if (!run) return null
+  if (run.u1) return createPortal(<div className="fl-layer" data-experience={experience} data-mode="live" data-firstlight-u1="">
+    <span className="fl-live" ref={setProbe} aria-hidden="true" />
+    <div className="fl-u1-scrim" hidden={under} aria-hidden="true" />
+    <div className="fl-u1-scene" hidden={under} inert={under ? true : undefined}>
+      <FirstLightMark className="fl-u1-omega" />
+      <section className="fl-panel fl-u1-panel" aria-label="First Light" onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); useFirstLight.getState().toggle() } }}>
+        <SingleScreen key={`${run.id}:${run.facts.mind?.id ?? 'unread'}`} run={run} now={now} providers={providers} />
+      </section>
+    </div>
+  </div>, document.body)
   const step = stepOf(run)
   const parts = panelParts(run)
   const phone = typeof window !== 'undefined' && window.innerWidth < 640
@@ -150,7 +181,7 @@ export default function FirstLightLayer({ experience }: { experience: string }) 
   const askHigh = !!ask && ask.top < vh * 0.45
   const vw = typeof window !== 'undefined' ? window.innerWidth : 1440
   const base: CSSProperties = askHigh ? { top: ask!.top + ask!.height + 10 } : { bottom: ask ? Math.max(12, vh - ask.top + 10) : 96 }
-  // the Change UI gallery is open (beat 2): the panel steps aside so it never covers the looks being tried — beside
+  // the Change experience gallery is open (beat 2): the panel steps aside so it never covers the looks being tried — beside
   // the gallery's sheet on a desktop (it is 520 px at the right), at the top of a phone above its sheet
   const room = vw - GALLERY_W - 48
   const panelStyle: CSSProperties = !look.galleryOpen ? base : !phone && room >= 360 ? { ...base, left: 16 + Math.max(0, (room - Math.min(620, room)) / 2), translate: 'none', width: Math.min(620, room) } : { top: 8, bottom: 'auto' }
@@ -227,7 +258,7 @@ function Body({ run, step, now }: { run: Run; step: FlStep | undefined; now: num
     )
   }
   const f = run.facts
-  const text = fillLine(step.say, { name: f.name, host: f.host, limit: f.limit, look: f.lookName, monthly: f.limit?.chosen_usd ?? null, mind: f.mind?.name ?? null, app: startApp(f.apps)?.name ?? null })
+  const text = run.limit.limitUncertain && step.beat === 'models' ? firstLightLimitLine(run) : fillLine(step.say, { name: f.name, host: f.host, limit: f.limit, look: f.lookName, monthly: f.limit?.chosen_usd ?? null, mind: f.mind?.name ?? null, app: startApp(f.apps)?.name ?? null })
   const beat = run.beats[step.beat]
   const mindWords = step.voice === 'mind'
   return (
@@ -240,7 +271,7 @@ function Body({ run, step, now }: { run: Run; step: FlStep | undefined; now: num
           {text}
         </p>
       )}
-      {(beat.state === 'blocked' || beat.state === 'ready' || beat.state === 'skipped') && beat.line && step.beat !== 'hello' && (
+      {(beat.state === 'blocked' || beat.state === 'ready' || beat.state === 'skipped') && beat.line && step.beat !== 'hello' && !(run.limit.limitUncertain && step.beat === 'models') && (
         <p className="fl-state" data-state={beat.state} role="status">
           <State state={beat.state} /> {beat.line}
         </p>
@@ -284,7 +315,7 @@ function Choices({ run, step }: { run: Run; step: FlStep }) {
   return (
     <div className="fl-chips" role="group" aria-label={step.wait?.for === 'choice' && step.wait.field === 'role' ? 'What you will mostly do' : 'Your monthly limit'}>
       {choices.map((c, i) => (
-        <button key={c.label} ref={i === 0 ? first : undefined} type="button" className="fl-btn" data-tone={i === 0 ? 'primary' : undefined} disabled={run.limit.busy || run.status === 'ended'} onClick={() => void g.choose(c.value)}>
+        <button key={c.label} ref={i === 0 ? first : undefined} type="button" className="fl-btn" data-tone={i === 0 ? 'primary' : undefined} disabled={run.limit.busy || run.status !== 'playing'} onClick={() => void g.choose(c.value)}>
           {c.label}
         </button>
       ))}
@@ -294,7 +325,7 @@ function Choices({ run, step }: { run: Run; step: FlStep }) {
             <span className="fl-sr">Monthly amount in dollars</span>
             <input type="number" inputMode="decimal" min={0} max={10000} step={1} value={amount} onChange={(e) => setAmount(e.target.value)} className="fl-input" aria-label="Monthly amount in dollars" placeholder="$ a month" />
           </label>
-          <button type="button" className="fl-btn" data-tone="primary" disabled={!amount.trim() || run.limit.busy} onClick={() => void g.choose(Number(amount))}>
+          <button type="button" className="fl-btn" data-tone="primary" disabled={!amount.trim() || run.limit.busy || run.status !== 'playing'} onClick={() => void g.choose(Number(amount))}>
             Set
           </button>
         </span>
@@ -329,7 +360,7 @@ function Card({ run, step, now }: { run: Run; step: FlStep; now: number }) {
     case 'own-limit':
       return (
         <CardBox region="fl-own-limit" title="Your monthly limit">
-          <p data-testid="fl-limit-line">{limitLine(l, w)}</p>
+          <p data-testid="fl-limit-line">{firstLightLimitLine(run)}</p>
           <p className="fl-small">{COMPANY_SEPARATE}</p>
           <p className="fl-pays">{payerLine(w)}</p>
         </CardBox>
@@ -337,7 +368,7 @@ function Card({ run, step, now }: { run: Run; step: FlStep; now: number }) {
     case 'limit':
       return (
         <CardBox region="fl-limit" title="What your minds may spend">
-          <p data-testid="fl-limit-line">{limitLine(l, w)}</p>
+          <p data-testid="fl-limit-line">{firstLightLimitLine(run)}</p>
           {l?.enforced && <p className="fl-small">{COMPANY_SEPARATE}</p>}
           <p className="fl-pays">{payerLine(w)}</p>
         </CardBox>
@@ -570,7 +601,7 @@ export function AskCard({ run, step }: { run: Run; step: FlStep }) {
     if (run.mode === 'live' && editing) nameRef.current?.focus()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run.token])
-  const howShown = how ?? run.facts.askHow ?? ''
+  const howShown = how ?? askPurposeValue(run.facts.askHow)
   if (!editing)
     return (
       <CardBox region="fl-ask" title="Your Ask">
@@ -585,18 +616,21 @@ export function AskCard({ run, step }: { run: Run; step: FlStep }) {
         <input ref={nameRef} className="fl-input" value={name} maxLength={ASK_NAME_MAX} onChange={(e) => setName(e.target.value)} autoComplete="off" disabled={run.askForm.busy} />
       </label>
       <label className="fl-field">
-        <span>How should it be? A few words</span>
+        <span>Its purpose</span>
         {run.facts.askHow !== null && !personaEditable(run.facts.askHow) ? (
           <p className="fl-small">It already has longer words of its own. Change them on your mind’s page; saving here keeps them.</p>
         ) : (
           <textarea className="fl-input" rows={2} value={howShown} maxLength={ASK_HOW_MAX} onChange={(e) => setHow(e.target.value)} placeholder="For example: warm and brief, plain words" disabled={run.askForm.busy || run.facts.askHow === null} />
         )}
+        {run.facts.askHow === null && <p className="fl-small">Its current words aren’t available yet. Saving its name keeps them unchanged.</p>}
       </label>
       {run.askForm.error && (
         <p className="fl-error" role="alert">
           {run.askForm.error}
         </p>
       )}
+      {run.askForm.saves && !run.askForm.busy && !run.askForm.error && <p role="status">{profileSaveCopy(run.askForm.saves)}</p>}
+      {run.askForm.saves?.readback && <details><summary>Here’s what {run.askForm.saves.readback.name} has now</summary><p>Name: {run.askForm.saves.readback.name}</p><p className="fl-u1-readback">Purpose: {run.askForm.saves.readback.purpose}</p></details>}
       <div className="fl-chips">
         <button type="button" className="fl-btn" data-tone="primary" disabled={run.askForm.busy || !name.trim() || run.status === 'ended'} onClick={() => void g.saveAsk(askToSave(name, how, run.facts.askHow))}>
           {run.askForm.busy ? 'Saving…' : 'Save'}

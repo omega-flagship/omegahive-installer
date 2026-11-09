@@ -23,10 +23,10 @@ from .program_actions import named_person
 
 UTC = datetime.timezone.utc
 MAX_BYTES = 500
-CAPS = (0, 1, 3, 5, 8)                    # the default is 3 a day
+CAPS = (0, 1, 3, 5, 8)                    # Surface's design; Jon: default 3 a day
 DEFAULT_CAP = 3
 DEFAULT_QUIET = ("21:00", "07:00")        # local time
-URGENT_KINDS = ("smoke_co", "water_leak", "door_open_night", "security_alarm")   # fixed: nothing else breaks through
+URGENT_KINDS = ("smoke_co", "water_leak", "door_open_night", "security_alarm")   # Jon: fixed; nothing else breaks through
 MIND_PER_HOUR = 20                        # per sending mind, accepted or held
 PERSON_PER_DAY = 200                      # per person per local day, all their minds together
 HELD_MAX = 500                            # beyond this a mind is refused (it learns), nothing already held is lost

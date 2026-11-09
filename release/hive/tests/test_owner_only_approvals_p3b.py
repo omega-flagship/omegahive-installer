@@ -109,9 +109,22 @@ def test_owner_only_all_answer_routes_and_program_rows(env, name, payload, statu
                                                 ("hiveowner", "approve", {}), ("admin", "remember", {"remember": True}),
                                                 ("hiveowner", "always", {"decision": "always"})))
 def test_absent_setting_keeps_existing_visible_and_durable_authorities(env, actor, name, payload):
+    if actor == "hiveowner" and name == "always":
+        # money port r1.1 (Dot): a lasting answer needs the hive owner still an enabled admin, as every owner power
+        env["h"].db.execute("UPDATE people SET role = 'admin' WHERE id = 'u_p3b_hiveowner'")
     row = pending(env)
     r = answer(env, row, actor, name, payload)
     assert r.status_code == 200 and r.json()["status"] == "approved", r.text
+
+
+def test_a_hive_owner_who_is_not_an_admin_gives_no_lasting_answer(env):
+    """money port r1.1 (Dot): the recorded hive owner, demoted to member, may still answer this one request on a mind
+    they see, but a lasting answer (always) is refused (403 owner_only) and writes no rule."""
+    row = pending(env)
+    r = answer(env, row, "hiveowner", "always", {"decision": "always"})
+    assert r.status_code == 403 and r.json()["error"]["code"] == "owner_only", r.text
+    assert env["h"].policy.approval(row["id"])["status"] == "pending" and not env["h"].policy.rules()
+    assert answer(env, row, "hiveowner", "approve", {}).status_code == 200
 
 
 @pytest.mark.parametrize("actor", ("member", "admin", "hiveowner"))

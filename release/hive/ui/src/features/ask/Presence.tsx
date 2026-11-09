@@ -1,5 +1,5 @@
 /**
- * Presence (the owner, 2026-10-05: watch the orchestrator work live). Presentation only: it never moves focus, takes no
+ * Presence (Jon, 2026-10-05: watch the orchestrator work live). Presentation only: it never moves focus, takes no
  * pointer events, and is inert (and hidden) under a modal. Each experience has its own system:
  *  - Classic: a soft light glides to the target, which glows, with a caption pill; `sketch` is a stronger glow.
  *  - Still: the referenced words light up (on the paper and in the letter thread).

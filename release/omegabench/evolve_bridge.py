@@ -4,7 +4,7 @@ from .protocol import seal, compare
 
 
 def _owner(actor, swarm_id):
-    # One source for "the hive owner": EvolveRegistry.named_owner (the owner, 2026-10-04: a named admin person stands for it).
+    # One source for "the hive owner": EvolveRegistry.named_owner (Jon, 2026-10-04: a named admin person stands for it).
     from hive.core.evolve import EvolveRegistry
     if not EvolveRegistry.named_owner(actor, swarm_id):
         raise PermissionError('named hive owner required for benchmark evidence import')

@@ -1,15 +1,14 @@
 {
   "name": "whatsapp_bridge",
   "version": "1.0.0",
-  "private": true,
-  "description": "Optional WhatsApp Web bridge (closed source for product consideration; see CLOSED_SOURCE.md and GPL-NOTICE.md)",
+  "description": "",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
-  "license": "UNLICENSED",
+  "license": "ISC",
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc11",
     "pino": "^10.3.1",

@@ -13,7 +13,7 @@ import { targetOpenable } from './editSessionRules'
 import { shown } from '../../lib/displayName'
 
 /** The app's text-field look (as in Launch and Schedule). */
-const FIELD = 'min-h-11 w-full rounded-xl border border-line bg-black/25 px-3 text-[14px] text-ink outline-none placeholder:text-ink-4 focus:border-line-2'
+const FIELD = 'min-h-11 w-full rounded-xl border border-line bg-shade/25 px-3 text-[14px] text-ink outline-none placeholder:text-ink-4 focus:border-line-2'
 const FIELD_MONO = `${FIELD} font-mono`
 
 const NONE: Record<string, GoalGrant[]> = {}
@@ -95,7 +95,7 @@ function WorkRow({ item, repos, swarm, worker }: { item: LiveWorkItem; repos: Ta
   const { goal, workspaces } = item
   const [open, setOpen] = useState(false)
   return (
-    <li className="rounded-xl border border-line bg-white/[0.025] px-3 py-2.5">
+    <li className="rounded-xl border border-line bg-tint/[0.025] px-3 py-2.5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <div className="min-w-0 flex-1">
           <div className="truncate text-[14px] text-ink" title={goal.title}>{goal.title}</div>

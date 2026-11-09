@@ -30,11 +30,11 @@ export function FlowAdoptions() {
   const current = swarm || list[0]?.id || ''
   if (!has(client, 'flowList') || !has(client, 'flowRevision')) return null
   return (
-    <section aria-labelledby="flow-adoptions-h" className="mx-3 my-2 rounded-2xl border border-line bg-white/[0.02] px-4 py-2.5 md:mx-6" data-flow-adoptions>
+    <section aria-labelledby="flow-adoptions-h" className="rounded-2xl border border-line bg-tint/[0.02] px-4 py-2.5" data-flow-adoptions>
       <div className="flex flex-wrap items-center gap-2">
         <h2 id="flow-adoptions-h" className="flex-1 text-[14px] font-medium text-ink">Adopted revisions</h2>
         {open && list.length > 1 && (
-          <select aria-label="Swarm" value={current} onChange={(e) => setSwarm(e.target.value)} className="min-h-10 rounded-xl border border-line bg-black/30 px-2.5 text-[13px] text-ink outline-none focus:border-line-2">
+          <select aria-label="Swarm" value={current} onChange={(e) => setSwarm(e.target.value)} className="min-h-10 rounded-xl border border-line bg-shade/30 px-2.5 text-[13px] text-ink outline-none focus:border-line-2">
             {list.map((s) => (
               <option key={s.id} value={s.id}>
                 {shown(s.name)}

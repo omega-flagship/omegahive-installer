@@ -1,19 +1,21 @@
 ---
 name: Feature request
-about: Suggest a change to the hive, the UI, minds or the app contract
+about: Suggest an idea for this project
 title: ''
-labels: enhancement
+labels: ''
 assignees: ''
+type: Feature
+
 ---
 
-**What problem does this solve, and for whom?**
+**Is your feature request related to a problem? Please describe.**
+A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
 
-**What you would like to happen**
+**Describe the solution you'd like**
+A clear and concise description of what you want to happen.
 
-**Which part it touches**
-server / UI / experience / minds / commons and reasoning / app contract / an app (which)
+**Describe alternatives you've considered**
+A clear and concise description of any alternative solutions or features you've considered.
 
-**Alternatives you considered**
-
-**Anything else**
-New features start as a short plan that is reviewed before anything is built.
+**Additional context**
+Add any other context or screenshots about the feature request here.

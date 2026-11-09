@@ -5,6 +5,7 @@ import { chrome as construct } from '../experiences/construct/chrome'
 import { chrome as cosmos } from '../experiences/cosmos/chrome'
 import { chrome as flux } from '../experiences/flux/chrome'
 import { chrome as still } from '../experiences/still/chrome'
+import * as caseFile from './caseFile/palette'
 import { dressedIn } from './chromeDress'
 import * as commons from './commons/palette'
 import { GRAMMARS, type FormId, type Grammar } from './contract'
@@ -74,6 +75,7 @@ const CHROMES: Record<string, ExperienceChrome[]> = {
 type Pairs = [string, string, string][]
 const FORMS: { id: FormId; palette: (s: 'light' | 'dark') => Record<string, string>; text: Pairs; ui: Pairs }[] = [
   { id: 'commons', palette: commons.chromePalette as never, text: commons.TEXT_PAIRS, ui: commons.UI_PAIRS },
+  { id: 'case-file', palette: caseFile.chromePalette as never, text: caseFile.TEXT_PAIRS, ui: [['control edge on card', 'control', 'card']] },
 ]
 
 describe('forms dressed in an experience chrome', () => {
@@ -97,8 +99,9 @@ describe('forms dressed in an experience chrome', () => {
       }
     }
   }
-  it('Commons is dressed in the experiences the audit found them undressed in', () => {
+  it('the Contract fixture and Commons are dressed in the experiences the audit found them undressed in', () => {
     expect(['cosmos', 'construct', 'flux'].every((g) => dressedIn('commons', g as Grammar))).toBe(true)
+    expect(['cosmos', 'flux', 'canvas'].every((g) => dressedIn('case-file', g as Grammar))).toBe(true)
     expect(['still', 'canvas'].some((g) => dressedIn('commons', g as Grammar))).toBe(false)
   })
   it('prints the table', () => {

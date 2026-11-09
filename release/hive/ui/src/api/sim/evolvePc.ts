@@ -1,6 +1,7 @@
 /**
  * SIM ONLY, opt-in by URL (`?sim=1&pcreports=fixture`): OmegaEvolve's research view holding Code's two prepared
- * contribution payloads, R10 (sha256 ddd3ab93…), R7 (sha256 ad67a584…) and R11 (sha256 7c64a455…, r1.1), byte-identical in ./fixtures. They are
+ * contribution payloads, R10 (sha256 ddd3ab93…), R7 (sha256 ad67a584…) and R11 (sha256 7c64a455…, r1.1), byte-identical in ./fixtures
+ * (R11 but for its three workspace locators, shortened to drop an internal-notes path). They are
  * recorded here the way the host's `contribute` records them (hive/core/evolve.py contribute(): each evidence ref gains
  * custody "unresolved" and verified false; state "recorded-claim"; adoption not authorized) and viewed the way the
  * host's plugin views them (hive/plugins/omegaevolve/program.py view()). Nothing here was contributed to any hive.

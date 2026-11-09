@@ -1,6 +1,6 @@
 """J3 host round R3: the maker handoff, Stop and step delivery.
 
-Specification: coordination/omegareview/PLATFORM_J3R4_HOST_HANDOFF_SPEC_R2.md r2.4 (sha256 79556a75...), which replaces
+Specification: PLATFORM_J3R4_HOST_HANDOFF_SPEC_R2.md r2.4 (sha256 79556a75...), which replaces
 every handoff, Stop, admission-delivery and credential-file section of PLATFORM_J3R4_HOST_O1_O2_G1_PLAN.md; G1, G2, G3,
 G5, H2, H3.1 and L6 of the plan still stand. Section numbers below are the spec's.
 
@@ -81,46 +81,65 @@ def pending_file(root, epoch):
     return pathlib.Path(root) / f"pending-token-e{int(epoch)}"
 
 
-def file_hash(path):
+def file_hash(path, *, guard=contextlib.nullcontext):
+    with guard():
+        try:
+            return _token_hash(pathlib.Path(path).read_text(encoding="utf-8").strip())
+        except OSError:
+            return None
+
+
+def _read_epoch(path, *, guard=contextlib.nullcontext):
+    with guard():
+        try:
+            text = pathlib.Path(path).read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+        return int(text) if text.isdigit() else None
+
+
+def write_fsync(path, text, *, guard=contextlib.nullcontext):
+    """Guard pathname authority and content mutation; fsync only the already-open descriptor outside the DB lock.
+
+    A stalled disk must not hold the shared DB and block unrelated minds. The fd remains pinned to the authorized
+    inode: fsync neither resolves a pathname nor reads/changes credential bytes. Durability still precedes the next
+    file operation, exactly as the handoff repair protocol requires.
+    """
+    fd = None
     try:
-        return _token_hash(pathlib.Path(path).read_text(encoding="utf-8").strip())
-    except OSError:
-        return None
-
-
-def _read_epoch(path):
-    try:
-        text = pathlib.Path(path).read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-    return int(text) if text.isdigit() else None
-
-
-def write_fsync(path, text):
-    """Mode 0600, written, fsynced, closed."""
-    _hook("write", path)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        os.fchmod(fd, 0o600)
-        os.write(fd, str(text).encode("utf-8"))
+        with guard():
+            _hook("write", path)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            os.fchmod(fd, 0o600)
+            data = str(text).encode("utf-8")
+            while data:
+                written = os.write(fd, data)
+                if written <= 0:
+                    raise OSError("credential write made no progress")
+                data = data[written:]
         _hook("fsync", path)
         os.fsync(fd)
     finally:
-        os.close(fd)
+        if fd is not None:
+            os.close(fd)
 
 
-def rename(src, dst):
-    _hook("rename", dst)
-    os.replace(src, dst)
+def rename(src, dst, *, guard=contextlib.nullcontext):
+    with guard():
+        _hook("rename", dst)
+        os.replace(src, dst)
 
 
-def dir_fsync(root):
-    _hook("dirsync", root)
-    fd = os.open(root, os.O_RDONLY)
+def dir_fsync(root, *, guard=contextlib.nullcontext):
+    fd = None
     try:
+        with guard():
+            fd = os.open(root, os.O_RDONLY)
+        _hook("dirsync", root)
         os.fsync(fd)
     finally:
-        os.close(fd)
+        if fd is not None:
+            os.close(fd)
 
 
 def new_token():
@@ -128,81 +147,85 @@ def new_token():
     return token, _token_hash(token)
 
 
-def write_pending(root, epoch, token):
-    """§3 prepare steps 2-3: pending-token-e<k+1> at 0600 + fsync, then current.tmp = k+1 + fsync. Nothing it writes
-    authenticates anything: the hub checks agents.token_hash, which only the DB rotate changes."""
-    write_fsync(pending_file(root, epoch), token)
-    write_fsync(pathlib.Path(root) / "current.tmp", str(int(epoch)))
+def write_pending(root, epoch, token, *, guard=contextlib.nullcontext):
+    """Pending token fsynced before current.tmp, after the digest's durable DB authorization."""
+    write_fsync(pending_file(root, epoch), token, guard=guard)
+    write_fsync(pathlib.Path(root) / "current.tmp", str(int(epoch)), guard=guard)
 
 
-def ensure_pointer_tmp(root, epoch):
-    if _read_epoch(pathlib.Path(root) / "current.tmp") != int(epoch):
-        write_fsync(pathlib.Path(root) / "current.tmp", str(int(epoch)))
+def ensure_pointer_tmp(root, epoch, *, guard=contextlib.nullcontext):
+    if _read_epoch(pathlib.Path(root) / "current.tmp", guard=guard) != int(epoch):
+        write_fsync(pathlib.Path(root) / "current.tmp", str(int(epoch)), guard=guard)
 
 
-def install(root, epoch, expected_hash):
-    """§3 install (under transition, after the DB rotate): two renames, no fsync. Idempotent: a token file already in
-    place with the expected hash is kept."""
-    root = pathlib.Path(root)
-    if file_hash(token_file(root, epoch)) != expected_hash:
-        rename(pending_file(root, epoch), token_file(root, epoch))
-    if _read_epoch(root / "current") != int(epoch):
-        if _read_epoch(root / "current.tmp") != int(epoch):
-            raise OSError(f"no pointer file for epoch {epoch}")
-        rename(root / "current.tmp", root / "current")
-
-
-def point(root, epoch):
-    root = pathlib.Path(root)
-    write_fsync(root / "current.tmp", str(int(epoch)))
-    rename(root / "current.tmp", root / "current")
-
-
-def repair(root, epoch, db_hash):
-    """§3 repair, at the start of every job, under the owner. Returns ok | repaired | credential_missing. It never
-    asserts anything about the process or about fencing. The legacy single `token` file (every mind before its first
-    handoff) counts as token-e<epoch> when it hashes to the DB: it is copied into the per-epoch scheme, never moved."""
-    root = pathlib.Path(root)
-    root.mkdir(parents=True, exist_ok=True)
-    status = "ok"
-    if file_hash(token_file(root, epoch)) != db_hash:
-        if file_hash(pending_file(root, epoch)) == db_hash:
+def install(root, epoch, expected_hash, *, guard=contextlib.nullcontext):
+    """After DB rotate: hash checks and two renames share the namespace transaction; no fsync here."""
+    with guard():
+        root = pathlib.Path(root)
+        if file_hash(token_file(root, epoch)) != expected_hash:
             rename(pending_file(root, epoch), token_file(root, epoch))
+        if _read_epoch(root / "current") != int(epoch):
+            if _read_epoch(root / "current.tmp") != int(epoch):
+                raise OSError(f"no pointer file for epoch {epoch}")
+            rename(root / "current.tmp", root / "current")
+
+
+def point(root, epoch, *, guard=contextlib.nullcontext):
+    root = pathlib.Path(root)
+    write_fsync(root / "current.tmp", str(int(epoch)), guard=guard)
+    rename(root / "current.tmp", root / "current", guard=guard)
+
+
+def repair(root, epoch, db_hash, *, guard=contextlib.nullcontext):
+    """Repair from the DB-authorized hash, under the maker owner. Every pathname/content operation is guarded;
+    descriptor durability waits release the DB. Legacy tokens are copied, never moved.
+    """
+    root = pathlib.Path(root)
+    with guard():
+        root.mkdir(parents=True, exist_ok=True)
+    status = "ok"
+    if file_hash(token_file(root, epoch), guard=guard) != db_hash:
+        if file_hash(pending_file(root, epoch), guard=guard) == db_hash:
+            rename(pending_file(root, epoch), token_file(root, epoch), guard=guard)
             status = "repaired"
-        elif _read_epoch(root / "current") is None and file_hash(root / "token") == db_hash:
-            write_fsync(token_file(root, epoch), (root / "token").read_text(encoding="utf-8").strip())
+        elif _read_epoch(root / "current", guard=guard) is None and file_hash(root / "token", guard=guard) == db_hash:
+            with guard():
+                legacy = (root / "token").read_text(encoding="utf-8").strip()
+            write_fsync(token_file(root, epoch), legacy, guard=guard)
             status = "repaired"
         else:
             status = "credential_missing"
-    if status != "credential_missing" and _read_epoch(root / "current") != int(epoch):
-        point(root, epoch)
+    if status != "credential_missing" and _read_epoch(root / "current", guard=guard) != int(epoch):
+        point(root, epoch, guard=guard)
         status = "repaired"
-    for path in root.iterdir():            # stray pending files of any epoch but the next one
-        name = path.name
-        if name.startswith("pending-token-e") and name[len("pending-token-e"):].isdigit() \
-                and int(name[len("pending-token-e"):]) != int(epoch) + 1:
-            path.unlink(missing_ok=True)
-    tmp = _read_epoch(root / "current.tmp")
-    if (root / "current.tmp").exists() and tmp != int(epoch) + 1:
-        (root / "current.tmp").unlink(missing_ok=True)
+    with guard():
+        for path in root.iterdir():
+            name = path.name
+            if name.startswith("pending-token-e") and name[len("pending-token-e"):].isdigit() \
+                    and int(name[len("pending-token-e"):]) != int(epoch) + 1:
+                path.unlink(missing_ok=True)
+        tmp = _read_epoch(root / "current.tmp")
+        if (root / "current.tmp").exists() and tmp != int(epoch) + 1:
+            (root / "current.tmp").unlink(missing_ok=True)
     return status
 
 
-def cleanup(root, keep_epoch):
-    """Old token-e<i < keep> files, and the legacy `token` once the per-epoch scheme holds the credential. Worker only."""
-    root = pathlib.Path(root)
-    removed = []
-    if not root.exists():
+def cleanup(root, keep_epoch, *, guard=contextlib.nullcontext):
+    """Delete old epochs and the retired legacy token under one namespace transaction."""
+    with guard():
+        root = pathlib.Path(root)
+        removed = []
+        if not root.exists():
+            return removed
+        for path in root.iterdir():
+            name = path.name
+            if name.startswith("token-e") and name[len("token-e"):].isdigit() and int(name[len("token-e"):]) < int(keep_epoch):
+                path.unlink(missing_ok=True)
+                removed.append(name)
+        if (root / "current").exists() and (root / "token").exists():
+            (root / "token").unlink(missing_ok=True)
+            removed.append("token")
         return removed
-    for path in root.iterdir():
-        name = path.name
-        if name.startswith("token-e") and name[len("token-e"):].isdigit() and int(name[len("token-e"):]) < int(keep_epoch):
-            path.unlink(missing_ok=True)
-            removed.append(name)
-    if (root / "current").exists() and (root / "token").exists():
-        (root / "token").unlink(missing_ok=True)
-        removed.append("token")
-    return removed
 
 
 # ---- the worker (§1) -------------------------------------------------------------------------------------------------
@@ -389,10 +412,31 @@ class StudioHandoffs:
         row = self.hive.db.one("SELECT token_hash FROM agents WHERE id = ?", (maker_id,))
         return row["token_hash"] if row else None
 
+    @contextlib.contextmanager
+    def _credential_root(self, maker_id, root=None):
+        """Hold the authoritative namespace transaction through each credential filesystem operation.
+
+        Returning a Path never grants later filesystem authority. Callers re-enter for every read/write/rename/delete;
+        credential hash authorization still commits before a fresh token is written (the crash-repair protocol).
+        """
+        root = pathlib.Path(root if root is not None else self.hive.supervisor.workspace.path(maker_id))
+        with self.hive.placement._workspace_guard(maker_id, root):
+            root.mkdir(parents=True, exist_ok=True)
+            self.hive.placement._check_workspace_namespace(maker_id, root)  # recheck newly created native inode aliases
+            yield root
+
     def _root(self, maker_id):
-        root = pathlib.Path(self.hive.supervisor.workspace.path(maker_id))
-        root.mkdir(parents=True, exist_ok=True)
-        return root
+        with self._credential_root(maker_id) as root:
+            return root
+
+    def _install_files(self, maker_id, root, epoch, digest):
+        install(root, epoch, digest, guard=lambda: self._credential_root(maker_id, root))
+
+    def _cleanup_files(self, maker_id, root, epoch):
+        cleanup(root, epoch, guard=lambda: self._credential_root(maker_id, root))
+
+    def _sync_files(self, maker_id, root):
+        dir_fsync(root, guard=lambda: self._credential_root(maker_id, root))
 
     def open_reservations(self, maker_id, k=None):
         """The maker's reservations still reserved or dispatched, by subject or metadata, of epoch <= k. R4 records the
@@ -585,7 +629,9 @@ class StudioHandoffs:
 
     def _repair(self, maker_id, session_id=None):
         """§3 repair at the start of a job; a credential_missing result is a display reason only."""
-        status = repair(self._root(maker_id), self._epoch(maker_id), self._db_hash(maker_id))
+        root = self._root(maker_id)
+        status = repair(root, self._epoch(maker_id), self._db_hash(maker_id),
+                        guard=lambda: self._credential_root(maker_id, root))
         if status == "credential_missing" and session_id:
             with self.hive.db.transaction():
                 self.hive.db.execute("UPDATE studio_sessions SET credential_reason = 'credential_missing' WHERE id = ?",
@@ -596,13 +642,14 @@ class StudioHandoffs:
         """§3 prepare, owner only, no mind lock: reuse a pending file whose hash is the recorded one; otherwise a fresh
         token whose hash is recorded first (record(hash) in its own transaction), then the files."""
         root = self._root(maker_id)
-        if recorded and file_hash(pending_file(root, epoch)) == recorded:
-            ensure_pointer_tmp(root, epoch)
+        guard = lambda: self._credential_root(maker_id, root)
+        if recorded and file_hash(pending_file(root, epoch), guard=guard) == recorded:
+            ensure_pointer_tmp(root, epoch, guard=guard)
             return recorded
         token, digest = new_token()
         with self.hive.db.transaction():
             record(digest)
-        write_pending(root, epoch, token)
+        write_pending(root, epoch, token, guard=guard)
         return digest
 
     def _rotate_to(self, maker_id, expected, digest):
@@ -729,6 +776,7 @@ class StudioHandoffs:
         """§4 job B: revalidate; under transition verify_stopped, the install authorisation (rotate CAS + installing,
         requiring the session live), renames, the start authorisation (starting, requiring live), start, awaiting_proof;
         then the directory fsync outside the lock."""
+        from .hive import HiveError  # runtime import: Hive constructs Studio after its module is loaded
         db = self.hive.db
         row = self._handoff(row_id)
         if row is None:
@@ -754,8 +802,9 @@ class StudioHandoffs:
                         return
             if stale:
                 return self._hold_row(row_id, "handoff_stale")
-            root = self._root(maker)
-            if file_hash(pending_file(root, k + 1)) != row["token_hash"]:
+            with self._credential_root(maker) as root:
+                pending_matches = file_hash(pending_file(root, k + 1)) == row["token_hash"]
+            if not pending_matches:
                 # §3 prepare's reuse rule: a pending file that no longer hashes to the recorded one is re-prepared (a new
                 # token, its hash recorded first) before anything is installed; the epoch still advances only at the rotate
                 def record(digest):
@@ -786,7 +835,11 @@ class StudioHandoffs:
                 if conflict:
                     return self._hold_row(row_id, "rotation_conflict")
                 try:
-                    install(root, k + 1, row["token_hash"])
+                    self._install_files(maker, root, k + 1, row["token_hash"])
+                except HiveError as exc:
+                    if exc.code in ("workspace_identity_conflict", "workspace_identity_invalid"):
+                        return self._hold_row(row_id, "namespace_conflict")
+                    return self._hold_row(row_id, "credential_missing")
                 except Exception as exc:   # noqa: BLE001
                     log.warning("studio handoff %s: renames failed: %s", row_id, exc)
                     return self._hold_row(row_id, "credential_missing")
@@ -806,7 +859,7 @@ class StudioHandoffs:
                     db.execute("UPDATE studio_handoffs SET state = 'awaiting_proof', deadline = ?, updated_at = ? WHERE "
                                "id = ? AND state = 'starting'", (_after(row["window_s"]), now(), row_id))
             try:
-                dir_fsync(root)
+                self._sync_files(maker, root)
             except Exception as exc:   # noqa: BLE001  (repair restores the files by hash from the pending names)
                 log.warning("studio handoff %s: directory fsync failed: %s", row_id, exc)
 
@@ -882,7 +935,7 @@ class StudioHandoffs:
         held = self._held_from.pop(maker, None)
         if held is not None:
             with contextlib.suppress(RuntimeError):
-                asyncio.get_running_loop().create_task(self.hive.replay(maker, held - 1))
+                asyncio.get_running_loop().create_task(self.hive.release_held(maker))   # resume-first hub: a release only flushes
         return self._step(ses["id"], n)
 
     # ---- §6 delivery -----------------------------------------------------------------------------------------------
@@ -1053,7 +1106,7 @@ class StudioHandoffs:
             return False
         return self.worker.submit(ses["maker_id"], "S", "S", lambda: self.job_s(session_id), session_id)
 
-    def finish_stopping(self, session_id):
+    def finish_stopping(self, session_id, *, count=True):
         """§5.3, in the caller's transaction: clear both flags, a new 780 s deadline; the caller submits S once. Kimi R3.1
         #2: while a job for the maker is still outstanding a press changes nothing (no flag, deadline or count churn).
         Returns True when it reset the session (so S should be submitted)."""
@@ -1063,72 +1116,105 @@ class StudioHandoffs:
         if self.worker.outstanding(ses["maker_id"]):
             return False
         self.hive.db.execute("UPDATE studio_sessions SET stop_failed = 0, release_stale = 0, stopping_deadline = ?, "
-                             "finish_count = finish_count + 1, updated_at = ? WHERE id = ?",
-                             (_after(STOPPING_S), now(), session_id))
+                             "finish_count = finish_count + ?, updated_at = ? WHERE id = ?",
+                             (_after(STOPPING_S), int(count), now(), session_id))
         return True
 
+    @staticmethod
+    def _namespace_release_held(ses):
+        """Only an installed stopping release waits for explicit owner authorization."""
+        return ses["state"] == "stopping" and ses["release_phase"] == "installed" and ses["credential_reason"] == "namespace_conflict"
+
     def job_s(self, session_id):
-        """§5.2 job S: repair; the verified stop (once, stop_verified); settle against its own 660 s settle_deadline;
-        the release (prepare -> installed -> durable, persisted, so a crash never causes a second release rotation);
-        the conditional final commit releasing the maker; old files deleted."""
+        """Existing maker-owned Stop continuation; an installed namespace hold needs the owner control first."""
+        from .hive import HiveError
         db = self.hive.db
         ses = self._session(session_id)
         if ses is None:
             return
         maker = ses["maker_id"]
         with self._owned(maker) as got:
-            if not got:
+            if not got or self._namespace_release_held(self._session(session_id)):
                 return
-            self._repair(maker, session_id)
+            try:
+                self._continue_stop(session_id, maker)
+            except HiveError as exc:
+                if exc.code not in ("workspace_identity_conflict", "workspace_identity_invalid"):
+                    raise
+                with db.transaction():
+                    fresh = self._session(session_id)
+                    if fresh["state"] != "stopping":
+                        raise  # a post-terminal cleanup never retroactively reclaims a released maker
+                    # A namespace refusal after fsync still needs the original owner before continuing. Retain
+                    # its exact epoch/hash; conservatively redo durability, never reset or rotate the credential.
+                    phase = "installed" if fresh["release_phase"] == "durable" else fresh["release_phase"]
+                    db.execute("UPDATE studio_sessions SET credential_reason = 'namespace_conflict', release_phase = ?, updated_at = ? WHERE id = ?",
+                               (phase, now(), session_id))
+                return
+
+    def _continue_stop(self, session_id, maker):
+        """Run only under job_s's existing maker owner; preserve its stop/settle/prepare/install/durable protocol."""
+        db = self.hive.db
+        self._repair(maker, session_id)
+        ses = self._session(session_id)
+        if ses["credential_reason"] == "namespace_conflict" and ses["release_phase"] != "installed":
+            # A conflict before installation is an ordinary guarded retry, not an installed-release owner gate.
+            with self._credential_root(maker):
+                db.execute("UPDATE studio_sessions SET credential_reason = NULL, updated_at = ? WHERE id = ?",
+                           (now(), session_id))
             ses = self._session(session_id)
-            if ses["state"] != "stopping" or ses["stop_failed"]:
-                return
-            if not ses["stop_verified"]:                                       # step 2
-                with self._transition(maker):
-                    k = self._epoch(maker)
-                    try:
-                        self._verified_stop(maker)
-                    except Exception as exc:   # noqa: BLE001
-                        log.warning("studio stop %s: the maker could not be stopped: %s", session_id, exc)
-                        word = self._status_word(maker)          # r3.2: driver I/O before, never inside, a transaction
-                        with db.transaction():
-                            db.execute("UPDATE studio_sessions SET stop_failed = 1, stop_status = ?, updated_at = ? WHERE "
-                                       "id = ?", (word, now(), session_id))
-                        return
+        if ses["state"] != "stopping" or ses["stop_failed"]:
+            return
+        if not ses["stop_verified"]:                                       # step 2
+            with self._transition(maker):
+                k = self._epoch(maker)
+                try:
+                    self._verified_stop(maker)
+                except Exception as exc:   # noqa: BLE001
+                    log.warning("studio stop %s: the maker could not be stopped: %s", session_id, exc)
+                    word = self._status_word(maker)          # r3.2: driver I/O before, never inside, a transaction
                     with db.transaction():
-                        if self._session(session_id)["state"] != "stopping":
-                            return
-                        db.execute("UPDATE agents SET desired = 'asleep', status = 'asleep' WHERE id = ?", (maker,))
-                        self._fence_epoch(maker, k, session_id, "stopped")
-                        db.execute("UPDATE studio_sessions SET stop_verified = 1, settle_deadline = ?, stop_status = NULL, "
-                                   "updated_at = ? WHERE id = ?", (_after(SETTLE_S), now(), session_id))
-                with contextlib.suppress(Exception):
-                    self.hive.emit_agent(maker)
-            with db.transaction():                                             # step 3
-                ses = self._session(session_id)
-                k = self._epoch(maker)                 # the fenced epoch, or (after a release rotation) above it
-                if _passed(ses["settle_deadline"]):
-                    self.unknown_move(maker, k)
-                if self.open_reservations(maker, k):
+                        db.execute("UPDATE studio_sessions SET stop_failed = 1, stop_status = ?, updated_at = ? WHERE "
+                                   "id = ?", (word, now(), session_id))
                     return
-            root = self._root(maker)
-            if not self._release(session_id, maker, root):
+                with db.transaction():
+                    if self._session(session_id)["state"] != "stopping":
+                        return
+                    db.execute("UPDATE agents SET desired = 'asleep', status = 'asleep' WHERE id = ?", (maker,))
+                    self._fence_epoch(maker, k, session_id, "stopped")
+                    db.execute("UPDATE studio_sessions SET stop_verified = 1, settle_deadline = ?, stop_status = NULL, "
+                               "updated_at = ? WHERE id = ?", (_after(SETTLE_S), now(), session_id))
+            with contextlib.suppress(Exception):
+                self.hive.emit_agent(maker)
+        with db.transaction():                                             # step 3
+            ses = self._session(session_id)
+            k = self._epoch(maker)                 # the fenced epoch, or (after a release rotation) above it
+            if _passed(ses["settle_deadline"]):
+                self.unknown_move(maker, k)
+            if self.open_reservations(maker, k):
                 return
-            self._finish_release(session_id, maker, root)
+        root = self._root(maker)
+        if not self._release(session_id, maker, root):
+            return
+        self._finish_release(session_id, maker, root)
+
 
     def _files_match(self, maker, root, epoch):
-        return epoch is not None and file_hash(token_file(root, epoch)) == self._db_hash(maker) \
-            and _read_epoch(pathlib.Path(root) / "current") == epoch
+        with self._credential_root(maker, root):
+            return epoch is not None and file_hash(token_file(root, epoch)) == self._db_hash(maker) \
+                and _read_epoch(pathlib.Path(root) / "current") == epoch
 
     def _phase_reset(self, session_id):
         """§5.2a after a proven credential loss: the only second release rotation."""
         with self.hive.db.transaction():
-            self.hive.db.execute("UPDATE studio_sessions SET release_phase = 'none', release_epoch = NULL, "
+            changed = self.hive.db.execute("UPDATE studio_sessions SET release_phase = 'none', release_epoch = NULL, "
                                  "release_token_hash = NULL, credential_reason = 'credential_missing', updated_at = ? "
-                                 "WHERE id = ?", (now(), session_id))
+                                 "WHERE id = ? AND COALESCE(credential_reason, '') != 'namespace_conflict'", (now(), session_id))
+            return changed.rowcount == 1
 
     def _release(self, session_id, maker, root):
         """§5.2 steps 4-5. True when the release is installed (go to step 6)."""
+        from .hive import HiveError
         db = self.hive.db
         ses = self._session(session_id)
         k = self._epoch(maker)
@@ -1138,7 +1224,8 @@ class StudioHandoffs:
             self._repair(maker, session_id)
             if k == ses["release_epoch"] and self._files_match(maker, root, k):
                 return True
-            self._phase_reset(session_id)
+            if not self._phase_reset(session_id):
+                return False
             ses = self._session(session_id)
         # step 4: prepare for k+1, reusing a valid pending file
         def record(digest):
@@ -1147,6 +1234,8 @@ class StudioHandoffs:
             digest = self._prepare_files(maker, k + 1, ses["release_token_hash"] if ses["release_epoch"] in (None, k + 1)
                                          else None, record)
         except Exception as exc:   # noqa: BLE001
+            if isinstance(exc, HiveError) and exc.code in ("workspace_identity_conflict", "workspace_identity_invalid"):
+                raise
             log.warning("studio stop %s: release prepare failed: %s", session_id, exc)
             with db.transaction():
                 db.execute("UPDATE studio_sessions SET credential_reason = 'credential_write_failed' WHERE id = ?",
@@ -1187,7 +1276,12 @@ class StudioHandoffs:
             if not moved:
                 return False
             try:
-                install(root, k + 1, digest)
+                self._install_files(maker, root, k + 1, digest)
+            except HiveError as exc:
+                reason = "namespace_conflict" if exc.code in ("workspace_identity_conflict", "workspace_identity_invalid") else "credential_missing"
+                with db.transaction():
+                    db.execute("UPDATE studio_sessions SET credential_reason = ? WHERE id = ?", (reason, session_id))
+                return False
             except Exception as exc:   # noqa: BLE001
                 log.warning("studio stop %s: release renames failed: %s", session_id, exc)
                 with db.transaction():
@@ -1198,10 +1292,13 @@ class StudioHandoffs:
 
     def _finish_release(self, session_id, maker, root):
         """§5.2 step 6, owner only: directory fsync -> durable; the conditional final commit; old files deleted."""
+        from .hive import HiveError
         db = self.hive.db
         try:
-            dir_fsync(root)
+            self._sync_files(maker, root)
         except Exception as exc:   # noqa: BLE001  (stay installed; the next S re-attempts the fsync only)
+            if isinstance(exc, HiveError) and exc.code in ("workspace_identity_conflict", "workspace_identity_invalid"):
+                raise
             log.warning("studio stop %s: directory fsync failed: %s", session_id, exc)
             return
         with db.transaction():
@@ -1215,7 +1312,7 @@ class StudioHandoffs:
             db.execute("UPDATE studio_sessions SET maker_released = 1, state = ?, stopped_at = ?, updated_at = ? WHERE "
                        "id = ? AND state = 'stopping'", (ENDED, now(), now(), session_id))
             self._session_event(session_id)
-        cleanup(root, k)
+        self._cleanup_files(maker, root, k)
 
     def job_cleanup(self, maker_id):
         """A queued cleanup (admission or release): old token-e<i < keep> files. Worker only, under the owner."""
@@ -1227,7 +1324,7 @@ class StudioHandoffs:
             if row is None:
                 return
             keep = min(row["keep_epoch"], self._epoch(maker_id))
-            cleanup(self._root(maker_id), keep)
+            self._cleanup_files(maker_id, self._root(maker_id), keep)
             with db.transaction():
                 db.execute("DELETE FROM studio_cleanups WHERE maker_id = ? AND keep_epoch = ?", (maker_id, row["keep_epoch"]))
 
@@ -1283,6 +1380,8 @@ class StudioHandoffs:
             except Exception:   # noqa: BLE001  (one row never stops the sweep)
                 log.exception("studio admission failed for %s", h["id"])
         for ses in db.all("SELECT * FROM studio_sessions WHERE state = 'stopping'"):
+            if self._namespace_release_held(ses):
+                continue  # neither no-op jobs nor deadline churn while waiting for the explicit owner repair
             if _passed(ses["stopping_deadline"]) and not ses["release_stale"]:
                 db.execute("UPDATE studio_sessions SET release_stale = 1 WHERE id = ? AND state = 'stopping' AND "
                            "release_stale = 0", (ses["id"],))

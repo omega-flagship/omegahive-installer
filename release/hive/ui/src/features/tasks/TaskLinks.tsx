@@ -17,7 +17,7 @@ export function MotivationChip({ m, onClick, title }: { m: Pick<MotivationRef, '
       onClick={onClick ?? (() => navigate({ name: 'tasks', motivation: m.id }))}
       title={title ?? `Tasks under “${m.title}”${quiet ? ` (${m.status})` : ''}`}
       data-motivation-chip={m.id}
-      className={cx('inline-flex min-h-6 max-w-full items-center gap-1 rounded-full border px-2 text-[11px] font-medium transition-colors hover:bg-white/[0.06]', quiet ? 'border-line text-ink-3' : 'border-accent/30 bg-accent/[0.07] text-accent')}
+      className={cx('inline-flex min-h-6 max-w-full items-center gap-1 rounded-full border px-2 text-[11px] font-medium transition-colors hover:bg-tint/[0.06]', quiet ? 'border-line text-ink-3' : 'border-accent/30 bg-accent/[0.07] text-accent')}
     >
       <Icon name="target" size={10} strokeWidth={2.4} />
       <span className="truncate">{m.title}</span>
@@ -45,7 +45,7 @@ export function TaskChips({ goal }: { goal: Goal }) {
           key={r.id}
           type="button"
           onClick={() => navigate({ name: 'swarm', id: goal.swarm_id, tab: 'requests' })}
-          className="inline-flex min-h-6 items-center gap-1 rounded-full border border-line px-2 text-[11px] text-ink-3 hover:bg-white/[0.06]"
+          className="inline-flex min-h-6 items-center gap-1 rounded-full border border-line px-2 text-[11px] text-ink-3 hover:bg-tint/[0.06]"
           title={`Cross-swarm request ${r.id}`}
         >
           <Icon name="link" size={10} />
@@ -98,15 +98,15 @@ export function TaskLinks({ goal, subtasks }: { goal: Goal; subtasks: number }) 
               {m?.editable &&
                 (confirm === l.id ? (
                   <span className="inline-flex items-center gap-1 text-[11px]">
-                    <button type="button" disabled={busy} onClick={() => void run(m, 'unlink')} className="rounded px-1.5 text-bad hover:bg-white/[0.06]">
+                    <button type="button" disabled={busy} onClick={() => void run(m, 'unlink')} className="rounded px-1.5 text-bad hover:bg-tint/[0.06]">
                       Take out{subtasks > 0 && withSubs ? ' with subtasks' : ''}
                     </button>
-                    <button type="button" onClick={() => setConfirm(null)} className="rounded px-1.5 text-ink-3 hover:bg-white/[0.06]">
+                    <button type="button" onClick={() => setConfirm(null)} className="rounded px-1.5 text-ink-3 hover:bg-tint/[0.06]">
                       Keep
                     </button>
                   </span>
                 ) : (
-                  <button type="button" onClick={() => setConfirm(l.id)} aria-label={`Take this task out of “${l.title}”`} className="flex size-6 items-center justify-center rounded-full text-ink-4 hover:bg-white/[0.06] hover:text-ink">
+                  <button type="button" onClick={() => setConfirm(l.id)} aria-label={`Take this task out of “${l.title}”`} className="flex size-6 items-center justify-center rounded-full text-ink-4 hover:bg-tint/[0.06] hover:text-ink">
                     <Icon name="x" size={10} />
                   </button>
                 ))}
@@ -114,18 +114,18 @@ export function TaskLinks({ goal, subtasks }: { goal: Goal; subtasks: number }) 
           )
         })}
         {candidates.length > 0 && (
-          <button type="button" onClick={() => setPicking(!picking)} aria-expanded={picking} className="inline-flex min-h-6 items-center gap-1 rounded-full border border-dashed border-line-2 px-2 text-[11px] text-ink-2 hover:bg-white/[0.06]">
+          <button type="button" onClick={() => setPicking(!picking)} aria-expanded={picking} className="inline-flex min-h-6 items-center gap-1 rounded-full border border-dashed border-line-2 px-2 text-[11px] text-ink-2 hover:bg-tint/[0.06]">
             <Icon name="plus" size={10} />
             File under a motivation
           </button>
         )}
       </div>
       {picking && (
-        <div className="rounded-xl border border-line bg-black/30 p-1.5" role="group" aria-label="File this task under a motivation">
+        <div className="rounded-xl border border-line bg-shade/30 p-1.5" role="group" aria-label="File this task under a motivation">
           <ul className="max-h-48 space-y-px overflow-y-auto">
             {candidates.map((m) => (
               <li key={m.id}>
-                <button type="button" disabled={busy} onClick={() => void run(m, 'link')} className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[12.5px] text-ink-2 hover:bg-white/[0.06] disabled:opacity-50">
+                <button type="button" disabled={busy} onClick={() => void run(m, 'link')} className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[12.5px] text-ink-2 hover:bg-tint/[0.06] disabled:opacity-50">
                   <Icon name="target" size={12} />
                   <span className="min-w-0 flex-1 truncate">{m.title}</span>
                   {m.status === 'paused' && <span className="text-[11px] text-ink-4">paused</span>}

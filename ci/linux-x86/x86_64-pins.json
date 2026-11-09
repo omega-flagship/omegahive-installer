@@ -19,8 +19,9 @@
   "arch_neutral_reuse": [
     "swipl_source 1a078f18... (13684969 B)",
     "petta_source de1e2474... codeload",
-    "ui_prebuilt 37be24f5.../f5efdb6d...",
-    "apps omegaassist 71d182fb..., omegadesign 38671264..."
+    "ui_prebuilt 6388ffb9.../88571292... (ui-dist-r3, built from 6b5a96c1)",
+    "apps omegaassist 71d182fb... (r6.1), omegadesign e40a65ee... (Studio 0.4.22)",
+    "core_lock 725d90dd... (adds xkcdpass==1.30.0)"
   ],
   "core_lock": "coordination/hive-prs/bundles/hive-requirements-linux-x86_64.lock",
   "python_stripped": {

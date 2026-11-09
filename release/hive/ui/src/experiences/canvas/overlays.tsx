@@ -1,12 +1,14 @@
+import { useCanvasCurrent } from './actionAuthority'
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { AnimatePresence, m } from 'framer-motion'
-import { shown, useReducedMotion, type Agent } from '../sdk'
+import { shown, useReducedMotion, useRoute, type Agent } from '../sdk'
 import type { Link } from './data'
 import { useEngine, useEngineRef } from './engine'
 import { centre, type IslandBox, type Item, type Layout, type Rect } from './layout'
 import { Avatar } from './parts'
 import { avatarFill, tint, type Mode } from './theme'
 import { guardComposing } from '../../features/ask/keys'
+import { StudioLiveBar } from '../../features/studioLive/DirectingStudio'
 
 // ------------------------------------------------------------------ links (world space)
 
@@ -151,13 +153,14 @@ export function Cursors({ list, reduced, detail }: { list: CursorSpec[]; reduced
 const glass = 'border border-[var(--chrome-line)] bg-[var(--chrome)] shadow-[var(--shadow)] backdrop-blur-xl'
 
 export function IconBtn({ label, active, onClick, children, kbd, wide, marker }: { label: string; active?: boolean; onClick: () => void; children: ReactNode; kbd?: string; wide?: boolean; marker?: string }) {
+  const current = useCanvasCurrent()
   return (
     <button
       {...(marker ? { [`data-${marker}`]: '' } : {})}
       aria-label={label}
       aria-pressed={active}
       title={kbd ? `${label} (${kbd})` : label}
-      onClick={onClick}
+      onClick={() => { if (current()) onClick() }}
       className={`grid h-9 place-items-center rounded-[10px] transition-colors ${wide ? 'px-2.5' : 'w-9'} ${active ? 'bg-[var(--accent)] text-[var(--on-accent)]' : 'text-[var(--ink-2)] hover:bg-[var(--accent-soft)] hover:text-[var(--ink)]'}`}
     >
       {children}
@@ -215,7 +218,7 @@ export function Toolbar({ tool, setTool, onSearch, onFit, compact, mapOpen, onMa
   )
 }
 
-/** "Start a swarm": labelled on desktop (the owner could not find how to make a top-level swarm), an icon on phones. */
+/** "Start a swarm": labelled on desktop (Jon could not find how to make a top-level swarm), an icon on phones. */
 function CreateSwarm({ compact, onClick }: { compact: boolean; onClick: () => void }) {
   const icon = (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden><circle cx="4.5" cy="5" r="2" /><circle cx="10" cy="4" r="1.6" /><circle cx="6.5" cy="11" r="1.8" /><path d="M12.5 8.5v5M10 11h5" /></svg>
@@ -304,9 +307,12 @@ export function Minimap({ layout, mode }: { layout: Layout; mode: Mode }) {
 
 export function TopBar({ awake, pending, connection, mode, onMode, onDecisions, onFollow, onPalette, hiveOpen, onHive, compact }: { awake: Agent[]; pending: number; connection: string; mode: Mode; onMode: () => void; onDecisions: () => void; onFollow: (id: string) => void; onPalette: () => void; hiveOpen: boolean; onHive: () => void; compact: boolean }) {
   const live = connection === 'open'
+  const route = useRoute()
   return (
-    <>
-      <div data-xc-keep-clear="" data-chrome className={`absolute top-3 left-3 flex h-11 items-center gap-2.5 rounded-[14px] pr-3.5 pl-2 ${glass}`} style={{ zIndex: 40 }}>
+    // Both header controls and the live-session bar own rows: neither overlays the other on a narrow viewport.
+    <div data-chrome className="cv-top-chrome pointer-events-none absolute flex flex-col gap-2" style={{ zIndex: 40, top: 'calc(12px + var(--sat, 0px))', left: 'calc(12px + env(safe-area-inset-left, 0px))', right: 'calc(12px + env(safe-area-inset-right, 0px))' }}>
+      <div className="flex items-start justify-between gap-2">
+      <div data-xc-keep-clear="" data-chrome className={`pointer-events-auto flex h-11 items-center gap-2.5 rounded-[14px] pr-3.5 pl-2 ${glass}`}>
         <span aria-hidden className="grid size-7 place-items-center rounded-[8px] text-[13px] font-bold text-white" style={{ background: 'var(--accent)' }}>
           <svg width="14" height="14" viewBox="0 0 14 14"><circle cx="3.5" cy="3.5" r="2" fill="#fff" /><circle cx="10.5" cy="3.5" r="2" fill="#fff" opacity=".75" /><circle cx="3.5" cy="10.5" r="2" fill="#fff" opacity=".75" /><circle cx="10.5" cy="10.5" r="2" fill="#fff" opacity=".5" /></svg>
         </span>
@@ -318,7 +324,7 @@ export function TopBar({ awake, pending, connection, mode, onMode, onDecisions, 
           {!compact && (live ? 'Live' : connection)}
         </span>
       </div>
-      <div data-xc-keep-clear="" data-chrome className={`absolute top-3 right-3 flex h-11 items-center gap-1 rounded-[14px] px-1.5 ${glass}`} style={{ zIndex: 40 }}>
+      <div data-xc-keep-clear="" data-chrome className={`pointer-events-auto flex h-11 items-center gap-1 rounded-[14px] px-1.5 ${glass}`}>
         {!compact && awake.length > 0 && (
           <div className="mr-1 flex items-center pl-1" aria-label="Awake minds">
             {awake.slice(0, 5).map((a, i) => (
@@ -358,7 +364,9 @@ export function TopBar({ awake, pending, connection, mode, onMode, onDecisions, 
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M3 4.5h10M3 8h10M3 11.5h6" /></svg>
         </IconBtn>
       </div>
-    </>
+      </div>
+      {route.name === 'hive' && <StudioLiveBar inline canvas />}
+    </div>
   )
 }
 
@@ -509,12 +517,13 @@ export function SelectionBar({ r, label, children }: { r: Rect; label: string; c
 }
 
 export function BarBtn({ onClick, children, strong, busy, label }: { onClick: () => void; children: ReactNode; strong?: boolean; busy?: boolean; label?: string }) {
+  const current = useCanvasCurrent()
   return (
     <button
       aria-label={label}
       disabled={busy}
       aria-busy={busy || undefined}
-      onClick={(e) => (e.stopPropagation(), onClick())}
+      onClick={(e) => { e.stopPropagation(); if (current()) onClick() }}
       className="h-8 rounded-[8px] px-2.5 text-[13px] font-medium transition-colors hover:bg-[color-mix(in_srgb,var(--paper)_16%,transparent)]"
       style={strong ? { background: 'var(--accent)', color: 'var(--on-accent)' } : undefined}
     >

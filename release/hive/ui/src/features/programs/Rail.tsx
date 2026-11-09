@@ -62,7 +62,7 @@ export function SourcesPanel({
           )}
           <ul className="space-y-2">
             {groups.map((g) => (
-              <li key={g.origin ?? g.uses[0].source.id} className={cx('rounded-xl border', g.shared ? 'border-warn/30 bg-warn/[0.03]' : 'border-line bg-white/[0.02]')}>
+              <li key={g.origin ?? g.uses[0].source.id} className={cx('rounded-xl border', g.shared ? 'border-warn/30 bg-warn/[0.03]' : 'border-line bg-tint/[0.02]')}>
                 <div className="flex items-center gap-2 px-2.5 pt-2 pb-1">
                   <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-ink-3" title={g.origin ?? 'No origin given'}>
                     {g.origin ? `origin · ${g.origin}` : 'origin not given'}
@@ -86,7 +86,7 @@ export function SourcesPanel({
                             </div>
                             <div className="mt-1 flex flex-wrap items-center gap-1">
                               {u.citedBy.map((c) => (
-                                <button key={c.id} onClick={() => onSelect(c.id)} className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-md border border-line bg-white/[0.03] px-1.5 py-px text-[10.5px] text-ink-2 hover:border-line-2 hover:text-ink" title={gi.items.get(c.id)?.label}>
+                                <button key={c.id} onClick={() => onSelect(c.id)} className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-md border border-line bg-tint/[0.03] px-1.5 py-px text-[10.5px] text-ink-2 hover:border-line-2 hover:text-ink" title={gi.items.get(c.id)?.label}>
                                   <span className="truncate">{c.via ? `via ${gi.items.get(c.id)?.label ?? c.id}` : 'this item'}</span>
                                 </button>
                               ))}
@@ -245,7 +245,7 @@ export function InputForm({ input, def, busy, onSubmit, onCancel }: { input: Pen
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 6 }}
       className="rounded-2xl border border-accent-2/30 p-3.5"
-      style={{ background: 'linear-gradient(180deg, rgb(110 231 255 / 0.06), rgb(110 231 255 / 0.02)), rgb(10 10 32 / 0.9)' }}
+      style={{ background: 'linear-gradient(180deg, color-mix(in oklab, var(--color-accent-2) 6%, transparent), color-mix(in oklab, var(--color-accent-2) 2%, transparent)), color-mix(in oklab, var(--color-abyss) 90%, transparent)' }}
       aria-label={`${def?.label ?? input.action}: more input needed`}
     >
       <div className="flex items-start gap-2.5">
@@ -258,7 +258,7 @@ export function InputForm({ input, def, busy, onSubmit, onCancel }: { input: Pen
         </div>
       </div>
       {needsItems && (
-        <p className="mt-2.5 rounded-lg border border-line bg-white/[0.03] px-2.5 py-2 text-[12px] text-ink-2">
+        <p className="mt-2.5 rounded-lg border border-line bg-tint/[0.03] px-2.5 py-2 text-[12px] text-ink-2">
           <b className="font-semibold">Items:</b> {input.needs.items}. Select them on the stage (shift-click, or “Select more”), then run it again.
         </p>
       )}
@@ -275,7 +275,7 @@ export function InputForm({ input, def, busy, onSubmit, onCancel }: { input: Pen
                 value={values[k] ?? ''}
                 onChange={(e) => setValues((v) => ({ ...v, [k]: e.target.value }))}
                 rows={2}
-                className="w-full resize-y rounded-xl border border-line-2 bg-black/30 px-3 py-2 text-[14px] text-ink outline-none placeholder:text-ink-4 focus:border-accent-2/60"
+                className="w-full resize-y rounded-xl border border-line-2 bg-shade/30 px-3 py-2 text-[14px] text-ink outline-none placeholder:text-ink-4 focus:border-accent-2/60"
                 placeholder={desc}
               />
             ) : (
@@ -283,7 +283,7 @@ export function InputForm({ input, def, busy, onSubmit, onCancel }: { input: Pen
                 ref={i === 0 ? (el) => void (first.current = el) : undefined}
                 value={values[k] ?? ''}
                 onChange={(e) => setValues((v) => ({ ...v, [k]: e.target.value }))}
-                className="min-h-10 w-full rounded-xl border border-line-2 bg-black/30 px-3 text-[14px] text-ink outline-none placeholder:text-ink-4 focus:border-accent-2/60"
+                className="min-h-10 w-full rounded-xl border border-line-2 bg-shade/30 px-3 text-[14px] text-ink outline-none placeholder:text-ink-4 focus:border-accent-2/60"
                 placeholder={desc}
               />
             )}
@@ -308,9 +308,9 @@ export function InputForm({ input, def, busy, onSubmit, onCancel }: { input: Pen
 
 const TONE: Record<ProgramNotice['tone'], { color: string; icon: IconName }> = {
   info: { color: '#7dd3fc', icon: 'info' },
-  good: { color: '#4ade80', icon: 'check' },
-  warn: { color: '#fbbf24', icon: 'alert' },
-  bad: { color: '#fb7185', icon: 'alert' },
+  good: { color: 'var(--color-good)', icon: 'check' },
+  warn: { color: 'var(--color-warn)', icon: 'alert' },
+  bad: { color: 'var(--color-bad)', icon: 'alert' },
 }
 
 export function NoticeBar({ notice, onDismiss }: { notice: ProgramNotice; onDismiss(): void }) {
@@ -328,7 +328,7 @@ export function NoticeBar({ notice, onDismiss }: { notice: ProgramNotice; onDism
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -4, transition: { duration: 0.15 } }}
       className="flex items-start gap-2.5 rounded-2xl border px-3 py-2.5 shadow-[0_18px_50px_-16px_rgb(0_0_0/0.9)]"
-      style={{ borderColor: `color-mix(in srgb, ${t.color} 35%, transparent)`, background: `linear-gradient(180deg, color-mix(in srgb, ${t.color} 7%, transparent), transparent), rgb(12 12 34)` }}
+      style={{ borderColor: `color-mix(in srgb, ${t.color} 35%, transparent)`, background: `linear-gradient(180deg, color-mix(in srgb, ${t.color} 7%, transparent), transparent), var(--color-abyss)` }}
     >
       <span className="mt-px flex size-6 shrink-0 items-center justify-center rounded-lg" style={{ color: t.color, background: `color-mix(in srgb, ${t.color} 15%, transparent)` }}>
         <Icon name={t.icon} size={14} strokeWidth={2.2} />
@@ -337,7 +337,7 @@ export function NoticeBar({ notice, onDismiss }: { notice: ProgramNotice; onDism
         <div className="text-[13px] font-semibold text-ink">{notice.title}</div>
         {notice.body && <p className="mt-0.5 text-[12px] leading-snug text-ink-3">{notice.body}</p>}
       </div>
-      <button onClick={onDismiss} className="-m-1 flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-3 hover:bg-white/[0.06] hover:text-ink" aria-label="Dismiss">
+      <button onClick={onDismiss} className="-m-1 flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-3 hover:bg-tint/[0.06] hover:text-ink" aria-label="Dismiss">
         <Icon name="x" size={15} />
       </button>
     </m.div>
@@ -362,7 +362,7 @@ export function TaskChips({ tasks, swarmId, onCancel }: { tasks: TaskRef[]; swar
           const color = GOAL_COLOR[status] ?? '#8a89b3'
           const who = g?.claimed_by ? agents[g.claimed_by]?.name : null
           return (
-            <m.li key={t.id} layout initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="flex min-w-0 items-center gap-1 rounded-xl border border-line bg-white/[0.035] py-1 pr-1 pl-2">
+            <m.li key={t.id} layout initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="flex min-w-0 items-center gap-1 rounded-xl border border-line bg-tint/[0.035] py-1 pr-1 pl-2">
               <span className={cx('size-2 shrink-0 rounded-full', LIVE.has(status) && 'animate-pulse')} style={{ background: color, boxShadow: `0 0 8px ${color}` }} aria-hidden="true" />
               <button
                 onClick={() => navigate({ name: 'tasks', swarm: swarmId })}

@@ -111,26 +111,52 @@ describe('after an identity change (real init, two SimClients)', () => {
 })
 
 /**
- * Closed-source apps ship their own forms in their own repositories. In this repo the contract has no form for them:
- * their pages open on the generic host stage. Routing only, with invented props.
+ * Kimi town-r3 #3: Atlas's own form (forms/lifeMap) is reached only through Atlas's own program page. Routing only,
+ * with invented props: no Atlas data or content is read, and the form's module is never rendered beyond its Suspense
+ * fallback (server rendering does not resolve lazy components).
  */
-describe('closed-source app forms are not part of the hive', () => {
-  it('the contract routes no form to the closed apps, whatever they describe', () => {
-    for (const id of ['atlas', 'omegatruth', 'invented-listed', 'Atlas', ''])
-      expect(formFor(id, null), id).toBeNull()
-    expect(formFor('invented-listed', { kinds: [{ role: 'question' }, { role: 'claim' }, { role: 'evidence' }] } as never)).toBeNull()
+describe("Atlas's form renders only on Atlas's own program page", () => {
+  it('the contract routes the life-map form to the atlas id and to no other', () => {
+    expect(formFor('atlas', null)).toBe('life-map')
+    for (const id of ['omegatruth', 'omegadesign', 'commons-explorer', 'invented-listed', 'atlas-invented', 'Atlas', 'life-map', ''])
+      expect(formFor(id, null), id).not.toBe('life-map')
+    // whatever a program describes, it never earns the life-map form
+    expect(formFor('invented-listed', { kinds: [{ role: 'subject' }, { role: 'reading' }] } as never)).not.toBe('life-map')
   })
-  it('a listed closed app gets the generic page, with no form at all', () => {
-    quiet()
+  const atlasSession = () => {
     useHive.setState({
       swarms: { s_inv: { id: 's_inv', name: 'Invented Swarm' } } as never,
       programSessions: { [sessionKey('atlas', 's_inv')]: { graph: { title: 'Invented', items: [], revision: 'r1' } } as never },
       programDetails: {},
-      programs: [app('atlas', 'Invented Name')], programsError: null,
     })
-    expect(render('atlas', 's_inv')).not.toContain('data-app-form')
+  }
+  it('when the host lists atlas for this person: its page mounts the life-map form', () => {
+    quiet()
+    atlasSession()
+    useHive.setState({ programs: [app('atlas', 'Invented Name')], programsError: null })
+    expect(render('atlas', 's_inv')).toContain('data-app-form="life-map"')
   })
-  it('no hive source references the closed apps\' form folders', async () => {
+  it('when the host does not list it: the generic page, with no form at all', () => {
+    quiet()
+    atlasSession()
+    useHive.setState({ programs: [LISTED], programsError: null })
+    const html = render('atlas', 's_inv')
+    expect(html).toMatch(UNAVAILABLE)
+    expect(html).not.toContain('data-app-form')
+  })
+  it("another app's page never mounts it", () => {
+    quiet()
+    useHive.setState({
+      swarms: { s_inv: { id: 's_inv', name: 'Invented Swarm' } } as never,
+      programSessions: { [sessionKey(LISTED.id, 's_inv')]: { graph: { title: 'Invented', items: [], revision: 'r1' } } as never },
+      programs: [LISTED, app('atlas', 'Invented Name')], programsError: null,
+    })
+    expect(render(LISTED.id, 's_inv')).not.toContain('life-map')
+  })
+})
+
+describe("Atlas's form component is reached only through the form contract", () => {
+  it('no hive source imports forms/lifeMap/LifeMap except forms/contract (the developer harness never mounts it)', async () => {
     const fsName = 'node:fs'
     const { readdirSync, readFileSync, statSync } = (await import(/* @vite-ignore */ fsName)) as {
       readdirSync: (p: string) => string[]; readFileSync: (p: string, e: 'utf8') => string; statSync: (p: string) => { isDirectory: () => boolean }
@@ -138,8 +164,9 @@ describe('closed-source app forms are not part of the hive', () => {
     const root = new URL('../..', import.meta.url).pathname.replace(/\/$/, '')
     const walk = (d: string): string[] => readdirSync(d).flatMap((n) => (statSync(`${d}/${n}`).isDirectory() ? walk(`${d}/${n}`) : /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n) ? [`${d}/${n}`] : []))
     const importers = walk(root)
-      .filter((f) => /forms\/(lifeMap|caseFile)\//.test(readFileSync(f, 'utf8')))
+      .filter((f) => !f.startsWith(`${root}/forms/lifeMap/`))
+      .filter((f) => /from\s+['"][^'"]*lifeMap\/LifeMap['"]|import\(\s*['"][^'"]*lifeMap\/LifeMap['"]\s*\)/.test(readFileSync(f, 'utf8')))
       .map((f) => f.slice(root.length + 1))
-    expect(importers).toEqual([])
+    expect(importers).toEqual(['forms/contract.ts'])
   })
 })

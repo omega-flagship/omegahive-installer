@@ -106,7 +106,7 @@ class AppAsk:
         person = self.hive.db.one("SELECT role, disabled FROM people WHERE id = ?", (viewer.principal[5:],)) \
             if named_person(viewer.principal) else None
         if not person or person["disabled"] or person["role"] not in ("admin", "member") or not row \
-                or row.get("kind") != "sso" or row.get("principal") != viewer.principal \
+                or row.get("kind") not in ("sso", "member_password") or row.get("principal") != viewer.principal \
                 or (row.get("expires_at") is not None and row["expires_at"] <= self.wall_clock()):
             raise self.error("not_available", 403)
         return row
@@ -698,7 +698,8 @@ class AppAsk:
         sub["cursor"] = dict(cursor)
         self.live_frames = {k: v for k, v in self.live_frames.items()
                             if not (k[:2] == (g["id"], t["id"]) and k[2] <= cursor["after_seq"])}
-        terminal = t["state"] not in ("accepted", "thinking", "conducting")
+        from .ask import OPEN   # gateway r1b: the one open-state constant (an app's turn is never a browser turn)
+        terminal = t["state"] not in OPEN
         events = self.hive.ask.events(t["id"], cursor["after_seq"], 1)["events"]
         if not events:
             if cursor["offset"]:

@@ -48,7 +48,7 @@ describe('r1.13 (Design phone P2): the compact bar keeps the money whole', () =>
     useStudioLive.setState({ ledger, local: 'receiving' })
     const live = renderToStaticMarkup(createElement(AppUnavailable, { state: 'opening' }))
     expect(live).toMatch(/<span class="sl-bar-money" data-studio-bar-money="">\$0\.10 of \$2\.00<\/span>/)
-    expect(live).toMatch(/<span class="sl-bar-text">Studio · [^<]*<\/span>/)
+    expect(live).toMatch(/<span class="sl-bar-text">Create · [^<]*<\/span>/)
     useStudioLive.setState({ ledger, local: 'stopped' })
     const stopped = renderToStaticMarkup(createElement(AppUnavailable, { state: 'opening' }))
     expect(stopped).not.toContain('data-studio-bar-money')

@@ -24,9 +24,9 @@
   z-index: 96;
   padding: 10px 14px;
   border-radius: 12px;
-  background: var(--color-abyss, #080822);
-  color: var(--color-ink, #eceaff);
-  outline: 2px solid var(--color-accent, #a493ff);
+  background: var(--color-abyss);
+  color: var(--color-ink);
+  outline: 2px solid var(--color-accent);
   transform: translateY(-200%);
 }
 .ask-skip:focus {
@@ -48,8 +48,8 @@ html[data-ask-resizing] .ask-dock { transition: none; }
 /* resting: quieter, never smaller (every control stays at least 44 px) */
 .ask-dock[data-state='resting'] .ask-capsule {
   background:
-    radial-gradient(120% 140% at 50% 0%, rgb(164 147 255 / 0.1), transparent 60%),
-    linear-gradient(180deg, rgb(22 20 58 / 0.78), rgb(12 12 36 / 0.84));
+    radial-gradient(120% 140% at 50% 0%, color-mix(in oklab, var(--color-accent) 10%, transparent), transparent 60%),
+    linear-gradient(180deg, color-mix(in oklab, var(--color-abyss) 78%, transparent), color-mix(in oklab, var(--color-abyss) 84%, transparent));
 }
 .ask-dock[data-state='resting'] .ask-chips {
   opacity: 0.8;
@@ -62,29 +62,29 @@ html[data-ask-resizing] .ask-dock { transition: none; }
   min-height: 54px;
   padding: 5px 5px 5px 14px;
   border-radius: 999px;
-  color: var(--color-ink, #eceaff);
+  color: var(--color-ink);
   background:
-    radial-gradient(120% 140% at 50% 0%, rgb(164 147 255 / 0.16), transparent 60%),
-    linear-gradient(180deg, rgb(26 24 66 / 0.86), rgb(12 12 36 / 0.9));
-  border: 1px solid rgb(190 180 255 / 0.22);
+    radial-gradient(120% 140% at 50% 0%, color-mix(in oklab, var(--color-accent) 16%, transparent), transparent 60%),
+    linear-gradient(180deg, color-mix(in oklab, var(--color-abyss) 86%, transparent), color-mix(in oklab, var(--color-abyss) 90%, transparent));
+  border: 1px solid color-mix(in oklab, var(--color-primary-top) 22%, transparent);
   box-shadow:
     0 18px 50px -18px rgb(0 0 0 / 0.75),
-    0 0 0 1px rgb(255 255 255 / 0.03) inset,
-    0 1px 0 rgb(255 255 255 / 0.08) inset;
+    0 0 0 1px color-mix(in oklab, var(--color-ink) 3%, transparent) inset,
+    0 1px 0 color-mix(in oklab, var(--color-ink) 8%, transparent) inset;
   backdrop-filter: blur(22px) saturate(150%);
   -webkit-backdrop-filter: blur(22px) saturate(150%);
   transition: transform 0.35s cubic-bezier(0.2, 0.7, 0.2, 1), box-shadow 0.3s, border-color 0.3s;
 }
 .ask-dock[data-state='active'] .ask-capsule,
 .ask-dock[data-state='answering'] .ask-capsule {
-  border-color: rgb(190 180 255 / 0.38);
+  border-color: color-mix(in oklab, var(--color-primary-top) 38%, transparent);
   box-shadow:
     0 22px 60px -18px rgb(0 0 0 / 0.8),
-    0 0 0 4px rgb(164 147 255 / 0.12),
-    0 1px 0 rgb(255 255 255 / 0.1) inset;
+    0 0 0 4px color-mix(in oklab, var(--color-accent) 12%, transparent),
+    0 1px 0 color-mix(in oklab, var(--color-ink) 10%, transparent) inset;
 }
 .ask-capsule:focus-within {
-  outline: 2px solid var(--color-accent, #a493ff);
+  outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
 
@@ -98,7 +98,7 @@ html[data-ask-resizing] .ask-dock { transition: none; }
   background-image:
     radial-gradient(1.2px 1.2px at 12% 30%, rgb(220 214 255 / 0.55), transparent 60%),
     radial-gradient(1px 1px at 34% 78%, rgb(220 214 255 / 0.4), transparent 60%),
-    radial-gradient(1.4px 1.4px at 61% 22%, rgb(200 240 255 / 0.5), transparent 60%),
+    radial-gradient(1.4px 1.4px at 61% 22%, color-mix(in oklab, var(--color-ink) 50%, transparent), transparent 60%),
     radial-gradient(1px 1px at 83% 70%, rgb(220 214 255 / 0.45), transparent 60%),
     radial-gradient(1.1px 1.1px at 92% 18%, rgb(220 214 255 / 0.35), transparent 60%);
   background-size: 260px 54px;
@@ -117,7 +117,7 @@ html[data-ask-resizing] .ask-dock { transition: none; }
   inset: -1px;
   border-radius: inherit;
   padding: 1.5px;
-  background: conic-gradient(from var(--ask-a, 0deg), transparent 0 55%, #6ee7ff 66%, #a493ff 76%, #ff8fd8 84%, transparent 92%);
+  background: conic-gradient(from var(--ask-a, 0deg), transparent 0 55%, var(--color-accent-2) 66%, var(--color-accent) 76%, #ff8fd8 84%, transparent 92%);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
@@ -145,8 +145,8 @@ html[data-ask-resizing] .ask-dock { transition: none; }
   width: 22px;
   text-align: center;
   font-size: 15px;
-  color: var(--color-accent, #a493ff);
-  text-shadow: 0 0 12px rgb(164 147 255 / 0.8);
+  color: var(--color-accent);
+  text-shadow: 0 0 12px color-mix(in oklab, var(--color-accent) 80%, transparent);
 }
 .ask-capsule[data-state='listening'] .ask-mark {
   color: #ff8fa3;
@@ -166,12 +166,12 @@ html[data-ask-resizing] .ask-dock { transition: none; }
   background: transparent;
   border: 0;
   outline: none;
-  color: var(--color-ink, #eceaff);
+  color: var(--color-ink);
   font-size: 15.5px;
   letter-spacing: 0.005em;
 }
 .ask-input::placeholder {
-  color: var(--color-ink-3, #8a89b3);
+  color: var(--color-ink-3);
 }
 .ask-step,
 .ask-listening {
@@ -181,7 +181,7 @@ html[data-ask-resizing] .ask-dock { transition: none; }
   padding: 0 8px;
   font-size: 11.5px;
   line-height: 1.2;
-  color: var(--color-accent-2, #6ee7ff);
+  color: var(--color-accent-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -221,12 +221,12 @@ html[data-ask-resizing] .ask-dock { transition: none; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--color-ink-2, #b9b8dc);
-  background: rgb(255 255 255 / 0.05);
-  border: 1px solid rgb(190 190 255 / 0.12);
+  color: var(--color-ink-2);
+  background: color-mix(in oklab, var(--color-ink) 5%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-primary-top) 12%, transparent);
 }
 .ask-chip-mind {
-  color: var(--color-ink, #eceaff);
+  color: var(--color-ink);
 }
 .ask-dock[data-mode='phone'] .ask-chips,
 .ask-dock[data-mode='landscape'] .ask-chips {
@@ -241,29 +241,29 @@ html[data-ask-resizing] .ask-dock { transition: none; }
   width: 44px;
   height: 44px;
   border-radius: 99px;
-  color: var(--color-ink-2, #b9b8dc);
+  color: var(--color-ink-2);
   transition: background 0.15s, color 0.15s, transform 0.15s;
 }
 .ask-icon:hover {
-  background: rgb(255 255 255 / 0.07);
-  color: var(--color-ink, #eceaff);
+  background: color-mix(in oklab, var(--color-ink) 7%, transparent);
+  color: var(--color-ink);
 }
 .ask-icon:focus-visible {
-  outline: 2px solid var(--color-accent, #a493ff);
+  outline: 2px solid var(--color-accent);
   outline-offset: -2px;
 }
 .ask-icon[aria-pressed='true'] {
   color: #ffb3c1;
-  background: rgb(255 95 122 / 0.14);
+  background: color-mix(in oklab, var(--color-bad) 14%, transparent);
 }
 .ask-go {
-  color: var(--color-primary-ink, #0b0820);
-  background: linear-gradient(180deg, var(--color-primary-top, #b9aeff), var(--color-accent, #a493ff));
-  box-shadow: 0 6px 18px -6px rgb(164 147 255 / 0.8);
+  color: var(--color-primary-ink);
+  background: linear-gradient(180deg, var(--color-primary-top), var(--color-accent));
+  box-shadow: 0 6px 18px -6px color-mix(in oklab, var(--color-accent) 80%, transparent);
 }
 .ask-go:hover {
-  color: var(--color-primary-ink, #0b0820);
-  background: linear-gradient(180deg, var(--color-primary-top, #b9aeff), var(--color-accent, #a493ff));
+  color: var(--color-primary-ink);
+  background: linear-gradient(180deg, var(--color-primary-top), var(--color-accent));
   transform: translateY(-1px);
 }
 .ask-go:disabled {
@@ -278,8 +278,8 @@ html[data-ask-resizing] .ask-dock { transition: none; }
   width: 7px;
   height: 7px;
   border-radius: 99px;
-  background: var(--color-accent-2, #6ee7ff);
-  box-shadow: 0 0 8px var(--color-accent-2, #6ee7ff);
+  background: var(--color-accent-2);
+  box-shadow: 0 0 8px var(--color-accent-2);
 }
 
 /* ---- suggestions and the policy's panel, stacked above the capsule */
@@ -292,9 +292,9 @@ html[data-ask-resizing] .ask-dock { transition: none; }
   overflow: auto;
   padding: 6px;
   border-radius: 22px;
-  color: var(--color-ink, #eceaff);
-  background: linear-gradient(180deg, rgb(24 22 60 / 0.92), rgb(12 12 34 / 0.95));
-  border: 1px solid rgb(190 180 255 / 0.2);
+  color: var(--color-ink);
+  background: linear-gradient(180deg, color-mix(in oklab, var(--color-abyss) 92%, transparent), color-mix(in oklab, var(--color-abyss) 95%, transparent));
+  border: 1px solid color-mix(in oklab, var(--color-primary-top) 20%, transparent);
   box-shadow: 0 24px 60px -20px rgb(0 0 0 / 0.8);
   backdrop-filter: blur(22px) saturate(150%);
   -webkit-backdrop-filter: blur(22px) saturate(150%);
@@ -316,8 +316,8 @@ html[data-ask-resizing] .ask-dock { transition: none; }
   cursor: pointer;
 }
 .ask-sug[aria-selected='true'] {
-  background: rgb(164 147 255 / 0.16);
-  box-shadow: 0 0 0 1px rgb(164 147 255 / 0.28) inset;
+  background: color-mix(in oklab, var(--color-accent) 16%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-accent) 28%, transparent) inset;
 }
 .ask-sug-tag {
   flex: none;
@@ -326,10 +326,10 @@ html[data-ask-resizing] .ask-dock { transition: none; }
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--color-ink-3, #8a89b3);
+  color: var(--color-ink-3);
 }
 .ask-sug[data-tag='Ask'] .ask-sug-tag {
-  color: var(--color-accent-2, #6ee7ff);
+  color: var(--color-accent-2);
 }
 .ask-sug-body {
   flex: 1;
@@ -348,19 +348,19 @@ html[data-ask-resizing] .ask-dock { transition: none; }
   font-weight: 600;
 }
 .ask-sug-body q {
-  color: var(--color-ink-2, #b9b8dc);
+  color: var(--color-ink-2);
 }
 .ask-sug-who {
-  color: var(--color-ink-3, #8a89b3);
+  color: var(--color-ink-3);
   font-size: 12.5px;
 }
 .ask-sug-enter {
   flex: none;
   font-size: 11px;
-  color: var(--color-ink-3, #8a89b3);
+  color: var(--color-ink-3);
 }
 .ask-sug[data-limit] .ask-sug-tag {
-  color: var(--color-warn, #fbbf24);
+  color: var(--color-warn);
 }
 .ask-say {
   padding: 10px 12px;
@@ -371,7 +371,7 @@ html[data-ask-resizing] .ask-dock { transition: none; }
   margin: 0 0 8px;
 }
 .ask-say[data-tone='warn'] {
-  color: var(--color-warn, #fbbf24);
+  color: var(--color-warn);
   margin: 0;
 }
 .ask-chips-row {
@@ -388,9 +388,9 @@ html[data-ask-resizing] .ask-dock { transition: none; }
   border-radius: 14px;
   text-align: left;
   font-size: 14px;
-  color: var(--color-ink, #eceaff);
-  background: rgb(255 255 255 / 0.05);
-  border: 1px solid rgb(190 190 255 / 0.14);
+  color: var(--color-ink);
+  background: color-mix(in oklab, var(--color-ink) 5%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-primary-top) 14%, transparent);
 }
 .ask-chips-row .ask-choice {
   width: auto;
@@ -398,14 +398,14 @@ html[data-ask-resizing] .ask-dock { transition: none; }
 }
 .ask-choice:hover,
 .ask-choice:focus-visible {
-  background: rgb(164 147 255 / 0.16);
+  background: color-mix(in oklab, var(--color-accent) 16%, transparent);
   outline: none;
 }
 .ask-choice[data-default] {
-  border-color: rgb(164 147 255 / 0.5);
+  border-color: color-mix(in oklab, var(--color-accent) 50%, transparent);
 }
 .ask-choice[data-quiet] {
-  color: var(--color-ink-2, #b9b8dc);
+  color: var(--color-ink-2);
 }
 
 /* ---- over a mind's open chat (features/dot/DotPanel sets html[data-mind-panel]) what opens under the field stays
@@ -456,10 +456,10 @@ html[data-mind-panel][data-ask-pop] [data-mind-panel-body] [data-reading-yields]
 .ask-pop-close:hover,
 .ask-pop-close:focus-visible {
   opacity: 1;
-  background: rgb(255 255 255 / 0.08);
+  background: color-mix(in oklab, var(--color-ink) 8%, transparent);
 }
 .ask-pop-close:focus-visible {
-  outline: 2px solid var(--color-accent, #a493ff);
+  outline: 2px solid var(--color-accent);
   outline-offset: 1px;
 }
 
@@ -468,9 +468,9 @@ html[data-mind-panel][data-ask-pop] [data-mind-panel-body] [data-reading-yields]
   position: fixed;
   display: flex;
   flex-direction: column;
-  color: var(--color-ink, #eceaff);
-  background: linear-gradient(180deg, rgb(22 20 56 / 0.97), rgb(10 10 30 / 0.98));
-  border: 1px solid rgb(190 180 255 / 0.18);
+  color: var(--color-ink);
+  background: linear-gradient(180deg, color-mix(in oklab, var(--color-abyss) 97%, transparent), color-mix(in oklab, var(--color-abyss) 98%, transparent));
+  border: 1px solid color-mix(in oklab, var(--color-primary-top) 18%, transparent);
   box-shadow: 0 30px 80px -24px rgb(0 0 0 / 0.85);
   backdrop-filter: blur(26px) saturate(150%);
   -webkit-backdrop-filter: blur(26px) saturate(150%);
@@ -522,12 +522,12 @@ html[data-mind-panel][data-ask-pop] [data-mind-panel-body] [data-reading-yields]
   width: 42px;
   height: 5px;
   border-radius: 9px;
-  background: rgb(190 190 255 / 0.35);
+  background: color-mix(in oklab, var(--color-primary-top) 35%, transparent);
 }
 .ask-head {
   flex: none;
   padding: 10px 12px 8px 16px;
-  border-bottom: 1px solid rgb(170 170 255 / 0.12);
+  border-bottom: 1px solid color-mix(in oklab, var(--color-ink) 12%, transparent);
 }
 .ask-head-line {
   display: flex;
@@ -546,7 +546,7 @@ html[data-mind-panel][data-ask-pop] [data-mind-panel-body] [data-reading-yields]
 .ask-spend {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  color: var(--color-ink-2, #b9b8dc);
+  color: var(--color-ink-2);
 }
 .ask-head-tools {
   margin-left: auto;
@@ -556,7 +556,7 @@ html[data-mind-panel][data-ask-pop] [data-mind-panel-body] [data-reading-yields]
 .ask-info {
   margin: 4px 0 0;
   font-size: 11.5px;
-  color: var(--color-ink-3, #8a89b3);
+  color: var(--color-ink-3);
 }
 /* the log and its "New messages ↓" pill (mind-chat r1): the frame takes the log's place in the panel's column */
 .ask-log-frame {
@@ -574,9 +574,9 @@ html[data-mind-panel][data-ask-pop] [data-mind-panel-body] [data-reading-yields]
   min-height: 36px;
   padding: 0 14px;
   border-radius: 99px;
-  border: 1px solid rgb(190 180 255 / 0.32);
-  background: rgb(20 18 50 / 0.95);
-  color: var(--color-ink, #eceaff);
+  border: 1px solid color-mix(in oklab, var(--color-primary-top) 32%, transparent);
+  background: color-mix(in oklab, var(--color-abyss) 95%, transparent);
+  color: var(--color-ink);
   font: inherit;
   font-size: 12.5px;
   font-weight: 600;
@@ -584,7 +584,7 @@ html[data-mind-panel][data-ask-pop] [data-mind-panel-body] [data-reading-yields]
   cursor: pointer;
 }
 .ask-new-below:focus-visible {
-  outline: 2px solid var(--color-accent, #a493ff);
+  outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
 .ask-log {
@@ -607,10 +607,10 @@ html[data-mind-panel][data-ask-pop] [data-mind-panel-body] [data-reading-yields]
   display: block;
 }
 .ask-row-mark {
-  color: var(--color-ink-3, #8a89b3);
+  color: var(--color-ink-3);
 }
 .ask-row[data-kind='change'] .ask-row-mark {
-  color: var(--color-good, #4ade80);
+  color: var(--color-good);
 }
 .ask-row-text {
   min-width: 0;
@@ -618,8 +618,8 @@ html[data-mind-panel][data-ask-pop] [data-mind-panel-body] [data-reading-yields]
 }
 .ask-where {
   font-size: 11px;
-  color: var(--color-ink-3, #8a89b3);
-  border: 1px solid rgb(190 190 255 / 0.14);
+  color: var(--color-ink-3);
+  border: 1px solid color-mix(in oklab, var(--color-primary-top) 14%, transparent);
   border-radius: 99px;
   padding: 1px 8px;
 }
@@ -628,7 +628,7 @@ html[data-mind-panel][data-ask-pop] [data-mind-panel-body] [data-reading-yields]
   font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: var(--color-accent-2, #6ee7ff);
+  color: var(--color-accent-2);
 }
 .ask-answer {
   margin: 2px 0 6px;
@@ -643,8 +643,8 @@ html[data-mind-panel][data-ask-pop] [data-mind-panel-body] [data-reading-yields]
   margin: 8px 0;
   padding: 8px 8px 8px 12px;
   border-radius: 16px;
-  background: rgb(255 255 255 / 0.04);
-  border: 1px solid rgb(190 190 255 / 0.14);
+  background: color-mix(in oklab, var(--color-ink) 4%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-primary-top) 14%, transparent);
 }
 .ask-card .ask-row-text {
   flex: 1 1 180px;
@@ -652,10 +652,10 @@ html[data-mind-panel][data-ask-pop] [data-mind-panel-body] [data-reading-yields]
 .ask-row-note {
   flex-basis: 100%;
   font-size: 12px;
-  color: var(--color-ink-3, #8a89b3);
+  color: var(--color-ink-3);
 }
 .ask-muted {
-  color: var(--color-ink-3, #8a89b3);
+  color: var(--color-ink-3);
 }
 .ask-empty {
   margin: 8px 0;
@@ -673,32 +673,40 @@ html[data-mind-panel][data-ask-pop] [data-mind-panel-body] [data-reading-yields]
   border-radius: 12px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--color-ink, #eceaff);
-  background: rgb(255 255 255 / 0.06);
-  border: 1px solid rgb(190 190 255 / 0.14);
+  color: var(--color-ink);
+  background: color-mix(in oklab, var(--color-ink) 6%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-primary-top) 14%, transparent);
 }
 .ask-btn[data-tone='primary'] {
   font-weight: 600;
-  color: var(--color-primary-ink, #0b0820);
-  background: linear-gradient(180deg, var(--color-primary-top, #b9aeff), var(--color-accent, #a493ff));
+  color: var(--color-primary-ink);
+  background: linear-gradient(180deg, var(--color-primary-top), var(--color-accent));
   border-color: transparent;
 }
 .ask-btn[data-tone='quiet'] {
   background: transparent;
   border-color: transparent;
-  color: var(--color-ink-2, #b9b8dc);
+  color: var(--color-ink-2);
 }
 .ask-btn:hover {
   filter: brightness(1.12);
 }
 .ask-btn:focus-visible {
-  outline: 2px solid var(--color-accent, #a493ff);
+  outline: 2px solid var(--color-accent);
   outline-offset: 1px;
 }
 
 /* ---- room for the Ask: a page's own scroll ends above it; phone toasts stack above it */
 html[data-ask] .xc-page > .xc-omega-pad {
   padding-bottom: var(--ask-room, 0px);
+}
+/* Native terminal notices clear the complete measured prompt, including its choices, in every viewport. */
+html[data-ask][data-ask-native='construct'] .toast-stack {
+  top: auto;
+  bottom: var(--ask-room, 0px);
+  padding-top: 0;
+  padding-bottom: 0;
+  flex-direction: column-reverse;
 }
 @media (max-width: 767px) {
   html[data-ask] .toast-stack {
@@ -717,14 +725,14 @@ html[data-ask] .xc-page > .xc-omega-pad {
   position: fixed;
   border-radius: 14px;
   box-shadow:
-    0 0 0 2px rgb(164 147 255 / 0.85),
-    0 0 26px 6px rgb(164 147 255 / 0.35);
+    0 0 0 2px color-mix(in oklab, var(--color-accent) 85%, transparent),
+    0 0 26px 6px color-mix(in oklab, var(--color-accent) 35%, transparent);
   animation: ask-glow-in 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
 .ask-presence-glow[data-strong] {
   box-shadow:
-    0 0 0 3px rgb(110 231 255 / 0.95),
-    0 0 40px 12px rgb(110 231 255 / 0.4);
+    0 0 0 3px color-mix(in oklab, var(--color-accent-2) 95%, transparent),
+    0 0 40px 12px color-mix(in oklab, var(--color-accent-2) 40%, transparent);
 }
 @keyframes ask-glow-in {
   from {
@@ -738,8 +746,8 @@ html[data-ask] .xc-page > .xc-omega-pad {
   height: 22px;
   margin: -11px 0 0 -11px;
   border-radius: 99px;
-  background: radial-gradient(circle, #fff 0 18%, rgb(185 174 255 / 0.9) 30%, rgb(164 147 255 / 0) 70%);
-  filter: drop-shadow(0 0 10px rgb(164 147 255 / 0.9));
+  background: radial-gradient(circle, #fff 0 18%, color-mix(in oklab, var(--color-primary-top) 90%, transparent) 30%, color-mix(in oklab, var(--color-accent) 0%, transparent) 70%);
+  filter: drop-shadow(0 0 10px color-mix(in oklab, var(--color-accent) 90%, transparent));
   animation: ask-glide 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 @keyframes ask-glide {
@@ -763,9 +771,9 @@ html[data-ask] .xc-page > .xc-omega-pad {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--color-ink, #eceaff);
-  background: rgb(16 14 44 / 0.92);
-  border: 1px solid rgb(164 147 255 / 0.45);
+  color: var(--color-ink);
+  background: color-mix(in oklab, var(--color-abyss) 92%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-accent) 45%, transparent);
   box-shadow: 0 10px 30px -10px rgb(0 0 0 / 0.8);
   animation: ask-glow-in 0.3s both;
 }
@@ -946,17 +954,17 @@ html[data-ask] .xc-page > .xc-omega-pad {
 }
 .st-letter .ask-lit-word,
 .ask-letter .ask-lit-word {
-  background: linear-gradient(transparent 58%, rgb(255 205 80 / 0.7) 58%);
+  background: linear-gradient(transparent 58%, color-mix(in oklab, var(--color-warn) 70%, transparent) 58%);
 }
 
 /* Still: the referenced words on the paper light up */
 .still .ask-lit,
 .still .ask-lit-strong {
-  background: linear-gradient(transparent 55%, rgb(255 205 80 / 0.65) 55%);
+  background: linear-gradient(transparent 55%, color-mix(in oklab, var(--color-warn) 65%, transparent) 55%);
   transition: background 0.4s;
 }
 .still .ask-lit-strong {
-  background: linear-gradient(transparent 35%, rgb(255 190 60 / 0.8) 35%);
+  background: linear-gradient(transparent 35%, color-mix(in oklab, var(--color-warn) 80%, transparent) 35%);
 }
 .ask-presence-note {
   position: fixed;
@@ -986,11 +994,11 @@ html[data-ask] .xc-page > .xc-omega-pad {
 }
 .ask-icon.ask-mic[aria-pressed='true'] {
   color: #ffd1da;
-  background: rgb(255 95 122 / 0.22);
-  box-shadow: 0 0 0 1px rgb(255 95 122 / 0.55), 0 0 18px rgb(255 95 122 / 0.45);
+  background: color-mix(in oklab, var(--color-bad) 22%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-bad) 55%, transparent), 0 0 18px color-mix(in oklab, var(--color-bad) 45%, transparent);
 }
 .ask-capsule[data-state='listening'] {
-  box-shadow: 0 0 0 1px rgb(255 143 163 / 0.55), 0 18px 50px -20px rgb(255 95 122 / 0.55);
+  box-shadow: 0 0 0 1px rgb(255 143 163 / 0.55), 0 18px 50px -20px color-mix(in oklab, var(--color-bad) 55%, transparent);
 }
 .ask-voice-words {
   min-width: 0;
@@ -1158,12 +1166,12 @@ html[data-ui-motion='none'] .ask-capsule[data-state='answering'] .ask-aurora {
   min-height: 44px;
   padding: 0 8px;
   border-radius: 10px;
-  color: var(--color-ink-2, #b9b8dc);
+  color: var(--color-ink-2);
   text-decoration: underline;
   text-underline-offset: 3px;
 }
 .ask-trail-step[aria-current='page'] {
-  color: var(--color-ink, #eceaff);
+  color: var(--color-ink);
   font-weight: 600;
   text-decoration: none;
 }
@@ -1174,7 +1182,7 @@ html[data-ui-motion='none'] .ask-capsule[data-state='answering'] .ask-aurora {
   inset: 0;
   z-index: 54;
   pointer-events: none;
-  background: radial-gradient(70% 60% at 50% 60%, rgb(164 147 255 / 0.22), rgb(4 4 15 / 0.35) 70%);
+  background: radial-gradient(70% 60% at 50% 60%, color-mix(in oklab, var(--color-accent) 22%, transparent), color-mix(in oklab, var(--color-void) 35%, transparent) 70%);
   animation: ask-veil 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
 @keyframes ask-veil {
@@ -1216,10 +1224,10 @@ html[data-ui-motion='none'] .ask-capsule[data-state='answering'] .ask-aurora {
   font-size: 11px;
 }
 .ask-row[data-kind='steer'] {
-  color: var(--color-ink-2, #b9b8dc);
+  color: var(--color-ink-2);
 }
 .ask-row[data-kind='steer'] .ask-row-mark {
-  color: var(--color-accent-2, #6ee7ff);
+  color: var(--color-accent-2);
 }
 .ask-row[data-kind='steer'][data-state='sending'] {
   opacity: 0.75;
@@ -1227,16 +1235,16 @@ html[data-ui-motion='none'] .ask-capsule[data-state='answering'] .ask-aurora {
 .ask-step-row {
   margin: 2px 0 2px 14px;
   font-size: 12px;
-  color: var(--color-ink-3, #8a89b3);
+  color: var(--color-ink-3);
 }
 .ask-trail-step[data-state='reverted'] {
-  color: var(--color-ink-3, #8a89b3);
+  color: var(--color-ink-3);
 }
 .ask-row s,
 .ask-trail-step s {
   text-decoration-thickness: 1.5px;
 }
-.ask-num { width: 6em; min-height: 36px; margin-left: 4px; padding: 0 8px; border-radius: 10px; background: rgb(255 255 255 / 0.06); border: 1px solid rgb(190 190 255 / 0.2); color: inherit; }
+.ask-num { width: 6em; min-height: 36px; margin-left: 4px; padding: 0 8px; border-radius: 10px; background: color-mix(in oklab, var(--color-ink) 6%, transparent); border: 1px solid color-mix(in oklab, var(--color-primary-top) 20%, transparent); color: inherit; }
 
 /* toasts keep clear of a side sheet or a pinned thread (they stay above the Ask in z-order) */
 html[data-ask-side='landscape'] .toast-stack {
@@ -2181,7 +2189,7 @@ html[data-ui-motion='none'] .ask-fx-current {
 }
 
 /* ---------------------------------------------------------------- Canvas: the note card (skins.ts `note`)
-   A card pinned to the bottom of the view and taped to the page, in Canvas's own paper and ink (light or dark board,
+   A card pinned to the bottom of the view, in Canvas's own paper and ink (light or dark board,
    whichever the person chose: the chrome tokens follow it). Answers arrive as notes; the mind's cursor leaves notes. */
 .ask-root[data-skin='note'] {
   font-family: var(--xc-font);
@@ -2198,21 +2206,6 @@ html[data-ui-motion='none'] .ask-fx-current {
   box-shadow: var(--xc-shadow);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-}
-/* the tape that pins it */
-.ask-root[data-skin='note'] .ask-capsule::before {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: -7px;
-  width: 64px;
-  height: 14px;
-  translate: -50% 0;
-  rotate: -2deg;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--xc-accent) 18%, color-mix(in srgb, var(--xc-surface) 70%, transparent));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--xc-accent) 14%, transparent);
-  pointer-events: none;
 }
 .ask-root[data-skin='note'] .ask-dock[data-state='resting'] .ask-capsule {
   background: var(--xc-surface);
@@ -2591,3 +2584,7 @@ a.ask-chip-answerer {
   color: var(--color-accent);
   text-decoration: underline;
 }
+
+/* an answer's bullet list (answerText.tsx): bullets and an indent the base styles strip */
+.ask-answer[data-answer-list]{list-style:disc;padding-inline-start:1.25em;display:grid;gap:4px}
+.ask-answer[data-answer-list] li::marker{color:var(--xc-ink-3, currentColor)}

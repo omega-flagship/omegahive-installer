@@ -1,4 +1,4 @@
-"""People's answers as evidence the hive can reason over (the owner, 2026-10-04: the parts must meet in Hyperon).
+"""People's answers as evidence the hive can reason over (Jon, 2026-10-04: the parts must meet in Hyperon).
 
 Every answer a person gives (to a mind's approval, or to a person's request) is one NAL observation, integrated into
 the governance commons (&commons_governance, PeTTa) by the same lib_hive revision every swarm commons uses:

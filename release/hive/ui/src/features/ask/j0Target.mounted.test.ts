@@ -83,8 +83,9 @@ vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined, r
 vi.stubGlobal('navigator', { userAgent: '', language: 'en-GB' })
 
 const { useHive } = await import('../../store/store')
-const { useAskStore } = await import('../../store/ask')
-const { useAskField } = await import('./useAskField')
+const { askOrigin, useAskStore } = await import('../../store/ask')
+const { answererChoice } = await import('./answererChoice')
+const { useAskField, restoreAskDraft } = await import('./useAskField')
 type AskBody = import('../../api/ask').AskBody
 type HiveClient = import('../../api/client').HiveClient
 
@@ -321,4 +322,225 @@ describe('item 2: a Studio starter fills the Ask and never sends', () => {
     expect(fillAsk('Make a poster')).toBe('none')
     expect(posts).toHaveLength(0)
   })
+})
+
+describe('wake retry restored-draft ownership', () => {
+  it('clears an unchanged restoration on retry dispatch and never clears an edited draft', () => {
+    const m = mount(() => useAskField({ experience: 'classic' }))
+    const field = () => m.tree as ReturnType<typeof useAskField>
+    const clearRestored = restoreAskDraft('Read the note', 'classic')!
+    m.settle(); expect(field().value).toBe('Read the note')
+    clearRestored(); m.settle(); expect(field().value).toBe('')
+    const clearEdited = restoreAskDraft('Read the note', 'classic')!
+    m.settle()
+    field().change('A new question'); m.settle()
+    clearEdited(); m.settle(); expect(field().value).toBe('A new question')
+    // Even editing back to identical text is a new person-owned draft.
+    field().change('Read the note'); m.settle()
+    clearEdited(); m.settle(); expect(field().value).toBe('Read the note')
+    expect(restoreAskDraft('Must not replace this', 'classic')).toBeNull()
+  })
+  it('a restoration cleanup retained across an identity change cannot clear the next person’s draft', () => {
+    const m = mount(() => useAskField({ experience: 'classic' }))
+    const field = () => m.tree as ReturnType<typeof useAskField>
+    const cleanup = restoreAskDraft('Earlier private words', 'classic')!
+    m.settle()
+    useHive.setState({ session: 'another-person-session', inits: 9001 })
+    m.settle()
+    expect(field().value).toBe('')
+    field().change('Next person’s question'); m.settle()
+    cleanup(); m.settle(); expect(field().value).toBe('Next person’s question')
+  })
+})
+
+it('restored words leave the thread Retry reachable; deliberate Enter uses that same choice instead of a fresh Ask', async () => {
+  const m = mount(() => useAskField({ experience: 'classic' }))
+  const field = () => m.tree as ReturnType<typeof useAskField>
+  const retry = vi.fn(async () => {})
+  restoreAskDraft('Read the note', 'classic', retry)
+  m.settle()
+  expect(field().list).toEqual([])
+  await field().submit({ quiet: true })
+  expect(retry).not.toHaveBeenCalled()
+  await field().submit()
+  expect(retry).toHaveBeenCalledTimes(1)
+  expect(posts).toHaveLength(0)
+  field().change('A newly edited question'); m.settle()
+  expect(field().list.length).toBeGreaterThan(0)
+})
+
+it('pre-admission composer copy stays quiet for 400ms, then says waking rather than reading', async () => {
+  vi.useFakeTimers()
+  try {
+    let awake = false
+    let finish!: () => void
+    const wait = new Promise<void>((resolve) => { finish = () => { awake = true; resolve() } })
+    const agent = async () => ({ ...C, kind: 'omega', status: awake ? 'awake' : 'asleep', is_mine: true, may_sleep: true })
+    const client = Object.assign(host(), {
+      me: async () => ({ principal: 'user:p_invented', role: 'member' }),
+      myMind: async () => ({ mind: C }), getAgent: agent,
+      getSwarm: async () => ({ id: C.swarm_id, coordinator_id: C.id, owner: 'user:p_invented' }),
+      agentAction: async () => { await wait; return agent() },
+    })
+    useHive.setState({ client: client as HiveClient })
+    useAskStore.getState().bind(useHive.getState().session, 'user:p_invented')
+    useAskStore.setState({ settings: { swarm_id: null, thread_budget_usd: 5, eligible }, personal: C as never })
+    const m = mount(() => useAskField({ experience: 'classic' }))
+    const field = () => m.tree as ReturnType<typeof useAskField>
+    const sent = useAskStore.getState().send('Read the note', { route: 'hive', experience: 'classic' })
+    await flush(); m.settle()
+    expect(field().step).toBe('preparing')
+    expect(posts).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(399); m.settle()
+    expect(field().waking).toBe(false)
+    await vi.advanceTimersByTimeAsync(1); m.settle()
+    expect(field().step).toBe('waking')
+    expect(field().waking).toBe(true)
+    expect(posts).toHaveLength(0)
+    finish(); await sent; m.settle()
+    expect(posts).toHaveLength(1)
+    expect(field().waking).toBe(false)
+  } finally { vi.useRealTimers() }
+})
+
+it('a local choice names the paid row, but never leaves its chip over a later typed address', () => {
+  const m = mount(() => useAskField({ experience: 'classic' }))
+  const f = () => m.tree as ReturnType<typeof useAskField>
+  answererChoice.select({ kind: 'swarm', swarm: 's_kelp', name: 'Kelp Commons' }, askOrigin().ok)
+  m.settle()
+  f().change('what is on today'); m.settle()
+  expect(f().chip).toEqual({ kind: 'thread', name: 'Kelp Commons' })
+  expect(rowWords(f())).toContain('Kelp Keeper')
+  f().change('ask Ember to read this note'); m.settle()
+  expect(f().chip).not.toEqual({ kind: 'thread', name: 'Kelp Commons' })
+  expect(f().answerer).toBe('Ember')
+  expect(answererChoice.get()).toMatchObject({ kind: 'swarm', swarm: 's_kelp' })
+})
+
+it('an outgoing native chooser trigger cannot acquire the next credential’s Ask origin', async () => {
+  vi.stubGlobal('requestAnimationFrame', win.requestAnimationFrame)
+  const { AnswererInline, AnswererChipButton } = await import('./AnswererPicker')
+  let credential = {}
+  const client = useHive.getState().client!
+  Object.assign(client, { authContext: () => credential })
+  useAskStore.getState().bind(useHive.getState().session, 'user:p_invented')
+  useAskStore.setState({ settings: { swarm_id: null, thread_budget_usd: 5, eligible }, personal: C as never })
+  type El = { type: unknown; props: Record<string, unknown> }
+  const elements = (tree: unknown): El[] => {
+    if (Array.isArray(tree)) return tree.flatMap(elements)
+    if (!tree || typeof tree !== 'object' || !('props' in tree)) return []
+    const el = tree as El
+    return [el, ...elements(el.props.children)]
+  }
+  const shell = mount(() => AnswererInline({ chip: { kind: 'personal', name: C.name, resting: false }, answering: false, look: 'construct' }))
+  const child = shell.tree as El
+  const chooser = mount(() => (child.type as (p: Record<string, unknown>) => unknown)(child.props))
+  const oldTrigger = elements(chooser.tree).find((el) => el.type === AnswererChipButton)!.props.onToggle as () => void
+  credential = {}
+  useAskStore.getState().bind(useHive.getState().session, 'user:next_invented')
+  oldTrigger(); chooser.settle()
+  expect(elements(chooser.tree).some((el) => el.props.className === 'ask-answerer-pop')).toBe(false)
+  expect(client.setAskSettings).not.toHaveBeenCalled()
+  expect(posts).toHaveLength(0)
+})
+
+it('a Still field handover preserves an unsent starter and re-arms its newly shown paid row', async () => {
+  const { useDraft } = await import('../../experiences/drafts')
+  const { fillAsk } = await import('./useAskField')
+  const paper = mount(() => useAskField({ experience: 'still', draft: useDraft('still:ask') }))
+  expect(fillAsk('Make a poster inviting neighbours', { experience: 'still' })).toBe('filled')
+  paper.settle()
+  expect((paper.tree as ReturnType<typeof useAskField>).value).toBe('Make a poster inviting neighbours')
+  paper.unmount()
+  const floating = mount(() => useAskField({ experience: 'still', draft: useDraft('still:ask') }))
+  const field = () => floating.tree as ReturnType<typeof useAskField>
+  expect(field().value).toBe('Make a poster inviting neighbours')
+  field().declareSeen({ rows: true, panel: false })
+  await field().submit(); await flush()
+  expect(posts).toHaveLength(0)
+  clock += 10_000
+  await field().submit(); await flush()
+  expect(posts.map(p => p.text)).toEqual(['Make a poster inviting neighbours'])
+})
+
+it('returning to the retained paper re-arms words filled through the fallback', async () => {
+  const { useState } = await import('react')
+  const { useDraft } = await import('../../experiences/drafts')
+  const { fillAsk } = await import('./useAskField')
+  let setPaperActive!: (v: boolean) => void
+  const paper = mount(() => {
+    const [active, setActive] = useState(true)
+    setPaperActive = setActive
+    return useAskField({ experience: 'still', draft: useDraft('still:ask'), active })
+  })
+  fillAsk('Make a poster inviting neighbours', { experience: 'still' }); paper.settle()
+  clock += 10_000
+  setPaperActive(false); paper.settle()
+  expect(fillAsk('An inactive field cannot receive words', { experience: 'still' })).toBe('none')
+  const hidden = paper.tree as ReturnType<typeof useAskField>
+  hidden.declareSeen({ rows: true, panel: false })
+  await hidden.submit(); await flush()
+  expect(posts).toHaveLength(0)
+  const floating = mount(() => useAskField({ experience: 'still', draft: useDraft('still:ask') }))
+  fillAsk('Make a warmer invitation card', { experience: 'still', replace: true })
+  paper.settle(); floating.settle()
+  clock += 10_000
+  floating.unmount()
+  setPaperActive(true); paper.settle()
+  const field = () => paper.tree as ReturnType<typeof useAskField>
+  expect(field().value).toBe('Make a warmer invitation card')
+  field().declareSeen({ rows: true, panel: false })
+  await field().submit(); await flush()
+  expect(posts).toHaveLength(0)
+  clock += 10_000
+  await field().submit(); await flush()
+  expect(posts.map(p => p.text)).toEqual(['Make a warmer invitation card'])
+})
+
+it('late words from the yielding presentation re-arm the already mounted shared receiver', async () => {
+  const { useDraft } = await import('../../experiences/drafts')
+  const paper = mount(() => useAskField({ experience: 'still', draft: useDraft('still:ask'), active: false }))
+  const floating = mount(() => useAskField({ experience: 'still', draft: useDraft('still:ask') }))
+  // A final recognition result can arrive while the old voice controller is stopping. The words stay editable.
+  ;(paper.tree as ReturnType<typeof useAskField>).voiceText('Make a poster inviting neighbours')
+  paper.settle(); floating.settle()
+  const field = () => floating.tree as ReturnType<typeof useAskField>
+  expect(field().value).toBe('Make a poster inviting neighbours')
+  field().declareSeen({ rows: true, panel: false })
+  await field().submit(); await flush()
+  expect(posts).toHaveLength(0)
+  clock += 10_000
+  await field().submit(); await flush()
+  expect(posts.map(p => p.text)).toEqual(['Make a poster inviting neighbours'])
+})
+
+it.each(['submit', 'take', 'run'] as const)('a retained %s closure loses authority across native/floating handover and unmount', async kind => {
+  const { useState } = await import('react')
+  const { useDraft } = await import('../../experiences/drafts')
+  const { fillAsk } = await import('./useAskField')
+  let setNative!: (active: boolean) => void
+  const native = mount(() => {
+    const [active, setActive] = useState(true); setNative = setActive
+    return useAskField({ experience: 'construct', draft: useDraft('construct:ask'), active })
+  })
+  const value = 'Explain this invented onboarding message'
+  fillAsk(value, { experience: 'construct' }); native.settle(); clock += 10_000
+  const capture = (field: ReturnType<typeof useAskField>) => {
+    field.declareSeen({ rows: true, panel: false })
+    const paid = field.list.find(c => c.act?.do === 'mind')
+    expect(paid).toBeDefined()
+    return () => kind === 'submit' ? field.submit() : kind === 'take' ? field.take(paid) : field.run({ do: 'mind', text: field.value }, field.value)
+  }
+  const oldNative = capture(native.tree as ReturnType<typeof useAskField>)
+  setNative(false); native.settle()
+  const floating = mount(() => useAskField({ experience: 'construct', draft: useDraft('construct:ask') }))
+  clock += 10_000
+  const oldFloating = capture(floating.tree as ReturnType<typeof useAskField>)
+  await oldNative(); await flush()
+  expect(posts, 'yielded native closure cannot spend').toEqual([])
+  floating.unmount(); setNative(true); native.settle(); clock += 10_000
+  ;(native.tree as ReturnType<typeof useAskField>).declareSeen({ rows: true, panel: false })
+  await oldNative(); await oldFloating(); await flush()
+  expect(posts, 'reactivation never revives an earlier closure; the unmounted fallback remains disarmed').toEqual([])
+  expect((native.tree as ReturnType<typeof useAskField>).value).toBe(value)
 })

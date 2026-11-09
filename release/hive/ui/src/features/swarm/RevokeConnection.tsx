@@ -17,7 +17,7 @@ export function RevokeReason({ value, onChange }: { value: string; onChange: (v:
   return (
     <label className="block">
       <span className="text-[12px] text-ink-3">Why (optional; kept in the connection’s history for everyone who can see it)</span>
-      <textarea value={value} onChange={(e) => onChange(e.target.value.slice(0, REVOKE_REASON_MAX))} rows={2} maxLength={REVOKE_REASON_MAX} placeholder="The review finished; nothing more is needed." className="mt-1 w-full resize-y rounded-xl border border-line bg-black/30 px-3 py-2 text-[13px] text-ink outline-none focus:border-line-2" />
+      <textarea value={value} onChange={(e) => onChange(e.target.value.slice(0, REVOKE_REASON_MAX))} rows={2} maxLength={REVOKE_REASON_MAX} placeholder="The review finished; nothing more is needed." className="mt-1 w-full resize-y rounded-xl border border-line bg-shade/30 px-3 py-2 text-[13px] text-ink outline-none focus:border-line-2" />
     </label>
   )
 }

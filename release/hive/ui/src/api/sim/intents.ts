@@ -14,6 +14,8 @@
 import { ApiError } from '../client'
 import type { CodeTeamOffer, IntentRecordBody } from '../askIntents'
 import type { SimCodeService } from './codeService'
+import type { CodeTestIntentBody } from '../../features/code/testIntent'
+import type { SimTestOutcome } from './projectTests'
 
 const REQUEST_FIELDS = ['to_swarm', 'kind', 'title', 'instruction', 'origin', 'budget', 'lifetime', 'lease']
 const ORIGIN_FIELDS = ['task_id', 'repository_id', 'workspace_id', 'scope_id', 'scope_digest', 'generation']
@@ -21,11 +23,21 @@ const hex = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n)),
 
 /** INVENTED: the team that takes code requests in the simulator (Lyra's coordinator is its controller). */
 export const SIM_CODE_TEAM: CodeTeamOffer = { to_swarm: 's_lyra', team_name: 'Lyra', template_ids: ['tpl_sim_coder'] }
+/**
+ * INVENTED: GET /api/teams/s_lyra/templates as the live host answers it for a foundation team (release with
+ * request_limits): the registered template and the host-bound limits a request to this team is admitted within.
+ */
+export const SIM_CODE_TEAM_TEMPLATES = {
+  to_swarm: SIM_CODE_TEAM.to_swarm,
+  templates: [{ template_id: 'tpl_sim_coder', harness: 'sim', model_id: 'sim/coder', role_id: 'r_sim_coder', max_allocation_usd: 0.25, overridable: [], controls: ['pause', 'stop'], lifecycle_modes: ['ephemeral'] }],
+  request_limits: { limit_usd: 0.25, max_children: 1, lifetime_seconds: 600, template_ids: ['tpl_sim_coder'] },
+}
 /** INVENTED: the person ceiling (the host's HIVE_PERSON_REQUEST_CEILING_USD default). */
 const CEILING_USD = 1
 
 interface Row {
   id: string
+  kind: 'code.request' | 'code.test'
   turn_id: string
   principal: string
   body: Record<string, unknown> & { operation_id: string }
@@ -72,6 +84,12 @@ export interface SimIntentsDeps {
    * plays today's host, whose application record has neither (the page must then say it can't verify the OK).
    */
   evidence?: () => boolean
+  /** SIM: how long the invented child is seen working before it files its proposal, ms (0 under tests) */
+  workMs?: () => number
+  /** SIM: how the fork's sandbox test of a proposal ends (?simtest=fail plays a failing test) */
+  testOutcome?: () => SimTestOutcome
+  /** SIM: how long the sandbox test reads as running before its result settles, ms */
+  testRunMs?: () => number
 }
 
 const canonical = (v: unknown): string => {
@@ -83,6 +101,8 @@ const bad = (m: string) => new ApiError(400, 'bad_request', m)
 
 export class SimIntents {
   private rows = new Map<string, Row>()
+  /** SIM: whether a linked code.request names this request id (the controller sim serves only those) */
+  hasRequest(requestId: string): boolean { return [...this.rows.values()].some((r) => r.kind === 'code.request' && r.request_id === requestId) }
   /** the invented team's children (minds.py child_view, only the fields the page reads) */
   private kids: { child_id: string; request_id: string; team_id: string; state: string }[] = []
   constructor(private d: SimIntentsDeps) {}
@@ -118,6 +138,7 @@ export class SimIntents {
   }
 
   private view(r: Row) {
+    if (r.kind === 'code.test') return this.testView(r)
     const lifetime = (r.body.lifetime ?? {}) as { until?: string }
     const origin = (r.body.origin ?? {}) as Record<string, unknown>
     return structuredClone({
@@ -127,6 +148,24 @@ export class SimIntents {
       last_dispatch: null, last_refusal: null, dispatch_id: null, dispatch_started_at: null, request_id: r.request_id, lease_id: r.lease_id, receiving_goal: r.receiving_goal,
       deleted: false, links_rev: r.links_rev, created_at: r.created_at, updated_at: r.updated_at,
     })
+  }
+  /** ask_intents.py view for a code.test row (its _studio_view, then request/title/session_id/acceptance). */
+  private testView(r: Row) {
+    const origin = this.origin(String((r.body.request as { request_id?: unknown })?.request_id ?? ''))
+    return structuredClone({
+      intent_id: r.id, turn_id: r.turn_id, kind: 'code.test', state: r.state, request_operation_id: r.body.operation_id,
+      request_digest: `sim-${r.id}`, destination: origin ? { to_swarm: origin.to_swarm, task_id: origin.task_id, workspace_id: origin.workspace_id, repository_id: origin.repository_id } : null,
+      title: 'Test retained proposal', instruction: null, instruction_digest: `sim-${r.id}`, budget: null, until: origin?.until ?? null, request: r.body.request,
+      last_dispatch: null, last_refusal: null, dispatch_id: null, dispatch_started_at: null, request_id: r.request_id, lease_id: r.lease_id, receiving_goal: r.receiving_goal,
+      session_id: null, deleted: false, links_rev: r.links_rev, created_at: r.created_at, updated_at: r.updated_at, acceptance: 'queued_only',
+    })
+  }
+  /** the linked code.request row behind a request id, with its origin */
+  private origin(requestId: string) {
+    const req = [...this.rows.values()].find((x) => x.kind === 'code.request' && x.state === 'linked' && x.request_id === requestId)
+    if (!req) return null
+    const body = req.body as unknown as IntentRecordBody['request'] & { operation_id: string }
+    return { row: req, to_swarm: body.to_swarm, task_id: body.origin.task_id, workspace_id: body.origin.workspace_id, repository_id: body.origin.repository_id, until: body.lifetime.until }
   }
   private own(id: string): Row {
     const r = this.rows.get(id)
@@ -173,18 +212,89 @@ export class SimIntents {
     const live = [...this.rows.values()].find((r) => r.turn_id === t.turnId && (r.state === 'pending' || r.state === 'dispatching'))
     if (live) {
       if (live.state === 'dispatching') throw new ApiError(409, 'intent_in_flight', 'That turn’s intent is being sent; wait for it to settle.')
-      if (live.canon === canon) return { status: 200, view: this.view(live) }
+      if (live.kind === 'code.request' && live.canon === canon) return { status: 200, view: this.view(live) }
       throw new ApiError(409, 'intent_pending', 'That turn already has an intent waiting to be sent.')
     }
     const at = new Date().toISOString()
     const id = `ai_${hex(12)}`
-    const row: Row = { id, turn_id: t.turnId, principal: this.d.principal(), body: { ...req, operation_id: `ask.${id}` }, canon, state: 'pending', request_id: null, lease_id: null, receiving_goal: null, answer: null, links_rev: 1, created_at: at, updated_at: at }
+    const row: Row = { id, kind: 'code.request', turn_id: t.turnId, principal: this.d.principal(), body: { ...req, operation_id: `ask.${id}` }, canon, state: 'pending', request_id: null, lease_id: null, receiving_goal: null, answer: null, links_rev: 1, created_at: at, updated_at: at }
     this.rows.set(id, row)
     return { status: 201, view: this.view(row) }
   }
 
+  /**
+   * POST /api/ask/{op}/intents {kind: 'code.test', request} (ask_intents.py record_async + code_test_intents.py clean /
+   * current / verify, in miniature): the person's own linked code request, still in its window, and a retained proposal
+   * of exactly that request, current and undecided. One pending intent per Ask turn, as for code.request.
+   */
+  recordTest(op: string, data: CodeTestIntentBody | Record<string, unknown>): { status: 200 | 201; view: unknown } {
+    const t = this.d.turn(op)
+    if (!t) throw new ApiError(404, 'not_available', 'That isn’t available.')
+    if (Date.now() - Date.parse(t.createdAt) > 24 * 3600_000) throw bad('that Ask turn is more than 24 hours old; ask again')
+    if (Object.keys(data ?? {}).sort().join() !== 'kind,request') throw bad('the body is exactly {kind, request}')
+    if ((data as CodeTestIntentBody).kind !== 'code.test') throw bad("kind is 'code.test'")
+    const req = (data as CodeTestIntentBody).request as unknown as Record<string, unknown>
+    const allowed = ['request_id', 'proposal_id', 'selection', 'test_filter']
+    if (!req || typeof req !== 'object' || Array.isArray(req) || Object.keys(req).some((k) => !allowed.includes(k)) || typeof req.request_id !== 'string' || typeof req.proposal_id !== 'string')
+      throw bad('code.test request is {request_id,proposal_id,selection?,test_filter?}')
+    if ('selection' in req && (!Array.isArray(req.selection) || req.selection.length < 1 || req.selection.length > 32 || req.selection.some((v) => typeof v !== 'string' || !v || v.length > 200) || new Set(req.selection).size !== req.selection.length))
+      throw bad('selection is up to 32 distinct inert reference strings of 1..200 characters')
+    if ('test_filter' in req && (typeof req.test_filter !== 'string' || !req.test_filter || [...req.test_filter].length > 512 || req.test_filter.includes('\0')))
+      throw bad('test_filter is an inert string of 1..512 characters')
+    this.testSource(req.request_id, req.proposal_id)
+    const canon = canonical({ kind: 'code.test', request: req })
+    const live = [...this.rows.values()].find((r) => r.turn_id === t.turnId && (r.state === 'pending' || r.state === 'dispatching'))
+    if (live) {
+      if (live.state === 'dispatching') throw new ApiError(409, 'intent_in_flight', 'That turn’s intent is being sent; wait for it to settle.')
+      if (live.kind === 'code.test' && live.canon === canon) return { status: 200, view: this.view(live) }
+      throw new ApiError(409, 'intent_pending', 'That turn already has an intent waiting to be sent.')
+    }
+    // as record_async: a refused row on this turn is abandoned when a fresh test intent is recorded
+    for (const r of this.rows.values()) if (r.turn_id === t.turnId && r.state === 'refused') Object.assign(r, { state: 'abandoned', links_rev: r.links_rev + 1 })
+    const at = new Date().toISOString()
+    const id = `ai_${hex(12)}`
+    const row: Row = { id, kind: 'code.test', turn_id: t.turnId, principal: this.d.principal(), body: { request: structuredClone(req), operation_id: `ask.${id}` }, canon, state: 'pending', request_id: null, lease_id: null, receiving_goal: null, answer: null, links_rev: 1, created_at: at, updated_at: at }
+    this.rows.set(id, row)
+    return { status: 201, view: this.view(row) }
+  }
+  /** code_test_intents.py current + _source_refs, in miniature: the caller's own open request and its current proposal. */
+  private testSource(requestId: string, proposalId: string) {
+    const o = this.origin(requestId)
+    if (!o || o.row.principal !== this.d.principal()) throw new ApiError(404, 'not_available', 'That isn’t available.')
+    if (Date.parse(o.until) <= Date.now()) throw new ApiError(403, 'code_test_lease', 'the original request window has expired')
+    const svc = this.d.code(o.task_id)
+    if (!svc) throw new ApiError(409, 'code_test_source', 'the request has no retained Code origin')
+    return { o, svc, source: svc.projectTestSource(proposalId, requestId) }
+  }
+  /** submit of a code.test intent (code_test_intents.py dispatch): one queued message to the original controller. */
+  private submitTest(r: Row): unknown {
+    if (r.state === 'linked') return JSON.parse(r.answer!)
+    if (r.state === 'abandoned') throw new ApiError(409, 'intent_closed', 'That intent was abandoned or its thread deleted; it can’t be sent.')
+    const req = r.body.request as { request_id: string; proposal_id: string }
+    let found: ReturnType<SimIntents['testSource']>
+    try {
+      found = this.testSource(req.request_id, req.proposal_id)
+    } catch (e) {
+      r.state = 'refused'
+      r.links_rev++
+      throw e
+    }
+    const { o, svc, source } = found
+    const receipt = {
+      schema: 'hive.code-test-intent-receipt/1', kind: 'code.test', request_id: req.request_id, proposal_id: req.proposal_id,
+      lease_id: o.row.lease_id!, receiving_goal: o.row.receiving_goal!, controller_id: 'a_vega01', message_id: `m_sim${hex(8)}`,
+      state: 'queued', tested: false, accepted_source: false,
+    }
+    Object.assign(r, { state: 'linked', request_id: receipt.request_id, lease_id: receipt.lease_id, receiving_goal: receipt.receiving_goal, answer: JSON.stringify(receipt), updated_at: new Date().toISOString() })
+    r.links_rev++
+    svc.startProjectTest(source, { lease_id: receipt.lease_id, controller_id: receipt.controller_id, issuer: r.principal, outcome: this.d.testOutcome?.() ?? 'pass', runMs: this.d.testRunMs?.() ?? 0 })
+    return structuredClone(receipt)
+  }
+
   /** POST /api/ask/intents/{id}/submit: S1-S4 in miniature (no await between the claim and the link here). */
   submit(id: string): unknown {
+    // a member's own code.test intent is theirs to send (ask_intents.py: members may hold studio.session / code.test)
+    if (this.rows.get(id)?.kind === 'code.test') return this.submitTest(this.own(id))
     if (!this.d.admin()) throw new ApiError(403, 'person_required', 'a named, signed-in admin person sends instructions')
     const r = this.own(id)
     if (r.state === 'linked') return JSON.parse(r.answer!)
@@ -217,6 +327,9 @@ export class SimIntents {
         if (this.d.spawn && !this.d.spawn()) return
         this.kids.push({ child_id: `a_simchild${hex(4)}`, request_id: String(delegated.request_id), team_id: SIM_CODE_TEAM.to_swarm, state: 'running' })
         try {
+          // the helper is seen working for a few seconds before its proposal lands (the canvas's thinking stage)
+          const work = this.d.workMs?.() ?? 0
+          if (work > 0) await new Promise((r) => setTimeout(r, work))
           if (this.d.mindGate) await this.d.mindGate()
           const rec = (await svc.ask(body.origin.workspace_id, body.origin.scope_id, body.instruction, delegated)) as { id: string; digest: string }
           if (svc.copyApplyOn) {

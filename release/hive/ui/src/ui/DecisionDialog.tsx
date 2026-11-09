@@ -43,6 +43,7 @@ export function DecisionDialog({
   onClose,
   dismissLabel = 'Cancel',
   restoreFocus,
+  canAct,
 }: {
   icon?: IconName
   eyebrow: string
@@ -60,6 +61,8 @@ export function DecisionDialog({
   dismissLabel?: string
   /** Where focus goes on close when the opener may have gone with the decision (a decided request's card): see useModalContainment. */
   restoreFocus?: (opener: HTMLElement | null) => HTMLElement | null | undefined
+  /** The opening surface's visible grant. The first publication may be pending; a later grant cannot renew this dialog. */
+  canAct?: () => boolean
 }) {
   const desktop = useIsDesktop()
   const reduced = useReducedMotion()
@@ -71,7 +74,9 @@ export function DecisionDialog({
   const [unsettled, setUnsettled] = useState<DecisionUnsettled | null>(null)
   const armed = useRef(0)
   const alive = useRef(true)
-  useEscape(() => !busy && onClose())
+  const openingAuthority = useRef<(() => boolean) | null>(null)
+  const revoked = useRef(false)
+  const allowed = () => !revoked.current && (openingAuthority.current ? openingAuthority.current() : canAct ? canAct() : true)
   // Tab and Shift-Tab stay inside (from the heading too), the page behind is inert, focus returns to the opener
   useModalContainment(box, restoreFocus ? { restoreFocus } : {})
   // re-arm on open and whenever the binding changes, so a press aimed at a disabled button cannot land once it re-enables
@@ -92,28 +97,39 @@ export function DecisionDialog({
   useLayoutEffect(() => {
     closeRef.current = onClose
   })
-  useEffect(() => onIdentityChange(() => closeRef.current()), [])
+  const closeDialog = () => {
+    if (revoked.current) return
+    revoked.current = true
+    closeRef.current()
+  }
+  useEscape(closeDialog)
+  useEffect(() => onIdentityChange(closeDialog), [])
+  useLayoutEffect(() => {
+    // The authority hook publishes its first grant in layout. Its pending false is not a revoked opening.
+    if (!openingAuthority.current && canAct?.()) openingAuthority.current = canAct
+    if (openingAuthority.current && !openingAuthority.current()) closeDialog()
+  })
 
   const note = boundNote(bound, thing)
-  const open = bound.kind === 'ready' && !busy && !unsettled
+  const open = bound.kind === 'ready' && !busy && !unsettled && allowed()
   // unsettled outranks the binding's note: the decision is spent here either way, and what happened is the news
   const status = unsettled ? (busy ? `${busy}…` : unsettled.unsettled) : (note ?? (busy ? `${busy}…` : error))
 
   const settle = (r: DecisionResult) => {
     const shown = decisionShown(r)
-    if (shown.kind === 'close') onClose()
+    if (shown.kind === 'close') closeDialog()
     else if (shown.kind === 'error') setError(shown.text)
     else setUnsettled(shown.unsettled)
   }
   const failed = (err: unknown) => (err instanceof Error ? err.message : String(err))
   const recheck = async () => {
     const again = unsettled?.recheck
-    if (!again || busy) return
+    if (!again || busy || !allowed()) return
     const binding = bindEpoch()
     setBusy('Checking')
     // a recheck that throws settles nothing: the same uncertainty stays, with the way to check again
     const r = await again().catch((err: unknown): DecisionResult => ({ unsettled: `${unsettled.unsettled} (${failed(err)})`, recheck: again }))
-    if (!alive.current) return
+    if (!alive.current || !allowed()) return
     binding.commit(() => {
       setBusy(null)
       settle(r)
@@ -130,13 +146,17 @@ export function DecisionDialog({
     },
     onClick: async (e: MouseEvent) => {
       e.stopPropagation()
-      if (!open || a.blocked || !accepts({ at: performance.now() }, armed.current)) return
+      if (!open || !allowed() || a.blocked || !accepts({ at: performance.now() }, armed.current)) return
       const binding = bindEpoch()
       setError(null)
       setBusy(a.busyLabel ?? a.label)
       // Review B1 (commons f0818d8): a thrown run is not a refusal; a lost answer stays unsettled
       const r = await a.run().catch((err: unknown) => decisionFailure(err))
-      if (!alive.current || r === STALE) return
+      // This precedes the STALE busy release: a revoked/closing dialog must remain spent, including its busy state.
+      if (!alive.current || !allowed()) return
+      // A visible attachment can be revoked without unmounting this dialog. Release only its busy state;
+      // a stale action must neither publish a result nor strand the retained dialog on return.
+      if (r === STALE) { binding.commit(() => setBusy(null)); return }
       binding.commit(() => {
         setBusy(null)
         settle(r)
@@ -150,7 +170,7 @@ export function DecisionDialog({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      onClick={() => !busy && onClose()}
+      onClick={closeDialog}
       style={{ paddingBottom: desktop ? undefined : 'calc(var(--sab) + 12px)' }}
     >
       <m.div
@@ -175,7 +195,7 @@ export function DecisionDialog({
               {title}
             </h2>
           </div>
-          <button type="button" onClick={onClose} disabled={!!busy} aria-label="Close" className="flex size-10 shrink-0 items-center justify-center rounded-xl text-ink-3 hover:bg-white/[0.07] hover:text-ink">
+          <button type="button" onClick={closeDialog} aria-label="Close" className="flex size-10 shrink-0 items-center justify-center rounded-xl text-ink-3 hover:bg-tint/[0.07] hover:text-ink">
             <Icon name="x" size={18} />
           </button>
         </div>
@@ -204,7 +224,7 @@ export function DecisionDialog({
                   'min-h-11 flex-1 basis-[140px] rounded-xl px-4 text-[14px] font-semibold transition-opacity aria-disabled:cursor-not-allowed aria-disabled:opacity-45',
                   a.tone === 'primary' && 'border border-control/50 text-[var(--color-primary-ink)]',
                   a.tone === 'danger' && 'border border-bad/30 bg-bad/15 text-bad',
-                  a.tone === 'plain' && 'border border-line bg-white/[0.06] text-ink',
+                  a.tone === 'plain' && 'border border-line bg-tint/[0.06] text-ink',
                 )}
                 style={a.tone === 'primary' ? { background: 'linear-gradient(180deg, var(--color-primary-top), var(--color-accent))' } : undefined}
               >
@@ -212,12 +232,12 @@ export function DecisionDialog({
               </button>
             ))}
             {unsettled?.recheck && (
-              <button type="button" onClick={() => void recheck()} disabled={!!busy} className="min-h-11 rounded-xl border border-line bg-white/[0.06] px-4 text-[14px] font-semibold text-ink">
+              <button type="button" onClick={() => void recheck()} disabled={!!busy} className="min-h-11 rounded-xl border border-line bg-tint/[0.06] px-4 text-[14px] font-semibold text-ink">
                 Check again
               </button>
             )}
-            <button type="button" onClick={onClose} disabled={!!busy} className="min-h-11 rounded-xl px-4 text-[14px] text-ink-2 hover:bg-white/[0.06] hover:text-ink">
-              {dismissLabel}
+            <button type="button" onClick={closeDialog} className="min-h-11 rounded-xl px-4 text-[14px] text-ink-2 hover:bg-tint/[0.06] hover:text-ink">
+              {busy ? 'Close' : dismissLabel}
             </button>
           </div>
         </div>

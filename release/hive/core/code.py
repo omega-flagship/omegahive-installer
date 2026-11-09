@@ -15,12 +15,16 @@ import json
 import base64
 import os
 import pathlib
+import posixpath
 import re
 import subprocess
+import sys
 import time
+import urllib.parse
 
 import httpx
 
+from .relay_proof import RelayProofError, proved_request
 from .services import scope_allows
 
 def relayed_error(status, content):
@@ -44,7 +48,23 @@ def relayed_error(status, content):
 
 # The reviewed OmegaCode service release these routes were written for. The parity test checks every route against its
 # handlers and, on the hive's own machine, that the Code service actually loads it (Kimi next7-r3).
-INTENDED_SERVICE_RELEASE = "345fde5378300dd2090f7141627c65f79c2e419e9e85393d7f5758241a13d2dd"
+INTENDED_SERVICE_RELEASE = "b6283f467b3691566b48c7a420e25f699c801ce6c97b6bbc8946db986c91cdce"   # Coupled sandbox-purpose candidate; deployment/review remains separate
+# The owner-local enrolment profile has its own reviewed service pin.
+LOCAL_ENROLMENT_SERVICE_RELEASE = "b26ab7daf18fe46920d631bf082a6bd73ef4624acaab4e7d2bff048f62d427fd"
+# Rollback reverts the selected pin and the Code LaunchAgent together.
+# Code releases whose listener answers POST /v1/relay-challenge (wire R1). When the pin is one of them, every person
+# relay proves the listener on the same connection before the bearer is written; the pin is the only switch.
+RELAY_PROOF_RELEASES: frozenset = frozenset({
+    LOCAL_ENROLMENT_SERVICE_RELEASE,
+    "b6283f467b3691566b48c7a420e25f699c801ce6c97b6bbc8946db986c91cdce",
+    "c63d17cb8886a119fd35358108b4fd5daeb16074cdf74de0a108f218a070d319",
+    "309df6d5c9c35427c53e7b6525e1be2729c95d04cbab6057207071c82f3fdbfe",
+})
+# 4b33ce28 (Code C2 R10 "code for members" with the empty-seed fix; Kimi + stand-in SHIP,
+# CODE_C2_R10_EMPTY_SEED_{STANDIN,KIMI}_VERDICT) serves the same 72 method/path templates as 345fde53; its api.py
+# (sha256 508c6766...) adds request/response models only (V2 suggestion scope, created-file receipts, safe 422 for
+# unpaired surrogates). Bodies are forwarded without a host schema, so the relay, held and unrelayed tables stand.
+# Previous pin, kept for the history below:
 # 345fde53 (Code canonical-runner r1: patch interpreter-canonical-env-r1 75e7df75; Kimi + stand-in SHIP,
 # STANDIN_CODE_CANONICAL_RUNNER_VERDICT_20261007) differs from bdfb0591 in omegacode/runner.py only; api.py is
 # byte-identical (sha256 b94ca803..., checked by the parity test), so the routes and relay tables are bdfb0591's unchanged.
@@ -60,6 +80,7 @@ INTENDED_SERVICE_RELEASE = "345fde5378300dd2090f7141627c65f79c2e419e9e85393d7f57
 # Each relayed route carries the exact, minimal OmegaCode actions it needs (Code's PROXY_ACTIONS_RESPONSE, Kimi
 # 2026-10-05): a read route never holds edit or run authority. Actions are a subset of HUMAN_ACTIONS.
 PROXY_ROUTES = [
+    ("GET", r"^/v1/workspaces/ws_[A-Za-z0-9_-]+/suggestions/[A-Za-z0-9_-]+/project-tests$", ("read",)),
     ("POST", r"^/v1/workspaces/ws_[A-Za-z0-9_-]+/repository-facts$", ("read",)),
     ("POST", r"^/v1/workspaces/ws_[A-Za-z0-9_-]+/repository-retrieval$", ("read",)),
     ("GET", r"^/v1/runs/run_[A-Za-z0-9_-]+/proof-result$", ("read", "events",)),
@@ -136,10 +157,12 @@ PROXY_ROUTES = [
 # silently. The four default-off purpose routes (/v1/proposal-tests...) are installed outside api.py and are never relayed.
 UNRELAYED_SERVICE_ROUTES = [
     ("POST", "/v1/operator/register"),                            # operator administration: service secret, never relayed
+    ("POST", "/v1/relay-challenge"),                              # host-only: the relay proof handshake itself (R1.4)
     ("POST", "/v1/operator/grants"),
     ("DELETE", "/v1/operator/grants/{id}"),
     ("POST", "/v1/workspaces/{id}/forks"),                        # held per Code: actions not named
     ("GET", "/v1/workspaces/{id}/suggestions/{suggestion_id}/hunks/{hunk_id}/before"),  # unrelayed since ed66; not adopted
+    ("GET", "/v1/workspaces/{id}/suggestions/{suggestion_id}/candidate"),  # served by 309df; person relay is Studio post-J, not adopted yet
     ("GET", "/v1/workspaces/{id}/suggestion-scopes/{scope_id}"),
     ("POST", "/v1/workspaces/{id}/proposal-test-receipts"),
     ("GET", "/v1/workspaces/{id}/proposal-test-receipts/{receipt_id}"),
@@ -149,6 +172,7 @@ UNRELAYED_SERVICE_ROUTES = [
 # become authority-bearing. Values are caller-selected references, never attested evidence. Routes not listed keep the
 # existing behaviour (one value per key) until Code rules on them.
 QUERY_RULES = {
+    r"^/v1/workspaces/ws_[A-Za-z0-9_-]+/suggestions/[A-Za-z0-9_-]+/project-tests$": {"cursor": (1,19), "limit": (1,2)},
     r"^/v1/workspaces/ws_[A-Za-z0-9_-]+/merge-review/[A-Za-z0-9_-]+$": {"verification_id": (100, 160)},
 }
 
@@ -268,8 +292,13 @@ class CodeError(Exception):
 
 
 class Code:
+    intended_service_release = INTENDED_SERVICE_RELEASE
+
     def __init__(self, hive, client: httpx.AsyncClient):
         self.hive, self.client = hive, client
+        from .code_local_enrolment import ENV_SOCKET
+        if os.environ.get(ENV_SOCKET):
+            self.intended_service_release = LOCAL_ENROLMENT_SERVICE_RELEASE
         # who owns which source tree, and whether its code is private: [{"prefix", "owner", "private"}]
         try:
             self.owners = json.loads(os.environ.get("HIVE_CODE_OWNERS", "[]"))
@@ -279,7 +308,7 @@ class Code:
         # OmegaCode repositories: the service's own config is the one source of which repositories exist and can be
         # edited (HIVE_CODE_SERVICE_CONFIG, the file the service runs with). HIVE_CODE_REPOS only adds hive-side
         # metadata (label, argv_prefixes) to those ids. The two lists drifted, so the hive offered targets the service
-        # refused with 403 repository_unregistered (the owner never saw a workspace, 2026-10-05).
+        # refused with 403 repository_unregistered (Jon never saw a workspace, 2026-10-05).
         try:
             extra = json.loads(os.environ.get("HIVE_CODE_REPOS", "{}"))
         except ValueError:
@@ -307,6 +336,60 @@ class Code:
         if not isinstance(repos, dict):               # a list or other shape is not a registry: nothing editable
             return {}
         return {str(k): str((v or {}).get("path", "")) for k, v in repos.items() if isinstance(v, dict)}
+
+    @staticmethod
+    def _native_start_path(method, path):
+        # Denial normalization only. Existing route allowlists are never widened.
+        return (method == "POST" and isinstance(path, str)
+                and posixpath.normpath("/" + urllib.parse.unquote(path).lstrip("/")) == "/v1/runs")
+
+    @staticmethod
+    def _require_native_start_policy():
+        """Original operator service config only; no body/claim/label policy.
+
+        The bench bootstrap refuses mixed profiles, but the Host additionally
+        denies globally if ANY configured repository is proposal-only. Agent
+        relay therefore need not decode/adopt a caller's claimed repository.
+        Unnamed, unreadable or malformed policy is unknown, never native proof.
+        """
+        try:
+            name = os.environ.get("HIVE_CODE_SERVICE_CONFIG", "").strip()
+            if not name:
+                raise ValueError()
+            with pathlib.Path(name).open("rb") as stream:
+                raw = stream.read(1024 * 1024 + 1)
+            if len(raw) > 1024 * 1024:
+                raise ValueError()
+            def unique(pairs):
+                result = {}
+                for key, value in pairs:
+                    if key in result:
+                        raise ValueError()
+                    result[key] = value
+                return result
+            config = json.loads(raw.decode("utf-8"), object_pairs_hook=unique,
+                parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+            if type(config) is not dict:
+                raise ValueError()
+            repositories = config.get("repositories")
+            if type(repositories) is not dict or not repositories:
+                raise ValueError()
+            modes = []
+            for ident, spec in repositories.items():
+                if (type(ident) is not str or not ident or type(spec) is not dict
+                        or type(spec.get("path")) is not str or not spec["path"]):
+                    raise ValueError()
+                ident.encode("utf-8"); spec["path"].encode("utf-8")
+                mode = spec.get("execution_policy", "trusted-native")
+                if type(mode) is not str or mode not in ("proposal-only", "trusted-native"):
+                    raise ValueError()
+                modes.append(mode)
+        except (OSError, ValueError, TypeError, UnicodeError, RecursionError):
+            raise CodeError(503, "repository_policy_unavailable",
+                            "native start requires a valid original operator service policy") from None
+        if "proposal-only" in modes:
+            raise CodeError(403, "proposal_only_execution_forbidden",
+                            "native start is unavailable on this proposal-only Code profile")
 
     # ---- targets ---------------------------------------------------------------------------------
 
@@ -531,13 +614,17 @@ class Code:
         provides an omegacode package must be exactly .../releases/<pin>, and no other entry may provide one (OmegaReview
         next15 B1: a wrong release earlier in the path shadowed the right one). An agent that exists but cannot be read
         fails closed; no agent on this machine means nothing to check. Configuration only: rollout receipts still check the
-        running process."""
+        running process. On Linux the Code service is a systemd user unit, checked by _linux_release_problem."""
+        if sys.platform.startswith("linux"):
+            return self._linux_release_problem()
         import plistlib
         agent = pathlib.Path(self.CODE_AGENT_PLIST)
         try:
             st = agent.stat()
             stamp = (st.st_mtime_ns, st.st_size)          # a same-second rewrite still changes one of these (Kimi)
         except FileNotFoundError:
+            if self.intended_service_release == LOCAL_ENROLMENT_SERVICE_RELEASE:
+                return "the owner-local Code LaunchAgent is absent"
             if not getattr(self, "_no_agent_logged", False):
                 self._no_agent_logged = True
                 import logging
@@ -547,17 +634,16 @@ class Code:
         except OSError:
             return "agent unreadable"
         if getattr(self, "_release_check", (None, None))[0] != stamp:
-            self._release_check = (stamp, self._configured_release_problem(agent, plistlib))
+            self._release_check = (stamp, self._configured_release_problem(agent, plistlib, self.intended_service_release))
         return self._release_check[1]
 
     @staticmethod
-    def _configured_release_problem(agent, plistlib):
+    def _configured_release_problem(agent, plistlib, intended_release=INTENDED_SERVICE_RELEASE):
         """Ask Python's own path finder which omegacode the configured service would import, over the same search
         order it uses: the working directory first when started with -m, then PYTHONPATH. It must be exactly
         releases/<pin>/omegacode, and no other entry may offer a real module or package (a plain omegacode.py, a
         compiled or extension module, another package): Code showed a module file shadowing the release
         (OmegaReview next15 B1, Code module-shadow finding). Namespace-only directories never win over a package."""
-        import importlib.machinery
         try:
             config = plistlib.loads(agent.read_bytes())
             entries = str(config["EnvironmentVariables"]["PYTHONPATH"]).split(":")
@@ -565,6 +651,12 @@ class Code:
             workdir = config.get("WorkingDirectory")
         except Exception:
             return "agent unreadable"
+        return Code._path_release_problem(entries, argv, workdir, intended_release)
+
+    @staticmethod
+    def _path_release_problem(entries, argv, workdir, intended_release=INTENDED_SERVICE_RELEASE):
+        """The import-order check shared by the macOS LaunchAgent and the Linux user unit."""
+        import importlib.machinery
         # Relative or empty entries resolve against the service's own directory, not the hive's, so their meaning cannot
         # be checked from here: refuse them, and require an absolute working directory for -m (OmegaReview next15 B1).
         if any(not e or not pathlib.Path(e).is_absolute() for e in entries):
@@ -579,12 +671,12 @@ class Code:
             return "no omegacode package on the configured path"
         chosen = pathlib.Path(spec.origin)
         release = chosen.parent.parent
-        if chosen.name != "__init__.py" or chosen.parent.name != "omegacode" or release.name != INTENDED_SERVICE_RELEASE \
+        if chosen.name != "__init__.py" or chosen.parent.name != "omegacode" or release.name != intended_release \
                 or release.parent.name != "releases":
             return f"configured import is {spec.origin}"
         # judged on the real files, not the spelling: a symlinked release or package resolving elsewhere is refused (Kimi)
         real = chosen.resolve()
-        if not real.is_file() or real.parent.parent != release.resolve() or release.resolve().name != INTENDED_SERVICE_RELEASE \
+        if not real.is_file() or real.parent.parent != release.resolve() or release.resolve().name != intended_release \
                 or release.resolve().parent.name != "releases" or real.parent.name != "omegacode":
             return f"configured import resolves to {real}"
         others = [e for e in entries if pathlib.Path(e) != release
@@ -593,14 +685,236 @@ class Code:
             return "another omegacode module or package is on the configured path"
         return None
 
+    CODE_UNIT = os.environ.get("HIVE_CODE_UNIT", "omegacode.service")
+    _LINUX_RECHECK_SECONDS = 5
+
+    def _linux_release_problem(self):
+        """Linux (contract R2 section 1): fail closed unless the Code user unit is configured for exactly
+        releases/<pin> and the process listening on the Code port is that unit's own main process. A missing unit,
+        an unreadable fact or any ambiguity is a problem, never a pass. Re-checked at most every few seconds."""
+        # Only a refusal is remembered (briefly): a pass is never reused, so a replaced listener is seen at once.
+        cached = getattr(self, "_linux_check", None)
+        if cached and time.monotonic() - cached[0] < self._LINUX_RECHECK_SECONDS:
+            return cached[1]
+        try:
+            problem = self._linux_release_facts_problem(self._systemd_show(self.CODE_UNIT))
+        except Exception as e:                                         # unreadable facts fail closed
+            problem = f"Code service facts unreadable ({type(e).__name__})"
+        self._linux_check = (time.monotonic(), problem) if problem else None
+        return problem
+
+    @staticmethod
+    def _systemd_show(unit):
+        out = subprocess.run(["systemctl", "--user", "show", unit, "--no-pager",
+                              "-p", "LoadState", "-p", "ActiveState", "-p", "MainPID", "-p", "ExecStart",
+                              "-p", "WorkingDirectory", "-p", "Environment"],
+                             capture_output=True, text=True, timeout=5, check=False, stdin=subprocess.DEVNULL)
+        if out.returncode != 0:
+            raise OSError("systemctl show failed")
+        return dict(line.split("=", 1) for line in out.stdout.splitlines() if "=" in line)
+
+    @staticmethod
+    def _exec_argv(exec_start):
+        """systemd prints ExecStart as '{ path=... ; argv[]=a b c ; ... }'. The reviewed unit has plain absolute
+        arguments without spaces or quoting; anything else is refused rather than guessed."""
+        m = re.fullmatch(r"\{ path=(\S+) ; argv\[\]=([^;]*) ;.*\}", exec_start.strip())
+        if not m:
+            return None
+        argv = m.group(2).split()
+        return argv if argv and argv[0] == m.group(1) else None
+
+    @staticmethod
+    def _read_proc(pid, name):
+        return pathlib.Path(f"/proc/{pid}/{name}").read_bytes()
+
+    @staticmethod
+    def _proc_link(pid, name):
+        return os.readlink(f"/proc/{pid}/{name}")
+
+    @staticmethod
+    def _proc_fds(pid):
+        return os.listdir(f"/proc/{pid}/fd")
+
+    def _linux_release_facts_problem(self, show):
+        if show.get("LoadState") != "loaded":
+            return "no Code service unit on this machine"
+        if show.get("ActiveState") != "active":
+            return "the Code service unit is not running"
+        pid = show.get("MainPID", "")
+        if not pid.isdecimal() or pid == "0":
+            return "the Code service has no main process"
+        argv = self._exec_argv(show.get("ExecStart", ""))
+        if argv is None:
+            return "the Code service command line is not the reviewed form"
+        # reviewed form: <the hive's own pinned python> -B -s -m omegacode --config <absolute config>. No shell; -s keeps
+        # user site-packages (.pth, usercustomize) out; not -I, which would also ignore the configured PYTHONPATH.
+        if len(argv) != 7 or argv[1:5] != ["-B", "-s", "-m", "omegacode"] \
+                or argv[5] != "--config" or not pathlib.Path(argv[6]).is_absolute():
+            return "the Code service command line is not the reviewed form"
+        if not pathlib.Path(argv[0]).is_absolute() or os.path.realpath(argv[0]) != os.path.realpath(self._code_python()):
+            return "the Code service does not use the hive's pinned interpreter"
+        env = dict(item.split("=", 1) for item in show.get("Environment", "").split() if "=" in item)
+        if "PYTHONPATH" not in env:
+            return "the Code service has no configured path"
+        # exactly one entry, the pinned release: any other directory could carry a sitecustomize that runs at startup
+        if ":" in env["PYTHONPATH"]:
+            return "the Code service path has more than the pinned release"
+        for name in ("LD_PRELOAD", "LD_AUDIT", "PYTHONHOME"):
+            if name in env:
+                return f"the Code service sets {name}"
+        workdir = show.get("WorkingDirectory", "")
+        problem = Code._path_release_problem(env["PYTHONPATH"].split(":"), argv, workdir, self.intended_service_release)
+        if problem:
+            return problem
+        # the release's contents, not only its name: the module digest must be the pin (Code's digest recipe)
+        release = pathlib.Path(env["PYTHONPATH"].split(":")[0]).resolve() / "omegacode"
+        if Code._module_digest(release) != self.intended_service_release:
+            return "the Code release contents do not match the pin"
+        # the working directory: owned by this account, 0700, empty, not a link (contract R2 section 2)
+        st = os.lstat(workdir)
+        import stat as stat_
+        if not stat_.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or stat_.S_IMODE(st.st_mode) != 0o700 \
+                or any(os.scandir(workdir)):
+            return "the Code service working directory is not an empty private folder"
+        # the running process is that unit's own: same process instance throughout, the reviewed interpreter,
+        # same account, argv, working directory and path
+        started = self._proc_start(pid)
+        if os.path.realpath(self._proc_link(pid, "exe")) != os.path.realpath(argv[0]):
+            return "the running Code service is not the reviewed interpreter"
+        status = self._read_proc(pid, "status").decode("ascii", "replace")
+        uid = next((line.split()[1] for line in status.splitlines() if line.startswith("Uid:")), None)
+        if uid != str(os.getuid()):
+            return "the Code service runs as another account"
+        if self._read_proc(pid, "cmdline").split(b"\0")[:-1] != [a.encode() for a in argv]:
+            return "the running Code service differs from its unit"
+        if os.path.realpath(self._proc_link(pid, "cwd")) != os.path.realpath(workdir):
+            return "the running Code service differs from its unit"
+        environ = dict(item.split(b"=", 1) for item in self._read_proc(pid, "environ").split(b"\0") if b"=" in item)
+        if environ.get(b"PYTHONPATH") != env["PYTHONPATH"].encode() \
+                or any(name in environ for name in (b"LD_PRELOAD", b"LD_AUDIT", b"PYTHONHOME")):
+            return "the running Code service differs from its unit"
+        problem = self._linux_listener_problem(pid, argv[6])
+        if problem is None and self._proc_start(pid) != started:
+            return "the Code service restarted during the check"
+        if problem is None and self._systemd_show(self.CODE_UNIT).get("MainPID") != pid:
+            return "the Code service restarted during the check"
+        return problem
+
+    @staticmethod
+    def _code_python():
+        """The interpreter the Code unit must use: the hive's own pinned one (the installer stages both on it)."""
+        return sys.executable
+
+    def _proc_start(self, pid):
+        """Process start time (field 22 of /proc/<pid>/stat, after the parenthesised name): one process instance."""
+        raw = self._read_proc(pid, "stat").decode("ascii", "replace")
+        return raw.rsplit(")", 1)[1].split()[19]
+
+    @staticmethod
+    def _module_digest(package):
+        """SHA256 over sorted (path relative to the package, NUL, file SHA256, LF) for every .py module."""
+        import hashlib
+        rows = sorted((str(p.relative_to(package)), hashlib.sha256(p.read_bytes()).hexdigest())
+                      for p in package.rglob("*.py") if "__pycache__" not in p.parts)
+        h = hashlib.sha256()
+        for rel, digest in rows:
+            h.update(rel.encode() + b"\0" + digest.encode() + b"\n")
+        return h.hexdigest()
+
+    def _linux_listener_problem(self, pid, config_path):
+        """Exactly one listener on the Code port, on 127.0.0.1 only, owned by this account and held by the unit's
+        main process. Only the port is read from the Code config, never its secrets. As in the installer, another
+        process of the same account acting against us (sharing the socket, ptrace) is outside this check."""
+        # read only the port; never follow a link, never block on a special file, never read more than 64 KiB
+        fd = os.open(config_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            import stat as stat_
+            st = os.fstat(fd)
+            if not stat_.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or st.st_size > 65536:
+                return "the Code service config is not a private regular file"
+            port = json.loads(os.read(fd, 65537)).get("port", 8724)
+        finally:
+            os.close(fd)
+        if type(port) is not int or not 0 < port < 65536:
+            return "the Code service port is not valid"
+        # the relay sends to the registered address: it must be exactly this attested loopback port
+        svc = self.hive.services.by_name("omegacode") if getattr(self, "hive", None) else None
+        if not svc or svc.get("address") != f"http://127.0.0.1:{port}":
+            return "the registered Code address is not the attested listener"
+        own = {self._proc_link(pid, f"fd/{fd}") for fd in self._proc_fds(pid)}
+        listeners = []
+        for table in ("tcp", "tcp6"):
+            try:
+                raw = self._read_proc("self", f"net/{table}").decode("ascii", "replace")
+            except FileNotFoundError:
+                continue
+            for line in raw.splitlines()[1:]:
+                fields = line.split()
+                if len(fields) >= 10 and fields[3] == "0A" and fields[1].rsplit(":", 1)[1] == format(port, "04X"):
+                    listeners.append((table, fields[1].rsplit(":", 1)[0], fields[7], fields[9]))
+        if len(listeners) != 1:
+            return "the Code port does not have exactly one listener"
+        table, address, uid, inode = listeners[0]
+        if table != "tcp" or address != "0100007F":
+            return "the Code service listens beyond 127.0.0.1"
+        if uid != str(os.getuid()) or f"socket:[{inode}]" not in own:
+            return "the Code port is held by another process"
+        return None
+
+    def local_enrolment_available(self):
+        if self.intended_service_release != LOCAL_ENROLMENT_SERVICE_RELEASE:
+            return True
+        bridge = getattr(self.hive, "code_local_enrolment", None)
+        return bridge is not None and bridge.ready()
+
+    def require_local_enrolment(self):
+        if not self.local_enrolment_available():
+            raise CodeError(503, "service_release_mismatch", "the owner-local Code enrolment bridge is unavailable")
+
     def require_intended_release(self):
         """Every place that issues Code authority asks this first: open, attach, select_target, the two capability routes
         and the relay (Kimi next15: the relay alone was guarded while grants and capabilities were minted unchecked)."""
+        self.require_local_enrolment()
         problem = self._loaded_release_mismatch()
         if problem is not None:
             raise CodeError(503, "service_release_mismatch",
                             f"the Code service is configured to load another release than the hive's routes were written for "
-                            f"({INTENDED_SERVICE_RELEASE[:8]}): {problem}")
+                            f"({self.intended_service_release[:8]}): {problem}")
+
+    # A mind's own Code call, relayed (2026-10-29). The mind already holds an hc1 capability the hive issued for a goal it
+    # claimed (/api/agent/code/capability), bound to its member token. Code R1.4+ accepts hc1 only on a connection the
+    # host has proved, so the hive forwards the mind's exact request through the same-connection proof. The hive adds no
+    # authority: Code still checks the capability, its member binding and its scope. Lifecycle, operator, registration
+    # and relay-challenge routes are never relayed.
+    AGENT_RELAY_PATH = re.compile(r"/v1/(?!relay-challenge\b|operator/|lifecycle\b|register\b|workspaces/[^/]+/suggestions/[^/]+/candidate(?:/|$))[A-Za-z0-9_./~-]*")   # no %: an encoded segment never slips past the exclusions
+
+    async def relay_agent(self, member_token, bearer, method, path, raw_query, body):
+        self.require_intended_release()
+        if method not in ("GET", "POST"):
+            raise CodeError(405, "method_not_relayed", "minds relay GET and POST only")
+        if not isinstance(bearer, str) or not bearer.startswith("hc1."):
+            raise CodeError(403, "capability_required", "relay a coding capability from /api/agent/code/capability")
+        if not self.AGENT_RELAY_PATH.fullmatch(path) or ".." in path.split("/"):
+            raise CodeError(404, "not_relayed", f"{method} {path} is not available to minds through the hive")
+        if self._native_start_path(method, path):
+            self._require_native_start_policy()
+        target = path + ("?" + raw_query if raw_query else "")
+        svc = self.hive.services.by_name("omegacode")
+        if self.intended_service_release in RELAY_PROOF_RELEASES:
+            try:
+                status, headers, content = await proved_request(svc["address"], svc["id"], svc["capability_secret"],
+                                                                method, target, body or b"", bearer=bearer,
+                                                                extra_headers={"X-Hive-Token": member_token})
+            except RelayProofError as exc:
+                raise CodeError(502, "relay_proof_failed", f"OmegaCode did not prove this connection: {exc}") from exc
+            return status, content, headers.get("content-type", "application/json")
+        try:
+            response = await self.client.request(method, svc["address"] + target, content=body or None,
+                                                 headers={"Authorization": f"Bearer {bearer}", "X-Hive-Token": member_token,
+                                                          "Content-Type": "application/json"}, timeout=60)
+        except httpx.HTTPError as exc:
+            raise CodeError(502, "service_unreachable", f"OmegaCode did not answer: {exc}") from exc
+        return response.status_code, response.content, response.headers.get("content-type", "application/json")
 
     async def proxy(self, principal, method, path, query, body, task_id, grant_id, repository_id):
         self.require_intended_release()
@@ -639,21 +953,37 @@ class Code:
                 raise CodeError(403, "grant_scope", f"your {grant['scope']} grant does not allow {method} {path}")
         elif principal != "user:operator":
             raise CodeError(403, "grant_required", "open the target first")
+        if self._native_start_path(method, path):
+            # Original person grant/scope checks above precede private policy.
+            if repository_id not in self.repos:
+                raise CodeError(403, "repository_unregistered", "this repository is not registered for coding")
+            self._require_native_start_policy()
         svc = self.hive.services.by_name("omegacode")
         query = checked_query(route[1], query)
         token = self._capability(principal, task_id, grant_id, repository_id, route[2], paths=paths,
                                  family=entry["pattern"] if entry else None)
-        try:
-            response = await self.client.request(method, svc["address"] + path, params=query,
-                                                 content=body if body else None,
-                                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-                                                 timeout=60)
-        except httpx.HTTPError as exc:
-            raise CodeError(502, "service_unreachable", f"OmegaCode did not answer: {exc}") from exc
-        if response.status_code == 200 and path.startswith("/v1/artifacts/"):
-            result = {"digest": path.rsplit("/", 1)[-1], "size_bytes": len(response.content),
-                      "content_base64": base64.b64encode(response.content).decode()}
+        if self.intended_service_release in RELAY_PROOF_RELEASES:
+            target = path + ("?" + urllib.parse.urlencode(query, doseq=True) if query else "")
+            try:
+                status, headers, content = await proved_request(svc["address"], svc["id"], svc["capability_secret"],
+                                                                method, target, body or b"", bearer=token)
+            except RelayProofError as exc:
+                raise CodeError(502, "relay_proof_failed", f"OmegaCode did not prove this connection: {exc}") from exc
+            content_type = headers.get("content-type", "application/json")
+        else:
+            try:
+                response = await self.client.request(method, svc["address"] + path, params=query,
+                                                     content=body if body else None,
+                                                     headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                                                     timeout=60)
+            except httpx.HTTPError as exc:
+                raise CodeError(502, "service_unreachable", f"OmegaCode did not answer: {exc}") from exc
+            status, content = response.status_code, response.content
+            content_type = response.headers.get("content-type", "application/json")
+        if status == 200 and path.startswith("/v1/artifacts/"):
+            result = {"digest": path.rsplit("/", 1)[-1], "size_bytes": len(content),
+                      "content_base64": base64.b64encode(content).decode()}
             return 200, json.dumps(result).encode(), "application/json"
-        if response.status_code >= 400:
-            return relayed_error(response.status_code, response.content)
-        return response.status_code, response.content, response.headers.get("content-type", "application/json")
+        if status >= 400:
+            return relayed_error(status, content)
+        return status, content, content_type

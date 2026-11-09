@@ -12,7 +12,7 @@ SEEN = [  # (command, result, kind): real results recorded on 3 October 2026
     ('(code-open "g" "r")', "CODE-APPROVAL-NEEDED p_41f7cc44 for code-workspace", "waiting"),
     ('(code-repos)', "CODE-UNREACHABLE ConnectError", "unreachable"),
     ('(send "x")', "HIVE-ERROR spend_limit: swarm has spent $500.00", "budget"),
-    ('(hive-goal-claim "g_1")', "HIVE-ERROR not_open: goal is claimed by a_11111111", "refused"),
+    ('(hive-goal-claim "g_1")', "HIVE-ERROR not_open: goal is claimed by a_0d39ba27", "refused"),
     ('(code-status)', "CODE-STATUS workspace ws_1 generation 3 run run_2: completed, exit code 0 (PASSED)", None),
     ('(send "hi")', "HIVE-MESSAGE-QUEUED", None),
 ]

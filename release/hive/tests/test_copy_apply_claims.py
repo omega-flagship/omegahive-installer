@@ -56,6 +56,7 @@ def body(rq, op="op-capply-0001", **over):
 @pytest.fixture()
 def cw(w, monkeypatch):
     monkeypatch.setattr(type(w.hive.code), "_loaded_release_mismatch", lambda self: None)   # no Code LaunchAgent in tests
+    monkeypatch.setattr(code_module, "RELAY_PROOF_RELEASES", frozenset())   # relay-proof transport: interop tests
     w.svc = service(w)
     w.hive.settings.copy_apply_claims = True
     return w
@@ -67,7 +68,7 @@ ORIGIN = {"Origin": "http://127.0.0.1:8700"}
 def consent(w, rq, suggestion_id=SUGGESTION, suggestion_digest=SUGGESTION_DIGEST, decision="accept", who=None):
     """copy-apply consent r1: the request's person accepts (after Accept + confirm) or declines one exact proposal."""
     return w.client.post(f"/api/requests/{rq['request_id']}/proposals/{suggestion_id}/{decision}",
-                         headers={**(who or w.quinn), **ORIGIN}, json={"suggestion_digest": suggestion_digest})
+                         headers={**(who or w.jon), **ORIGIN}, json={"suggestion_digest": suggestion_digest})
 
 
 def issue(w, rq, agent=None, consented=True, **over):
@@ -129,7 +130,7 @@ def test_the_controller_gets_the_exact_purpose_claims(cw):
     assert 0 < claims["exp"] - claims["iat"] <= 300
     assert claims["copy_apply"] == {
         "purpose": "workspace-copy-apply", "operation_id": "op-capply-0001", "request_id": rq["request_id"],
-        "lease_id": rq["lease_id"], "controller_id": cw.ctl["id"], "execution_goal": rq["receiving_goal"], "issuer": "user:u_quinn",
+        "lease_id": rq["lease_id"], "controller_id": cw.ctl["id"], "execution_goal": rq["receiving_goal"], "issuer": "user:u_jon",
         "origin_grant_id": cw.grant["id"],
         "origin": {"task_id": cw.task["id"], "repository_id": "synthetic", "workspace_id": WS, "scope_id": "scope_1",
                    "scope_digest": SCOPE_DIGEST},
@@ -233,21 +234,21 @@ def test_check_3_request_and_lease_live(cw):
     cw.hive.db.execute("UPDATE mind_leases SET until = ? WHERE id = ?", ("2000-01-01T00:00:00.000Z", rq["lease_id"]))
     out = issue(cw, rq)
     assert out.status_code == 403 and error(out)["code"] == "lease_required"
-    cw.client.post(f"/api/requests/{rq['request_id']}/cancel", headers=cw.quinn)
+    cw.client.post(f"/api/requests/{rq['request_id']}/cancel", headers=cw.jon)
     out = issue(cw, rq)
     assert out.status_code == 409 and error(out)["code"] == "request_closed"
 
 
 def test_check_3_a_lease_whose_issuer_lost_admin_is_not_live(cw):
     rq = request(cw)
-    cw.hive.db.execute("UPDATE people SET role = 'member' WHERE id = 'u_quinn'")
+    cw.hive.db.execute("UPDATE people SET role = 'member' WHERE id = 'u_jon'")
     out = issue(cw, rq)
     assert out.status_code == 403 and error(out)["code"] == "lease_required"
 
 
 def test_check_4_a_read_origin_grant_is_never_raised_to_edit(cw):
     cw.hive.services.revoke_grant(cw.task["id"], cw.grant["id"])
-    cw.hive.services.grant(cw.task["id"], "user:u_quinn", "read", None, 120, by="user:u_quinn")
+    cw.hive.services.grant(cw.task["id"], "user:u_jon", "read", None, 120, by="user:u_jon")
     rq = request(cw)                                  # an instruction under a read grant is accepted ...
     out = issue(cw, rq)                               # ... and still gives no copy authority
     assert out.status_code == 403 and error(out)["code"] == "origin_grant_read_only"
@@ -255,7 +256,7 @@ def test_check_4_a_read_origin_grant_is_never_raised_to_edit(cw):
 
 def test_check_4_the_edit_grant_covers_the_origin_workspace(cw):
     cw.hive.services.revoke_grant(cw.task["id"], cw.grant["id"])
-    cw.hive.services.grant(cw.task["id"], "user:u_quinn", "edit", "ws_" + "b2" * 16, 120, by="user:u_quinn")
+    cw.hive.services.grant(cw.task["id"], "user:u_jon", "edit", "ws_" + "b2" * 16, 120, by="user:u_jon")
     rq = request(cw)
     out = issue(cw, rq)
     assert out.status_code == 403 and error(out)["code"] == "origin_grant_read_only"
@@ -315,7 +316,7 @@ def test_services_issue_keeps_proposal_apply_to_the_copy_apply_branch(cw):
 
 
 def test_ordinary_issuance_refuses_proposal_apply(cw):
-    goal = asyncio.run(cw.hive.goals.create(cw.team["id"], "Own goal", created_by="user:u_quinn"))
+    goal = asyncio.run(cw.hive.goals.create(cw.team["id"], "Own goal", created_by="user:u_jon"))
     claim = cw.client.post(f"/api/agent/goals/{goal['id']}/claim", headers=agent_headers(cw.ctl))
     assert claim.status_code == 200, claim.text
     out = cw.client.post(CAP, headers=agent_headers(cw.ctl), json={"task_id": goal["id"], "actions": ["proposal-apply"]})
@@ -324,7 +325,7 @@ def test_ordinary_issuance_refuses_proposal_apply(cw):
     assert out.status_code == 400 and error(out)["code"] == "bad_actions"
     assert "proposal-apply" not in HUMAN_ACTIONS
     with pytest.raises(code_module.CodeError) as refused:
-        cw.hive.code._capability("user:u_quinn", cw.task["id"], cw.grant["id"], "synthetic", ("proposal-apply",))
+        cw.hive.code._capability("user:u_jon", cw.task["id"], cw.grant["id"], "synthetic", ("proposal-apply",))
     assert refused.value.code == "route_actions_invalid"
 
 
@@ -341,7 +342,7 @@ def test_revoking_the_lease_grant_revokes_the_capability(cw):
 @pytest.mark.parametrize("withdraw,reason,flags", [
     (lambda w, rq: w.client.patch(f"/api/swarms/{w.team['id']}", json={"coordinator_id": w.helper["id"]}), "not_controller",
      {"controller_current": False}),
-    (lambda w, rq: w.client.post(f"/api/requests/{rq['request_id']}/cancel", headers=w.quinn), "request_closed",
+    (lambda w, rq: w.client.post(f"/api/requests/{rq['request_id']}/cancel", headers=w.jon), "request_closed",
      {"request_open": False, "lease_live": False}),        # cancelling a request also ends its lease
     (lambda w, rq: w.hive.db.execute("UPDATE mind_leases SET until = ? WHERE id = ?", ("2000-01-01T00:00:00.000Z", rq["lease_id"])),
      "lease_expired", {"lease_live": False}),
@@ -365,7 +366,7 @@ def test_status_withdraws_with_the_purpose_reason(cw, withdraw, reason, flags):
 def test_generic_reasons_come_before_purpose_reasons(cw):
     rq = request(cw)
     claims = issue(cw, rq).json()["claims"]
-    cw.client.post(f"/api/requests/{rq['request_id']}/cancel", headers=cw.quinn)
+    cw.client.post(f"/api/requests/{rq['request_id']}/cancel", headers=cw.jon)
     cw.hive.services.revoke_capability(claims["id"])
     st = status(cw, claims["id"])
     assert st["reason"] == "revoked" and st["copy_apply_status"]["request_open"] is False
@@ -375,7 +376,7 @@ def test_status_is_only_for_the_service_and_ordinary_capabilities_carry_no_copy_
     rq = request(cw)
     claims = issue(cw, rq).json()["claims"]
     assert cw.client.get(f"/api/services/capabilities/{claims['id']}", headers=agent_headers(cw.ctl)).status_code == 401
-    plain = cw.hive.services.issue("svc_code", actor="user:u_quinn", kind="human", task_id=cw.task["id"], swarm_id=cw.origin["id"],
+    plain = cw.hive.services.issue("svc_code", actor="user:u_jon", kind="human", task_id=cw.task["id"], swarm_id=cw.origin["id"],
                                    repository_id="synthetic", actions=["read"], grant_id=cw.grant["id"])
     assert "copy_apply_status" not in status(cw, plain["claims"]["id"])
 
@@ -426,7 +427,7 @@ def relay(cw, monkeypatch):
 def proxied(w, method, path, grant_id, headers=None):
     query = {"task_id": w.task["id"], "repository_id": "synthetic"} | ({"grant_id": grant_id} if grant_id else {})
     return w.client.request(method, "/api/code/proxy" + path, params=query, json={} if method == "POST" else None,
-                            headers=headers if headers is not None else w.quinn)
+                            headers=headers if headers is not None else w.jon)
 
 
 def test_held_routes_are_not_relayed_while_off_and_the_person_never_applies(relay):
@@ -454,17 +455,17 @@ def test_person_undo_relays_with_edit_on_the_persons_own_edit_grant(relay):
     assert out.status_code == 200, out.text
     _, url, claims = relay.fake.calls[-1]
     assert url.endswith(APP + "/undo") and claims["kind"] == "human" and claims["actions"] == ["edit"]
-    assert claims["actor"] == "user:u_quinn" and claims["grant_id"] == relay.grant["id"]
+    assert claims["actor"] == "user:u_jon" and claims["grant_id"] == relay.grant["id"]
 
 
 def test_undo_is_human_only_and_path_scoped(relay):
     calls = len(relay.fake.calls)
     out = proxied(relay, "POST", APP + "/undo", None, headers={})            # the operator login without a grant
     assert out.status_code == 403 and error(out)["code"] == "edit_grant_required"
-    read = relay.hive.services.grant(relay.task["id"], "user:u_quinn", "read", None, 120)
+    read = relay.hive.services.grant(relay.task["id"], "user:u_jon", "read", None, 120)
     out = proxied(relay, "POST", APP + "/undo", read["id"])
     assert out.status_code == 403 and error(out)["code"] == "edit_grant_required"
-    other = relay.hive.services.grant(relay.task["id"], "user:u_quinn", "edit", "ws_" + "b2" * 16, 120)
+    other = relay.hive.services.grant(relay.task["id"], "user:u_jon", "edit", "ws_" + "b2" * 16, 120)
     out = proxied(relay, "POST", APP + "/undo", other["id"])
     assert out.status_code == 403 and error(out)["code"] == "edit_grant_required"
     assert len(relay.fake.calls) == calls
@@ -472,8 +473,8 @@ def test_undo_is_human_only_and_path_scoped(relay):
 
 # ---- Code's own validator accepts the host claims (when Code's r7 candidate source is on this machine) -----------
 
-R7_SRC = os.environ.get("OMEGACODE_R7_SRC", "/home/user/OmegaDot/.runtime/omegacode/r7-installed-candidate-20261007/"
-                                             "git-staging/omegacode/src")
+R7_SRC = os.environ.get("OMEGACODE_R7_SRC", os.path.join(os.path.expanduser("~"), "OmegaDot", ".runtime", "omegacode",
+                                                          "r7-installed-candidate-20261007", "git-staging", "omegacode", "src"))
 
 
 def test_codes_r7_binding_validator_accepts_the_issued_claims_and_live_status(cw):
@@ -493,7 +494,7 @@ def test_codes_r7_binding_validator_accepts_the_issued_claims_and_live_status(cw
                    "suggestion_digest": SUGGESTION_DIGEST, "expected_generation": 1, "expected_tree_digest": TREE,
                    "scope_id": "scope_1", "scope_digest": SCOPE_DIGEST}
         assert validate(principal, workspace, payload, audience="svc_code", status_reader=lambda i: status(cw, i)) is True
-        cw.client.post(f"/api/requests/{rq['request_id']}/cancel", headers=cw.quinn)
+        cw.client.post(f"/api/requests/{rq['request_id']}/cancel", headers=cw.jon)
         with pytest.raises(Exception) as refused:
             validate(principal, workspace, payload, audience="svc_code", status_reader=lambda i: status(cw, i))
         assert refused.value.code == "host_capability_inactive"
@@ -572,15 +573,14 @@ def test_a_cached_ordinary_read_token_is_never_reused_for_a_copy_apply_route(rel
     assert ordinary["actions"] == copy["actions"] == ["read"] and ordinary["id"] != copy["id"]
 
 
-R7_SERVICE = os.environ.get("OMEGACODE_R7_SERVICE", "/home/user/OmegaDot/coordination/omegacode/poc/"
-                                                    "workspace_copy_service_r7/omegacode")
+R7_SERVICE = os.environ.get("OMEGACODE_R7_SERVICE", "")   # Code r7 service source, supplied explicitly; else skipped
 
 
 def test_undo_mints_exactly_the_actions_codes_r7_undo_authorizes():
     """#2: Code r7's undo authorizes through service.edit's default _action "edit" only, with kind human; no read check."""
     import ast
-    root = pathlib.Path(R7_SERVICE)
-    if not (root / "copy_application.py").is_file():
+    root = pathlib.Path(R7_SERVICE) if R7_SERVICE else None
+    if root is None or not (root / "copy_application.py").is_file():
         pytest.skip("Code r7 service source not on this machine")
     tree = ast.parse((root / "copy_application.py").read_text())
     undo = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "undo")
@@ -644,7 +644,7 @@ def test_path_entry_validator_accepts_ordinary_relative_paths():
 
 def test_services_issue_refuses_a_copy_apply_capability_on_a_read_grant(cw):
     """MISSING-UI B1 r3 #1 defence in depth: Services.issue itself refuses copy_apply unless the lease grant is edit."""
-    read = cw.hive.services.grant(cw.task["id"], "user:u_quinn", "read", None, 120, by="user:u_quinn")
+    read = cw.hive.services.grant(cw.task["id"], "user:u_jon", "read", None, 120, by="user:u_jon")
     common = dict(actor=cw.ctl["id"], kind="agent", task_id=cw.task["id"], swarm_id=cw.origin["id"], repository_id="synthetic",
                   member_token="t", actions=["proposal-apply"], max_runs=0, max_runtime_seconds=0,
                   copy_apply={"purpose": "workspace-copy-apply"}, copy_apply_consent=CONSENT_CLAIM, exp=int(datetime.datetime.now().timestamp()) + 60)
@@ -656,7 +656,7 @@ def test_services_issue_refuses_a_copy_apply_capability_on_a_read_grant(cw):
 
 
 def test_a_read_grant_reads_an_application_but_never_undoes_it(relay):
-    read = relay.hive.services.grant(relay.task["id"], "user:u_quinn", "read", None, 120, by="user:u_quinn")
+    read = relay.hive.services.grant(relay.task["id"], "user:u_jon", "read", None, 120, by="user:u_jon")
     assert proxied(relay, "GET", APP, read["id"]).status_code == 200
     out = proxied(relay, "POST", APP + "/undo", read["id"])
     assert out.status_code == 403 and error(out)["code"] == "edit_grant_required"

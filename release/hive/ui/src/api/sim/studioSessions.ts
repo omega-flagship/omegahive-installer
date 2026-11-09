@@ -152,6 +152,11 @@ export class SimStudioHost {
       ? { key: 'k_sim_rowan', label: 'Rowan’s key (invented)', payer: 'hive_key', foreign: true, model: 'invented-model' }
       : { key: 'k_sim_own', label: 'Studio key (invented)', payer: 'own_key', foreign: false, model: 'invented-model' })
   }
+  /** SIM (host ownhive.key_setup, Jon 11-05): what the one add-your-key step needs, on own_key_needed */
+  keyStep(): Json {
+    const hasTotal = !this.d.flags.monthlyMissing
+    return { provider: 'openrouter', provider_label: 'OpenRouter', has_total: hasTotal, suggested_month_usd: hasTotal ? null : 50 }
+  }
   /** SIM: the person added their own key in Keys (OI-13): the resolved paying key and payer change */
   addOwnKey(): void {
     this.worldLazy = { ...this.world, key: 'k_sim_mine', label: 'Your own key (invented)', payer: 'own_key', foreign: false }
@@ -169,12 +174,12 @@ export class SimStudioHost {
   /** SIM (host R7 setup {}): the person's own maker; its Studio space is the sim's s_lyra (it owns studio-source canvases) */
   makerAnswer(): Json {
     const w = this.world
-    if (w.foreign) refuse(402, 'own_key_needed', "Add your own key in Keys, then try again.", { scope: 'studio_maker', pays: 'own-key', provider: 'invented' })
+    if (w.foreign) refuse(402, 'own_key_needed', "Add your own key in Keys, then try again.", { scope: 'studio_maker', pays: 'own-key', ...this.keyStep() })
     return { maker: { id: 'a_bell10', name: 'Bellows', swarm_id: STUDIO_SPACE, kind: 'omega', model: w.model, key_id: w.key, key_label: w.label, own_key: w.payer === 'own_key', status: 'asleep', program_id: 'omegadesign', created: false } }
   }
   setupProposal(programId: string, swarmId: string, prep?: { operation_id: string; title: string; detail: string; scene_id: string; source_ref: Json; studio_swarm: string; max_steps: number; window_minutes: number }): Json {
     const w = this.world
-    if (w.foreign) refuse(402, 'own_key_needed', "Add your own key in Keys, then try again.", { scope: 'studio_maker', pays: 'own-key', provider: 'invented' })
+    if (w.foreign) refuse(402, 'own_key_needed', "Add your own key in Keys, then try again.", { scope: 'studio_maker', pays: 'own-key', ...this.keyStep() })
     // r1.13: with the person's pick, the piece is that exact saved canvas, in their Studio space (the sim has no Ask turn
     // of its own: the invented title stays when the pick carries none)
     const request = {
@@ -236,7 +241,7 @@ export class SimStudioHost {
     if (this.d.flags.monthlyMissing) refuse(402, 'spend_limit', 'a total monthly limit is required', { limit: { kind: 'own_key_limit', limit: null, spent: null, held: null }, detail: { reason: 'monthly_total_required' } })
     // OI-13 (sim, ?studiokey=none): the maker would run on someone else's key: 402 before anything is reserved or created
     const w = this.world
-    if (w.foreign) refuse(402, 'own_key_needed', "This mind would run on someone else's key. Add your own key in Keys, then try again.", { scope: 'use', pays: 'own-key' })
+    if (w.foreign) refuse(402, 'own_key_needed', "This mind would run on someone else's key. Add your own key in Keys, then try again.", { scope: 'use', pays: 'own-key', ...this.keyStep() })
     // host admit order (studio_sessions.admit): model, the resolved paying key (key_drift BEFORE consent), the payer
     if (r.model !== w.model) refuse(409, 'model_drift', "The maker's model changed since you confirmed; confirm again.")
     if (r.key_id !== w.key) refuse(409, 'key_drift', 'The key paying for the maker changed since you confirmed; confirm again.')

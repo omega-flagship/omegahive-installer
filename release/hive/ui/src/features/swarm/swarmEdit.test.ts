@@ -34,7 +34,7 @@ describe('swarm changes in words', () => {
 describe('service grants through connections', () => {
   const c = (over: Partial<ConnectionAgreement>): ConnectionAgreement => ({
     id: 'c1', from_swarm: 's1', to_swarm: 's2', purpose: 'p', deliverable: 'd', success: 's', from_coordinator: 'a1', to_coordinator: 'a2', scopes: [],
-    starts_at: '', ends_at: null, until_revoked: false, review_at: null, budget_usd: 1, allocated_usd: 0, on_end: 'drain', status: 'active', created_by: 'user:quinn', created_at: '', history: [], summary: '', note: '', ...over,
+    starts_at: '', ends_at: null, until_revoked: false, review_at: null, budget_usd: 1, allocated_usd: 0, on_end: 'drain', status: 'active', created_by: 'user:jon', created_at: '', history: [], summary: '', note: '', ...over,
   })
   it('splits by who may ask whom, and ignores ended ones', () => {
     const list = [

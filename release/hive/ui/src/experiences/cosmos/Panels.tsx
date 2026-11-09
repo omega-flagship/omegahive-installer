@@ -1,3 +1,5 @@
+import { healthCheck } from '../../lib/healthQuestion'
+import { HealthCheckLabel } from '../../ui/HealthCheckLabel'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { useDraft } from '../drafts'
 import { AnimatePresence, m } from 'framer-motion'
@@ -447,12 +449,12 @@ function Comms({ agent }: { agent: Agent }) {
         ) : (
           <ol className="flex flex-col gap-3">
             {recent.map((msg) => {
-              const mine = msg.direction === 'in' && !msg.sender.startsWith('agent:')
+              const mine = msg.direction === 'in' && !msg.sender.startsWith('agent:') && !healthCheck(msg)
               const peer = msg.direction === 'in' && msg.sender.startsWith('agent:') ? agents[msg.sender.slice(6)] : undefined
               return (
                 <li key={msg.id} className={`flex flex-col ${mine ? 'items-end' : 'items-start'}`}>
                   <div className="cx-mono mb-1 text-[9.5px]" style={{ color: 'var(--cx-ink-3)', letterSpacing: '0.16em' }}>
-                    {mine ? 'YOU' : peer ? `FROM ${shown(peer.name).toUpperCase()}` : shown(agent.name).toUpperCase()} · {clock(msg.created_at)}
+                    {healthCheck(msg) ? <HealthCheckLabel className="" upper /> : mine ? 'YOU' : peer ? `FROM ${shown(peer.name).toUpperCase()}` : shown(agent.name).toUpperCase()} · {clock(msg.created_at)}
                   </div>
                   <div
                     className="cx-selectable max-w-[88%] whitespace-pre-wrap break-words px-3 py-2 text-[14px] leading-relaxed"

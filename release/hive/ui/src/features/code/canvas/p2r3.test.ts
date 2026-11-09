@@ -1,5 +1,5 @@
 /**
- * p2r3 (stand-in FIX-FIRST on p2r2, coordination/omegareview/standin/STANDIN_canvasp2r2_VERDICT_20261007.md), adopting
+ * p2r3 (stand-in FIX-FIRST on p2r2, STANDIN_canvasp2r2_VERDICT_20261007.md), adopting
  * Code's correction 14eafcd3: an apply's completion and a record's reload belong to the context they were issued in.
  * Both tests fail on p2r2 (80a2881) and pass with the correction (receipts code-canvas/p2r3).
  */

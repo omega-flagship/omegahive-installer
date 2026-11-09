@@ -29,7 +29,8 @@ SOURCE_JSON_BYTES = 32768
 STUDIO_STATES = frozenset(("active", "paused", "stopping", "stopped", "held"))
 INTENT_STATES = frozenset(("pending", "refused", "dispatching"))
 PERSON = re.compile(r"user:u_[A-Za-z0-9_-]{1,40}\Z")
-KEY = re.compile(r"k_[0-9a-f]{8}\Z")
+from .keyids import STORED as STORED_KEY
+KEY = re.compile(STORED_KEY + r"\Z")   # keyids: the one grammar (a stored key)
 
 
 @dataclass(frozen=True)
@@ -51,7 +52,7 @@ def human_session(hive, session, role):
     def refused():
         raise hive.error(401, "unauthorized", "a current signed-in person is required")
 
-    if not isinstance(session, dict) or session.get("kind") not in ("password", "sso"):
+    if not isinstance(session, dict) or session.get("kind") not in ("password", "sso", "member_password"):
         refused()
     expires = session.get("expires_at")
     if expires is not None and (type(expires) not in (int, float) or not math.isfinite(expires) or expires <= time.time()):
@@ -66,11 +67,18 @@ def human_session(hive, session, role):
             or len(principal) > 128 or any(ord(c) < 32 or ord(c) == 127 for c in principal)
             or role not in ("admin", "member") or expires is None):
         refused()
+    if session["kind"] == "member_password" and (not principal.startswith("user:u_") or role != "member"):
+        refused()
     if principal.startswith("user:u_"):
         if PERSON.fullmatch(principal) is None:
             refused()
         row = hive.db.one("SELECT role, disabled FROM people WHERE id = ?", (principal[5:],))
-        if row is None or row["disabled"] or row["role"] != role:
+        if row is None or row["disabled"]:
+            refused()
+        if session["kind"] == "member_password":
+            if row["role"] not in ("admin", "member"):
+                refused()
+        elif row["role"] != role:
             refused()
     # The app adapter's existing role_of has checked the current family allowlist for a family SSO identity.
     return True
@@ -609,7 +617,7 @@ class MeDecisions:
             return None
         if row["state"] in ("linked", "abandoned"):
             return None
-        if row["kind"] not in ("code.request", "studio.session") or row["state"] not in INTENT_STATES:
+        if row["kind"] not in ("code.request", "studio.session", "code.test") or row["state"] not in INTENT_STATES:
             raise self._invalid()
         if row["kind"] == "code.request" and not self.person.admin:
             return None

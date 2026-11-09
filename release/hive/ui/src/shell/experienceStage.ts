@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect } from 'react'
+import { useLayoutEffect } from 'react'
 import { cleanInsets, experienceNoticeTop, noticeOverlap, noticePillWidth, noticeRowTop, OMEGA_GLYPH, TOUCH_MIN, type Box, type Insets } from '../lib/frameFit'
 import { useHive } from '../store/store'
-import { setAppStage, useAppStage, type AppStage } from './appStage'
+import { createAppStagePublisher, useAppStage, type AppStage } from './appStage'
 
 /** Marks chrome a whole experience asks the host to keep clear of its notices: bars, docks, pagers, command lines. */
 export const KEEP_CLEAR = 'data-xc-keep-clear'
@@ -92,7 +92,10 @@ export function useExperienceNotices(active: boolean): void {
     let raf = 0
     let top: number | null = null
     let settled = false
+    let disposed = false
+    const stage = createAppStagePublisher()
     const measure = () => {
+      if (disposed) return
       raf = 0
       const viewport = { width: window.innerWidth, height: window.innerHeight }
       const pill = { width: noticePillWidth(viewport), height: coarse.matches ? TOUCH_MIN : OMEGA_GLYPH }
@@ -104,7 +107,7 @@ export function useExperienceNotices(active: boolean): void {
       if (inRow !== null) {
         top = inRow
         settled = showing
-        setAppStage({ mode: 'experience', top })
+        stage.set({ mode: 'experience', top })
         return
       }
       const clear = keepClearBoxes()
@@ -112,10 +115,10 @@ export function useExperienceNotices(active: boolean): void {
       if (settled && top !== null && noticeOverlap(viewport, top, pill, clear) === 0 && top + pill.height <= viewport.height) return
       top = experienceNoticeTop(viewport, readDeviceInsets(probe), clear, pill, undefined, showing ? controlBoxes() : [])
       settled = showing
-      setAppStage({ mode: 'experience', top })
+      stage.set({ mode: 'experience', top })
     }
     const schedule = () => {
-      if (!raf) raf = requestAnimationFrame(measure)
+      if (!disposed && !raf) raf = requestAnimationFrame(measure)
     }
     const resized = () => {
       settled = false
@@ -128,6 +131,8 @@ export function useExperienceNotices(active: boolean): void {
     window.visualViewport?.addEventListener('resize', resized)
     coarse.addEventListener('change', resized)
     return () => {
+      disposed = true
+      stage.release()
       if (raf) cancelAnimationFrame(raf)
       if (poll) clearInterval(poll)
       window.removeEventListener('resize', resized)
@@ -138,8 +143,4 @@ export function useExperienceNotices(active: boolean): void {
       probe.remove()
     }
   }, [active, showing])
-  // back to the usual place when the experience goes behind a page, or goes
-  useEffect(() => {
-    if (active) return () => setAppStage(null)
-  }, [active])
 }

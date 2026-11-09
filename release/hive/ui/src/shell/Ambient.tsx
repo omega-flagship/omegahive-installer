@@ -15,6 +15,7 @@ import { Brand } from './Hud'
 import type { SigninReach } from './brandStatus'
 import { DESKTOP_TICKER_BOTTOM, PHONE_TICKER_BOTTOM } from './tickerPlace'
 import { shown } from '../lib/displayName'
+import { usePhase } from './phase'
 import { clearSigninError, GOOGLE_REQUIRED, readSigninError, signinErrorWords } from './signinError'
 
 // the explainer (copy for every view) loads with the views, not with the shell
@@ -32,11 +33,12 @@ const OUTCOME_VERB: Record<AssertionOutcome, string> = {
 
 /** A quiet live feed of what the hive is doing. */
 export function ActivityTicker() {
+  const phasedHome = usePhase((s) => s.phased && s.phase !== 'pro')
   const activity = useHive((s) => s.activity)
   const agents = useHive((s) => s.agents)
   const desktop = useIsDesktop()
   const route = useRoute()
-  if (route.name !== 'hive') return null
+  if (route.name !== 'hive' || phasedHome) return null
   const items = activity.slice(0, desktop ? 4 : 1)
   return (
     <div
@@ -54,7 +56,7 @@ export function ActivityTicker() {
               animate={{ opacity: 1 - i * 0.22, y: 0, filter: 'blur(0px)' }}
               exit={{ opacity: 0, transition: { duration: 0.2 } }}
               transition={{ type: 'spring', stiffness: 380, damping: 32 }}
-              className="flex min-w-0 items-center gap-2 rounded-xl bg-black/25 px-2.5 py-1.5 text-[12px] text-ink-2 backdrop-blur-sm"
+              className="flex min-w-0 items-center gap-2 rounded-xl bg-shade/25 px-2.5 py-1.5 text-[12px] text-ink-2 backdrop-blur-sm"
             >
               {agent ? <Orb hue={agent.hue} status={agent.status} size={14} /> : <span className="size-3.5" />}
               <span className="shrink-0 font-medium text-ink">{agent?.name ?? 'Someone'}</span>
@@ -100,13 +102,13 @@ export function SceneControls() {
       <Suspense fallback={<span className="block size-11" />}>
         <ViewInfo view="hive" />
       </Suspense>
-      <button onClick={() => engine.zoomBy(1.3)} className="flex size-11 items-center justify-center rounded-xl text-ink-2 hover:bg-white/[0.06] hover:text-ink" aria-label="Zoom in">
+      <button onClick={() => engine.zoomBy(1.3)} className="flex size-11 items-center justify-center rounded-xl text-ink-2 hover:bg-tint/[0.06] hover:text-ink" aria-label="Zoom in">
         <Icon name="zoomIn" size={19} />
       </button>
-      <button onClick={() => engine.zoomBy(1 / 1.3)} className="flex size-11 items-center justify-center rounded-xl text-ink-2 hover:bg-white/[0.06] hover:text-ink" aria-label="Zoom out">
+      <button onClick={() => engine.zoomBy(1 / 1.3)} className="flex size-11 items-center justify-center rounded-xl text-ink-2 hover:bg-tint/[0.06] hover:text-ink" aria-label="Zoom out">
         <Icon name="zoomOut" size={19} />
       </button>
-      <button onClick={() => engine.overview()} className="flex size-11 items-center justify-center rounded-xl text-ink-2 hover:bg-white/[0.06] hover:text-ink" aria-label="Recenter the hive">
+      <button onClick={() => engine.overview()} className="flex size-11 items-center justify-center rounded-xl text-ink-2 hover:bg-tint/[0.06] hover:text-ink" aria-label="Recenter the hive">
         <Icon name="locate" size={19} />
       </button>
     </div>
@@ -124,7 +126,7 @@ export function DotDirectory() {
     >
       <div className="eyebrow px-2 py-1">Minds</div>
       {list.map((a) => (
-        <button key={a.id} onClick={() => navigate({ name: 'dot', id: a.id })} className="flex min-h-11 w-full items-center gap-2 rounded-xl px-2 text-left text-sm hover:bg-white/[0.06]">
+        <button key={a.id} onClick={() => navigate({ name: 'dot', id: a.id })} className="flex min-h-11 w-full items-center gap-2 rounded-xl px-2 text-left text-sm hover:bg-tint/[0.06]">
           <Orb hue={a.hue} status={a.status} size={16} />
           {shown(a.name)}
           <span className="ml-auto text-xs text-ink-3">{a.status}</span>
@@ -180,6 +182,8 @@ export function Login() {
   const client = useHive((s) => s.client)
   const hydrate = useHive((s) => s.hydrate)
   const [pw, setPw] = useState('')
+  // T-101: a member types the email an admin added; the operator leaves it empty
+  const [email, setEmail] = useState('')
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [shake, setShake] = useState(0)
@@ -224,7 +228,7 @@ export function Login() {
           <p className="mt-1.5 text-sm text-ink-3">Sign in with the Google account your invitation was sent to.</p>
           <SigninNotice code={signinError} />
           {url ? (
-            <a href={url} className="mt-6 flex min-h-12 w-full items-center justify-center gap-2.5 rounded-xl bg-white px-4 text-[15px] font-semibold text-[#1f1f1f] shadow-[0_8px_30px_-8px_rgb(255_255_255/0.4)] transition-transform active:scale-[0.98]">
+            <a href={url} className="mt-6 flex min-h-12 w-full items-center justify-center gap-2.5 rounded-xl bg-white px-4 text-[15px] font-semibold text-[#1f1f1f] shadow-[0_8px_30px_-8px_color-mix(in_oklab,var(--color-ink)_40%,transparent)] transition-transform active:scale-[0.98]">
               <GoogleMark /> Continue with Google
             </a>
           ) : (
@@ -236,13 +240,14 @@ export function Login() {
     )
   }
 
+  const members = methods?.member_password === true
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     if (!client || !pw) return
     setBusy(true)
     setErr(null)
     try {
-      await client.login(pw)
+      await client.login(pw, members && email.trim() ? email.trim() : undefined)
       // a client that reports credential changes is read again by the store's own observer (store init): the one
       // sign-in path, also taken when another tab signs in. Hydrating here as well would read the hive twice.
       if (!client.onAuthChange) await hydrate()
@@ -263,22 +268,36 @@ export function Login() {
         animate={shake ? { x: [0, -10, 9, -6, 4, 0], opacity: 1, y: 0, scale: 1 } : { opacity: 1, y: 0, scale: 1 }}
         transition={{ duration: 0.45 }}
         className="glass-strong w-full max-w-sm rounded-[26px] p-6"
-        aria-label="Operator login"
+        aria-label={members ? 'Sign in' : 'Operator login'}
       >
         <Brand signin={reach} />
-        <h1 className="mt-6 font-display text-2xl font-semibold tracking-tight">Welcome back, operator</h1>
-        <p className="mt-1.5 text-sm text-ink-3">Enter the hive password to wake the interface.</p>
+        <h1 className="mt-6 font-display text-2xl font-semibold tracking-tight">{members ? 'Welcome back' : 'Welcome back, operator'}</h1>
+        <p className="mt-1.5 text-sm text-ink-3">{members ? 'Members: your email and the password an admin gave you. The operator: the hive password, no email.' : 'Enter the hive password to wake the interface.'}</p>
         <SigninNotice code={signinError} googleUrl={methods?.sso.login_url ?? null} />
-        <label className="mt-6 block">
+        {members && (
+          <label className="mt-6 block">
+            <span className="eyebrow">Email</span>
+            <input
+              type="email"
+              autoComplete="username"
+              autoFocus
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="mt-2 min-h-12 w-full rounded-xl border border-line bg-shade/30 px-4 text-ink outline-none transition-colors placeholder:text-ink-4 focus:border-accent/60"
+              placeholder="Members only; empty for the operator"
+            />
+          </label>
+        )}
+        <label className={members ? 'mt-4 block' : 'mt-6 block'}>
           <span className="eyebrow">Password</span>
           <input
             type="password"
             autoComplete="current-password"
-            autoFocus
+            autoFocus={!members}
             value={pw}
             onChange={(e) => setPw(e.target.value)}
-            className="mt-2 min-h-12 w-full rounded-xl border border-line bg-black/30 px-4 text-ink outline-none transition-colors placeholder:text-ink-4 focus:border-accent/60"
-            placeholder="Hive password"
+            className="mt-2 min-h-12 w-full rounded-xl border border-line bg-shade/30 px-4 text-ink outline-none transition-colors placeholder:text-ink-4 focus:border-accent/60"
+            placeholder={members ? 'Password' : 'Hive password'}
             aria-invalid={!!err}
             aria-describedby={err ? 'login-err' : undefined}
           />
@@ -320,7 +339,7 @@ export function SigninNotice({ code, googleUrl }: { code: string | null; googleU
         {words}
       </p>
       {code === GOOGLE_REQUIRED && googleUrl && (
-        <a href={googleUrl} className="mt-3 flex min-h-12 w-full items-center justify-center gap-2.5 rounded-xl bg-white px-4 text-[15px] font-semibold text-[#1f1f1f] shadow-[0_8px_30px_-8px_rgb(255_255_255/0.4)] transition-transform active:scale-[0.98]">
+        <a href={googleUrl} className="mt-3 flex min-h-12 w-full items-center justify-center gap-2.5 rounded-xl bg-white px-4 text-[15px] font-semibold text-[#1f1f1f] shadow-[0_8px_30px_-8px_color-mix(in_oklab,var(--color-ink)_40%,transparent)] transition-transform active:scale-[0.98]">
           <GoogleMark /> Continue with Google
         </a>
       )}
@@ -352,7 +371,7 @@ function InviteCard({ token, url }: { token: string; url: string | null }) {
               A living hive of minds. Accept with the Google account {preview ? <span className="text-ink">{preview.email_hint}</span> : 'this was sent to'}.
             </p>
             {url && (
-              <a href={url} className="mt-6 flex min-h-12 w-full items-center justify-center gap-2.5 rounded-xl bg-white px-4 text-[15px] font-semibold text-[#1f1f1f] shadow-[0_8px_30px_-8px_rgb(255_255_255/0.4)] transition-transform active:scale-[0.98]">
+              <a href={url} className="mt-6 flex min-h-12 w-full items-center justify-center gap-2.5 rounded-xl bg-white px-4 text-[15px] font-semibold text-[#1f1f1f] shadow-[0_8px_30px_-8px_color-mix(in_oklab,var(--color-ink)_40%,transparent)] transition-transform active:scale-[0.98]">
                 <GoogleMark /> Accept with Google
               </a>
             )}

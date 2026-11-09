@@ -153,7 +153,7 @@ export function SuiteHistory({ suite }: { suite: LabSuite }) {
                       key={r.key}
                       onClick={() => setPick(r.key)}
                       aria-pressed={on}
-                      className={cx('flex min-h-10 w-full items-center gap-2 rounded-lg px-2 text-left text-[12.5px] transition-colors', on ? 'bg-white/[0.08] text-ink' : 'text-ink-2 hover:bg-white/[0.04]')}
+                      className={cx('flex min-h-10 w-full items-center gap-2 rounded-lg px-2 text-left text-[12.5px] transition-colors', on ? 'bg-tint/[0.08] text-ink' : 'text-ink-2 hover:bg-tint/[0.04]')}
                     >
                       <span className="min-w-0 flex-1 truncate">
                         {labText(r.name)}
@@ -174,7 +174,7 @@ export function SuiteHistory({ suite }: { suite: LabSuite }) {
         <ul className="-mx-2 divide-y divide-line">
           {runsNewest.map((r) => (
             <li key={r.id}>
-              <button onClick={() => navigate({ name: 'lab', run: r.id })} className="flex min-h-12 w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-white/[0.04]">
+              <button onClick={() => navigate({ name: 'lab', run: r.id })} className="flex min-h-12 w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-tint/[0.04]">
                 <StatusIcon status={r.status} size={20} />
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
@@ -199,7 +199,7 @@ export function SuiteHistory({ suite }: { suite: LabSuite }) {
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: 'good' | 'bad' }) {
   return (
-    <div className="min-w-0 rounded-xl border border-line bg-black/20 px-3 py-2">
+    <div className="min-w-0 rounded-xl border border-line bg-shade/20 px-3 py-2">
       <dt className="truncate text-[11px] text-ink-3">{label}</dt>
       <dd className={cx('mt-0.5 truncate text-[16px] font-semibold tabular-nums', tone === 'good' ? 'text-good' : tone === 'bad' ? 'text-bad' : 'text-ink')}>{value}</dd>
     </div>

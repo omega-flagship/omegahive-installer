@@ -3,12 +3,22 @@ import { previewLook } from '../../shell/uiVariant'
 import { DEMO_GREET_MS, DemoHost } from './demo'
 import { BLANK_PROGRESS, FlRefusal, liveHost, type AppRef, type AskShape, type BoundWrite, type FlClient, type FlHost, type Hello, type HiveOwn, type MonthlyLimit, type Progress, type ProgressWrite, type Setup } from './host'
 import { useHive } from '../../store/store'
-import { autoHeld, setFlScreen, stepOf, useFirstLight, type FlScreen } from './store'
-import { askToSave } from './host'
+import { ApiError } from '../../api/client'
+import { LiveClient } from '../../api/live'
+import { OperationStopped } from '../../lib/boundOperation'
+import { identityKey } from '../../lib/identityEpoch'
+import { autoHeld, firstLightLimitLine, setFlScreen, stepOf, useFirstLight, type FlScreen } from './store'
+import { DEFAULT_ASK_PURPOSE, askToSave } from './host'
+import { profileSaveCopy, spendingCopy } from './conditionalCopy'
+import { enterFirstRun } from '../../tour/firstRun'
+
+let scopeSerial = 0
 
 /** A live-shaped host with scripted answers; it records every call (nothing reaches a hive). */
 class FakeHost implements FlHost {
   readonly kind = 'live' as const
+  private readonly scope = { host: `https://firstlight-${++scopeSerial}.invalid`, principal: 'user:invented' }
+  retainedMutationScope() { return this.scope }
   calls: string[] = []
   p: Progress = { ...BLANK_PROGRESS }
   keys = 0
@@ -90,10 +100,10 @@ class FakeHost implements FlHost {
     this.calls.push(`saveAsk:${mindId}:${JSON.stringify(shape)}`)
     if (this.liveClient) return liveHost(this.liveClient, () => 0).saveAsk(mindId, shape, write)
     if (this.saveRefusal) throw this.saveRefusal
-    return write(async () => {
-      if (shape.how !== null) this.how = shape.how
-      return { id: mindId, name: shape.name, status: 'asleep' }
-    })
+    const mind = await write(async () => ({ id: mindId, name: shape.name, status: 'asleep' }))
+    if (shape.how !== null) await write(async () => { this.how = shape.how! })
+    await write(async () => undefined)
+    return mind
   }
 }
 
@@ -115,6 +125,781 @@ const flush = async (n = 6) => {
 }
 const g = () => useFirstLight.getState()
 const at = () => stepOf(g().run)?.id
+
+/** U1 uses the real store/coordinator. Only its host endpoints are scripted. */
+class SingleHost extends FakeHost {
+  model: string | null = 'provider/model-from-host'
+  profileName = 'Pip'
+  profileError = false
+  constructor() {
+    super()
+    this.keys = 1
+    this.wakeAnswer = () => ({ mind: { id: 'a_pipmind', name: this.profileName, status: 'awake' }, state: 'greeted', greeting: { id: 'm_u1', text: 'A recorded host reply.', created_at: null }, created: true, retryable: false, requested_at: null })
+  }
+  async profile(mindId: string) {
+    this.calls.push(`profile:${mindId}`)
+    if (this.profileError) throw new Error('synthetic unavailable profile')
+    return { id: mindId, name: this.profileName, persona: this.how, model: this.model }
+  }
+}
+
+/** Real liveHost adapters over distinct invented client instances; no Host/identity/store algorithm is replaced. */
+type LimitWorld = { host: string; amount: number; calls: string[]; send: (amount: number) => Promise<void>; read?: () => Promise<number> }
+function limitWorld(amount: number): LimitWorld {
+  const world: LimitWorld = { host: `https://limit-${++scopeSerial}.invalid`, amount, calls: [], send: async (next) => { world.amount = next } }
+  return world
+}
+function limitClient(world: LimitWorld, principal: string, proven = true): FlClient {
+  return {
+    retainedMutationScope: () => proven ? { host: world.host, principal } : null,
+    onboarding: async () => ({ ...BLANK_PROGRESS }),
+    mySetup: async () => {
+      world.calls.push(`setup:${principal}`)
+      const amount = world.read ? await world.read() : world.amount
+      return { items: [
+        { id: 'provider_key', done: true, detail: { own_keys: 1, guest: false } },
+        { id: 'monthly_limit', done: true, enforced: true, detail: { enforced_by: 'own', limit_usd: amount, spent_usd: 0, chosen_usd: null } },
+        { id: 'mind_awake', done: false, detail: {} },
+      ], complete: false }
+    },
+    hiveOwn: async () => ({ owner_name: 'Invented', you_are_owner: true, your_access: 'owner', visibility: 'private', pays: 'own-key' }),
+    me: async () => ({ person: { name: principal } }),
+    myMind: async () => ({ mind: { id: 'mind_' + principal, name: principal, status: 'asleep' } }),
+    getAgent: async (id) => ({ id, name: principal, persona: '', model: 'provider/model' }),
+    programs: async () => [],
+    setOwnKeyLimit: async (body) => {
+      expect(body.key_id).toBe('*')
+      expect(typeof body.month_usd).toBe('number')
+      world.calls.push(`send:${principal}:${body.month_usd}`)
+      await world.send(body.month_usd as number)
+      return {}
+    },
+    personalMindHello: async () => { world.calls.push('unexpectedWake'); throw new Error('unexpected Wake') },
+    renameMyMind: async () => { world.calls.push('unexpectedProfile'); throw new Error('unexpected profile write') },
+  }
+}
+const pendingCopy = () => {
+  const r = g().run!
+  return spendingCopy(r.facts.limit, 9, r.u1!.limitPending ?? null, r.u1!.limitChecking === true && r.u1!.busy, r.u1!.limitUncertain)
+}
+const replaceIdentity = () => useHive.setState({ inits: useHive.getState().inits + 1 })
+
+describe('sent limit reconciliation across pause and real adapter/client replacement', () => {
+  it('records sent9 before dispatch settles, and a read begun while it is outstanding cannot resolve old5 uncertainty', async () => {
+    const world = limitWorld(5)
+    let releaseSend: () => void = () => undefined
+    world.send = async (next) => { await new Promise<void>((resolve) => { releaseSend = resolve }); world.amount = next }
+    await g().start({ mode: 'live', host: liveHost(limitClient(world, 'A'), () => 0), singleScreen: true })
+    const old = g().wakeSingleScreen({ name: 'A', how: null }, 9)
+    await flush()
+    expect(world.calls).toContain('send:A:9')
+    expect(g().run!.u1).toMatchObject({ limitPending: 9, limitUncertain: true, limitChecking: true })
+    g().toggle()
+    expect(g().run!.u1).toMatchObject({ limitPending: 9, limitUncertain: true, limitChecking: false, busy: false })
+    expect(pendingCopy()).toBe("We couldn't confirm a spending limit here.")
+    expect(pendingCopy()).not.toContain('$5')
+    g().stop()
+    let releaseRead: (amount: number) => void = () => undefined
+    world.read = () => new Promise<number>((resolve) => { releaseRead = resolve })
+    const reopen = g().start({ mode: 'live', host: liveHost(limitClient(world, 'A'), () => 0), singleScreen: true })
+    await flush()
+    const newRun = g().run!.id
+    releaseSend(); await old
+    expect(g().run!.id).toBe(newRun)
+    expect(g().run!.status).toBe('loading') // old finally did not finish the new read
+    releaseRead(9); await reopen
+    expect(g().run!.u1).toMatchObject({ limitPending: 9, limitUncertain: true, busy: false })
+    expect(pendingCopy()).toBe("We couldn't confirm a spending limit here.")
+    world.read = undefined
+    await g().reload()
+    expect(g().run!.u1).toMatchObject({ limitPending: null, limitUncertain: false })
+    expect(pendingCopy()).toBe('Your minds may spend up to $9 a month.')
+    expect(world.calls).not.toContain('unexpectedWake')
+    expect(world.calls).not.toContain('unexpectedProfile')
+  })
+
+  it('A→B→A with new client and wrapper objects keeps A quarantined, never projects A9 into B, and isolates old finally', async () => {
+    const a = limitWorld(5), b = limitWorld(3)
+    b.host = a.host // same hive, distinct authenticated principals
+    let finishA: () => void = () => undefined, finishB: () => void = () => undefined
+    a.send = async (next) => { await new Promise<void>((resolve) => { finishA = resolve }); a.amount = next }
+    b.send = async (next) => { await new Promise<void>((resolve) => { finishB = resolve }); b.amount = next }
+    await g().start({ mode: 'live', host: liveHost(limitClient(a, 'A'), () => 0), singleScreen: true })
+    const oldA = g().wakeSingleScreen({ name: 'A', how: null }, 9); await flush()
+    replaceIdentity()
+    await g().start({ mode: 'live', host: liveHost(limitClient(b, 'B'), () => 0), singleScreen: true })
+    expect(g().run!.u1).toMatchObject({ limitPending: null, limitUncertain: false })
+    expect(g().run!.facts.limit!.limit_usd).toBe(3)
+    const oldB = g().wakeSingleScreen({ name: 'B', how: null }, 11); await flush()
+    expect(g().run!.u1!.limitPending).toBe(11)
+    replaceIdentity()
+    await g().start({ mode: 'live', host: liveHost(limitClient(a, 'A'), () => 0), singleScreen: true })
+    expect(g().run!.u1).toMatchObject({ limitPending: 9, limitUncertain: true, busy: false })
+    expect(pendingCopy()).not.toContain('$5')
+    expect(pendingCopy()).not.toContain('Checking')
+    replaceIdentity()
+    await g().start({ mode: 'live', host: liveHost(limitClient(b, 'B'), () => 0), singleScreen: true })
+    expect(g().run!.u1!.limitPending).toBe(11)
+    let readB: (amount: number) => void = () => undefined
+    b.read = () => new Promise<number>((resolve) => { readB = resolve })
+    const newB = g().wakeSingleScreen({ name: 'B', how: null }, 11); await flush()
+    expect(g().run!.u1!.limitChecking).toBe(true)
+    finishA(); await oldA
+    expect(g().run!.u1).toMatchObject({ limitPending: 11, limitUncertain: true, limitChecking: true, busy: true })
+    readB(3); await newB
+    finishB(); await oldB
+    b.read = undefined
+    await g().reload()
+    expect(g().run!.u1).toMatchObject({ limitPending: null, limitUncertain: false })
+    expect(a.calls).not.toContain('unexpectedWake')
+    expect(b.calls).not.toContain('unexpectedWake')
+    replaceIdentity()
+    await g().start({ mode: 'live', host: liveHost(limitClient(a, 'A'), () => 0), singleScreen: true })
+    expect(g().run!.u1!.limitUncertain).toBe(false) // ordinary matching read also reconciles A's settled write
+  })
+
+  it('a lost response retains unknown through new wrappers and mismatching readbacks until a fresh matching read', async () => {
+    const world = limitWorld(5)
+    world.send = async () => { throw new Error('invented lost reply; remote outcome unknown') }
+    await g().start({ mode: 'live', host: liveHost(limitClient(world, 'A'), () => 0), singleScreen: true })
+    await g().wakeSingleScreen({ name: 'A', how: null }, 9)
+    expect(g().run!.u1).toMatchObject({ limitPending: 9, limitUncertain: true, limitChecking: false, busy: false })
+    expect(pendingCopy()).not.toContain('$5')
+    g().stop()
+    await g().start({ mode: 'live', host: liveHost(limitClient(world, 'A'), () => 0), singleScreen: true })
+    await g().wakeSingleScreen({ name: 'A', how: null }, 9)
+    expect(world.calls.filter((x) => x === 'send:A:9')).toHaveLength(1)
+    expect(pendingCopy()).toBe("We couldn't confirm a spending limit here.")
+    world.amount = 9 // invented delayed remote commit; not a cancellation/receipt assertion
+    await g().reload()
+    expect(g().run!.u1).toMatchObject({ limitPending: null, limitUncertain: false })
+    expect(pendingCopy()).toBe('Your minds may spend up to $9 a month.')
+    expect(world.calls).not.toContain('unexpectedWake')
+  })
+
+  it('an unproved replacement scope gets only generic uncertainty, no A amount, and sends no mutation', async () => {
+    const world = limitWorld(5)
+    world.send = async () => { throw new Error('invented lost reply') }
+    await g().start({ mode: 'live', host: liveHost(limitClient(world, 'A'), () => 0), singleScreen: true })
+    await g().wakeSingleScreen({ name: 'A', how: null }, 9)
+    g().stop()
+    await g().start({ mode: 'live', host: liveHost(limitClient(world, 'unproved', false), () => 0), singleScreen: true })
+    expect(g().run!.u1).toMatchObject({ limitPending: null, limitUncertain: true })
+    await g().wakeSingleScreen({ name: 'unproved', how: null }, 7)
+    expect(world.calls.filter((x) => x.startsWith('send:'))).toEqual(['send:A:9'])
+    expect(pendingCopy()).toBe("We couldn't confirm a spending limit here.")
+    world.amount = 9
+    g().stop()
+    await g().start({ mode: 'live', host: liveHost(limitClient(world, 'A'), () => 0), singleScreen: true })
+    expect(g().run!.u1!.limitUncertain).toBe(false)
+  })
+})
+
+describe('real LiveClient retained scope is correlated with the successful current me identity', () => {
+  it('new client objects recover the same public host/principal scope only after successful me, and principal switch invalidates it', async () => {
+    let principal = 'user:A'
+    const fetcher = vi.fn(async (_url: string | URL | Request) => new Response(JSON.stringify({ principal, person: { name: principal } }), { headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetcher)
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined, removeItem: () => undefined })
+    const a = new LiveClient('https://scope.invalid/hive/'), replacement = new LiveClient('https://scope.invalid/hive')
+    try {
+      expect(a.retainedMutationScope()).toBeNull()
+      await a.me(); await replacement.me()
+      expect(replacement.retainedMutationScope()).toEqual(a.retainedMutationScope())
+      expect(a.retainedMutationScope()).toEqual({ host: 'https://scope.invalid/hive', principal: 'user:A' })
+      principal = 'user:B'
+      await expect(a.me()).rejects.toMatchObject({ code: 'auth_context_changed' })
+      expect(a.retainedMutationScope()).toBeNull()
+      await a.me()
+      expect(a.retainedMutationScope()).toEqual({ host: 'https://scope.invalid/hive', principal: 'user:B' })
+      expect(fetcher.mock.calls.every((args) => String(args[0]).endsWith('/api/auth/me'))).toBe(true)
+    } finally { a.dispose(); replacement.dispose() }
+  })
+
+  it('logout invalidates cached scope and an older in-flight me cannot publish it under the new auth identity', async () => {
+    let hold = false
+    const releases: Array<(response: Response) => void> = []
+    const fetcher = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).endsWith('/api/auth/logout')) return new Response('{}')
+      if (hold) return new Promise<Response>((resolve) => { releases.push(resolve) })
+      return new Response(JSON.stringify({ principal: 'user:A', person: { name: 'A' } }), { headers: { 'Content-Type': 'application/json' } })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined, removeItem: () => undefined })
+    const client = new LiveClient('https://old-me.invalid')
+    try {
+      await client.me(); expect(client.retainedMutationScope()).not.toBeNull()
+      hold = true
+      const old = client.me()
+      const rejected = expect(old).rejects.toMatchObject({ code: 'auth_context_changed' })
+      await flush()
+      expect(client.retainedMutationScope()).toBeNull() // cached A is not usable during the pending identity read
+      await client.logout()
+      expect(client.retainedMutationScope()).toBeNull()
+      const current = client.me()
+      await flush()
+      expect(releases).toHaveLength(2)
+      releases[0](new Response(JSON.stringify({ principal: 'user:A', person: { name: 'A' } }), { headers: { 'Content-Type': 'application/json' } }))
+      await rejected
+      expect(client.retainedMutationScope()).toBeNull() // old finally cannot make the newer read look settled
+      releases[1](new Response(JSON.stringify({ principal: 'user:B', person: { name: 'B' } }), { headers: { 'Content-Type': 'application/json' } }))
+      await current
+      expect(client.retainedMutationScope()).toEqual({ host: 'https://old-me.invalid', principal: 'user:B' })
+    } finally { client.dispose() }
+  })
+})
+
+/** Use the public journey state transitions/choose API, not a second test setter implementation. */
+async function monthlyChoice(host: FakeHost) {
+  await g().start({ mode: 'live', host, beat: 'models' })
+  await nextTo('3.3')
+  await g().checkKey()
+  await flush()
+  expect(at()).toBe('3.4')
+}
+
+describe('all reachable First Light own-limit writers share the same quarantine', () => {
+  it('U1 sent9 blocks journey choose20 until settled matching readback, then the same public choose may send20', async () => {
+    const h = new SingleHost()
+    h.ownLimit = 5
+    const actualSet = h.setOwnLimit.bind(h)
+    let finish: () => void = () => undefined
+    h.setOwnLimit = async (amount) => {
+      h.calls.push(`dispatch:${amount}`)
+      if (amount === 9) await new Promise<void>((resolve) => { finish = resolve })
+      await actualSet(amount)
+    }
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    const u1 = g().wakeSingleScreen({ name: 'Pip', how: null }, 9)
+    await flush()
+    expect(h.calls.filter((x) => x.startsWith('dispatch:'))).toEqual(['dispatch:9'])
+    g().toggle()
+    await monthlyChoice(h) // same path reached by the existing look/role journey action
+    const current = g().run!.id
+    await g().choose(20)
+    expect(h.calls.filter((x) => x.startsWith('dispatch:'))).toEqual(['dispatch:9'])
+    expect(g().run!.limit).toMatchObject({ limitPending: 9, limitUncertain: true, busy: false })
+    expect(firstLightLimitLine(g().run!)).toBe("We couldn't confirm a spending limit here.")
+    expect(firstLightLimitLine(g().run!)).not.toContain('$5')
+    finish(); await u1
+    expect(g().run!.id).toBe(current)
+    expect(g().run!.limit).toMatchObject({ limitPending: 9, limitUncertain: true, busy: false })
+    await g().checkKey() // fresh read begins after the original setter locally settles
+    expect(g().run!.limit).toMatchObject({ limitPending: null, limitUncertain: false })
+    expect(g().run!.facts.limit!.limit_usd).toBe(9)
+    await g().choose(20)
+    expect(h.calls.filter((x) => x.startsWith('dispatch:'))).toEqual(['dispatch:9', 'dispatch:20'])
+    expect(g().run!.limit).toMatchObject({ limitPending: null, limitUncertain: false, busy: false, error: null })
+    expect(g().run!.facts.limit).toMatchObject({ enforced: true, enforced_by: 'own', limit_usd: 20 })
+    expect(firstLightLimitLine(g().run!)).toContain('$20')
+    expect(at()).toBe('3.5')
+    expect(h.calls).not.toContain('helloWake')
+  })
+
+  it('a journey-dispatched setter stays unknown across pause/reopen and its old finally cannot mutate the new U1 attempt', async () => {
+    const h = new SingleHost()
+    h.ownLimit = 5
+    const set = h.setOwnLimit.bind(h)
+    let finish: () => void = () => undefined
+    h.setOwnLimit = async (amount) => { h.calls.push(`dispatch:${amount}`); await new Promise<void>((resolve) => { finish = resolve }); await set(amount) }
+    await monthlyChoice(h)
+    const choosing = g().choose(9)
+    await flush()
+    expect(g().run!.limit).toMatchObject({ busy: true, limitPending: 9, limitUncertain: true })
+    g().toggle()
+    expect(g().run!.limit).toMatchObject({ busy: false, limitPending: 9, limitUncertain: true })
+    expect(firstLightLimitLine(g().run!)).not.toContain('$5')
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    const newRun = g().run!.id
+    expect(g().run!.u1).toMatchObject({ limitPending: 9, limitUncertain: true, busy: false, limitChecking: false })
+    const writes = h.calls.filter((x) => x.startsWith('write:')).length
+    finish(); await choosing
+    expect(g().run!.id).toBe(newRun)
+    expect(g().run!.u1).toMatchObject({ limitPending: 9, limitUncertain: true, busy: false, limitChecking: false })
+    expect(h.calls.filter((x) => x.startsWith('write:'))).toHaveLength(writes)
+    await g().reload()
+    expect(g().run!.u1).toMatchObject({ limitPending: null, limitUncertain: false })
+    expect(h.calls).not.toContain('helloWake')
+  })
+
+  it('a lost journey setter response cannot restore old5 or allow another setter/Wake before matching readback', async () => {
+    const h = new SingleHost()
+    h.ownLimit = 5
+    const set = h.setOwnLimit.bind(h)
+    h.setOwnLimit = async (amount) => { h.calls.push(`lost-dispatch:${amount}`); throw new Error('invented lost response') }
+    await monthlyChoice(h)
+    await g().choose(9)
+    expect(g().run!.limit).toMatchObject({ limitPending: 9, limitUncertain: true, busy: false, error: "We couldn't confirm a spending limit here." })
+    const progressWrites = h.calls.filter((x) => x.startsWith('write:')).length
+    await g().checkKey()
+    await g().choose(20)
+    expect(h.calls.filter((x) => x.startsWith('lost-dispatch:'))).toEqual(['lost-dispatch:9'])
+    expect(h.calls.filter((x) => x.startsWith('write:'))).toHaveLength(progressWrites)
+    expect(firstLightLimitLine(g().run!)).not.toContain('$5')
+    await g().goBeat('hello')
+    await g().wake()
+    expect(h.calls).not.toContain('helloWake')
+    expect(g().run!.hello.refusal?.code).toBe('limit_unconfirmed')
+    h.ownLimit = 9 // invented delayed remote commit, not proof of cancellation
+    await monthlyChoice(h)
+    h.setOwnLimit = set
+    await g().choose(20)
+    expect(h.calls).toContain('setOwnLimit:20')
+    expect(g().run!.limit.limitUncertain).toBe(false)
+  })
+
+  it('the shared dispatch checks fresh current own-key context rather than granting a stale owner/enforcer write', async () => {
+    for (const changed of ['guest', 'foreign-enforcer'] as const) {
+      const h = new SingleHost()
+      h.ownLimit = 5
+      await monthlyChoice(h)
+      if (changed === 'guest') h.own = async () => ({ ...h.own_, your_access: 'guest', you_are_owner: false })
+      else {
+        const setup = h.setup.bind(h)
+        h.setup = async () => { const s = await setup(); return { ...s, limit: { ...s.limit!, enforced_by: 'invite' as const } } }
+      }
+      await g().choose(20)
+      expect(h.calls.some((x) => x.startsWith('setOwnLimit:'))).toBe(false)
+      expect(g().run!.limit.busy).toBe(false)
+      expect(g().run!.limit.error).toBeTruthy()
+      g().stop()
+    }
+  })
+})
+
+describe('U1: one explicit, person-bound profile and Wake chain', () => {
+  it('reads the whole personal context without role/look navigation, writes or Wake', async () => {
+    const h = new SingleHost()
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    expect(g().run!.u1).toMatchObject({ context: 'known', model: h.model, phase: 'editing', busy: false })
+    expect(g().run!.facts.askHow).toBe('')
+    expect(g().run!.i).toBe(-1)
+    expect(h.calls).toContain('profile:a_pipmind')
+    expect(h.calls.some((x) => /^(write:|setOwnLimit:|saveAsk:|helloWake)/.test(x))).toBe(false)
+    expect(moves).toEqual([])
+  })
+
+  it('explicit Wake verifies the proposed own-key limit before profile and Wake, and quotes only the returned greeting', async () => {
+    const h = new SingleHost()
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    await g().wakeSingleScreen(askToSave('Pip', null, ''), 5)
+    await flush()
+    const limitAt = h.calls.indexOf('setOwnLimit:5')
+    const saveAt = h.calls.findIndex((x) => x.startsWith('saveAsk:'))
+    expect(limitAt).toBeGreaterThan(-1)
+    expect(h.calls.slice(limitAt + 1, saveAt)).toContain('setup')
+    expect(saveAt).toBeGreaterThan(limitAt)
+    expect(h.calls.indexOf('helloWake')).toBeGreaterThan(saveAt)
+    expect(h.how).toBe(DEFAULT_ASK_PURPOSE)
+    expect(g().run!.facts.limit).toMatchObject({ enforced: true, enforced_by: 'own', limit_usd: 5 })
+    expect(g().run!.u1!.phase).toBe('greeted')
+    expect(g().run!.hello.hello!.greeting!.text).toBe('A recorded host reply.')
+    expect(g().run!.beats.arrive.state).not.toBe('ready')
+    expect(g().run!.progress!.status).toBe('finished')
+    expect(g().run!.u1!.completion).toBe('confirmed')
+    expect(g().run!.progress!.beats_done).toEqual(['ask', 'hello'])
+    expect(g().run!.beats.look.state).toBe('pending')
+    expect(moves).toEqual([])
+  })
+
+  it('Checking follows dispatched limit setter/readback promises, clears before profile work, and never survives a settled unconfirmed amount', async () => {
+    const h = new SingleHost()
+    const actualSet = h.setOwnLimit.bind(h), actualSetup = h.setup.bind(h), actualSave = h.saveAsk.bind(h)
+    let releaseSet: () => void = () => undefined
+    let releaseRead: () => void = () => undefined
+    let releaseProfile: () => void = () => undefined
+    let readbackReached = false, profileReached = false
+    h.setOwnLimit = async (amount) => { await new Promise<void>((resolve) => { releaseSet = resolve }); await actualSet(amount) }
+    h.setup = async () => {
+      if (h.ownLimit !== null) { readbackReached = true; await new Promise<void>((resolve) => { releaseRead = resolve }) }
+      return actualSetup()
+    }
+    h.saveAsk = async (id, shape, write) => {
+      profileReached = true
+      await new Promise<void>((resolve) => { releaseProfile = resolve })
+      return actualSave(id, shape, write)
+    }
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    const attempt = g().wakeSingleScreen({ name: 'Pip', how: null }, 5)
+    await flush()
+    expect(g().run!.u1!.limitChecking).toBe(true)
+    expect(spendingCopy(g().run!.facts.limit, 5, null, g().run!.u1!.limitChecking)).toBe('Checking your limit…')
+    releaseSet(); await flush()
+    expect(readbackReached).toBe(true)
+    expect(g().run!.u1).toMatchObject({ limitChecking: true, limitPending: 5 })
+    releaseRead(); await flush()
+    expect(profileReached).toBe(true)
+    expect(g().run!.u1).toMatchObject({ limitChecking: false, limitPending: null, busy: true })
+    expect(spendingCopy(g().run!.facts.limit, 5, null, g().run!.u1!.limitChecking)).toBe('Your minds may spend up to $5 a month.')
+    releaseProfile(); await attempt; await flush()
+    expect(g().run!.u1!.limitChecking).toBe(false)
+
+    const failed = new SingleHost(), setup = failed.setup.bind(failed)
+    failed.setup = async () => {
+      const snapshot = await setup()
+      return failed.ownLimit !== null ? { ...snapshot, limit: { ...snapshot.limit!, enforced: false, enforced_by: null, limit_usd: null } } : snapshot
+    }
+    g().stop()
+    await g().start({ mode: 'live', host: failed, singleScreen: true })
+    await g().wakeSingleScreen({ name: 'Pip', how: null }, 5)
+    const run = g().run!
+    expect(run.u1).toMatchObject({ limitChecking: false, limitPending: 5, busy: false })
+    expect(spendingCopy(run.facts.limit, 5, run.u1!.limitPending!, run.u1!.limitChecking)).toBe("We couldn't confirm a spending limit here.")
+    expect(failed.calls).not.toContain('helloWake')
+  })
+
+  it('unread purpose or absent host model cannot send profile, limit or Wake', async () => {
+    for (const problem of ['profile', 'model'] as const) {
+      const h = new SingleHost()
+      if (problem === 'profile') h.profileError = true
+      else h.model = null
+      await g().start({ mode: 'live', host: h, singleScreen: true })
+      expect(g().run!.u1!.context).toBe('unavailable')
+      expect(g().run!.facts.askHow).toBe(problem === 'profile' ? null : '')
+      await g().wakeSingleScreen({ name: 'Pip', how: DEFAULT_ASK_PURPOSE }, 5)
+      expect(h.calls.some((x) => /^(setOwnLimit:|saveAsk:|helloWake)/.test(x))).toBe(false)
+      g().stop()
+    }
+  })
+
+  it('name-only preserves the whole multiline persona; an intentional clear stays empty', async () => {
+    for (const [existing, edit, expected] of [['Long\n' + 'x'.repeat(900), null, 'Long\n' + 'x'.repeat(900)], ['Kind.', '', '']] as const) {
+      const h = new SingleHost()
+      h.how = existing
+      h.ownLimit = 7
+      await g().start({ mode: 'live', host: h, singleScreen: true })
+      await g().wakeSingleScreen(askToSave('Wren', edit, g().run!.facts.askHow), null)
+      expect(h.calls.some((x) => x.startsWith('saveAsk:'))).toBe(true)
+      expect(h.how).toBe(expected)
+      expect(g().run!.facts.askHow).toBe(expected)
+      expect(h.calls.some((x) => x.startsWith('setOwnLimit:'))).toBe(false)
+      g().stop()
+    }
+  })
+
+  it('guest scope refuses an own-key limit change, while an unchanged host allowance can reach host Wake', async () => {
+    const h = new SingleHost()
+    h.own_ = { ...h.own_, you_are_owner: false, your_access: 'guest', pays: 'hive-key' }
+    h.limit = { done: true, enforced: true, enforced_by: 'invite', limit_usd: 3, spent_usd: 0, chosen_usd: null, host_name: 'Host', pending_request: null }
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    await g().wakeSingleScreen({ name: 'Pip', how: null }, 5)
+    expect(h.calls.some((x) => /^(setOwnLimit:|saveAsk:|helloWake)/.test(x))).toBe(false)
+    expect(g().run!.u1!.error).toContain('host controls')
+    await g().wakeSingleScreen({ name: 'Pip', how: null }, null)
+    expect(h.calls).toContain('helloWake')
+    expect(h.calls.some((x) => x.startsWith('setOwnLimit:'))).toBe(false)
+    expect(g().run!.facts.limit!.limit_usd).toBe(3)
+  })
+
+  it('a changed current model or purpose is shown for review before any write', async () => {
+    const h = new SingleHost()
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    h.model = 'provider/new-host-model'
+    h.how = 'Changed elsewhere.'
+    await g().wakeSingleScreen({ name: 'Pip', how: DEFAULT_ASK_PURPOSE }, 5)
+    expect(g().run!.facts.askHow).toBe(h.how)
+    expect(g().run!.u1!.model).toBe(h.model)
+    expect(g().run!.u1!.error).toContain('Review the current values')
+    expect(h.calls.some((x) => /^(setOwnLimit:|saveAsk:|helloWake)/.test(x))).toBe(false)
+  })
+
+  it('unconfirmed limit readback stops before profile and Wake without claiming rollback', async () => {
+    const h = new SingleHost()
+    h.setOwnLimit = async (n) => { h.calls.push(`setOwnLimit:${n}`) } // host answer without a confirming state change
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    await g().wakeSingleScreen({ name: 'Pip', how: null }, 5)
+    expect(h.calls).toContain('setOwnLimit:5')
+    expect(h.calls.some((x) => /^(saveAsk:|helloWake)/.test(x))).toBe(false)
+    expect(g().run!.facts.limit!.enforced).toBe(false)
+    expect(g().run!.u1!.error).toContain('may have been saved')
+  })
+
+  it('a host Wake refusal retains saved-profile truth and never invents a greeting', async () => {
+    const h = new SingleHost()
+    h.ownLimit = 5
+    h.helloWake = async () => { h.calls.push('helloWake'); throw new FlRefusal(403, 'no_key', 'No usable key') }
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    await g().wakeSingleScreen(askToSave('Pip', null, ''), null)
+    expect(h.how).toBe(DEFAULT_ASK_PURPOSE)
+    expect(g().run!.u1).toMatchObject({ profileSaved: true, phase: 'editing', busy: false })
+    expect(g().run!.u1!.saves!.name).toBe('saved')
+    expect(g().run!.u1!.error).toContain("couldn't confirm whether this was charged")
+    expect(g().run!.facts.greeted).toBe(false)
+    expect(g().run!.hello.hello).toBeNull()
+  })
+
+  it('each actual live-host write and the Wake answer stays bound to its original identity', async () => {
+    for (const at of ['limit', 'rename', 'persona', 'prefs', 'wake'] as const) {
+      const h = new SingleHost()
+      const sent: string[] = []
+      const endpoint = (name: string) => { sent.push(name); if (at === name) useHive.setState((s) => ({ inits: s.inits + 1 })) }
+      const setLimit = h.setOwnLimit.bind(h)
+      h.setOwnLimit = async (n) => { endpoint('limit'); await setLimit(n) }
+      h.liveClient = {
+        renameMyMind: async (name) => { endpoint('rename'); return { mind: { id: 'a_pipmind', name, status: 'asleep' } } },
+        patchAgent: async () => { endpoint('persona'); return {} },
+        setAskSettings: async () => { endpoint('prefs'); return {} },
+      }
+      const reply = h.wakeAnswer!
+      h.helloWake = async () => { endpoint('wake'); return reply() }
+      await g().start({ mode: 'live', host: h, singleScreen: true })
+      await g().wakeSingleScreen({ name: 'Pip', how: 'Kind.' }, 5)
+      expect(sent).toEqual(['limit', 'rename', 'persona', 'prefs', 'wake'].slice(0, ['limit', 'rename', 'persona', 'prefs', 'wake'].indexOf(at) + 1))
+      expect(g().run?.facts.greeted ?? false).toBe(false)
+      g().stop()
+    }
+  })
+
+  it('pause then resume cannot revive a deferred old read or let its finally clear a newer attempt', async () => {
+    const h = new SingleHost()
+    h.ownLimit = 5
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    const original = h.profile.bind(h)
+    let release: (v: Awaited<ReturnType<SingleHost['profile']>>) => void = () => undefined
+    h.profile = async (_id) => { h.calls.push('deferred-profile'); return new Promise((resolve) => { release = resolve }) }
+    const old = g().wakeSingleScreen({ name: 'Pip', how: null }, null)
+    await flush()
+    expect(h.calls).toContain('deferred-profile')
+    g().toggle()
+    g().toggle()
+    h.profile = original
+    let answer: (v: Hello) => void = () => undefined
+    h.helloWake = async () => { h.calls.push('new-wake'); return new Promise((resolve) => { answer = resolve }) }
+    const next = g().wakeSingleScreen({ name: 'Pip', how: null }, null)
+    await flush()
+    expect(h.calls).toContain('new-wake')
+    release(await original('a_pipmind'))
+    await old
+    expect(g().run!.u1!.busy).toBe(true)
+    expect(h.calls.filter((x) => x.startsWith('saveAsk:'))).toHaveLength(1)
+    answer(h.wakeAnswer!())
+    await next
+    expect(g().run!.u1!.phase).toBe('greeted')
+  })
+
+  it('overlapping context reloads keep only the newest whole-persona and model answer', async () => {
+    const h = new SingleHost()
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    const original = h.profile.bind(h)
+    let release: (v: Awaited<ReturnType<SingleHost['profile']>>) => void = () => undefined
+    h.profile = async () => new Promise((resolve) => { release = resolve })
+    const old = g().reload()
+    await flush()
+    h.profile = original
+    h.how = 'Newest whole purpose.'
+    h.model = 'new/model'
+    await g().reload()
+    release({ id: 'a_pipmind', name: 'Pip', persona: 'Stale.', model: 'old/model' })
+    await old
+    expect(g().run!.facts.askHow).toBe('Newest whole purpose.')
+    expect(g().run!.u1!.model).toBe('new/model')
+  })
+
+  it('a failed completion write stays explicit and retries only progress, never paid Wake', async () => {
+    const h = new SingleHost()
+    h.ownLimit = 5
+    const actual = h.writeProgress.bind(h)
+    let fail = true
+    h.writeProgress = async (w, version) => { if (w.status === 'finished' && fail) { fail = false; h.calls.push('completion-refused'); throw new FlRefusal(503, 'unavailable', 'synthetic completion refusal') } return actual(w, version) }
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    await g().wakeSingleScreen(askToSave('Pip', null, ''), null)
+    await flush()
+    expect(h.calls).toContain('completion-refused')
+    expect(g().run!.facts.greeted).toBe(true)
+    expect(g().run!.u1!.completion).toBe('unknown')
+    expect(h.p.status).not.toBe('finished')
+    await g().finishSingleScreen()
+    expect(g().run!.u1!.completion).toBe('confirmed')
+    expect(h.p.status).toBe('finished')
+    expect(h.calls.filter((x) => x === 'helloWake')).toHaveLength(1)
+    expect(h.p.beats_done).toEqual(['ask', 'hello'])
+    expect(h.p.beats_skipped).toEqual([])
+    const opened: string[] = []
+    expect(await enterFirstRun({ onboarding: async () => ({ record: 'first-light.progress/1', ...h.p }) }, () => opened.push('open'))).toBe('complete')
+    expect(opened).toEqual([])
+  })
+
+  it('a lost completion acknowledgement is unknown until readback, with no second progress write or Wake', async () => {
+    const h = new SingleHost()
+    const actual = h.writeProgress.bind(h)
+    let writes = 0
+    h.writeProgress = async (w, version) => { writes++; const saved = await actual(w, version); if (writes === 1) throw new Error('synthetic lost completion acknowledgement'); return saved }
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    await g().wakeSingleScreen({ name: 'Pip', how: null }, null)
+    await flush()
+    expect(writes).toBe(1)
+    expect(h.p.status).toBe('finished')
+    expect(g().run!.u1!.completion).toBe('unknown')
+    await g().finishSingleScreen()
+    expect(g().run!.u1!.completion).toBe('confirmed')
+    expect(writes).toBe(1)
+    expect(h.calls.filter((x) => x === 'helloWake')).toHaveLength(1)
+  })
+
+  it('an in-flight completion answer cannot commit after the person changes', async () => {
+    const h = new SingleHost()
+    const actual = h.writeProgress.bind(h)
+    let release: (p: Progress) => void = () => undefined
+    h.writeProgress = async (w, version) => { const value = await actual(w, version); h.calls.push('held-completion'); return new Promise<Progress>((resolve) => { release = () => resolve(value) }) }
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    await g().wakeSingleScreen({ name: 'Pip', how: null }, null)
+    await flush()
+    expect(h.calls).toContain('held-completion')
+    expect(g().run!.u1!.completion).toBe('saving')
+    useHive.setState((s) => ({ inits: s.inits + 1 }))
+    release(h.p)
+    await flush()
+    expect(g().run?.u1?.completion).not.toBe('confirmed')
+    expect(h.calls.filter((x) => x === 'helloWake')).toHaveLength(1)
+  })
+
+  it('after an incomplete close and re-signin, the recorded greeting is reused instead of replaying paid Wake', async () => {
+    const h = new SingleHost()
+    const actual = h.writeProgress.bind(h)
+    let first = true
+    h.writeProgress = async (w, version) => { if (first) { first = false; throw new Error('synthetic completion unavailable') } return actual(w, version) }
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    await g().wakeSingleScreen({ name: 'Pip', how: null }, null)
+    await flush()
+    expect(g().run!.u1!.completion).toBe('unknown')
+    h.helloNext = g().run!.hello.hello
+    g().stop()
+    useHive.setState((s) => ({ inits: s.inits + 1 }))
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    await g().wakeSingleScreen({ name: 'Pip', how: null }, null)
+    await flush()
+    expect(h.calls.filter((x) => x === 'helloWake')).toHaveLength(1)
+    expect(g().run!.u1!.completion).toBe('confirmed')
+    expect(h.p.status).toBe('finished')
+  })
+
+  it('actual rename acknowledgement plus lost persona response names partial/unknown truth and reads current values back', async () => {
+    const h = new SingleHost()
+    const wire: string[] = []
+    h.liveClient = {
+      renameMyMind: async (name) => { wire.push('name'); h.profileName = name; return { mind: { id: 'a_pipmind', name, status: 'asleep' } } },
+      patchAgent: async (_id, body) => { wire.push('purpose'); h.how = String(body.persona); throw new Error('synthetic lost persona answer') },
+      setAskSettings: async () => { wire.push('preferences'); return {} },
+    }
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    await g().wakeSingleScreen({ name: 'Wren', how: 'Kind.' }, null)
+    expect(wire).toEqual(['name', 'purpose'])
+    expect(g().run!.u1!.saves).toMatchObject({ name: 'saved', purpose: 'unknown', preferences: 'not_sent', readback: { name: 'Wren', purpose: 'Kind.' } })
+    expect(h.calls).not.toContain('helloWake')
+    expect(g().run!.facts.greeted).toBe(false)
+  })
+
+  it('ordinary prefs refusal retains the existing success policy without falsely claiming every field Saved', async () => {
+    const h = new SingleHost()
+    h.liveClient = {
+      renameMyMind: async (name) => { h.profileName = name; return { mind: { id: 'a_pipmind', name, status: 'asleep' } } },
+      patchAgent: async (_id, body) => { h.how = String(body.persona); return {} },
+      setAskSettings: async () => { throw new ApiError(403, 'person_required', 'synthetic ordinary preference refusal') },
+    }
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    await g().wakeSingleScreen({ name: 'Pip', how: 'Kind.' }, null)
+    await flush()
+    expect(g().run!.u1!.saves).toMatchObject({ name: 'saved', purpose: 'saved', preferences: 'unknown' })
+    expect(g().run!.u1!.completion).toBe('confirmed')
+    expect(h.calls).toContain('helloWake')
+  })
+
+  it('completion reads held across pause/resume release only their own lock; an old answer cannot clear the newer progress retry', async () => {
+    const h = new SingleHost()
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    const actualProgress = h.progress.bind(h)
+    const releases: ((p: Progress) => void)[] = []
+    let reads = 0
+    h.progress = async () => {
+      reads++
+      h.calls.push(`completion-read:${reads}`)
+      return reads <= 2 ? new Promise<Progress>((resolve) => releases.push(resolve)) : actualProgress()
+    }
+    await g().wakeSingleScreen({ name: 'Pip', how: null }, null)
+    await flush()
+    expect(reads).toBe(1)
+    const oldToken = g().run!.u1!.completionToken
+    expect(oldToken).toBe(g().run!.token)
+    g().toggle()
+    expect(g().run!.u1!.completion).toBe('unknown')
+    expect(g().run!.u1!.completionToken).toBeUndefined()
+    g().toggle()
+    expect(g().run!.u1!.phase).toBe('greeted')
+    const retry = g().finishSingleScreen()
+    const newToken = g().run!.token
+    expect(newToken).not.toBe(oldToken)
+    expect(g().run!.u1!.completionToken).toBe(newToken)
+    releases[0]({ ...h.p })
+    await flush()
+    expect(reads).toBe(2)
+    expect(g().run!.u1!.completion).toBe('saving')
+    expect(g().run!.u1!.completionToken).toBe(newToken)
+    expect(h.calls.some((x) => x.startsWith('write:'))).toBe(false) // the old read never received write authority
+    releases[1]({ ...h.p })
+    await retry
+    expect(g().run!.u1!.completion).toBe('confirmed')
+    expect(g().run!.u1!.completionToken).toBeUndefined()
+    expect(h.p.status).toBe('finished')
+    expect(h.calls.filter((x) => x === 'helloWake')).toHaveLength(1)
+  })
+
+  it('a held completion write can finish remotely during pause/reload; current greeting and progress readback recover without another write or Wake', async () => {
+    const h = new SingleHost()
+    const actualWrite = h.writeProgress.bind(h)
+    let release: () => void = () => undefined
+    let writes = 0
+    h.writeProgress = async (w, version) => {
+      writes++
+      const saved = await actualWrite(w, version)
+      if (writes === 1) return new Promise<Progress>((resolve) => { release = () => resolve(saved) })
+      return saved
+    }
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    await g().wakeSingleScreen({ name: 'Pip', how: null }, null)
+    await flush()
+    expect(writes).toBe(1)
+    expect(h.p.status).toBe('finished')
+    expect(g().run!.u1!.completion).toBe('saving')
+    h.helloNext = g().run!.hello.hello
+    g().toggle()
+    g().toggle()
+    await g().reload()
+    expect(g().run!.u1!.completion).toBe('unknown')
+    expect(g().run!.u1!.completionToken).toBeUndefined()
+    await g().wakeSingleScreen({ name: 'Pip', how: null }, null)
+    const currentToken = g().run!.token
+    expect(g().run!.u1!.completionToken).toBe(currentToken)
+    release()
+    await flush()
+    expect(g().run!.u1!.completion).toBe('confirmed')
+    expect(g().run!.u1!.completionToken).toBeUndefined()
+    expect(writes).toBe(1)
+    expect(h.calls.filter((x) => x === 'helloWake')).toHaveLength(1)
+    expect(h.p.beats_done).toEqual(['ask', 'hello'])
+  })
+
+  it('actual typed stops release a completion lock even before the store identity key changes, without retrying Wake', async () => {
+    for (const stoppedError of [new OperationStopped(), new ApiError(409, 'identity_changed', 'Synthetic current-key client stop')]) {
+      const h = new SingleHost()
+      await g().start({ mode: 'live', host: h, singleScreen: true })
+      const key = identityKey()
+      const actualProgress = h.progress.bind(h)
+      let first = true
+      h.progress = async () => { if (first) { first = false; h.calls.push('same-key-stop'); throw stoppedError } return actualProgress() }
+      await g().wakeSingleScreen({ name: 'Pip', how: null }, null)
+      await flush()
+      expect(h.calls).toContain('same-key-stop')
+      expect(identityKey()).toBe(key)
+      expect(g().run!.u1!.completion).toBe('unknown')
+      expect(g().run!.u1!.completionToken).toBeUndefined()
+      expect(g().run!.u1!.error).toContain('Completion stopped')
+      await g().finishSingleScreen()
+      expect(g().run!.u1!.completion).toBe('confirmed')
+      expect(h.calls.filter((x) => x === 'helloWake')).toHaveLength(1)
+      g().stop()
+    }
+  })
+})
 /** Next until the step with this id (only steps that do not wait for the person). */
 async function nextTo(id: string) {
   for (let i = 0; i < 30 && at() !== id; i++) {
@@ -133,6 +918,7 @@ afterEach(() => {
   g().stop()
   setFlScreen(null)
   vi.useRealTimers()
+  vi.unstubAllGlobals()
 })
 
 describe('the owner path, live', () => {
@@ -581,6 +1367,31 @@ describe('R3: your apps, your Ask and the hand-off, live', () => {
     expect(g().run!.beats.ask.state).toBe('ready')
   })
 
+
+  it('beat Ask uses the real adapter: acknowledged rename, refused persona and unsent prefs remain a partial save with current readback', async () => {
+    const h = new SingleHost()
+    h.how = 'Original purpose.'
+    const wire: string[] = []
+    h.liveClient = {
+      renameMyMind: async (name) => { wire.push('name'); h.profileName = name; return { mind: { id: 'a_pipmind', name, status: 'asleep' } } },
+      patchAgent: async () => { wire.push('purpose'); throw new ApiError(403, 'owner_only', 'Synthetic persona refusal') },
+      setAskSettings: async () => { wire.push('preferences'); return {} },
+    }
+    await g().start({ mode: 'live', host: h, beat: 'ask' })
+    await flush()
+    await g().saveAsk({ name: 'Wren', how: 'New purpose.' })
+    await flush()
+    expect(wire).toEqual(['name', 'purpose'])
+    expect(at()).toBe('6.1')
+    expect(g().run!.beats.ask.state).not.toBe('ready')
+    const state = g().run!.askForm.saves!
+    expect(state).toMatchObject({ name: 'saved', purpose: 'unknown', preferences: 'not_sent', readback: { name: 'Wren', purpose: 'Original purpose.' } })
+    expect(g().run!.askForm.error).toBe(profileSaveCopy(state))
+    expect(g().run!.askForm.error).toContain('name was saved')
+    expect(g().run!.askForm.error).toContain("preferences weren't sent")
+    expect(g().run!.askForm.error).not.toContain('Nothing changed')
+    expect(h.calls).not.toContain('helloWake')
+  })
   it('beat 6 leaves unchanged words alone, refuses an empty name, and keeps the person there on a refusal', async () => {
     const h = new FakeHost()
     h.how = 'Kind.'
@@ -704,5 +1515,199 @@ describe('R3.3: saving only the name never touches the persona (stand-in R3.2 P1
     expect(sent).toEqual(['rename', 'ask'])
     expect(h.how).toBe(LONG)
     expect(g().run!.beats.ask.state).toBe('ready')
+  })
+})
+
+describe('editable default purpose: explicit choices and asynchronous read identity', () => {
+  it('explicit Save of the visible known-empty default persists that exact purpose', async () => {
+    const h = new FakeHost()
+    await g().start({ mode: 'live', host: h, beat: 'ask' })
+    await flush()
+    expect(g().run!.facts.askHow).toBe('')
+    await g().saveAsk(askToSave('Wren', null, g().run!.facts.askHow))
+    await flush()
+    expect(h.how).toBe(DEFAULT_ASK_PURPOSE)
+    expect(g().run!.facts.askHow).toBe(DEFAULT_ASK_PURPOSE)
+    expect(at()).toBe('6.2')
+  })
+
+  it('explicitly clearing the proposed default stays empty after Save', async () => {
+    const h = new FakeHost()
+    await g().start({ mode: 'live', host: h, beat: 'ask' })
+    await flush()
+    await g().saveAsk(askToSave('Wren', '', g().run!.facts.askHow))
+    await flush()
+    expect(h.calls).toContain('saveAsk:a_pipmind:{"name":"Wren","how":""}')
+    expect(h.how).toBe('')
+    expect(g().run!.facts.askHow).toBe('')
+  })
+
+  it('a failed persona read remains unknown and name-only Save sends no persona', async () => {
+    const h = new FakeHost()
+    h.askHow = async () => { throw new Error('offline') }
+    const sent: string[] = []
+    h.liveClient = {
+      renameMyMind: async (name) => (sent.push('rename'), { mind: { id: 'a_pipmind', name, status: 'asleep' } }),
+      patchAgent: async () => (sent.push('persona'), {}),
+      setAskSettings: async () => (sent.push('ask'), {}),
+    }
+    await g().start({ mode: 'live', host: h, beat: 'ask' })
+    await flush()
+    expect(g().run!.facts.askHow).toBeNull()
+    await g().saveAsk(askToSave('Wren', null, g().run!.facts.askHow))
+    await flush()
+    expect(sent).toEqual(['rename', 'ask'])
+    expect(g().run!.facts.askHow).toBeNull()
+  })
+
+  it('a persona answer arriving after a person switch is never committed', async () => {
+    const h = new FakeHost()
+    let answer!: (value: string) => void
+    h.askHow = () => new Promise<string>((resolve) => { answer = resolve })
+    await g().start({ mode: 'live', host: h, beat: 'ask' })
+    await flush()
+    expect(typeof answer).toBe('function')
+    useHive.setState((st) => ({ inits: st.inits + 1 }))
+    answer('')
+    await flush()
+    expect(g().run).toBeNull()
+    expect(h.calls.some((call) => call.startsWith('saveAsk'))).toBe(false)
+  })
+
+  it('a persona answer for a replaced mind is not used as the new mind’s default', async () => {
+    const h = new FakeHost()
+    let answer!: (value: string) => void
+    h.askHow = () => new Promise<string>((resolve) => { answer = resolve })
+    await g().start({ mode: 'live', host: h, beat: 'ask' })
+    await flush()
+    const r = g().run!
+    useFirstLight.setState({ run: { ...r, facts: { ...r.facts, mind: { id: 'a_other', name: 'Other', status: 'asleep' } } } })
+    answer('')
+    await flush()
+    expect(g().run!.facts.mind?.id).toBe('a_other')
+    expect(g().run!.facts.askHow).toBeNull()
+  })
+})
+
+describe('typed stops at UI action boundaries are quiet stops, not ordinary refusals', () => {
+  const errors = () => [new ApiError(409, 'identity_changed', 'Earlier sign-in answer'), new OperationStopped()]
+  const bump = () => useHive.setState((st) => ({ inits: st.inits + 1 }))
+
+  it('a stopped guest limit request neither rejects its UI action nor reads setup or displays an ordinary refusal', async () => {
+    for (const error of errors()) for (const switchPerson of [false, true]) {
+      const h = new FakeHost()
+      h.own_ = { ...h.own_, your_access: 'guest', you_are_owner: false }
+      await g().start({ mode: 'live', host: h, beat: 'models' })
+      await flush()
+      let attempted = 0
+      h.askForMore = async () => { attempted++; if (switchPerson) bump(); throw error }
+      const setupReads = h.calls.filter((c) => c === 'setup').length
+      await expect(g().askForMore(7)).resolves.toBeUndefined()
+      await flush()
+      expect(attempted).toBe(1)
+      expect(h.calls.filter((c) => c === 'setup')).toHaveLength(setupReads)
+      if (switchPerson) expect(g().run).toBeNull()
+      else {
+        expect(g().run!.ask.error).toBeNull()
+        expect(g().run!.ask.sent).toBeNull()
+      }
+      g().stop()
+    }
+  })
+
+  it('a stopped Wake neither rejects its UI action nor displays a refusal, greeting or successful beat', async () => {
+    for (const error of errors()) for (const switchPerson of [false, true]) {
+      const h = new FakeHost()
+      await g().start({ mode: 'live', host: h, beat: 'hello' })
+      await flush()
+      let attempted = 0
+      h.helloWake = async () => { attempted++; if (switchPerson) bump(); throw error }
+      await expect(g().wake()).resolves.toBeUndefined()
+      await flush()
+      expect(attempted).toBe(1)
+      if (switchPerson) expect(g().run).toBeNull()
+      else {
+        expect(g().run!.hello.refusal).toBeNull()
+        expect(g().run!.hello.hello).toBeNull()
+        expect(g().run!.facts.greeted).toBe(false)
+        expect(g().run!.beats.hello.state).not.toBe('blocked')
+        expect(g().run!.beats.hello.state).not.toBe('ready')
+      }
+      expect(h.calls.some((c) => c.startsWith('write:') && c.includes('"hello"'))).toBe(false)
+      g().stop()
+    }
+  })
+
+  it('a stopped startup read resolves without ordinary refusal logging or showing a start error', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      for (const error of errors()) for (const switchPerson of [false, true]) {
+        const h = new FakeHost()
+        let attempted = 0
+        h.progress = async () => { attempted++; if (switchPerson) bump(); throw error }
+        await expect(g().start({ mode: 'live', host: h })).resolves.toBe(true)
+        await flush()
+        expect(attempted).toBe(1)
+        expect(warn).not.toHaveBeenCalled()
+        if (switchPerson) expect(g().run).toBeNull()
+        else {
+          expect(g().run!.loadError).toBeNull()
+          expect(g().run!.beats.arrive.state).toBe('pending')
+        }
+        g().stop()
+      }
+    } finally { warn.mockRestore() }
+  })
+})
+
+describe('"Not now" is remembered on the host (live walk 11-08)', () => {
+  it('records status skipped (compare-and-set) so the next sign-in, on any device, does not reopen First Light', async () => {
+    const h = new SingleHost()
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    await flush()
+    expect(g().run).not.toBeNull()
+    g().notNow()
+    expect(g().run).toBeNull()
+    await flush(12)
+    expect(h.calls).toContain(`write:${JSON.stringify({ status: 'skipped' })}@0`)
+    expect(h.p.status).toBe('skipped')
+    // what IntroLayer reads on the next load: complete, so nothing opens by itself
+    const opened: string[] = []
+    expect(await enterFirstRun({ onboarding: async () => ({ record: 'first-light.progress/1', ...h.p }) }, () => opened.push('open'))).toBe('complete')
+    expect(opened).toEqual([])
+  })
+
+  it('a stale version is re-read from the refusal and written once more; a finished record is never turned into skipped', async () => {
+    const h = new SingleHost()
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    await flush()
+    h.stale = true // the next write is refused as stale, carrying the record as another device left it (version 7)
+    h.p = { ...h.p, version: 7 }
+    g().notNow()
+    await flush(12)
+    expect(h.calls.filter((c) => c.startsWith('write:{"status":"skipped"}'))).toEqual(['write:{"status":"skipped"}@7', 'write:{"status":"skipped"}@7'])
+    expect(h.p.status).toBe('skipped')
+
+    const done = new SingleHost()
+    done.p = { ...done.p, status: 'finished', version: 3 }
+    await g().start({ mode: 'live', host: done, singleScreen: true })
+    await flush()
+    g().notNow()
+    await flush(12)
+    expect(done.calls.some((c) => c.includes('"skipped"'))).toBe(false)
+    expect(done.p.status).toBe('finished')
+  })
+
+  it('the demo writes nothing, and plain Stop/Continue still only closes', async () => {
+    const h = new SingleHost()
+    await g().start({ mode: 'live', host: h, singleScreen: true })
+    await flush()
+    g().stop()
+    await flush(12)
+    expect(h.calls.some((c) => c.includes('"skipped"'))).toBe(false)
+    await g().start({ mode: 'demo', persona: 'pip' })
+    await flush()
+    g().notNow()
+    expect(g().run).toBeNull()
   })
 })

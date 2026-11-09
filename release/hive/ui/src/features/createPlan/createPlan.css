@@ -1,0 +1,834 @@
+/* Create · Make: the plan, full-bleed. Colours come from the look's inks and accent; every well and shadow is the look's
+   own shade (--color-shade: black on a dark look, a light ink tint on a light chrome, index.css), never a fixed black or
+   white. A mind's colour is its own hue (--mind-hue). Reduced motion: nothing pulses, glides or fades; states show at once.
+   Where the parts sit is MeTTa's (plan.metta); this only gives the composed columns their proportions and their glass. */
+
+.pc {
+  --cc-accent: var(--app-accent, var(--color-accent));
+  --cc-glass: color-mix(in oklab, var(--color-abyss) 84%, transparent);
+  --cc-glass-line: color-mix(in oklab, var(--color-ink) 10%, transparent);
+  --cc-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --pc-glass: var(--cc-glass);
+  --pc-line: var(--cc-glass-line);
+  --pc-well: color-mix(in srgb, var(--color-shade) 26%, transparent);
+  --pc-lift: 0 18px 50px -18px color-mix(in srgb, var(--color-shade) 55%, transparent);
+  min-height: 100%;
+  padding: 18px clamp(14px, 3vw, 36px) 40px;
+  color: var(--color-ink);
+}
+/* a mind's colour is worked out where its hue is set (a custom property resolves where it is declared) */
+.pc,
+.pc * {
+  --mind: hsl(var(--mind-hue, 280) 90% 74%);
+  --mind-soft: hsl(var(--mind-hue, 280) 90% 70% / 0.16);
+}
+html[data-xc-scheme='light'] .pc,
+html[data-xc-scheme='light'] .pc * {
+  --mind: hsl(var(--mind-hue, 280) 62% 42%);
+  --mind-soft: hsl(var(--mind-hue, 280) 70% 50% / 0.13);
+}
+.pc *:focus-visible {
+  outline: 2px solid var(--cc-accent);
+  outline-offset: 2px;
+}
+.pc .cm-content:focus-visible,
+.pc .cm-editor.cm-focused {
+  outline: none;
+}
+/* the composed columns: on a wide screen the work (head, questions, board, stream) left, the live pair right and wider */
+.pc-col > [data-screen-part] {
+  margin-bottom: 0;
+}
+.pc-col {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+}
+.pc-col > [data-screen-part]:empty {
+  display: none;
+}
+@media (min-width: 768px) {
+  .pc [data-screen='plan'] {
+    grid-template-columns: minmax(19rem, 5fr) minmax(0, 7fr);
+    gap: 22px;
+  }
+  .pc [data-screen='plan'] > [data-screen-region='aside'] {
+    position: sticky;
+    top: 12px;
+  }
+  .pc [data-screen='plan-ready'] {
+    grid-template-columns: minmax(0, 8fr) minmax(16rem, 4fr);
+    gap: 22px;
+  }
+}
+.pc [data-screen-row='head'] {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+.pc [data-screen-row='head'] > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- the empty canvas: one sentence */
+.pc[data-plan-screen='plan-start'] .pc-col {
+  min-height: min(70vh, 640px);
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+}
+.pc-say {
+  width: min(680px, 100%);
+  display: grid;
+  gap: 16px;
+}
+.pc-say-label {
+  font: 600 clamp(24px, 3.4vw, 36px) / 1.15 var(--font-display);
+  letter-spacing: -0.015em;
+  color: var(--color-ink);
+  text-wrap: balance;
+}
+.pc-say-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 7px 7px 18px;
+  border-radius: 20px;
+  background: var(--pc-glass);
+  border: 1px solid var(--pc-line);
+  box-shadow: 0 0 0 5px color-mix(in oklab, var(--cc-accent) 12%, transparent), var(--pc-lift);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  transition: box-shadow 0.25s var(--cc-ease), border-color 0.25s;
+}
+.pc-say-row:focus-within {
+  border-color: color-mix(in oklab, var(--cc-accent) 55%, transparent);
+  box-shadow: 0 0 0 6px color-mix(in oklab, var(--cc-accent) 20%, transparent), var(--pc-lift);
+}
+.pc-say-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  font: 400 16px/1.3 var(--font-sans);
+  color: var(--color-ink);
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+.pc-say-input::placeholder {
+  color: var(--color-ink-4);
+}
+.pc-say-go,
+.pr-deploy,
+.pq-send {
+  flex: none;
+  min-height: 44px;
+  padding: 0 20px;
+  border-radius: 14px;
+  font: 600 14px/1 var(--font-sans);
+  color: var(--color-abyss);
+  background: var(--cc-accent);
+  border: 0;
+  cursor: pointer;
+  transition: filter 0.2s, opacity 0.2s, transform 0.2s var(--cc-ease);
+}
+.pc-say-go:hover:not(:disabled),
+.pr-deploy:hover:not(:disabled),
+.pq-send:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.pc-say-go:disabled,
+.pr-deploy:disabled,
+.pq-send:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.pc[data-plan-screen='plan-start'] [data-block='note'] p {
+  max-width: 46ch;
+  margin-inline: auto;
+}
+
+/* ---- the plan's head */
+.pc-head {
+  display: grid;
+  gap: 4px;
+}
+.pc-eyebrow {
+  margin: 0;
+  font: 600 11px/1.2 var(--font-sans);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--cc-accent);
+}
+.pc-sentence {
+  margin: 0;
+  font: 600 clamp(19px, 2.2vw, 25px) / 1.25 var(--font-display);
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+.pc-status {
+  margin: 2px 0 0;
+  font-size: 13.5px;
+  color: var(--color-ink-2);
+}
+.pc-stale {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--color-ink-4);
+}
+.pc-alert,
+.pr-alert {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--color-bad);
+}
+.pc-forming {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 18px;
+  font-size: 13.5px;
+  color: var(--color-ink-2);
+  background: var(--pc-glass);
+  border: 1px dashed var(--pc-line);
+}
+.pc-forming-orbs {
+  position: relative;
+  width: 34px;
+  height: 22px;
+}
+.pc-forming-orbs i {
+  position: absolute;
+  top: 6px;
+  width: 10px;
+  height: 10px;
+  border-radius: 99px;
+  background: var(--cc-accent);
+  opacity: 0.7;
+}
+.pc-forming-orbs i:nth-child(1) { left: 0; }
+.pc-forming-orbs i:nth-child(2) { left: 12px; opacity: 0.5; }
+.pc-forming-orbs i:nth-child(3) { left: 24px; opacity: 0.3; }
+.pc-forming-live i {
+  animation: pc-bob 1.4s var(--cc-ease) infinite;
+}
+.pc-forming-live i:nth-child(2) { animation-delay: 0.18s; }
+.pc-forming-live i:nth-child(3) { animation-delay: 0.36s; }
+
+/* ---- questions: gentle, never in the way */
+.pq-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.pq-card {
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--pc-glass);
+  border: 1px solid var(--pc-line);
+  animation: pc-in 0.36s var(--cc-ease) both;
+}
+.pq-card[data-open] {
+  border-color: color-mix(in oklab, var(--cc-accent) 40%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--cc-accent) 9%, transparent), var(--pc-lift);
+}
+.pq-text {
+  margin: 0;
+  font: 500 14.5px/1.4 var(--font-display);
+  color: var(--color-ink);
+}
+.pq-about {
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: var(--color-ink-3);
+}
+.pq-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.pq-choice {
+  min-height: 34px;
+  padding: 0 13px;
+  border-radius: 99px;
+  font: 500 13px/1 var(--font-sans);
+  color: var(--color-ink);
+  background: color-mix(in oklab, var(--cc-accent) 10%, transparent);
+  border: 1px solid color-mix(in oklab, var(--cc-accent) 30%, transparent);
+  cursor: pointer;
+}
+.pq-choice:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--cc-accent) 18%, transparent);
+}
+.pq-own {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.pq-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 11px;
+  font: 400 13px/1.3 var(--font-sans);
+  color: var(--color-ink);
+  background: var(--pc-well);
+  border: 1px solid var(--color-line-2);
+  outline: none;
+}
+.pq-input:focus-visible {
+  border-color: var(--cc-accent);
+}
+.pq-send {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 11px;
+  font-size: 13px;
+}
+.pq-card[data-settled] {
+  padding: 10px 14px;
+  background: transparent;
+  border-style: dashed;
+}
+.pq-asked {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-ink-4);
+}
+.pq-said {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--color-ink-2);
+}
+
+/* ---- the board: one lane per assignee, as columns that wrap */
+.pb {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+.pb[data-lanes='1'] {
+  grid-template-columns: minmax(0, 420px);
+}
+.pb-threads {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 1;
+}
+.pb-threads path {
+  fill: none;
+  stroke: color-mix(in oklab, var(--cc-accent) 45%, transparent);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 4;
+  stroke-linecap: round;
+}
+.pb-lane {
+  min-width: 0;
+  padding: 12px;
+  border-radius: 18px;
+  background: var(--pc-glass);
+  border: 1px solid var(--pc-line);
+  box-shadow: var(--pc-lift);
+  backdrop-filter: blur(18px) saturate(1.15);
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
+  animation: pc-in 0.4s var(--cc-ease) both;
+}
+.pb-lane[data-open] {
+  border-style: dashed;
+}
+.pb-lane-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.pb-lane-names {
+  display: grid;
+  min-width: 0;
+}
+.pb-lane-name {
+  font: 600 13.5px/1.3 var(--font-display);
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+.pb-lane-kind {
+  font-size: 11.5px;
+  color: var(--color-ink-3);
+  overflow-wrap: anywhere;
+}
+
+/* orbs, per assignee */
+.pb-orb {
+  position: relative;
+  flex: none;
+  display: inline-block;
+  border-radius: 99px;
+  background: radial-gradient(circle at 34% 30%, color-mix(in oklab, var(--mind) 70%, var(--color-ink)), var(--mind) 62%, color-mix(in oklab, var(--mind) 60%, transparent));
+  box-shadow: 0 0 0 3px var(--mind-soft), 0 0 18px -2px var(--mind);
+  animation: pb-arrive 0.5s var(--cc-ease) both;
+}
+.pb-orb[data-form='team'] {
+  border-radius: 38%;
+}
+.pb-orb[data-form='open'] {
+  background: transparent;
+  border: 1.5px dashed color-mix(in oklab, var(--color-ink) 40%, transparent);
+  box-shadow: inset 0 0 12px color-mix(in oklab, var(--cc-accent) 25%, transparent);
+}
+.pb-orb[data-form='hive'] {
+  background: radial-gradient(circle, var(--mind-soft), transparent 70%);
+  box-shadow: none;
+}
+.pb-orb[data-form='hive'] i {
+  position: absolute;
+  width: 22%;
+  height: 22%;
+  border-radius: 99px;
+  background: var(--mind);
+  box-shadow: 0 0 6px var(--mind);
+}
+.pb-orb[data-form='hive'] i:nth-child(1) { left: 39%; top: 6%; }
+.pb-orb[data-form='hive'] i:nth-child(2) { left: 72%; top: 34%; }
+.pb-orb[data-form='hive'] i:nth-child(3) { left: 58%; top: 72%; }
+.pb-orb[data-form='hive'] i:nth-child(4) { left: 18%; top: 70%; }
+.pb-orb[data-form='hive'] i:nth-child(5) { left: 6%; top: 32%; }
+.pb-orb-live::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: inherit;
+  border: 1.5px solid var(--mind);
+  opacity: 0;
+  animation: pc-breathe 1.8s var(--cc-ease) infinite;
+}
+.pb-orb[data-form='open'].pb-orb-live::after,
+.pb-orb[data-form='open']::before {
+  border-color: var(--cc-accent);
+}
+.pb-orb[data-form='open'].pb-orb-live {
+  animation: pb-search 3.2s linear infinite;
+}
+
+/* piece cards */
+.pb-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.pb-card {
+  position: relative;
+  z-index: 2;
+  padding: 10px 12px;
+  border-radius: 13px;
+  background: var(--pc-well);
+  border: 1px solid var(--pc-line);
+  transition: border-color 0.3s, box-shadow 0.3s, background 0.3s;
+}
+.pb-card-title {
+  margin: 0;
+  font: 500 13px/1.35 var(--font-sans);
+  color: var(--color-ink);
+}
+.pb-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0 0;
+}
+.pb-file {
+  padding: 2px 6px;
+  border-radius: 6px;
+  font: 400 11px/1.3 var(--font-mono);
+  color: var(--color-ink-3);
+  background: color-mix(in oklab, var(--color-ink) 6%, transparent);
+}
+.pb-words {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-ink-3);
+  overflow-wrap: anywhere;
+}
+.pb-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 5px 0 0;
+  font-size: 11px;
+  color: var(--color-ink-4);
+}
+.pb-after::before {
+  content: '↳ ';
+}
+.pb-fixed {
+  color: color-mix(in oklab, var(--color-good) 75%, var(--color-ink));
+}
+.pb-dot,
+.ps-dot {
+  flex: none;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 99px;
+  background: var(--mind);
+  box-shadow: 0 0 8px var(--mind);
+}
+.pb-dot-live,
+.ps-dot-live {
+  animation: pc-pulse 1.4s var(--cc-ease) infinite;
+}
+.pb-card[data-phase='building'],
+.pb-card[data-phase='testing'] {
+  border-color: color-mix(in oklab, var(--mind) 50%, transparent);
+  box-shadow: 0 0 0 3px var(--mind-soft);
+}
+.pb-card[data-phase='building'] .pb-words,
+.pb-card[data-phase='testing'] .pb-words {
+  color: var(--color-ink-2);
+}
+.pb-card[data-phase='review'] {
+  border-color: color-mix(in oklab, var(--cc-accent) 40%, transparent);
+}
+.pb-card[data-phase='held'] {
+  border-style: dashed;
+  border-color: color-mix(in oklab, var(--color-warn) 45%, transparent);
+}
+.pb-card[data-phase='held'] .pb-words {
+  color: color-mix(in oklab, var(--color-warn) 80%, var(--color-ink));
+}
+.pb-card[data-phase='fixing'],
+.pb-card[data-phase='blocked'] {
+  border-color: color-mix(in oklab, var(--color-bad) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-bad) 14%, transparent);
+}
+.pb-card[data-phase='fixing'] .pb-words,
+.pb-card[data-phase='blocked'] .pb-words {
+  color: color-mix(in oklab, var(--color-bad) 80%, var(--color-ink));
+}
+.pb-card[data-phase='integrated'] {
+  border-color: color-mix(in oklab, var(--color-good) 35%, transparent);
+}
+.pb-card[data-phase='integrated'] .pb-words {
+  color: color-mix(in oklab, var(--color-good) 75%, var(--color-ink));
+}
+.pb-card[data-phase='integrated'] .pb-words::before {
+  content: '✓';
+  font-weight: 700;
+}
+
+/* ---- the stream (Code's work stream glass), with each piece under Build */
+.ps {
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: var(--pc-glass);
+  border: 1px solid var(--pc-line);
+}
+.ps-rows {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.ps-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+.ps-row .ps-dot {
+  opacity: 0.35;
+  box-shadow: none;
+}
+.ps-row[data-phase='building'] .ps-dot,
+.ps-row[data-phase='testing'] .ps-dot {
+  opacity: 1;
+  box-shadow: 0 0 8px var(--mind);
+}
+.ps-row[data-phase='fixing'] .ps-dot {
+  opacity: 1;
+  background: var(--color-bad);
+}
+.ps-row[data-phase='integrated'] .ps-dot {
+  opacity: 1;
+  background: var(--color-good);
+  box-shadow: none;
+}
+.ps-row-words {
+  display: grid;
+  min-width: 0;
+}
+.ps-row-title {
+  color: var(--color-ink-2);
+  font-weight: 500;
+}
+.ps-row-state {
+  color: var(--color-ink-3);
+  overflow-wrap: anywhere;
+}
+.ps-row[data-phase='fixing'] .ps-row-state {
+  color: color-mix(in oklab, var(--color-bad) 80%, var(--color-ink));
+}
+
+/* ---- the live pair: the code beside the running page */
+/* the pair's column is the container (a container query cannot style its own container) */
+.pc [data-screen-region='aside'],
+.pl-host {
+  container-type: inline-size;
+}
+.pl {
+  display: grid;
+  gap: 12px;
+}
+.pl {
+  grid-template-columns: minmax(0, 1fr);
+}
+.pl-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 18px;
+  background: var(--pc-glass);
+  border: 1px solid var(--pc-line);
+  box-shadow: var(--pc-lift);
+}
+.pl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--pc-line);
+}
+.pl-path {
+  font: 500 12px/1.3 var(--font-mono);
+  color: var(--color-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pl-who {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font: 600 11px/1.3 var(--font-sans);
+  color: var(--mind);
+  background: var(--mind-soft);
+}
+.pl-page .pl-who {
+  color: var(--cc-accent);
+  background: color-mix(in oklab, var(--cc-accent) 14%, transparent);
+}
+.pl-editor {
+  height: clamp(220px, 34vh, 420px);
+  min-height: 0;
+  background: var(--pc-well);
+}
+.pl-why {
+  margin: 0;
+  padding: 18px;
+  font-size: 12.5px;
+  color: var(--color-ink-3);
+}
+.pl-run {
+  position: relative;
+}
+.pl-stage {
+  position: relative;
+  height: clamp(260px, 42vh, 560px);
+  background: var(--pc-well);
+}
+.pl-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  transition: opacity 0.45s var(--cc-ease);
+}
+.pl-frame[data-shown] {
+  opacity: 1;
+}
+/* the page a mounted pair opens on is simply there: only a newer preview fades in */
+.pl-frame[data-instant] {
+  transition: none;
+}
+.pl-receipt {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  margin: 0;
+  padding: 5px 11px;
+  border-radius: 99px;
+  font: 600 11.5px/1.3 var(--font-mono);
+  color: color-mix(in oklab, var(--color-good) 80%, var(--color-ink));
+  background: var(--pc-glass);
+  border: 1px solid color-mix(in oklab, var(--color-good) 35%, transparent);
+  box-shadow: var(--pc-lift);
+  animation: pl-receipt 4.5s var(--cc-ease) both;
+}
+.pl .cc-mcaret {
+  position: relative;
+  display: inline-block;
+  width: 0;
+  height: 1.2em;
+  vertical-align: text-bottom;
+  border-left: 2px solid var(--mind);
+  margin-right: -2px;
+}
+.pl .cc-mcaret-tag {
+  position: absolute;
+  left: -2px;
+  bottom: 100%;
+  margin-bottom: 2px;
+  padding: 2px 7px;
+  border-radius: 7px 7px 7px 2px;
+  white-space: nowrap;
+  font: 600 11px/1.3 var(--font-sans);
+  color: var(--color-abyss);
+  background: var(--mind);
+}
+/* side by side when the column is wide enough, stacked when not */
+@container (min-width: 620px) {
+  .pl {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    align-items: stretch;
+  }
+  .pl-editor {
+    height: auto;
+    flex: 1;
+    min-height: clamp(320px, 56vh, 640px);
+  }
+  .pl-stage {
+    height: 100%;
+    min-height: clamp(320px, 56vh, 640px);
+  }
+  .pl-page .pl-run {
+    flex: 1;
+  }
+}
+
+/* ---- ready: the page large, what it does, and the go */
+.pr {
+  display: grid;
+  gap: 14px;
+}
+.pr-stage {
+  overflow: hidden;
+  border-radius: 22px;
+  border: 1px solid var(--pc-line);
+  box-shadow: var(--pc-lift);
+}
+.pr-stage .pl-stage {
+  height: clamp(340px, 62vh, 760px);
+}
+.pr-summary {
+  margin: 0;
+  padding: 0 0 0 18px;
+  display: grid;
+  gap: 4px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-ink-2);
+}
+.pr-go {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 18px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  background: var(--pc-glass);
+  border: 1px solid color-mix(in oklab, var(--cc-accent) 35%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--cc-accent) 8%, transparent), var(--pc-lift);
+}
+.pr-go-words {
+  flex: 1;
+  min-width: 14rem;
+}
+.pr-go-title {
+  margin: 0;
+  font: 600 15px/1.3 var(--font-display);
+  color: var(--color-ink);
+}
+.pr-go-line {
+  margin: 3px 0 0;
+  font-size: 13px;
+  color: var(--color-ink-3);
+}
+.pr-deploy {
+  min-width: 140px;
+  font-size: 15px;
+}
+.pr-alert {
+  flex-basis: 100%;
+}
+
+@keyframes pc-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes pc-breathe {
+  0% { opacity: 0.55; transform: scale(0.85); }
+  100% { opacity: 0; transform: scale(1.4); }
+}
+@keyframes pc-pulse {
+  50% { opacity: 0.35; }
+}
+@keyframes pc-bob {
+  50% { transform: translateY(-5px); }
+}
+@keyframes pb-arrive {
+  from { opacity: 0; transform: scale(0.6); }
+}
+@keyframes pb-search {
+  to { transform: rotate(360deg); }
+}
+@keyframes pl-receipt {
+  0% { opacity: 0; transform: translateY(6px); }
+  8%, 80% { opacity: 1; transform: none; }
+  100% { opacity: 0.7; }
+}
+.pc[data-reduced] *,
+.pc[data-reduced] *::before,
+.pc[data-reduced] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pc *,
+  .pc *::before,
+  .pc *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* the Ask sits over the foot of the page: the plan's scroll keeps clear of it (askRoom.ts writes --ask-room), so the
+   Deploy go and Open are never under it */
+.pc {
+  padding-bottom: calc(var(--ask-room, 88px) + 20px);
+  scroll-padding-bottom: calc(var(--ask-room, 88px) + 20px);
+}

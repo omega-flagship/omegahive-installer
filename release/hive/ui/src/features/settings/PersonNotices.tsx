@@ -6,7 +6,7 @@ import { has, need } from '../../lib/useResource'
 import { useHive } from '../../store/store'
 import { Button, Segmented } from '../../ui/primitives'
 
-const inputClass = 'mt-1 min-h-11 rounded-xl border border-line bg-black/30 px-3 text-[13px] text-ink outline-none focus:border-line-2'
+const inputClass = 'mt-1 min-h-11 rounded-xl border border-line bg-shade/30 px-3 text-[13px] text-ink outline-none focus:border-line-2'
 type Cap = `${typeof NOTICE_CAPS[number]}`
 
 /** "How often may your minds interrupt you?" (G2): the person's own daily cap and quiet hours, and their notices.
@@ -50,7 +50,7 @@ function PersonNoticesBody() {
   const prefs = list?.prefs
   const quietOn = !!prefs?.quiet_start && !!prefs?.quiet_end
   return (
-    <section className="rounded-2xl border border-line bg-white/[0.02] p-4" aria-labelledby="notices-h">
+    <section className="rounded-2xl border border-line bg-tint/[0.02] p-4" aria-labelledby="notices-h">
       <h2 id="notices-h" className="eyebrow">Notices</h2>
       <p className="mt-2 text-[13px] text-ink-3">Only minds in your own app spaces can send you a notice. Anything over your daily limit or in quiet hours waits and comes later as one summary; nothing is thrown away. Reminders you set yourself don't count.</p>
       {problem && <p className="mt-2 text-[13px] text-warn" role="alert">{problem}</p>}

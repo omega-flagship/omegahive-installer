@@ -88,13 +88,13 @@ export function FiguresSection({ figures, fetcher, identity }: { figures: PcFigu
         </h4>
         {figures.length > 1 && (
           <span className="flex items-center gap-1 text-[11.5px] text-ink-4">
-            <button type="button" data-pc-figure-prev disabled={i === 0} onClick={() => setAt(i - 1)} aria-label="Previous figure" className="flex size-8 items-center justify-center rounded-lg hover:bg-white/[0.06] disabled:opacity-40">
+            <button type="button" data-pc-figure-prev disabled={i === 0} onClick={() => setAt(i - 1)} aria-label="Previous figure" className="flex size-8 items-center justify-center rounded-lg hover:bg-tint/[0.06] disabled:opacity-40">
               <Icon name="chevron" size={13} className="rotate-180" />
             </button>
             <span data-pc-figure-pos>
               Figure {i + 1} of {figures.length}
             </span>
-            <button type="button" data-pc-figure-next disabled={i === figures.length - 1} onClick={() => setAt(i + 1)} aria-label="Next figure" className="flex size-8 items-center justify-center rounded-lg hover:bg-white/[0.06] disabled:opacity-40">
+            <button type="button" data-pc-figure-next disabled={i === figures.length - 1} onClick={() => setAt(i + 1)} aria-label="Next figure" className="flex size-8 items-center justify-center rounded-lg hover:bg-tint/[0.06] disabled:opacity-40">
               <Icon name="chevron" size={13} />
             </button>
           </span>
@@ -127,13 +127,13 @@ function FigureCard({ fig, fetcher, identity, narrow }: { fig: PcFigure; fetcher
             {full ? FIGURE_COPY.close : FIGURE_COPY.open}
           </button>
           {full && (
-            <div data-pc-figure-full className="overflow-x-auto rounded-lg bg-black/20">
+            <div data-pc-figure-full className="overflow-x-auto rounded-lg bg-shade/20">
               <img src={load.url} alt={fig.caption} width={fig.width || undefined} height={fig.height || undefined} className="block max-w-none" />
             </div>
           )}
         </div>
       ) : (
-        <div className="flex justify-center rounded-lg bg-black/20 p-2">
+        <div className="flex justify-center rounded-lg bg-shade/20 p-2">
           <img data-pc-figure-img src={load.url} alt={fig.caption} className="block h-auto max-h-[420px] w-auto max-w-full object-contain" />
         </div>
       )}

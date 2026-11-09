@@ -1,10 +1,11 @@
+import { currentEpoch } from '../lib/identityEpoch'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // the page's location, played in node: navigate() moves the hash, as the router does
 const loc = { hash: '#/', search: '', pathname: '/' }
 const store = new Map<string, string>()
 const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) }
-vi.stubGlobal('window', { location: loc, matchMedia: () => ({ matches: false }), localStorage: storage })
+vi.stubGlobal('window', Object.assign(new EventTarget(), { location: loc, matchMedia: () => ({ matches: false }), localStorage: storage }))
 vi.stubGlobal('localStorage', storage)
 vi.mock('../lib/router', async (orig) => {
   const real = await orig<typeof import('../lib/router')>()
@@ -13,7 +14,7 @@ vi.mock('../lib/router', async (orig) => {
 
 const { useHive } = await import('./store')
 const askModule = await import('./ask')
-const { askOrigin, threadRows, useAskStore } = askModule
+const { askOrigin, threadRows, useAskStore, askRetryContext } = askModule
 const { ApiError } = await import('../api/client')
 const { AskRefusal } = await import('../api/ask')
 type AskEvent = import('../api/ask').AskEvent
@@ -296,7 +297,7 @@ describe('Ask: a credential-only change on the same client is an identity change
     h.on.askTurn = async (o) => view(o, [frame(o, 1, { phase: 'accepted', thread })])
     h.on.ask = async (b) => view(b.operation_id)
     await vi.advanceTimersByTimeAsync(120_000)
-    await useAskStore.getState().retryLast()
+    await retryCurrent()
     await useAskStore.getState().checkAgain(op)
     await flush()
     expect(h.sent.length).toBe(before)
@@ -386,3 +387,11 @@ describe('Ask: the host binds the new sign-in only from its own me() read (bindA
     expect(useAskStore.getState().bound).toBeNull()
   })
 })
+
+/** The current rendered request in these store-only protocol scenarios. Retained UI authority is tested separately. */
+function retryCurrent() {
+  const state = useAskStore.getState()
+  const op = [...state.log].reverse().find(row => row.kind === 'turn')
+  const request = op?.kind === 'turn' ? op.op : 'no-rendered-request'
+  return state.retryLast(request, currentEpoch(), askRetryContext(request, currentEpoch()))
+}

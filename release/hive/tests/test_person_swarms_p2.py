@@ -29,7 +29,7 @@ def install(hive, template=TEMPLATE):
 
 @pytest.fixture()
 def p(w, monkeypatch):
-    # The fake process driver launches no process. Its explicit synthetic stop oracle
+    # The process stand-in launches no process. Its explicit synthetic stop oracle
     # is separate from the production supervisor's positive driver verification.
     monkeypatch.setattr(w.hive.supervisor, "verify_stopped", lambda agent_id: None, raising=False)
     install(w.hive)
@@ -340,3 +340,14 @@ def test_an_earlier_dated_own_key_after_consent_requires_fresh_consent(p):
     repaired = ensure(p)
     assert repaired["minds"] == original["minds"]
     assert all(opts(p.hive, aid)["key"] == new_key for aid in repaired["minds"].values())
+
+
+def test_person_swarm_insert_refuses_a_namespace_alias_that_appears_after_allocation(p, monkeypatch):
+    from hive.core.hive import HiveError
+    from hive.tests.test_identity_namespace import late_alias
+    assert consent(p).status_code == 200
+    captured = late_alias(p.hive, monkeypatch)
+    with pytest.raises(HiveError, match='workspace namespace'):
+        ensure(p)
+    assert p.hive.db.one('SELECT id FROM agents WHERE id=?', (captured['id'],)) is None
+    assert p.hive.db.one('SELECT 1 FROM app_person_minds WHERE agent_id=?', (captured['id'],)) is None

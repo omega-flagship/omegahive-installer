@@ -60,7 +60,7 @@ function Comparison({ suite }: { suite: LabCase[] }) {
           const rows = suite.map((c) => ({ c, b: caseKey(c), v: findMetric(c, m.name) }))
           const max = Math.max(1, ...rows.map((r) => r.v?.value ?? 0))
           return (
-            <figure key={m.name} className="rounded-xl border border-line bg-black/20 p-3">
+            <figure key={m.name} className="rounded-xl border border-line bg-shade/20 p-3">
               <figcaption className="mb-2 flex items-baseline justify-between gap-2">
                 <span className="text-[13px] font-semibold text-ink">{m.short}</span>
                 <span className="text-[11px] text-ink-3">
@@ -79,7 +79,7 @@ function Comparison({ suite }: { suite: LabCase[] }) {
                         </span>
                         <span className={cx('tabular-nums', mine ? 'font-semibold text-ink' : 'text-ink-2')}>{val == null ? '–' : fmtValue(val, m.name === 'correction latency' ? 'steps' : '')}</span>
                       </div>
-                      <div className="relative mt-1 h-2 rounded-full bg-white/[0.05]">
+                      <div className="relative mt-1 h-2 rounded-full bg-tint/[0.05]">
                         {val != null && (
                           <div
                             className="absolute inset-y-0 left-0 rounded-full"
@@ -110,12 +110,12 @@ function Scenario({ c }: { c: LabCase }) {
   const matched = steps?.filter((s) => s.ok).length ?? 0
   const freq = c.series[0]
   return (
-    <article className="rounded-xl border border-line bg-black/20 p-3">
+    <article className="rounded-xl border border-line bg-shade/20 p-3">
       <header className="flex items-start gap-2.5">
         <StatusIcon status={c.status} size={20} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-x-2">
-            <span className="rounded-md border border-line-2 bg-white/[0.04] px-1.5 py-px text-[10.5px] font-semibold tracking-wide text-ink-2 uppercase">{family}</span>
+            <span className="rounded-md border border-line-2 bg-tint/[0.04] px-1.5 py-px text-[10.5px] font-semibold tracking-wide text-ink-2 uppercase">{family}</span>
             <span className="text-[13px] text-ink">{claim}</span>
           </div>
           {steps && (

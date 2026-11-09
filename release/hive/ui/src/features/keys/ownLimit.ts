@@ -37,7 +37,7 @@ export async function saveOwnLimit(op: BoundOperation, io: { write(body: { key_i
   }
 }
 
-/** r1.14b (Dot, the owner's three 409 duplicate_key): the hive's refusal of a new key, in plain words that stay on screen */
+/** r1.14b (Dot, Jon's three 409 duplicate_key): the hive's refusal of a new key, in plain words that stay on screen */
 export function addKeyRefusalWords(err: unknown, provider: string): string {
   const code = err instanceof ApiError ? err.code : null
   if (code === 'duplicate_key') return `That key is already saved in this hive, perhaps as the hive's own key or one added before. Make a new key at ${provider} for your own use, then add that one.`

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { savedHunkRanges, savedSelection, sha256 } from './savedSelection'
 
-// Reproduces the utility's own documented checks (coordination/omegacode/tools/check_saved_selection.mjs) against the port.
+// Reproduces the utility's own documented checks (check_saved_selection.mjs) against the port.
 const encode = (text: string) => new TextEncoder().encode(text)
 
 describe('savedSelection port: roundtrip every character and EOF', () => {

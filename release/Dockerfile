@@ -109,7 +109,6 @@ COPY . ${OMEGACLAW_DIR}
 
 RUN cp ${OMEGACLAW_DIR}/run.metta /PeTTa/run.metta \
  && mkdir -p ${MEMORY_DIR}/chroma_db \
- && cp ${OMEGACLAW_DIR}/src/base_prompt.txt ${MEMORY_DIR}/prompt.txt \
  && ln -s ${MEMORY_DIR}/chroma_db ./chroma_db \
  && chown -R 65534:65534 ${MEMORY_DIR} \
  && find ${MEMORY_DIR} -type f -exec chmod 0644 {} \; \

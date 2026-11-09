@@ -14,6 +14,7 @@ import type { ReactElement, ReactNode } from 'react'
  */
 
 // ---- a minimal hook runtime for one mounted component ----
+const escape = vi.hoisted(() => ({ run: null as null | (() => void) }))
 const rt = {
   slots: [] as unknown[],
   i: 0,
@@ -54,11 +55,12 @@ vi.mock('react', async (orig) => {
   }
 })
 vi.mock('react-dom', async (orig) => ({ ...(await orig<typeof import('react-dom')>()), createPortal: (children: ReactNode) => children }))
-vi.mock('../lib/hooks', async (orig) => ({ ...(await orig<typeof import('../lib/hooks')>()), useEscape: () => undefined, useIsDesktop: () => true, useReducedMotion: () => true }))
+vi.mock('../lib/hooks', async (orig) => ({ ...(await orig<typeof import('../lib/hooks')>()), useEscape: (run: () => void) => { escape.run = run }, useIsDesktop: () => true, useReducedMotion: () => true }))
 vi.mock('./useModalContainment', () => ({ useModalContainment: () => undefined }))
 
 const { DecisionDialog } = await import('./DecisionDialog')
 const { boundRun } = await import('../lib/epochBound')
+const STALE: import('../lib/identityEpoch').Stale = (await import('../lib/identityEpoch')).STALE
 const { releasePersons, signInAs, switchPerson, testPerson } = await import('../lib/identityEpoch.testkit')
 
 type Props = Parameters<typeof DecisionDialog>[0]
@@ -123,7 +125,98 @@ afterEach(() => {
 
 const base = (run: Props['actions'][number]['run'], onClose: () => void): Props => ({ eyebrow: 'Test', title: 'A decision', facts: [], bound: { kind: 'ready' }, thing: 'This', onClose, actions: [{ label: 'Do it', tone: 'primary', run }] })
 
+describe('a decision dialog keeps its opening visible authority', () => {
+  it('waits for the first grant, then closes once when that grant is revoked', () => {
+    let allowed = false
+    const close = vi.fn(), props = { ...base(vi.fn(async () => true as const), close), canAct: () => allowed }
+    let el = render(props)
+    expect(all(el).find(isAction('Do it'))!.props!['aria-disabled']).toBe(true)
+    expect(close).not.toHaveBeenCalled()
+    allowed = true; el = render(props)
+    expect(all(el).find(isAction('Do it'))!.props!['aria-disabled']).toBe(false)
+    expect(close).not.toHaveBeenCalled()
+    allowed = false; render(props); render(props)
+    expect(close).toHaveBeenCalledTimes(1)
+  })
+  it('a replacement grant cannot renew an already opened dialog', async () => {
+    let original = true
+    const close = vi.fn(), run = vi.fn(async () => true as const)
+    const props = { ...base(run, close), canAct: () => original }
+    render(props); clock += 1000
+    original = false
+    const el = render({ ...props, canAct: () => true })
+    expect(close).toHaveBeenCalledTimes(1)
+    await clickOn(el, isAction('Do it'))
+    expect(run).not.toHaveBeenCalled()
+  })
+  it('a saved action callback refuses revocation before React commits', async () => {
+    let allowed = true
+    const run = vi.fn(async () => true as const), props = { ...base(run, vi.fn()), canAct: () => allowed }
+    const el = render(props); clock += 1000
+    allowed = false
+    await clickOn(el, isAction('Do it'))
+    expect(run).not.toHaveBeenCalled()
+  })
+  it('an answer arriving after revocation publishes no outcome, before the close render', async () => {
+    let allowed = true
+    const d = defer<string>(), close = vi.fn(), props = { ...base(() => d.promise, close), canAct: () => allowed }
+    const el = render(props); clock += 1000
+    const pending = clickOn(el, isAction('Do it'))
+    allowed = false; d.resolve('Outcome of a revoked attachment.'); await pending
+    expect(close).not.toHaveBeenCalled()
+    expect(statusOf(render(props))).not.toContain('revoked attachment')
+    expect(close).toHaveBeenCalledTimes(1)
+  })
+  it('a recheck answer after revocation also publishes no outcome', async () => {
+    let allowed = true
+    const again = defer<{ unsettled: string }>(), close = vi.fn()
+    const props = { ...base(async () => ({ unsettled: 'Not known yet.', recheck: () => again.promise }), close), canAct: () => allowed }
+    let el = render(props); clock += 1000
+    await clickOn(el, isAction('Do it')); el = render(props)
+    const pending = clickOn(el, e => e.type === 'button' && text(e.props?.children) === 'Check again')
+    allowed = false; again.resolve({ unsettled: 'Recheck of a revoked attachment.' }); await pending
+    expect(statusOf(render(props))).not.toContain('revoked attachment')
+    expect(close).toHaveBeenCalledTimes(1)
+  })
+  it('Escape stays available while its initial grant is pending', () => {
+    const close = vi.fn(), props = { ...base(vi.fn(async () => true as const), close), canAct: () => false }
+    render(props); escape.run!()
+    expect(close).toHaveBeenCalledTimes(1)
+  })
+  it('dismissing first does not notify twice when authority is revoked during the retained exit', () => {
+    let allowed = true
+    const close = vi.fn(), props = { ...base(vi.fn(async () => true as const), close), canAct: () => allowed }
+    render(props); escape.run!()
+    allowed = false; render(props)
+    expect(close).toHaveBeenCalledTimes(1)
+  })
+  it('does not release busy after a revocation close when the pending action answers STALE', async () => {
+    let allowed = true
+    const d = defer<typeof STALE>(), close = vi.fn(), props = { ...base(() => d.promise, close), canAct: () => allowed }
+    const el = render(props); clock += 1000
+    const pending = clickOn(el, isAction('Do it'))
+    allowed = false
+    expect(statusOf(render(props))).toBe('Do it…')
+    expect(close).toHaveBeenCalledTimes(1)
+    d.resolve(STALE); await pending
+    expect(statusOf(render(props))).toBe('Do it…')
+    expect(close).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('r6: the decision dialog settles only under the identity it was acted in', () => {
+  it.each(['Escape', 'backdrop'])('%s dismisses a busy dialog locally before its answer arrives', async (how) => {
+    const d = defer<string>(), onClose = vi.fn(), run = vi.fn(() => d.promise), props = base(run, onClose)
+    let el = render(props); clock += 1000
+    const pending = clickOn(el, isAction('Do it')); el = render(props)
+    expect(run).toHaveBeenCalledTimes(1)
+    if (how === 'Escape') escape.run!()
+    else (el.props as { onClick: () => void }).onClick()
+    expect(onClose).toHaveBeenCalledTimes(1)
+    reset() // the real caller unmounts on dismissal: the late outcome has no dialog to publish into
+    d.resolve('Late outcome'); await pending
+    expect(onClose).toHaveBeenCalledTimes(1); expect(run).toHaveBeenCalledTimes(1)
+  })
   it('control: with no identity change the refusal is shown', async () => {
     const d = defer<string>()
     const onClose = vi.fn()

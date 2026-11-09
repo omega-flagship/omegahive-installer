@@ -1,5 +1,5 @@
 /**
- * Who answers an Ask when nothing on the page decides it (pure; tested). The host routes in the owner's order: the addressed
+ * Who answers an Ask when nothing on the page decides it (pure; tested). The host routes in Jon's order: the addressed
  * mind's swarm, the page's swarm, the person's default swarm (GET /api/me/ask), then (Platform P2) the person's own
  * mind (GET /api/me/mind). When none of these holds the host refuses with `no_mind`, so the bar says so before the
  * first send and offers the same picker the refusal does. Never about models: a swarm's coordinator answers.
@@ -21,14 +21,17 @@ export const CHANGE_WHO = 'Change who answers'
 export const PICKER_REASONS: readonly RefusalReason[] = ['no_mind', 'no_orchestrator']
 
 export type AnswererChip =
+  | { kind: 'loading' }
   /** the person's own mind answers (Platform P2; inert until the host has it) */
-  | { kind: 'personal'; name: string; resting: boolean }
+  | { kind: 'personal'; name: string; resting: boolean; status?: string }
   /** exactly one swarm can answer: it is preselected, and shown */
   | { kind: 'one'; swarm: AskSwarmChoice }
   /** nobody would answer yet: choose before the first send */
   | { kind: 'choose' }
   /** j0-fixes r1: the open thread's mind answers a plain follow-up (continuity); Change still beats it */
   | { kind: 'thread'; name: string }
+  /** A resolved plan is named before admission; it is not yet a thread. */
+  | { kind: 'planned'; name: string }
 
 /**
  * The bar's chip, or null when something else decides who answers (an addressed mind, the page's swarm, a saved
@@ -38,17 +41,28 @@ export type AnswererChip =
 export function answererChip(o: { settings: AskSettings | null; personal: MyMind | null | undefined; pageSwarm?: string; to?: string }): AnswererChip | null {
   if (!o.settings || o.to || o.pageSwarm) return null
   if (o.settings.swarm_id) return null // an explicit default still wins over the person's own mind (Platform P2)
-  if (o.personal) return { kind: 'personal', name: o.personal.name, resting: !!o.personal.status && !['awake', 'starting'].includes(o.personal.status) }
+  if (o.personal === undefined) return { kind: 'loading' }
+  if (o.personal) return { kind: 'personal', name: o.personal.name, resting: o.personal.status === 'asleep', status: o.personal.status }
   const eligible = o.settings.eligible ?? []
   return eligible.length === 1 ? { kind: 'one', swarm: eligible[0] } : { kind: 'choose' }
 }
 
 /** The chip's words. */
 export function chipWords(c: AnswererChip): string {
-  if (c.kind === 'personal') return `Answering: you (${c.name.slice(0, 60)})${c.resting ? ' · resting' : ''}`
+  if (c.kind === 'loading') return 'Finding who answers…'
+  if (c.kind === 'personal') return `Answering: you (${c.name.slice(0, 60)})`
   if (c.kind === 'one') return `Answering: ${c.swarm.name.slice(0, 60)} · change`
   if (c.kind === 'thread') return `Answering: ${c.name.slice(0, 60)} (this thread) · change`
+  if (c.kind === 'planned') return `Answering: ${c.name.slice(0, 60)}`
   return CHOOSE_WHO
+}
+
+/** Native grammar changes the presentation, never the routing scope or identity. */
+export type NativeAnswererLook = 'construct' | 'professional' | 'still'
+export function nativeAnswererWords(chip: AnswererChip, look: NativeAnswererLook): string {
+  if (chip.kind === 'loading' || chip.kind === 'choose') return look === 'construct' ? chipWords(chip).toLowerCase() : chipWords(chip)
+  const name = (chip.kind === 'one' ? chip.swarm.name : chip.name).slice(0, 60)
+  return look === 'construct' ? `answering: ${name.toLowerCase()}` : look === 'still' ? `Asking ${name} · change` : `Answering: ${name}`
 }
 
 /**
@@ -65,16 +79,19 @@ export function withPreselected(ctx: AskContext, chip: AnswererChip | null, sett
 }
 
 /**
- * The context for the one re-send after the person chose a swarm: `no_mind` re-sends as it was (the saved default now
- * answers, ahead of the person's own mind); `no_orchestrator` names the chosen swarm and drops an addressed mind (the
- * swarm in view, or the addressed mind's, has no coordinator, so it would be refused again).
+ * The context after an explicit saved choice: a root refusal can use the new
+ * host default; an old recipient/program scope is replaced so it cannot win
+ * over that choice. Private requests retain their exact contract.
  */
 export function resendContext(ctx: AskContext, reason: RefusalReason, swarmId: string): AskContext {
-  if ('private' in ctx || reason !== 'no_orchestrator') return ctx
-  const { mind: _mind, selection, ...rest } = ctx
+  if ('private' in ctx) return ctx
+  // A root refusal can use the newly saved host default unchanged. Explicit
+  // previous recipient/program scope must instead be replaced by the choice.
+  if (reason !== 'no_orchestrator' && !ctx.swarm_id && !ctx.mind && !ctx.program && !ctx.selection?.length) return ctx
+  const { mind: _mind, program, selection, view, ...rest } = ctx
   void _mind
-  const sel = selection?.filter((r) => r.kind !== 'mind')
-  return { ...rest, ...(sel?.length ? { selection: sel } : {}), swarm_id: swarmId }
+  const sel = program ? undefined : selection?.filter((r) => r.kind !== 'mind')
+  return { ...rest, ...(!program && view ? { view } : {}), ...(sel?.length ? { selection: sel } : {}), swarm_id: swarmId }
 }
 
 /** What routeAround knows of a swarm: its name, and its coordinator when the swarm list said (absent: unknown). */
@@ -96,7 +113,7 @@ export function cannotAnswer(swarm: SwarmFacts | undefined): string {
 }
 
 /**
- * The mind an Ask answers through in a swarm that has no coordinator (ask-fix r2; the owner: "any hive I have permission
+ * The mind an Ask answers through in a swarm that has no coordinator (ask-fix r2; Jon: "any hive I have permission
  * for should answer through some way"). Platform's host route (ask-answer-through-mind r1): in a swarm with NO
  * coordinator an addressed mind (`context.mind`) answers itself, under the same participates/sees/addressable checks
  * and wake and budget rules as a coordinator; a swarm with a coordinator still answers through it. A host without that
@@ -125,7 +142,7 @@ export function answerMindFor<M extends { id: string; name: string; swarm_id?: s
 type Routed = { context: AskContext; note: string | null; why?: string; fixSwarm?: string }
 
 /**
- * ask-fix r1/r2 (the owner, live): standing near a swarm the Ask cannot use (not in the host's `eligible`) made every plain
+ * ask-fix r1/r2 (Jon, live): standing near a swarm the Ask cannot use (not in the host's `eligible`) made every plain
  * question a "no coordinator" refusal, because the page's swarm is sent as `context.swarm_id`, which the host routes
  * to (core/ask.py _route). Such a swarm is never targeted. Instead, in the host's own order (an explicit default wins
  * over the person's own mind, Platform P2): the person's default swarm when the Ask may use it; else their own mind;
@@ -156,6 +173,7 @@ function aroundTo(ctx: AskContext & { swarm_id?: string }, settings: AskSettings
   const { swarm_id: page, ...rest } = ctx
   const chosen = eligible.find((e) => e.id === settings.swarm_id)
   if (chosen) return { context: { ...rest, swarm_id: chosen.id }, note: `Answering: ${chosen.name.slice(0, 60)}`, why }
+  if (personal === undefined) return { context: rest, note: null, why }
   if (personal) {
     // a saved default the Ask cannot use would be routed to first: name the person's own swarm instead
     const own = settings.swarm_id && personal.swarm_id ? { swarm_id: personal.swarm_id } : {}
@@ -206,6 +224,8 @@ export interface PlanInputs {
   personal: MyMind | null | undefined
   swarmOf: (id: string) => SwarmFacts | undefined
   words?: string
+  /** Explicit local choice: do not replace it with an inferred page fallback. */
+  explicitChoice?: boolean
   through?: Parameters<typeof routeAround>[5]
   thread: { mind: { id: string; name: string } } | null
   carry: Carry | null
@@ -224,7 +244,7 @@ export type Plan = Routed & { through?: { mind: string; why: string }; compat?: 
 
 /** The one decision: the context a request is sent with, and the chip that says who answers it. */
 export function planAsk(ctx: AskContext, o: PlanInputs): Plan {
-  const around = routeAround(ctx, o.settings, o.personal, o.swarmOf, o.words ?? '', o.through)
+  const around = o.explicitChoice ? { context: ctx, note: null } : routeAround(ctx, o.settings, o.personal, o.swarmOf, o.words ?? '', o.through)
   const pageSwarm = 'private' in ctx ? undefined : ctx.swarm_id
   if (!around.through) {
     const c = continuing(ctx, o)
@@ -265,8 +285,11 @@ export function planRecipient(plan: Pick<Plan, 'context' | 'through'>, f: NameFa
     // rather than render a row with no recipient (the send would still reach its coordinator)
     return { id, name: known ?? el?.orchestrator?.name ?? f.swarms[sw]?.name ?? el?.name ?? 'this swarm’s coordinator' }
   }
-  // an addressed mind: its swarm's orchestrator answers, about it (the owner's ruling)
-  if (ctx.mind) return coordinatorOf(f.agents[ctx.mind]?.swarm_id)
+  // an addressed mind: its swarm's orchestrator answers, about it (Jon's ruling)
+  if (ctx.mind) {
+    if (ctx.mind === f.personal?.id) return { id: f.personal.id, name: f.personal.name }
+    return coordinatorOf(f.agents[ctx.mind]?.swarm_id)
+  }
   if (ctx.swarm_id) return coordinatorOf(ctx.swarm_id)
   if (f.settings?.swarm_id) return coordinatorOf(f.settings.swarm_id)
   return { id: f.personal?.id ?? null, name: f.personal?.name ?? null }

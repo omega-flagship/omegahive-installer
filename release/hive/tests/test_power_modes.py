@@ -1,4 +1,4 @@
-"""Off, On and Wake all (the owner, 2026-10-05): a power snapshot of the awake minds, restored exactly. FakeSupervisor."""
+"""Off, On and Wake all (Jon 2026-10-05): a power snapshot of the awake minds, restored exactly. FakeSupervisor."""
 import json
 
 import pytest

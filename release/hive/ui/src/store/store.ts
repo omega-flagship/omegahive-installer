@@ -88,7 +88,7 @@ export interface Toast {
   group?: string
 }
 
-/** The owner's five answers: Once (approve), For a time (for), Always (remember), No (deny), Never (never). */
+/** Jon's five answers: Once (approve), For a time (for), Always (remember), No (deny), Never (never). */
 export type Decision = 'approve' | 'for' | 'remember' | 'deny' | 'never'
 
 export const atomKey = (agentId: string, space: string, atom: string) => `${agentId}\u0000${space}\u0000${atom}`
@@ -466,6 +466,108 @@ function listen(client: HiveClient, get: () => Store, set: (p: Partial<Store>) =
   return live
 }
 
+/**
+ * Notices that wait (Ask-and-apps R1.1 #7; Codex 3 Nov): while the shell rests, a notice's time is not spent unseen.
+ * The shell registers the hold (shell/restNotices); a notice whose time runs out under it is parked, and every parked
+ * notice gets a fresh time when the hold ends, so on wake they all appear. Store-side, so no import cycle.
+ */
+let noticeHold: () => boolean = () => false
+/**
+ * parked: a notice held while the shell rests, with the time it has left (id → ms); timers: every running notice's
+ * pending expiry, with when it ends. Invariant: every parked or timed id is a notice in `toasts` (forgetToast removes
+ * both whenever a notice leaves; restNotices.test checks it after every kind of change).
+ */
+const parkedToasts = new Map<number, number>()
+const toastTimers = new Map<number, ReturnType<typeof setTimeout>>()
+const toastEnds = new Map<number, number>()
+/** errors past the cap during one rest, said once as a summary on wake (Dot R3.1 P2: a long rest stays bounded) */
+let awayErrors = 0
+const AWAY_ERRORS = 3
+const AWAY_GROUP = 'away-summary'
+/** for tests: the ids the parked map and the timers hold (the invariant: each is a notice in toasts) */
+export const noticeBookkeeping = (): { parked: number[]; timed: number[] } => ({ parked: [...parkedToasts.keys()], timed: [...toastTimers.keys()] })
+export function setNoticeHold(hold: () => boolean): void {
+  noticeHold = hold
+}
+function armToast(id: number, ttl: number): void {
+  const prev = toastTimers.get(id)
+  if (prev) clearTimeout(prev)
+  toastEnds.set(id, Date.now() + ttl)
+  toastTimers.set(id, setTimeout(() => { toastTimers.delete(id); toastEnds.delete(id); expireToast(id, ttl) }, ttl))
+}
+/** the hold began: every running notice pauses with the time it has left (Kimi R3.1: never a refilled time) */
+export function pauseNotices(): void {
+  const now = Date.now(), spent: number[] = []
+  for (const [id, h] of toastTimers) {
+    clearTimeout(h)
+    const left = (toastEnds.get(id) ?? now) - now
+    // a notice with no time left goes now, rather than flashing on wake (Dot R3.1 P3)
+    if (left <= 0) spent.push(id)
+    else parkedToasts.set(id, left)
+  }
+  toastTimers.clear()
+  toastEnds.clear()
+  if (spent.length) removeToasts((t) => spent.includes(t.id))
+}
+/** every notice's bookkeeping cleared (a session's own clear of toasts calls this, with or without the identity hook) */
+export function forgetAllNotices(): void {
+  for (const h of toastTimers.values()) clearTimeout(h)
+  toastTimers.clear()
+  toastEnds.clear()
+  parkedToasts.clear()
+  awayErrors = 0
+}
+/** remove notices through their bookkeeping (Dot R3.1: no path removes a toast behind the invariant's back) */
+export function removeToasts(gone: (t: Toast) => boolean): void {
+  const ids = useHive.getState().toasts.filter(gone).map((t) => t.id)
+  if (!ids.length) return
+  for (const id of ids) forgetToast(id)
+  useHive.setState((s) => ({ toasts: s.toasts.filter((t) => !ids.includes(t.id)) }))
+}
+/** a notice leaves (dismissed, replaced, evicted): its timer and any parked entry go with it (Dot R3.1 P2 #1) */
+function forgetToast(id: number): void {
+  parkedToasts.delete(id)
+  const h = toastTimers.get(id)
+  if (h) clearTimeout(h)
+  toastTimers.delete(id)
+  toastEnds.delete(id)
+}
+/** the hold ended: every parked notice resumes with the time it had left (an unseen one, its whole time) */
+export function releaseParkedNotices(): void {
+  const live = new Set(useHive.getState().toasts.map((t) => t.id))
+  for (const [id, ttl] of parkedToasts) if (live.has(id)) armToast(id, ttl)
+  parkedToasts.clear()
+  awayErrors = 0
+}
+/**
+ * An identity change: the earlier person's notices go, parked or not, with every pending timer, so none can
+ * repopulate the parked map during the next person's rest or strand a counted notice (Dot R3.1 P2 #2, #3).
+ */
+export function dropParkedNotices(): void {
+  forgetAllNotices()
+  if (useHive.getState().toasts.length) useHive.setState({ toasts: [] })
+}
+// A timer only runs outside the hold: pauseNotices stops them all as it begins, and a notice arriving under it parks
+// without one. So a firing timer always means no time is left: the notice goes (Dot R3.1 P3: never parked at zero).
+function expireToast(id: number, _ttl: number): void {
+  useHive.getState().dismissToast(id)
+}
+/**
+ * The lane keeps 4. While the shell rests, an error is never the one evicted: the oldest non-error goes first, so every
+ * error is there on wake (Dot R3.1 blocking); errors past 4 stay too. Outside rest, the oldest goes, as before.
+ */
+export function laneAfter<T extends { id: number; tone?: string }>(kept: T[], holding: boolean): { lane: T[]; evicted: T[] } {
+  if (kept.length <= 3) return { lane: kept, evicted: [] }
+  if (!holding) return { lane: kept.slice(-3), evicted: kept.slice(0, kept.length - 3) }
+  const lane = [...kept], evicted: T[] = []
+  while (lane.length > 3) {
+    const i = lane.findIndex((x) => x.tone !== 'error')
+    if (i < 0) break
+    evicted.push(...lane.splice(i, 1))
+  }
+  return { lane, evicted }
+}
+
 export const useHive = create<Store>()((set, get) => ({
   ...clientScoped(),
   client: null,
@@ -506,6 +608,8 @@ export const useHive = create<Store>()((set, get) => ({
     if (client !== get().client) {
       // Surface R (O-B1): a different client is a new session; nothing read under the earlier one is kept
       clearSessionTimers()
+      // the toasts go with their timers and parked entries (Dot R3.1)
+      forgetAllNotices()
       set({ ...clientScoped(), toasts: [], client, session: readContext(client, ++epoch), inits: get().inits + 1, ready: false, bootError: null })
     } else set({ inits: get().inits + 1, ready: false, bootError: null })
     unsubAuth?.()
@@ -522,6 +626,8 @@ export const useHive = create<Store>()((set, get) => ({
         // only for the init that subscribed (a later init, or another client, has its own)
         if (get().client !== client || get().inits !== inits) return
         clearSessionTimers()
+        // the toasts go with their timers and parked entries (Dot R3.1)
+        forgetAllNotices()
         set({ ...clientScoped(), toasts: [], session: readContext(client, ++epoch), ready: false, bootError: null })
         listen(client, get, set)
         if (!client.needsAuth()) void get().hydrate()
@@ -761,8 +867,29 @@ export const useHive = create<Store>()((set, get) => ({
     // press on it then does nothing. The newest copy carries its own action.
     const action = t.action && liveToastAction(t.action, id, () => get().toasts)
     // the same message again (a retrying loader) replaces its earlier copy rather than stacking four of it
-    set((s) => ({ toasts: [...s.toasts.filter((x) => !(x.title === t.title && x.body === t.body && x.tone === t.tone) && !(t.group && x.group === t.group)).slice(-3), { ...t, id, ...(action ? { action } : {}) }] }))
-    setTimeout(() => get().dismissToast(id), t.ttl ?? (t.tone === 'error' ? 6000 : 3500))
+    set((s) => {
+      // a group replaces its own earlier notice, an error included (a retrying loader's newest word is the one that counts)
+      const replaced = s.toasts.filter((x) => (x.title === t.title && x.body === t.body && x.tone === t.tone) || (t.group && x.group === t.group))
+      const kept = s.toasts.filter((x) => !replaced.includes(x))
+      const holding = noticeHold()
+      // at rest the newest AWAY_ERRORS errors are kept; older ones become one summary notice (said on wake)
+      const capped: Toast[] = []
+      if (holding && t.tone === 'error' && t.group !== AWAY_GROUP) {
+        const errs = kept.filter((x) => x.tone === 'error' && x.group !== AWAY_GROUP)
+        for (const x of errs.slice(0, Math.max(0, errs.length - (AWAY_ERRORS - 1)))) { capped.push(x); awayErrors++ }
+      }
+      const rest = kept.filter((x) => !capped.includes(x) && x.group !== AWAY_GROUP)
+      const summary = awayErrors > 0 ? [{ id: ++toastSeq, tone: 'error' as const, icon: 'info', title: `${awayErrors} more ${awayErrors === 1 ? 'problem' : 'problems'} while you were away`, group: AWAY_GROUP }] as Toast[] : []
+      for (const x of kept.filter((x) => x.group === AWAY_GROUP)) forgetToast(x.id)
+      for (const x of summary) parkedToasts.set(x.id, 8000)
+      const { lane, evicted } = laneAfter([...summary, ...rest], holding)
+      for (const x of [...replaced, ...capped, ...evicted]) forgetToast(x.id)
+      return { toasts: [...lane, { ...t, id, ...(action ? { action } : {}) }] }
+    })
+    // under the hold an arriving notice is unseen: it parks with its whole time (no timer runs while the shell rests)
+    const ttl = t.ttl ?? (t.tone === 'error' ? 6000 : 3500)
+    if (noticeHold()) parkedToasts.set(id, ttl)
+    else armToast(id, ttl)
   },
 
   // ------------------------------------------------------------ Phase 2
@@ -1197,6 +1324,7 @@ export const useHive = create<Store>()((set, get) => ({
     set({ labQueue: [] })
   },
   dismissToast(id) {
+    forgetToast(id)
     set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }))
   },
 
@@ -1419,7 +1547,15 @@ export const useHive = create<Store>()((set, get) => ({
     if (!client || (get().catalogState === 'loading' && !refresh)) return
     set({ catalogState: 'loading', catalogError: null })
     try {
-      const catalog = await client.openrouterCatalog(refresh)
+      let catalog: Catalog
+      try {
+        catalog = await client.openrouterCatalog(refresh)
+      } catch (err) {
+        // keyview R13: someone who does not pay by the hive's OpenRouter key may not refresh it; the cache is theirs
+        if (!(refresh && err instanceof ApiError && err.code === 'refresh_not_allowed')) throw err
+        if (!live.ok()) return
+        catalog = await client.openrouterCatalog(false)
+      }
       if (!live.ok()) return
       set({ catalog, catalogState: 'idle', catalogError: catalog.error })
     } catch (err) {
@@ -1503,7 +1639,7 @@ export const useHive = create<Store>()((set, get) => ({
       if (!live.ok()) return null
       await Promise.allSettled([get().loadKeys(), get().loadProviders(), client.getModels().then((models) => live.ok() && set({ models }))])
       if (!live.ok()) return null
-      if (k.provider === 'openrouter' && !get().catalog) void get().loadCatalog(true)
+      if (k.provider === 'openrouter' && !get().catalog) void get().loadCatalog()   // R13: a plain read; the host fetches what is stale
       get().toast({ tone: 'success', icon: 'token', title: `${k.label} added`, body: `${k.provider_label} key ${k.hint}${k.default ? ' · hive default' : ''}` })
       return k
     } catch (err) {

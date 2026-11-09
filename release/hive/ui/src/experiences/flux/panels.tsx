@@ -1,5 +1,8 @@
+import { useVisibleAuthority } from '../../lib/useVisibleAuthority'
+import { healthCheck } from '../../lib/healthQuestion'
+import { HealthCheckLabel } from '../../ui/HealthCheckLabel'
 import { plural } from '../../lib/plural'
-import { AnimatePresence, m } from 'framer-motion'
+import { AnimatePresence, m, useIsPresent } from 'framer-motion'
 import { useDraft } from '../drafts'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { BeliefSentence, closeToHome, hsl, openClassic, PlainText, plainText, shown, Sureness, useHive, useReducedMotion, type Agent, type Approval, type Belief, type Goal, type Message } from '../sdk'
@@ -10,6 +13,12 @@ import { INK, INK2, INK3, statusLine, useFlux, type Origin } from './ctx'
 import { Chip, GlassButton, Glyph, LiquidPanel, LiquidSwitch, MotivationChip, Slot, ThinkingDrops } from './kit'
 import { guardComposing } from '../../features/ask/keys'
 import { SurenessMeter } from './SurenessMeter'
+
+export function useFluxApprovalAuthority(id: string) {
+  const { decisionOwner } = useFlux()
+  const cardOwner = useMemo(() => ({ ...decisionOwner, matches: (value: unknown) => (value as { id: string } | null)?.id === id }), [decisionOwner, id])
+  return useVisibleAuthority('hive-pro', useIsPresent(), id, cardOwner)
+}
 
 const EMPTY_M: Message[] = []
 const EMPTY_P: never[] = []
@@ -343,7 +352,7 @@ function Bubble({ msg, agent, agents }: { msg: Message; agent: Agent; agents: Re
       initial={{ opacity: 0, y: 16, scale: 0.92, borderRadius: 40 }}
       animate={{ opacity: 1, y: 0, scale: 1, borderRadius: 22 }}
       transition={{ type: 'spring', stiffness: 300, damping: 22 }}
-      className={`max-w-[86%] px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words ${mine || peer ? 'self-start rounded-bl-md' : 'self-end rounded-br-md'}`}
+      className={`max-w-[86%] px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words ${mine || peer || healthCheck(msg) ? 'self-start rounded-bl-md' : 'self-end rounded-br-md'}`}
       style={
         mine ? { background: hsl(agent.hue, 70, 45, 0.24), boxShadow: `inset 0 1px 0 rgb(255 255 255 / 0.14), inset 0 0 0 1px ${hsl(agent.hue, 80, 70, 0.25)}` }
         : peer ? { background: hsl(peer.hue, 60, 45, 0.18), boxShadow: `inset 0 0 0 1px ${hsl(peer.hue, 80, 70, 0.25)}` }
@@ -351,6 +360,7 @@ function Bubble({ msg, agent, agents }: { msg: Message; agent: Agent; agents: Re
       }
     >
       {peer && <div className="mb-0.5 text-[12px] font-semibold" style={{ color: hsl(peer.hue, 90, 82) }}>{shown(peer.name)}</div>}
+      {healthCheck(msg) && <div className="mb-0.5"><HealthCheckLabel className="text-[12px] font-semibold" /></div>}
       <PlainText text={msg.text} />
       <div className="mt-1 text-[11px]" style={{ color: INK3 }}>{time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
     </m.div>
@@ -494,6 +504,7 @@ function Stat({ k, v }: { k: string; v: string }) {
  */
 export function DecisionCard({ id, origin }: { id: string; origin?: Origin }) {
   const { desktop, closeDecision, openDecision, openMind } = useFlux()
+  const approvalCurrent = useFluxApprovalAuthority(id)
   const ap = useHive((s) => s.approvals[id])
   const agent = useHive((s) => (ap ? s.agents[ap.agent_id] : undefined))
   const deciding = useHive((s) => s.deciding[id])
@@ -561,7 +572,7 @@ export function DecisionCard({ id, origin }: { id: string; origin?: Origin }) {
           </div>
         )}
       </div>
-      <AnimatePresence>{answering && <ApprovalDecision key={answering.ap.id} seen={answering.ap} session={answering.session} onClose={closed} restoreFocus={afterAnswer} />}</AnimatePresence>
+      <AnimatePresence>{answering && <ApprovalDecision current={approvalCurrent} key={answering.ap.id} seen={answering.ap} session={answering.session} onClose={closed} restoreFocus={afterAnswer} />}</AnimatePresence>
     </LiquidPanel>
   )
 }

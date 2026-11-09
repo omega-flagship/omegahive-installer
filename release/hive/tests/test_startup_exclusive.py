@@ -393,7 +393,7 @@ REVIEW_PROBE_CHILD = ("from hive.core import exclusive; import sys; exclusive.ac
 
 
 def test_review_probe_a_lock_on_A_never_recovers_B_held_by_another_process(tmp_path):
-    """Review's probe (coordination/receipts-local/omegareview-linkage-s1/tree/hive/tests/review_lock_binding.py), kept
+    """Review's probe (review_lock_binding.py), kept
     as a regression: a child process holds B's lifetime lock, this process holds A's; recovery with A's holder on B's
     database must refuse and change nothing (3d77e95 committed reservations=1)."""
     from hive.core import exclusive

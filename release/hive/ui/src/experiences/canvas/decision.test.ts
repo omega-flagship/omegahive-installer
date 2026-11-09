@@ -26,7 +26,7 @@ describe('decision binding', () => {
 
   it('two requests sharing a visible prefix but differing in target are not interchangeable', () => {
     const a = ap({ id: 'ap_a', command: '(shell-confirm "rm -rf /srv/scratch/build-cache")' })
-    const b = ap({ id: 'ap_b', command: '(shell-confirm "rm -rf /srv/scratch/build-cache /home/quinn")' })
+    const b = ap({ id: 'ap_b', command: '(shell-confirm "rm -rf /srv/scratch/build-cache /home/jon")' })
     expect(b.command.startsWith(a.command.slice(0, 40))).toBe(true)
     const seenA = inspect(a)
     // the same id now carrying B's target: changed, buttons off

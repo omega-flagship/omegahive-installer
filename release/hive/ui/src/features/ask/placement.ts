@@ -20,6 +20,26 @@ export interface PlacementIn {
   railX?: number | null
   /** The OS clock's left edge, when it shows (shell/OsClock): on the clock's row the Ask ends before it, as it starts after Ω */
   clockLeft?: number | null
+  /**
+   * The hive's own home (no page open): the Ask sits on the page's centre axis with the mark, the title and the apps
+   * (Jon, 3 Nov: "some of them should be centered"), still never over the rail. A page centres it in its content area.
+   */
+  pageAxis?: boolean
+  /** px the page's centre axis moves left for a thread pinned beside it (PINNED_AXIS_SHIFT), so the Ask and the Ω share it */
+  axisShift?: number
+}
+
+/** A desktop thread pinned beside the home takes the right; what's left is centred this far left of the page's centre */
+export const PINNED_AXIS_SHIFT = 202
+
+/**
+ * Where the Ask's thread sits beside the view, if it does: a side sheet in landscape, a pinned column on desktop. The one
+ * source for both the root's `data-ask-side` (which the scene frames by) and the Ask's own axis shift.
+ */
+export function askSideOf(o: { floating: boolean; threadOpen: boolean; pinned: boolean; mode: AskMode }): 'desktop' | 'landscape' | null {
+  if (!o.floating || !o.threadOpen) return null
+  if (o.mode === 'landscape') return 'landscape'
+  return o.mode === 'desktop' && o.pinned ? 'desktop' : null
 }
 
 export interface Placement {
@@ -68,9 +88,9 @@ export function placeAsk(p: PlacementIn): Placement {
   }
   const avail = maxRight - minLeft
   const width = Math.min(ASK_MAX, avail)
-  // centred in the content area: right of the classic rail when it shows (as pages are), else the whole width
-  const contentLeft = p.railX ?? 0
-  const centred = contentLeft + (p.width - contentLeft - width) / 2
+  // on the home, on the page's centre axis; on a page, centred in its content area (right of the rail, as pages are)
+  const contentLeft = p.pageAxis ? 0 : (p.railX ?? 0)
+  const centred = contentLeft + (p.width - contentLeft - width) / 2 - (p.pageAxis ? p.axisShift ?? 0 : 0)
   return { mode, bottom, left: Math.max(minLeft, Math.min(centred, maxRight - width)), width }
 }
 

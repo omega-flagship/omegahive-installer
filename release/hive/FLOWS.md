@@ -22,7 +22,7 @@ Notifications follow commit and are advisory; workers discover durable goals. Cr
 
 ## Verification
 
-`hive/tests/test_flows.py` is self-contained with synthetic people, swarms and a fake process supervisor. It covers storage, actor authority, adoption, result/review gates, unsupported forms, idempotency, cancellation, delegated children, three crash stages, restart and concurrent controllers. Browser checks exercise the actual native shell and bridge against an offline disposable Hive. Receipts and screenshots are in the OmegaDot workspace's `coordination/omegaflow/`; integration handoff records final counts and commit.
+`hive/tests/test_flows.py` is self-contained with synthetic people, swarms and a fake process supervisor. It covers storage, actor authority, adoption, result/review gates, unsupported forms, idempotency, cancellation, delegated children, three crash stages, restart and concurrent controllers. Browser checks exercise the actual native shell and bridge against an offline disposable Hive. Receipts and screenshots are kept in the OmegaDot workspace's internal notes; integration handoff records final counts and commit.
 
 ## Frame isolation qualification
 

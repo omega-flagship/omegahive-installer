@@ -8,10 +8,10 @@
  * real-person detector: it cannot tell that an arbitrary name belongs to someone real. A value fails when, as it
  * would be rendered, it contains:
  *   - the owner's sign-in principal, first name or full name;
- *   - a family name together with the owner's first name or surname in the same value (an invented "Cormac" or
- *     "Tessa" alone is fine);
+ *   - a family name together with the owner's first name or surname in the same value (an invented person who
+ *     shares a first name with the family is fine alone); family names are compared as SHA-256 digests only;
  *   - an email address outside the reserved example domains (example.org/.com/.net), or the organisation's domain;
- *   - a macOS home-directory path.
+ *   - a macOS home-directory path (the /Users/ prefix).
  *
  * Layers (values only; comments are provenance and never scanned):
  *   1. Source: every string the sim modules, guided-demo scripts, sim fixtures and look seeds produce from constants:
@@ -31,32 +31,46 @@ import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { SimClient } from './SimClient'
 
-// The owner's real names are NOT stored in the repo either. Set OMEGA_PRIVATE_OWNER_NAMES locally (comma list: first name,
-// then surnames or other forms) to guard the real ones; the default is invented and keeps the self-test meaningful.
-const DEFAULT_OWNER_NAMES = "kip,thorne"
-// Names of real family members are NOT stored in the repo. Set OMEGA_PRIVATE_FAMILY_NAMES (comma list) locally to guard
-// the real ones; the default list is invented and keeps the guard and its self-test meaningful.
-const DEFAULT_FAMILY_NAMES = "odette,wren,cormac,maren,tessa,ines"
-const ENV = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
-const FAMILY_NAMES = (ENV?.OMEGA_PRIVATE_FAMILY_NAMES ?? DEFAULT_FAMILY_NAMES).split(",").map((n: string) => n.trim()).filter(Boolean)
-const FAMILY = new RegExp(`\\b(${FAMILY_NAMES.join("|")})\\b`, "i")
-const OWNER_NAMES = (ENV?.OMEGA_PRIVATE_OWNER_NAMES ?? DEFAULT_OWNER_NAMES).split(",").map((n: string) => n.trim()).filter(Boolean)
-const [OWNER_FIRST, ...OWNER_OTHER] = OWNER_NAMES
-const OWNER: RegExp[] = [new RegExp(`user:${OWNER_FIRST}\\b`, "i"), new RegExp(`\\b${OWNER_FIRST} (${OWNER_OTHER.join("|")})\\b`, "i"), new RegExp(`\\b${OWNER_FIRST}\\b`, "i")]
-const OWNER_CONTEXT = new RegExp(`\\b(${OWNER_NAMES.join("|")})\\b`, "i")
+const OWNER: RegExp[] = [/user:jon\b/i, /\bjon(athan)? grove\b/i, /\bjon\b/i]
+// Family names are held only as SHA-256 digests of the lower-cased name, so this file never spells them out. A value
+// carries one when any whole word in it (a maximal run of WORD characters, exactly what a \b...\b/i regex matches),
+// lower-cased, hashes to a listed digest.
+const FAMILY_SHA256: ReadonlySet<string> = new Set([
+  '4b9e5c3f6ea3585cf24b7bbc5e577694158effa19ed61ff707f2a9ce9b208263',
+  '2138adb5a75a82642ac0eb51e530783d835f36691bb102959db917abfc736365',
+  '4b25923a4f31b83195ceb0d160e0a1a6d1556b5a2cd4c582ff40aa0498ae1578',
+  '358a3cd454c38404d1162e39500b2fca02ee644c45bc5a886af173579c1e9549',
+  '55579b557896d0ce1764c47fed644f9b35f58bad620674af23f356d80ed0c503',
+  '02b6bb0bd1c5831b8d08a2d88947ff5597aeebfa291a6516e10972ba4688dcd1',
+])
+const WORD = /[A-Za-z0-9_]+/g
+const OWNER_CONTEXT = /\b(jon|jonathan|grove)\b/i
 const EMAIL = /[A-Za-z0-9._%+-]+@((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})/g
 const EXAMPLE_DOMAIN = /^example\.(org|com|net)$/i
 const ORG_DOMAIN = /singularitynet\.io/i
 const HOME_PATH = /\/Users\//
-const PATTERNS = [...OWNER, FAMILY, OWNER_CONTEXT, EMAIL, EXAMPLE_DOMAIN, ORG_DOMAIN, HOME_PATH]
+const PATTERNS = [...OWNER, WORD, OWNER_CONTEXT, EMAIL, EXAMPLE_DOMAIN, ORG_DOMAIN, HOME_PATH]
+
+// node's crypto by dynamic import, as the other source-reading tests do (the app tsconfig has no node types)
+const cryptoName = 'node:crypto'
+const { createHash } = (await import(/* @vite-ignore */ cryptoName)) as {
+  createHash: (algorithm: string) => { update: (s: string, encoding: string) => { digest: (encoding: string) => string } }
+}
+const digests = new Map<string, string>()
+const sha256hex = (s: string): string => {
+  let d = digests.get(s)
+  if (d === undefined) digests.set(s, (d = createHash('sha256').update(s, 'utf8').digest('hex')))
+  return d
+}
+const hasFamilyName = (s: string, family: ReadonlySet<string>) => (s.match(WORD) ?? []).some((w) => family.has(sha256hex(w.toLowerCase())))
 
 const visible = (s: string) => s.normalize('NFKC').replace(/[\u00AD\u200B-\u200F\u2060\uFEFF]/g, '')
 
 /** Why a value is refused, or null. */
-function refusal(raw: string): string | null {
+function refusal(raw: string, family: ReadonlySet<string> = FAMILY_SHA256): string | null {
   for (const s of new Set([raw, visible(raw)])) {
     if (OWNER.some((re) => re.test(s))) return 'owner identity'
-    if (FAMILY.test(s) && OWNER_CONTEXT.test(s)) return 'family name with owner context'
+    if (hasFamilyName(s, family) && OWNER_CONTEXT.test(s)) return 'family name with owner context'
     if (ORG_DOMAIN.test(s)) return 'organisation domain'
     for (const m of s.matchAll(EMAIL)) if (!EXAMPLE_DOMAIN.test(m[1])) return 'email outside example domains'
     if (HOME_PATH.test(s)) return 'home path'
@@ -267,34 +281,33 @@ describe('demo/sim data carries none of the owner\u2019s identity markers', () =
   })
 
   it('the scanner sees values and skips comments', () => {
-    expect(hits(sourceValues("// the owner's ruling, provenance only\nconst a = { by: 'user:kip' }"))).toEqual(['user:kip'])
-    const home = '/' + 'Users/someone'   // built at run time so the shipped source carries no home path
-    expect(hits(sourceValues('/* user:kip */ const b = `x ${1} at ' + home + '`'))).toEqual(['x 1 at ' + home, ' at ' + home])
+    expect(hits(sourceValues("// the owner's ruling, provenance only\nconst a = { by: 'user:jon' }"))).toEqual(['user:jon'])
+    expect(hits(sourceValues('/* user:jon */ const b = `x ${1} at /Users/*`'))).toEqual(['x 1 at /Users/*', ' at /Users/*'])
     expect(hits(jsonValues({ a: ['someone@gmail.com', 'Ada Brightwater'] }))).toEqual(['someone@gmail.com'])
   })
 
   it('refuses values assembled from constant pieces (stand-in r1 P2)', () => {
     const lower = (v: string[]) => hits(v).map((s) => s.toLowerCase())
-    expect(hits(sourceValues("const a = 'user:' + 'ki' + 'p'"))).toContain('user:kip')
-    expect(hits(sourceValues("const a = `user:${'ki'}p`"))).toContain('user:kip')
-    expect(lower(sourceValues('const A = () => <span>K&#105;p</span>', 'x.tsx'))).toContain('kip')
-    expect(hits(sourceValues("const ki = 'ki'\nconst who = 'user:' + ki + 'p'"))).toContain('user:kip')
-    expect(lower(sourceValues("const A = () => <span>K{'i'}p</span>", 'x.tsx'))).toContain('kip')
-    expect(lower(sourceValues('const A = () => <i title="K&#x69;p" />', 'x.tsx'))).toContain('kip')
-    expect(hits(['K\u200Bip', '\uFF2Bip'])).toHaveLength(2) // zero-width / full-width forms
-    expect(hits(heldValues(new Map([['k', new Set([{ by: ['user:', 'kip'].join('') }])]])))).toEqual(['user:kip'])
+    expect(hits(sourceValues("const a = 'user:' + 'jo' + 'n'"))).toContain('user:jon')
+    expect(hits(sourceValues("const a = `user:${'jo'}n`"))).toContain('user:jon')
+    expect(lower(sourceValues('const A = () => <span>J&#111;n</span>', 'x.tsx'))).toContain('jon')
+    expect(hits(sourceValues("const jo = 'jo'\nconst who = 'user:' + jo + 'n'"))).toContain('user:jon')
+    expect(lower(sourceValues("const A = () => <span>J{'o'}n</span>", 'x.tsx'))).toContain('jon')
+    expect(lower(sourceValues('const A = () => <i title="J&#x6F;n" />', 'x.tsx'))).toContain('jon')
+    expect(hits(['J\u200Bon', '\uFF2Aon'])).toHaveLength(2) // zero-width / full-width forms
+    expect(hits(heldValues(new Map([['k', new Set([{ by: ['user:', 'jon'].join('') }])]])))).toEqual(['user:jon'])
   })
 
   it('resolves names by lexical scope: the nearest binding wins (stand-in r2 P2)', () => {
-    const shadowedHit = "const part = 'x'\nexport function demo() {\n  const part = 'ki'\n  return 'user:' + part + 'p'\n}"
-    expect(hits(sourceValues(shadowedHit))).toContain('user:kip')
-    const shadowedClean = "const part = 'ki'\nexport function demo() {\n  const part = 'ro'\n  return 'user:' + part + 'p'\n}"
+    const shadowedHit = "const part = 'x'\nexport function demo() {\n  const part = 'jo'\n  return 'user:' + part + 'n'\n}"
+    expect(hits(sourceValues(shadowedHit))).toContain('user:jon')
+    const shadowedClean = "const part = 'jo'\nexport function demo() {\n  const part = 'ro'\n  return 'user:' + part + 'n'\n}"
     expect(hits(sourceValues(shadowedClean))).toEqual([])
-    expect(sourceValues(shadowedClean)).toContain('user:rop')
+    expect(sourceValues(shadowedClean)).toContain('user:ron')
     // block scope and a parameter that shadows a module const
-    expect(hits(sourceValues("const p = 'ki'\nif (Math.random()) { const p = 'ro'; void ('user:' + p + 'p') }"))).toEqual([])
-    expect(hits(sourceValues("const p = 'ki'\nexport const f = (p: string) => 'user:' + p + 'p'"))).toEqual([])
-    expect(hits(sourceValues("const p = 'ki'\nexport const f = () => 'user:' + p + 'p'"))).toContain('user:kip')
+    expect(hits(sourceValues("const p = 'jo'\nif (Math.random()) { const p = 'ro'; void ('user:' + p + 'n') }"))).toEqual([])
+    expect(hits(sourceValues("const p = 'jo'\nexport const f = (p: string) => 'user:' + p + 'n'"))).toEqual([])
+    expect(hits(sourceValues("const p = 'jo'\nexport const f = () => 'user:' + p + 'n'"))).toContain('user:jon')
   })
 
   it('decodes JSX entities as the JSX compiler does; ordinary and unknown entities pass (stand-in r2 P3)', () => {
@@ -306,27 +319,37 @@ describe('demo/sim data carries none of the owner\u2019s identity markers', () =
   })
 
   it('allows invented people and example addresses (stand-in r1 P3)', () => {
-    expect(hits(sourceValues("const c = ['Cormac Ortega', 'Tessa Kowal', 'Maren', 'Ines', 'Cormacology', 'ada@example.org', 'k@example.com', 'n@example.net', 'user:p_ada', 'kipper', 'Thorne Street']"))).toEqual([])
-    expect(hits(['Cormac Thorne', 'Odette and kip', 'x@other.org', 'https://singularitynet.io/x'])).toHaveLength(4)
+    expect(hits(sourceValues("const c = ['Ravi Kowal', 'Mia', 'Theo', 'Philosophy', 'ada@example.org', 'k@example.com', 'n@example.net', 'user:p_ada', 'jonquil', 'Grove Street']"))).toEqual([])
+    expect(hits(['x@other.org', 'https://singularitynet.io/x'])).toHaveLength(2)
+  })
+
+  it('family names are compared by digest only: whole words, any case, only with owner context', () => {
+    expect(FAMILY_SHA256.size).toBe(6)
+    // independent pin of the approved list (digests only; reviewed equal to the real names 2026-11-05): both copies must match it
+    expect([...FAMILY_SHA256].sort()).toEqual(['02b6bb0bd1c5831b8d08a2d88947ff5597aeebfa291a6516e10972ba4688dcd1', '2138adb5a75a82642ac0eb51e530783d835f36691bb102959db917abfc736365', '358a3cd454c38404d1162e39500b2fca02ee644c45bc5a886af173579c1e9549', '4b25923a4f31b83195ceb0d160e0a1a6d1556b5a2cd4c582ff40aa0498ae1578', '4b9e5c3f6ea3585cf24b7bbc5e577694158effa19ed61ff707f2a9ce9b208263', '55579b557896d0ce1764c47fed644f9b35f58bad620674af23f356d80ed0c503'])
+    for (const d of FAMILY_SHA256) expect(d).toMatch(/^[0-9a-f]{64}$/)
+    // an invented family list, so the test never needs a real name: the same rule the real list is held to
+    const invented = new Set([sha256hex('mia')])
+    expect(refusal('Mia Grove', invented)).toBe('family name with owner context')
+    expect(refusal('GROVE, mia', invented)).toBe('family name with owner context')
+    expect(refusal('Mia\u200B Grove', invented)).toBe('family name with owner context')
+    expect(refusal('Mia Kowal', invented)).toBeNull()
+    expect(refusal('Miami Grove', invented)).toBeNull()
+    expect(refusal('Mia Grove')).toBeNull() // not on the real list
   })
 
   it('calls exported zero-argument fixture factories and records a read that throws (stand-in r2 P2)', async () => {
-    const reads = await exportedReads({ './x.ts': { made: () => ['user:', 'ki', 'p'].join(''), broken: () => { throw new Error('needs a hive') }, withArg: (n: string) => n, Klass: class {} } })
+    const reads = await exportedReads({ './x.ts': { made: () => ['user:', 'jo', 'n'].join(''), broken: () => { throw new Error('needs a hive') }, withArg: (n: string) => n, Klass: class {} } })
     expect(reads.map((r) => r.name)).toEqual(['./x.ts made()', './x.ts broken()'])
-    expect(hits(reads[0].values)).toEqual(['user:kip'])
+    expect(hits(reads[0].values)).toEqual(['user:jon'])
     expect(reads[1]).toMatchObject({ ok: false, why: 'needs a hive' })
   })
 
   it('the rendered-page check uses these same patterns', () => {
     const script = Object.values(renderedCheck)[0]
     expect(script).toBeTruthy()
-    for (const re of PATTERNS.filter((r) => r !== FAMILY && r !== OWNER_CONTEXT && !OWNER.includes(r))) expect(script).toContain(re.toString())
-    // the owner patterns are built from the same env variable and default list in both places
-    expect(script).toContain('OMEGA_PRIVATE_OWNER_NAMES')
-    expect(script).toContain(DEFAULT_OWNER_NAMES)
-    // the family pattern is built from the same env variable and default list in both places
-    expect(script).toContain('OMEGA_PRIVATE_FAMILY_NAMES')
-    expect(script).toContain(DEFAULT_FAMILY_NAMES)
+    for (const re of PATTERNS) expect(script).toContain(re.toString())
+    for (const d of FAMILY_SHA256) expect(script).toContain(`'${d}'`)
   })
 
   it.each(Object.entries(codeFiles))('source %s', (f, text) => {

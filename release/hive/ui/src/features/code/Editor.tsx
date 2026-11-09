@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { EditorView, basicSetup } from 'codemirror'
 import { Compartment, EditorState, Prec, type Extension } from '@codemirror/state'
 import { autocompletion } from '@codemirror/autocomplete'
@@ -10,6 +10,33 @@ import { json } from '@codemirror/lang-json'
 import { markdown } from '@codemirror/lang-markdown'
 import { mettaSupport } from './metta'
 import { codeLayers, fenceLayers, setLayers, type Layers } from './canvas/layers'
+import { screensSpace } from '../../screens/screenSpace'
+import { experienceById } from '../../experiences/registry'
+import { useLook } from '../../shell/uiVariant'
+
+/**
+ * The surface the editor is worn on (the chrome writes html[data-xc-scheme]; absent: a dark surface) and the look worn.
+ * Which ink the code is written in is NOT decided here: MeTTa answers it from the AtomSpace (screens/looks.metta,
+ * scr-code-ink: a look's own LookCodeInk, else the surface's SchemeCodeInk). `night` is One Dark; `paper` is
+ * CodeMirror's own light highlighting (basicSetup's fallback).
+ */
+const surface = (): 'light' | 'dark' => (typeof document !== 'undefined' && document.documentElement.dataset.xcScheme === 'light' ? 'light' : 'dark')
+function useSurface(): 'light' | 'dark' {
+  return useSyncExternalStore(
+    (cb) => {
+      const mo = new MutationObserver(cb)
+      mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-xc-scheme'] })
+      return () => mo.disconnect()
+    },
+    surface,
+    () => 'dark',
+  )
+}
+function inkFor(look: string, scheme: 'light' | 'dark'): Extension {
+  let ink: 'paper' | 'night' = 'night'
+  try { ink = screensSpace().codeInk(look, scheme) } catch { /* the space did not open: the editor keeps night ink */ }
+  return ink === 'paper' ? [] : oneDark
+}
 
 function language(path: string): Extension[] {
   if (/\.metta$/i.test(path)) return mettaSupport()
@@ -29,8 +56,8 @@ const OFF = autocompletion({ activateOnTyping: false, defaultKeymap: false })
 const look = EditorView.theme({
   '&': { height: '100%', fontSize: '13px', backgroundColor: 'transparent' },
   '.cm-scroller': { fontFamily: 'var(--font-mono)', lineHeight: '1.55' },
-  '.cm-gutters': { backgroundColor: 'transparent', borderRight: '1px solid rgb(170 170 255 / 0.12)' },
-  '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'rgb(255 255 255 / 0.035)' },
+  '.cm-gutters': { backgroundColor: 'transparent', borderRight: '1px solid color-mix(in oklab, var(--color-ink) 12%, transparent)' },
+  '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'color-mix(in oklab, var(--color-ink) 3.5%, transparent)' },
 })
 
 /**
@@ -64,18 +91,25 @@ export function Editor({ path, content, onChange, onSave, onSelect, readOnly, la
 }) {
   const host = useRef<HTMLDivElement>(null)
   const completion = useRef(new Compartment())
+  const theme = useRef(new Compartment())
+  const scheme = useSurface()
+  const lookId = experienceById(useLook().current?.experience).id
   const view = useRef<EditorView | null>(null)
   const handlers = useRef({ onChange, onSave, onSelect, keys, onView, onModClick, onDoubleClick })
   useEffect(() => {
     handlers.current = { onChange, onSave, onSelect, keys, onView, onModClick, onDoubleClick }
   })
+  // the ink follows the look and its surface live (MeTTa answers which)
+  useEffect(() => {
+    view.current?.dispatch({ effects: theme.current.reconfigure(inkFor(lookId, scheme)) })
+  }, [lookId, scheme])
   useEffect(() => {
     if (!host.current) return
     const state = EditorState.create({
       doc: content,
       extensions: [
         basicSetup,
-        oneDark,
+        theme.current.of(inkFor(lookId, scheme)),
         look,
         ...language(path),
         EditorState.readOnly.of(!!readOnly),

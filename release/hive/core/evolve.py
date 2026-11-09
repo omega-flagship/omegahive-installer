@@ -21,7 +21,7 @@ def _named(principal):
 class EvolveRegistry:
     @staticmethod
     def named_owner(actor, swarm_id):
-        """The hive owner who seals experiments is a named admin person (the owner, 2026-10-04): no person holds a role
+        """The hive owner who seals experiments is a named admin person (Jon, 2026-10-04): no person holds a role
         called "owner", so an admin signed in by name stands for it. The loopback operator and minds never do."""
         return bool(actor and actor.get("swarm_id") == swarm_id and actor.get("kind") == "person"
                     and actor.get("role") in ("owner", "admin") and not actor.get("local_operator")

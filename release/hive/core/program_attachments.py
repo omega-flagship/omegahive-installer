@@ -102,7 +102,7 @@ class ProgramAttachments:
         return {'actions': actions, 'channels': None}
 
     def host_attach_studio_maker(self, program, mind_id, principal):
-        """the owner 2026-10-19 ("each member gets their own Studio maker mind that runs on their own key"): the host attaches a
+        """Jon 2026-10-19 ("each member gets their own Studio maker mind that runs on their own key"): the host attaches a
         person's own Studio maker to the Studio app, in place of an admin. Narrow and audited: only the Studio program
         (HIVE_STUDIO_PROGRAM), only the mind the host made and bound to this person (person_minds), in its own Studio
         swarm and owned by them. Anything else is 403 attachment_refused and nothing is written. No activation row is

@@ -178,7 +178,9 @@ describe('AppFrame wires the binding (source check)', () => {
     expect(body).toMatch(/const out = req\.settle\(value\)/)
     expect(body).not.toMatch(/postMessage/)   // the frame is only ever posted to through send (req.settle) or notify (docBinding)
     expect(body.match(/settleAct\([^)]*\)/g)).toEqual(['settleAct(m.id, admitted.asked, reply)'])
-    expect(src).toMatch(/\}, \[client, programId, identity\]\)/)        // a new document for a new identity
+    // a new document for a new identity: the document effect lists the identity among its dependencies (later rounds
+    // added reload and the linked entry after it)
+    expect(src).toMatch(/\}, \[client, programId, identity(, [^\]]*)?\]\)/)
     expect(src).toMatch(/\}, \[client, identity\]\)/)                    // the person in `context` is re-read too
     expect(src).toMatch(/const notify = \(value: object, transfer: Transferable\[\] = \[\]\) => void docBinding\.commit\(\(\) => send\(value, transfer\)\)/)
     expect(src).toMatch(/post\.current = notify/)

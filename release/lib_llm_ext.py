@@ -78,6 +78,14 @@ class AbstractAIProvider:
     def required_env(self) -> str:
         return ""
 
+
+class _RuntimeFailure(str):
+    """A string-compatible provider result with runtime provenance; model text never receives this type."""
+    def __new__(cls, text, kind):
+        value = super().__new__(cls, text)
+        value.failure_kind = kind
+        return value
+
 class AIProvider(AbstractAIProvider):
     """Lazy AI provider with on-demand initialization."""
 
@@ -175,14 +183,22 @@ class AIProvider(AbstractAIProvider):
                 completion_chars=len(raw_text),
             )
             if _incomplete_choice(response.choices[0]):
-                return ""
+                return _RuntimeFailure('wait "LLM-FORMAT-ERROR incomplete response"', 'format')
             return self._clean_text(raw_text)
         except Exception as e:
             print(f"[lib_llm_ext.AIProvider.chat] Exception while communicating with LLM: {e}")
-            return ""
+            return _RuntimeFailure('wait "LLM-PROVIDER-ERROR retry after 60 seconds"', 'provider')
 
     def _clean_text(self, text: str) -> str:
         """Unescape special characters and remove provider tool-call artifacts."""
+        try:
+            from helper_command_parser import signature_raw_batch_complete
+        except ImportError:
+            from src.helper_command_parser import signature_raw_batch_complete
+        # This is the ORIGINAL SDK content. A literal opening quote and an encoded closing quote must never become
+        # runnable through cleanup. The runtime validates the decoded batch again before canonical repair.
+        if not signature_raw_batch_complete(text):
+            return _RuntimeFailure('wait "LLM-FORMAT-ERROR incomplete response"', 'format')
         return (
             text.replace("</arg_value>", " ")
                 .replace("</tool_call>", " ")
@@ -230,11 +246,11 @@ class AsiOneProvider(AIProvider):
                 completion_chars=len(raw_text),
             )
             if _incomplete_choice(response.choices[0]):
-                return ""
+                return _RuntimeFailure('wait "LLM-FORMAT-ERROR incomplete response"', 'format')
             return self._clean_text(raw_text)
         except Exception as e:
             print(f"[lib_llm_ext.ASIOneProvider.chat] Exception while communicating with LLM: {e}")
-            return ""
+            return _RuntimeFailure('wait "LLM-PROVIDER-ERROR retry after 60 seconds"', 'provider')
 
 class TestProvider(AbstractAIProvider):
     """Test provider for mocking LLM output"""
@@ -296,15 +312,28 @@ def callProvider(provider_name: str, content: str, max_tokens: int = 6000) -> st
     """Generic dispatcher for MeTTa."""
     provider = _get_provider(provider_name)
     if not provider:
-        return 'wait "LLM-PROVIDER-UNKNOWN provider=%s; choose a configured provider and restart"' % provider_name
+        return _RuntimeFailure('wait "LLM-PROVIDER-UNKNOWN provider=%s; choose a configured provider and restart"' % provider_name, 'provider')
     if not provider.is_available:
         env_name = provider.required_env or "provider API key"
-        return (
+        return _RuntimeFailure((
             'wait "LLM-PROVIDER-NOT-AVAILABLE provider=%s missing=%s; '
             'configure the key in .env or rerun installer repair, then restart"'
             % (provider_name, env_name)
-        )
+        ), 'provider')
     return provider.chat(content=content, max_tokens=max_tokens)
+
+
+def callProviderCommands(provider_name: str, content: str, max_tokens: int = 6000) -> str:
+    """The runtime's command envelope carries exception/finish provenance separately from untrusted model text."""
+    try:
+        import helper
+    except ImportError:  # package import without the runtime's src path
+        from src import helper
+    try:
+        result = callProvider(provider_name, content, max_tokens)
+    except Exception:
+        result = _RuntimeFailure('wait "LLM-PROVIDER-ERROR retry after 60 seconds"', 'provider')
+    return helper.prepare_model_response(str(result), result.failure_kind if isinstance(result, _RuntimeFailure) else 'normal')
 
 
 

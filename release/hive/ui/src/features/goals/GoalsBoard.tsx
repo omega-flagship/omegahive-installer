@@ -1,3 +1,4 @@
+import { useVisibleAuthority } from '../../lib/useVisibleAuthority'
 import { plural } from '../../lib/plural'
 import { AnimatePresence, LayoutGroup, m } from 'framer-motion'
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
@@ -29,8 +30,8 @@ const COLS: { key: Col; label: string; short?: string; color: string; icon: Icon
   { key: 'claimed', label: 'Claimed', color: '#7dd3fc', icon: 'bolt' },
   // R17: done means reviewed, so submitted work waits here, not among the claimed (same words as Boards)
   { key: 'review', label: 'Awaiting review', short: 'Review', color: '#a78bfa', icon: 'check' },
-  { key: 'done', label: 'Done', color: '#4ade80', icon: 'check' },
-  { key: 'failed', label: 'Failed', color: '#fb7185', icon: 'x' },
+  { key: 'done', label: 'Done', color: 'var(--color-good)', icon: 'check' },
+  { key: 'failed', label: 'Failed', color: 'var(--color-bad)', icon: 'x' },
 ]
 /** Stalled tasks are unclaimed and need a person, so they lead the Open column; waiting tasks are still held; submitted work awaits review. */
 const colOf = (s: GoalStatus): Col => (s === 'cancelled' ? 'failed' : s === 'stalled' ? 'open' : s === 'waiting' ? 'claimed' : s === 'submitted' ? 'review' : s)
@@ -90,6 +91,7 @@ export function GoalsBoard({
   // GoalDecision, on the goal as the card showed it and the session it was shown under. The dialog lives here, not on
   // the card, so it stays open (and says what changed) when the goal moves columns under it.
   const [asking, setAsking] = useState<CardAsk | null>(null)
+  const decisionCurrent = useVisibleAuthority('page', true, 'tasks-board')
   const closeAsk = useCallback(() => setAsking(null), [])
   // focus goes back to the button that asked; if the card moved columns since (the old card may still be leaving),
   // to that goal's card in the column it is in now
@@ -218,7 +220,7 @@ export function GoalsBoard({
                   role="tab"
                   aria-selected={visible === c.key}
                   onClick={() => jump(c.key)}
-                  className={cx('flex min-h-9 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg border px-1 text-[12px] font-medium transition-colors', visible === c.key ? 'border-line-2 bg-white/[0.08] text-ink' : 'border-transparent text-ink-3')}
+                  className={cx('flex min-h-9 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg border px-1 text-[12px] font-medium transition-colors', visible === c.key ? 'border-line-2 bg-tint/[0.08] text-ink' : 'border-transparent text-ink-3')}
                 >
                   <span className="size-1.5 shrink-0 rounded-full" style={{ background: c.color }} />
                   <span className="truncate" aria-label={c.label}>{c.short ?? c.label}</span>
@@ -241,7 +243,7 @@ export function GoalsBoard({
                   data-col={c.key}
                   data-tour={`goals-col-${c.key}`}
                   aria-label={`${c.label} tasks`}
-                  className={cx('flex min-h-0 flex-col rounded-[20px] border border-line bg-white/[0.02]', !desktop && 'w-[86%] shrink-0 snap-start')}
+                  className={cx('flex min-h-0 flex-col rounded-[20px] border border-line bg-tint/[0.02]', !desktop && 'w-[86%] shrink-0 snap-start')}
                 >
                   <header className="flex items-center gap-2 px-3.5 pt-3 pb-2">
                     <span className="size-2 rounded-full" style={{ background: c.color, boxShadow: `0 0 10px ${c.color}` }} />
@@ -272,7 +274,7 @@ export function GoalsBoard({
         </>
       )}
       <AnimatePresence>
-        {asking && <GoalDecision key={`${asking.seen.id}:${asking.to}`} seen={asking.seen} to={asking.to} session={asking.session} onClose={closeAsk} dismissLabel={KEEP_THE_GOAL} restoreFocus={askHome} />}
+        {asking && <GoalDecision current={decisionCurrent} key={`${asking.seen.id}:${asking.to}`} seen={asking.seen} to={asking.to} session={asking.session} onClose={closeAsk} dismissLabel={KEEP_THE_GOAL} restoreFocus={askHome} />}
       </AnimatePresence>
     </div>
   )
@@ -325,7 +327,7 @@ function QuickAdd({ swarmId, addUnder }: { swarmId?: string; addUnder: Motivatio
     if (g) setTitle('')
   }
   return (
-    <form onSubmit={submit} data-tour="goals-add" className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-[18px] border border-line bg-black/20 p-1.5 focus-within:border-line-2 md:flex-nowrap">
+    <form onSubmit={submit} data-tour="goals-add" className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-[18px] border border-line bg-shade/20 p-1.5 focus-within:border-line-2 md:flex-nowrap">
       <div className="flex min-w-0 basis-full items-center gap-2 md:basis-auto md:flex-1">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-xl" style={{ background: hsl(hue, 80, 55, 0.15), color: hsl(hue, 100, 80) }}>
           <Icon name="plus" size={18} />
@@ -345,7 +347,7 @@ function QuickAdd({ swarmId, addUnder }: { swarmId?: string; addUnder: Motivatio
       {!swarmId && open.length > 1 && (
         <label className="flex min-h-9 items-center gap-1 text-[12px] text-ink-3">
           <span className="sr-only">Swarm</span>
-          <select value={team} onChange={(e) => setPicked(e.target.value)} className="min-h-9 max-w-[10rem] rounded-lg border border-line bg-black/30 px-2 text-[12px] text-ink-2">
+          <select value={team} onChange={(e) => setPicked(e.target.value)} className="min-h-9 max-w-[10rem] rounded-lg border border-line bg-shade/30 px-2 text-[12px] text-ink-2">
             {open.map((s) => (
               <option key={s.id} value={s.id}>
                 {shown(s.name)}
@@ -357,7 +359,7 @@ function QuickAdd({ swarmId, addUnder }: { swarmId?: string; addUnder: Motivatio
       {linkTo && (
         <span className="inline-flex min-h-9 max-w-[16rem] items-center gap-1 rounded-full border border-accent/30 bg-accent/10 pr-1 pl-2.5 text-[12px] text-accent" data-add-under title={LINK_MEANS}>
           <span className="truncate">under “{linkTo.title}”</span>
-          <button type="button" onClick={() => setSkipUnder(linkTo.id)} aria-label={`Do not file the new task under ${linkTo.title}`} className="flex size-6 items-center justify-center rounded-full hover:bg-white/10">
+          <button type="button" onClick={() => setSkipUnder(linkTo.id)} aria-label={`Do not file the new task under ${linkTo.title}`} className="flex size-6 items-center justify-center rounded-full hover:bg-tint/10">
             <Icon name="x" size={11} />
           </button>
         </span>
@@ -475,7 +477,7 @@ function GoalCard({ goal: g, subgoals, agents, swarmHue, team, focused = false, 
           <Icon name={stalled ? 'alert' : 'clock'} size={12} strokeWidth={2.4} />
           <span className="min-w-0 flex-1 truncate">{stalled ? `Stalled · ${g.attempts ?? LEASE_LAPSES} claims lapsed` : 'Waiting on you'}</span>
           {stalled && (
-            <button onClick={() => onDecide(cardAsk(g, 'open', session))} className="-my-1 -mr-1.5 inline-flex min-h-8 items-center gap-1 rounded-lg px-2 text-ink hover:bg-white/[0.07]" aria-label={`Re-open ${g.title}`}>
+            <button onClick={() => onDecide(cardAsk(g, 'open', session))} className="-my-1 -mr-1.5 inline-flex min-h-8 items-center gap-1 rounded-lg px-2 text-ink hover:bg-tint/[0.07]" aria-label={`Re-open ${g.title}`}>
               <Icon name="reset" size={12} strokeWidth={2.2} />
               Re-open
             </button>
@@ -536,7 +538,7 @@ function GoalCard({ goal: g, subgoals, agents, swarmHue, team, focused = false, 
 
       <TaskChips goal={g} />
       {subgoals.length > 0 && (
-        <ul className="mx-2 mb-2 space-y-px rounded-xl bg-black/25 p-1" aria-label="Subtasks">
+        <ul className="mx-2 mb-2 space-y-px rounded-xl bg-shade/25 p-1" aria-label="Subtasks">
           <AnimatePresence initial={false}>
             {subgoals.map((s) => (
               <SubRow key={s.id} goal={s} agent={s.claimed_by ? agents[s.claimed_by] : undefined} />
@@ -612,7 +614,7 @@ function GoalCard({ goal: g, subgoals, agents, swarmHue, team, focused = false, 
                     onChange={(e) => setSub(e.target.value)}
                     placeholder="Add a subtask…"
                     aria-label="New subtask"
-                    className="min-h-9 min-w-0 flex-1 rounded-lg border border-line bg-black/25 px-2.5 text-[13px] text-ink outline-none placeholder:text-ink-4 focus:border-line-2"
+                    className="min-h-9 min-w-0 flex-1 rounded-lg border border-line bg-shade/25 px-2.5 text-[13px] text-ink outline-none placeholder:text-ink-4 focus:border-line-2"
                   />
                   <button type="submit" disabled={!sub.trim()} aria-label="Add subtask" className="flex size-9 items-center justify-center rounded-lg border border-line text-ink-2 disabled:opacity-40">
                     <Icon name="plus" size={16} />
@@ -642,14 +644,14 @@ function LeaseRow({ lease, attempts }: { lease: ReturnType<typeof leaseOf>; atte
             {lease.kind === 'running' ? `lease ${leaseText(left)}` : lease.kind === 'lapsed' ? 'lease lapsed' : 'lease paused'}
           </span>
           {lease.kind === 'running' && (
-            <span className="h-[3px] w-14 overflow-hidden rounded-full bg-white/[0.08]" aria-hidden="true">
+            <span className="h-[3px] w-14 overflow-hidden rounded-full bg-tint/[0.08]" aria-hidden="true">
               <m.span className="block h-full rounded-full" initial={false} animate={{ width: `${frac * 100}%` }} style={{ background: color }} />
             </span>
           )}
         </>
       )}
       {attempts > 0 && (
-        <span className="ml-auto rounded px-1 font-semibold" style={{ color: attempts >= LEASE_LAPSES - 1 ? '#fbbf24' : 'var(--color-ink-3)', background: 'rgb(255 255 255 / 0.05)' }} title={`${attempts} earlier claim${attempts === 1 ? '' : 's'} lapsed; ${LEASE_LAPSES} stall the task`}>
+        <span className="ml-auto rounded px-1 font-semibold" style={{ color: attempts >= LEASE_LAPSES - 1 ? '#fbbf24' : 'var(--color-ink-3)', background: 'color-mix(in oklab, var(--color-ink) 5%, transparent)' }} title={`${attempts} earlier claim${attempts === 1 ? '' : 's'} lapsed; ${LEASE_LAPSES} stall the task`}>
           {attempts}/{LEASE_LAPSES} lapsed
         </span>
       )}
@@ -667,14 +669,14 @@ function MiniAction({ icon, label, color, onClick }: { icon: IconName; label: st
 }
 
 const SUB_ICON: Record<GoalStatus, { icon: IconName; color: string }> = {
-  open: { icon: 'target', color: '#8a89b3' },
+  open: { icon: 'target', color: 'var(--color-ink-3)' },
   claimed: { icon: 'bolt', color: '#7dd3fc' },
   waiting: { icon: 'clock', color: WAITING },
   stalled: { icon: 'alert', color: STALLED },
   submitted: { icon: 'check', color: '#a78bfa' },
-  done: { icon: 'check', color: '#4ade80' },
-  failed: { icon: 'x', color: '#fb7185' },
-  cancelled: { icon: 'ban', color: '#5d5c86' },
+  done: { icon: 'check', color: 'var(--color-good)' },
+  failed: { icon: 'x', color: 'var(--color-bad)' },
+  cancelled: { icon: 'ban', color: 'var(--color-ink-5)' },
 }
 
 function SubRow({ goal: s, agent }: { goal: Goal; agent: Agent | undefined }) {

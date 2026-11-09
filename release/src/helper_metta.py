@@ -17,10 +17,6 @@ CORE_ROOT = pathlib.Path(__file__).resolve().parents[1]
 OMEGACLAW_ROOT = CORE_ROOT.parents[1]
 MEMORY_DIR = pathlib.Path(os.environ.get("OMEGACLAW_MEMORY_DIR", CORE_ROOT / "memory"))
 PROMPT_FILE = pathlib.Path(os.environ.get("OMEGACLAW_PROMPT_FILE", MEMORY_DIR / "prompt.txt"))
-# The shipped base prompt. memory/prompt.txt is runtime state (git-ignored); in the default memory folder without one,
-# the loop reads this default. An explicit OMEGACLAW_MEMORY_DIR or OMEGACLAW_PROMPT_FILE is used as given.
-DEFAULT_PROMPT_FILE = CORE_ROOT / "src" / "base_prompt.txt"
-_PROMPT_DEFAULTED = "OMEGACLAW_PROMPT_FILE" not in os.environ and "OMEGACLAW_MEMORY_DIR" not in os.environ
 CONTEXT_VIEW_POLICY_RE = re.compile(
     r'\(SkillContextView\s+"?([^"\s()]+)"?\s+"?([^"\s()]+)"?\s*\)'
 )
@@ -196,8 +192,6 @@ def _read_text_tail_bytes(path, max_bytes):
 def context_prompt(max_chars=20000):
     """Read the persona prompt as text for the loop context membrane."""
     path = PROMPT_FILE
-    if not path.exists() and _PROMPT_DEFAULTED:
-        path = DEFAULT_PROMPT_FILE   # a fresh checkout: the shipped default stands in for memory/prompt.txt
     if not path.exists():
         return ""
     return _read_text_tail(path, max_chars)

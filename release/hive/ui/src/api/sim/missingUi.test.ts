@@ -216,9 +216,9 @@ describe('missing-UI batch 1: pure helpers', () => {
   })
 
   it('app.grants_* events become plain notes', () => {
-    const n = appGrantsFrom({ type: 'app.grants_restore_applied', at: 't', program: 'p', restored_by: 'user:quinn' } as HiveEvent, 's1')
-    expect(n).toMatchObject({ kind: 'restore_applied', by: 'user:quinn', session: 's1' })
-    expect(appGrantsWords({ kind: 'revoked', by: 'user:quinn' }, 'Atlas')).toMatch(/paused by quinn/)
+    const n = appGrantsFrom({ type: 'app.grants_restore_applied', at: 't', program: 'p', restored_by: 'user:jon' } as HiveEvent, 's1')
+    expect(n).toMatchObject({ kind: 'restore_applied', by: 'user:jon', session: 's1' })
+    expect(appGrantsWords({ kind: 'revoked', by: 'user:jon' }, 'Atlas')).toMatch(/paused by jon/)
     expect(appGrantsFrom({ type: 'hive.power', at: 't', state: 'on', since: null } as HiveEvent, 's')).toBeNull()
   })
 })

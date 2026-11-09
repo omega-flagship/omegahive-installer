@@ -330,7 +330,7 @@ def abandoned_goal():
         recovered = mark("mind 1 went silent")["status"] == "open"
         b.post(agents[1], f"/api/agent/goals/{goal['id']}/claim")
         mark("claimed by mind 2")
-        b.post(agents[1], f"/api/agent/goals/{goal['id']}/result", {"status": "waiting", "result": "asked the owner"})
+        b.post(agents[1], f"/api/agent/goals/{goal['id']}/result", {"status": "waiting", "result": "asked Jon"})
         mark("mind 2 waits on a person")
         lapse()
         waited = mark("lease check while waiting")["status"] == "waiting"

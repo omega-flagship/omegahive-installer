@@ -56,7 +56,7 @@ export function BeliefRow({ b }: { b: Belief }) {
             aria-label="What the Ask should know"
             aria-invalid={problem ? true : undefined}
             aria-describedby={problem ? msgId : undefined}
-            className="min-h-9 min-w-0 flex-1 rounded-lg border border-line-2 bg-black/20 px-2 text-[14px] text-ink outline-none"
+            className="min-h-9 min-w-0 flex-1 rounded-lg border border-line-2 bg-shade/20 px-2 text-[14px] text-ink outline-none"
           />
           <Button type="submit" variant="primary" className="min-h-9 px-3 text-[12.5px]" disabled={!text.trim()}>
             Save
@@ -111,7 +111,7 @@ export function MemorySection() {
   const learned = mem.beliefs.length
   const status = memoryStatus(mem.owner !== null, mem.hive, mem.capabilities, learned)
   return (
-    <section ref={ref} id={MEMORY_SECTION_ID} tabIndex={-1} aria-labelledby="ask-memory-h" className="rounded-2xl border border-line bg-white/[0.03] p-4 outline-none" data-hive-memory={mem.hive} data-hive-switches={mem.capabilities ? (!mem.capabilities.conductor ? 'conductor-off' : mem.capabilities.memory ? 'on' : 'off') : 'unknown'}>
+    <section ref={ref} id={MEMORY_SECTION_ID} tabIndex={-1} aria-labelledby="ask-memory-h" className="rounded-2xl border border-line bg-tint/[0.03] p-4 outline-none" data-hive-memory={mem.hive} data-hive-switches={mem.capabilities ? (!mem.capabilities.conductor ? 'conductor-off' : mem.capabilities.memory ? 'on' : 'off') : 'unknown'}>
       <ConfirmHost />
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">

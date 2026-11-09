@@ -1,3 +1,4 @@
+import { useVisibleAuthority } from '../../lib/useVisibleAuthority'
 import { plural } from '../../lib/plural'
 import { plainText } from '../sdk'
 import { useShownSwarms } from '../../scene/viewer'
@@ -17,6 +18,9 @@ import { DIRECTORY } from '../directory'
 import { publicActivityKind, publicBlurb, publicLabel, publicWords } from '../publicWords'
 import { guardComposing } from '../../features/ask/keys'
 import './styles.css'
+import { OmegaGlyph } from '../../brand/OmegaGlyph'
+import { LiveOmega } from '../../brand/LiveOmega'
+import { usePhase } from '../../shell/phase'
 
 type View = 'overview' | 'minds' | 'swarms' | 'goals' | 'decisions' | 'apps' | 'activity' | 'tools' | 'future'
 type Inspected = { kind: 'approval'; seen: Approval; session: string } | { kind: 'goal'; seen: Goal; to: Goal['status']; session: string }
@@ -63,11 +67,13 @@ function Workspace({ ctx }: { ctx: string }) {
   const bootError = useHive((s) => s.bootError)
   const route = useRoute()
   const resting = useResting((s) => s.resting)
+  const phaseHeld = usePhase((s) => s.phased && s.phase !== 'pro') && route.name === 'hive'
   const [view, setView] = useState<View>('overview')
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<string | null>(null)
   const [pick, setPick] = useState<Feature | null>(null)
   const [inspected, setInspected] = useState<Inspected | null>(null)
+  const decisionCurrent = useVisibleAuthority('hive-pro', !phaseHeld && route.name === 'hive' && !resting, 'professional-inspector')
   const [readError, setReadError] = useState<string | null>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const stage = useRef<HTMLDivElement>(null)
@@ -94,7 +100,7 @@ function Workspace({ ctx }: { ctx: string }) {
   const teamIds = teams.map((s) => s.id).sort().join('\u0001')
   const goalsComplete = teams.every((s) => !!goalsLoaded[s.id])
   const awake = minds.filter((a) => a.status === 'awake').length
-  const covered = route.name !== 'hive' || resting
+  const covered = route.name !== 'hive' || resting || phaseHeld
   const activeMind = selected ? agents[selected] : null
   const words = query.toLowerCase().split(/\s+/).filter(Boolean)
   const hit = (text: string) => words.every((w) => text.toLowerCase().includes(w))
@@ -109,14 +115,14 @@ function Workspace({ ctx }: { ctx: string }) {
     })
   }
   useEffect(() => {
-    if (!ready || !current(ctx)) return
+    if (!ready || phaseHeld || !current(ctx)) return
     const s = useHive.getState()
     let showing = true
     void Promise.allSettled([s.loadApprovals(), s.loadPrograms(), ...Object.keys(s.swarms).map((id) => s.loadGoals(id))]).then((results) => {
       if (showing && current(ctx) && results.some((r) => r.status === 'rejected')) setReadError('Some information could not be loaded. You can check it on its page.')
     })
     return () => { showing = false }
-  }, [ctx, ready, teamIds])
+  }, [ctx, ready, teamIds, phaseHeld])
 
   useEffect(() => {
     if (stage.current) stage.current.inert = covered
@@ -250,13 +256,13 @@ function Workspace({ ctx }: { ctx: string }) {
   })}</div>
 
   return <>
-    <div ref={stage} className="professional" style={TOKENS as CSSProperties} data-experience="professional" aria-hidden={covered || undefined}>
+    <div ref={stage} className="professional" style={TOKENS as CSSProperties} data-experience="professional" data-phase-held={phaseHeld || undefined} inert={covered || undefined} aria-hidden={covered || undefined}>
       <a className="pr-skip" href="#pr-main">Skip to workspace</a>
-      <aside className="pr-sidebar" aria-label="Workspace navigation"><div className="pr-brand"><span aria-hidden="true">Ω</span><div><strong>{shown(hive?.name ?? 'OmegaHive')}</strong><small>Professional</small></div></div>
+      <aside className="pr-sidebar" aria-label="Workspace navigation"><div className="pr-brand"><span aria-hidden="true"><LiveOmega look="professional" size="corner" className="size-[30px]" fallback={<span className="grid size-full place-items-center"><OmegaGlyph className="h-[19px] w-[21px]" /></span>} /></span><div><strong>{shown(hive?.name ?? 'OmegaHive')}</strong><small>Professional</small></div></div>
         <nav>{VIEWS.map((v) => <button key={v.id} type="button" ref={v.id === 'tools' ? toolsButton : undefined} aria-current={view === v.id ? 'page' : undefined} onClick={() => changeView(v.id)}><span>{v.label}</span>{v.id === 'decisions' && pending.length > 0 && <span className="pr-count">{pending.length}</span>}</button>)}
           {/* mind-chat r1: one step back to any mind's chat, in the nav row a phone keeps too */}
           <button type="button" data-presence-feature="talk.recent" onClick={() => byId('talk.recent')}>Recent conversations</button></nav>
-        <div className="pr-sidebar-bottom"><button type="button" onClick={() => byId('people.me')}>Your profile</button>{adminView && <button type="button" onClick={() => byId('hive.settings')}>Settings</button>}<button type="button" onClick={() => openGallery(true)}>Change UI</button><button type="button" onClick={() => changeView('future')}>Future spaces</button></div>
+        <div className="pr-sidebar-bottom"><button type="button" onClick={() => byId('people.me')}>Your profile</button>{adminView && <button type="button" onClick={() => byId('hive.settings')}>Settings</button>}<button type="button" onClick={() => openGallery(true)}>Change experience</button><button type="button" onClick={() => changeView('future')}>Future spaces</button></div>
       </aside>
       <div className="pr-workspace"><header className="pr-topbar"><div><p className="pr-eyebrow">{shown(hive?.name ?? 'Hive')}</p><h1 ref={heading} tabIndex={-1}>{selected && activeMind ? shown(activeMind.name) : VIEWS.find((v) => v.id === view)?.label ?? 'Future spaces'}</h1></div><div className="pr-topbar-actions"><span className="pr-connection" role="status">{connection === 'open' ? 'Connected' : connection === 'unauthorized' ? 'Sign in required' : connection === 'reconnecting' ? 'Reconnecting' : 'Connecting'}</span><button type="button" className="pr-button" onClick={() => openPalette()}>Search the hive</button><button type="button" className="pr-button" onClick={() => byId('minds.create')}>Create a mind</button></div></header>
         <main id="pr-main" tabIndex={-1} className="pr-main" data-professional-region="workspace">
@@ -267,8 +273,8 @@ function Workspace({ ctx }: { ctx: string }) {
         </main>
       </div>
     </div>
-    {pick && <ScopedFeaturePicker key={`${ctx}:${pick.id}`} feature={pick} displayedOriginCurrent={displayedOriginCurrent} onClose={() => setPick(null)} restoreTo={() => toolsButton.current ?? heading.current} />}
-    <AnimatePresence>{inspected?.kind === 'approval' && <ApprovalDecision key={`approval:${inspected.seen.id}`} seen={inspected.seen} session={inspected.session} onClose={() => setInspected(null)} restoreFocus={restore} />}{inspected?.kind === 'goal' && <GoalDecision key={`goal:${inspected.seen.id}`} seen={inspected.seen} to={inspected.to} session={inspected.session} onClose={() => setInspected(null)} restoreFocus={restore} />}</AnimatePresence>
+    {!phaseHeld && pick && <ScopedFeaturePicker key={`${ctx}:${pick.id}`} feature={pick} displayedOriginCurrent={displayedOriginCurrent} onClose={() => setPick(null)} restoreTo={() => toolsButton.current ?? heading.current} />}
+    <AnimatePresence>{!phaseHeld && inspected?.kind === 'approval' && <ApprovalDecision current={decisionCurrent} key={`approval:${inspected.seen.id}`} seen={inspected.seen} session={inspected.session} onClose={() => setInspected(null)} restoreFocus={restore} />}{!phaseHeld && inspected?.kind === 'goal' && <GoalDecision current={decisionCurrent} key={`goal:${inspected.seen.id}`} seen={inspected.seen} to={inspected.to} session={inspected.session} onClose={() => setInspected(null)} restoreFocus={restore} />}</AnimatePresence>
   </>
 }
 

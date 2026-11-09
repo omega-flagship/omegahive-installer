@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// the owner 2026-10-08: "when I close an open surface using the X in the top right, it should just go back to the main Home
+// Jon 2026-10-08: "when I close an open surface using the X in the top right, it should just go back to the main Home
 // Screen, but it seems to randomly open previously opened surfaces instead". A surface's X must land on a clean home:
 // the home route (#/), with the experience's own panels closed and its view back at home, whatever was opened before.
 // Esc and the browser's Back keep stepping through history.
@@ -21,6 +21,8 @@ function runHandler(r: Router, expr: string, pageSource?: string): void {
   const e = expr.trim()
   const home = () => r.navigate({ name: 'hive' })
   if (e === 'closeToHome' || e === '() => closeToHome()') return r.closeToHome()
+  // Embedded Code uses its guarded parent departure; the standalone branch still sends the X Home.
+  if (e === 'close' && pageSource?.includes('const close = () => embedded ? leaveEmbedded(embedded.onClose) : closeToHome()')) return r.closeToHome()
   if (e === "() => closePage(() => navigate({ name: 'hive' }))") return r.closePage(home)
   // Page.tsx on 870dea4: the X calls a local that wraps closePage with the page's onClose (most pages pass "navigate home")
   if (pageSource?.match(new RegExp(`const ${e} = \\(\\) => closePage\\(onClose\\)`))) return r.closePage(home)
@@ -35,7 +37,7 @@ const codeX = CODE.match(/<CodeCanvas[\s\S]*?\n\s+onClose=\{(.+)\}\n/)?.[1]
 
 const SURFACES: [string, string | undefined, string | undefined][] = [
   ['a shared page (every experience opens these: Classic, Still, Cosmos, Construct, Flux, Canvas, OmegaTown, Professional)', pageX, PAGE],
-  ['the Code canvas', codeX, undefined],
+  ['the Code canvas', codeX, CODE],
 ]
 
 let r: Router
@@ -133,7 +135,7 @@ describe('home:requested', () => {
     expect(heard).toEqual(['a', 'b'])
     offA()
     r.navigate({ name: 'usage' })
-    runHandler(r, codeX!)
+    runHandler(r, codeX!, CODE)
     expect(heard).toEqual(['a', 'b', 'b'])
   })
 
@@ -286,12 +288,14 @@ const EXPERIENCES: Experience[] = [
     id: 'still',
     file: '../experiences/still/index.tsx',
     mount: async () => {
-      const { state, setters } = states({ focus: null, sheet: null })
+      // the answer also ends a pending focus restore and a leaving transition (both reset on a home request)
+      const { state, setters } = states({ focus: null, sheet: null, exiting: false })
       const returnTo = { current: null as unknown }
+      const restorePending = { current: false }
       return {
-        open: () => { Object.assign(state, { focus: 'a1', sheet: 'all' }); returnTo.current = {} },
-        answer: () => runAnswer('../experiences/still/index.tsx', { ...setters, returnTo }),
-        isHome: () => expect([state.focus, state.sheet, returnTo.current]).toEqual([null, null, null]),
+        open: () => { Object.assign(state, { focus: 'a1', sheet: 'all', exiting: true }); returnTo.current = {}; restorePending.current = true },
+        answer: () => runAnswer('../experiences/still/index.tsx', { ...setters, returnTo, restorePending }),
+        isHome: () => expect([state.focus, state.sheet, returnTo.current, state.exiting, restorePending.current]).toEqual([null, null, null, false, false]),
       }
     },
   },
@@ -309,7 +313,9 @@ const EXPERIENCES: Experience[] = [
     },
   },
   {
-    id: 'omegatown',
+    // the retired town experience's source (out of the registry since Jon's 11-02 ruling; the town lives in Little
+    // World): while the file is still in the tree its close contract holds. Not an experience anyone can choose.
+    id: 'retired-town-source',
     file: '../experiences/omegatown/index.tsx',
     mount: async () => {
       const home = { view: 'residents', query: '', pick: null, room: null, selected: null }
@@ -384,7 +390,7 @@ describe('each experience answers home:requested with its own clean home', { tim
 
   it('every experience except Classic subscribes exactly once; Classic keeps no panels under a page', () => {
     for (const e of EXPERIENCES) expect(() => homeAnswer(e.file)).not.toThrow()
-    expect(EXPERIENCES.map((e) => e.id).sort()).toEqual(['canvas', 'construct', 'cosmos', 'flux', 'omegatown', 'professional', 'still'])
+    expect(EXPERIENCES.map((e) => e.id).sort()).toEqual(['canvas', 'construct', 'cosmos', 'flux', 'professional', 'retired-town-source', 'still'])
   })
 })
 
@@ -406,7 +412,7 @@ describe('native top-right X controls join the same close contract', () => {
     const chat = src('../experiences/canvas/chat.tsx')
     expect(chat).toMatch(/aria-label="Close the conversation" title="Close \(Esc\)" onClick=\{onCloseX\}/)
     expect(chat).toMatch(/if \(e\.key === 'Escape'\) \{[\s\S]{0,80}onDismiss\(\)/)
-    expect(src('../experiences/canvas/index.tsx')).toMatch(/const closeChat = useCallback\(\(\) => setOpenId\(null\), \[\]\)/)
+    expect(src('../experiences/canvas/index.tsx')).toMatch(/const closeChat = useCallback\(\(\) => \{ if \(current\(\)\) setOpenId\(null\) \}, \[current\]\)/)
   })
   it('mind panel and Create a mind: the visible X is closeToHome; the Sheet (Esc, phone drag) gets the plain dismissal', () => {
     const dot = src('../features/dot/DotPanel.tsx')
@@ -437,6 +443,7 @@ describe('Esc (Back semantics) is unchanged', () => {
 describe('no X close goes through closePage (history-stepping) any more', () => {
   it('Page.tsx and CodePage.tsx X handlers are closeToHome', () => {
     expect(pageX).toBe('closeToHome')
-    expect(codeX).toBe('closeToHome')
+    expect(codeX).toBe('close')
+    expect(CODE).toContain('const close = () => embedded ? leaveEmbedded(embedded.onClose) : closeToHome()')
   })
 })

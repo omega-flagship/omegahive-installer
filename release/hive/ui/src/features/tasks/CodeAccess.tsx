@@ -82,7 +82,7 @@ export function TaskCodeAccess({ task: goal }: { task: Goal }) {
   const [open, setOpen] = useState(false)
   if (!has(client, 'goalGrants')) return null
   return (
-    <div className="rounded-lg border border-line bg-black/20 px-2.5 py-1.5 text-[11.5px]" data-task-code-access>
+    <div className="rounded-lg border border-line bg-shade/20 px-2.5 py-1.5 text-[11.5px]" data-task-code-access>
       <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center gap-1 text-left text-ink-4 hover:text-ink-2">
         <span className="flex-1">Who has code access to this task</span>
         <span aria-hidden="true">{open ? '−' : '+'}</span>
@@ -162,7 +162,7 @@ function GiveGrant({ goal, onClose, onDone }: { goal: Goal; onClose: () => void;
     >
       <label className="block">
         <span className="text-[12px] text-ink-3">Person (admins only)</span>
-        <select value={person} onChange={(e) => setPerson(e.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-black/30 px-2.5 text-[13px] text-ink outline-none focus:border-line-2">
+        <select value={person} onChange={(e) => setPerson(e.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-shade/30 px-2.5 text-[13px] text-ink outline-none focus:border-line-2">
           <option value="">{people.status === 'loading' ? 'Loading people…' : list.length ? 'Choose an admin' : 'No enabled admin to choose'}</option>
           {list.map((p) => (
             <option key={p.id} value={p.id}>
@@ -181,7 +181,7 @@ function GiveGrant({ goal, onClose, onDone }: { goal: Goal; onClose: () => void;
       </fieldset>
       <label className="block">
         <span className="text-[12px] text-ink-3">For</span>
-        <select value={minutes} onChange={(e) => setMinutes(Number(e.target.value))} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-black/30 px-2.5 text-[13px] text-ink outline-none focus:border-line-2">
+        <select value={minutes} onChange={(e) => setMinutes(Number(e.target.value))} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-shade/30 px-2.5 text-[13px] text-ink outline-none focus:border-line-2">
           {GRANT_TTLS.map((t) => (
             <option key={t.minutes} value={t.minutes}>
               {t.label}

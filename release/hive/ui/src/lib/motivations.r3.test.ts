@@ -6,8 +6,11 @@ import { useHive } from '../store/store'
 import * as lib from './motivations'
 import { run } from '../experiences/construct/commands'
 import { useC } from '../experiences/construct/state'
-import motivationsPage from '../features/tasks/MotivationsPage.tsx?raw'
-import tasksPage from '../features/tasks/TasksPage.tsx?raw'
+import motivationsPageOnly from '../features/tasks/MotivationsPage.tsx?raw'
+import motivationsData from '../features/tasks/motivationsData.ts?raw'
+import motivationsScreens from '../features/tasks/motivations.metta?raw'
+import tasksPageOnly from '../features/tasks/TasksPage.tsx?raw'
+import tasksData from '../features/tasks/data.ts?raw'
 import fluxSheets from '../experiences/flux/sheets.tsx?raw'
 import cosmosDeck from '../experiences/cosmos/Deck.tsx?raw'
 import canvasPanel from '../experiences/canvas/HivePanel.tsx?raw'
@@ -20,6 +23,10 @@ import stillSheets from '../experiences/still/Sheets.tsx?raw'
  * INVENTED DATA, fake hive only.
  */
 const L = lib as unknown as Record<string, unknown>
+/** The Tasks page is composed by MeTTa: the page reads the partial flag and its adapter (data.ts) words the counts. */
+const tasksPage = `${tasksPageOnly}\n${tasksData}`
+/** So is the Motivations page: the page reads and writes the hive, its adapter (motivationsData.ts) words the counts. */
+const motivationsPage = `${motivationsPageOnly}\n${motivationsData}`
 const flush = async (n = 6) => {
   for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0))
 }
@@ -263,7 +270,10 @@ describe('P2-3: shared, with named people, is a real choice and round-trips exac
     expect(motivationsPage).not.toMatch(/'shared' \? 'private'/)
     expect(motivationsPage).not.toMatch(/\(\['private', 'public'\] as const\)/)
     expect(motivationsPage).toMatch(/VISIBILITY_CHOICES\.map/)
-    expect(motivationsPage).toMatch(/<PeoplePicker /)
+    // the people it is shared with are tick boxes the screen draws, when making one and when changing who
+    expect(motivationsScreens).toMatch(/\(field checks "Shared with" new\.people \(\(action pick-new-person\)\)\)/)
+    expect(motivationsScreens).toMatch(/\(field checks "Shared with" share\.people \(\(action pick-share-person\)\)\)/)
+    expect(motivationsPage).toMatch(/peopleChoices\(/)
     expect(motivationsPage).toMatch(/setMotivationVisibility\(sharing\.seen, 'shared', sharing\.people\)/)
     expect(L.VISIBILITY_CHOICES).toEqual(['private', 'shared', 'public'])
   })
@@ -296,7 +306,7 @@ describe('P2-4: counts from a partial read say they may be short, everywhere the
     for (const [name, src] of [['TasksPage', tasksPage], ['MotivationsPage', motivationsPage], ['flux', fluxSheets], ['cosmos', cosmosDeck], ['canvas', canvasPanel], ['still', stillSheets]] as const) expect(uses(src), name).toBe(true)
     // the detail view also counts its own read's completeness
     expect(motivationsPage).toMatch(/setDetailComplete\(read\.complete\)/)
-    expect(motivationsPage).toMatch(/<ProgressBar p=\{progress\} partial=\{partial\} \/>/)
+    expect(motivationsPage).toMatch(/'m\.progress\.text': progressWords\(progress, partial\)/)
     expect(motivationsPage).toMatch(/atLeast\(ids\.size, partial\)/)
     expect(tasksPage).toMatch(/atLeast\(perMotivation\.out\[x\.id\] \?\? 0, partial\)/)
     expect(tasksPage).toMatch(/atLeast\(perMotivation\.unsorted, partial\)/)

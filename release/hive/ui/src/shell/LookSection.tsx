@@ -7,7 +7,7 @@ import { DEFAULT_VARIANT, effectiveLayout, LAYOUTS, lookName, openGallery, reset
 export function ClockPref() {
   const cycle = useHourCycle()
   return (
-    <section aria-labelledby="clock-h" className="flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-white/[0.03] p-4">
+    <section aria-labelledby="clock-h" className="flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-tint/[0.03] p-4">
       <div className="min-w-0 flex-1">
         <h2 id="clock-h" className="eyebrow">
           Clock
@@ -29,7 +29,7 @@ export function ClockPref() {
   )
 }
 
-/** "Look and layout" on You & your keys: what you are using, Change UI, and the reset that always works. */
+/** "Look and layout" on You & your keys: what you are using, Change experience, and the reset that always works. */
 export function LookSection() {
   const look = useLook()
   const client = useHive((s) => s.client)
@@ -37,7 +37,7 @@ export function LookSection() {
   const name = lookName(look.saved) // the experience while one is chosen, never its companion look (F1)
   const layout = LAYOUTS.find((l) => l.id === effectiveLayout(look.saved))?.label ?? 'Side rail'
   return (
-    <section aria-labelledby="look-h" className="flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-white/[0.03] p-4">
+    <section aria-labelledby="look-h" className="flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-tint/[0.03] p-4">
       <div className="min-w-0 flex-1">
         <h2 id="look-h" className="eyebrow">
           Look and layout
@@ -47,7 +47,7 @@ export function LookSection() {
         </p>
       </div>
       <Button variant="primary" icon="sparkles" onClick={() => openGallery(true)} data-tour="me-change-ui">
-        Change UI
+        Change experience
       </Button>
       {look.saved && (
         <Button variant="subtle" icon="reset" onClick={() => void resetLook(client)}>

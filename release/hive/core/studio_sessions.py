@@ -1,7 +1,7 @@
 """J3 host round R2 (G1): the `studio.session` intent kind on the Ask intent plane, and its session record.
 
-Plan: coordination/omegareview/PLATFORM_J3R4_HOST_O1_O2_G1_PLAN.md §3.1-3.2 (R2 row of §9); contract of record
-coordination/omegacode/J3_ASK_SETS_UP_STUDIO_CONTRACT_R4_3.md §2, §6 (the contract wins where they differ).
+Plan: PLATFORM_J3R4_HOST_O1_O2_G1_PLAN.md §3.1-3.2 (R2 row of §9); contract of record
+J3_ASK_SETS_UP_STUDIO_CONTRACT_R4_3.md §2, §6 (the contract wins where they differ).
 
 - Record (ask_intents.Intents.record, kind "studio.session") keeps the person's exact consented request and creates
   nothing else. Named people record it, members included; code.request stays admin-only.
@@ -40,7 +40,7 @@ KIND = "studio.session"
 HUB_MAKER_KINDS = ("omega",)   # R6 (OI-11): minds whose hub channel delivers studio_step frames (modules/channel_hive)
 LIVE_STATES = ("active", "paused", "stopping")
 STATES = ("active", "paused", "stopping", "stopped", "held")
-# the owner 2026-10-17 ("i guess thats ok"), contract §6: the default backstops, always under the person's monthly headroom
+# Jon 2026-10-17 ("i guess thats ok"), contract §6: the default backstops, always under the person's monthly headroom
 DEFAULT_CAP_USD = 2.00
 DEFAULT_STEP_CAP_USD = 0.25
 STEP_WINDOW_SECONDS = 180
@@ -55,10 +55,11 @@ OPTIONAL = {"cap_usd", "step_cap_usd", "coordinator_exclusive"}
 # readbacks the person confirmed, verified against host state at submit; they select nothing
 READBACKS = {"key_id", "model", "role_id", "tools"}
 
-AGENT_ID = re.compile(r"a_[0-9a-f]{8}")
-SWARM_ID = re.compile(r"s_[0-9a-f]{8}")
+AGENT_ID = re.compile(r"a_(?:[0-9a-f]{8}|[0-9a-f]{32})")
+SWARM_ID = re.compile(r"s_(?:[0-9a-f]{8}|[0-9a-f]{32})")
 PROGRAM_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}")
-KEY_ID = re.compile(r"k_[0-9a-f]{8}|env:[a-z0-9_-]+")
+from .keyids import KEY_ID as KEY_GRAMMAR
+KEY_ID = re.compile(KEY_GRAMMAR)   # keyids: the one grammar
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 SESSION_ID = re.compile(r"ss_[0-9a-f]{24}")
 STREAM_ID = re.compile(r"as_[0-9a-f]{24}")
@@ -69,9 +70,9 @@ CONSENT_SCHEMA = "omega-studio-consent-1"
 DISCLOSURES = ("maker_restarts_between_steps", "maker_reads_unsaved_piece_while_live")
 SETTING = "HIVE_STUDIO_SESSIONS"
 # handoff spec r2.4 §8.8 activation prerequisite (Mac): the sha256 of every reviewed hive-local/safe-restart.sh that carries
-# the exact-commit awake override. None is adopted yet (the Platform question to the owner of 2026-10-18), so on a Mac host the
+# the exact-commit awake override. None is adopted yet (the Platform question to Jon of 2026-10-18), so on a Mac host the
 # self-check keeps Studio off whatever HIVE_STUDIO_SESSIONS says. The cloud's gate (ALLOW_AWAKE=<SHA>) already satisfies it.
-MAC_SAFE_RESTART_OVERRIDE_HASHES = ()
+MAC_SAFE_RESTART_OVERRIDE_HASHES = ('de8c80c4cb7240a6b83f9657145c059461c0bcf95c387f4de7724c44eee24429',)
 SAFE_RESTART_PATH = "HIVE_SAFE_RESTART_PATH"
 
 
@@ -252,13 +253,22 @@ class StudioSessions(StudioSteps):
         if wanted and not missing and not self._maker_template_set():
             # R7.1: sessions run, but members' own makers cannot be made (setup: 409 studio_maker_unavailable) and the
             # hive does not advertise capabilities.studio_sessions until the template is set
-            logging.getLogger("hive").warning("%s is on but HIVE_STUDIO_MAKER_TEMPLATE does not name a usable Omega "
-                                              "mind; members' own Studio makers can't be made", SETTING)
+            logging.getLogger("hive").warning("%s is on but the pinned Studio maker template (or explicit "
+                                              "HIVE_STUDIO_MAKER_TEMPLATE override) is unavailable; members' own "
+                                              "Studio makers can't be made", SETTING)
         return wanted and not missing, missing
 
     def _maker_template_set(self):
         import os
         mind_id = os.environ.get("HIVE_STUDIO_MAKER_TEMPLATE", "").strip()
+        if not mind_id or ":" in mind_id:
+            from .studio_makers import release_template
+            from .hive import HiveError
+            try:
+                release_template(self.hive, mind_id)
+                return True
+            except (HiveError, ValueError, TypeError, OSError):
+                return False
         row = self.hive.db.one("SELECT kind FROM agents WHERE id = ? AND deleted = 0", (mind_id,)) if mind_id else None
         return bool(row) and (row["kind"] or "omega") in HUB_MAKER_KINDS
 
@@ -409,8 +419,7 @@ class StudioSessions(StudioSteps):
                 return "own_key_limit", min(float(r["month_usd"]) for r in live)
             self._missing_total("own_key_limit")
         scope = "person:" + principal[5:]
-        rules = [float(r["limit_usd"]) for r in hive.budgets.rules() if r["scope"] == scope and r["period"] == "month"]
-        allowance = min(rules) if rules else (hive.budgets.member_allowance(principal[5:]) if principal.startswith("user:u_") else None)
+        allowance = self._allowance(principal, maker["id"], key_id)
         if allowance is None:
             self._missing_total("member_allowance")
         from .cost_reservations import ROUND_FLOOR, micros
@@ -423,6 +432,22 @@ class StudioSessions(StudioSteps):
                                    "held_usd": held / 1_000_000}, reason="monthly_total_required",
                             headroom_usd=max(0, room) / 1_000_000, cap_usd=cap_usd)
         return "member_allowance", float(allowance)
+
+    def _allowance(self, principal, maker_id, key_id):
+        """The person's month allowance for a Studio session on the hive's money (card, admission, each step and each
+        reservation read this one answer): their person month rule, else the member default. Jon 11-05 (friction-free):
+        the owner on the hive's key (StudioMakers.owner_on_hive_key) is hive money too; an admin has no member default, so
+        with no person rule set it is the hive's member default, never a setup step. None: no allowance applies."""
+        hive = self.hive
+        scope = "person:" + principal[5:]
+        rules = [float(r["limit_usd"]) for r in hive.budgets.rules() if r["scope"] == scope and r["period"] == "month"]
+        if rules:
+            return min(rules)
+        allowance = hive.budgets.member_allowance(principal[5:]) if principal.startswith("user:u_") else None
+        makers = getattr(hive, "studio_makers", None)
+        if allowance is None and makers is not None and makers.owner_on_hive_key(maker_id, key_id):
+            allowance = hive.budgets.default_allowance()
+        return allowance
 
     def _missing_total(self, kind):
         raise self._err(402, "spend_limit", "Set your monthly total first; Studio spends under it.",
@@ -477,7 +502,8 @@ class StudioSessions(StudioSteps):
         db = self.hive.db
         if db.one("SELECT 1 FROM studio_sessions WHERE maker_id = ? AND state IN ('active', 'paused', 'stopping')", (maker_id,)):
             return True
-        if db.one("SELECT 1 FROM ask_turns WHERE mind_id = ? AND state IN ('accepted', 'thinking')", (maker_id,)):
+        from .ask import OPEN_HOST_MIND, states_sql   # gateway r1b: the host's mind answering, the one constant
+        if db.one(f"SELECT 1 FROM ask_turns WHERE mind_id = ? AND state IN {states_sql(OPEN_HOST_MIND)}", (maker_id,)):
             return True
         return bool(db.one("SELECT 1 FROM work_sessions WHERE agent_id = ? AND status = 'active' "
                            "AND (purpose IS NULL OR purpose != 'ask')", (maker_id,)))
@@ -531,7 +557,8 @@ class StudioSessions(StudioSteps):
                     raise refused
                 record = ((getattr(self.gateway, "keyring", None) and self.gateway.keyring.ring.get("keys")) or {}).get(key_id) or {}
                 payer, own_key = self._payer_as_if(principal, record.get("owner"))
-                if makers is not None and makers.person_of(maker["id"]) is not None and not own_key:
+                if (makers is not None and makers.person_of(maker["id"]) is not None and not own_key
+                        and not makers.owner_on_hive_key(maker["id"], key_id)):
                     raise makers.key_refusal(maker["id"], None, "admission")   # never billed as anything but own key
                 if payer != principal:
                     raise self._err(409, "payer_mismatch", "That maker's calls wouldn't be billed to you; choose your own key.")
@@ -680,7 +707,7 @@ class StudioSessions(StudioSteps):
                            "unknown": self.scope_held(label, ("unknown",)), "step_cap": row["step_cap_usd"],
                            "step_spent": None, "monthly": monthly},
                 "stop": {**self.stop_view(row), "fenced_at": row["fenced_at"], "stopped_at": row["stopped_at"]},
-                "handoff": self.handoff_view(row),
+                "handoff": self.handoff_view(row), "credential_reason": row.get("credential_reason"),
                 "created_at": row["created_at"], "updated_at": row["updated_at"]}
 
     def _snapshot_view(self, row):

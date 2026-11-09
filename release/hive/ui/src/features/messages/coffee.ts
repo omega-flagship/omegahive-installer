@@ -2,7 +2,7 @@ import type { CoffeeMembership, Room, RoomMember, RoomMessage, RoomOrigin } from
 
 /**
  * The Coffee Room, as the UI reads it: the one place in the whole UI that knows the host contract (plan r1,
- * coordination/PLATFORM_COFFEE_ROOM_PLAN_20261006.md; contract sent by Platform 2026-10-06, CONFIRMED). Every page and
+ * PLATFORM_COFFEE_ROOM_PLAN_20261006.md; contract sent by Platform 2026-10-06, CONFIRMED). Every page and
  * every look asks this module, so a change in the contract is one edit here (and the sim, api/sim/rooms.ts).
  *
  * - The room:      `kind: "coffee"`, `alias: "coffee"`, `pinned: true`; one per hive; never deleted, archived, renamed

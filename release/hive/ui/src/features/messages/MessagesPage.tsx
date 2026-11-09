@@ -1,3 +1,5 @@
+import { healthCheck } from '../../lib/healthQuestion'
+import { HealthCheckLabel } from '../../ui/HealthCheckLabel'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PlainText } from '../../ui/Belief'
 import type { Person } from '../../api/client'
@@ -105,7 +107,7 @@ export default function MessagesPage({ room: roomId, message: focusId }: { room?
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search conversations"
           aria-label="Search conversations"
-          className="min-h-10 min-w-0 flex-1 rounded-xl border border-line bg-black/25 px-3 text-[13.5px] text-ink outline-none focus:border-line-2"
+          className="min-h-10 min-w-0 flex-1 rounded-xl border border-line bg-shade/25 px-3 text-[13.5px] text-ink outline-none focus:border-line-2"
         />
         <Button variant="primary" icon="plus" onClick={() => setCreating(true)} className="min-h-10 px-3 text-[13px]">
           New
@@ -137,7 +139,7 @@ export default function MessagesPage({ room: roomId, message: focusId }: { room?
                       aria-current={r.id === room?.id ? 'page' : undefined}
                       className={cx(
                         'flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors',
-                        r.id === room?.id ? 'bg-white/[0.08] text-ink' : 'text-ink-2 hover:bg-white/[0.05]',
+                        r.id === room?.id ? 'bg-tint/[0.08] text-ink' : 'text-ink-2 hover:bg-tint/[0.05]',
                       )}
                     >
                       <Icon name={kindIcon(r.kind)} size={16} className="shrink-0 text-ink-3" />
@@ -182,7 +184,7 @@ export default function MessagesPage({ room: roomId, message: focusId }: { room?
         ) : desktop ? (
           <>
             <aside className="w-72 shrink-0">{list}</aside>
-            <div className="min-w-0 flex-1 rounded-2xl border border-line bg-white/[0.02]">
+            <div className="min-w-0 flex-1 rounded-2xl border border-line bg-tint/[0.02]">
               {room ? (
                 <RoomBody room={room} rooms={shownRooms ?? []} focus={focusId} sessions={sessions} onChanged={load} />
               ) : roomFailed ? (
@@ -197,7 +199,7 @@ export default function MessagesPage({ room: roomId, message: focusId }: { room?
             <button onClick={() => navigate({ name: 'messages' })} className="mb-2 flex items-center gap-1 self-start text-[13px] text-ink-3 hover:text-ink">
               <Icon name="back" size={14} /> All conversations
             </button>
-            <div className="min-h-0 flex-1 rounded-2xl border border-line bg-white/[0.02]">
+            <div className="min-h-0 flex-1 rounded-2xl border border-line bg-tint/[0.02]">
               <RoomBody room={room} rooms={shownRooms ?? []} focus={focusId} sessions={sessions} onChanged={load} />
             </div>
           </div>
@@ -345,13 +347,13 @@ function Conversation({ room, rooms, focus, onChanged }: { room: Room; rooms: Ro
                     <><NoteBody message={m} /><span className="mt-0.5 text-[11px] text-ink-4">{time(m.created_at)}</span></>
                   ) : (<>
                   <div className="mb-0.5 flex items-baseline gap-2 text-[11.5px] text-ink-3">
-                    {!mine && <span className="font-medium" style={agent ? { color: `hsl(${agent.hue} 90% 72%)` } : undefined}>{shown(coffee ? memberName({ member: m.sender, name: m.name }, room.me) : m.name)}</span>}
+                    {!mine && (healthCheck(m) ? <HealthCheckLabel /> : <span className="font-medium" style={agent ? { color: `hsl(${agent.hue} 90% 72%)` } : undefined}>{shown(coffee ? memberName({ member: m.sender, name: m.name }, room.me) : m.name)}</span>)}
                     <span>{time(m.created_at)}</span>
                   </div>
                   <p
                     className={cx(
                       'max-w-[85%] rounded-2xl px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap',
-                      mine ? 'bg-accent/25 text-ink' : 'border border-line bg-white/[0.04] text-ink',
+                      mine ? 'bg-accent/25 text-ink' : 'border border-line bg-tint/[0.04] text-ink',
                     )}
                   >
                     <PlainText text={m.text} />
@@ -373,7 +375,7 @@ function Conversation({ room, rooms, focus, onChanged }: { room: Room; rooms: Ro
               <ul className="glass-strong absolute bottom-full left-3 mb-1 w-64 rounded-xl !bg-[#0b0b22]/[0.97] p-1" role="listbox" aria-label="Mention">
                 {suggestions.map((m) => (
                   <li key={m.member}>
-                    <button onClick={() => pick(m)} className="w-full rounded-lg px-2.5 py-1.5 text-left text-[13px] text-ink-2 hover:bg-white/[0.06] hover:text-ink">
+                    <button onClick={() => pick(m)} className="w-full rounded-lg px-2.5 py-1.5 text-left text-[13px] text-ink-2 hover:bg-tint/[0.06] hover:text-ink">
                       @{shown(m.name)} <span className="text-ink-4">{m.member.startsWith('agent:') ? 'mind' : 'person'}</span>
                     </button>
                   </li>
@@ -404,7 +406,7 @@ function Conversation({ room, rooms, focus, onChanged }: { room: Room; rooms: Ro
                   rows={1}
                   placeholder={room.kind === 'dm' ? `Message ${roomTitle(room)}…` : coffee ? 'Say something to everyone…' : 'Message the room… (@ to mention)'}
                   aria-label="Message"
-                  className="max-h-40 min-h-11 min-w-0 flex-1 resize-none rounded-xl border border-line bg-black/25 px-3 py-2.5 text-[14px] text-ink outline-none focus:border-line-2"
+                  className="max-h-40 min-h-11 min-w-0 flex-1 resize-none rounded-xl border border-line bg-shade/25 px-3 py-2.5 text-[14px] text-ink outline-none focus:border-line-2"
                 />
                 <IconButton icon="send" label="Send" onClick={() => void send()} disabled={sending || !text.trim()} className="bg-accent/30" />
               </div>
@@ -454,7 +456,7 @@ function Members({ room, onChanged }: { room: Room; onChanged: () => void }) {
       {!fixed && candidates.length > 0 && (
         <div className="flex gap-2">
           <select value={adding} onChange={(e) => setAdding(e.target.value)} aria-label="Add a mind"
-            className="min-h-9 min-w-0 flex-1 rounded-xl border border-line bg-black/25 px-2 text-[13px] text-ink">
+            className="min-h-9 min-w-0 flex-1 rounded-xl border border-line bg-shade/25 px-2 text-[13px] text-ink">
             <option value="">Add a mind…</option>
             {candidates.map((a) => <option key={a.id} value={a.id} className="bg-[#0b0b22]">{shown(a.name)}</option>)}
           </select>
@@ -489,7 +491,7 @@ function Settings({ room, onChanged }: { room: Room; onChanged: () => void }) {
         {room.kind === 'dm' ? (
           <>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name the room" aria-label="Room name"
-              className="min-h-9 w-full rounded-xl border border-line bg-black/25 px-3 text-[13px] text-ink" />
+              className="min-h-9 w-full rounded-xl border border-line bg-shade/25 px-3 text-[13px] text-ink" />
             <Button variant="subtle" disabled={!name.trim()} className="min-h-9 w-full text-[12.5px]"
               onClick={() => void patch({ kind: 'group', name: name.trim() }, 'Now a group; history kept')}>Make it a group</Button>
           </>
@@ -508,7 +510,7 @@ function Settings({ room, onChanged }: { room: Room; onChanged: () => void }) {
           <label className="flex items-center gap-2 text-[12.5px] text-ink-2">
             Mind turns in a row
             <select value={room.settings.turn_cap} onChange={(e) => void patch({ settings: { turn_cap: Number(e.target.value) } }, 'Turn limit changed')}
-              className="min-h-8 rounded-lg border border-line bg-black/25 px-2 text-ink">
+              className="min-h-8 rounded-lg border border-line bg-shade/25 px-2 text-ink">
               {[0, 1, 2, 3, 5, 8].map((n) => <option key={n} value={n} className="bg-[#0b0b22]">{n}</option>)}
             </select>
           </label>
@@ -518,7 +520,7 @@ function Settings({ room, onChanged }: { room: Room; onChanged: () => void }) {
         <section className="space-y-2">
           <h3 className="eyebrow">Who can find it</h3>
           <select value={room.visibility} onChange={(e) => void patch({ visibility: e.target.value }, 'Visibility changed')} aria-label="Visibility"
-            className="min-h-9 w-full rounded-xl border border-line bg-black/25 px-2 text-[13px] text-ink">
+            className="min-h-9 w-full rounded-xl border border-line bg-shade/25 px-2 text-[13px] text-ink">
             <option value="private" className="bg-[#0b0b22]">Members only</option>
             <option value="shared" className="bg-[#0b0b22]">Shared with chosen people</option>
             <option value="public" className="bg-[#0b0b22]">Everyone in this hive</option>
@@ -576,9 +578,9 @@ function CoffeeSettings({ room, onChanged }: { room: Room; onChanged: () => void
     <div className="space-y-3">
       <h3 className="eyebrow">Coffee Room</h3>
       <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" aria-label="Coffee Room name"
-        className="min-h-9 w-full rounded-xl border border-line bg-black/25 px-3 text-[13px] text-ink" />
+        className="min-h-9 w-full rounded-xl border border-line bg-shade/25 px-3 text-[13px] text-ink" />
       <textarea value={topic} onChange={(e) => setTopic(e.target.value)} rows={3} placeholder="Topic" aria-label="Coffee Room topic"
-        className="w-full rounded-xl border border-line bg-black/25 px-3 py-2 text-[13px] text-ink" />
+        className="w-full rounded-xl border border-line bg-shade/25 px-3 py-2 text-[13px] text-ink" />
       <Button variant="subtle" disabled={!name.trim() || (name === room.name && topic === room.topic)} className="min-h-9 w-full text-[12.5px]" onClick={() => void save()}>Save</Button>
       <p className="text-[11.5px] text-ink-4">It is the hive's own room: it can't be deleted, left, copied or made into another kind of room, and everyone in the hive can read it.</p>
     </div>
@@ -620,7 +622,7 @@ export function NewRoom({ onClose, onCreated }: { onClose: () => void; onCreated
     } catch (e) { toast({ tone: 'error', title: 'Not created', body: e instanceof Error ? e.message : String(e) }) }
   }
   return (
-    <div ref={box} className="xc-dress xc-backdrop fixed inset-0 z-[60] flex items-end justify-center bg-black/50 p-0 md:items-center md:p-6" role="dialog" aria-modal="true" aria-label="New conversation" onClick={onClose}>
+    <div ref={box} className="xc-dress xc-backdrop fixed inset-0 z-[60] flex items-end justify-center bg-shade/50 p-0 md:items-center md:p-6" role="dialog" aria-modal="true" aria-label="New conversation" onClick={onClose}>
       <div className="xc-frame xc-flush-b glass-strong w-full max-w-lg space-y-4 rounded-t-3xl sheet-solid-98 p-5 md:rounded-3xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center">
           <h2 className="flex-1 font-display text-[18px] font-semibold">New conversation</h2>
@@ -633,23 +635,23 @@ export function NewRoom({ onClose, onCreated }: { onClose: () => void; onCreated
         </p>
         {kind !== 'dm' && (
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder={kind === 'session' ? 'What is this session for?' : 'Name'} aria-label="Name"
-            className="min-h-10 w-full rounded-xl border border-line bg-black/25 px-3 text-[14px] text-ink" />
+            className="min-h-10 w-full rounded-xl border border-line bg-shade/25 px-3 text-[14px] text-ink" />
         )}
         {kind === 'session' && (
           <>
             <textarea value={detail} onChange={(e) => setDetail(e.target.value)} rows={3} placeholder="Details for the mind (optional)" aria-label="Details"
-              className="w-full rounded-xl border border-line bg-black/25 px-3 py-2 text-[13.5px] text-ink" />
+              className="w-full rounded-xl border border-line bg-shade/25 px-3 py-2 text-[13.5px] text-ink" />
             <label className="flex items-center gap-2 text-[13px] text-ink-2">
               Spend cap $
               <input value={budget} onChange={(e) => setBudget(e.target.value.replace(/[^0-9.]/g, ''))} inputMode="decimal" aria-label="Spend cap in dollars"
-                className="min-h-9 w-24 rounded-lg border border-line bg-black/25 px-2 text-ink" />
+                className="min-h-9 w-24 rounded-lg border border-line bg-shade/25 px-2 text-ink" />
               <span className="text-[11.5px] text-ink-4">hard limit while the session runs</span>
             </label>
           </>
         )}
         {kind === 'channel' && (
           <select value={visibility} onChange={(e) => setVisibility(e.target.value)} aria-label="Who can find it"
-            className="min-h-10 w-full rounded-xl border border-line bg-black/25 px-2 text-[13px] text-ink">
+            className="min-h-10 w-full rounded-xl border border-line bg-shade/25 px-2 text-[13px] text-ink">
             <option value="public" className="bg-[#0b0b22]">Everyone in this hive can find and join</option>
             <option value="private" className="bg-[#0b0b22]">Members only</option>
           </select>
@@ -660,7 +662,7 @@ export function NewRoom({ onClose, onCreated }: { onClose: () => void; onCreated
             {options.map((o) => (
               <li key={o.id}>
                 <button onClick={() => toggle(o.id)} aria-pressed={chosen.includes(o.id)}
-                  className={cx('flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px]', chosen.includes(o.id) ? 'bg-accent/20 text-ink' : 'text-ink-2 hover:bg-white/[0.05]')}>
+                  className={cx('flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px]', chosen.includes(o.id) ? 'bg-accent/20 text-ink' : 'text-ink-2 hover:bg-tint/[0.05]')}>
                   <Icon name={o.sub === 'mind' ? 'mind' : 'user'} size={14} className="text-ink-3" />
                   <span className="min-w-0 flex-1 truncate">{o.label}</span>
                   <span className="text-[11px] text-ink-4">{o.sub}</span>

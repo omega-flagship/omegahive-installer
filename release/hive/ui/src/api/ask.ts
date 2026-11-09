@@ -1,9 +1,10 @@
+import type { KeySetup } from '../features/ownKey/addOwnKey'
 import { ApiError } from './client'
 import { readAppAskRecipient, type AppAskRecipient } from './appAsk'
 
 /**
  * The universal Ask's wire shapes (UNIVERSAL_ASK_HOST_CONTRACT_DRAFT_20261005 §1, §4, and its amendments: context.view,
- * The owner's ruling that the swarm's orchestrator answers, and the presence phase). Platform owns these; Surface reads them.
+ * Jon's ruling that the swarm's orchestrator answers, and the presence phase). Platform owns these; Surface reads them.
  * Every frame is checked here before the store uses it: a malformed one is dropped (logged in dev only).
  */
 
@@ -76,13 +77,15 @@ export interface PageAskContext {
   experience: string
   program?: string
   swarm_id?: string
-  /** a mind the person addressed: its swarm's coordinator answers, about it (the owner's ruling; context only, no authority) */
+  /** a mind the person addressed: its swarm's coordinator answers, about it (Jon's ruling; context only, no authority) */
   mind?: string
   selection?: { kind: SelectionKind; ref: string }[]
   view?: AskView
 }
 
 export interface AskBody {
+  /** Only after the page-owned Iter is ready; the host still decides route eligibility. */
+  answer_in?: 'browser'
   operation_id: string
   text: string
   context: AskContext
@@ -90,11 +93,20 @@ export interface AskBody {
   thread?: string
   via: AskVia
   /**
-   * The person's own memory, recalled by this browser for this turn only (lib/askMemory; the owner 2026-10-07: memory is kept
+   * The person's own memory, recalled by this browser for this turn only (lib/askMemory; Jon 2026-10-07: memory is kept
    * by the browser, the hive stores none of it). At most 20 notes and 8 KB; each `{id, text}` so a revise can name it.
    * Accepted only while the hive's conductor answers (otherwise 400 invalid: the page sends again without them).
    */
   memory_notes?: (string | { id: string; text: string })[]
+}
+
+/** Host gateway r1b DONE_WORDS; closing never changes an existing operation's owner. */
+export type BrowserOutcome = 'answered' | 'incomplete' | 'spend_cap' | 'failed' | 'stopped'
+export interface BrowserAskClosed {
+  operation_id: string
+  turn_id: string
+  route: 'browser_mind'
+  state: 'done' | 'refused'
 }
 
 export interface AskWho {
@@ -121,7 +133,10 @@ export interface AskAccepted {
   operation_id: string
   turn_id: string
   thread: AskThread
-  state: 'accepted' | 'thinking' | 'done' | 'refused'
+  state: 'accepted' | 'thinking' | 'done' | 'refused' | 'browser'
+  route?: 'browser_mind'
+  cap_usd?: number
+  month_remaining_usd?: number | null
   reason?: RefusalReason | null
   text?: string
   /** how the request was made (audit only; the host's turn view carries it) */
@@ -182,7 +197,7 @@ export interface NavigateProposal {
   kind: 'navigate'
   /** a hash route, e.g. "#/goals" or a route name */
   route: string
-  /** play the experience's own transition (the owner, 2026-10-05); default false: the page moves instantly */
+  /** play the experience's own transition (Jon, 2026-10-05); default false: the page moves instantly */
   animate?: boolean
   digest: string
   label?: string
@@ -310,7 +325,7 @@ export interface AskTurnState extends Partial<Omit<AskAccepted, 'operation_id' |
   more?: boolean
 }
 
-/** A steer: words the person typed while the turn is open (the owner, 2026-10-05; Platform phase 1.1). */
+/** A steer: words the person typed while the turn is open (Jon, 2026-10-05; Platform phase 1.1). */
 export interface AskSteerBody {
   steer_id: string
   text: string
@@ -360,13 +375,15 @@ export interface AskSettings {
 export interface AskCapabilities {
   conductor: boolean
   memory: boolean
+  /** Installed code.test protocol support, independently checked for each operation. */
+  code_test_intents?: boolean
 }
 /** The capabilities as the page trusts them: booleans only; anything else reads as not given. */
 export function readCapabilities(v: unknown): AskCapabilities | null {
   if (!v || typeof v !== 'object') return null
   const c = v as Record<string, unknown>
   if (typeof c.conductor !== 'boolean' || typeof c.memory !== 'boolean') return null
-  return { conductor: c.conductor, memory: c.conductor && c.memory }
+  return { conductor: c.conductor, memory: c.conductor && c.memory, ...(typeof c.code_test_intents === 'boolean' ? { code_test_intents: c.code_test_intents } : {}) }
 }
 /** The person's own mind (GET /api/me/mind, Platform P1/P2; absent or 404 on older hosts). */
 export interface MyMind {
@@ -374,6 +391,13 @@ export interface MyMind {
   name: string
   swarm_id?: string | null
   status?: string
+}
+/** GET /api/me/mind, personal.py: host readiness and this person's preference are separate facts. */
+export interface BrowserMindRoute {
+  mindId: string
+  gateway: boolean
+  available: boolean
+  preference: boolean
 }
 /** `acting_as` on the turn view and the first `ask` frame (Platform P2): the person's own mind answering for them. */
 export interface ActingAs {
@@ -388,6 +412,17 @@ export function readMyMind(v: unknown): MyMind | null {
   const r = m as Record<string, unknown>
   if (!id(r.id) || !plainName(r.name)) return null
   return { id: r.id, name: r.name, swarm_id: id(r.swarm_id) ? r.swarm_id : null, status: typeof r.status === 'string' ? r.status.slice(0, 20) : undefined }
+}
+
+/** Missing/older/malformed advertisements never opt a person into browser-owned admission. */
+export function readBrowserMindRoute(v: unknown): BrowserMindRoute | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null
+  const root = v as Record<string, unknown>, mind = readMyMind(v)
+  const caps = root.capabilities, raw = root.mind
+  if (!mind || !caps || typeof caps !== 'object' || Array.isArray(caps) || !raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const c = caps as Record<string, unknown>, m = raw as Record<string, unknown>
+  if (typeof c.gateway !== 'boolean' || typeof c.browser_mind !== 'boolean' || typeof m.browser_mind !== 'boolean') return null
+  return { mindId: mind.id, gateway: c.gateway, available: c.browser_mind, preference: m.browser_mind }
 }
 /** An `acting_as` value, if well formed; anything else is ignored. */
 export function readActingAs(v: unknown): ActingAs | null {
@@ -407,6 +442,8 @@ export interface AskSettingsPut {
 export interface AskRefusalDetails {
   mind?: AskWho
   operation_id?: string
+  /** own_key_needed (Jon 11-05): what the one add-your-key step needs (ownhive.OwnHive.key_setup) */
+  keySetup?: KeySetup
 }
 
 // ---------------------------------------------------------------- frame checks (defence in depth)
@@ -610,5 +647,14 @@ export function refusalDetails(body: unknown): AskRefusalDetails {
   const out: AskRefusalDetails = {}
   if (who(o.mind)) out.mind = { id: o.mind.id, name: o.mind.name }
   if (id(o.operation_id)) out.operation_id = o.operation_id
+  if (o.code === 'own_key_needed' && typeof o.provider === 'string' && /^[a-z0-9_-]{1,40}$/.test(o.provider)) {
+    const m = o.suggested_month_usd
+    out.keySetup = {
+      provider: o.provider,
+      providerLabel: typeof o.provider_label === 'string' && o.provider_label.length <= 60 ? o.provider_label : o.provider,
+      hasTotal: o.has_total === true,
+      suggestedMonthUsd: typeof m === 'number' && Number.isFinite(m) && m >= 0 ? m : null,
+    }
+  }
   return out
 }

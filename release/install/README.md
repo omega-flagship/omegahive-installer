@@ -1,9 +1,4 @@
-# OmegaClaw Installers (legacy, reference only)
-
-> **Legacy.** These are the inherited OmegaClaw installers. They set up a single OmegaClaw agent, not OmegaHive,
-> and they are kept for reference only (see [`LEGACY.md`](LEGACY.md) and the root `LEGACY.md`). The new one-click
-> OmegaHive installers are **not built yet**. Their host side, a local-owner hive with one-time-link sign-in, is in
-> `hive/core/localowner.py` and `hive/core/newhive.py`; see "Local-owner hive and the new hive" in `hive/API.md`.
+# OmegaClaw Installers
 
 These installers are for source installs from the public repository. They create
 a local PeTTa workspace, install Python/runtime dependencies, ask what to name

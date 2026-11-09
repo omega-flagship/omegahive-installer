@@ -27,12 +27,12 @@ class CountingSupervisor(FakeSupervisor):
         self.starts.append(agent_id)
 
 
-def _env(monkeypatch, tmp=None, webhost=False):
+def _env(monkeypatch, tmp=None, family=False):
     monkeypatch.setenv("HIVE_GOOGLE_CLIENT_ID", "cid")
     monkeypatch.setenv("HIVE_GOOGLE_CLIENT_SECRET", "shh")
     monkeypatch.setenv("HIVE_GOOGLE_REDIRECT_URI", "https://hive.example/omegahive/api/auth/google/callback")
     monkeypatch.setenv("HIVE_PUBLIC_BASE", "https://hive.example")
-    if not webhost:
+    if not family:
         monkeypatch.setenv("HIVE_SSO_USERS", "")
     tmp = tmp or tempfile.mkdtemp(prefix="hive-personal-")
     settings = load_settings(data_dir=pathlib.Path(tmp), admin_password="pw", petta_path=PETTA, offline=True, base_path="/omegahive")
@@ -139,19 +139,19 @@ def test_operator_minds_and_unnamed_principals_get_none(monkeypatch):
         assert c.get("/api/me/mind", headers={"Authorization": f"Bearer {mind['token']}"}).status_code == 401   # a mind
         assert c.get("/api/me/mind").status_code == 401                                                      # signed out
         assert hive.personal.ensure("user:operator") is None and hive.personal.ensure(f"agent:{mind['id']}") is None
-        assert hive.personal.ensure("user:dee") is None                     # a legacy webhost principal: no account here
+        assert hive.personal.ensure("user:dee") is None                     # a legacy family principal: no account here
         assert _personal(hive) == []
     finally:
         c.__exit__(None, None, None)
 
 
-def test_legacy_webhost_principal_gets_none(monkeypatch):
-    tmp = pathlib.Path(tempfile.mkdtemp(prefix="hive-webhost-"))
+def test_legacy_family_principal_gets_none(monkeypatch):
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="hive-family-"))
     (tmp / "sessions.json").write_text(json.dumps({"fam-tok": {"username": "dee", "expires": int(time.time()) + 3600}}))
     (tmp / "users.json").write_text(json.dumps({"dee": {"name": "Dee"}}))
     monkeypatch.setenv("HIVE_SSO_STATE_DIR", str(tmp))
     monkeypatch.setenv("HIVE_SSO_USERS", "dee")
-    app, google, sup, _ = _env(monkeypatch, webhost=True)
+    app, google, sup, _ = _env(monkeypatch, family=True)
     c, admin = _client(app)
     try:
         session = c.post("/omegahive/api/auth/sso", cookies={"omega_session": "fam-tok"}).json()
@@ -294,7 +294,7 @@ def test_a_swarm_answer_is_held_only_for_its_person_and_nothing_wakes_or_calls(c
     calls = _gateway_calls(client, monkeypatch)
     personal = hive.personal.ensure("user:u_ann")
     hive.personal.ensure("user:u_bob")
-    hive.personal.ensure("user:u_quinn")
+    hive.personal.ensure("user:u_jon")
     supervisor_before = list(client.supervisor.calls)
     usage_before = hive.db.one("SELECT COUNT(*) AS n FROM usage")["n"]
     turn = _answered(client, w, "op-held-001", text="Ann's private words", answer="The coordinator's answer")
@@ -317,10 +317,10 @@ def test_a_swarm_answer_is_held_only_for_its_person_and_nothing_wakes_or_calls(c
     assert [(i["turn_id"], i["words"], i["answer"], i["truncated"]) for i in got["items"]] == \
         [(turn, "Ann's private words", "The coordinator's answer", False)]
     assert got["next"] is None and got["dropped"] == 0
-    for other in (w["bob"], w["quinn"]):   # another member, and an admin person: their own (empty) inbox only
+    for other in (w["bob"], w["jon"]):   # another member, and an admin person: their own (empty) inbox only
         assert client.get("/api/me/mind/inbox", headers=other).json()["items"] == []
     assert client.get("/api/me/mind/inbox").status_code == 403                        # the operator: no admin read
-    for other in (w["bob"], w["quinn"]):   # someone else's ids are ignored
+    for other in (w["bob"], w["jon"]):   # someone else's ids are ignored
         assert client.post("/api/me/mind/inbox/ack", headers=other, json={"ids": [got["items"][0]["id"]]}).json() == {"deleted": 0}
     # one per turn: a late second reply to the closed turn, or a second hold, adds nothing
     reply(hive, w["coord"], turn, "a late word")

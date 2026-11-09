@@ -25,7 +25,7 @@ def fixture():
 class PreflightChecks(unittest.TestCase):
     def test_even_passing_export_does_not_authorize_adoption(self):
         r, pin, result = fixture()
-        result["adopter"] = "Quinn"
+        result["adopter"] = "Jon"
         result["reviews"] = ["accepted"]
         report = assess(r, pin, result)
         self.assertEqual(report["status"], "ready-for-independent-review")

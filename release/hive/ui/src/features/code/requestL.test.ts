@@ -122,7 +122,7 @@ describe('L2: the saved session is keyed by principal and target', () => {
     expect(readSession(ME, 'repo:other', st)).toBeNull()
   })
   it('keys carry both principal and target, and a principal cannot forge another’s key', () => {
-    expect(sessionKey('user:quinn', 'repo:a')).toBe('omegadots.code.session.user%3Aquinn|repo%3Aa')
+    expect(sessionKey('user:jon', 'repo:a')).toBe('omegadots.code.session.user%3Ajon|repo%3Aa')
     expect(sessionKey('user:a|b', 'c')).not.toBe(sessionKey('user:a', 'b|c'))
     expect(workspaceKey(ME, 'repo:a')).toBe(`${sessionKey(ME, 'repo:a')}.ws`)
   })
@@ -154,8 +154,8 @@ describe('L2: reuse is offered only for this principal’s active grant on that 
   const j = (grants: GoalGrant[], principal: string | null | undefined = ME, s = saved) => judgeSaved(s, { grants }, principal, NOW)
   it('offers the viewer’s own active grant', () => expect(j([own])).toEqual({ kind: 'offer', grant: own }))
   it('another sign-in: saved under another principal, or the grant is another principal’s', () => {
-    expect(j([own], ME, { ...saved, principal: 'user:quinn' })).toEqual({ kind: 'drop', why: 'The task saved in this browser belongs to another sign-in.' })
-    expect(j([{ ...own, principal: 'user:quinn' }])).toEqual({ kind: 'drop', why: 'The task saved in this browser belongs to another sign-in.' })
+    expect(j([own], ME, { ...saved, principal: 'user:jon' })).toEqual({ kind: 'drop', why: 'The task saved in this browser belongs to another sign-in.' })
+    expect(j([{ ...own, principal: 'user:jon' }])).toEqual({ kind: 'drop', why: 'The task saved in this browser belongs to another sign-in.' })
   })
   it('its edit grant has ended', () => {
     expect(j([{ ...own, expires_at: NOW - 10, active: false }])).toEqual({ kind: 'drop', why: `The task saved in this browser can’t be reused: its edit grant has ended (${new Date((NOW - 10) * 1000).toISOString()}).` })

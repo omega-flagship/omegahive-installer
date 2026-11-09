@@ -7,7 +7,7 @@ import { PENDING, Resource } from '../../lib/useResource'
 import { bindCodingInbox, filterRows, inboxIdentity, receivingGoalRoute, REQUEST_PAGE_LIMIT, type CodingInboxRead } from './codingSwarmInbox'
 
 /**
- * Surface request P: Code's 23 helper checks (coordination/omegacode/tools/check_coding_swarm_inbox.py, receipt
+ * Surface request P: Code's 23 helper checks (check_coding_swarm_inbox.py, receipt
  * coding-swarm-inbox-helper.json), ported onto the owner helper and run against the sim's request lifecycle instead of
  * a disposable host. INVENTED data only; no live hive, no model calls.
  *

@@ -102,8 +102,8 @@ def test_people_review_by_name_and_the_password_cannot(client):
     propose(client, maker, goal, digest, {"deck": 1})
     assert client.post(f"/api/agent/goals/{goal}/review", headers=agent_headers(req), json={"decision": "accept"}).status_code == 403
     assert client.post(f"/api/goals/{goal}/review", json={"decision": "accept"}).status_code == 403          # hive password
-    quinn = person(client, "u_quinn", role="admin")
-    assert client.post(f"/api/goals/{goal}/review", headers=quinn, json={"decision": "accept"}).json()["status"] == "done"
+    jon = person(client, "u_jon", role="admin")
+    assert client.post(f"/api/goals/{goal}/review", headers=jon, json={"decision": "accept"}).json()["status"] == "done"
 
 
 def test_goals_without_review_finish_as_before(client):

@@ -86,10 +86,10 @@ html[data-os-clock] {
   font-family: var(--font-sans);
   font-weight: 300;
   letter-spacing: 0.02em;
-  color: rgb(236 238 255 / 0.92);
-  background: rgb(18 18 42 / 0.55);
-  border: 1px solid rgb(255 255 255 / 0.09);
-  box-shadow: 0 8px 28px -12px rgb(0 0 0 / 0.6), inset 0 1px 0 rgb(255 255 255 / 0.06);
+  color: rgb(from var(--xc-ink, rgb(236 238 255)) r g b / 0.92);
+  background: rgb(from var(--xc-surface, rgb(18 18 42)) r g b / 0.58);
+  border: 1px solid rgb(from var(--xc-ink, #fff) r g b / 0.09);
+  box-shadow: 0 8px 28px -12px rgb(0 0 0 / 0.6), inset 0 1px 0 rgb(from var(--xc-ink, #fff) r g b / 0.06);
   backdrop-filter: blur(16px) saturate(1.4);
   -webkit-backdrop-filter: blur(16px) saturate(1.4);
 }
@@ -166,3 +166,17 @@ html[data-os-clock] {
 @media (min-width: 768px) {
   html[data-os-clock] .toast-stack { padding-bottom: calc(16px + var(--os-clock-lift)); }
 }
+
+/* the Easter egg (brand/timeJump): after a rewind or fast forward, a second clock beside the real one shows the time
+   jumped to, with a 1.21 GW reading. It sits just above the clock's row, in the clock's own dressing, and goes. */
+.os-clock-then {
+  position: absolute; right: 0; bottom: calc(100% + 6px);
+  display: flex; align-items: center; gap: 8px; white-space: nowrap;
+  height: 30px; padding: 0 10px; border-radius: inherit;
+  background: inherit; color: inherit; border: inherit; box-shadow: inherit;
+  font-variant-numeric: tabular-nums;
+  animation: os-clock-then 0.22s ease-out;
+}
+.os-clock-then-gw { font-size: 0.78em; letter-spacing: 0.04em; color: #ffb347; }
+@keyframes os-clock-then { from { transform: translateY(4px); } }   /* slides only: never depends on an animation to be visible */
+@media (prefers-reduced-motion: reduce) { .os-clock-then { animation: none; } }

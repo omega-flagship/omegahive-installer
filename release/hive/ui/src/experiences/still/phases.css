@@ -1,0 +1,37 @@
+/* Candidate Still phases: one question written on the same native paper in every state. */
+html[data-shell-experience='still']:is([data-shell-phase='rest'], [data-shell-phase='awake']) .still .st-pro-only { display: none; }
+html[data-shell-experience='still']:is([data-shell-phase='rest'], [data-shell-phase='awake']) .still .still-col {
+ display: flex; flex-direction: column; min-height: 100dvh; box-sizing: border-box;
+ padding-top: max(40px, env(safe-area-inset-top)); padding-bottom: max(80px, var(--os-clock-lift, 0px));
+}
+html[data-shell-experience='still']:is([data-shell-phase='rest'], [data-shell-phase='awake']) .still .st-question-block {
+ margin: auto 0 !important; padding-top: 88px; width: 100%; flex: 0 0 auto;
+}
+html[data-shell-experience='still'][data-shell-phase='rest'] .still :is(.st-tries, .st-sugs, .st-panel, .st-writing, .st-receipt) { display: none; }
+.still .st-question-block { position: relative; }
+.still .st-phase-anchor { position: static; }
+/* Awake keeps the actual question on the paper while the app list scrolls. Pro keeps its existing handover. */
+html[data-shell-experience='still'][data-shell-phase='awake'] .still .st-ask {
+ position: sticky; top: 12px; z-index: 3; background: var(--paper);
+ max-height: max(120px, calc(100dvh - 160px)); overflow: auto;
+ padding: 0 14px 14px; margin: 0 -14px -14px;
+}
+html[data-shell-experience='still'][data-shell-phase='awake'] .still .st-ask-line {
+ position: sticky; top: 0; z-index: 1; background: var(--paper);
+}
+.still .st-home { font-family: var(--serif); padding: 0; }
+.still .st-home[hidden], .st-home-back[hidden] { display: none; }
+.still .st-home-omega { position: absolute; left: 50%; transform: translateX(-50%); top: 0; width: 64px; height: 64px; touch-action: none; }
+.still .st-home-mark { width: 64px; height: 64px; }
+.still .st-home-waiting { color: var(--ink-3); font-size: 15px; margin-top: 16px; }
+.still .st-home-rest-apps { display: block; margin: 34px 0 0; min-height: 44px; font-size: 21px; }
+.still .st-home-app-heading { margin: 34px 0 16px; }
+.still .st-home-apps { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; font-size: 21px; }
+.still .st-home-apps small { font-size: 14px; color: var(--ink-3); }
+.still .st-home-controls { display: flex; gap: 28px; margin-top: 34px; font-family: var(--sans); font-size: 14px; }
+.still .st-home-more { margin-top: 20px; }
+.st-home-back { position: fixed; z-index: 60; top: 18px; right: 20px; padding: 10px 16px; border: 1px solid #6a5f53; border-radius: 2px; background: #f4efe6; color: #463e35; font: 14px Georgia, serif; }
+@media (max-width: 900px) {
+ .still .st-home-omega { left: 50%; top: 8px; width: 56px; height: 56px; }
+ .still .st-home-mark { width: 56px; height: 56px; }
+}

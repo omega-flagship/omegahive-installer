@@ -1,4 +1,4 @@
-"""Linkage slice 4: the proposal-test plane, host side (linkage spec r3.6 §b, coordination/omegacode/
+"""Linkage slice 4: the proposal-test plane, host side (linkage spec r3.6 §b,
 PLATFORM_ASK_R2_13_LINKAGE_SPEC_DRAFT_20261006.md; settlement wire PLATFORM_SETTLEMENT_WIRE_FIELD_ANSWERS_20261006.md).
 
 - Issuance (b.1/b.2): the request's controller asks POST /api/agent/code/capability {service, proposal_test} for a
@@ -299,7 +299,7 @@ class ProposalTests:
         if not _match(DIGEST, proposal["proposal_digest"]) or not _match(DIGEST, proposal["normalized_hunks_digest"]):
             raise Minds._bad("proposal_digest and normalized_hunks_digest are sha256:<64 hex>")
 
-    def issue(self, agent, member_token, data):
+    def issue(self, agent, member_token, data, by="host:proposal_tests"):
         """POST /api/agent/code/capability {service, proposal_test}: create (or replay) a test, or re-issue a stage claim."""
         settings = self.hive.settings
         if not settings.proposal_test_claims or not settings.proposal_test_argv_prefixes:
@@ -314,7 +314,7 @@ class ProposalTests:
         if not isinstance(body, dict):
             raise Minds._bad("proposal_test is an object")
         if "test_id" in body:
-            return self._reissue(agent, member_token, body)
+            return self._reissue(agent, member_token, body, by)
         self._create_body(body)
         scope, op = f"ptest:{agent['id']}", body["operation_id"]
         digest = sha(canonical({"route": "proposal_test", "body": data}))
@@ -354,7 +354,7 @@ class ProposalTests:
                 self.db.insert("proposal_tests", test)
                 self.minds._record(scope, op, digest, 200, {"test_id": test["id"]})
             stage = "run" if test["preparation"] else "prepare"
-            return self._issue_stage(agent, member_token, test, stage, req, lease, origin)
+            return self._issue_stage(agent, member_token, test, stage, req, lease, origin, by)
 
     def _check_controller(self, agent, lease, test=None):
         """Checks 1 and 2: not a child; the lease's controller (and the test's), still in controllers(team)."""
@@ -387,7 +387,7 @@ class ProposalTests:
             raise self.err(409, "origin_invalid", "the request's origin is not a Code workspace scope a test can bind")
         return origin
 
-    def _reissue(self, agent, member_token, body):
+    def _reissue(self, agent, member_token, body, by="host:proposal_tests"):
         Minds._fields(body, ("test_id", "stage"))
         if not _match(TEST_ID, body["test_id"]):
             raise Minds._bad("test_id is pt_<24 hex>")
@@ -412,7 +412,7 @@ class ProposalTests:
                     raise self.err(409, "test_ended", "that test ended more than 7 days ago")
                 if origin is None:
                     raise self.err(403, "capability_withdrawn", "this request carries no person origin", reason="no_origin")
-                return self._issue_stage(agent, member_token, test, "result", req, lease, origin)
+                return self._issue_stage(agent, member_token, test, "result", req, lease, origin, by)
             current = self._current_lease(test["request_id"])
             self._check_controller(agent, current, test)
             if test["ended_at"]:
@@ -427,9 +427,9 @@ class ProposalTests:
                                bound_fork=bound)
             if stage == "run" and not bound:
                 raise self.err(409, "not_bound", "this test has no bound preparation yet")
-            return self._issue_stage(agent, member_token, test, stage, req, lease, origin)
+            return self._issue_stage(agent, member_token, test, stage, req, lease, origin, by)
 
-    def _issue_stage(self, agent, member_token, test, stage, req, lease, origin):
+    def _issue_stage(self, agent, member_token, test, stage, req, lease, origin, by="host:proposal_tests"):
         at = int(time.time())
         until = int(parse_time(lease["until"]).timestamp())
         exp = at + PROPOSAL_TEST_SECONDS if stage == "result" else min(at + PROPOSAL_TEST_SECONDS, until)
@@ -454,7 +454,7 @@ class ProposalTests:
             swarm_id=task["swarm_id"] if task else None, repository_id=origin["repository_id"], actions=["proposal-test"],
             argv_prefixes=self.hive.settings.proposal_test_argv_prefixes, max_runs=0,
             max_runtime_seconds=PROPOSAL_TEST_RUNTIME, member_token=member_token,
-            grant_id=None if stage == "result" else lease["grant_id"], by="host:proposal_tests", proposal_test=claim, exp=exp)
+            grant_id=None if stage == "result" else lease["grant_id"], by=by, proposal_test=claim, exp=exp)
 
     # ---- c.1/c.2 live status ------------------------------------------------------------------------------------------
 

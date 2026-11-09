@@ -1,8 +1,14 @@
+import { useVisibleAuthority, visibleOwner } from '../../lib/useVisibleAuthority'
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, m } from 'framer-motion'
 import './cosmos.css'
-import { countPending, hsl, openClassic, openPalette, shown, useHive, useHomeRequested, useResting, useRoomyLayout, useReducedMotion, useRoute } from '../sdk'
+import { countPending, hsl, openClassic, openPalette, shown, useHive, useHomeRequested, usePhase, useResting, useRoomyLayout, useReducedMotion, useRoute } from '../sdk'
+import { useOrbitApps } from './phaseApps'
+import { useAwakeApps as useShellApps } from '../../shell/awakeApps'
+import { rootPresentation } from './phaseRig'
 import { buildLayout, type CosmosLayout } from './layout'
+import { groupHelpers } from '../../scene/helperGroups'
+import { useHelperGroups } from '../../scene/helperGroupsStore'
 import { useCosmos } from './state'
 import { Labels } from './Labels'
 import { ApprovalsPanel, MindPanel, SystemPanel } from './Panels'
@@ -10,6 +16,9 @@ import { Deck } from './Deck'
 import { ApprovalDecision } from '../ApprovalDecision'
 import { HiveDirectory } from '../HiveDirectory'
 import { modalLayers } from '../../ui/useModalContainment'
+
+const approvalOwner = visibleOwner(useCosmos, s => s.answering, request => request !== null)
+export const useCosmosApprovalAuthority = () => useVisibleAuthority('hive-pro', true, 'cosmos-approval', approvalOwner)
 
 // the 3D engine streams in after the HUD, so the hive is usable while the stars ignite
 const Scene = lazy(() => import('./Scene'))
@@ -21,25 +30,37 @@ export default function Cosmos() {
   const reduced = useReducedMotion()
   const swarmKey = useHive((s) => Object.values(s.swarms).map((w) => `${w.id}:${w.name}:${w.hue}:${w.created_at}:${w.member_ids.join(',')}`).sort().join('|'))
   const agentKey = useHive((s) => Object.values(s.agents).map((a) => `${a.id}:${a.swarm_id}:${a.kind}:${a.created_at}`).sort().join('|'))
+  const view = useCosmos((s) => s.view)
+  // finished request helpers fold into one world per team (scene/helperGroups): which are folded is part of the shape
+  const expandedHelpers = useHelperGroups((s) => s.expanded)
+  const revealId = view.kind === 'mind' ? view.id : null
+  const helperKey = useHive((s) => groupHelpers(Object.values(s.agents), Date.now(), { expanded: expandedHelpers, reveal: revealId }).groups.map((g) => `${g.id}:${g.expanded}:${g.memberIds.join(',')}`).join('|'))
   const layout = useMemo<CosmosLayout>(() => {
     const st = useHive.getState()
-    return buildLayout(st.swarms, st.agents)
+    return buildLayout(st.swarms, st.agents, { expanded: expandedHelpers, reveal: revealId })
     // the layout only changes when the shape of the hive does, not on every status tick
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [swarmKey, agentKey])
-  const view = useCosmos((s) => s.view)
+  }, [swarmKey, agentKey, helperKey])
   const go = useCosmos((s) => s.go)
   const approvalsOpen = useCosmos((s) => s.approvalsOpen)
   const answering = useCosmos((s) => s.answering)
   const answeringSession = useCosmos((s) => s.answeringSession)
+  const approvalCurrent = useCosmosApprovalAuthority()
   const answer = useCosmos((s) => s.answer)
   const pickingSwarm = useCosmos((s) => s.pickingSwarm)
   const deck = useCosmos((s) => s.deck)
   // a surface's X lands on a clean galaxy (home:requested)
   useHomeRequested(() => useCosmos.getState().clearToHome())
   const hidden = usePageHidden()
-  const [lit, setLit] = useState(false)
-  const lightUp = useCallback(() => setLit(true), [])
+  // the ignition veil belongs to one scene (an epoch): a context restore builds a new one, which lifts it again on its
+  // own first light (Kimi r1 #1), so the veil only ever covers a canvas that has not drawn yet
+  const epochRef = useRef(0)
+  const [litEpoch, setLitEpoch] = useState(-1)
+  const [everLit, setEverLit] = useState(false)
+  const lightUp = useCallback(() => {
+    setLitEpoch(epochRef.current)
+    setEverLit(true)
+  }, [])
   // a classic page or app over the galaxy, or the page resting (the rest draws its own sky), stops the scene
   const resting = useResting((s) => s.resting)
   const covered = useRoute().name !== 'hive' || resting
@@ -49,13 +70,19 @@ export default function Cosmos() {
     if (st === 'lost') setGl('lost')
     else {
       setGl('ok')
-      setEpoch((n) => n + 1)
+      epochRef.current += 1
+      setEpoch(epochRef.current)
     }
   }, [])
   const sceneFailed = useCallback(() => {
     setGl('failed')
-    setLit(true)
+    // the released latch: a failure lifts the veil for good, as first light does
+    setEverLit(true)
   }, [])
+  // the phase is read here too (the same store the render reads below), so the presentation follows activation
+  const activated = usePhase((s) => s.phased)
+  const shown = rootPresentation({ phased: activated, gl, litEpoch, epoch, everLit })
+  const lit = shown.lit
   useBootData(layout)
   useKeys(layout)
 
@@ -66,11 +93,17 @@ export default function Cosmos() {
   }, [view, layout, go])
 
   const empty = layout.planets.length === 0 && layout.systems.length === 0
+  // CANDIDATE (cosmos-rest-r1): the shell's rest → awake → Pro. Not phased (the default): always Pro, as before.
+  const phased = usePhase((s) => s.phased)
+  const phase = usePhase((s) => s.phase)
+  const local = phased && phase !== 'pro'
+  // the scene's lit bodies are the shell's one list (contract R1.1 §3), read here, loaded by the shell's PhaseLayer
+  const orbit = useOrbitApps(useShellApps(false), useWidth()).shown
   return (
-    <div className="cx" data-experience="cosmos">
+    <div className="cx" data-experience="cosmos" data-phase={phased ? phase : undefined} data-cx-pro-root={phased ? "" : undefined} data-gl={shown.dataGl} data-cx-epoch={phased ? epoch : undefined} data-cx-lit-epoch={phased ? litEpoch : undefined} tabIndex={phased ? -1 : undefined} aria-label={phased && phase === 'pro' ? 'Cosmos, the full view' : undefined}>
       <SceneBoundary key={epoch} onFail={sceneFailed}>
         <Suspense fallback={null}>
-          <Scene layout={layout} reduced={reduced} desktop={desktop} hidden={hidden || covered} onReady={lightUp} onContext={onContext} />
+          <Scene layout={layout} reduced={reduced} desktop={desktop} hidden={hidden || covered} onReady={lightUp} onContext={onContext} phase={phased ? phase : 'pro'} phased={phased} apps={phased ? orbit : undefined} />
         </Suspense>
       </SceneBoundary>
       {gl !== 'ok' && (
@@ -78,7 +111,10 @@ export default function Cosmos() {
           {gl === 'lost' ? 'The 3D sky paused: the graphics card took it back. It returns by itself; everything else still works.' : 'This device could not start the 3D sky. Everything else works: use the navigator, the deck and the search.'}
         </p>
       )}
-      <Ignition lit={lit} />
+      <Ignition lit={lit} cut={phased && reduced} retire={shown.retireVeil} />
+      {/* Pro's own chrome: while rest or awake is in front it stays mounted (the person's view, deck page, scroll and
+          drafts are kept) but unseen and unreachable (phases.css) */}
+      <div className="cx-pro-layer" inert={local ? true : undefined}>
       <Labels layout={layout} />
       <Hud layout={layout} desktop={desktop} />
       {empty && <Void />}
@@ -91,12 +127,23 @@ export default function Cosmos() {
       </div>
       <AnimatePresence>{approvalsOpen && <ApprovalsPanel key="ap" desktop={desktop} />}</AnimatePresence>
       {pickingSwarm && <HiveDirectory experience="cosmos" initialPick={pickingSwarm} onClose={() => useCosmos.getState().pickSwarm(null)} />}
-      <AnimatePresence>{answering && <ApprovalDecision key={answering.id} seen={answering} session={answeringSession ?? undefined} onClose={() => answer(null)} restoreFocus={afterAnswer} />}</AnimatePresence>
+      <AnimatePresence>{answering && <ApprovalDecision current={approvalCurrent} key={answering.id} seen={answering} session={answeringSession ?? undefined} onClose={() => answer(null)} restoreFocus={afterAnswer} />}</AnimatePresence>
       <AnimatePresence>
         <Deck key="deck" layout={layout} desktop={desktop} />
       </AnimatePresence>
+      </div>
     </div>
   )
+}
+
+function useWidth(): number {
+  const [w, setW] = useState(() => window.innerWidth)
+  useEffect(() => {
+    const on = () => setW(window.innerWidth)
+    window.addEventListener('resize', on)
+    return () => window.removeEventListener('resize', on)
+  }, [])
+  return w
 }
 
 /**
@@ -129,12 +176,14 @@ class SceneBoundary extends Component<{ onFail: () => void; children: ReactNode 
 }
 
 /** Covers the canvas until its first frames are drawn, then dissolves. */
-function Ignition({ lit }: { lit: boolean }) {
+function Ignition({ lit, cut = false, retire = false }: { lit: boolean; cut?: boolean; retire?: boolean }) {
   return (
     <div
       aria-hidden={lit}
       className="pointer-events-none absolute inset-0 grid place-items-center"
-      style={{ background: 'radial-gradient(ellipse at center, #070b1d 0%, #010208 70%)', opacity: lit ? 0 : 1, transition: 'opacity 1.4s ease', zIndex: 1 }}
+      data-cx-ignition=""
+      // released: fades out. Activated (r2): after the fade it is not rendered at all, so nothing of it can linger
+      style={{ background: 'radial-gradient(ellipse at center, #070b1d 0%, #010208 70%)', opacity: lit ? 0 : 1, ...(retire ? { visibility: lit ? ('hidden' as const) : ('visible' as const) } : {}), transition: cut ? 'none' : retire && lit ? 'opacity 1.4s ease, visibility 0s linear 1.4s' : 'opacity 1.4s ease', zIndex: 1 }}
     >
       <div className="flex flex-col items-center gap-4">
         <span className="relative grid size-10 place-items-center">
@@ -192,6 +241,9 @@ function useKeys(layout: CosmosLayout) {
       if (tgt instanceof Element && tgt !== document.body && tgt.isConnected && !tgt.closest('[data-experience="cosmos"]')) return
       const st = useCosmos.getState()
       const lay = ref.current
+      // rest and awake are the shell's: Cosmos's flight keys belong to Pro
+      const ph = usePhase.getState()
+      if (ph.phased && ph.phase !== 'pro') return
       if (e.key === 'Escape') {
         if (useHive.getState().paletteOpen) return
         if (st.deck) st.setDeck(st.deck === 'index' ? null : 'index')
@@ -200,6 +252,7 @@ function useKeys(layout: CosmosLayout) {
           const sys = lay.planetById[st.view.id]?.systemId
           st.go(sys ? { kind: 'system', id: sys } : { kind: 'galaxy' })
         } else if (st.view.kind === 'system') st.go({ kind: 'galaxy' })
+        else if (usePhase.getState().phased && usePhase.getState().phase === 'pro') usePhase.getState().send('back')
         else return
         e.preventDefault()
         return
@@ -369,8 +422,18 @@ function Controls({ desktop }: { desktop: boolean }) {
   const home = useCosmos((s) => s.home)
   const deck = useCosmos((s) => s.deck)
   const setDeck = useCosmos((s) => s.setDeck)
+  const phased = usePhase((s) => s.phased)
   return (
     <div data-xc-keep-clear="" data-cx-occlude="" className="fixed z-40 flex items-start gap-1.5" style={{ top: desktop ? 20 : 10, right: desktop ? 20 : 10 }}>
+      {phased && (
+        // CANDIDATE (cosmos-rest-r1): the way back in to the Ω (Esc in the galaxy does the same)
+        <button className="cx-icon-btn cx-focus" data-cx-back-to-omega="" data-ui-part="cosmos pro back" onClick={() => usePhase.getState().send('back')} aria-label="Back to the Ω (Esc)" title="Back to the Ω  Esc">
+          <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden>
+            <circle cx="9" cy="9" r="2.4" fill="currentColor" />
+            <circle cx="9" cy="9" r="6.6" fill="none" stroke="currentColor" strokeWidth="1" strokeDasharray="1.6 2.2" />
+          </svg>
+        </button>
+      )}
       <button className="cx-icon-btn cx-focus" onClick={openPalette} aria-label="Search and commands" title="Search">
         <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
           <circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" strokeWidth="1.3" />

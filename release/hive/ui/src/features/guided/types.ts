@@ -1,5 +1,5 @@
 /**
- * Guided demos by Ask (the owner, 2026-10-07: "show me how temporal reasoning works" → the Ask pulls up the module and
+ * Guided demos by Ask (Jon, 2026-10-07: "show me how temporal reasoning works" → the Ask pulls up the module and
  * guides us through it by controlling the screen). A demo is DATA: a declarative script of steps. Each step says one
  * plain sentence, moves the screen to a real place, points at a real thing (the presence protocol's
  * `data-presence-*` targets, or the app's `data-tour` names), and says what to wait for.

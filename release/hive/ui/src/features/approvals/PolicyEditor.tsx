@@ -67,7 +67,7 @@ export default function PolicyEditor() {
 
 function Card({ title, icon, children, className, tour }: { title: string; icon?: Parameters<typeof Icon>[0]['name']; children: ReactNode; className?: string; tour?: string }) {
   return (
-    <section className={cx('rounded-[20px] border border-line bg-white/[0.025] p-4', className)} aria-label={title} data-tour={tour}>
+    <section className={cx('rounded-[20px] border border-line bg-tint/[0.025] p-4', className)} aria-label={title} data-tour={tour}>
       <h2 className="eyebrow mb-3 flex items-center gap-1.5">
         {icon && <Icon name={icon} size={13} />}
         {title}
@@ -100,7 +100,7 @@ function RuleList({ rules }: { rules: PolicyRule[] }) {
 
   return (
     <div className="space-y-5" data-tour="policy-rules">
-      <Group title="Hive" sub="Every mind" lead={<span className="flex size-6 items-center justify-center rounded-lg bg-white/[0.06] text-ink-2"><Icon name="hive" size={14} /></span>} rules={groups.hive} />
+      <Group title="Hive" sub="Every mind" lead={<span className="flex size-6 items-center justify-center rounded-lg bg-tint/[0.06] text-ink-2"><Icon name="hive" size={14} /></span>} rules={groups.hive} />
       {groups.bySwarm.length > 0 && <div className="eyebrow px-1 pt-1">Swarms</div>}
       {groups.bySwarm.map(([id, list]) => {
         const sw = swarms[id]
@@ -132,7 +132,7 @@ function Group({ title, sub, lead, rules }: { title: string; sub: string; lead: 
         <span className="text-[12px] text-ink-4">{sub}</span>
         <span className="ml-auto text-[12px] text-ink-4 tabular-nums">{rules.length}</span>
       </div>
-      <ul className="overflow-hidden rounded-[18px] border border-line bg-white/[0.02]">
+      <ul className="overflow-hidden rounded-[18px] border border-line bg-tint/[0.02]">
         <AnimatePresence initial={false}>
           {rules.length === 0 && <li className="px-4 py-3 text-[13px] text-ink-4">No rules at this scope.</li>}
           {rules.map((r, i) => (
@@ -166,7 +166,7 @@ function RuleRow({ rule, first }: { rule: PolicyRule; first: boolean }) {
         <span className="absolute top-1/2 left-1.5 h-7 w-[3px] -translate-y-1/2 rounded-full" style={{ background: MODE_STYLE[rule.mode].color, opacity: 0.75, boxShadow: `0 0 8px ${MODE_STYLE[rule.mode].color}` }} aria-hidden="true" />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <code className="rounded-md border border-line-2 bg-black/30 px-1.5 py-px font-mono text-[13px] text-ink">{rule.skill}</code>
+            <code className="rounded-md border border-line-2 bg-shade/30 px-1.5 py-px font-mono text-[13px] text-ink">{rule.skill}</code>
             <ModeChip mode={rule.mode} />
             {rule.skill.includes('*') && matches.length > 0 && <span className="hidden text-meta text-ink-4 sm:inline">matches {matches.slice(0, 3).join(', ')}{matches.length > 3 ? ` +${matches.length - 3}` : ''}</span>}
           </div>
@@ -196,7 +196,7 @@ function RuleRow({ rule, first }: { rule: PolicyRule; first: boolean }) {
 // ---------------------------------------------------------------- add
 
 const selectCls =
-  'min-h-11 w-full appearance-none rounded-xl border border-line bg-black/30 bg-[length:16px] bg-[right_10px_center] bg-no-repeat pr-9 pl-3 text-[14px] text-ink outline-none focus:border-line-2'
+  'min-h-11 w-full appearance-none rounded-xl border border-line bg-shade/30 bg-[length:16px] bg-[right_10px_center] bg-no-repeat pr-9 pl-3 text-[14px] text-ink outline-none focus:border-line-2'
 const chevronBg = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a89b3' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`
 
 function AddRule() {
@@ -276,7 +276,7 @@ function AddRule() {
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
-            className="min-h-11 w-full rounded-xl border border-line bg-black/30 px-3 font-mono text-[14px] text-ink outline-none placeholder:text-ink-4 focus:border-line-2"
+            className="min-h-11 w-full rounded-xl border border-line bg-shade/30 px-3 font-mono text-[14px] text-ink outline-none placeholder:text-ink-4 focus:border-line-2"
           />
           <span className="mt-1 block min-h-4 truncate text-meta text-ink-4">
             {skill.trim() ? (matches.length ? `Matches ${matches.slice(0, 5).join(', ')}${matches.length > 5 ? ` and ${matches.length - 5} more` : ''}` : 'Matches no skill the UI knows (it may still match others)') : 'Use * for any run of characters.'}
@@ -313,7 +313,7 @@ function AddRule() {
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder="Why this rule exists"
-            className="min-h-11 w-full rounded-xl border border-line bg-black/30 px-3 text-[14px] text-ink outline-none placeholder:text-ink-4 focus:border-line-2"
+            className="min-h-11 w-full rounded-xl border border-line bg-shade/30 px-3 text-[14px] text-ink outline-none placeholder:text-ink-4 focus:border-line-2"
           />
         </label>
         <Button type="submit" variant="primary" icon={flash ? 'check' : 'plus'} key={flash} disabled={!valid || busy} className="w-full">
@@ -365,7 +365,7 @@ function Tester({ rules }: { rules: PolicyRule[] }) {
           list="known-skills"
           autoCapitalize="off"
           spellCheck={false}
-          className="min-h-11 w-full min-w-0 rounded-xl border border-line bg-black/30 px-3 font-mono text-[14px] text-ink outline-none focus:border-line-2"
+          className="min-h-11 w-full min-w-0 rounded-xl border border-line bg-shade/30 px-3 font-mono text-[14px] text-ink outline-none focus:border-line-2"
         />
         <datalist id="known-skills">
           {KNOWN.map((k) => (
@@ -375,7 +375,7 @@ function Tester({ rules }: { rules: PolicyRule[] }) {
       </div>
       <AnimatePresence mode="wait" initial={false}>
         {d && (
-          <m.div key={`${d.mode}${from}`} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mt-3 flex items-center gap-2.5 rounded-xl border border-line bg-black/20 px-3 py-2.5">
+          <m.div key={`${d.mode}${from}`} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mt-3 flex items-center gap-2.5 rounded-xl border border-line bg-shade/20 px-3 py-2.5">
             <ModeChip mode={d.mode} />
             <span className="min-w-0 text-[12px] leading-snug text-ink-3">
               {from}
@@ -393,7 +393,7 @@ function Tester({ rules }: { rules: PolicyRule[] }) {
 function Help() {
   const [open, setOpen] = useState(false)
   return (
-    <section className="rounded-[20px] border border-line bg-white/[0.025]" aria-label="How the gate decides">
+    <section className="rounded-[20px] border border-line bg-tint/[0.025]" aria-label="How the gate decides">
       <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex min-h-12 w-full items-center gap-2 px-4 text-left">
         <Icon name="info" size={15} className="text-ink-3" />
         <span className="eyebrow flex-1">How the gate decides</span>
@@ -404,7 +404,7 @@ function Help() {
           {['Human-only', 'Mind', 'Swarm', 'Hive', 'Defaults'].map((x, i) => (
             <li key={x} className="flex items-center gap-1.5">
               {i > 0 && <Icon name="chevron" size={12} className="text-ink-4" />}
-              <span className={cx('rounded-md border px-1.5 py-0.5', i === 0 ? 'border-bad/30 bg-bad/10 text-bad' : 'border-line bg-white/[0.04]')}>{x}</span>
+              <span className={cx('rounded-md border px-1.5 py-0.5', i === 0 ? 'border-bad/30 bg-bad/10 text-bad' : 'border-line bg-tint/[0.04]')}>{x}</span>
             </li>
           ))}
         </ol>
@@ -414,14 +414,14 @@ function Help() {
             <m.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
               <ul className="mt-3 space-y-3">
                 {DEFAULT_POLICY.map((d) => (
-                  <li key={d.mode} className="rounded-xl border border-line bg-black/20 p-3">
+                  <li key={d.mode} className="rounded-xl border border-line bg-shade/20 p-3">
                     <div className="flex items-center gap-2">
                       <ModeChip mode={d.mode} />
                       <span className="text-[12px] text-ink-3">{d.why}</span>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-1">
                       {d.skills.map((s) => (
-                        <code key={s} className="rounded border border-line bg-white/[0.04] px-1 py-px font-mono text-meta text-ink-2">
+                        <code key={s} className="rounded border border-line bg-tint/[0.04] px-1 py-px font-mono text-meta text-ink-2">
                           {s}
                         </code>
                       ))}

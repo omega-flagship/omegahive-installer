@@ -1,5 +1,5 @@
 import { AnimatePresence, m } from 'framer-motion'
-import { useCallback, useId, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 import { PanelView } from '../../features/ask/ClassicAsk'
 import { useAskField, useSeen } from '../../features/ask/useAskField'
 import { guardComposing } from '../../features/ask/keys'
@@ -12,6 +12,9 @@ import { examples, type IntentAct } from '../../lib/intent'
 import { useMediaQuery } from '../../lib/hooks'
 import type { Act, World } from './intent'
 import { useSprings } from './shared'
+import { useDraft } from '../drafts'
+import { useStillFieldCaret, useStillFieldPlace, useStillFieldPart } from '../../features/ask/stillField'
+import { usePhase, wakeIntoAsk } from '../../shell/phase'
 
 export interface Receipt {
   text: string
@@ -43,6 +46,7 @@ interface Props {
 export function Ask({ inputRef, world, onAct }: Props) {
   const [receipt, setReceipt] = useState<Receipt | null>(null)
   const timer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(timer.current), [])
   const resultsRef = useRef<HTMLUListElement>(null)
   const sp = useSprings()
   const id = useId()
@@ -69,12 +73,18 @@ export function Ask({ inputRef, world, onAct }: Props) {
     },
     [onAct],
   )
-  const f = useAskField({ experience: 'still', onAct: handler })
+  const part = useStillFieldPart()
+  const draft = useDraft('still:ask')
+  const onPaper = useStillFieldPlace() === 'paper'
+  const f = useAskField({ experience: 'still', onAct: handler, draft, active: onPaper })
+  useStillFieldCaret('paper', inputRef)
   // a phone-wide line (still.css's 640px step) holds a shorter placeholder, so it never clips
   const narrow = useMediaQuery('(max-width: 640px)')
   const root = useRef<HTMLDivElement>(null)
   // spoken words replace an open receipt, as typing does
   const v = useAskVoice({ ...f, voiceText: (t: string) => (f.voiceText(t), setReceipt(null)) }, inputRef, root)
+  const stopVoice = useRef(v.stop)
+  stopVoice.current = v.stop
   const value = f.value
   const tries = useMemo(() => examples(world), [world])
   const top = f.list[0]
@@ -96,11 +106,14 @@ export function Ask({ inputRef, world, onAct }: Props) {
   // what Enter may act on is what is drawn here, while this field is the one in use (focused): the suggestion rows,
   // or the policy's panel (enter.ts AskSeen; Kimi r2.1 #1: the floating line is a separate field with its own)
   const [focused, setFocused] = useState(false)
-  useSeen(f.declareSeen, focused && sugs.length > 0, focused && !!f.panel)
+  useEffect(() => {
+    if (!onPaper) { setFocused(false); stopVoice.current() }
+  }, [onPaper])
+  useSeen(f.declareSeen, onPaper && focused && sugs.length > 0, onPaper && focused && !!f.panel)
 
   const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
     // an IME's confirming key is the input method's, never the Ask's (keys.ts)
-    if (guardComposing(e)) return
+    if (guardComposing(e) || e.defaultPrevented) return
     if (v.onFieldKey(e)) return
     if (receipt?.results && (e.key === 'ArrowDown' || e.key === 'Enter')) {
       // results are open: nothing hidden may run; ArrowDown goes into the results
@@ -125,8 +138,11 @@ export function Ask({ inputRef, world, onAct }: Props) {
   const listId = `${id}-list`
   const activeIndex = f.active ? sugs.indexOf(f.active) : -1
   return (
-    <div ref={root} className="st-ask" data-listening={v.listening || undefined}>
+    <div ref={root} className="st-ask" data-listening={v.listening || undefined} aria-hidden={!onPaper || undefined}>
+      {/* Keep the paper's full layout while yielding. Only the input disappears; dormant controls cannot act. */}
+      <div inert={!onPaper || undefined}>
       <div className="st-ask-line">
+        <AnswererInline look="still" chip={f.chip ?? (f.answerer ? { kind: 'planned', name: f.answerer } : null)} answering={f.answering} />
         <span className="st-ask-mark" aria-hidden>
           ›
         </span>
@@ -135,13 +151,20 @@ export function Ask({ inputRef, world, onAct }: Props) {
             {value}
             <span>{rest}</span>
           </div>
-          <input
+          {onPaper ? <input
             ref={inputRef}
             className="st-ask-input"
+            data-ask-input=""
+            data-ui-part={part}
+            data-intent="ask.field"
             value={value}
             onChange={(e) => change(e.target.value)}
             onKeyDown={onKey}
-            onFocus={() => setFocused(true)}
+            onFocus={() => {
+              setFocused(true)
+              const phase = usePhase.getState()
+              if (phase.phased && phase.phase === 'rest') wakeIntoAsk('type')
+            }}
             onBlur={() => setFocused(false)}
             placeholder={
               f.answering
@@ -164,7 +187,7 @@ export function Ask({ inputRef, world, onAct }: Props) {
             autoCapitalize="off"
             spellCheck={false}
             enterKeyHint="go"
-          />
+          /> : <span className="st-ask-input" style={{ display: 'block', overflow: 'hidden' }} aria-hidden="true">{value || '\u00a0'}</span>}
         </div>
         {!value && !v.listening && (
           <kbd className="st-ask-key" aria-hidden>
@@ -179,10 +202,10 @@ export function Ask({ inputRef, world, onAct }: Props) {
       {v.listening && <VoiceListening v={v} className="st-receipt st-listening" toggleClass="st-link ask-voice-pause" />}
       <VoiceNoticeView v={v} className="st-letter st-panel" buttonClass="ask-choice" />
 
-      {f.answering && (
-        <p className="st-receipt st-writing" role="status">
+      {f.answering && !f.preparing && (
+        <p className="st-receipt st-writing" role={f.waking ? undefined : 'status'} aria-live={f.waking ? 'off' : undefined}>
           <span>
-            {shownMind(f.thread?.mind.name ?? f.answerer)} is writing{f.step && f.step !== 'sending' ? ` · ${f.step}` : '…'}
+            {f.waking ? `Waking ${shownMind(f.answerer)}…` : `${shownMind(f.answerer)} is writing${f.step && f.step !== 'sending' ? ` · ${f.step}` : '…'}`}
           </span>
           <button className="st-link" onClick={() => void stop()}>
             Stop
@@ -227,6 +250,7 @@ export function Ask({ inputRef, world, onAct }: Props) {
                       <span key={j}>{p.t}</span>
                     ),
                   )}
+                  {s.pays && <small className="st-sug-pays" data-pays="">{s.pays}</small>}
                 </span>
                 {on && (s.act || s.fill) && <span className="st-sug-enter">{s.act ? '↵' : 'tab'}</span>}
               </m.li>
@@ -240,7 +264,6 @@ export function Ask({ inputRef, world, onAct }: Props) {
           <PanelView f={f} />
         </div>
       )}
-      <AnswererInline chip={f.chip} answering={f.answering} />
 
       <AnimatePresence initial={false} mode="wait">
         {receipt ? (
@@ -303,6 +326,7 @@ export function Ask({ inputRef, world, onAct }: Props) {
           </m.div>
         ) : null}
       </AnimatePresence>
+      </div>
     </div>
   )
 }

@@ -1,4 +1,4 @@
-"""Team rooms (the owner, 2026-10-08, after "Patswarm"): every swarm has a private room with its owner and its minds, so minds
+"""Team rooms (Jon, 2026-10-08, after "Patswarm"): every swarm has a private room with its owner and its minds, so minds
 can reach a swarm-mate by posting there with @Name; minds are told so; @Name tolerates missing spaces and punctuation."""
 import importlib.util
 import json
@@ -145,10 +145,10 @@ def test_the_skills_line_minds_see_lists_the_room_skills_with_the_usage_note():
 
 
 def test_hive_rooms_marks_the_team_room(monkeypatch):
-    rooms = [{"id": "r_team", "kind": "group", "name": "Patswarm team", "team": True, "members": ["Quinn", "Patmind"]},
-             {"id": "r_dm", "kind": "dm", "name": "DM", "members": ["Quinn", "Patmind"]}]
+    rooms = [{"id": "r_team", "kind": "group", "name": "Patswarm team", "team": True, "members": ["Jon", "Patmind"]},
+             {"id": "r_dm", "kind": "dm", "name": "DM", "members": ["Jon", "Patmind"]}]
     monkeypatch.setattr(hc, "_call", lambda m, p, payload=None: (rooms, None))
-    assert hc.rooms() == "HIVE-ROOMS r_team group (your swarm team room) Patswarm team: Quinn, Patmind | r_dm dm DM: Quinn, Patmind"
+    assert hc.rooms() == "HIVE-ROOMS r_team group (your swarm team room) Patswarm team: Jon, Patmind | r_dm dm DM: Jon, Patmind"
 
 
 # ---- C: @mentions without the spaces and punctuation ------------------------------------------------------------------

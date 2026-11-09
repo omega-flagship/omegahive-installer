@@ -84,7 +84,25 @@ export interface CodeTeamOffer {
   to_swarm: string
   team_name: string
   template_ids: string[]
+  /** The limits the host admits a request to this team within (the foundation Code team's are host-bound), when the
+   * templates read states them. A request is composed inside them, never refused 403 foundation_limits. */
+  limits?: TeamRequestLimits
 }
+export interface TeamRequestLimits { limit_usd: number; max_children: number; lifetime_seconds: number; template_ids: string[] }
+
+/** The optional `request_limits` of GET /api/teams/{swarm}/templates, strictly; anything malformed is treated as absent. */
+export function parseRequestLimits(raw: unknown): TeamRequestLimits | undefined {
+  if (!obj(raw) || !obj(raw.request_limits)) return undefined
+  const l = raw.request_limits
+  const pos = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v > 0
+  if (!pos(l.limit_usd) || !pos(l.max_children) || !pos(l.lifetime_seconds) || !Array.isArray(l.template_ids)) return undefined
+  const ids = l.template_ids.filter((t): t is string => ref(t, 120))
+  if (!ids.length) return undefined
+  return { limit_usd: l.limit_usd as number, max_children: Math.floor(l.max_children as number), lifetime_seconds: Math.floor(l.lifetime_seconds as number), template_ids: ids }
+}
+
+/** A clock margin under a host-bound lifetime, so a request never asks for a moment longer than the host admits. */
+export const LIFETIME_MARGIN_MS = 30_000
 /**
  * Which team takes a person's code request (r4 [P2]): the visible, in-use swarms with a coordinator whose services
  * offer `code`; exactly one, or the page says so rather than choose. Every read must answer: one that fails means
@@ -154,16 +172,17 @@ export class IntentContractError extends Error {
 
 const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
 const ref = (v: unknown, max = 200): v is string => typeof v === 'string' && v.length > 0 && v.length <= max
+const objectKind = (v: unknown) => obj(v) ? v.kind : undefined
 const refOrNull = (v: unknown) => v === null || v === undefined || ref(v)
 
 /** Strictly read an intent view (record's 201/200, get, and each item of a list). */
-export function parseIntentView(raw: unknown, expect?: { intent_id?: string }): IntentView {
+export function parseIntentView(raw: unknown, expect?: { intent_id?: string; kind?: typeof INTENT_KIND | 'code.test' }): IntentView {
   const p: string[] = []
   if (!obj(raw)) throw new IntentContractError('The intent', ['not an object'])
   if (!ref(raw.intent_id) || !/^ai_[0-9a-f]{24}$/.test(raw.intent_id)) p.push('intent_id')
   if (expect?.intent_id && raw.intent_id !== expect.intent_id) p.push('another intent')
   if (!ref(raw.turn_id)) p.push('turn_id')
-  if (raw.kind !== INTENT_KIND) p.push('kind')
+  if (raw.kind !== (expect?.kind ?? INTENT_KIND)) p.push('kind')
   if (!STATES.includes(raw.state as IntentState)) p.push('state')
   if (!ref(raw.request_operation_id) || raw.request_operation_id !== `ask.${String(raw.intent_id)}`) p.push('request_operation_id')
   for (const k of ['request_id', 'lease_id', 'receiving_goal'] as const) if (!refOrNull(raw[k])) p.push(k)
@@ -177,7 +196,7 @@ export function parseIntentView(raw: unknown, expect?: { intent_id?: string }): 
   return {
     intent_id: raw.intent_id as string,
     turn_id: raw.turn_id as string,
-    kind: INTENT_KIND,
+    kind: expect?.kind ?? INTENT_KIND,
     state: raw.state as IntentState,
     request_operation_id: raw.request_operation_id as string,
     request_id: (raw.request_id as string | null) ?? null,
@@ -193,7 +212,7 @@ export function parseIntentView(raw: unknown, expect?: { intent_id?: string }): 
 /** Strictly read the list answer (GET /api/ask/intents): `{intents: [...]}`. */
 export function parseIntentList(raw: unknown): IntentView[] {
   if (!obj(raw) || !Array.isArray(raw.intents)) throw new IntentContractError('The intent list', ['no intents array'])
-  return raw.intents.map((v) => parseIntentView(v))
+  return raw.intents.map((v) => parseIntentView(v, objectKind(v) === 'code.test' ? { kind: 'code.test' } : undefined))
 }
 
 /** Strictly read the recorded r2.13 admission submit answers (closed shape; state "accepted"). */
@@ -232,9 +251,14 @@ export function codeRequest(o: {
   if (bytes < 1 || bytes > 8192) throw new Error('Say it in fewer words: a request to a mind is at most 8 KB of text.')
   if (!/^[0-9a-f]{64}$/.test(o.origin.scope_digest_hex)) throw new Error('The lines you marked have no digest the hive can bind to.')
   const title = [...o.title.trim()].slice(0, 200).join('') || 'A change to the code'
-  const limits = o.limits ?? VIBE_REQUEST_LIMITS
-  if (!o.offer.template_ids.length) throw new Error(`${o.offer.team_name} has no minds registered to take a change.`)
-  const minutes = Math.min(Math.max(1, Math.floor(limits.lifetime_minutes)), 24 * 60)
+  const asked = o.limits ?? VIBE_REQUEST_LIMITS
+  const bound = o.offer.limits
+  // inside the team's host-bound limits when it states them (never more money, minds, time or templates than admitted)
+  const limits = bound ? { limit_usd: Math.min(asked.limit_usd, bound.limit_usd), max_children: Math.min(asked.max_children, bound.max_children) } : asked
+  const templates = bound ? o.offer.template_ids.filter((t) => bound.template_ids.includes(t)) : o.offer.template_ids
+  if (!templates.length) throw new Error(`${o.offer.team_name} has no minds registered to take a change.`)
+  const minutes = Math.min(Math.max(1, Math.floor(asked.lifetime_minutes)), 24 * 60)
+  const lifeMs = bound ? Math.min(minutes * 60_000, Math.max(60_000, bound.lifetime_seconds * 1000 - LIFETIME_MARGIN_MS)) : minutes * 60_000
   const { scope_digest_hex, ...origin } = o.origin
   return {
     to_swarm: o.offer.to_swarm,
@@ -243,7 +267,7 @@ export function codeRequest(o: {
     instruction: words,
     origin: { task_id: origin.task_id, repository_id: origin.repository_id, workspace_id: origin.workspace_id, scope_id: origin.scope_id, scope_digest: `sha256:${scope_digest_hex}`, generation: origin.generation },
     budget: { limit_usd: limits.limit_usd },
-    lifetime: { until: new Date(o.now + minutes * 60_000).toISOString() },
-    lease: { template_ids: [...o.offer.template_ids].slice(0, 8), max_children: limits.max_children },
+    lifetime: { until: new Date(o.now + lifeMs).toISOString() },
+    lease: { template_ids: [...templates].slice(0, 8), max_children: limits.max_children },
   }
 }

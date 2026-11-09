@@ -47,7 +47,14 @@ class FakeSupervisor:
 
 
 @pytest.fixture()
-def client():
+def client(monkeypatch):
+    # This shared fixture exercises the legacy API route explicitly. Conductor and first-install tests select
+    # their own setting; an absent switch in production now enables Ask.
+    if "HIVE_ASK_CONDUCTOR" not in os.environ:
+        monkeypatch.setenv("HIVE_ASK_CONDUCTOR", "0")
+    # The MeTTa coding controller (on in production) is selected by its own tests; the shared fixture keeps the earlier path.
+    if "HIVE_CODE_CONTROLLER_ENGINE" not in os.environ:
+        monkeypatch.setenv("HIVE_CODE_CONTROLLER_ENGINE", "0")
     data = tempfile.mkdtemp(prefix="hive-test-")
     settings = load_settings(data_dir=pathlib.Path(data), admin_password="pw", petta_path=PETTA)
     supervisor = FakeSupervisor()
@@ -77,6 +84,13 @@ def test_login_required_and_wrong_password(client):
     response = anonymous.get("/api/agents")
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "unauthorized"
+
+
+def test_non_ascii_operator_passwords_are_compared_without_server_errors(client):
+    assert client.post("/api/auth/login", json={"password": "invented-wrøng"}).status_code == 401
+    client.app.state.hive.settings.admin_password = "invented-corréct"
+    assert client.post("/api/auth/login", json={"password": "pw"}).status_code == 401
+    assert client.post("/api/auth/login", json={"password": "invented-corréct"}).status_code == 200
 
 
 def test_swarm_and_agent_lifecycle(client):

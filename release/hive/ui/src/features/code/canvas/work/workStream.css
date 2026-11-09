@@ -1,0 +1,345 @@
+/* The work stream (Create · Code): one living sequence of soft glass steps inside the canvas card. Colours come from
+   the look's inks and the canvas tokens (codeCanvas.css: --cc-glass, --cc-glass-line, --mind, --cc-accent); the moving
+   step breathes in the helper mind's own hue. Reduced motion: nothing pulses or glides; the state is shown at once. */
+
+.ws {
+  display: grid;
+  gap: 8px;
+}
+.ws-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.ws-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font: 600 14.5px/1.4 var(--font-display);
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+.ws-round {
+  flex: none;
+  padding: 3px 9px;
+  border-radius: 99px;
+  font: 600 11px/1.2 var(--font-sans);
+  color: var(--mind);
+  background: var(--mind-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--mind) 30%, transparent);
+}
+.ws-changes-asked {
+  margin: -2px 0 0;
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--color-ink-3);
+  overflow-wrap: anywhere;
+}
+.ws-steps {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  display: grid;
+}
+.ws-step {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 10px;
+  animation: ws-in 0.32s var(--cc-ease, ease-out) both;
+}
+.ws-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.ws-orb {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: 99px;
+  color: var(--color-ink-4);
+  background: color-mix(in oklab, var(--color-ink) 5%, transparent);
+  box-shadow: inset 0 0 0 1px var(--cc-glass-line, rgb(255 255 255 / 0.1));
+  transition: background 0.3s, color 0.3s, box-shadow 0.3s;
+}
+.ws-line {
+  flex: 1;
+  width: 1.5px;
+  min-height: 12px;
+  margin: 3px 0;
+  border-radius: 2px;
+  background: color-mix(in oklab, var(--color-ink) 10%, transparent);
+}
+.ws-body {
+  min-width: 0;
+  padding: 1px 0 12px;
+}
+.ws-step:last-child .ws-body {
+  padding-bottom: 0;
+}
+.ws-words {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--color-ink-3);
+  overflow-wrap: anywhere;
+}
+.ws-detail {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--color-ink-4);
+  overflow-wrap: anywhere;
+}
+.ws-out {
+  margin: 6px 0 0;
+  padding: 6px 9px;
+  border-radius: 9px;
+  font: 400 12px/1.45 var(--font-mono);
+  color: var(--color-ink-2);
+  /* a well in the look's own shade (black on a dark look, a light ink tint on a light chrome: index.css) */
+  background: color-mix(in srgb, var(--color-shade) 28%, transparent);
+  box-shadow: inset 0 0 0 1px var(--cc-glass-line, rgb(255 255 255 / 0.1));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ws-slot {
+  margin-top: 8px;
+}
+
+/* step states */
+.ws-step[data-state='waiting'] .ws-words {
+  color: var(--color-ink-4);
+}
+.ws-step[data-state='skipped'] .ws-words {
+  color: var(--color-ink-4);
+}
+.ws-step[data-state='skipped'] .ws-orb {
+  opacity: 0.6;
+}
+.ws-step[data-state='active'] .ws-words {
+  color: var(--color-ink);
+  font-weight: 500;
+}
+.ws-step[data-state='active'] .ws-orb {
+  background: radial-gradient(circle at 35% 30%, color-mix(in oklab, var(--mind) 80%, white), var(--mind) 70%);
+  box-shadow: 0 0 0 4px var(--mind-soft), 0 0 14px var(--mind);
+}
+.ws-step[data-state='done'] .ws-words {
+  color: var(--color-ink-2);
+}
+.ws-step[data-state='done'] .ws-orb {
+  color: var(--color-good);
+  background: color-mix(in oklab, var(--color-good) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-good) 40%, transparent);
+}
+.ws-step[data-state='done'] .ws-line {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--color-good) 40%, transparent), color-mix(in oklab, var(--color-ink) 10%, transparent));
+}
+.ws-step[data-state='failed'] .ws-words {
+  color: var(--color-bad);
+}
+.ws-step[data-state='failed'] .ws-orb {
+  color: var(--color-bad);
+  background: color-mix(in oklab, var(--color-bad) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-bad) 40%, transparent);
+}
+.ws-step[data-state='failed'] .ws-out {
+  color: color-mix(in oklab, var(--color-bad) 70%, var(--color-ink));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-bad) 30%, transparent);
+}
+.ws-step[data-state='done'][data-key='test'] .ws-out {
+  color: color-mix(in oklab, var(--color-good) 75%, var(--color-ink));
+}
+
+/* the breathing orb on the step that is moving */
+.ws-orb-live::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: inherit;
+  border: 1.5px solid var(--mind);
+  opacity: 0;
+  animation: ws-breathe 1.8s var(--cc-ease, ease-out) infinite;
+}
+
+/* the decision */
+.ws-ready {
+  margin-top: 10px;
+}
+.ws-acts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.ws-acts .cc-btn:first-child {
+  margin-right: auto;
+}
+.ws-ask {
+  display: grid;
+  gap: 8px;
+}
+.ws-ask-label {
+  display: grid;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-ink-2);
+}
+.ws-ask-input {
+  min-height: 36px;
+  padding: 0 11px;
+  border-radius: 10px;
+  font: 400 13px/1.3 var(--font-sans);
+  color: var(--color-ink);
+  background: color-mix(in srgb, var(--color-shade) 30%, transparent);
+  border: 1px solid var(--color-line-2);
+  outline: none;
+}
+.ws-ask-input:focus-visible {
+  border-color: var(--cc-accent);
+}
+
+@keyframes ws-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes ws-breathe {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.8);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+}
+.ws[data-reduced] *,
+.ws[data-reduced] *::before,
+.ws[data-reduced] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ws *,
+  .ws *::before,
+  .ws *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* the canvas card carrying the stream: a touch roomier, and its later lines sit under the steps */
+.cc-card.cc-card-stream {
+  padding: 14px 16px 14px 14px;
+}
+.cc-card-stream > .ws + * {
+  margin-top: 10px;
+}
+.ws-line-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--color-ink-3);
+  text-align: right;
+}
+.ws-line-alert {
+  color: var(--color-bad);
+}
+
+/* the empty canvas's request field (say what should change before any file is open) and the chooser it may open */
+.cc-say {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px auto 4px;
+  max-width: 520px;
+  padding: 6px 6px 6px 14px;
+  border-radius: 16px;
+  color: var(--mind);
+  background: var(--cc-glass);
+  border: 1px solid var(--cc-glass-line);
+  box-shadow: 0 0 0 4px var(--mind-soft), 0 14px 40px color-mix(in srgb, var(--color-shade) 35%, transparent);
+}
+.cc-say-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  font: 400 14px/1.3 var(--font-sans);
+  color: var(--color-ink);
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+.cc-say-input::placeholder {
+  color: var(--color-ink-4);
+}
+.cc-say:focus-within {
+  border-color: color-mix(in oklab, var(--mind) 45%, transparent);
+}
+.cc-quick-note {
+  margin: 0;
+  padding: 10px 14px 0;
+  font-size: 12.5px;
+  color: var(--color-ink-3);
+}
+.cc-quick li[data-named] .cc-quick-base {
+  color: var(--mind);
+}
+.cc-quick li[data-named] .cc-quick-base::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 7px;
+  vertical-align: middle;
+  border-radius: 99px;
+  background: var(--mind);
+  box-shadow: 0 0 8px var(--mind);
+}
+
+/* the decision stays in view while the card scrolls: pinned to the card's foot, on the card's own glass */
+.cc-card-stream .ws-ready {
+  position: sticky;
+  bottom: -14px;
+  z-index: 1;
+  margin: 10px -16px -14px -14px;
+  padding: 10px 16px 14px 14px;
+  /* the card's own glass, so the bar reads as part of the card in every look (light chromes included) */
+  background: var(--cc-glass);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  backdrop-filter: blur(18px) saturate(1.2);
+  border-radius: 0 0 18px 18px;
+  border-top: 1px solid var(--color-line);
+}
+.cc-card-stream {
+  max-height: min(640px, calc(100% - 150px));
+}
+/* the reasons and checks, folded */
+.cc-card-more {
+  margin-top: 6px;
+}
+.cc-card-more > summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+  color: var(--color-ink-3);
+}
+.cc-card-more > summary::-webkit-details-marker { display: none; }
+.cc-card-more > summary::before {
+  content: '›';
+  display: inline-block;
+  margin-right: 6px;
+  transition: transform 160ms ease;
+}
+.cc-card-more[open] > summary::before { transform: rotate(90deg); }
+.cc-card-more > summary:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) {
+  .cc-card-more > summary::before { transition: none; }
+}

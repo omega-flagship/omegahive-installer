@@ -42,7 +42,7 @@ export function CapabilityCatalogue({ swarm }: { swarm: Swarm }) {
   const [open, setOpen] = useState(false)
   if (!loaded || !has(client, 'capabilityCatalogue') || !(admin || (me && swarm.owner && swarm.owner === me.principal))) return null
   return (
-    <section aria-labelledby={`catalogue-h-${swarm.id}`} className="mx-1 mb-5 rounded-2xl border border-line bg-white/[0.02] p-4" data-capability-catalogue>
+    <section aria-labelledby={`catalogue-h-${swarm.id}`} className="mx-1 mb-5 rounded-2xl border border-line bg-tint/[0.02] p-4" data-capability-catalogue>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 id={`catalogue-h-${swarm.id}`} className="text-lead font-semibold">What other swarms can do for {shown(swarm.name)}</h2>
         <Button variant="subtle" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? 'Hide' : 'Show the catalogue'}</Button>

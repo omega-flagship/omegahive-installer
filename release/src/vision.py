@@ -87,7 +87,7 @@ def _call_vision(path, question):
                         "type": "text",
                         "text": (
                             str(question or "").strip()
-                            or "Describe this image for a persistent home agent. Include visible people, objects, setting, mood, text, and uncertainties."
+                            or "Describe this image for a persistent family agent. Include visible people, objects, setting, mood, text, and uncertainties."
                         ),
                     },
                     {

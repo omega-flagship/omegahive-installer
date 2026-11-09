@@ -13,7 +13,11 @@ other.  A mind may also ask for a particular upstream provider for its model
 
 from __future__ import annotations
 
+import copy
+import hashlib
+import hmac
 import json
+import logging
 import os
 import re
 import pathlib
@@ -22,12 +26,21 @@ import time
 
 import httpx
 
-from .redact import REDACTOR, provider_error_text, register as register_secret, scrub
+from .config import is_subscription
+from .keyids import KEY_ID
+from .redact import provider_error_text, register as register_secret
 
 CATALOG_TTL = 3600
+ANSWER_TTL = 60.0  # process-local evidence, never a background probe or admission
 ENDPOINTS_TTL = 900
 OPENROUTER = "openrouter"
-LABELS = {"mock": "Offline", "anthropic": "Anthropic", "openai": "OpenAI", "openrouter": "OpenRouter", "local": "Local server"}
+LABELS = {"mock": "Offline", "anthropic": "Anthropic", "openai": "OpenAI", "openrouter": "OpenRouter", "local": "Local server",
+          "subscription-cli": "AI subscription (this Mac)", "subscription-codex": "ChatGPT subscription (this Mac)"}
+
+
+def owner_mark(principal):
+    """A removed key's owner as its tombstone keeps it: a one-way mark, enough to recognise them, never their principal."""
+    return hashlib.sha256(("keyview-tombstone:" + str(principal)).encode()).hexdigest()[:32]
 
 
 class ProviderError(Exception):
@@ -91,10 +104,13 @@ class ProviderStore:
         self.client = client or httpx.AsyncClient(timeout=30)
         self.path = pathlib.Path(settings.data_dir) / "providers.json"
         self.ring = self._read()
+        self._committing = False   # r1ab.3: _commit is not re-entrant
         self.catalog = {"models": [], "fetched_at": 0.0, "error": None}
         self.endpoints: dict[str, tuple[float, list]] = {}
         self.accounts: dict[str, dict] = {}  # by key id; "env:<provider>" for an environment key
         self._apply_defaults()
+        self._answers = {}  # configuration-bound outcomes only; no content, key or account
+        self._answer_clock = time.monotonic
 
     # ---- the keyring -----------------------------------------------------------------------------
     #
@@ -128,7 +144,10 @@ class ProviderStore:
     def _write(self):
         """The keyring, written privately (J1 design r2 C, r3 N): a fresh random temp name created exclusively, never
         through a link, with mode 0600 from its first byte; fsynced, atomically renamed over the keyring, then the
-        folder fsynced so the rename itself survives a crash. A failure leaves the old keyring and no temp file."""
+        folder fsynced so the rename itself survives a crash. A failure leaves the old keyring and no temp file.
+        r1ab.3 (Kimi r1ab.2): once os.replace has succeeded the new keyring IS the file, so a failed folder fsync after it
+        is logged and the write counts as committed; raising there would let a caller restore memory to the old keyring
+        while the file holds the new one."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_name(f".{self.path.name}.{secrets.token_hex(8)}.tmp")
         flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
@@ -151,11 +170,43 @@ class ProviderStore:
             except OSError:
                 pass
             raise
-        directory = os.open(self.path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         try:
-            os.fsync(directory)
+            directory = os.open(self.path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        except OSError as exc:
+            logging.getLogger("hive").warning("keyring: written, but its folder could not be synced (%s)", exc)
+
+    def _commit(self, mutate):
+        """gateway r1ab.2 (stand-in r1ab.1 P1): one keyring change, applied as a unit. `mutate` changes self.ring; then it
+        is written. If either step raises, the in-memory keyring is put back exactly as it was (in place, so every holder
+        of self.ring sees it) and the error is raised. _write either replaces the file or leaves the old one (r1ab.3: a
+        failure after the rename is not raised), so memory and file stay in step and a failed write can never leave
+        the provider defaults changed. Not re-entrant (Kimi r1ab.2 #4): a mutate that commits again is refused, since the
+        inner write would persist the outer change half-made."""
+        if self._committing:
+            raise RuntimeError("keyring change inside a keyring change")
+        before = copy.deepcopy(self.ring)
+        self._committing = True
+        try:
+            out = mutate()
+            self._write()
+        except BaseException:
+            self.ring.clear()
+            self.ring.update(before)
+            self._apply_defaults()
+            raise
         finally:
-            os.close(directory)
+            self._committing = False
+        self._apply_defaults()
+        return out
+
+    def has_default(self, provider_name):
+        """Whether the provider already has a default: a stored one, or its environment key (add_key's own rule)."""
+        provider = self.provider(provider_name)
+        return provider_name in self.ring["defaults"] or bool(provider.key_env and os.environ.get(provider.key_env))
 
     def _apply_defaults(self):
         for record in self.ring["keys"].values():   # every key this hive holds is known to the one redactor (r2 F)
@@ -180,8 +231,14 @@ class ProviderStore:
     def key_record(self, key_id):
         record = self.ring["keys"].get(str(key_id or ""))
         if record is None:
-            raise ProviderError(404, "unknown_key", f"no key {key_id!r}")
+            raise ProviderError(404, "unknown_key", "no such key")
         return record
+
+    def paying_route(self, provider_name):
+        """How a call with no key of its own is paid for this provider, as the gateway pays it (gateway.paying_key): the
+        provider's default key, else its environment key. {key_id, secret}; secret is empty when there is none."""
+        return {"key_id": self.ring["defaults"].get(provider_name) or f"env:{provider_name}",
+                "secret": self.provider(provider_name).api_key}
 
     def secret_for(self, provider_name, key_id=None):
         """The secret that pays for a call: the mind's own key, else the provider's default."""
@@ -225,29 +282,53 @@ class ProviderStore:
         out.sort(key=lambda k: (k["provider"], not k["default"], k["label"].lower()))
         return out
 
+    def own_key(self, provider_name, secret, owner):
+        """gateway r1ab.4: the id of this owner's stored key for this provider with exactly this secret, or None (a
+        retry of POST /api/keys carries on with it). Compared in constant time against every record; the secret is never
+        echoed or logged. A key held by anyone else is not theirs, and add_key does not refuse it either: duplicates are
+        per owner (it is stored as this owner's own row, after verification)."""
+        self.provider(provider_name)
+        secret = str(secret or "").strip().encode()
+        if not secret:
+            return None
+        found = None
+        # every record, no early exit; O(ring) per request is fine at a hive's ring size (Kimi r1ab.4 #4)
+        for record in self.ring["keys"].values():
+            same = hmac.compare_digest(str(record.get("secret") or "").encode(), secret)
+            if same and record["provider"] == provider_name and record["owner"] == owner:
+                found = record["id"]
+        return found
+
     async def add_key(self, provider_name, secret, label="", owner="user:operator", make_default=None):
         provider = self.provider(provider_name)
         secret = str(secret or "").strip()
         if not secret:
             raise ProviderError(400, "bad_request", "key is required")
-        if provider.local or provider_name == "mock":
+        if provider.local or provider_name == "mock" or is_subscription(provider_name):
             raise ProviderError(400, "no_key_needed", f"{provider_name} does not take a key")
-        for record in self.ring["keys"].values():
-            if record["provider"] == provider_name and record["secret"] == secret:
-                raise ProviderError(409, "duplicate_key", f"that key is already saved as {record['label']!r}")
+        # duplicates are per owner (sol on 46f13f98): only the caller's OWN stored copy of this exact secret is refused,
+        # found as own_key finds it (constant time, every record). Another person's copy has no effect at all: the add
+        # verifies and stores this owner's own row like any new key, so nothing here tells anyone that someone else
+        # holds the same secret (no 409, no label, no shortcut past verification).
+        mine = self.own_key(provider_name, secret, owner)
+        if mine is not None:
+            raise ProviderError(409, "duplicate_key", "that key is already saved as one of yours")
         register_secret(secret)   # before verification: the key is scrubbed from anything a failure writes (r3 N)
         account = await self.verify(provider_name, secret)
         key_id = f"k_{secrets.token_hex(4)}"
         label = str(label or "").strip()[:60] or (account or {}).get("label") or f"{LABELS.get(provider_name, provider_name)} key"
-        self.ring["keys"][key_id] = {"id": key_id, "provider": provider_name, "label": label, "owner": owner,
-                                     "secret": secret, "created_at": time.time()}
-        has_default = provider_name in self.ring["defaults"] or bool(provider.key_env and os.environ.get(provider.key_env))
-        if make_default or (make_default is None and not has_default):
-            self.ring["defaults"][provider_name] = key_id
-        self._write()
-        self._apply_defaults()
+
+        def mutate():
+            self.ring["keys"][key_id] = {"id": key_id, "provider": provider_name, "label": label, "owner": owner,
+                                         "secret": secret, "created_at": time.time()}
+            (self.ring.get("removed") or {}).pop(key_id, None)   # a live key is never also a tombstone
+            if make_default or (make_default is None and not self.has_default(provider_name)):
+                self.ring["defaults"][provider_name] = key_id
+        self._commit(mutate)
         self.accounts[key_id] = account
-        if provider_name == OPENROUTER:
+        if provider_name == OPENROUTER and self.ring["defaults"].get(provider_name) == key_id:
+            # keyview R10 (sol on 26e22ed0): only a key that now fetches the catalogue (the default) refreshes it; a
+            # private, non-default key changes nothing anyone else is shown or the cache's hit or miss
             self.catalog["fetched_at"] = 0.0
         return self.key_view(self.ring["keys"][key_id])
 
@@ -257,23 +338,53 @@ class ProviderStore:
             label = str(label).strip()[:60]
             if not label:
                 raise ProviderError(400, "bad_request", "label cannot be empty")
-            record["label"] = label
-        if default is True:
-            self.ring["defaults"][record["provider"]] = key_id
-        elif default is False and self.ring["defaults"].get(record["provider"]) == key_id:
-            del self.ring["defaults"][record["provider"]]
-        self._write()
-        self._apply_defaults()
-        return self.key_view(record)
+
+        def mutate():
+            current = self.ring["keys"][key_id]
+            if label is not None:
+                current["label"] = label
+            if default is True:
+                self.ring["defaults"][current["provider"]] = key_id
+            elif default is False and self.ring["defaults"].get(current["provider"]) == key_id:
+                del self.ring["defaults"][current["provider"]]
+        self._commit(mutate)   # r1ab.2: a failed write leaves the label and the default exactly as they were
+        return self.key_view(self.ring["keys"][key_id])
+
+    def removed_by(self, key_id, principal):
+        """Whether `principal` held this key before it was removed (keyview: its tombstone; a live key is never one)."""
+        if not principal or key_id in self.ring["keys"]:
+            return False
+        mark = (self.ring.get("removed") or {}).get(key_id)
+        return bool(mark) and hmac.compare_digest(mark, owner_mark(principal))
+
+    def forget_removed_many(self, key_ids):
+        """Drop several removed keys' tombstones in ONE keyring write (startup reconcile)."""
+        gone = [k for k in key_ids if k in (self.ring.get("removed") or {})]
+        if gone:
+            def mutate():
+                for k in gone:
+                    self.ring["removed"].pop(k, None)
+            self._commit(mutate)
+
+    def forget_removed(self, key_id):
+        """Drop a removed key's tombstone once no mind names it any more (callers check that)."""
+        if key_id in (self.ring.get("removed") or {}):
+            self._commit(lambda: self.ring["removed"].pop(key_id, None))
 
     def remove_key_id(self, key_id):
         record = self.key_record(key_id)
-        del self.ring["keys"][key_id]
-        if self.ring["defaults"].get(record["provider"]) == key_id:
-            del self.ring["defaults"][record["provider"]]
+
+        def mutate():
+            del self.ring["keys"][key_id]
+            if self.ring["defaults"].get(record["provider"]) == key_id:
+                del self.ring["defaults"][record["provider"]]
+            # keyview (Kimi on bef0f01b, 593fde34): who held a key outlives it, as a hash of its owner only (never the
+            # secret, never the principal itself), so its owner still recognises their own key's id on a mind left
+            # assigned to it; nobody else ever sees it. Pruned once no mind names it (forget_removed).
+            self.ring.setdefault("removed", {})[key_id] = owner_mark(record.get("owner") or "")
+
+        self._commit(mutate)   # r1ab.2: a failed write leaves the key and the default in place
         self.accounts.pop(key_id, None)
-        self._write()
-        self._apply_defaults()
         return record
 
     async def refresh_account(self, key_id):
@@ -290,6 +401,92 @@ class ProviderStore:
             self.accounts[key_id] = {"error": exc.message}
         return self.accounts[key_id]
 
+    # ---- evidence from existing, explicitly admitted chat calls -----------------------------------
+
+    def _answer_config(self, name):
+        provider = self.provider(name)
+        # The secret digest stays internal and is never part of the public status.
+        return (id(provider), provider.name, provider.base_url, provider.local, provider.key_env,
+                tuple(provider.models), self.ring['defaults'].get(name),
+                hashlib.sha256((provider.api_key or '').encode()).digest(),
+                getattr(self.settings, 'default_model', None))
+
+    def answer_context(self, name, model, secret):
+        """Capture the actual route before its existing request; this method performs no I/O."""
+        provider = self.provider(name)
+        if name == 'mock' or provider.name == 'mock':
+            return None
+        # A person's non-default key answering does not validate the hive's default key.
+        if not provider.local and (not provider.api_key or secret != provider.api_key):
+            return None
+        return (name, model, self._answer_config(name))
+
+    def _record_answer(self, context, answered):
+        if context is None:
+            return False
+        name, model, config = context
+        if name not in self.providers or name == 'mock' or config != self._answer_config(name):
+            return False
+        self._answers[name] = {'config': config, 'model': model,
+                               'at': self._answer_clock(), 'answered': answered}
+        return answered
+
+    def record_answer(self, context, response):
+        """Retain only that an assistant answered, never its response or credentials."""
+        def reject_constant(_value):
+            raise ValueError("non-standard JSON constant")
+
+        answered = False
+        if isinstance(response, dict) and isinstance(response.get('choices'), list):
+            for choice in response['choices']:
+                message = choice.get('message') if isinstance(choice, dict) else None
+                if not isinstance(message, dict) or message.get('role') != 'assistant':
+                    continue
+                content = message.get('content')
+                if isinstance(content, str) and content.strip():
+                    answered = True
+                    break
+                calls = message.get('tool_calls')
+                if isinstance(calls, list):
+                    for call in calls:
+                        if not (isinstance(call, dict) and call.get('type') == 'function'
+                                and isinstance(call.get('id'), str) and bool(call['id'])
+                                and isinstance(call.get('function'), dict)
+                                and isinstance(call['function'].get('name'), str) and bool(call['function']['name'])):
+                            continue
+                        arguments = call['function'].get('arguments')
+                        if not isinstance(arguments, str) or not arguments.strip():
+                            continue
+                        try:
+                            json.loads(arguments, parse_constant=reject_constant)
+                        except (ValueError, RecursionError):
+                            continue
+                        answered = True
+                        break
+                    if answered:
+                        break
+        return self._record_answer(context, answered)
+
+    def record_failure(self, context):
+        """An observed upstream transport/error response is not a policy or budget refusal."""
+        self._record_answer(context, False)
+
+    def _readiness(self, name):
+        provider = self.provider(name)
+        if name == 'mock' or provider.name == 'mock':
+            return 'test_only'
+        record = self._answers.get(name)
+        if record is None:
+            return 'unverified'
+        if record['config'] != self._answer_config(name):
+            self._answers.pop(name, None)  # an observed config change cannot revive old proof
+            return 'unverified'
+        age = self._answer_clock() - record['at']
+        if not 0 <= age < ANSWER_TTL:
+            self._answers.pop(name, None)
+            return 'unverified'
+        return 'answered' if record['answered'] else 'not_answering'
+
     # ---- providers (one line each in the picker) ---------------------------------------------------
 
     def status(self, name):
@@ -297,12 +494,17 @@ class ProviderStore:
         default_id = self.ring["defaults"].get(name)
         env = bool(provider.key_env and os.environ.get(provider.key_env))
         source = "stored" if default_id else "env" if env else None
+        readiness = self._readiness(name)
+        # Legacy "connected" means configured, not evidence that a model answered.
         connected = provider.local or provider.name == "mock" or bool(provider.api_key) or any(
             r["provider"] == name for r in self.ring["keys"].values())
         out = {
             "name": name, "label": LABELS.get(name, name.capitalize()), "local": provider.local,
-            "needs_key": not provider.local and name != "mock", "connected": connected, "source": source,
-            "key_hint": self.hint(provider.api_key) if provider.api_key else "",
+            "needs_key": not provider.local and name != "mock" and not is_subscription(name), "connected": connected, "source": source,
+            "configured": connected, "answer_ready": readiness == "answered",
+            "test_only": readiness == "test_only", "readiness": readiness,
+            # the subscription bridge's key is never hinted, even in part (it is the bridge's door, not a paying key)
+            "key_hint": self.hint(provider.api_key) if provider.api_key and not is_subscription(name) else "",
             "key_env": provider.key_env, "base_url": provider.base_url, "models": list(provider.models),
             "keys": sum(1 for r in self.ring["keys"].values() if r["provider"] == name) + (1 if env else 0),
             "account": self.accounts.get(default_id or f"env:{name}"),
@@ -349,7 +551,7 @@ class ProviderStore:
                 if response.status_code == 200:
                     return {"label": f"{LABELS.get(name, name)} key"}
         except httpx.HTTPError as exc:
-            raise ProviderError(502, "provider_unreachable", scrub(f"could not reach {name}: {exc}")) from exc
+            raise ProviderError(502, "provider_unreachable", f"could not reach {LABELS.get(name, name)}") from exc   # fixed words
         if response.status_code in (401, 403):
             raise ProviderError(401, "bad_key", f"{LABELS.get(name, name)} rejected that key")
         raise ProviderError(502, "provider_error", provider_error_text(name, response))
@@ -389,12 +591,11 @@ class ProviderStore:
         try:
             response = await self.client.get(f"{provider.base_url}/models/{model_id}/endpoints", headers=headers)
         except httpx.HTTPError as exc:
-            raise ProviderError(502, "provider_unreachable", f"could not reach OpenRouter: {exc}") from exc
+            raise ProviderError(502, "provider_unreachable", "could not reach OpenRouter") from exc
         if response.status_code == 404:
             raise ProviderError(404, "unknown_model", f"OpenRouter has no model {model_id!r}")
         if response.status_code >= 400:
-            raise ProviderError(502, "provider_error", response.text[:200] if not REDACTOR.enabled
-                                else provider_error_text("OpenRouter", response))
+            raise ProviderError(502, "provider_error", provider_error_text("OpenRouter", response))   # never its body
         data = (response.json().get("data") or {}).get("endpoints") or []
         endpoints = [_slim_endpoint(e) for e in data]
         self.endpoints[model_id] = (time.time(), endpoints)
@@ -435,7 +636,7 @@ def clean_options(value):
         out["max_output_tokens"] = capacity
     key = value.get("key")
     if key:
-        if not isinstance(key, str) or not re.fullmatch(r"(k_[0-9a-f]{8}|env:[a-z0-9_-]+)", key):
+        if not isinstance(key, str) or not re.fullmatch(KEY_ID, key):   # keyids: the one grammar
             raise ValueError("options.key must be a key id")
         out["key"] = key
     if "key_locked" in value:   # app platform P3a: the mind runs only on its owner's own key, never a fallback

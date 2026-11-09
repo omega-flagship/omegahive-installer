@@ -476,7 +476,7 @@ export function WorkbenchSuggestionPanel({
       <div className="thin-scroll min-h-0 flex-1 space-y-3 overflow-y-auto p-3 pb-24 text-[12.5px]">
         <div ref={bannerRef} className="-mt-3 h-0 scroll-mt-3" aria-hidden />
         {note && (
-          <p role={note.tone === 'bad' ? 'alert' : 'status'} className={cx('rounded-lg border px-2.5 py-2 [overflow-wrap:anywhere]', note.tone === 'bad' ? 'border-bad/40 bg-bad/10 text-bad' : note.tone === 'ok' ? 'border-good/40 bg-good/10 text-good' : 'border-line bg-white/[0.03] text-ink-2')}>
+          <p role={note.tone === 'bad' ? 'alert' : 'status'} className={cx('rounded-lg border px-2.5 py-2 [overflow-wrap:anywhere]', note.tone === 'bad' ? 'border-bad/40 bg-bad/10 text-bad' : note.tone === 'ok' ? 'border-good/40 bg-good/10 text-good' : 'border-line bg-tint/[0.03] text-ink-2')}>
             {note.text}
           </p>
         )}
@@ -541,7 +541,7 @@ export function WorkbenchSuggestionPanel({
               ) : (
                 <div className="space-y-1.5" aria-label="Current selection">
                   <p className="text-ink"><RangeLine r={selected} /> · generation {ws.generation}</p>
-                  <pre className="thin-scroll max-h-28 overflow-auto rounded-md border border-line bg-black/25 p-2 font-mono text-[11.5px] text-ink-2">{selected.text}</pre>
+                  <pre className="thin-scroll max-h-28 overflow-auto rounded-md border border-line bg-shade/25 p-2 font-mono text-[11.5px] text-ink-2">{selected.text}</pre>
                   <button type="button" className="xc-button min-h-9 px-3" disabled={!!busy} onClick={addSelected}>Add this range</button>
                 </div>
               )}
@@ -630,7 +630,7 @@ export function WorkbenchSuggestionPanel({
             <ul className="space-y-1">
               {history.map((h) => (
                 <li key={h.id}>
-                  <button type="button" onClick={() => void openProposal(h.id)} aria-current={h.id === openId ? 'true' : undefined} className={cx('xc-item flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md px-2 py-1.5 text-left', h.id === openId && 'bg-white/[0.07]')}>
+                  <button type="button" onClick={() => void openProposal(h.id)} aria-current={h.id === openId ? 'true' : undefined} className={cx('xc-item flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md px-2 py-1.5 text-left', h.id === openId && 'bg-tint/[0.07]')}>
                     <span className="min-w-0 flex-1 truncate text-ink">{authorLabel(h.author)} · {h.hunk_count} hunk{h.hunk_count === 1 ? '' : 's'}</span>
                     <Currency c={h.currency} />
                     <span className="w-full text-[11px] text-ink-3">{when(h.created_at)} · generation {h.generation} · {h.accepted_count} accepted · {h.rejected_count} rejected</span>
@@ -698,7 +698,7 @@ export function WorkbenchSuggestionPanel({
       </div>
 
       {read && (accepting > 0 || rejecting > 0) && read.currency === 'current' && (
-        <div className="border-t border-line bg-black/20 px-3 py-2">
+        <div className="border-t border-line bg-shade/20 px-3 py-2">
           {blockedWhy && <p className="mb-1.5 text-[12px] text-ink-2 [overflow-wrap:anywhere]" id="suggestion-blocked">{blockedWhy}</p>}
           <button type="button" className="xc-button xc-primary min-h-10 w-full px-3 text-[13px] aria-disabled:cursor-not-allowed aria-disabled:opacity-45" aria-disabled={!!blockedWhy} aria-describedby={blockedWhy ? 'suggestion-blocked' : undefined} onClick={review}>
             Review decision: accept {accepting}, reject {rejecting}
@@ -764,7 +764,7 @@ function decisionFacts(read: SuggestionRead, p: PendingDecision, befores: Record
         <span className="font-mono">{h.path}</span>
         {b ? (b.last !== b.first ? ` lines ${b.first}–${b.last}` : ` line ${b.first}`) : ''} · bytes {h.start_byte}–{h.end_byte}
         <span className="block font-mono text-[11px] text-ink-3 [overflow-wrap:anywhere]">hunk {id}</span>
-        <span className="mt-0.5 block whitespace-pre-wrap rounded border border-line bg-black/20 p-1 font-mono text-[11.5px]">
+        <span className="mt-0.5 block whitespace-pre-wrap rounded border border-line bg-shade/20 p-1 font-mono text-[11.5px]">
           {b ? <><span className="text-bad">- {b.before || '(nothing)'}</span>{'\n'}</> : null}
           <span className="text-good">+ {h.replacement || '(removed)'}</span>
         </span>
@@ -833,8 +833,8 @@ function HunkCard({ index, hunk, state, group, hunks, before, staged, sideBySide
           <div className="mt-1.5 grid grid-cols-2 gap-px overflow-hidden rounded border border-line bg-line font-mono text-[11.5px]" role="table" aria-label="Before and after, side by side">
             {rows.map((r, i) => (
               <div key={i} className="contents" role="row">
-                <div role="cell" className={cx('flex min-w-0 gap-2 px-1.5 py-0.5', r.left ? 'bg-bad/10' : 'bg-black/30')}><span className="w-6 shrink-0 text-right text-ink-4">{r.left?.n}</span><span className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] text-ink-2">{r.left?.text}</span></div>
-                <div role="cell" className={cx('flex min-w-0 gap-2 px-1.5 py-0.5', r.right ? 'bg-good/10' : 'bg-black/30')}><span className="w-6 shrink-0 text-right text-ink-4">{r.right?.n}</span><span className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] text-ink">{r.right?.text}</span></div>
+                <div role="cell" className={cx('flex min-w-0 gap-2 px-1.5 py-0.5', r.left ? 'bg-bad/10' : 'bg-shade/30')}><span className="w-6 shrink-0 text-right text-ink-4">{r.left?.n}</span><span className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] text-ink-2">{r.left?.text}</span></div>
+                <div role="cell" className={cx('flex min-w-0 gap-2 px-1.5 py-0.5', r.right ? 'bg-good/10' : 'bg-shade/30')}><span className="w-6 shrink-0 text-right text-ink-4">{r.right?.n}</span><span className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] text-ink">{r.right?.text}</span></div>
               </div>
             ))}
           </div>

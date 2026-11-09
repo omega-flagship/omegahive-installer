@@ -1,33 +1,78 @@
-import { m } from 'framer-motion'
-import { useEffect } from 'react'
-import type { Program } from '../../api/types'
-import { cx } from '../../lib/cx'
-import { navigate } from '../../lib/router'
-import { useHive } from '../../store/store'
-import { Icon } from '../../ui/Icon'
-import { iconOr } from '../../ui/iconPaths'
-import { Page } from '../../ui/Page'
-import { has } from '../../lib/useResource'
-import { ActivityList, AppAccessButton } from './AppActivity'
-import { Button, EmptyState, ErrorState, Skeleton, Switch } from '../../ui/primitives'
+import { AnimatePresence } from 'framer-motion'
+import { useEffect, useMemo, useState } from 'react'
+import { experienceById } from '../../experiences/registry'
 import { shown } from '../../lib/displayName'
-import { useAppLook } from '../../shell/appLook'
+import { navigate } from '../../lib/router'
+import { has } from '../../lib/useResource'
+import { Screen, type ScreenItem } from '../../screens/Screen'
+import { useCompose } from '../../screens/useCompose'
+import { appLookIn, DESIGNED_APPS } from '../../shell/appLook'
+import { useLook } from '../../shell/uiVariant'
+import type { Program } from '../../api/types'
+import { useHive } from '../../store/store'
+import { Button } from '../../ui/primitives'
+import { Page } from '../../ui/Page'
+import { ActivityList, AppAccess } from './AppActivity'
+import { pressed, programsScreen, type IdentityOf } from './data'
 
-const CAP_TEXT: Record<string, string> = {
-  'commons:read': 'reads the swarm commons',
-  'goals:read': 'reads tasks',
-  'goals:write': 'posts tasks',
-}
-
-/** #/programs: every mind program this hive found, with its state and an operator switch. */
+/**
+ * #/programs: every app this hive found, with its state and an operator switch.
+ *
+ * The page and each app's card are atoms (programs.metta) that MeTTa composes for the look being worn; this page loads
+ * the apps, states the facts, and carries out a press (turning an app on or off, opening it, where it runs). Islands:
+ * what apps did lately (app-activity), a list that loads and refreshes itself under the heading the menu jumps to
+ * (#app-activity-h); and where one app runs (app-access), a dialog with its own tabs and decisions, bound to the app
+ * it was opened from. MeTTa decides whether each exists here.
+ */
 export default function ProgramsIndex() {
+  const client = useHive((s) => s.client)
   const programs = useHive((s) => s.programs)
   const err = useHive((s) => s.programsError)
   const load = useHive((s) => s.loadPrograms)
   const reload = useHive((s) => s.reloadPrograms)
+  const setEnabled = useHive((s) => s.setProgramEnabled)
+  const lookState = useLook()
+  const prefs = lookState.current
+  const look = experienceById(prefs?.experience).id
+  const designed = prefs?.apps === 'designed'
+  const [access, setAccess] = useState<{ id: string; name: string } | null>(null)
   useEffect(() => {
     void load().catch(() => undefined)
   }, [load])
+
+  const canActivity = has(client, 'programActivity')
+  const canAccess = has(client, 'programActivations') || canActivity
+  const compose = useCompose(look)
+  const { plan, data } = useMemo(() => {
+    const identityOf: IdentityOf = (p) => (designed ? DESIGNED_APPS[p.id]?.title ?? null : null)
+    // each card wears its app's identity in the current look (colour variables, type, motif)
+    const lookOf = (p: Program) => appLookIn(p, lookState)
+    const { data, facts } = programsScreen(programs, err, { activity: canActivity, access: canAccess }, identityOf, compose, lookOf)
+    return { plan: compose('programs', facts), data }
+  }, [programs, err, canActivity, canAccess, designed, compose, lookState])
+
+  const onAction = (action: string, item: ScreenItem, value?: boolean) => {
+    const press = pressed(action, item, value)
+    if (press?.kind === 'retry') return void load().catch(() => undefined)
+    const p = press && programs?.find((x) => x.id === press.id)
+    if (!press || !p) return
+    if (press.kind === 'switch') void setEnabled(p.id, press.on)
+    else if (press.kind === 'open' && p.enabled) navigate({ name: 'program', id: p.id })
+    else if (press.kind === 'access') setAccess({ id: p.id, name: shown(p.name) })
+  }
+
+  const islands = {
+    'app-activity': (
+      <section aria-labelledby="app-activity-h" className="mt-3">
+        <h2 id="app-activity-h" className="eyebrow mb-2 px-1">
+          What apps did lately
+        </h2>
+        <ActivityList limit={20} compact />
+      </section>
+    ),
+    'app-access': <AnimatePresence>{access && <AppAccess programId={access.id} name={access.name} onClose={() => setAccess(null)} />}</AnimatePresence>,
+  }
+
   return (
     <Page
       label="Programs"
@@ -42,108 +87,8 @@ export default function ProgramsIndex() {
       }
     >
       <div className="mx-auto w-full max-w-[1100px] px-3 pb-[calc(var(--sab)+24px)] md:px-6 md:pb-10">
-        <p className="mb-5 max-w-[680px] px-1 text-[13.5px] leading-relaxed text-ink-3">
-          A program supplies the meaning of a piece of work as a graph of items, links and sources. The hive turns it into a space you can unfold, map, compare and inspect, with sources, uncertainty and your trail always in view.
-        </p>
-        {err && !programs ? (
-          <ErrorState title="Apps are not available" body={`${err}. This hive may be older than the programs API.`} onRetry={() => void load().catch(() => undefined)} />
-        ) : !programs ? (
-          <div className="grid gap-3 md:grid-cols-2">
-            {[0, 1].map((i) => (
-              <Skeleton key={i} className="h-48 rounded-[20px]" />
-            ))}
-          </div>
-        ) : !programs.length ? (
-          <EmptyState icon="apps" title="No programs found" body="Built-in programs live in hive/plugins/. Point HIVE_PLUGIN_DIRS at your own program directories, then Reload." />
-        ) : (
-          <ul className="grid gap-3 md:grid-cols-2" data-tour="programs-list">
-            {programs.map((p, i) => (
-              <ProgramCard key={p.id} p={p} i={i} />
-            ))}
-          </ul>
-        )}
-        <RecentActivity />
+        <Screen plan={plan} host={{ data, framed: true, islands, onAction }} />
       </div>
     </Page>
-  )
-}
-
-function ProgramCard({ p, i }: { p: Program; i: number }) {
-  const setEnabled = useHive((s) => s.setProgramEnabled)
-  const look = useAppLook(p)
-  const state = p.error ? 'error' : p.enabled ? 'enabled' : 'disabled'
-  const color = state === 'error' ? '#fb7185' : state === 'enabled' ? '#4ade80' : '#8a89b3'
-  return (
-    <m.li
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: i * 0.04, type: 'spring', stiffness: 300, damping: 30 }}
-      data-tour={`program-card-${p.id}`}
-      className="relative flex flex-col overflow-hidden rounded-[20px] border p-4 md:p-5"
-      data-app-type={look?.type}
-      style={{ ...look?.style, background: 'linear-gradient(180deg, rgb(255 255 255 / 0.035), rgb(255 255 255 / 0.012)), var(--look-page-a, rgb(13 13 38 / 0.72))', borderColor: state === 'error' ? 'rgb(251 113 133 / 0.3)' : 'var(--color-line)' }}
-    >
-      {look && look.motif !== 'none' && <div className="app-motif" data-motif={look.motif} aria-hidden="true" />}
-      <div className="pointer-events-none absolute -top-20 -right-14 size-56 rounded-full opacity-40" style={{ background: state === 'enabled' ? 'radial-gradient(circle, color-mix(in srgb, var(--color-accent) 20%, transparent), transparent 70%)' : `radial-gradient(circle, ${color}33, transparent 70%)` }} />
-      <div className="relative flex items-start gap-3">
-        <span className={cx('flex size-11 shrink-0 items-center justify-center rounded-2xl border border-line bg-white/[0.04]', state === 'enabled' ? 'text-accent' : 'text-ink-3')} style={state === 'enabled' ? { boxShadow: '0 0 30px -8px color-mix(in srgb, var(--color-accent) 60%, transparent)' } : undefined}>
-          <Icon name={iconOr(p.icon, 'spark')} size={22} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-baseline gap-x-2">
-            <h2 className="font-display text-[17px] font-semibold tracking-tight text-ink">{shown(p.name)}</h2>
-            <span className="font-mono text-[11px] text-ink-4">v{p.version}</span>
-          </div>
-          <div className="mt-0.5 flex items-center gap-1.5 text-[11.5px] font-semibold" style={{ color }}>
-            <span className="size-1.5 rounded-full" style={{ background: color, boxShadow: `0 0 8px ${color}` }} aria-hidden="true" />
-            {state === 'error' ? 'Failed to load' : state === 'enabled' ? 'Enabled' : 'Disabled by an operator'}
-          </div>
-        </div>
-        {!p.error && <Switch checked={p.enabled} onChange={(v) => void setEnabled(p.id, v)} label={`${p.enabled ? 'Disable' : 'Enable'} ${shown(p.name)}`} hue={252} />}
-      </div>
-      {look?.identity && <p className="relative mt-2 font-display text-[13px] text-accent">{look.identity.title}</p>}
-      <p className="relative mt-3 text-[13px] leading-relaxed text-ink-2">{shown(p.description) || 'No description.'}</p>
-      {p.error && (
-        <pre className="thin-scroll relative mt-3 overflow-x-auto rounded-xl border border-bad/25 bg-bad/[0.06] px-3 py-2 font-mono text-[11.5px] whitespace-pre-wrap text-bad">{p.error}</pre>
-      )}
-      <dl className="relative mt-3 flex flex-wrap items-center gap-1.5 text-[11.5px]">
-        <dt className="sr-only">Source</dt>
-        <dd className="inline-flex items-center gap-1 rounded-md border border-line bg-white/[0.03] px-1.5 py-0.5 text-ink-2" title={p.source === 'built-in' ? 'Ships with the hive (hive/plugins/)' : 'Loaded from HIVE_PLUGIN_DIRS on this machine'}>
-          <Icon name={p.source === 'built-in' ? 'hive' : 'database'} size={11} />
-          {p.source === 'built-in' ? 'Built-in' : p.source === 'plugin-dir' ? 'Plugin dir' : p.source}
-        </dd>
-        <dt className="sr-only">Capabilities</dt>
-        {p.capabilities.length ? (
-          p.capabilities.map((c) => (
-            <dd key={c} className="inline-flex items-center gap-1 rounded-md border border-accent/25 bg-accent/[0.07] px-1.5 py-0.5 font-mono text-[10.5px] text-[#cfc7ff]" title={CAP_TEXT[c] ?? c}>
-              {c}
-            </dd>
-          ))
-        ) : (
-          <dd className="text-ink-4">no capabilities</dd>
-        )}
-      </dl>
-      <div className="relative mt-4 flex items-center gap-2 pt-1">
-        <span className="font-mono text-[10.5px] text-ink-4">{p.id}</span>
-        <span className="flex-1" />
-        <AppAccessButton programId={p.id} name={shown(p.name)} className="min-h-10 text-[13px]" iconOnly />
-        <Button variant={p.enabled ? 'primary' : 'subtle'} icon="unfold" disabled={!p.enabled} onClick={() => navigate({ name: 'program', id: p.id })} className="min-h-10 text-[13px]" aria-label={`Open ${shown(p.name)}`}>
-          Open
-        </Button>
-      </div>
-    </m.li>
-  )
-}
-
-function RecentActivity() {
-  const client = useHive((s) => s.client)
-  if (!has(client, 'programActivity')) return null
-  return (
-    <section aria-labelledby="app-activity-h" className="mt-8">
-      <h2 id="app-activity-h" className="eyebrow mb-2 px-1">
-        What apps did lately
-      </h2>
-      <ActivityList limit={20} compact />
-    </section>
   )
 }

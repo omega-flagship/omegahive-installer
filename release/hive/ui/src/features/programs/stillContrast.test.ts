@@ -18,6 +18,20 @@ const block = (css: string, selector: string) => {
   return css.slice(i, css.indexOf('}', i))
 }
 const STATUS_COLOURS = ['#fbbf24', '#a1a1c2', '#fb7185']   // features/programs/parts.tsx STATUS_STYLE
+/**
+ * A tone given as a theme token (the light-token round moved "opposes" and "unavailable" to var(--color-bad)) is the
+ * colour the dress gives that token inside an experience: index.css's .xc-dress maps --color-bad to var(--xc-danger),
+ * and --xc-danger is the chrome's own danger (experiences/chrome.ts). A token the dress doesn't map fails here.
+ */
+const resolveTone = (c: string, dress: string): string => {
+  const token = /^var\((--color-[a-z0-9-]+)\)$/.exec(c)?.[1]
+  if (!token) return c
+  const xc = new RegExp(`${token}: var\\(--xc-([a-z-]+)\\);`).exec(dress)?.[1]
+  expect(xc, `${token} is mapped by the dress`).toBeTruthy()
+  const value = (still as unknown as Record<string, string>)[xc!.replace(/-([a-z])/g, (_, ch: string) => ch.toUpperCase())]
+  expect(value, `the chrome has --xc-${xc}`).toMatch(/^#[0-9a-f]{6}$/i)
+  return value
+}
 
 describe('Still: app surfaces under the chrome ink', () => {
   const css = read('index.css')
@@ -32,7 +46,8 @@ describe('Still: app surfaces under the chrome ink', () => {
     expect(tint).toBeGreaterThan(0)
     for (const ink of [still.ink, still.ink2, still.ink3]) expect(contrast(ink, still.raised)).toBeGreaterThanOrEqual(4.5)
     const tones = [...Object.values(ROLE).map((r) => r.color), ...Object.values(SOURCE_STATUS).map((s) => s.color), ...STATUS_COLOURS]
-    for (const c of tones) {
+    const dress = block(css, 'html[data-xc-active] .xc-dress')
+    for (const c of tones.map((t) => resolveTone(t, dress))) {
       const drawn = mix(c, still.ink, tint / 100)
       expect(contrast(drawn, still.raised), c).toBeGreaterThanOrEqual(4.5)
       expect(contrast(drawn, still.surface), c).toBeGreaterThanOrEqual(4.5)

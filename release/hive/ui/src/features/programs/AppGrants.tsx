@@ -78,7 +78,7 @@ export function AppGrants({ programId, name, onDeciding }: { programId: string; 
         Some apps hold access the hive manages for them (read grants their owner set up). Pausing drops that access now and at every start, until the owner restores it.
         Only the app’s owner can pause or restore; the hive’s own machine can also pause, as an emergency stop. Restoring takes effect at the next restart.
       </p>
-      <p className="rounded-xl border border-line bg-black/20 px-3 py-2 text-[12.5px] text-ink-2" role="status">
+      <p className="rounded-xl border border-line bg-shade/20 px-3 py-2 text-[12.5px] text-ink-2" role="status">
         {note ? (
           <>
             {appGrantsWords(note, name)} <span className="text-ink-4">({ago(note.at)})</span>

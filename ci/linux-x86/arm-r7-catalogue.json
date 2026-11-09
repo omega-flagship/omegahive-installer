@@ -47,8 +47,8 @@
       "sha256": "71d182fb8d47253e4e77a7e2e98cf12cd893a4a7c3556932a0371845d36f82b1"
     },
     {
-      "bytes": 423197,
-      "digest": "sha256:866514650a9aecc652ad08b5da1f5f483d027608fd047e5df90fbf2f99d7ee00",
+      "bytes": 424325,
+      "digest": "sha256:64abf47808a469d37154be509266977b1a3887f0d39f0b974d7d5c3bce7f6f6e",
       "files": [
         {
           "bytes": 5832,
@@ -429,10 +429,10 @@
           "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         {
-          "bytes": 297,
+          "bytes": 1843,
           "mode": "100644",
           "path": "plugin.json",
-          "sha256": "500e9b3c1f6eb4e431a7adb4b8a5a3ac48cc02ce66305dd3b9ea125a71e60ce6"
+          "sha256": "52e03e5b30ce2c40c25c7624be65020d989cd31a8d506151a37cad572f3f63a5"
         },
         {
           "bytes": 6265,
@@ -441,10 +441,10 @@
           "sha256": "57652e9fddee95734c1f3a66e2f93b4f60cae51ce7c77c455df24b0222459465"
         },
         {
-          "bytes": 8843,
+          "bytes": 9339,
           "mode": "100644",
           "path": "program.py",
-          "sha256": "bd5676f4abd87fe757e6796064b0ebebf7444b659c855ad783b1a4abcfeebc38"
+          "sha256": "e5631c48881f461abc6b04443060e35317e62a18e8155fc542c9bf6e8170d1ab"
         },
         {
           "bytes": 19077,
@@ -455,8 +455,8 @@
       ],
       "id": "omegadesign",
       "path": "omegadesign.zip",
-      "prefix": "omegadesign-release/0.4.20/",
-      "sha256": "3867126432bc6add54bf1d0b6bd246d0ccd1c241652b5a521da9513a07ea4e70"
+      "prefix": "omegadesign-release/0.4.22/",
+      "sha256": "e40a65eeb866c74048477de16418318152d8af22e38f526594129ee013417712"
     }
   ],
   "bootstrap": {
@@ -607,9 +607,9 @@
         "sha256": "0a070c2d35b227ba1cefd84a8ad6a0d3a937ea8366a4af7c4e261dae6bc4cff1"
       },
       "core_lock": {
-        "bytes": 89685,
+        "bytes": 90003,
         "path": "core.lock",
-        "sha256": "c8e7d4fd8488edb700ce875028dbafe847ca542529c24f41feee601e6e79555e"
+        "sha256": "725d90dd79980b3548d2d277028d8fb5e5cecca09dde4f16bffce816b283330d"
       },
       "petta_source": {
         "bytes": 120306,
@@ -16035,17 +16035,17 @@
   "swipl_version": "10.1.14",
   "ui_prebuilt": {
     "archive": {
-      "bytes": 2588368,
-      "path": "ui-dist-r2.tar.gz",
-      "sha256": "37be24f5708146dfc881aaa4e915d7e02aff6fd2ea0adc5dfde34497b89dc4a9"
+      "bytes": 4423823,
+      "path": "ui-dist-r3.tar.gz",
+      "sha256": "6388ffb91ed883d10cb68c82394a8a24f06dcc647855fcfe3b9ea5cb3067003e"
     },
     "manifest": {
-      "bytes": 31997,
-      "path": "ui-dist-r2.manifest.json",
-      "sha256": "f5efdb6d987bdf8fc55ea41885d042b4c1f124e3abdb81002d6269ef498b8258"
+      "bytes": 43458,
+      "path": "ui-dist-r3.manifest.json",
+      "sha256": "88571292a4589f182241dc877a1cae6b079c99252eb0061430ea4fc7202c2b46"
     },
-    "source_revision": "ee370059eb0f28356bc1c3fc78caaa0d2183d6c6",
-    "source_tree": "a56a4f732610a6b43198ac4bf0652b83a5f790e4"
+    "source_revision": "6b5a96c1cc338923efd9c93673ca092121db7ea8",
+    "source_tree": "e122202bf4f3050b782599ebef5f47e4fc5dbb78"
   },
   "uv_version": "0.13.6"
 }

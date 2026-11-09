@@ -1,5 +1,5 @@
 /**
- * Voice for the universal Ask (UNIVERSAL_ASK_DESIGN Phase 3, Host §6; the owner's ruling relayed by Platform, 2026-10-06).
+ * Voice for the universal Ask (UNIVERSAL_ASK_DESIGN Phase 3, Host §6; Jon's ruling relayed by Platform, 2026-10-06).
  *
  * The order of layers: the browser's own speech recognition ON THIS DEVICE first; in-page Whisper later (not in this
  * slice); the browser's speech SERVICE (audio sent to the browser's maker) only after the person opted in, once, on

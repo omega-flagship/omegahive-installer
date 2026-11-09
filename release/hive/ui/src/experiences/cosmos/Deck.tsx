@@ -1,6 +1,7 @@
+import { useVisibleAuthority, visibleOwner } from '../../lib/useVisibleAuthority'
 import { plural } from '../../lib/plural'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { AnimatePresence, m } from 'framer-motion'
+import { AnimatePresence, m, useIsPresent } from 'framer-motion'
 import { BeliefSentence, beliefText, closeToHome, compareSureness, PlainText, plainText, countPending, GoalDecision, hsl, openClassic, openPalette, shown, useHive, useReducedMotion, type Agent, type Goal } from '../sdk'
 import { statusWord, type CosmosLayout } from './layout'
 import { deckGroups, runFeature, COSMOS_NATIVE, type DeckPage } from './nav'
@@ -22,6 +23,9 @@ const clock = (iso: string | null | undefined) => {
 }
 const day = (iso: string | null | undefined) => (iso ? iso.slice(5, 10).replace('-', '.') : '')
 const money = (n: number) => `$${n.toFixed(n >= 100 ? 0 : 2)}`
+
+const goalDeckOwner = visibleOwner(useCosmos, s => JSON.stringify([s.deck, s.deckSwarm, s.deckMotivation, s.deckTab, s.pickFor]), key => JSON.parse(key)[0] === 'goals')
+export const useCosmosGoalAuthority = () => useVisibleAuthority('hive-pro', useIsPresent(), 'cosmos-task-deck', goalDeckOwner)
 
 const TITLES: Record<DeckPage, string> = {
   index: 'Flight deck',
@@ -395,6 +399,7 @@ function Goals() {
   // Review D1: done, cancel and re-open are decisions on the task as it was when asked, confirmed in the shared dialog.
   // Held here, not in the row, so a task that moves lists while the dialog is open still shows why it was refused.
   const [deciding, setDeciding] = useState<{ seen: Goal; to: Goal['status']; session: string } | null>(null)
+  const decisionCurrent = useCosmosGoalAuthority()
   useEffect(() => {
     for (const id of sys ? [sys] : Object.keys(swarms)) void loadGoals(id).catch(() => undefined)
   }, [sys, swarms, loadGoals])
@@ -480,7 +485,7 @@ function Goals() {
           )}
         </div>
       </Body>
-      <AnimatePresence>{deciding && <GoalDecision seen={deciding.seen} to={deciding.to} session={deciding.session} onClose={() => setDeciding(null)} restoreFocus={goalsHome} />}</AnimatePresence>
+      <AnimatePresence>{deciding && <GoalDecision current={decisionCurrent} seen={deciding.seen} to={deciding.to} session={deciding.session} onClose={() => setDeciding(null)} restoreFocus={goalsHome} />}</AnimatePresence>
     </>
   )
 }
@@ -1288,7 +1293,7 @@ function Help() {
         </dl>
       </div>
       <p className="mt-4 text-[13px] leading-snug" style={{ color: 'var(--cx-ink-2)' }}>
-        Ω, bottom left, is the same everywhere: change UI, everything in the hive, and the way back to the Classic hive. The guided tour is in Search and commands.
+        Ω, bottom left, is the same everywhere: change experience, everything in the hive, and the way back to the Classic hive. The guided tour is in Search and commands.
       </p>
       <button className="cx-btn mt-3" onClick={openPalette}>
         Search and commands

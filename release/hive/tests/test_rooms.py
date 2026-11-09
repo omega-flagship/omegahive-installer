@@ -21,9 +21,9 @@ def test_dm_with_a_mind_round_trip(client):
     got = inbox(client, a)
     assert got[-1]["text"] == "hello" and got[-1]["conversation_id"] == dm["id"] and got[-1]["room"]["kind"] == "dm"
     # the mind's ordinary reply carries the conversation and lands in the room
-    client.post("/api/agent/messages", headers=agent_headers(a), json={"text": "hi Quinn", "conversation_id": dm["id"]})
+    client.post("/api/agent/messages", headers=agent_headers(a), json={"text": "hi Jon", "conversation_id": dm["id"]})
     msgs = client.get(f"/api/rooms/{dm['id']}/messages").json()
-    assert [(m["sender"], m["text"]) for m in msgs] == [("user:operator", "hello"), (f"agent:{a['id']}", "hi Quinn")]
+    assert [(m["sender"], m["text"]) for m in msgs] == [("user:operator", "hello"), (f"agent:{a['id']}", "hi Jon")]
     assert client.patch(f"/api/rooms/{dm['id']}", json={"name": "x"}).status_code == 400   # a DM is fixed
 
 

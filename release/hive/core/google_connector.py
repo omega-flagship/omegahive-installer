@@ -248,10 +248,12 @@ class GoogleConnector:
             raise _error(401, "session_changed", "The signed-in session changed; connect again.")
         current = self.db.one("SELECT * FROM sessions WHERE token_hash = ?", (saved["token_hash"],))
         if (current is None or any(current.get(k) != saved.get(k) for k in _SESSION_FIELDS)
-                or current.get("kind") != "sso" or type(current.get("expires_at")) not in {int, float}
+                or current.get("kind") not in ("sso", "member_password") or type(current.get("expires_at")) not in {int, float}
                 or not math.isfinite(current["expires_at"]) or current["expires_at"] <= time.time()):
             raise _error(401, "session_changed", "The signed-in session changed; connect again.")
         principal = self._person(current.get("principal"))
+        if current["kind"] == "member_password" and not principal.startswith("user:u_"):
+            raise _error(401, "session_changed", "The signed-in session changed; connect again.")
         signin_hash = current.get("signin_hash")
         if signin_hash:
             signin = self.db.one("SELECT person_id, expires_at FROM signins WHERE token_hash = ?", (signin_hash,))

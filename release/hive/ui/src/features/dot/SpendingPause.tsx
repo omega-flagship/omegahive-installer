@@ -41,7 +41,7 @@ export function SpendingPause({ agent, refusal, onFixBudget }: { agent: Agent; r
             )}
           </div>
         </div>
-        <button onClick={() => dismiss(agent.id)} aria-label="Hide this notice" title="Hide until the hive refuses it again" className="-mr-1 shrink-0 rounded-lg p-1.5 text-ink-4 hover:bg-white/[0.07] hover:text-ink">
+        <button onClick={() => dismiss(agent.id)} aria-label="Hide this notice" title="Hide until the hive refuses it again" className="-mr-1 shrink-0 rounded-lg p-1.5 text-ink-4 hover:bg-tint/[0.07] hover:text-ink">
           <Icon name="x" size={14} />
         </button>
       </div>

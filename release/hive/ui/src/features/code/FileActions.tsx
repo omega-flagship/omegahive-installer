@@ -38,7 +38,7 @@ export function FileActions({ call, ws, file, dirty, busy, onChanged }: {
       <Button disabled={disabled || !file} onClick={() => { if (file) void perform({ kind: 'remove', file: { ...file } }) }}>Remove</Button>
     </div>
     {mode && <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); if (mode === 'create') void perform({ kind: 'create', path: name }); else if (file) void perform({ kind: 'move', file: { ...file }, target: name }) }}>
-      <input autoFocus aria-label={mode === 'create' ? 'New file path' : 'Destination file path'} value={name} onChange={(e) => setName(e.target.value)} disabled={disabled} placeholder="src/example.metta" className="min-h-9 w-full rounded-lg border border-line bg-black/25 px-2.5 font-mono text-xs" />
+      <input autoFocus aria-label={mode === 'create' ? 'New file path' : 'Destination file path'} value={name} onChange={(e) => setName(e.target.value)} disabled={disabled} placeholder="src/example.metta" className="min-h-9 w-full rounded-lg border border-line bg-shade/25 px-2.5 font-mono text-xs" />
       <div className="flex gap-1"><Button type="submit" disabled={disabled || !name || (mode === 'move' && !file)}>{mode === 'create' ? 'Create empty file' : 'Move to this path'}</Button><Button type="button" disabled={disabled} onClick={() => setMode(null)}>Cancel</Button></div>
     </form>}
     {error && <p role="alert" className="break-words text-xs text-bad">File update needs attention: {error}</p>}

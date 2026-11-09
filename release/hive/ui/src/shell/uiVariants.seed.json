@@ -162,7 +162,6 @@
     "density": "roomy",
     "radius": "soft",
     "motion": "calm",
-    "needs": "Light themes arrive with the next token update",
     "fonts": {
       "display": "'Iowan Old Style', 'Palatino Linotype', Georgia, serif",
       "sans": "'Iowan Old Style', Georgia, serif",
@@ -178,7 +177,7 @@
       "ink-5": "#a99c88",
       "line": "rgb(60 40 20 / 0.12)",
       "line-2": "rgb(60 40 20 / 0.2)",
-      "control": "#8a7a62",
+      "control": "#7b6b54",
       "glass": "rgb(255 252 245 / 0.82)",
       "glass-2": "rgb(250 245 235 / 0.9)",
       "accent": "#b3261e",

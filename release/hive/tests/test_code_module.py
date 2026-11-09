@@ -78,14 +78,14 @@ def test_edit_needs_a_read_then_approval_then_exact_retry(svc):
 
 def test_a_persons_edit_in_between_makes_the_minds_edit_stale(svc):
     oc.read("calc.py")
-    svc.files["calc.py"] = "def add(a, b):\n    return a - b  # checked by Quinn\n"
+    svc.files["calc.py"] = "def add(a, b):\n    return a - b  # checked by Jon\n"
     svc.generation += 1  # a person saved in the Workbench
     first = oc.replace("calc.py", "return a - b ==> return a + b")
     approve_last(svc, first)
     stale = oc.replace("calc.py", "return a - b ==> return a + b")
     assert stale.startswith("CODE-STALE")
-    assert "checked by Quinn" in svc.files["calc.py"]  # never silently overwritten
-    assert "checked by Quinn" in oc.read("calc.py")
+    assert "checked by Jon" in svc.files["calc.py"]  # never silently overwritten
+    assert "checked by Jon" in oc.read("calc.py")
 
 
 def test_bad_changes_are_refused_locally(svc):

@@ -53,13 +53,13 @@ export function LookPreviewBar() {
           >
             Keep
           </button>
-          <button onClick={() => (requestState().previewing?.prefs === p ? undoPreview() : previewLook(null))} className="min-h-9 rounded-xl px-3 text-ink-2 hover:bg-white/[0.06] hover:text-ink">
+          <button onClick={() => (requestState().previewing?.prefs === p ? undoPreview() : previewLook(null))} className="min-h-9 rounded-xl px-3 text-ink-2 hover:bg-tint/[0.06] hover:text-ink">
             Undo
           </button>
-          <button onClick={() => openGallery(true)} className="min-h-9 rounded-xl px-3 text-ink-2 hover:bg-white/[0.06] hover:text-ink">
+          <button onClick={() => openGallery(true)} className="min-h-9 rounded-xl px-3 text-ink-2 hover:bg-tint/[0.06] hover:text-ink">
             More looks
           </button>
-          <button onClick={() => void resetLook(client)} className="min-h-9 rounded-xl px-3 text-ink-3 hover:bg-white/[0.06] hover:text-ink">
+          <button onClick={() => void resetLook(client)} className="min-h-9 rounded-xl px-3 text-ink-3 hover:bg-tint/[0.06] hover:text-ink">
             Reset to {DEFAULT_VARIANT.name}
           </button>
         </m.div>

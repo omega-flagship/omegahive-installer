@@ -478,7 +478,7 @@ describe('guided demos: the scripts', () => {
     }
   })
 
-  it('covers every area Quinn asked for, and stubs the modules with no screen yet', () => {
+  it('covers every area Jon asked for, and stubs the modules with no screen yet', () => {
     const ready = GUIDE_SCRIPTS.filter((s) => s.status === 'ready').map((s) => s.id)
     for (const want of ['hive', 'swarms', 'beliefs', 'memory', 'reasoning', 'thinking', 'lab', 'evolve', 'commons-explorer', 'ask', 'experiences', 'apps', 'design', 'code', 'coffee', 'power', 'trust', 'mcp', 'tools-catalogue']) expect(ready).toContain(want)
     // Root's four ready hooks are banked tours; temporal is unavailable (being built); assume's hooks are proposed only

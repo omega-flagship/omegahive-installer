@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { applyChrome, closeToHome, GoalDecision, openClassic, openPalette, shown, useHive, useHomeRequested, useIsDesktop, useReducedMotion, useRoute, type Agent, type Goal } from '../sdk'
 import { chromeForMode } from './chrome'
@@ -20,6 +20,8 @@ import { goalAsk, goalBarActions, type GoalAsk } from './goalAsk'
 import { NO_MOTIVES } from './motives'
 import { useMotivationData } from '../../lib/motivations'
 import { plural } from '../../lib/plural'
+import { currentEpoch, onIdentityChange } from '../../lib/identityEpoch'
+import { CanvasActionBoundary, useCanvasCurrent } from './actionAuthority'
 
 const THEME_KEY = 'omegahive.canvas.mode'
 const MAP_KEY = 'omegahive.canvas.minimap'
@@ -53,15 +55,21 @@ const grow = (r: Rect, d: number): Rect => ({ x: r.x - d, y: r.y - d, w: r.w + d
 const inside = (r: Rect, x: number, y: number) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h
 
 export default function Experience() {
+  const epoch = useSyncExternalStore(onIdentityChange, currentEpoch, currentEpoch)
+  return <CanvasOwner key={epoch} />
+}
+
+function CanvasOwner() {
   const [engine] = useState(() => new Engine())
   return (
     <EngineCtx.Provider value={engine}>
-      <Board engine={engine} />
+      <CanvasActionBoundary><Board engine={engine} /></CanvasActionBoundary>
     </EngineCtx.Provider>
   )
 }
 
 function Board({ engine }: { engine: Engine }) {
+  const current = useCanvasCurrent()
   const reduced = useReducedMotion()
   const desktop = useIsDesktop()
   // the motivations each task serves (chips on stickies, the outline and the selection bar): read once per session
@@ -191,29 +199,32 @@ function Board({ engine }: { engine: Engine }) {
   // ---------------------------------------------------------------- actions
   const flyToItem = useCallback(
     (key: string, opts: { maxZ?: number; pad?: number } = {}) => {
+      if (!current()) return
       const it = layout.items.get(key)
       if (!it) return
       if (it.kind === 'island') engine.fitRect(it, { pad: 30, maxZ: opts.maxZ ?? 1 })
       else if (it.kind === 'mind') engine.fitRect(grow(it, 120), { maxZ: opts.maxZ ?? 1.15, pad: opts.pad ?? 20 })
       else engine.fitRect(grow(it, 90), { maxZ: opts.maxZ ?? 1.25, pad: opts.pad ?? 20 })
     },
-    [engine, layout],
+    [engine, layout, current],
   )
 
-  const closeChat = useCallback(() => setOpenId(null), [])
+  const closeChat = useCallback(() => { if (current()) setOpenId(null) }, [current])
   const openChat = useCallback(
     (id: string) => {
+      if (!current()) return
       const it = layout.items.get(`mind:${id}`)
       if (!it) return
       setOpenId(id)
       setSelected(`mind:${id}`)
       engine.fitRect({ x: it.x, y: it.y, w: CHAT_W, h: CHAT_H }, { pad: desktop ? 28 : 6, maxZ: desktop ? 1.2 : 1.1, dur: 560 })
     },
-    [engine, layout, desktop],
+    [engine, layout, desktop, current],
   )
 
   const select = useCallback(
     (key: string) => {
+      if (!current()) return
       if (engine.dragged) return
       const it = layout.items.get(key)
       if (!it) return
@@ -231,28 +242,30 @@ function Board({ engine }: { engine: Engine }) {
       }
       setSelected(key)
     },
-    [engine, layout, flyToItem],
+    [engine, layout, flyToItem, current],
   )
   const selectMind = useCallback((id: string) => select(`mind:${id}`), [select])
 
   const onFocusItem = useCallback(
     (key: string) => {
+      if (!current()) return
       const it = layout.items.get(key)
       if (!it || engine.dragged) return
       const full = engine.visible(it, -0.06)
       if (!full || engine.z < 0.55) flyToItem(key, { maxZ: Math.max(engine.z, 0.9) })
     },
-    [engine, layout, flyToItem],
+    [engine, layout, flyToItem, current],
   )
 
   const openInspect = useCallback((id: string) => {
+    if (!current()) return
     setSelected(`decision:${id}`)
     setInspectId(id)
-  }, [])
-  const closeInspect = useCallback(() => setInspectId(null), [])
+  }, [current])
+  const closeInspect = useCallback(() => { if (current()) setInspectId(null) }, [current])
   const decisionsFallback = useCallback(() => rootRef.current?.querySelector<HTMLElement>('[data-cv-decisions]') ?? null, [])
-  const askGoal = useCallback((ask: GoalAsk) => setGoalAsking(ask), [])
-  const closeGoalAsk = useCallback(() => setGoalAsking(null), [])
+  const askGoal = useCallback((ask: GoalAsk) => { if (current()) setGoalAsking(ask) }, [current])
+  const closeGoalAsk = useCallback(() => { if (current()) setGoalAsking(null) }, [current])
   // the opener can go with the change (Mark done becomes Reopen): focus returns to the goal on the board, else the outline
   const goalHome = useCallback(
     (opener: HTMLElement | null) => {
@@ -268,8 +281,10 @@ function Board({ engine }: { engine: Engine }) {
   /** Put keyboard focus on a board item once the camera has brought it on screen (it mounts when visible). */
   const focusItem = useCallback(
     (key: string) => {
+      if (!current()) return
       let n = 0
       const tick = () => {
+        if (!current()) return
         const root = rootRef.current
         if (!root) return
         const el = root.querySelector<HTMLElement>(`[data-item="${window.CSS.escape(key)}"]`)
@@ -279,21 +294,24 @@ function Board({ engine }: { engine: Engine }) {
       }
       requestAnimationFrame(tick)
     },
-    [engine],
+    [engine, current],
   )
 
   const startDraft = useCallback(
     (islandId: string) => {
+      if (!current()) return
       setDraft(islandId)
       setTool('select')
       const it = layout.items.get(`add:${islandId}`)
       if (it && !engine.visible(it, -0.05)) engine.fitRect(grow(it, 160), { maxZ: Math.max(0.95, engine.z), pad: 20 })
       else if (engine.z < 0.7 && it) engine.fitRect(grow(it, 200), { maxZ: 1, pad: 20 })
     },
-    [engine, layout],
+    [engine, layout, current],
   )
   const submitDraft = useCallback(async (swarmId: string, title: string) => {
+    if (!current()) return false
     const g = await useHive.getState().createGoal(swarmId, { title })
+    if (!current()) return false
     if (g) {
       setDraft(null)
       setSelected(`goal:${g.id}`)
@@ -301,21 +319,24 @@ function Board({ engine }: { engine: Engine }) {
       return true
     }
     return false
-  }, [])
+  }, [current])
 
   const fitDecisions = useCallback(() => {
+    if (!current()) return
     const l = layout.lane
     if (layout.laneMode === 'row') engine.fitRect({ x: l.x, y: l.y + 10, w: Math.min(l.w, LANE_W + 10), h: l.h - 10 }, { maxZ: 1.1, pad: 8 })
     else engine.fitRect({ x: l.x, y: 0, w: l.w, h: Math.min(l.h, LANE_HEAD + Math.max(1, Math.min(3, decisions.length)) * (DEC_H + DEC_GAP)) }, { maxZ: 1.1, pad: 24 })
-  }, [engine, layout, decisions.length])
+  }, [engine, layout, decisions.length, current])
 
   const toggleMode = () => {
+    if (!current()) return
     const next = mode === 'light' ? 'dark' : 'light'
     setMode(next)
     writePref(THEME_KEY, next)
     applyChrome(chromeForMode(next)) // shared windows follow the board
   }
   const toggleMap = () => {
+    if (!current()) return
     setMapOpen(!mapOpen)
     writePref(MAP_KEY, mapOpen ? '0' : '1')
   }
@@ -820,13 +841,14 @@ function Board({ engine }: { engine: Engine }) {
       </div>
       {inspectId && <DecisionInspect key={inspectId} id={inspectId} now={now} onClose={closeInspect} fallbackFocus={decisionsFallback} />}
       <AnimatePresence>
-        {goalAsking && <GoalDecision key={`${goalAsking.seen.id}:${goalAsking.to}`} seen={goalAsking.seen} to={goalAsking.to} session={goalAsking.session} onClose={closeGoalAsk} restoreFocus={goalHome} />}
+        {goalAsking && <GoalDecision key={`${goalAsking.seen.id}:${goalAsking.to}`} seen={goalAsking.seen} to={goalAsking.to} session={goalAsking.session} onClose={closeGoalAsk} restoreFocus={goalHome} current={current} />}
       </AnimatePresence>
     </div>
   )
 }
 
-function SelectionActions({ item, openChat, startDraft, flyToItem, openInspect, askGoal }: { item: Item; openChat: (id: string) => void; startDraft: (id: string) => void; flyToItem: (k: string) => void; openInspect: (id: string) => void; askGoal: (ask: GoalAsk) => void }) {
+export function SelectionActions({ item, openChat, startDraft, flyToItem, openInspect, askGoal }: { item: Item; openChat: (id: string) => void; startDraft: (id: string) => void; flyToItem: (k: string) => void; openInspect: (id: string) => void; askGoal: (ask: GoalAsk) => void }) {
+  const current = useCanvasCurrent()
   const agent = useHive((s) => (item.kind === 'mind' ? s.agents[item.id] : undefined))
   const goal = useHive((s) => (item.kind === 'goal' ? s.goals[item.id] : undefined))
   // the session this goal was read under, from the same store state (Surface R)
@@ -837,7 +859,7 @@ function SelectionActions({ item, openChat, startDraft, flyToItem, openInspect, 
     return (
       <>
         <BarBtn strong onClick={() => openChat(agent.id)}>Talk</BarBtn>
-        <BarAct run={() => useHive.getState().agentAction(agent.id, awake ? 'sleep' : 'wake')}>{awake ? 'Sleep' : 'Wake'}</BarAct>
+        <BarAct run={async () => { if (current()) return useHive.getState().agentAction(agent.id, awake ? 'sleep' : 'wake') }}>{awake ? 'Sleep' : 'Wake'}</BarAct>
         <BarBtn onClick={() => openClassic({ name: 'dot', id: agent.id, tab: 'mind' })}>Mind</BarBtn>
         <BarBtn onClick={() => openClassic({ name: 'dot', id: agent.id, tab: 'memory' })}>Memory</BarBtn>
       </>

@@ -3,7 +3,7 @@ from hive.tests.test_core_api import client  # noqa: F401
 from hive.tests.test_visibility import person
 import pytest
 
-from hive.tests.test_app_attachments import ROOT, _needs, setup_app, attach
+from hive.tests.test_app_attachments import ROOT, setup_app, attach
 
 
 def test_body_targets_are_checked_before_view_or_action_and_viewer_is_host_derived(client, monkeypatch):
@@ -35,7 +35,7 @@ def test_body_targets_are_checked_before_view_or_action_and_viewer_is_host_deriv
     assert who['member_id'] is None and actor is None and command is None
 
 
-@pytest.mark.skipif(ROOT is None, reason=_needs("omegafusion"))
+@pytest.mark.skipif(ROOT is None, reason="needs owner-local Fusion/Social candidates")
 def test_attachment_list_filters_private_mind_even_in_visible_swarm(client, tmp_path, monkeypatch):
     _, values, data, _ = setup_app(client, tmp_path, monkeypatch)
     swarm, mind = values[:2]

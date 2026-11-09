@@ -1,4 +1,4 @@
-"""Requests from people to the hive's admins (the owner, 2026-10-04).
+"""Requests from people to the hive's admins (Jon, 2026-10-04).
 
 A member asks; an admin decides, with the same five answers as every approval: Once, For a time, Always, No, Never.
 - once: grant this request.
@@ -100,7 +100,7 @@ class PersonRequests:
         return self.view(row)
 
     def auto_allowance(self, person, monthly_now):
-        """When a member runs out, ask the admins once a month for more (the owner: stop, notify, request card)."""
+        """When a member runs out, ask the admins once a month for more (Jon: stop, notify, request card)."""
         month = now()[:7]
         if self.hive.db.one("SELECT 1 FROM person_requests WHERE requested_by = ? AND kind = 'allowance' AND created_at >= ?",
                             (person, month)):

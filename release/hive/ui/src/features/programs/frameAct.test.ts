@@ -117,7 +117,7 @@ describe('AppFrame admits every frame act through admitFrameAct (source check)',
     const fsName = 'node:fs'
     const fs = (await import(/* @vite-ignore */ fsName)) as { readFileSync: (p: string | URL, e: string) => string }
     const src = fs.readFileSync(new URL('./AppFrame.tsx', import.meta.url), 'utf8')
-    expect(src).toMatch(/if \(m\.op === 'act'\) \{\n\s+const admitted = admitFrameAct\(/)
+    expect(src).toMatch(/if \(m\.op === 'act'\) \{\n\s+if \(memory\) return reply\(\{ type: 'app-reply', id: m\.id, ok: false, error: 'busy', act_not_sent: true \}\)\n\s+const admitted = admitFrameAct\(/)
     expect(src).not.toMatch(/prepareConfirm|precheckActFile|\.ask\(/)
   })
 })

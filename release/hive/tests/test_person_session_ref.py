@@ -1,6 +1,6 @@
 """GET /api/auth/me auth_session_ref: an opaque, per-session attribution reference that no route accepts as authority.
 
-Ported from Review's seven copied-host route checks (coordination/omegacode/poc/person_session_identity/test_host_session.py),
+Ported from Review's seven copied-host route checks (test_host_session.py),
 widened to cross-principal, role and non-authority cases. Disposable DB; Google is faked; nothing leaves."""
 
 import base64

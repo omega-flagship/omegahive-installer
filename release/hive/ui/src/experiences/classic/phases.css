@@ -1,0 +1,35 @@
+.classic-home { position: fixed; inset: 0; z-index: 25; padding: max(60px, env(safe-area-inset-top)) 20px max(90px, var(--ask-room, 150px)); display: flex; flex-direction: column; overflow: auto; background: radial-gradient(ellipse at 50% 25%, color-mix(in srgb, var(--color-abyss) 86%, transparent), color-mix(in srgb, var(--color-void) 66%, transparent) 85%); backdrop-filter: blur(1px); color: var(--color-ink); }
+.classic-home[hidden], .classic-home [hidden], .classic-home-back[hidden] { display: none; }
+.classic-home-core { margin: auto; flex: 0 0 auto; width: min(100%, 520px); display: flex; flex-direction: column; align-items: center; }
+
+.classic-home-omega { width: 130px; height: 130px; touch-action: none; border: 0; background: none; cursor: pointer; color: inherit; }
+.classic-home-mark { width: 100%; height: 100%; }
+.classic-home-mark svg { width: 100%; height: 100%; }
+.classic-home h1 { margin: 8px 0 28px; font-size: 22px; font-weight: 500; letter-spacing: .04em; }
+.classic-home-question { margin-top: 18px; color: var(--color-ink-3); text-align: center; }
+.classic-home-awake { width: 100%; text-align: center; }
+.classic-home-apps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px 12px; }
+.classic-home-app { min-width: 0; padding: 0; display: flex; align-items: center; flex-direction: column; gap: 7px; color: inherit; border: 0; background: none; cursor: pointer; font-size: 12px; }
+.classic-home-app-name { max-width: 100%; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; text-wrap: balance; }
+.classic-home-app small { color: var(--color-ink-3); font-size: 12px; }
+.classic-home-tile { position: relative; width: clamp(48px, 15vw, 70px); aspect-ratio: 1; display: grid; place-items: center; border-radius: 22%; border: 1px solid #ffffff24; background: radial-gradient(ellipse at 24% 4%, #ffffff32, transparent 60%), linear-gradient(145deg, color-mix(in srgb, currentColor 24%, #ffffff08), #ffffff05); box-shadow: inset 0 1px #ffffff38, inset 0 -1px #0003, 0 8px 28px #0003; backdrop-filter: blur(12px); }
+.classic-home-tile svg { width: 48%; height: 48%; }
+.classic-home-tile { overflow: hidden; }
+.classic-home-tile > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
+.classic-home-tile::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(145deg, #ffffff24, transparent 55%); border-radius: inherit; box-shadow: inset 0 1px #ffffff38; }
+.classic-home-app-badge { position: absolute; right: 5px; bottom: 5px; width: 13px; height: 13px; opacity: .8; }
+.classic-home-app-badge svg { width: 100%; height: 100%; }
+.classic-home-more, .classic-home-pro, .classic-home-power, .classic-home-back { min-height: 44px; padding: 10px 16px; border-radius: 20px; background: linear-gradient(150deg, color-mix(in srgb, var(--color-glass) 88%, white 12%), var(--color-glass)); border: 1px solid var(--color-line-2); box-shadow: inset 0 1px #ffffff22, 0 6px 18px #0002; backdrop-filter: blur(16px); color: inherit; font-size: 13px; font-weight: 400; letter-spacing: .01em; cursor: pointer; }
+.classic-home-more, .classic-home-pro { margin: 26px 6px 0; }
+.classic-home-power { position: absolute; top: max(20px, env(safe-area-inset-top)); right: 20px; }
+.classic-home-back { position: fixed; z-index: 45; top: max(60px, env(safe-area-inset-top)); right: 20px; }
+.classic-home button:focus-visible, .classic-home-back:focus-visible { outline: 2px solid currentColor; outline-offset: 5px; }
+html[data-shell-experience='classic'][data-shell-phase='awake'] #ask .ask-mark,
+html[data-shell-experience='classic'][data-shell-phase='rest'] #ask .ask-mark { display: none; }
+/* Pro help is portalled to body, so hiding its owner alone does not hide it. */
+html[data-shell-experience='classic'][data-shell-phase='rest'] [data-viewinfo-layer],
+html[data-shell-experience='classic'][data-shell-phase='awake'] [data-viewinfo-layer] { display: none; }
+@media (max-height: 620px) { .classic-home { padding-top: 16px; } .classic-home-omega { width: 82px; height: 82px; } .classic-home h1 { margin: 4px 0 14px; } .classic-home-apps { gap: 14px 8px; } }
+
+/* One quiet count, with its own debounced live node; no toast or animated badge at rest. */
+.classic-home-waiting { margin: 12px 0 0; color: rgba(238, 236, 255, .6); font-size: 12px; line-height: 1.5; }

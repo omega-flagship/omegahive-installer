@@ -1,15 +1,17 @@
+import { answererChoice } from '../features/ask/answererChoice'
+import type { BrowserAskOwner } from '../features/browserIter/askOwner'
 /**
  * The universal Ask's store slice (Surface universal Ask, phase 1). One thread per orchestrator across every page,
  * bound to Surface R's store session (a different client, or any re-init) and the signed-in identity: a switch of
  * either clears it, and nothing that started under the earlier one (a reply, a refusal, an event) lands here.
  *
- * MEMORY (the owner, 2026-10-05: "it can always reverse direction and keep the memory right"). The thread is one ordered
+ * MEMORY (Jon, 2026-10-05: "it can always reverse direction and keep the memory right"). The thread is one ordered
  * log. Each mind turn keeps the host's frames in `seq` order plus what the page did with each (its outcome: moved,
  * held as a Go card, kept, undone, reverted); the rows are DERIVED from that (threadRows), so a reconnect that reads
  * the turn back with GET /api/ask/{op} rebuilds exactly the same thread. Steers the person typed mid-turn are host
  * frames too (echoed with their seq); until the echo they show optimistically at the seq they were typed at.
  *
- * Rules carried here (UNIVERSAL_ASK_HOST_CONTRACT_DRAFT §4–§5, amendments, the owner's rulings of 2026-10-05):
+ * Rules carried here (UNIVERSAL_ASK_HOST_CONTRACT_DRAFT §4–§5, amendments, Jon's rulings of 2026-10-05):
  *  - every frame is checked (api/ask checkAskEvent); a malformed one is dropped, logged in dev only;
  *  - a gap in `seq` is recovered with GET /api/ask/{op}; frames apply strictly in order, once; a gap that cannot be
  *    read back holds everything after it (no navigation, look, revert or close applies), is retried a few times with
@@ -27,21 +29,24 @@
  *    under the same id (the host returns the original turn), until the host settles it (Review B1, 45392df).
  */
 import { create } from 'zustand'
-import { AskRefusal, checkAskEvent, readCapabilities, type AppActProposal, type AskBody, type AskContext, type AskEvent, type AskSettings, type AskThread, readActingAs, readMyMind, type ActingAs, type MyMind, type AskVia, type AskWho, type PresenceTarget, type PresenceVerb, type RefusalReason } from '../api/ask'
+import { AskRefusal, checkAskEvent, readCapabilities, type AppActProposal, type AskBody, type AskContext, type AskEvent, type AskSettings, type AskThread, readActingAs, readMyMind, readBrowserMindRoute, type BrowserMindRoute, type ActingAs, type MyMind, type AskVia, type AskWho, type PresenceTarget, type PresenceVerb, type RefusalReason } from '../api/ask'
 import { ApiError, type HiveClient } from '../api/client'
 import { EXPERIENCES } from '../experiences/registry'
 import { featureById } from '../features/registry'
 import { domUnsaved, hasUnsaved } from '../features/ask/dirty'
+import type { KeySetup } from '../features/ownKey/addOwnKey'
 import { DONE_OFFERS, DONE_WORDS, doneErrorWords, readDoneLimit, refusalOf, spendStop, TAKEOVER_WORDS, THREAD_LIMIT_MAX_USD, type Offer } from '../features/ask/words'
 import { href, navigate, parse, type Route } from '../lib/router'
 import { asOwnChoice, DEFAULT_VARIANT, keepLook, lookName, lookState, previewLook, SEED_VARIANTS, withExperience, type Layout, type UiPrefs, type UiVariant } from '../shell/uiVariant'
 import { hiveBus, useHive } from './store'
 import { OUTCOME_UNKNOWN, outcomeUnknown, type DecisionResult } from '../lib/decisionGate'
 import { authIdentity } from '../lib/readContext'
+import { currentEpoch } from '../lib/identityEpoch'
 import { readMe } from '../lib/readMe'
 import { askMemory, hiveKey, LOST_WORDS, type TurnMark } from '../lib/askMemory'
 import { isPrivateHash } from '../features/ask/view'
-import { answererChip, PICKER_REASONS, planAsk, resendContext, withPreselected, type Carry } from '../features/ask/answerer'
+import { answererChip, PICKER_REASONS, planAsk, planRecipient, resendContext, withPreselected, type Carry } from '../features/ask/answerer'
+import { askAutoWake, ASK_NOT_SENT } from './askAutoWake'
 import { appAskTracked, framePresentsAsk } from './appAsk'
 import { askSelector, hostAskRecipient } from '../api/appAsk'
 
@@ -53,12 +58,27 @@ export type AskOpts = {
   about?: string
   where?: string
   via?: AskVia
+  /** Queued work may start a new turn, but must never become a direction for an open turn. */
+  newTurnOnly?: boolean
+  /** The turn joins the person's thread without opening it (Create's Code bench shows its own work stream). */
+  quiet?: boolean
   /**
    * Told once, with exactly what the hive admitted these words under (or why it did not). Never stored with held or
    * retried words. Additive: callers that do not pass it are unchanged. Read it through `admit`.
    */
   admission?: (a: AskAdmission) => void
+  /** Memory-only correlation for this exact request; stripped from every kept/retried option. */
+  onOperation?: (receipt: AskOperationReceipt) => void
 }
+/** Local correlation DATA, not a host grant or a serializable recovery capability. */
+export interface AskOperationReceipt { readonly op: string; readonly principal: string; readonly epoch: number }
+/** Compare only an optional raw transport extension; callers still require their authenticated binding/op fences. */
+export function optionalAskPrincipalMatches(raw: unknown, principal: string | null | undefined): boolean {
+  if (!raw || typeof raw !== 'object') return false
+  const fields = raw as Record<string, unknown>
+  return !('principal' in fields) || (typeof fields.principal === 'string' && fields.principal === principal)
+}
+
 /**
  * An Ask's admission (vibe-intents r2): the exact operation the hive admitted these words under, for the person bound
  * when they were asked; or the reason they were not admitted. Anything but `admitted: true` means nothing may ride on
@@ -66,16 +86,16 @@ export type AskOpts = {
  */
 export type AskAdmission =
   | { admitted: true; op: string; principal: string }
-  | { admitted: false; reason: 'not_available' | 'refused' | 'unknown' | 'held' | 'unsupported' | 'capped' | 'failed' | 'not_admitted' }
+  | { admitted: false; reason: 'not_available' | 'refused' | 'unknown' | 'held' | 'unsupported' | 'capped' | 'failed' | 'not_admitted'; receipt?: AskOperationReceipt }
 /** The opts as they may be kept (held or retried later): never with an admission callback. */
 const kept = (o: AskOpts): AskOpts => {
-  const { admission: _a, ...rest } = o
-  void _a
+  const { admission: _a, onOperation: _o, ...rest } = o
+  void _a; void _o
   return rest
 }
 
 export const PRESENCE_PER_TURN = 40
-/** The owner (2026-10-05): the mind moves the page as often as it chooses; only a flood cap stops a runaway turn. */
+/** Jon (2026-10-05): the mind moves the page as often as it chooses; only a flood cap stops a runaway turn. */
 export const NAV_FLOOD_CAP = 36
 /** Platform: about 20 steers per turn. */
 export const STEERS_PER_TURN = 20
@@ -184,6 +204,8 @@ export interface AskRow {
   detail?: string
   /** refused mind_asleep: the asleep mind is the person's own (Platform P2): "Your mind is resting" */
   own?: boolean
+  /** a refused row whose way on is the one add-your-key step (features/ownKey) */
+  keySetup?: KeySetup
   /** an answer shown although steps before it could not be loaded (nothing of it was applied) */
   incomplete?: boolean
   /** an answer still arriving in pieces (`delta` frames) */
@@ -214,6 +236,15 @@ export interface PendingSteer {
 }
 
 export interface TurnMeta {
+  answerOwner?: 'iter' | 'fallback'
+  browserSteers?: string[]
+  browserClosed?: true
+  browserTurnId?: string
+  /** Live frames wait for a route-checked host view to establish the canonical turn id. */
+  browserPendingFrames?: AskEvent[]
+  browserStopping?: true
+  browserEntered?: true
+  browserFallbackStarted?: true
   appAsk?: true
   /** Canonical identity for P1 live adoption; a reused operation cannot attach another turn's frames. */
   appAskTurnId?: string
@@ -224,6 +255,9 @@ export interface TurnMeta {
   where?: string
   /** checking: sent, but whether the host admitted it is not known yet (Review B1, 45392df) */
   state: 'sending' | 'checking' | 'open' | 'done' | 'refused'
+  /** The answering mind confirmed for this exact operation, independent of later threads. */
+  answerer?: AskWho
+  resentMind?: AskWho
   lastSeq: number
   /** the host's frames, applied, in seq order */
   events: AskEvent[]
@@ -251,6 +285,8 @@ export interface TurnMeta {
   asleep?: AskWho
   /** that asleep mind is the person's own (GET /api/me/mind) */
   asleepOwn?: boolean
+  /** own_key_needed: the one add-your-key step's details, from the host's refusal */
+  keySetup?: KeySetup
   /** the mind the person addressed: the thread reads "<coordinator> about <mind>" */
   about?: string
   /** the person's own mind answering for them (`acting_as`, Platform P2): said in the thread */
@@ -319,6 +355,8 @@ interface AskState {
   settings: AskSettings | null
   /** the person's own mind (GET /api/me/mind, Platform P1/P2): undefined until read; null when none or not on this hive */
   personal: MyMind | null | undefined
+  /** Same authenticated myMind read as personal; metadata only, never worker or sealed-store readiness. */
+  browserMind: BrowserMindRoute | null | undefined
   /**
    * j0-fixes r1: the mind the showing thread answers through, for plain follow-ups (features/ask/answerer planAsk).
    * Cleared by an explicit choice of who answers, by closing the thread, and by a new thread or person.
@@ -332,6 +370,10 @@ interface AskState {
 }
 
 interface AskActions {
+  /** Install only after durable restoration and, for a restored open operation, openTurn readback have completed. */
+  attachBrowser(owner: BrowserAskOwner): () => void
+  /** Called by the actual worker boot owner; connection-ready alone is insufficient. */
+  browserReady(): void
   /**
    * Bind the thread to the store session and the person `me()` named, under the sign-in that read was made under
    * (`auth`, default: the client's current one). A sign-in that is no longer current binds nothing.
@@ -358,13 +400,16 @@ interface AskActions {
    * refusals and unknown admissions are all `admitted: false`. Never "whatever turn is open".
    */
   admit(text: string, context: AskContext, opts?: AskOpts): Promise<AskAdmission>
+  /** Read only: accepts only the original memory receipt, under its unchanged binding. */
+  admissionOf(receipt: AskOperationReceipt): AskAdmission
   /** ask_busy: the person's thread already has a turn in flight; show that one instead of starting another. */
   rejoin(op: string): Promise<void>
   /** Host-only adoption of an admitted app turn into this same memory-only Ask log. Never sends another Ask. */
   adoptAppTurn(op: string, turn: string, text?: string): boolean
   /** P1 nonterminal recovery of this exact existing turn; never calls takeover or creates a replacement. */
   showAppTurn(op: string): Promise<void>
-  retryLast(): Promise<void>
+  /** Retry only the exact request rendered for this identity; callers also own presentation lifetime. */
+  retryLast(requestId: string, identityEpoch: number, context: string | null): Promise<void>
   /** Check again whether an Ask of unknown admission reached the hive (the same request, under the same id). */
   checkAgain(op: string): Promise<void>
   onEvent(e: unknown): void
@@ -399,7 +444,7 @@ interface AskActions {
    * The person chose who answers: saved as their default Ask swarm, then (when `op` is the last request, refused for
    * who answers) its same words are sent once more, only while the same person, sign-in and epoch still hold.
    */
-  chooseAnswerer(swarmId: string, op?: string): Promise<'resent' | 'saved' | 'failed'>
+  chooseAnswerer(swarmId: string | null, op?: string): Promise<'resent' | 'saved' | 'saved-not-sent' | 'failed'>
   /** A new limit for new threads (the host says the most allowed); the current thread's cap never rises. */
   setThreadLimit(usd: number): Promise<boolean>
   setThreadOpen(open: boolean): void
@@ -408,9 +453,14 @@ interface AskActions {
 
 export type AskStore = AskState & AskActions
 
-let last: { text: string; context: AskContext; opts: AskOpts } | null = null
+let last: { text: string; context: AskContext; opts: AskOpts; identityEpoch: number } | null = null
 /** the operation id of the last request sent (retryLast checks it before anything new is sent) */
 let lastOp: string | null = null
+/** Snapshot taken when a Retry row renders. Rerouting the known-unsent request changes it, even before React commits. */
+export function askRetryContext(requestId: string, identityEpoch: number): string | null {
+  return identityEpoch === currentEpoch() && last?.identityEpoch === identityEpoch && requestId === lastOp
+    ? JSON.stringify(last.context) : null
+}
 const undos = new Map<string, { fn: () => Promise<void> | void; origin?: AskOrigin }>()
 const silence = new Map<string, ReturnType<typeof setTimeout>>()
 const retries = new Map<string, ReturnType<typeof setTimeout>>()
@@ -598,7 +648,7 @@ export function turnRows(t: TurnMeta, mindName?: string, thread?: { spent_usd: n
     const stuck = t.unsure.state === 'unresolved'
     rows.push({ id: `${t.op}#checking`, op: t.op, kind: 'checking', text: stuck ? 'Could not confirm whether the hive received this. It is kept here and will not be sent twice; check again in a moment.' : 'Checking whether the hive received this. It will not be sent twice.', state: stuck ? 'failed' : 'waiting' })
   }
-  if (t.refusedEarly) rows.push({ id: `${t.op}#refused`, op: t.op, kind: 'refused', text: '', reason: t.refusedEarly, mind: t.asleep, swarm: t.swarm, ...(t.asleepOwn ? { own: true } : {}) })
+  if (t.refusedEarly) rows.push({ id: `${t.op}#refused`, op: t.op, kind: 'refused', text: '', reason: t.refusedEarly, mind: t.asleep, swarm: t.swarm, ...(t.asleepOwn ? { own: true } : {}), ...(t.keySetup && t.refusedEarly === 'own_key_needed' ? { keySetup: t.keySetup } : {}) })
   // a steer typed at a seq not (yet) received sits at the end
   for (const s of pending) if (s.at_seq > t.lastSeq) rows.push({ id: `${t.op}~${s.steer_id}`, op: t.op, kind: 'steer', text: s.text, state: 'sending' })
   return rows
@@ -635,6 +685,12 @@ const throughMinds = new Map<string, string>()
 export const throughMindOf = (swarmId: string): string | undefined => throughMinds.get(swarmId)
 
 export const useAskStore = create<AskStore>()((set, get) => {
+  // Outside AskState/TurnMeta/history/body/opts: hydration or JSON copies cannot forge these receipts.
+  const admissionReceipts = new Map<string, AskOperationReceipt>()
+  const admissionRecords = new WeakMap<AskOperationReceipt, { current(): boolean; state: 'unknown' | 'admitted' | 'refused' }>()
+  // Overlapping reads for the same identity publish only the newest personal-mind advertisement.
+  let mindRead = 0
+  let browser: { owner: BrowserAskOwner; current(): boolean; steering: Set<string> } | null = null
   const addRow = (r: Omit<AskRow, 'id'>): string => {
     const id = rid()
     set((s) => ({ log: [...s.log, { kind: 'row' as const, row: { ...r, id } }].slice(-300) }))
@@ -688,11 +744,24 @@ export const useAskStore = create<AskStore>()((set, get) => {
   }
   const outcome = (op: string, seq: number, o: Outcome) => patchTurn(op, (t) => ({ outcomes: { ...t.outcomes, [seq]: o } }))
   const noteAfter = (op: string, text: string) => patchTurn(op, (t) => ({ notes: [...t.notes, { after: t.lastSeq, text }] }))
-  const closeTurn = (op: string, state: 'done' | 'refused') => {
+  const closeTurn = (op: string, state: 'done' | 'refused', hostClosed = false) => {
+    if (hostClosed) release(op)
+    clearTimeout(checks.get(op))
+    checks.delete(op)
     clearTimeout(silence.get(op))
     silence.delete(op)
     patchTurn(op, { state, step: undefined })
     set((s) => ({ open: s.open === op ? null : s.open }))
+    const attached = browser
+    if (hostClosed && get().turns[op]?.answerOwner && !get().turns[op]?.browserClosed) {
+      patchTurn(op, { browserClosed: true, unsure: undefined })
+      if (attached?.current()) {
+        try {
+          if (get().turns[op]?.answerOwner === 'iter' && attached.owner.lifecycle.phase === 'admitting' && attached.owner.lifecycle.operation === op) attached.owner.lifecycle.reconcileClosed({ operation_id: op, route: 'browser_mind', state })
+          attached.owner.closed(op)
+        } catch { noteAfter(op, 'The browser mind could not finish its cleanup. Check before leaving.') }
+      }
+    }
   }
   const watch = (op: string) => {
     clearTimeout(silence.get(op))
@@ -711,6 +780,14 @@ export const useAskStore = create<AskStore>()((set, get) => {
     const { client, session, inits } = useHive.getState()
     return { client, ok: () => !!bound && get().epoch === epoch && get().bound === bound && useHive.getState().session === session && useHive.getState().inits === inits && useHive.getState().client === client && authIdentity(client) === bound.auth }
   }
+  const recordAdmission = (op: string, state: 'admitted' | 'refused', principal?: string) => {
+    const receipt = admissionReceipts.get(op)
+    const record = receipt && admissionRecords.get(receipt)
+    if (!receipt || !record?.current() || receipt.op !== op || receipt.epoch !== get().epoch || receipt.principal !== get().bound?.principal || (principal !== undefined && principal !== receipt.principal)) return
+    // A verified positive cannot be undone by a late HTTP refusal; a matching later frame may settle a refusal.
+    if (record.state !== 'admitted' || state === 'admitted') record.state = state
+  }
+
   /** The binding, only while the client's sign-in is still the one it was bound under; otherwise the thread is dropped. */
   const liveBound = () => {
     const b = get().bound
@@ -719,6 +796,74 @@ export const useAskStore = create<AskStore>()((set, get) => {
       return null
     }
     return b
+  }
+  const browserView = (op: string, view: unknown) => {
+    const answer = view as Partial<import('../api/ask').AskAccepted> | null
+    const known = get().turns[op]?.browserTurnId
+    return answer?.operation_id === op && answer.route === 'browser_mind' && ['browser', 'done', 'refused'].includes(answer.state ?? '') && typeof answer.turn_id === 'string' && answer.turn_id && (!known || answer.turn_id === known) ? answer as import('../api/ask').AskAccepted : null
+  }
+  const reportBrowserAdmission = (op: string) => {
+    if (!browser?.current() || browser.owner.lifecycle.phase !== 'admitting' || browser.owner.lifecycle.operation !== op) return
+    const text = 'Your browser turn has not been confirmed. Check this turn or Stop it before asking again.'
+    if (!get().turns[op]?.notes.some(n => n.text === text)) noteAfter(op, text)
+  }
+  const browserAdmitted = (op: string, view?: unknown) => {
+    const attached = browser, turn = get().turns[op]
+    if (!turn?.answerOwner || turn.browserClosed) return
+    if (turn.answerOwner === 'fallback') {
+      if (!attached?.current()) return
+      if (!turn.browserFallbackStarted) {
+        patchTurn(op, { browserFallbackStarted: true })
+        try { attached.owner.fallbackStarted(op, turn.you) } catch { noteAfter(op, 'Earlier answers came from your hive mind.') }
+      }
+      return
+    }
+    const answer = view === undefined ? null : browserView(op, view)
+    if (view !== undefined && !answer) return
+    const pending = answer ? (turn.browserPendingFrames ?? []).filter(e => e.turn_id === answer.turn_id).sort((a, b) => a.seq - b.seq) : []
+    if (answer) patchTurn(op, { browserTurnId: answer.turn_id, browserPendingFrames: undefined })
+    if (answer && (answer.state === 'done' || answer.state === 'refused')) {
+      release(op)
+      closeTurn(op, answer.state, true)
+      // Terminal readback wins before historical frames: none may resume a worker or move the closed page.
+      for (const frame of pending) accept(frame)
+      return
+    }
+    for (const frame of pending) accept(frame)
+    if (get().turns[op]?.browserClosed) return
+    if (!attached?.current()) return
+    const lifecycle = attached.owner.lifecycle
+    if (lifecycle.phase === 'admitting' && lifecycle.operation === op && answer?.operation_id === op && answer.route === 'browser_mind' && answer.state === 'browser') lifecycle.reconcile(answer)
+    if (lifecycle.phase === 'running' && lifecycle.operation === op) release(op)
+    if (turn.browserClosed || turn.browserStopping || lifecycle.phase !== 'running' || lifecycle.operation !== op || !attached.owner.workerReady()) return
+    if (get().turns[op]?.state === 'checking') { patchTurn(op, { state: 'open', unsure: undefined }); release(op) }
+    if (!turn.browserEntered) {
+      patchTurn(op, { browserEntered: true })
+      try { attached.owner.entered(op) } catch { noteAfter(op, 'The browser mind could not continue this turn. Stop it before asking again.'); return }
+    }
+    void browserSteers(op)
+  }
+  const browserSteerWaiting = 'These words are still waiting to reach your browser mind. They will be retried when it is ready.'
+  const browserSteers = async (op: string) => {
+    const attached = browser
+    if (!attached?.current() || get().turns[op]?.answerOwner !== 'iter' || attached.steering.has(op)) return
+    attached.steering.add(op)
+    try {
+      while (attached.current() && !get().turns[op]?.browserClosed && !get().turns[op]?.browserStopping && attached.owner.lifecycle.phase === 'running' && attached.owner.lifecycle.operation === op && attached.owner.workerReady()) {
+        const turn = get().turns[op]
+        const next = turn?.events.find((e): e is Extract<AskEvent, { phase: 'steer' }> => e.phase === 'steer' && !turn.browserSteers?.includes(e.steer_id))
+        if (!next) {
+          patchTurn(op, t => ({ notes: t.notes.map(note => note.text === browserSteerWaiting ? { ...note, text: 'Your words have reached your browser mind.' } : note) }))
+          break
+        }
+        const result = await attached.owner.steer(op, next.steer_id, next.text)
+        if (!attached.current() || get().turns[op]?.browserClosed) return
+        if (!result.ok || result.steerId !== next.steer_id) throw new Error('browser steer not kept')
+        patchTurn(op, t => ({ browserSteers: [...(t.browserSteers ?? []), next.steer_id] }))
+      }
+    } catch {
+      if (attached.current() && !get().turns[op]?.browserClosed && !get().turns[op]?.notes.some(note => note.text === browserSteerWaiting)) noteAfter(op, browserSteerWaiting)
+    } finally { attached.steering.delete(op) }
   }
   /**
    * A live memory frame, once it is placed in its turn (`accept`: in seq order, every frame before it applied) and
@@ -822,7 +967,8 @@ export const useAskStore = create<AskStore>()((set, get) => {
       case 'accepted': {
         set({ thread: e.thread })
         const as = readActingAs((e as { acting_as?: unknown }).acting_as)
-        patchTurn(op, (t) => ({ ...(t.state === 'sending' ? { state: 'open' as const } : {}), ...(as && !t.actingAs ? { actingAs: as } : {}) }))
+        patchTurn(op, (t) => ({ answerer: e.thread.mind, ...(t.state === 'sending' ? { state: 'open' as const } : {}), ...(as && !t.actingAs ? { actingAs: as } : {}) }))
+        if (get().turns[op]?.answerOwner === 'fallback') browserAdmitted(op)
         return
       }
       case 'thinking':
@@ -830,8 +976,16 @@ export const useAskStore = create<AskStore>()((set, get) => {
         return
       case 'steer':
         patchTurn(op, (t) => ({ steers: t.steers.map((s) => (s.steer_id === e.steer_id ? { ...s, state: 'sent' as const } : s)) }))
+        void browserSteers(op)
         return
       case 'answer':
+        if (browser?.current() && get().turns[op]?.answerOwner === 'fallback' && !get().turns[op]?.browserClosed) {
+          const attached = browser
+          browserAdmitted(op)
+          if (attached.current()) {
+            try { attached.owner.fallbackAnswer(op, e.text) } catch { noteAfter(op, 'Earlier answers came from your hive mind.') }
+          }
+        }
         return
       case 'proposal': {
         const p = e.proposal
@@ -899,10 +1053,10 @@ export const useAskStore = create<AskStore>()((set, get) => {
       }
       case 'done':
         if (typeof e.spent_usd === 'number') set((s) => (s.thread ? { thread: { ...s.thread, spent_usd: e.spent_usd! } } : s))
-        closeTurn(op, 'done')
+        closeTurn(op, 'done', true)
         return
       case 'refused':
-        closeTurn(op, 'refused')
+        closeTurn(op, 'refused', true)
         return
     }
   }
@@ -953,8 +1107,15 @@ export const useAskStore = create<AskStore>()((set, get) => {
   const accept = (frame: AskEvent) => {
     let e = frame
     const t = get().turns[e.operation_id]
-    if (!t || e.seq <= t.lastSeq || t.appAskTurnId && e.turn_id !== t.appAskTurnId) return
-    if (t.state === 'checking') {
+    if (!t || e.seq <= t.lastSeq || t.appAskTurnId && e.turn_id !== t.appAskTurnId || t.browserTurnId && e.turn_id !== t.browserTurnId) return
+    if (t.answerOwner === 'iter' && !t.browserTurnId) {
+      const pending = t.browserPendingFrames ?? []
+      if (pending.length < AHEAD_CAP && !pending.some(x => x.turn_id === e.turn_id && x.seq === e.seq)) patchTurn(t.op, { browserPendingFrames: [...pending, e] })
+      return
+    }
+    if (optionalAskPrincipalMatches(e, get().bound?.principal)) recordAdmission(e.operation_id, 'admitted')
+    const waitingBrowser = t.answerOwner === 'iter' && browser?.current() && browser.owner.lifecycle.phase === 'admitting' && browser.owner.lifecycle.operation === t.op
+    if (t.state === 'checking' && !waitingBrowser) {
       // a frame of this very operation: the host admitted it (Review B1, 45392df); the check stops
       clearTimeout(checks.get(t.op))
       checks.delete(t.op)
@@ -1024,11 +1185,18 @@ export const useAskStore = create<AskStore>()((set, get) => {
   const admitted = (op: string, view: { thread?: AskThread | null; events?: unknown[]; more?: boolean; app_ask?: true } | null, read: boolean) => {
     const t = get().turns[op]
     if (!t) return
+    if (t.answerOwner === 'iter') {
+      if (!browserView(op, view)) {
+        if (t.unsure) patchTurn(op, { unsure: { ...t.unsure, state: 'unresolved' } })
+        return
+      }
+    }
+    browserAdmitted(op, view)
     if (view?.app_ask === true) patchTurn(op, { appAsk: true })
     clearTimeout(checks.get(op))
     checks.delete(op)
     if (view?.thread) set({ thread: view.thread })
-    if (t.state === 'checking') patchTurn(op, { state: 'open', unsure: undefined })
+    if (get().turns[op]?.state === 'checking') patchTurn(op, { state: 'open', unsure: undefined })
     watch(op)
     release(op)
     for (const raw of [...(view?.events ?? [])].sort((a, b) => ((a as AskEvent).seq ?? 0) - ((b as AskEvent).seq ?? 0))) {
@@ -1056,14 +1224,16 @@ export const useAskStore = create<AskStore>()((set, get) => {
     checks.delete(op)
     checking.add(op)
     patchTurn(op, (x) => ({ unsure: x.unsure && { ...x.unsure, state: 'checking' } }))
-    let found: { thread?: AskThread | null; events?: unknown[]; more?: boolean } | null = null
+    let found: { operation_id?: string; thread?: AskThread | null; events?: unknown[]; more?: boolean } | null = null
     let read = false
+    let confirmed = false // only a real successful response, never a manufactured compatibility placeholder
     let refusedWith: ApiError | null = null
     let readRefused: ApiError | null = null
     try {
       if (client.askTurn) {
         try {
           found = await client.askTurn(op, get().turns[op]?.lastSeq ?? 0)
+          confirmed = found?.operation_id === op
           read = true
         } catch (err) {
           found = null
@@ -1079,6 +1249,7 @@ export const useAskStore = create<AskStore>()((set, get) => {
         if (get().turns[op]?.state !== 'checking') return
         try {
           found = await client.ask(body)
+          confirmed = found?.operation_id === op
         } catch (err) {
           if (!snap.ok()) return
           if (err instanceof AskRefusal && err.code === 'ask_busy' && err.details.operation_id === op) found = {}
@@ -1092,18 +1263,23 @@ export const useAskStore = create<AskStore>()((set, get) => {
     }
     const now = get().turns[op]
     if (!now) return
-    if (found) return admitted(op, found, read)
+    if (found) {
+      if (confirmed) recordAdmission(op, 'admitted', principal)
+      return admitted(op, found, read)
+    }
     if (now.state !== 'checking' || !now.unsure) return
     if (readRefused) {
       patchTurn(op, { unsure: { ...now.unsure, state: 'unresolved' } })
       return
     }
     if (refusedWith) {
+      if (get().turns[op]?.answerOwner === 'iter' && browser?.current() && browser.owner.lifecycle.phase === 'admitting' && browser.owner.lifecycle.operation === op) browser.owner.lifecycle.confirmedRefusal(op)
       // the host's own no to this very request: nothing was admitted; only now may a new request be sent
+      recordAdmission(op, 'refused', principal)
       const details = refusedWith instanceof AskRefusal ? refusedWith.details : {}
       patchTurn(op, { refusedEarly: refusalOf(refusedWith.code), asleep: details.mind, unsure: undefined })
-      closeTurn(op, 'refused')
       release(op)
+      closeTurn(op, 'refused')
       return
     }
     const tries = now.unsure.tries + 1
@@ -1128,10 +1304,29 @@ export const useAskStore = create<AskStore>()((set, get) => {
   const findRow = (rowId: string) => threadRows(get()).find((r) => r.id === rowId)
 
   return {
+    attachBrowser(owner) {
+      liveBound()
+      if (!owner.lifecycle.isCurrent()) throw new Error('This browser mind was restored for a different identity')
+      if (!get().bound || owner.lifecycle.phase === 'restoring' || owner.lifecycle.phase === 'disposed') throw new Error('Restore the browser mind before attachment')
+      if (browser?.current()) throw new Error('A browser mind is already attached')
+      if ((get().open && get().open !== owner.lifecycle.operation) || (owner.lifecycle.operation && get().open !== owner.lifecycle.operation)) throw new Error('Read the existing Ask operation before browser attachment')
+      if (owner.lifecycle.operation && get().turns[owner.lifecycle.operation]?.answerOwner !== 'iter') throw new Error('This is not a person-owned browser Ask')
+      const snap = snapshot()
+      const attached = { owner, current: () => browser === attached && snap.ok() && owner.lifecycle.isCurrent(), steering: new Set<string>() }
+      browser = attached
+      if (get().open) browserAdmitted(get().open!)
+      return () => {
+        if (browser !== attached) return
+        browser = null
+        owner.dispose()
+      }
+    },
+    browserReady() { if (get().open) browserAdmitted(get().open!) },
     bound: null,
     epoch: 0,
     settings: null,
     personal: undefined,
+    browserMind: undefined,
     pinned: false,
     threadOpen: false,
     ...fresh(),
@@ -1149,6 +1344,13 @@ export const useAskStore = create<AskStore>()((set, get) => {
     },
 
     reset() {
+      mindRead++
+      const attached = browser
+      browser = null
+      attached?.owner.dispose()
+      answererChoice.clear()
+      askAutoWake.clear()
+      admissionReceipts.clear() // private correlation is neither persisted nor hydrated into another thread
       throughMinds.clear()   // another person or sign-in never inherits the minds a thread answered through
       undos.clear()
       last = null
@@ -1156,7 +1358,7 @@ export const useAskStore = create<AskStore>()((set, get) => {
       for (const t of silence.values()) clearTimeout(t)
       silence.clear()
       clearRetries()
-      set((s) => ({ ...fresh(), bound: null, epoch: s.epoch + 1, settings: null, personal: undefined, threadOpen: false }))
+      set((s) => ({ ...fresh(), bound: null, epoch: s.epoch + 1, settings: null, personal: undefined, browserMind: undefined, threadOpen: false }))
       askMemory.use(null)
     },
 
@@ -1187,8 +1389,20 @@ export const useAskStore = create<AskStore>()((set, get) => {
         opts.admission?.({ admitted: false, reason: 'not_available' })
         return
       }
-      if (get().open) return get().steer(words, context, opts)
+      if (get().open) {
+        if (opts.newTurnOnly) {
+          opts.admission?.({ admitted: false, reason: 'held' })
+          return
+        }
+        return get().steer(words, context, opts)
+      }
+      if (browser?.current() && browser.owner.lifecycle.operation) {
+        get().addLocal(words, 'Your earlier browser turn is still being checked or cleaned up. Nothing new was sent.', { state: 'waiting' })
+        opts.admission?.({ admitted: false, reason: 'held' })
+        return
+      }
       // exactly one swarm can answer and nothing else decides: it is named, so the first send works (answerer.ts)
+      context = answererChoice.apply(context)
       const pageSwarm = 'private' in context ? undefined : context.swarm_id
       // a swarm the Ask cannot use is never targeted because the person stands near it (ask-fix r1)
       const hive = useHive.getState()
@@ -1202,13 +1416,20 @@ export const useAskStore = create<AskStore>()((set, get) => {
       const st = get()
       const around: Around = forced
         ? { ...forced, context: withPreselected(forced.context, answererChip({ settings: st.settings, personal: st.personal, pageSwarm, to: 'private' in forced.context ? undefined : forced.context.mind }), st.settings) }
-        : planAsk(context, { settings: st.settings, personal: st.personal, swarmOf: (id) => hive.swarms[id], words, through: { minds: Object.values(hive.agents), app: pageApp, prefer: (id) => throughMinds.get(id) }, thread: st.thread, carry: st.carry, threadOpen: st.threadOpen })
+        : planAsk(context, { explicitChoice: answererChoice.matches(context), settings: st.settings, personal: st.personal, swarmOf: (id) => hive.swarms[id], words, through: { minds: Object.values(hive.agents), app: pageApp, prefer: (id) => throughMinds.get(id) }, thread: st.thread, carry: st.carry, threadOpen: st.threadOpen })
       context = around.context
+      const attached = browser?.current() ? browser : null
+      const personal = st.personal, eligibility = st.browserMind
+      const own = !!personal && planRecipient(around, { agents: hive.agents, swarms: hive.swarms, personal, settings: st.settings }).id === personal.id
+      const useBrowser = !!attached && attached.owner.lifecycle.phase === 'ready' && attached.owner.workerReady() && own && !!eligibility && eligibility.mindId === personal?.id && eligibility.gateway && eligibility.available && eligibility.preference
+      const answerOwner = attached && own ? (useBrowser ? 'iter' as const : 'fallback' as const) : undefined
       const op = opId()
-      last = { text: words, context, opts: kept(opts) }
+      last = { text: words, context, opts: kept(opts), identityEpoch: currentEpoch() }
       lastOp = op
       const snap = snapshot()
-      const principal = get().bound!.principal
+      const bound = get().bound!
+      const principal = bound.principal
+      const sendingHive = useHive.getState()
       // when the person asked: what they forget after this is never learned from this turn
       const memorySince = askMemory.turnMark()
       // the person's own memory for this turn, recalled in this browser; never from a private app's page
@@ -1216,12 +1437,78 @@ export const useAskStore = create<AskStore>()((set, get) => {
       const recalled = privatePage ? { notes: [], ids: [] } : askMemory.notesFor(words)
       // the original request: kept as sent, so a check can send exactly it again under the same id (Review B1, 45392df)
       const body: AskBody = { operation_id: op, text: words.slice(0, 4000), context, via: opts.via ?? 'typed', ...(recalled.notes.length ? { memory_notes: recalled.notes } : {}) }
-      set((s) => ({ open: op, threadOpen: true, turns: { ...s.turns, [op]: { ...newTurn(op, words, opts.where, opts.about), memorySince, privatePage, ...(pageSwarm ? { swarm: pageSwarm } : {}), ...(around.note ? { rerouted: around.note } : {}), ...(around.why ? { reroutedWhy: around.why } : {}), ...(around.fixSwarm ? { fixSwarm: around.fixSwarm } : {}) } }, log: [...s.log, { kind: 'turn' as const, op }] }))
+      // This is the original body kept for unknown-admission readback/retry, never a second request or a new owner.
+      if (useBrowser) body.answer_in = 'browser'
+      const pendingTurn: TurnMeta = { ...newTurn(op, words, opts.where, opts.about), memorySince, privatePage, ...(pageSwarm ? { swarm: pageSwarm } : {}), ...(around.note ? { rerouted: around.note } : {}), ...(around.why ? { reroutedWhy: around.why } : {}), ...(around.fixSwarm ? { fixSwarm: around.fixSwarm } : {}) }
+      set((s) => ({ open: op, threadOpen: opts.quiet ? s.threadOpen : true, turns: { ...s.turns, [op]: pendingTurn }, log: [...s.log, { kind: 'turn' as const, op }] }))
+      if (!snap.ok()) {
+        // A synchronous observer invalidated this turn before any POST or receipt: these words were not sent.
+        set((s) => {
+          const currentHive = useHive.getState()
+          if (s.bound !== bound || s.bound?.principal !== principal || currentHive.client !== sendingHive.client || currentHive.session !== sendingHive.session || currentHive.inits !== sendingHive.inits || authIdentity(currentHive.client) !== bound.auth) return s
+          const unsent = s.turns[op]
+          // A copied or reworded row can still be unsent; keep changed words as device-local rows.
+          if (!unsent || unsent.op !== op || typeof unsent.you !== 'string' || unsent.where !== opts.where || unsent.about !== opts.about || unsent.state !== 'sending' || unsent.lastSeq !== 0
+            || unsent.events.length || unsent.ahead.length || unsent.notes.length || unsent.steers.length || Object.keys(unsent.outcomes).length
+            || unsent.unsure || unsent.held?.length || unsent.refusedEarly || unsent.appAsk || unsent.appAskTurnId || unsent.gap || unsent.takeover || unsent.recovering
+            || unsent.moves !== 0 || unsent.tookOver || unsent.presence !== 0 || admissionReceipts.has(op)) return s
+          const { [op]: removed, ...turns } = s.turns
+          void removed
+          const log = s.log.flatMap((entry): LogEntry[] => {
+            if (entry.kind !== 'turn' || entry.op !== op) return [entry]
+            return unsent.you === words ? [] : [
+              { kind: 'row', row: { id: `${op}#unsent-you`, kind: 'you', text: unsent.you, where: unsent.where } },
+              { kind: 'row', row: { id: `${op}#unsent-note`, kind: 'note', text: 'These words were not sent.' } },
+            ]
+          })
+          return { turns, open: s.open === op ? null : s.open, log }
+        })
+        opts.admission?.({ admitted: false, reason: 'not_admitted' })
+        return
+      }
+      // No unsent watch to cancel; a publication-time frame keeps its own progress/watch on rejection.
       watch(op)
+      if (opts.onOperation) {
+        for (const [id, prior] of admissionReceipts) if (!get().turns[id] || !admissionRecords.get(prior)?.current()) admissionReceipts.delete(id)
+        const receipt: AskOperationReceipt = Object.freeze({ op, principal, epoch: get().epoch })
+        admissionReceipts.set(op, receipt)
+        admissionRecords.set(receipt, { current: snap.ok, state: 'unknown' })
+        opts.onOperation(receipt)
+      }
+      if (answerOwner) {
+        patchTurn(op, { answerOwner })
+        if (answerOwner === 'fallback') noteAfter(op, 'Your hive mind is answering this turn while your browser mind is unavailable.')
+      }
+      // Streamed completion is stronger admission evidence than a delayed HTTP
+      // reply. Preserve that terminal outcome and never project its old thread
+      // over a newer request (including a late transport error).
+      const finishStreamed = (): boolean => {
+        const state = get().turns[op]?.state
+        if (state !== 'done' && state !== 'refused') return false
+        opts.admission?.(state === 'done' ? { admitted: true, op, principal } : { admitted: false, reason: 'refused' })
+        release(op)
+        return true
+      }
+      const deliver = async (): Promise<void> => {
       try {
         // the host takes memory_notes whatever its switches (core/ask.py _validate): no resend without them
-        const r = await client.ask(body)
+        const r = useBrowser ? await (() => { watch(op); return attached!.owner.lifecycle.begin(body) })() : await askAutoWake.deliver(op, {
+          client, principal, context: body.context, expectedOwn: answererChoice.expectedOwn(body.context),
+          current: () => snap.ok() && !!get().turns[op] && lastOp === op && (!get().open || get().open === op),
+          send: () => { watch(op); return client.ask!(body) }, phase: () => {}, retry: deliver,
+          reopen: () => { patchTurn(op, { state: 'sending' }); set({ open: op }) },
+          routeOwn: (next) => { body.context = next; if (lastOp === op && last) last = { ...last, context: next }; patchTurn(op, (t) => ({ rerouted: undefined, reroutedWhy: undefined, fixSwarm: undefined, held: t.held?.map((h) => ({ ...h, context: next })) })) },
+        })
+        if (r === ASK_NOT_SENT) {
+          if (snap.ok()) { opts.admission?.({ admitted: false, reason: 'failed' }); opts = kept(opts); closeTurn(op, 'refused') }
+          return
+        }
         if (!snap.ok()) return
+        if (r?.operation_id === op) recordAdmission(op, 'admitted', principal)
+        browserAdmitted(op, r)
+        if (!snap.ok()) return
+        patchTurn(op, { answerer: r.thread.mind })
+        if (finishStreamed()) return
         // one turn's metadata never overwrites the host's switches; a disagreement reads them again (r2 P2)
         if (askMemory.sawHive(!!r.conductor)) void get().loadSettings()
         if (body.memory_notes) askMemory.markUsed(recalled.ids)
@@ -1235,13 +1522,21 @@ export const useAskStore = create<AskStore>()((set, get) => {
         if (through) set((s) => ({ carry: sw ? { mind: around.through!.mind, swarm: sw } : s.carry }))
         patchTurn(op, (t) => ({ ...(t.state === 'sending' ? { state: 'open' as const } : {}), ...(as && !t.actingAs ? { actingAs: as } : {}), ...(through ? { rerouted: through, reroutedWhy: `${around.through!.why}, so ${r.thread.mind.name.slice(0, 60)} answers directly` } : {}) }))
         opts.admission?.({ admitted: true, op, principal })
+        release(op)
       } catch (err) {
-        if (!snap.ok()) return
+        if (!snap.ok() || finishStreamed()) return
+        if (body.answer_in && attached?.current() && attached.owner.lifecycle.phase === 'ready' && attached.owner.lifecycle.operation === null) {
+          // The lifecycle refused before reserving or calling the host. Never turn that into a recovery POST.
+          patchTurn(op, { refusedEarly: 'not_available' })
+          closeTurn(op, 'refused')
+          opts.admission?.({ admitted: false, reason: 'held' })
+          return
+        }
         // a host without the answer-through-mind route refuses the addressed mind (no_orchestrator): the turn is sent
         // once more with the r1 fallback, and the refused attempt leaves no row (ask-fix r2 compatibility)
         // ...and so is a mind asleep where the host has no conductor (Platform 80d066e: mind_asleep)
         const throughRefused = err instanceof ApiError ? refusalOf(err.code) : null
-        if (around.compat && (throughRefused === 'no_orchestrator' || throughRefused === 'mind_asleep')) {
+        if (!body.answer_in && around.compat && (throughRefused === 'no_orchestrator' || throughRefused === 'mind_asleep')) {
           const sw = 'swarm_id' in around.context ? around.context.swarm_id : undefined
           if (sw) throughMinds.delete(sw)
           closeTurn(op, 'refused')
@@ -1258,18 +1553,26 @@ export const useAskStore = create<AskStore>()((set, get) => {
           // not known whether the host has it: never refused, never re-sent under a new id; checked by its own id
           clearTimeout(silence.get(op))
           silence.delete(op)
-          patchTurn(op, (t) => (t.state === 'sending' ? { state: 'checking', unsure: { body, principal, tries: 0, state: 'checking' } } : {}))
+          patchTurn(op, (t) => (t.state === 'sending' || body.answer_in && attached?.current() && attached.owner.lifecycle.phase === 'admitting' ? { state: 'checking', unsure: { body, principal, tries: 0, state: 'checking' } } : {}))
           await check(op, snap)
           return
         }
+        recordAdmission(op, 'refused', principal)
         const reason = refusalOf(err instanceof ApiError ? err.code : null)
+        if (body.answer_in && attached?.current() && attached.owner.lifecycle.phase === 'admitting' && attached.owner.lifecycle.operation === op) {
+          attached.owner.lifecycle.confirmedRefusal(op)
+          void get().loadSettings()
+        }
         const details = err instanceof AskRefusal ? err.details : {}
         const own = reason === 'mind_asleep' && !!details.mind && details.mind.id === get().personal?.id
-        patchTurn(op, { refusedEarly: reason, asleep: details.mind, ...(own ? { asleepOwn: true } : {}) })
+        patchTurn(op, { refusedEarly: reason, asleep: details.mind, ...(own ? { asleepOwn: true } : {}), ...(reason === 'own_key_needed' && details.keySetup ? { keySetup: details.keySetup } : {}) })
+        release(op)
         closeTurn(op, 'refused')
         // the thread already has a turn in flight (another tab, or a reload): show that one, live
         if (reason === 'ask_busy' && details.operation_id && !get().turns[details.operation_id]) void get().rejoin(details.operation_id)
       }
+      }
+      return deliver()
     },
 
     steer(text, context, opts = {}) {
@@ -1282,12 +1585,23 @@ export const useAskStore = create<AskStore>()((set, get) => {
       const op = target
       const t = op ? get().turns[op] : undefined
       const { client } = useHive.getState()
-      if (op && t?.state === 'checking') {
+      if (op && t?.answerOwner === 'iter' && browser?.current() && browser.owner.lifecycle.phase === 'admitting' && browser.owner.lifecycle.operation === op && t.state !== 'checking') {
+        patchTurn(op, x => ({ held: [...(x.held ?? []), { text: words, context, opts: kept(opts) }] }))
+        opts.admission?.({ admitted: false, reason: 'held' })
+        noteAfter(op, 'Held until the browser turn is confirmed; then these words are sent.')
+        return
+      }
+      if (op && t?.browserStopping && !t.browserClosed) {
+        get().addLocal(words, 'Your earlier browser turn is still stopping. Check its outcome before asking again.', { state: 'waiting' })
+        opts.admission?.({ admitted: false, reason: 'held' })
+        return
+      }
+      if (op && t && (t.state === 'checking' || askAutoWake.pending(op))) {
         // Review B1 (45392df): nothing new is sent while it is not known whether the last request arrived
         // held, never dropped: released once it is known whether the hive has the request
         patchTurn(op, (x) => ({ held: [...(x.held ?? []), { text: words, context, opts: kept(opts) }] }))
         opts.admission?.({ admitted: false, reason: 'held' })
-        noteAfter(op, 'Held until the hive confirms it received your last request; then these words are sent.')
+        noteAfter(op, askAutoWake.pending(op) ? 'Held while the mind wakes; these words will join your request.' : 'Held until the hive confirms it received your last request; then these words are sent.')
         return
       }
       // a closed turn: the words are a fresh request
@@ -1332,12 +1646,24 @@ export const useAskStore = create<AskStore>()((set, get) => {
     async admit(text, context, opts = {}) {
       const asker = get().bound?.principal ?? null
       let first: AskAdmission | null = null
-      const o: AskOpts = { ...kept(opts), admission: (a) => void (first ??= a) }
-      await get().send(text, context, o)
-      const a = (first as AskAdmission | null) ?? { admitted: false, reason: 'not_admitted' }
+      let receipt: AskOperationReceipt | null = null
+      let threw = false
+      const o: AskOpts = { ...kept(opts), onOperation: (r) => { receipt = r }, admission: (a) => void (first ??= a) }
+      try { await get().send(text, context, o) } catch { threw = true }
+      // The returned receipt names the last issued operation, including a compatibility fallback.
+      const original = receipt as AskOperationReceipt | null
+      if (original) return get().admissionOf(original)
+      const a = (first as AskAdmission | null) ?? { admitted: false, reason: threw ? 'unknown' : 'not_admitted' }
       // bound to the person who asked: a change of person (or thread) in between admits nothing for anyone
       if (a.admitted && (!asker || a.principal !== asker || get().bound?.principal !== asker)) return { admitted: false, reason: 'not_admitted' }
       return a
+    },
+
+    admissionOf(receipt) {
+      const record = admissionRecords.get(receipt)
+      if (!record || admissionReceipts.get(receipt.op) !== receipt || !record.current() || receipt.epoch !== get().epoch || receipt.principal !== get().bound?.principal || !get().turns[receipt.op]) return { admitted: false, reason: 'unknown' }
+      if (record.state === 'admitted') return { admitted: true, op: receipt.op, principal: receipt.principal }
+      return { admitted: false, reason: record.state === 'refused' ? 'refused' : 'unknown', receipt }
     },
 
     async rejoin(op) {
@@ -1347,7 +1673,8 @@ export const useAskStore = create<AskStore>()((set, get) => {
       const snap = snapshot()
       try {
         const v = await client.askTurn(op, 0)
-        if (!snap.ok() || get().turns[op]) return
+        if (!snap.ok() || get().turns[op] || v.operation_id !== op) return
+        if (v.route === 'browser_mind' && !browserView(op, v)) return
         if (v.app_ask === true && (v.operation_id !== op || !askSelector(v.turn_id))) return
         const open = v.state !== 'done' && v.state !== 'refused'
         set((s) => ({
@@ -1356,6 +1683,7 @@ export const useAskStore = create<AskStore>()((set, get) => {
           turns: { ...s.turns, [op]: { ...newTurn(op, v.text ?? 'Your earlier request'), ...(v.app_ask === true ? { appAsk: true as const, appAskTurnId: v.turn_id, privatePage: true } : {}), state: open ? 'open' : v.state === 'done' ? 'done' : 'refused', ...(readActingAs(v.acting_as) ? { actingAs: readActingAs(v.acting_as)! } : {}) } },
           log: [...s.log, { kind: 'turn' as const, op }],
         }))
+        if (v.route === 'browser_mind' && v.app_ask !== true) patchTurn(op, { answerOwner: 'iter', browserTurnId: v.turn_id })
         await get().recover(op)
       } catch {
         /* the earlier turn could not be read: nothing to show */
@@ -1391,11 +1719,13 @@ export const useAskStore = create<AskStore>()((set, get) => {
       set({ threadOpen: true, ...(accepted ? { thread: accepted.thread } : {}), ...(['open', 'sending', 'checking'].includes(turn.state) ? { open: op } : {}) })
     },
 
-    async retryLast() {
-      liveBound()
+    async retryLast(requestId, identityEpoch, context) {
+      // No fallback to the ambient last request: an old button must never spend for a newer request or person.
+      if (!liveBound() || identityEpoch !== currentEpoch() || !last || last.identityEpoch !== identityEpoch || requestId !== lastOp || !context || context !== askRetryContext(requestId, identityEpoch)) return
       // Review B1 (45392df): the last request's admission is not known: check it (the same request, the same id)
-      const t = lastOp ? get().turns[lastOp] : undefined
-      if (t?.state === 'checking') return get().checkAgain(t.op)
+      const t = get().turns[requestId]
+      if (!t) return
+      if (t.state === 'checking') return get().checkAgain(t.op)
       // still being answered: never a second request for it
       if (t && (t.state === 'sending' || t.state === 'open')) return
       // settled (answered, or the host's own no): asking again is a new request, under a new id
@@ -1442,11 +1772,15 @@ export const useAskStore = create<AskStore>()((set, get) => {
           const after = get().turns[op]?.lastSeq ?? 0
           const state = await client.askTurn(op, after)
           if (!snap.ok()) return
+          if (get().turns[op]?.answerOwner === 'iter' && !browserView(op, state)) { reportBrowserAdmission(op); return }
+          browserAdmitted(op, state)
           if (state.app_ask === true && (state.operation_id !== op || !get().adoptAppTurn(op, state.turn_id))) return
           for (const raw of [...state.events].sort((a, b) => a.seq - b.seq)) {
             const e = readFrame(raw, op)
             if (e && e.operation_id === op) accept(e)
           }
+          // A successful exact-operation readback is proof even if it has no new frames.
+          if (state.operation_id === op) recordAdmission(op, 'admitted')
           if (!state.more || (get().turns[op]?.lastSeq ?? 0) <= after) break
         }
       } catch {
@@ -1455,6 +1789,7 @@ export const useAskStore = create<AskStore>()((set, get) => {
         if (snap.ok()) patchTurn(op, { recovering: false })
       }
       if (snap.ok()) afterRead(op, snap)
+      if (snap.ok()) reportBrowserAdmission(op)
     },
 
     async retryRecover(op) {
@@ -1504,13 +1839,32 @@ export const useAskStore = create<AskStore>()((set, get) => {
       const op = get().open
       const { client } = useHive.getState()
       if (!op) return
+      if (askAutoWake.cancel(op)) { patchTurn(op, { refusedEarly: 'stopped' }); closeTurn(op, 'refused'); return }
       const snap = snapshot()
+      const attached = browser?.current() && get().turns[op]?.answerOwner === 'iter' ? browser : null
+      if (attached) { patchTurn(op, { browserStopping: true }); attached.owner.stopping(op) }
+      let unconfirmed = false
       try {
-        await client?.askStop?.(op)
+        const result = await client?.askStop?.(op)
+        if (!snap.ok()) return
+        if (attached?.current()) {
+          const closed = browserView(op, result)
+          if (closed && (closed.state === 'done' || closed.state === 'refused')) browserAdmitted(op, closed)
+          else unconfirmed = true
+        }
       } catch {
         if (!snap.ok()) return
-        patchTurn(op, { refusedEarly: 'stopped' })
-        closeTurn(op, 'refused')
+        if (attached?.current()) {
+          unconfirmed = true
+        } else {
+          patchTurn(op, { refusedEarly: 'stopped' })
+          closeTurn(op, 'refused')
+        }
+      }
+      if (unconfirmed && snap.ok() && attached?.current()) {
+        noteAfter(op, 'The hive has not confirmed this browser turn stopped. Checking its outcome; Stop again if it stays open.')
+        // One bounded read of this operation; never another Stop, admission or fallback.
+        await get().recover(op)
       }
     },
 
@@ -1519,6 +1873,8 @@ export const useAskStore = create<AskStore>()((set, get) => {
       const { thread } = get()
       const { client } = useHive.getState()
       if (thread) await client?.askEndThread?.(thread.id).catch(() => undefined)
+      answererChoice.clear()
+      askAutoWake.clear()
       undos.clear()
       clearRetries()
       set((s) => ({ ...fresh(), epoch: s.epoch + 1 }))
@@ -1538,6 +1894,8 @@ export const useAskStore = create<AskStore>()((set, get) => {
         }
         if (!snap.ok()) return false
       }
+      answererChoice.clear()
+      askAutoWake.clear()
       undos.clear()
       clearRetries()
       set((s) => ({ ...fresh(), epoch: s.epoch + 1 }))
@@ -1695,15 +2053,16 @@ export const useAskStore = create<AskStore>()((set, get) => {
       const { client } = useHive.getState()
       if (!client?.askSettings) return
       const snap = snapshot()
+      const mineAt = ++mindRead
       // the person's own mind (Platform P1/P2): a host without the route (404), or any failure, is no mind here
       const mine = client.myMind
         ? client.myMind().then(
-            (v) => readMyMind(v),
-            () => null,
+            (v) => ({ mind: readMyMind(v), browser: readBrowserMindRoute(v) }),
+            () => ({ mind: null, browser: null }),
           )
-        : Promise.resolve(null)
+        : Promise.resolve({ mind: null, browser: null })
       void mine.then((m) => {
-        if (snap.ok()) set({ personal: m })
+        if (snap.ok() && mineAt === mindRead) set({ personal: m.mind, browserMind: m.browser })
       })
       try {
         const st = await client.askSettings()
@@ -1717,13 +2076,21 @@ export const useAskStore = create<AskStore>()((set, get) => {
       const snap = snapshot()
       const ok = await get().setDefaultSwarm(swarmId)
       if (!ok || !snap.ok()) return 'failed'
+      // The committed explicit default supersedes a thread-local choice before
+      // any refusal repair reaches send() and applies recipient planning.
+      answererChoice.clear()
       const t = op ? get().turns[op] : undefined
       const reason = t?.refusedEarly
       const again = !!t && !!last && op === lastOp && t.state === 'refused' && !t.resent && !get().open && !!reason && (PICKER_REASONS.includes(reason) || reason === 'mind_asleep')
       if (!again) return 'saved'
-      patchTurn(op!, { resent: true })
+      const targetSwarm = swarmId ?? get().personal?.swarm_id
+      if (!targetSwarm) return 'saved'
+      patchTurn(op!, { resent: true, resentMind: undefined })
       const prev = last!
-      await get().send(prev.text, resendContext(prev.context, reason!, swarmId), prev.opts)
+      const admitted = await get().admit(prev.text, resendContext(prev.context, reason!, targetSwarm), prev.opts)
+      if (!snap.ok()) return 'failed'
+      if (!admitted.admitted) { patchTurn(op!, { resent: false }); return 'saved-not-sent' }
+      patchTurn(op!, { resentMind: get().turns[admitted.op]?.answerer })
       return 'resent'
     },
 
@@ -1731,7 +2098,15 @@ export const useAskStore = create<AskStore>()((set, get) => {
       const { client } = useHive.getState()
       if (!client?.setAskSettings) return false
       const snap = snapshot()
+      const principal = get().bound?.principal
+      if (!snap.ok()) return false
       try {
+        // An explicit preference write belongs to the freshly confirmed person,
+        // even when a stale bound principal survived without a credential event.
+        if (client.me) {
+          const me = await client.me()
+          if (!snap.ok() || me.principal !== principal) return false
+        }
         const st = await client.setAskSettings({ swarm_id: swarmId })
         // j0-fixes r1: an explicit choice of who answers beats continuity: the carried thread mind is dropped
         if (snap.ok()) {
@@ -1746,7 +2121,7 @@ export const useAskStore = create<AskStore>()((set, get) => {
 
     async setThreadLimit(usd) {
       const { client } = useHive.getState()
-      // never above $5 (the owner 2026-10-05), nor above the host's own maximum when it says one
+      // never above $5 (Jon 2026-10-05), nor above the host's own maximum when it says one
       const max = Math.min(get().settings?.max_thread_budget_usd ?? THREAD_LIMIT_MAX_USD, THREAD_LIMIT_MAX_USD)
       if (!client?.setAskSettings || !(usd > 0) || !(usd <= max)) return false
       const snap = snapshot()
@@ -1760,6 +2135,7 @@ export const useAskStore = create<AskStore>()((set, get) => {
     },
 
     setThreadOpen(open) {
+      if (!open) answererChoice.clear()
       // j0-fixes r1: closing the thread is a routing decision too: a closed thread carries no mind into a new request
       set(open ? { threadOpen: true } : { threadOpen: false, carry: null })
     },

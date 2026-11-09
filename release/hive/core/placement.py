@@ -1,4 +1,4 @@
-"""Where a mind lives, and moving it between hives (the owner, 2026-10-04: minds and swarms move between home and cloud at will).
+"""Where a mind lives, and moving it between hives (Jon, 2026-10-04: minds and swarms move between home and cloud at will).
 
 A mind is its workspace (memory, vector memory), its records here (who it is, its conversation, its wakeups, its own
 rules) and a connection to the hive it runs under. Moving it:
@@ -16,6 +16,7 @@ Truth and Atlas data never travel in a bundle: a mind's workspace is its own mem
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import json
@@ -23,13 +24,17 @@ import logging
 import os
 import pathlib
 import platform
+import re
 import secrets
 import shutil
+import stat
 import tarfile
 import time
+import unicodedata
 
 from .db import new_id, now
 from .governance_evidence import GovernanceEvidence, symbol
+from .health import people_message
 
 FORMAT = "omegahive.mind/1"
 SKIP_TOP = {"token", "tmp", "mind.pid", "agent.log", "repos", "run.metta"}
@@ -91,24 +96,28 @@ class Placement:
 
     def write_body(self, agent_id):
         """The body descriptor for this mind under this hive (read by modules/body_container)."""
-        me = self.identity()
-        root = self.hive.settings.data_dir / "agents" / agent_id
-        path = root / "memory" / "runtime" / "body" / "host.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({
-            "status": "present", "launcher": "omegahive", "hive_id": me["id"], "hive_name": me["name"],
-            "placement": "home" if me["home"] else "cloud", "owner": me["owner"],
-            "machine": {"system": platform.system(), "machine": platform.machine()},
-            "atoms": [f"(RunsUnder {symbol(agent_id)} {symbol(me['id'])})",
-                      f"(Placement {symbol(me['id'])} {'home' if me['home'] else 'cloud'})"],
-            "written_at": now(),
-        }, indent=2), encoding="utf-8")
-        return path
+        with self._workspace_guard(agent_id):
+            me = self.identity()
+            root = self.hive.settings.data_dir / "agents" / agent_id
+            path = root / "memory" / "runtime" / "body" / "host.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({
+                "status": "present", "launcher": "omegahive", "hive_id": me["id"], "hive_name": me["name"],
+                "placement": "home" if me["home"] else "cloud", "owner": me["owner"],
+                "machine": {"system": platform.system(), "machine": platform.machine()},
+                "atoms": [f"(RunsUnder {symbol(agent_id)} {symbol(me['id'])})",
+                          f"(Placement {symbol(me['id'])} {'home' if me['home'] else 'cloud'})"],
+                "written_at": now(),
+            }, indent=2), encoding="utf-8")
+            return path
 
     # ---- export ------------------------------------------------------------------------------------------
 
-    def export(self, agent_id, reader=None, mark=None, by=None):
-        """reader: a principal whose readable rows (Hive.reader_scope) are the only messages carried, for a personal
+    def export(self, agent_id, reader=None, mark=None, by=None, may_see_key=None):
+        """may_see_key (keyview, sol on f06f2915): the exporting caller's key-visibility check (app key_seer; None for
+        everything). A key the mind is assigned that they may not see is left out of the manifest before it is written
+        and hashed, so the bundle and its digest never carry it; the importing hive then pays as for no key.
+        reader: a principal whose readable rows (Hive.reader_scope) are the only messages carried, for a personal
         mind exported by anyone but an admin's explicit audit, its person included (app.py export_mind); None carries
         them all.
         mark: detail.personal_conversations in the manifest and the move record ("excluded", "included_person",
@@ -136,14 +145,26 @@ class Placement:
                 info = tarfile.TarInfo("workspace/" + rel.as_posix())
                 info.size, info.mode, info.mtime = len(data), 0o600, int(path.stat().st_mtime)
                 tar.addfile(info, io.BytesIO(data))
+            mind = {k: row.get(k) for k in ("id", "name", "kind", "model", "persona", "options", "hue", "budget_usd",
+                                            "idle_sleep_minutes", "owner", "visibility", "shared_with", "created_at",
+                                            "personal_of")}
+            if may_see_key is not None and mind.get("options"):
+                options = json.loads(mind["options"]) if isinstance(mind["options"], str) else dict(mind["options"])
+                if isinstance(options.get("key"), str) and options["key"] and not may_see_key(options["key"]):
+                    options.pop("key")
+                    mind["options"] = json.dumps(options) if isinstance(mind["options"], str) else options
             manifest = {
                 "format": FORMAT, "exported_at": now(), "from": self.identity(),
-                "mind": {k: row.get(k) for k in ("id", "name", "kind", "model", "persona", "options", "hue", "budget_usd",
-                                                 "idle_sleep_minutes", "owner", "visibility", "shared_with", "created_at",
-                                                 "personal_of")},
+                "mind": mind,
                 "role": self._role(row),
                 "swarm": self._swarm(row),
+                # two contracts (sol and Kimi on 7cf0ca57): `messages` is canonical, as stored and as the mind read them
+                # (Health's question keeps its id tag; import reads only these); `transcript` is the same rows as PEOPLE
+                # read them (health.people_message: a verified Health question untagged and marked health_check)
                 "messages": messages,
+                "transcript": [people_message(self.hive.message_view(r)) for r in messages],
+                "contracts": {"messages": "canonical: as stored and as the mind read them; import reads these",
+                              "transcript": "for people: the same rows, Health's verified question untagged (health_check)"},
                 "conversation_owners": self._conversation_owners(agent_id, messages),
                 "wakeups": self.hive.db.all("SELECT * FROM wakeups WHERE agent_id = ?", (agent_id,)),
                 "rules": [r for r in self.hive.db.all("SELECT scope, skill, mode, note, expires_at, origin FROM policy_rules WHERE scope = ?",
@@ -253,13 +274,115 @@ class Placement:
                 raise self.hive.error(400, "bad_bundle", f"{name} does not match its hash")
         return manifest, contents
 
+    def _check_import_identity(self, agent_id, existing, manifest_sha256):
+        canonical = re.fullmatch(r"a_(?:[0-9a-f]{8}|[0-9a-f]{32})", agent_id)
+        departed = existing is not None and self.hive.db.one(
+            "SELECT 1 FROM mind_moves WHERE agent_id = ? AND direction = 'out' AND manifest_sha256 = ? LIMIT 1",
+            (agent_id, manifest_sha256))
+        legacy = departed and re.fullmatch(r"a_[a-z0-9]+", agent_id)
+        if not canonical and not legacy:
+            raise self.hive.error(400, "bad_bundle", "bad mind id; noncanonical historical identities need recorded departure or owner migration")
+
+    @staticmethod
+    def _namespace_key(value):
+        return unicodedata.normalize("NFKC", unicodedata.normalize("NFKC", value).casefold())
+
+    @staticmethod
+    def _component(value):
+        return isinstance(value, str) and value not in ("", ".", "..") and "\0" not in value and pathlib.Path(value).name == value
+
+    @staticmethod
+    def _inode(path):
+        try:
+            value = path.stat()
+            return value.st_dev, value.st_ino
+        except (FileNotFoundError, NotADirectoryError):
+            return None
+
+    def _namespace_index(self, parent):
+        # A linked ancestor also makes resolved workspace paths unsuitable for a warm inode snapshot.
+        # Missing components are safe to cache as absent: creating them changes the parent stamp below.
+        cacheable = True
+        for component in (parent, *parent.parents):
+            try:
+                if stat.S_ISLNK(component.lstat().st_mode):
+                    cacheable = False
+                    break
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+        if not cacheable and not getattr(self, "_namespace_link_warned", False):
+            self._namespace_link_warned = True
+            log.warning("Namespace cache reuse disabled by a linked workspace ancestor; guards will use fresh scans.")
+        try:
+            parent_stat = parent.stat()
+            directory = (parent_stat.st_dev, parent_stat.st_ino, parent_stat.st_mtime_ns, parent_stat.st_ctime_ns)
+        except (FileNotFoundError, NotADirectoryError):
+            directory = None
+        revision = self.hive.db.agent_namespace_revision()
+        cache = getattr(self, "_namespace_cache", None)
+        if cacheable and cache is not None and cache["cacheable"] and cache["revision"] == revision and cache["parent"] == parent and cache["directory"] == directory:
+            return cache
+        rows = self.hive.db.all("SELECT id FROM agents")
+        cache = {"revision": revision, "directory": directory, "parent": parent, "groups": {}, "inodes": {}, "by_id": {}, "invalid": False, "cacheable": cacheable}
+        for row in rows:
+            identity = row["id"]
+            if not isinstance(identity, str):
+                cache["invalid"] = True
+                continue
+            cache["groups"].setdefault(self._namespace_key(identity), []).append(identity)
+            if self._component(identity):
+                path = parent / identity
+                try:
+                    entry = path.lstat()
+                except (FileNotFoundError, NotADirectoryError):
+                    inode = None
+                else:
+                    # Identities are single path components. A workspace symlink may traverse intermediaries outside
+                    # this parent; their retargeting changes neither parent metadata nor the requested mind's inode.
+                    # Keep the recorded namespace authoritative, but never reuse a resolved-inode snapshot with links.
+                    if stat.S_ISLNK(entry.st_mode):
+                        cache["cacheable"] = False
+                        inode = self._inode(path)
+                    else:
+                        inode = entry.st_dev, entry.st_ino
+                cache["by_id"][identity] = inode
+                if inode is not None:
+                    cache["inodes"].setdefault(inode, []).append(identity)
+        self._namespace_cache = cache if cache["cacheable"] else None
+        return cache
+
+    def _check_workspace_namespace(self, agent_id, root):
+        # The index is derived only from the DB, never a second namespace authority. TEMP triggers invalidate identity
+        # writes before commit; rollback invalidates uncommitted views; data_version covers external commits.
+        if not self._component(agent_id) or root.name != agent_id:
+            raise self.hive.error(409, "workspace_identity_invalid", "invalid mind workspace identity; owner migration required")
+        cache = self._namespace_index(root.parent)
+        if cache["invalid"]:
+            raise self.hive.error(409, "workspace_identity_invalid", "invalid recorded mind identity; owner migration required")
+        inode = self._inode(root)
+        if agent_id in cache["by_id"] and cache["by_id"][agent_id] != inode:
+            # Directory creation/replacement is a cold fallback, not a scan on every nested prompt/token write.
+            self._namespace_cache = None
+            cache = self._namespace_index(root.parent)
+        if any(value != agent_id for value in cache["groups"].get(self._namespace_key(agent_id), ())):
+            raise self.hive.error(409, "workspace_identity_conflict", "another historical mind identity owns this workspace namespace; owner migration required")
+        if inode is not None and any(value != agent_id for value in cache["inodes"].get(inode, ())):
+            raise self.hive.error(409, "workspace_identity_conflict", "another historical mind identity owns this workspace namespace; owner migration required")
+
+    @contextlib.contextmanager
+    def _workspace_guard(self, agent_id, root=None):
+        root = root if root is not None else self.hive.settings.agents_dir / agent_id
+        with self.hive.db.transaction():
+            self._check_workspace_namespace(agent_id, root)
+            yield root
+
     def import_(self, bundle, swarm_id=None, owner=None, by=None, may_use_key=None, tools_ok=True):
         manifest, contents = self.read_bundle(bundle)
+        digest = hashlib.sha256(json.dumps(manifest, indent=1).encode()).hexdigest()
         mind = manifest["mind"]
         agent_id = str(mind["id"])
-        if not agent_id.startswith("a_") or not agent_id[2:].isalnum():
-            raise self.hive.error(400, "bad_bundle", "bad mind id")
         existing = self.hive.db.one("SELECT * FROM agents WHERE id = ?", (agent_id,))
+        self._check_import_identity(agent_id, existing, digest)
         if existing and not existing.get("moved_to") and not existing["deleted"]:
             raise self.hive.error(409, "already_here", f"{mind['name']} already lives on this hive")
         if existing and owner and existing.get("owner") and existing["owner"] != owner:
@@ -286,7 +409,8 @@ class Placement:
         self.hive.check_key_lock(lock_owner, _options_of(existing), wanted, by)   # app platform P3a: import too
         if wanted.get("tools") and not tools_ok:
             raise self.hive.error(403, "admin_only", "only a hive admin can do that")
-        options = self.hive._options(wanted, model)
+        hidden = bool(wanted.get("key") and may_use_key is not None and not may_use_key(wanted["key"]))   # kept, unseen
+        options = self.hive._options(wanted, model, hidden_key=hidden)
         self.hive.validate_tools(mind.get("kind"), options, model, agent_id if existing else None)
         for name, data in contents.items():               # memory files are loaded as MeTTa at boot: atoms only
             if name.startswith("workspace/memory/") and name.endswith(".metta") and _has_bang(data):
@@ -296,6 +420,7 @@ class Placement:
             raise self.hive.error(400, "swarm_required", "choose a swarm on this hive for the mind to join")
         self.hive.require_open_swarm(swarm_id)
         root = self.hive.settings.data_dir / "agents" / agent_id
+        self._check_workspace_namespace(agent_id, root)  # preflight only; the write-guarded decision is below
         root.parent.mkdir(parents=True, exist_ok=True)
         # Stage first, beside the target, touching nothing live (stand-in r6): the swap happens only under the mind's
         # lock and the swarms' fences, after the row is re-validated, and is undone if the write does not land.
@@ -345,13 +470,20 @@ class Placement:
                 self.hive.personal.refuse_join(swarm_id, (fresh or {}).get("personal_of"))   # and holds no other mind
                 if fresh and fresh["deleted"]:
                     self.hive.settle_cleanup_before_return(agent_id)   # its old deletion's cleanup never acts on it live
-                if root.exists():          # the old workspace goes aside (never merged), and comes back on any failure
-                    aside = root.parent / f".{agent_id}.before-{int(time.time())}-{secrets.token_hex(3)}"
-                    os.rename(root, aside)
-                os.rename(staged, root)
                 spaces_done = []           # (op, swarm) applied, undone in reverse on failure
+                installed = False
                 try:
                     with self.hive.db.transaction():
+                        # The existing BEGIN IMMEDIATE write guard serializes namespace rows through installation
+                        # and commit, including when alias spellings have different supervisor/mind lock keys.
+                        self._check_import_identity(agent_id, self.hive.db.one("SELECT * FROM agents WHERE id = ?", (agent_id,)), digest)
+                        self._check_workspace_namespace(agent_id, root)
+                        if root.exists():  # old workspace is restored on any validation/install/commit failure
+                            aside = root.parent / f".{agent_id}.before-{int(time.time())}-{secrets.token_hex(3)}"
+                            os.rename(root, aside)
+                        self._check_workspace_namespace(agent_id, root)  # immediately before the installing rename
+                        os.rename(staged, root)
+                        installed = True
                         if existing:   # a returning mind joins only an existing, open swarm, re-checked in the write
                             self.hive.update_in_open_swarm("agents", agent_id, values, swarm_id, expect=expect)
                         else:
@@ -386,7 +518,6 @@ class Placement:
                                                       origin="" if owner else (r.get("origin") or ""), publish=False,
                                                       granted_by=by or owner)   # host-identity r1.1: who brought it in
                             rules_added = True
-                        digest = hashlib.sha256(json.dumps(manifest, indent=1).encode()).hexdigest()
                         source = manifest.get("from") or {}
                         self.hive.db.insert("mind_moves", {"id": new_id("mv"), "agent_id": agent_id, "direction": "in",
                                                            "other_hive": source.get("id"), "other_name": source.get("name"),
@@ -407,12 +538,13 @@ class Placement:
                             (self.hive.spaces.revoke if op == "grant" else self.hive.spaces.grant)(agent_id, sid)
                         except Exception:   # noqa: BLE001
                             log.exception("placement rollback: could not undo %s of %s in %s", op, agent_id, sid)
-                    os.rename(root, staged)                 # the staged copy (now with any prepared files) is removed below
+                    if installed:
+                        os.rename(root, staged)             # the staged copy (with any prepared files) is removed below
                     if aside is not None:
                         os.rename(aside, root)
                         aside = None
                     raise
-                for notify in (lambda: rules_added and self.hive.events.publish("policy.updated", rules=self.hive.policy.rules()),
+                for notify in (lambda: rules_added and self.hive.events.publish("policy.updated", **self.hive.policy.rule_views()),
                                lambda: self.evidence.record(f"in:{agent_id}:{digest[:16]}",
                                                             placed_statement(agent_id, self.identity()["id"]), True),
                                lambda: self.hive.events.publish("swarm.updated", swarm=self.hive.swarm(swarm_id)),

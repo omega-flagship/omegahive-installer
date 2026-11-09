@@ -22,7 +22,7 @@ from ..spaces import sexpr
 from ..spaces.service import SpaceService
 from .config import Settings
 from .db import Database, latest_stamp, new_id, now, parse_stamp
-from .health import HEALTH_QUESTION, HEALTH_QUESTION_TAG, HEALTH_SENDER
+from .health import HEALTH_QUESTION, HEALTH_QUESTION_TAG, HEALTH_SENDER, for_people
 from .events import EventBus
 from .goals import Goals
 from .lab import Lab
@@ -37,6 +37,8 @@ from .providers import clean_options
 from .schedule import Scheduler
 
 log = logging.getLogger("hive")
+SEND_TIMEOUT = 30      # seconds a hub send may take before it counts as failed (the socket is then ended)
+CLOSE_TIMEOUT = 5
 _HEALTH_FALLBACK_LOGGED: set[str] = set()   # message ids whose unreadable extra was logged (Hive._health_question)
 
 AGENT_KINDS = {"omega", "iter", "module"}
@@ -90,6 +92,14 @@ class Hive:
         self.events = EventBus()
         self.supervisor = supervisor
         self.connections: dict[str, object] = {}  # agent_id -> hub websocket
+        # agent_id -> (its hub websocket, the highest hub_seq sent on it, None until that socket's resume is answered).
+        # The channel keeps last_seen_seq as a high-water mark and drops a seq at or below it (hive_channel.py,
+        # _Daemon.deliver), so a socket gets the mind's stored messages in hub_seq order, each once (upstream #18/#21).
+        self.sent_upto: dict[str, tuple[object, int | None]] = {}
+        # agent_id -> one lock: a socket's flushes run one at a time, each send completing (or failing and ending the
+        # socket's live delivery) before the next flush reads the mark (review r1.1 P1: an in-flight send that later
+        # failed could be overtaken by a concurrent flush's successful newer send, and lost)
+        self.flush_locks: dict[str, asyncio.Lock] = {}
         self.boot_generation: dict[str, int] = {}  # agent_id -> connections since the hive started
         self.boot_nonce: dict[str, str] = {}       # agent_id -> nonce of its current connection
         self.name = "OmegaHive"
@@ -174,6 +184,8 @@ class Hive:
         self.me_spend = MeSpend(self)   # G4: a person's own spend per day, read from the usage rows
         from .governance_evidence import GovernanceEvidence
         self.governance = GovernanceEvidence(self)
+        from .mindgateway_evidence import MindGatewayEvidence
+        self.mindgateway = MindGatewayEvidence(self)   # gateway r1e: advisory, write-only; off unless HIVE_MIND_GATEWAY=1
         from .placement import Placement
         self.placement = Placement(self)
         from .person_requests import PersonRequests
@@ -193,8 +205,14 @@ class Hive:
         self.minds = Minds(self)   # mind control r2.12/r2.13: children a team's controller runs under a person's lease
         from .proposal_tests import ProposalTests
         self.proposal_tests = ProposalTests(self)   # linkage slice 4 (r3.6 §b): proposal-test claims, bind, holds, settlement
+        from .code_controller_engine import CodeControllerEngine
+        self.code_controller = CodeControllerEngine(self)   # Create - Code: the MeTTa reducer drives each Code request
+        from .create_plan_engine import CreatePlanEngine
+        self.create_plans = CreatePlanEngine(self)   # Create plans: the MeTTa plan controller R4.0 drives each plan
         from .repomap import RepoMaps
         self.repo_maps = RepoMaps(self)   # repo-map/1 Slice A: admin-loaded, read-only repository maps (repomap.py)
+        from .credentials import Credentials
+        self.credentials = Credentials(self)   # session onboarding R2.8: host-issued bridged-session credentials (credentials.py)
         self.newhive = None   # new-hive R1a (newhive.py): set by create_app only on a marked new installation
         self.last_llm = {}  # agent_id -> (latency_ms, tokens) of its latest model call
         self.llm_calls = {}  # agent_id -> monotonic times of its calls in the last minute
@@ -235,7 +253,7 @@ class Hive:
                     parent_swarm_id=parent["swarm_id"] if parent else None, child_swarm_ids=children,
                     services=json.loads(services["kinds"]) if services else [])
 
-    def update_swarm(self, swarm_id, data):
+    def update_swarm(self, swarm_id, data, *, _defer_events=False):
         """Name, description, the coordinating mind (a member) and the parent mind (a mind elsewhere that contains
         this swarm: the holarchy). Nesting never cycles and is at most four levels deep. Fenced (stand-in r3): held
         under this swarm's and the parent mind's swarm's membership fence, so a rename or attach never lands mid
@@ -243,12 +261,13 @@ class Hive:
         pid = data.get("parent_mind_id") if "parent_mind_id" in data else None
         parent = self.db.one("SELECT swarm_id FROM agents WHERE id = ? AND deleted = 0", (pid,)) if pid else None
         with self.swarm_membership(swarm_id, (parent or {}).get("swarm_id")):
-            return self._update_swarm_fenced(swarm_id, data, (parent or {}).get("swarm_id"))
+            return self._update_swarm_fenced(swarm_id, data, (parent or {}).get("swarm_id"),
+                                             _defer_events=_defer_events)
 
-    def _update_swarm_fenced(self, swarm_id, data, fenced_parent_swarm):
+    def _update_swarm_fenced(self, swarm_id, data, fenced_parent_swarm, *, _defer_events=False):
         row = self.db.one("SELECT * FROM swarms WHERE id = ?", (swarm_id,))
         if row is None:
-            raise HiveError(404, "not_found", f"no swarm {swarm_id}")
+            raise HiveError(404, "not_found", "no such swarm")
         values = {}
         if "name" in data:
             if not str(data["name"]).strip():
@@ -288,18 +307,27 @@ class Hive:
                 params += [values["parent_mind_id"], fenced_parent_swarm]
             if self.db.execute(sql, params).rowcount != 1:
                 if not self.db.one("SELECT 1 FROM swarms WHERE id = ?", (swarm_id,)):
-                    raise HiveError(404, "not_found", f"no swarm {swarm_id}")
+                    raise HiveError(404, "not_found", "no such swarm")
                 raise HiveError(409, "parent_moved", "the parent mind moved or was deleted meanwhile; try again")
         swarm = self.swarm(swarm_id)
-        self.events.publish("swarm.updated", swarm=swarm)
-        if "name" in values:
-            self._team_sync(swarm_id)    # its team room is named after it
+        if _defer_events:
+            # Foundation encloses this mutation in its binding transaction. Both
+            # the notice and room work wait for its outermost durable commit.
+            def notify():
+                self.events.publish("swarm.updated", swarm=self.swarm(swarm_id))
+                if "name" in values:
+                    self._team_sync(swarm_id)
+            self.db.after_commit(notify)
+        else:
+            self.events.publish("swarm.updated", swarm=swarm)
+            if "name" in values:
+                self._team_sync(swarm_id)    # its team room is named after it
         return swarm
 
     def _agent_row(self, agent_id, guard=True):
         row = self.db.one("SELECT * FROM agents WHERE id = ? AND deleted = 0", (agent_id,))
         if row is None:
-            raise HiveError(404, "not_found", f"no agent {agent_id}")
+            raise HiveError(404, "not_found", "no such agent")
         return self.person_swarms.read_row(row) if guard and getattr(self, "person_swarms", None) is not None else row
 
     def agent(self, agent_id):
@@ -323,12 +351,23 @@ class Hive:
                        "max_llm_calls_per_minute": self.settings.max_llm_calls_per_minute},
         }
 
-    def models(self):
+    def model_catalog(self):
+        """The operator-configured model ids, whether or not a key is set: every configured provider's models as
+        <provider>/<model> (the source models() offers). The only model names the gateway evidence may publish (its
+        model_symbol); any other value is published as other-model. The fetched OpenRouter catalogue is deliberately
+        not part of it (r1e.2): its ids come off the network, so they are never a naming source."""
+        return frozenset(f"{p.name}/{m}" for p in self.settings.providers.values() for m in p.models)
+
+    def models(self, can_pay=None):
+        """can_pay(provider) (keyview R9): for a caller who may not see every key, whether THEY could pay with that
+        provider; None: the hive-wide view (an admin, or no caller)."""
         out = []
         for provider in self.settings.providers.values():
             store = getattr(self, "providers", None)
             has_key = bool(provider.api_key) or (store is not None and any(
                 r["provider"] == provider.name for r in store.ring["keys"].values()))
+            if can_pay is not None and not provider.local and provider.name != "mock":
+                has_key = can_pay(provider.name)
             if provider.name != "mock" and not provider.local and not has_key:
                 continue
             for model in provider.models:
@@ -344,7 +383,7 @@ class Hive:
     def swarm(self, swarm_id):
         row = self.db.one("SELECT * FROM swarms WHERE id = ?", (swarm_id,))
         if row is None:
-            raise HiveError(404, "not_found", f"no swarm {swarm_id}")
+            raise HiveError(404, "not_found", "no such swarm")
         return self.swarm_view(row)
 
     def _visibility_fields(self, owner, visibility, shared_with):
@@ -360,18 +399,20 @@ class Hive:
     OPEN_SWARM_SQL = "EXISTS (SELECT 1 FROM swarms WHERE id = ? AND archived_at IS NULL)"
 
     def insert_into_open_swarm(self, table, row, swarm_id):
-        """Insert a row only while its swarm exists and is not archived, in ONE statement: atomic with archive_swarm's
-        write transaction and with a swarm's delete, with no lock held across other work and nothing announced before it
-        lands (Kimi / OmegaReview). A row with no swarm is inserted as it is."""
-        if swarm_id is None:
-            self.db.insert(table, row)
-            return
-        cols, marks = ", ".join(row), ", ".join("?" for _ in row)
-        with self.swarm_membership(swarm_id):
+        """Insert while the swarm is open. Every agent insert reserves its namespace under the existing DB guard."""
+        with self.swarm_membership(swarm_id), (self.db.transaction() if table == "agents" else contextlib.nullcontext()):
+            if table == "agents":
+                self.placement._check_workspace_namespace(row["id"], self.settings.agents_dir / row["id"])
+                if self.db.one("SELECT 1 FROM agents WHERE id = ?", (row["id"],)):
+                    raise HiveError(409, "workspace_identity_conflict", "another mind already owns this identity; try again")
+            if swarm_id is None:
+                self.db.insert(table, row)
+                return
+            cols, marks = ", ".join(row), ", ".join("?" for _ in row)
             cur = self.db.execute(f"INSERT INTO {table} ({cols}) SELECT {marks} WHERE {self.OPEN_SWARM_SQL}",
                                   (*row.values(), swarm_id))
-        if cur.rowcount != 1:
-            self.refuse_closed_swarm(swarm_id)
+            if cur.rowcount != 1:
+                self.refuse_closed_swarm(swarm_id)
 
     def update_in_open_swarm(self, table, key, values, swarm_id, expect=None):
         """db.update, but only while swarm_id exists and is not archived, in the same statement. expect: the row's
@@ -415,7 +456,7 @@ class Hive:
 
     def archive_swarm(self, swarm_id, by):
         """Retire a swarm that has history: hidden from lists, nothing deleted, restorable. Refused while any of its minds
-        is awake, so archiving never strands running work (the owner 2026-10-05: retire the old Apps local swarm)."""
+        is awake, so archiving never strands running work (Jon 2026-10-05: retire the old Apps local swarm)."""
         self.swarm(swarm_id)
         with self.db.transaction():   # the busy check and the archive commit together: no mind can start in between
             busy = self.db.all("SELECT name FROM agents WHERE swarm_id = ? AND deleted = 0 AND kind != 'module' "
@@ -531,7 +572,7 @@ class Hive:
         self.events.publish("swarm.deleted", swarm_id=swarm_id)
 
     def delete_swarm_with_minds(self, swarm_id, confirm, by):
-        """The owner 2026-10-07: delete a swarm and its minds in one step (a warning, not a lock). Held under the swarm's
+        """Jon 2026-10-07: delete a swarm and its minds in one step (a warning, not a lock). Held under the swarm's
         operation guard throughout. Order, so nothing running is ever stranded: (1) refuse a live flow; (2) stop every
         awake/starting mind through the API's stop path (re-judged under its lock: one that left the swarm is not
         touched), refusing the whole operation, before anything is deleted, if any cannot be stopped; (3) archive the
@@ -542,7 +583,11 @@ class Hive:
         A mind that cannot be deleted after the archive gives a structured answer, not an exception: the swarm stays
         archived with nothing running, and the same request finishes the job."""
         with self._swarm_operation(swarm_id):
-            return self._delete_swarm_with_minds(swarm_id, confirm, by)
+            out = self._delete_swarm_with_minds(swarm_id, confirm, by)
+        # keyview (Dot on a0975c2f): its minds were deleted on _delete_one's path; once the outcome is settled, the
+        # tombstones of removed keys only they named go too (a partial outcome leaves the rest for startup's reconcile)
+        self.reconcile_removed_keys()
+        return out
 
     @staticmethod
     def _kept_after_minds(counts):
@@ -686,7 +731,7 @@ class Hive:
             result["detached_swarms"] = detached
         return result
 
-    def create_swarm(self, name, description="", hue=None, owner=None, visibility="private", shared_with=None):
+    def create_swarm(self, name, description="", hue=None, owner=None, visibility="private", shared_with=None, *, _defer_events=False):
         if not str(name).strip():
             raise HiveError(400, "bad_request", "name is required")
         row = {"id": new_id("s"), "name": str(name).strip(), "description": str(description or ""),
@@ -694,8 +739,16 @@ class Hive:
                **self._visibility_fields(owner, visibility, shared_with)}
         self.db.insert("swarms", row)
         swarm = self.swarm_view(row)
-        self.events.publish("swarm.updated", swarm=swarm)
-        self._team_sync(row["id"])   # then its team room, where its minds reach each other (rooms.py)
+        if _defer_events:
+            # Keep the original notice then room-sync order, outside the outer
+            # connection lock; rollback drops both without taking a room lock.
+            def notify():
+                self.events.publish("swarm.updated", swarm=self.swarm(row["id"]))
+                self._team_sync(row["id"])
+            self.db.after_commit(notify)
+        else:
+            self.events.publish("swarm.updated", swarm=swarm)
+            self._team_sync(row["id"])   # then its team room, where its minds reach each other (rooms.py)
         return swarm
 
     # ---- agents -------------------------------------------------------------------------------
@@ -703,7 +756,9 @@ class Hive:
     def agents(self):
         return [self.agent_view(r) for r in self.db.all("SELECT * FROM agents WHERE deleted = 0 ORDER BY created_at")]
 
-    def _options(self, value, model=None):
+    def _options(self, value, model=None, hidden_key=False):
+        """hidden_key (keyview, sol on 59dfe1ff): the key is one the caller may not see (kept unchanged, never chosen by
+        them): a mismatch is refused in words that name no key, label or provider."""
         try:
             options = clean_options(value)
         except ValueError as exc:
@@ -718,10 +773,15 @@ class Hive:
             else:
                 record = store.ring["keys"].get(key)
                 if record is None:
-                    raise HiveError(404, "unknown_key", f"no key {key}")
+                    if hidden_key:   # a kept key that is gone, for a caller who may not see it: nothing named
+                        raise HiveError(404, "unknown_key", "This mind's assigned key is gone; its owner can choose another.")
+                    raise HiveError(404, "unknown_key", "no such key")   # as check_key_use words it: never the id
                 if record["provider"] != provider:
-                    raise HiveError(400, "key_provider_mismatch",
-                                    f"{record['label']} is a {record['provider']} key; this mind runs on {provider}")
+                    if hidden_key:
+                        raise HiveError(400, "key_provider_mismatch", "This mind's key is for another provider; its owner "
+                                        "can change the key or the model.")
+                    raise HiveError(400, "key_provider_mismatch",   # never a key's label (keyview R7)
+                                    f"that key is a {record['provider']} key; this mind runs on {provider}")
         return options
 
     def check_key_lock(self, owner, old, new, by):
@@ -754,8 +814,38 @@ class Hive:
         caller; None means any key). The key already stored (current) is never refused, so an edit that leaves it alone
         works whoever's key it is. A refused key is answered as an unknown one (404 unknown_key)."""
         if key and may_use is not None and key != current and not may_use(key):
-            # r1.1 (Kimi #4): answered exactly as a key that does not exist (Hive._options), so key ids cannot be probed
-            raise HiveError(404, "unknown_key", f"no key {key}")
+            # r1.1 (Kimi #4): answered exactly as a key that does not exist, so key ids cannot be probed; keyview (sol on
+            # f4bb6907): without echoing the id, which a refused caller may not see
+            raise HiveError(404, "unknown_key", "no such key")
+
+    def reconcile_removed_keys(self):
+        """keyview (sol and Kimi on 1edef3b4): every removed key's tombstone that no mind names any more is dropped (at
+        startup, for orphans from before, and after any deletion of minds). Never raises: a tombstone kept a little longer
+        only lets its own former owner keep recognising the id."""
+        store = getattr(self, "providers", None)
+        tombs = set((getattr(store, "ring", None) or {}).get("removed") or {})
+        if not tombs:
+            return
+        try:   # ONE scan of the minds and ONE keyring write, however many tombstones (Dot on a0975c2f)
+            named = set()
+            for row in self.db.all("SELECT options FROM agents WHERE deleted = 0 AND options LIKE '%\"key\"%'"):
+                key = (json.loads(row["options"] or "{}") or {}).get("key")
+                if key in tombs:
+                    named.add(key)
+            store.forget_removed_many(tombs - named)
+        except Exception:   # noqa: BLE001
+            log.exception("keyview: removed keys' tombstones could not be reconciled")
+
+    def forget_removed_key_if_unused(self, key_id):
+        """keyview (Kimi on 593fde34): a removed key's tombstone (ProviderStore.removed_by) is kept only while a mind still
+        names it; once none does, it is dropped."""
+        store = getattr(self, "providers", None)
+        if store is None or not key_id or key_id not in (store.ring.get("removed") or {}):
+            return
+        for row in self.db.all("SELECT options FROM agents WHERE deleted = 0 AND options LIKE ?", (f'%"{key_id}"%',)):
+            if (json.loads(row["options"] or "{}") or {}).get("key") == key_id:
+                return
+        store.forget_removed(key_id)
 
     def key_usage(self):
         rows = self.db.all("SELECT key_id, COALESCE(SUM(cost_usd), 0) AS spent FROM usage WHERE key_id IS NOT NULL GROUP BY key_id")
@@ -801,7 +891,10 @@ class Hive:
     @serialized_tools_choices
     def create_agent(self, name, kind="omega", swarm_id=None, model=None, persona="", hue=None, budget_usd=0.0,
                      options=None, role_id=None, owner=None, visibility="private", shared_with=None, personal_of=None, by=None,
-                     privileged=True, approval_guard=None):
+                     privileged=True, approval_guard=None, host_need=None):
+        """host_need (First Light, sol on 50998399): the host itself chose this mind's model for that need, so it is
+        recorded (model_route.record) in the same transaction as the insert, before any edit can reach the mind; an edit
+        afterwards forgets it (update_agent). Never set for a model anyone else chose."""
         row, token, role = self.new_agent_row(name, kind, swarm_id, model, persona, hue, budget_usd, options, role_id,
                                               owner, visibility, shared_with, personal_of, by=by, approval_guard=approval_guard)
         # The rule (stand-in r9): the new mind's lock, taken before its row is visible, and its swarm's fence, held from
@@ -811,16 +904,17 @@ class Hive:
             # gets only a role carrying no rules. Re-checked under the roles lock through the insert, so a role edit that
             # adds rules lands either before (refused here) or after (the edit then applies to this mind as the admin's act).
             approval_options = json.loads(row.get("options") or "{}")
-            with self.roles.lock, (self.db.transaction() if approval_options.get("approvals") == "owner_only" else contextlib.nullcontext()):
+            atomic = approval_options.get("approvals") == "owner_only" or host_need
+            with self.roles.lock, (self.db.transaction() if atomic else contextlib.nullcontext()):
                 if approval_options.get("approvals") == "owner_only":
                     actor = approval_guard() if approval_guard is not None else by
                     self.check_approval_options(row.get("owner"), {}, approval_options, actor)
                 if role and not privileged and self.roles.carries_rules(role["id"]):
                     raise HiveError(403, "admin_only", "only a hive admin or the hive's owner can give a mind a role that carries approval rules")
-                if swarm_id:
-                    self.insert_into_open_swarm("agents", row, swarm_id)
-                else:
-                    self.db.insert("agents", row)
+                self.insert_into_open_swarm("agents", row, swarm_id)   # the namespace guard, nested in this transaction
+                if host_need:
+                    from .model_route import record
+                    record(self.db, row["id"], row["model"], host_need)
             # a person who may not write policy is never recorded as granting rules (any a role has came from an admin's edit)
             return self.finish_agent(row, token, role, by=(by or owner) if privileged else None)
 
@@ -849,9 +943,26 @@ class Hive:
         if options.get("key_locked"):   # app platform P3a: every creation path, host-made minds included (by: the owner)
             self.check_key_lock(owner, {}, options, by or owner)
         self.validate_tools(kind, options, model or self.settings.default_model)
+        # Allocation is a preflight; the shared insert path rechecks under BEGIN IMMEDIATE. A generated collision
+        # never grants authority over an old record, directory or dangling link. No historical ids are rewritten.
+        for _ in range(16):
+            agent_id = new_id("a")
+            root = self.settings.agents_dir / agent_id
+            try:
+                with self.db.transaction():
+                    self.placement._check_workspace_namespace(agent_id, root)
+                    if self.db.one("SELECT 1 FROM agents WHERE id = ?", (agent_id,)) or root.exists() or root.is_symlink():
+                        continue
+            except HiveError as exc:
+                if exc.code != "workspace_identity_conflict":
+                    raise
+                continue
+            break
+        else:
+            raise HiveError(409, "workspace_identity_conflict", "could not allocate a free mind workspace; try again")
         token = secrets.token_urlsafe(32)
         row = {
-            "id": new_id("a"), "name": str(name).strip(), "kind": kind, "swarm_id": swarm_id or None,
+            "id": agent_id, "name": str(name).strip(), "kind": kind, "swarm_id": swarm_id or None,
             "model": model or self.settings.default_model, "persona": str(persona or ""),
             "options": json.dumps(options) if options else None,
             "role_id": role["id"] if role else None,
@@ -868,6 +979,8 @@ class Hive:
         """Everything after a new mind's row is committed: spaces, workspace, role, announcement."""
         swarm_id = row["swarm_id"]
         kind = row["kind"]
+        with self.db.transaction():
+            self.placement._check_workspace_namespace(row["id"], self.settings.agents_dir / row["id"])
         if swarm_id:
             self.spaces.grant(row["id"], swarm_id)
             self.events.publish("swarm.updated", swarm=self.swarm(swarm_id))
@@ -897,13 +1010,15 @@ class Hive:
                     raise HiveError(409, "not_stopped", "stop it first")
                 self.require_open_swarm(row["swarm_id"])
                 token = secrets.token_urlsafe(32)
-                sql = ("UPDATE agents SET kind = 'omega', token_hash = ?, status = 'created', desired = 'stopped' WHERE id = ? "
-                       "AND deleted = 0 AND kind = 'module' AND swarm_id IS ? AND status IN ('created', 'stopped')")
-                params = [token_hash(token), agent_id, row["swarm_id"]]
-                if row["swarm_id"]:
-                    sql, params = sql + " AND " + self.OPEN_SWARM_SQL, params + [row["swarm_id"]]
-                if self.db.execute(sql, params).rowcount != 1:
-                    raise HiveError(409, "mind_changed", "this member changed meanwhile; reload and try again")
+                with self.db.transaction():
+                    self.placement._check_workspace_namespace(agent_id, self.settings.agents_dir / agent_id)
+                    sql = ("UPDATE agents SET kind = 'omega', token_hash = ?, status = 'created', desired = 'stopped' WHERE id = ? "
+                           "AND deleted = 0 AND kind = 'module' AND swarm_id IS ? AND status IN ('created', 'stopped')")
+                    params = [token_hash(token), agent_id, row["swarm_id"]]
+                    if row["swarm_id"]:
+                        sql, params = sql + " AND " + self.OPEN_SWARM_SQL, params + [row["swarm_id"]]
+                    if self.db.execute(sql, params).rowcount != 1:
+                        raise HiveError(409, "mind_changed", "this member changed meanwhile; reload and try again")
                 if self.supervisor:
                     self.supervisor.prepare(self.agent(agent_id), token)
                 if row.get("role_id"):
@@ -934,7 +1049,11 @@ class Hive:
             target = changes.get("swarm_id") if "swarm_id" in changes else row["swarm_id"]
             fences = (row["swarm_id"], target) if target != row["swarm_id"] else ()
             with self.swarm_membership(*fences):
-                return self._update_agent_locked(agent_id, changes, expected_tools, by, privileged, may_use_key, approval_guard)
+                out = self._update_agent_locked(agent_id, changes, expected_tools, by, privileged, may_use_key, approval_guard)
+        old_key = (json.loads(row.get("options") or "{}") or {}).get("key")
+        if old_key and "options" in changes and (changes.get("options") or {}).get("key") != old_key:
+            self.forget_removed_key_if_unused(old_key)   # keyview: moved off a removed key; drop it once nobody names it
+        return out
 
     def _update_agent_locked(self, agent_id, changes, expected_tools=None, by=None, privileged=True, may_use_key=None, approval_guard=None):
         row = self._agent_row(agent_id)
@@ -952,14 +1071,31 @@ class Hive:
         # Refuse a Tool change before existing swarm grant/revoke side effects.
         if changes.get('driver') and changes['driver'] != 'local' and (changes.get('options',json.loads(row['options'] or '{}')) or {}).get('tools'):
             raise HiveError(400,'tools_refused','Tools candidate requires the local driver')
+        if 'model' in changes and 'options' not in changes:
+            # keyview (sol on 16842acb): a model-only edit keeps the mind's assigned key, so that key must suit the new
+            # model's provider; refused here, in words that name nothing to a caller who may not see it, rather than
+            # left to fail later at the gateway
+            kept = json.loads(row['options'] or '{}')
+            if kept.get('key'):
+                hidden = bool(may_use_key is not None and not may_use_key(kept['key']))
+                self._options(kept, changes['model'], hidden_key=hidden)
         if 'options' in changes:
-            options = self._options(changes['options'], changes.get('model') or row['model'])
+            # keyview (sol on 59dfe1ff): the key is authorized BEFORE any check whose words carry a key's details: a
+            # changed key the caller may not use is refused exactly as a key that does not exist (check_key_use), and
+            # one they keep unchanged without being able to see it is judged in words that name nothing (_options)
+            try:
+                cleaned = clean_options(changes['options'])
+            except ValueError as exc:
+                raise HiveError(400, "bad_options", str(exc)) from exc
+            stored_key = json.loads(row['options'] or '{}').get('key')
+            self.check_key_use(cleaned.get('key'), may_use_key, stored_key)   # OI-13, now first
+            hidden = bool(cleaned.get('key') and may_use_key is not None and not may_use_key(cleaned['key']))
+            options = self._options(cleaned, changes.get('model') or row['model'], hidden_key=hidden)
             old_options = json.loads(row['options'] or '{}')
             approval_change = old_options.get("approvals") != options.get("approvals")
             if approval_change:
                 actor = approval_guard() if approval_guard is not None else by
                 self.check_approval_options(row.get("owner"), old_options, options, actor)
-            self.check_key_use(options.get('key'), may_use_key, json.loads(row['options'] or '{}').get('key'))   # OI-13
             self.check_key_lock(row.get('owner'), json.loads(row['options'] or '{}'), options, by)   # app platform P3a
             makers = getattr(self, "studio_makers", None)
             if options.get('key') and makers is not None:
@@ -1020,15 +1156,31 @@ class Hive:
         if "hue" in changes:
             changes["hue"] = int(changes["hue"]) % 360
         moved_to = changes.pop("swarm_id", row["swarm_id"])   # written above, conditionally, or not at all: never twice
+        from . import model_route
+
+        def provenance():
+            # model provenance (model_route), in the same transaction as the model change: the host's own choice is
+            # recorded; anyone else's change forgets it, so the host never moves a model a person or an admin chose
+            if "model" not in changes:
+                return
+            if by == model_route.HOST_ACTOR:
+                model_route.record(self.db, agent_id, changes["model"], "personal-mind:dialogue")
+            else:
+                model_route.forget(self.db, agent_id)
         if changes:
+            if "model" in changes:
+                model_route.migrate(self.db)                     # its table exists before the transaction opens
             if approval_change:
                 with self.db.transaction():
                     fresh = self._agent_row(agent_id, guard=False)
                     actor = approval_guard() if approval_guard is not None else by
                     self.check_approval_options(fresh.get("owner"), json.loads(fresh.get("options") or "{}"), options, actor)
                     self.db.update("agents", agent_id, changes)
+                    provenance()
             else:
-                self.db.update("agents", agent_id, changes)
+                with self.db.transaction():
+                    self.db.update("agents", agent_id, changes)
+                    provenance()
         if self.supervisor and ({"model", "persona", "name"} & changes.keys()):
             self.supervisor.reconfigure(self.agent(agent_id))
         if self.supervisor and row['kind'] == 'omega' and 'options' in changes and (
@@ -1065,7 +1217,8 @@ class Hive:
         _, error = self._delete_one(agent_id, expect_swarm, by,
                                     f"released: its mind was deleted by {by}", announce=announce_swarm)
         if error is not None:
-            raise error
+            raise error   # the outcome is not settled: startup's reconcile picks the tombstone up later
+        self.reconcile_removed_keys()   # keyview: a removed key's tombstone goes with the last mind that named it
         return {"ok": True}
 
     def _delete_one(self, agent_id, expect_swarm, by, why, announce=True):
@@ -1250,7 +1403,7 @@ class Hive:
         return {"slept": slept, "failed": failed}
 
     def sleep_for_restart(self, keep=()):
-        """The Mac restart script's one try (the owner 2026-10-18, "normal sleep"): ask each awake mind, residents in keep
+        """The Mac restart script's one try (Jon 2026-10-18, "normal sleep"): ask each awake mind, residents in keep
         aside, to sleep once through the ordinary lifecycle Sleep; no retry. Each on its own, as sleep_idle_minds: one
         failure never keeps the others awake. Modules are never touched."""
         rows = self.db.all("SELECT id FROM agents WHERE status = 'awake' AND deleted = 0 AND kind != 'module' ORDER BY id")
@@ -1323,10 +1476,15 @@ class Hive:
             raise HiveError(400, "bad_request", f"unknown action {action}")
         return self.agent(agent_id)
 
-    def authenticate_agent(self, token):
+    def authenticate_agent(self, token, surface=None):
+        """The member behind a token. surface (session onboarding R2.8 §W, W-a): where the call arrives; "mcp" only at
+        /mcp. A restricted bridged-session credential (pending or mixed context) is refused with 403 at every other
+        surface, including a caller that names none (closed default)."""
         if not token:
             return None
         row = self.db.one("SELECT * FROM agents WHERE token_hash = ? AND deleted = 0", (token_hash(token),))
+        if row is None and getattr(self, "credentials", None) is not None:
+            row = self.credentials.authenticate(token, surface)
         if row is not None:
             binding, reason = self.person_swarms.current(row["id"])
             if binding is not None and reason is not None:
@@ -1337,9 +1495,33 @@ class Hive:
     # ---- messages -----------------------------------------------------------------------------
 
     def message_view(self, row):
+        """A message as stored: the text exactly as the mind sent or received it (Health's question keeps its id tag,
+        which the mind answers by). A verified Health question (_health_question: its stored event, never its text) is
+        marked health_check; what a person reads of it is health.people_message, applied where answers and events
+        leave for people (app.py), never here."""
         view = {k: row[k] for k in ("id", "agent_id", "conversation_id", "direction", "sender", "text", "created_at")}
         view["sender_name"] = self.sender_name(row["sender"])
+        if self.verified_health_question(dict(row)):
+            view["health_check"] = True
         return view
+
+    def verified_health_question(self, message):
+        """For DISPLAY (sol and Kimi on 7cf0ca57): Health's idle question proven by its structured event alone, sender
+        Health and extra.event health_question (IdleWatch.ask writes it), read from the stored row when a live view
+        carries none. No text fallback: a row with no or unreadable extra is not marked and keeps its words. (Routing
+        keeps _health_question's text fallback, which fails closed for whose chat a row belongs to.)"""
+        if not isinstance(message, dict) or message.get("sender") != HEALTH_SENDER:
+            return False
+        extra = message.get("extra")
+        if extra is None and "extra" not in message and message.get("id"):
+            stored = self.db.one("SELECT extra FROM messages WHERE id = ?", (message["id"],))
+            extra = stored["extra"] if stored else None
+        if isinstance(extra, str):
+            try:
+                extra = json.loads(extra)
+            except ValueError:
+                return False
+        return isinstance(extra, dict) and extra.get("event") == HEALTH_QUESTION
 
     def sender_name(self, sender):
         """Who sent a message, for display: a person's name, a mind's name, or None (the loopback operator, the hive)."""
@@ -1351,7 +1533,7 @@ class Hive:
             p = self.db.one("SELECT name, email FROM people WHERE id = ?", (sender[5:],))
             return (p.get("name") or p.get("email")) if p else None
         if sender.startswith("user:") and sender != "user:operator" and len(sender) > 5:
-            return sender[5:].capitalize()          # a webhost sign-in principal (as /api/auth/me names it)
+            return sender[5:].capitalize()          # a family sign-in principal (as /api/auth/me names it)
         return None
 
     # ---- one person's chat with a mind (mind-chat-identity r1) ---------------------------------------------------
@@ -1546,7 +1728,7 @@ class Hive:
         placement export that is not its person's or an admin's audit (stand-in idle-minds r2.2 P1 #2) share it.
         No principal: every row (an audit, or the mind's own migration)."""
         # The loopback operator reads the whole stream, except a personal mind's: its person's chats with it are theirs
-        # (the owner 2026-10-09; idle-minds r2), so the operator is scoped there like any other admin. Audit is ?include=all.
+        # (Jon 2026-10-09; idle-minds r2), so the operator is scoped there like any other admin. Audit is ?include=all.
         personal = self._personal_of(agent_id)
         if not principal or (principal == "user:operator" and not personal):
             return "", []
@@ -1630,7 +1812,13 @@ class Hive:
                 message = self.enqueue_message(agent_id, text, conversation_id, sender, extra)
         if not from_room:   # the classic chat and hive notes keep the mind's DM room whole (R15)
             try:
-                self.rooms.mirror_in(agent_id, message["conversation_id"], sender, message["text"])
+                # the DM room copy is the people's transcript (sol and Kimi on 7cf0ca57): a VERIFIED Health question goes
+                # in untagged, from Health, marked health_check, with its source message's id (the tagged canonical row
+                # the mind read); anything else, a Health alert quoting the tag included, goes in exactly as sent
+                verified = self.verified_health_question(message)
+                self.rooms.mirror_in(agent_id, message["conversation_id"], sender,
+                                     for_people(sender, message["text"]) if verified else message["text"],
+                                     source_message_id=message["id"], health_check=verified)
             except Exception:
                 log.exception("room mirror failed for %s", agent_id)
         view = self.message_view(message)
@@ -1659,31 +1847,93 @@ class Hive:
         return json.dumps(body)
 
     async def deliver(self, agent_id, message):
+        """Send a stored message on the mind's socket now, after any older one the socket has not had. False when it did
+        not go: no socket, a socket whose resume is not answered yet (the replay sends it, in order), a message Studio
+        holds or never delivers, or a failed send (the next connection's resume sends it). Port of upstream #21."""
         ws = self.connections.get(agent_id)
-        if ws is None:
+        if not await self._flush(agent_id, ws):
             return False
-        studio = getattr(self, "studio", None)
-        stale = getattr(studio, "stale_goal_notice", None)
-        if stale is not None and stale(agent_id, message):
-            return False   # J3 R8.5: a Studio session's own GOAL-CANCELLED never reaches its maker (Stop settled it)
-        if studio is not None and studio.holds_messages(agent_id, message.get("hub_seq")):
-            return False   # J3 R3 (handoff spec r2.4 §6): held back while Studio owns the maker mid-handoff
-        try:
-            await ws.send_text(json.dumps({"type": "user_message", "seq": message["hub_seq"],
-                                           "text": self.envelope(message)}))
-        except Exception:
-            return False
-        if message.get("extra") and '"mind_prompt"' in message["extra"]:
-            self.minds.delivered(agent_id, message)   # r2.12 §3: the hub sent the frame (not yet acknowledged)
-        return True
+        mark = self.sent_upto.get(agent_id)
+        return (mark is not None and mark[0] is ws and mark[1] is not None and mark[1] >= message["hub_seq"]
+                and not self._never_delivered(agent_id, message))
 
     async def replay(self, agent_id, last_seen):
+        """Answer a mind's resume (only the channel's resume frame calls this): send every stored message after
+        last_seen that this socket has not had, in hub_seq order, and deliver live from then on. Nothing goes live
+        before it, so a message stored while the mind was offline never follows a newer one, which the channel would
+        drop as already seen (upstream #18/#21). A second resume on the same socket never moves the mark back."""
+        ws = self.connections.get(agent_id)
+        mark = self.sent_upto.get(agent_id)
+        if ws is None or mark is None or mark[0] is not ws:
+            return
+        if mark[1] is None:
+            self.sent_upto[agent_id] = (ws, int(last_seen or 0))
+        await self._flush(agent_id, ws)
+
+    async def release_held(self, agent_id):
+        """Studio's release after a handoff: send what it held, in order, on a socket whose resume is answered. On a
+        socket not yet resumed it does nothing; that socket's own resume sends the released messages (review P1: a
+        release must never set a new socket's mark in place of the channel's real last_seen)."""
+        await self._flush(agent_id, self.connections.get(agent_id))
+
+    def _never_delivered(self, agent_id, message):
+        """R8.5: a Studio session's own GOAL-CANCELLED never reaches its maker (Stop settled it)."""
+        studio = getattr(self, "studio", None)
+        stale = getattr(studio, "stale_goal_notice", None)
+        return stale is not None and bool(stale(agent_id, message))
+
+    async def _flush(self, agent_id, ws):
+        lock = self.flush_locks.setdefault(agent_id, asyncio.Lock())
+        async with lock:
+            return await self._flush_locked(agent_id, ws)
+
+    async def _flush_locked(self, agent_id, ws):
+        """Send ws the mind's stored messages above its mark, in hub_seq order; False if ws is not the mind's live
+        socket, its resume is not answered, or a send failed. Runs under the mind's flush lock, so flushes never
+        interleave; the mark is still raised before each send, and the identity and mark are re-read per row, so a
+        flush that waited on the lock sends nothing twice and nothing after a higher seq.
+        Studio (J3 R3, handoff spec r2.4 §6): a held message STOPS the flush without raising the mark (nothing newer may
+        overtake it); Studio's release replays from there. A never-delivered notice (R8.5) is passed over: the mark
+        rises past it and it is not sent."""
+        mark = self.sent_upto.get(agent_id)
+        if ws is None or mark is None or mark[0] is not ws or mark[1] is None:
+            return False
+        studio = getattr(self, "studio", None)
         rows = self.db.all(
             "SELECT * FROM messages WHERE agent_id = ? AND direction = 'in' AND hub_seq > ? AND text != '' ORDER BY hub_seq",   # '' = a deleted Ask
-            (agent_id, int(last_seen or 0)),
+            (agent_id, mark[1]),
         )
         for row in rows:
-            await self.deliver(agent_id, row)
+            mark = self.sent_upto.get(agent_id)
+            if mark is None or mark[0] is not ws:
+                return False                     # withdrawn or replaced meanwhile
+            if row["hub_seq"] <= mark[1]:
+                continue                         # an interleaved flush sent it
+            if studio is not None and studio.holds_messages(agent_id, row["hub_seq"]):
+                return True                      # held: nothing at or after it goes until Studio releases
+            self.sent_upto[agent_id] = (ws, row["hub_seq"])
+            if self._never_delivered(agent_id, row):
+                continue
+            try:
+                # bounded: a send that never resolves would hold this mind's flush lock, so its replacement connection
+                # would wait too (review r1.2, liveness); a timeout counts as a failed send
+                await asyncio.wait_for(
+                    ws.send_text(json.dumps({"type": "user_message", "seq": row["hub_seq"], "text": self.envelope(row)})),
+                    SEND_TIMEOUT)
+            except Exception:
+                # the mark is already past this seq, so nothing more may go on this socket: a later send succeeding
+                # would leave this one lost (review P2). The socket stops being live and is closed; the channel
+                # reconnects and its resume resends from its own last_seen.
+                if (self.sent_upto.get(agent_id) or (None,))[0] is ws:
+                    self.sent_upto.pop(agent_id, None)
+                close = getattr(ws, "close", None)
+                if callable(close):
+                    with contextlib.suppress(Exception):
+                        await asyncio.wait_for(close(code=1011), CLOSE_TIMEOUT)
+                return False
+            if row.get("extra") and '"mind_prompt"' in row["extra"]:
+                self.minds.delivered(agent_id, row)   # r2.12 §3: the hub sent the frame (not yet acknowledged)
+        return True
 
     def record_agent_message(self, agent_id, frame):
         text = str(frame.get("text", ""))
@@ -1773,6 +2023,7 @@ class Hive:
                     return False, None
             previous = self.connections.get(agent_id)
             self.connections[agent_id] = ws
+            self.sent_upto[agent_id] = (ws, None)   # nothing goes live on a new socket before its resume is answered
             # A host-observed boot generation: each connection is a new one, so evidence about a process (S4 boot
             # receipts) can be bound to the connection it arrived on (OmegaReview 2026-10-04, replayed receipts).
             self.boot_generation[agent_id] = self.boot_generation.get(agent_id, 0) + 1
@@ -1807,6 +2058,7 @@ class Hive:
         """A stop won: the mind's registered connection ends, with its nonce. Called by Supervisor.stop under the mind's
         lock, from any thread; the socket's close is scheduled on the hive's event loop."""
         ws = self.connections.pop(agent_id, None)
+        self.sent_upto.pop(agent_id, None)
         self.boot_nonce.pop(agent_id, None)
         studio = getattr(self, "studio", None)
         if studio is not None:
@@ -1837,6 +2089,7 @@ class Hive:
     def agent_disconnected(self, agent_id, ws):
         if self.connections.get(agent_id) is ws:
             del self.connections[agent_id]
+            self.sent_upto.pop(agent_id, None)
             # No connection, no current nonce: a receipt cannot be accepted for a connection that has ended (Kimi 2026-10-04).
             self.boot_nonce.pop(agent_id, None)
             studio = getattr(self, "studio", None)
@@ -2007,11 +2260,12 @@ class Hive:
         person at a time: sessions.py refuses a second); else the mind's owner when that is a named person; else the
         hive. An Ask thread with no open turn is for no one. J3 R4 (plan §3.6): first, while a Studio session is live, every
         call its maker makes is for the session's person (inert with Studio off)."""
+        from .ask import OPEN_HOST_MIND, states_sql   # the host's mind answering; never a conductor or browser turn
         studio = getattr(self, "studio", None)
         principal = studio.call_principal(agent["id"]) if studio is not None else None
         if principal:
             return principal
-        turn = self.db.one("SELECT principal FROM ask_turns WHERE mind_id = ? AND state IN ('accepted', 'thinking') ORDER BY created_at LIMIT 1",
+        turn = self.db.one(f"SELECT principal FROM ask_turns WHERE mind_id = ? AND state IN {states_sql(OPEN_HOST_MIND)} ORDER BY created_at LIMIT 1",
                            (agent["id"],)) if getattr(self, "ask", None) else None
         if turn and str(turn["principal"]).startswith("user:u_"):
             return turn["principal"]
@@ -2028,23 +2282,38 @@ class Hive:
         """Who pays for this mind's model call, and whether it is on their own key (user_for names who it is for):
         a person's own key -> that person, own key; a person's key used for a guest, a public visitor or someone the key's
         owner granted -> that someone, not on their own key (own hive H1: the grant, else their visitor limit, holds them;
-        ownhive.py); used for anyone else -> the key's owner, own key (as before H1, H1.1); a
-        person's key used for no one in particular (a hive mind) -> the key's owner, own key; else whoever it is for."""
+        ownhive.py); used for an enabled person from before H1 -> the key's owner, own key (as before H1, H1.1); a
+        person's key used for no one in particular (a hive mind) -> the key's owner, own key; else whoever it is for.
+        The key's owner is never the payer of last resort for anyone else: a call for a disabled or unknown person stays
+        theirs (them, not on their own key), and OwnHive.use_check refuses it (402 no_key_grant)."""
         user = self.user_for(agent)
         if key_owner and str(key_owner).startswith("user:u_"):
             if user == key_owner or not user.startswith("user:u_"):
                 return key_owner, True
-            if self.ownhive.access(user) in ("guest", "public") or self.ownhive.has_grant(user, owner=key_owner):
+            access = self.ownhive.access(user)
+            if access is None:
+                return user, False   # disabled or unknown: no payer; refused at use_check, never the key owner's spend
+            if access in ("guest", "public") or self.ownhive.has_grant(user, owner=key_owner):
                 return user, False   # H1: a guest, a public visitor, or someone the key's owner granted is held themselves
-            return key_owner, True   # H1.1: anyone else from before H1 is billed exactly as at e1717db (the key's owner)
+            return key_owner, True   # H1.1: an enabled person from before H1 is billed exactly as at e1717db (the key's owner)
         return user, False
 
-    def check_budget(self, agent, paid=False, estimate=0.0, key_id=None, payer=None, own_key=False):
+    def check_budget(self, agent, paid=False, estimate=0.0, key_id=None, payer=None, own_key=False, turn_bound=False,
+                     evidence_id=None):
         """Refuse a model call that would cross any limit, and remember the refusal: a mind whose calls are
-        refused never gets a trace for them, so Health and the bounded runner read it from here."""
+        refused never gets a trace for them, so Health and the bounded runner read it from here.
+        turn_bound (gateway r1a, plan §2.6): only the personal-mind gateway passes True; every other caller is unchanged.
+        evidence_id (gateway r1e): the gateway's id for this call, so a retried refusal is one observation; a turn-bound
+        refusal becomes an advisory observation in the mindgateway commons AFTER the decision (it is never read here)."""
         try:
-            return self._check_budget(agent, paid, estimate, key_id, payer, own_key)
+            return self._check_budget(agent, paid, estimate, key_id, payer, own_key, turn_bound)
         except HiveError as exc:
+            if turn_bound:
+                from .mindgateway_evidence import refusal_kind
+                with contextlib.suppress(Exception):
+                    # no evidence_id: a nonce, so each retry of that call counts as a new observation; the gateway's
+                    # call path (r1c) must pass its request id for retries to be one observation (Kimi r1e P3)
+                    self.mindgateway.call_refused(evidence_id or secrets.token_hex(16), refusal_kind(exc))
             if exc.status == 402:
                 seen = self.refusals.setdefault(agent["id"], {"count": 0})
                 first = seen["count"] == 0
@@ -2056,7 +2325,7 @@ class Hive:
                     self.person_requests.auto_allowance("user:" + d["scope"][7:], float(d["limit_usd"]))   # stop, notify, ask
             raise
 
-    def _check_budget(self, agent, paid=False, estimate=0.0, key_id=None, payer=None, own_key=False):
+    def _check_budget(self, agent, paid=False, estimate=0.0, key_id=None, payer=None, own_key=False, turn_bound=False):
         """Refuse an LLM call before it is made when it could overspend.
 
         A paid call needs a budget (0 means none, not unlimited) with room for
@@ -2082,13 +2351,17 @@ class Hive:
                 raise HiveError(429, "rate_limited", f"{agent['name']} made {limit} LLM calls in the last minute")
             calls.append(moment)
         budget, spent = agent["budget_usd"] or 0.0, agent["spent_usd"] or 0.0
-        if paid and budget <= 0 and not self.budgets.paid_without_cap(agent, None, payer, own_key):   # a hive total: auto limits; a personal mind: its person's allowance
+        if paid and turn_bound and self.budgets.monthly_total(agent, payer, own_key, key_id) is None:
+            # gateway r1a (r1.1 §C, r1.2): a turn-bound call is governed by the person's one monthly total; with none,
+            # refused before any reservation, with the one refusal word monthly_total_required
+            raise self.budgets.total_required(own_key)
+        if paid and budget <= 0 and not self.budgets.paid_without_cap(agent, None, payer, own_key, key_id, turn_bound):   # a hive total: auto limits; a personal mind: its person's allowance
             raise HiveError(402, "no_budget", f"{agent['name']} needs a budget to use {agent['model']}")
         if budget and spent + estimate > budget:
             raise HiveError(402, "budget_exhausted", f"{agent['name']} has spent ${spent:.2f} of its "
                                                      f"${budget:.2f} budget")
         if paid:
-            self.budgets.check(agent, estimate, key_id, payer, own_key)
+            self.budgets.check(agent, estimate, key_id, payer, own_key, turn_bound)
         cap = self.budgets.hard_cap() if paid else 0
         if paid and cap:
             total = self.budgets.hard_total_spent()
@@ -2100,10 +2373,11 @@ class Hive:
                "completion_tokens": usage["completion_tokens"], "cost_usd": usage["cost_usd"], "created_at": now(),
                "key_id": usage.get("key_id"), "swarm_id": agent.get("swarm_id"),
                "resolved_model": str(resolved_model)[:200] if resolved_model else None,
-               "payer": payer or self.payer_for(agent)[0]}
+               "payer": payer or self.payer_for(agent)[0], "payer_mode": usage.get("payer_mode")}
         row["key_grantee"] = self.ownhive.grantee_for(row["key_id"], row["payer"])   # H1.1: the key-limit scope it counts in
         self.db.insert("usage", row)
-        row = {k: v for k, v in row.items() if k not in ("key_id", "swarm_id", "resolved_model", "payer", "key_grantee")}  # the event keeps its published shape
+        row = {k: v for k, v in row.items() if k not in ("key_id", "swarm_id", "resolved_model", "payer", "key_grantee",
+                                                         "payer_mode")}  # the event keeps its published shape
         # Spend is not activity: it moves neither last_active_at nor last_input_at (a mind calling its model with no
         # input is exactly what Health's idle pass notices; see mark_input).
         self.db.execute("UPDATE agents SET spent_usd = spent_usd + ? WHERE id = ?", (usage["cost_usd"], agent["id"]))
@@ -2155,7 +2429,8 @@ class Hive:
                 "by_mind": sorted(({**m, "cost_usd": round(m["cost_usd"], 6)} for m in by_mind.values()), key=lambda m: -m["cost_usd"])}
 
     def usage(self, agent_id=None, since=None):
-        sql, params = "SELECT agent_id, model, resolved_model, payer, prompt_tokens, completion_tokens, cost_usd, created_at FROM usage WHERE 1=1", []
+        sql, params = ("SELECT agent_id, model, resolved_model, payer, payer_mode, prompt_tokens, completion_tokens, cost_usd, "
+                       "created_at FROM usage WHERE 1=1"), []
         if agent_id:
             sql += " AND agent_id = ?"
             params.append(agent_id)
@@ -2216,21 +2491,74 @@ class Hive:
     def error(status, code, message, details=None):
         return HiveError(status, code, message, details)
 
+    def foundation_infrastructure_bindings(self):
+        """Copied stored Foundation custody for infrastructure projection, never execution admission.
+
+        Global owner adoption can lag these records. Only their exact stored
+        owner/member/coordinator chain classifies them; names and options do not.
+        Missing, duplicated or drifted bindings are ordinary, not hidden.
+        """
+        foundation = getattr(self, "foundation", None)
+        if (foundation is None or getattr(foundation, "hive", None) is not self
+                or getattr(foundation, "db", None) is not self.db):
+            return ()
+        from .foundation import CODE, REVIEW
+        with self.db._lock:
+            if self.db.one("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'person_minds'") is None:
+                return ()
+            rows = self.db.all("SELECT purpose, principal, agent_id, swarm_id FROM person_minds "
+                               "WHERE purpose IN (?, ?)", (CODE, REVIEW))
+            out = []
+            for purpose in (CODE, REVIEW):
+                same = [b for b in rows if b["purpose"] == purpose]
+                if len(same) != 1:
+                    continue
+                binding = same[0]
+                principal, aid, sid = binding["principal"], binding["agent_id"], binding["swarm_id"]
+                if (not all(isinstance(v, str) and v for v in (principal, aid, sid))
+                        or sum(b["agent_id"] == aid for b in rows) != 1
+                        or sum(b["swarm_id"] == sid for b in rows) != 1):
+                    continue
+                agent = self.db.one("SELECT * FROM agents WHERE id = ?", (aid,))
+                swarm = self.db.one("SELECT * FROM swarms WHERE id = ?", (sid,))
+                if (not agent or agent["deleted"] or agent["kind"] != "omega" or agent.get("driver") != "local"
+                        or agent.get("moved_to") or agent.get("swarm_id") != sid or agent.get("owner") != principal
+                        or not swarm or swarm.get("archived_at") or swarm.get("owner") != principal
+                        or swarm.get("coordinator_id") != aid):
+                    continue
+                out.append({"purpose": purpose, "principal": principal, "agent_id": aid, "swarm_id": sid})
+            return tuple(out)
+
     def stop_all(self, by="user:operator", power="stopped"):
-        """Stops every mind. One whose stop fails is left as it is (row unchanged) and the rest still stop; the call then
+        """Stops every mind; the count/snapshot describe ordinary minds, not bound infrastructure controllers.
+        Infrastructure still receives every original stop and failure check. One whose stop fails is left as it is
+        (row unchanged) and the rest still stop; the call then
         fails, naming the minds still up, so the kill switch never reports success over a mind it could not stop.
         Each mind meant to be awake (judged under its lock, before its stop) goes into the power snapshot that Wake all
         and power On restore (hive/core/power.py), durably before that stop; the snapshot is kept when some stop fails."""
         stopped, failed = 0, []
         with self.power.lock:
             archived = {r["id"] for r in self.db.all("SELECT id FROM swarms WHERE archived_at IS NOT NULL")}
-            for row in self.db.all("SELECT id, status FROM agents WHERE deleted = 0"):
+            rows = self.db.all("SELECT id, status FROM agents WHERE deleted = 0")
+            try:
+                infrastructure = {b["agent_id"] for b in self.foundation_infrastructure_bindings()}
+            except Exception:
+                # Classification must never prevent a kill-switch effect.
+                log.warning("foundation power classification unavailable; stopping the original census")
+                infrastructure = set()
+            rows.sort(key=lambda row: row["id"] in infrastructure)   # stable: ordinary custody first
+            for row in rows:
                 try:
                     with self._mind_lock(row["id"]):
                         fresh = self.db.one("SELECT * FROM agents WHERE id = ? AND deleted = 0", (row["id"],))
                         if fresh is None:
                             continue
-                        if self.power.wakeable(fresh, fresh.get("swarm_id") in archived):
+                        try:
+                            bound = any(b["agent_id"] == row["id"] for b in self.foundation_infrastructure_bindings())
+                        except Exception:
+                            log.warning("foundation power classification unavailable for %s; using ordinary custody", row["id"])
+                            bound = False
+                        if not bound and self.power.wakeable(fresh, fresh.get("swarm_id") in archived):
                             self.power.hold(row["id"], by, power)
                         if self.supervisor:
                             self.supervisor.stop(row["id"])
@@ -2239,7 +2567,7 @@ class Hive:
                     log.warning("stop_all could not stop %s: %s", row["id"], exc)
                     failed.append({"id": row["id"], "error": str(exc)})
                     continue
-                if fresh["status"] != "stopped":
+                if not bound and fresh["status"] != "stopped":
                     stopped += 1
             self.power.record(by, power)
         if failed:

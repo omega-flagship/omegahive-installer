@@ -5,7 +5,6 @@ import { useMe } from '../../lib/useAdmin'
 import { has, need, useResource } from '../../lib/useResource'
 import { useHive } from '../../store/store'
 import { Icon } from '../../ui/Icon'
-import { Button } from '../../ui/primitives'
 import { doneCount, isDismissed, setDismissed, setupSteps, type SetupFacts } from './checklist'
 
 /** Read everything the checklist needs from routes that already exist; each read that fails or is missing is `unknown`. */
@@ -53,7 +52,7 @@ export function SetupChecklist({ compact, onDismiss }: { compact?: boolean; onDi
               onClick={() => navigate(s.route)}
               data-step={s.id}
               data-state={s.state}
-              className="flex w-full items-start gap-2.5 rounded-xl border border-line bg-white/[0.02] px-3 py-2 text-left hover:border-line-2 hover:bg-white/[0.05]"
+              className="flex w-full items-start gap-2.5 rounded-xl border border-line bg-tint/[0.02] px-3 py-2 text-left hover:border-line-2 hover:bg-tint/[0.05]"
             >
               <span className={cx('mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border', s.state === 'done' ? 'border-good/50 bg-good/15 text-good' : s.state === 'unknown' ? 'border-dashed border-line-2 text-ink-4' : 'border-line-2 text-ink-3')} aria-hidden="true">
                 {s.state === 'done' ? <Icon name="check" size={12} strokeWidth={2.6} /> : s.state === 'unknown' ? '?' : <Icon name={s.icon} size={11} />}
@@ -102,20 +101,6 @@ export function useSetupDismissed(): [boolean, (v: boolean) => void, string | un
     },
     principal,
   ]
-}
-
-/** The page form (#/setup): always shown, with a way to show it on the hive again. */
-export function SetupStatus() {
-  const [dismissed, setDismissedState, principal] = useSetupDismissed()
-  if (!principal) return null
-  return (
-    <p className="mt-4 text-[12.5px] text-ink-3">
-      {dismissed ? 'Hidden from your hive view. ' : 'Shown on your hive view until every step is done. '}
-      <Button variant="ghost" className="min-h-9 px-2 text-[12.5px]" onClick={() => setDismissedState(!dismissed)}>
-        {dismissed ? 'Show it there again' : 'Hide it there'}
-      </Button>
-    </p>
-  )
 }
 
 /**

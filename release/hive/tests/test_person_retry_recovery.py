@@ -30,14 +30,14 @@ def test_a_lost_save_retried_returns_the_original_and_publishes_nothing_new(clie
     monkeypatch.setenv("HIVE_PLUGIN_DIRS", str(folder))
     client.post("/api/programs/reload")
     swarm = client.post("/api/swarms", json={"name": "Design", "visibility": "public"}).json()
-    quinn = person(client, "u_quinn", role="admin")
+    jon = person(client, "u_jon", role="admin")
     body = {"swarm_id": swarm["id"], "action": "save", "items": ["d1"], "params": {"text": "hello"}, "idempotency_key": "intent-1"}
-    body = confirmed(client, quinn, "studio", body)       # the person confirmed it in the host (§9d)
-    first = client.post("/api/programs/studio/act", headers=quinn, json=body)
+    body = confirmed(client, jon, "studio", body)       # the person confirmed it in the host (§9d)
+    first = client.post("/api/programs/studio/act", headers=jon, json=body)
     assert first.status_code == 200, first.text
     hive = client.app.state.hive
     before = hive.db.one("SELECT count(*) AS n FROM artifacts")["n"]
-    again = client.post("/api/programs/studio/act", headers=quinn, json=body)       # the response was lost; the UI retries
+    again = client.post("/api/programs/studio/act", headers=jon, json=body)       # the response was lost; the UI retries
     assert again.status_code == 200 and again.json() == first.json()
     assert hive.db.one("SELECT count(*) AS n FROM artifacts")["n"] == before       # no second publication
 
@@ -55,34 +55,34 @@ def test_a4_same_key_replay_by_another_person_is_their_own_intent_never_the_orig
     monkeypatch.setenv("HIVE_PLUGIN_DIRS", str(folder))
     client.post("/api/programs/reload")
     swarm = client.post("/api/swarms", json={"name": "Design", "visibility": "public"}).json()
-    quinn, ana = person(client, "u_quinn", role="admin"), person(client, "u_ana", role="admin")
+    jon, ana = person(client, "u_jon", role="admin"), person(client, "u_ana", role="admin")
     hive = client.app.state.hive
     plain = {"swarm_id": swarm["id"], "action": "save", "items": ["d1"], "params": {"text": "hello"}, "idempotency_key": "intent-1"}
-    quinns = confirmed(client, quinn, "studio", plain)
-    first = client.post("/api/programs/studio/act", headers=quinn, json=quinns)
+    jons = confirmed(client, jon, "studio", plain)
+    first = client.post("/api/programs/studio/act", headers=jon, json=jons)
     assert first.status_code == 200, first.text
     rows = lambda: hive.db.all("SELECT principal, status, result FROM program_actions WHERE program = 'studio' AND idempotency_key = 'intent-1' ORDER BY principal")  # noqa: E731
-    quinn_row = rows()
-    assert [r["principal"] for r in quinn_row] == ["user:u_quinn"]
+    jon_row = rows()
+    assert [r["principal"] for r in jon_row] == ["user:u_jon"]
     published = hive.db.one("SELECT count(*) AS n FROM artifacts")["n"]
 
-    # 1. Ana replays Quinn's exact body, Quinn's spent token included: refused (the token is Quinn's principal and session)
-    stolen = client.post("/api/programs/studio/act", headers=ana, json=quinns)
+    # 1. Ana replays Jon's exact body, Jon's spent token included: refused (the token is Jon's principal and session)
+    stolen = client.post("/api/programs/studio/act", headers=ana, json=jons)
     assert stolen.status_code == 403 and stolen.json()["error"]["code"] == "confirm_invalid", stolen.text
     assert "artifact_id" not in stolen.text
-    # her lookup is scoped to her principal (no prior of Quinn's to recover), and the refused token stops it before a row
-    assert [(r["principal"], r["status"]) for r in rows()] == [("user:u_quinn", "done")]
+    # her lookup is scoped to her principal (no prior of Jon's to recover), and the refused token stops it before a row
+    assert [(r["principal"], r["status"]) for r in rows()] == [("user:u_jon", "done")]
     assert hive.db.one("SELECT count(*) AS n FROM artifacts")["n"] == published
 
-    # 2. with her own confirm, the same key is HER intent: a separate row and a delivery as her, never Quinn's result
+    # 2. with her own confirm, the same key is HER intent: a separate row and a delivery as her, never Jon's result
     hers = client.post("/api/programs/studio/act", headers=ana, json=confirmed(client, ana, "studio", plain))
     assert hers.status_code == 200, hers.text
     assert hers.json()["detail"]["artifact_id"] != first.json()["detail"]["artifact_id"]
     assert hive.db.one("SELECT count(*) AS n FROM artifacts")["n"] == published + 1
     after = {r["principal"]: r for r in rows()}
-    assert set(after) == {"user:u_quinn", "user:u_ana"} and after["user:u_ana"]["status"] == "done"
-    assert after["user:u_quinn"]["result"] == quinn_row[0]["result"]          # the original's record is untouched
+    assert set(after) == {"user:u_jon", "user:u_ana"} and after["user:u_ana"]["status"] == "done"
+    assert after["user:u_jon"]["result"] == jon_row[0]["result"]          # the original's record is untouched
 
-    # 3. Quinn's own same-key retry still recovers Quinn's original, unaffected by Ana's intent
-    again = client.post("/api/programs/studio/act", headers=quinn, json=quinns)
+    # 3. Jon's own same-key retry still recovers Jon's original, unaffected by Ana's intent
+    again = client.post("/api/programs/studio/act", headers=jon, json=jons)
     assert again.status_code == 200 and again.json() == first.json()

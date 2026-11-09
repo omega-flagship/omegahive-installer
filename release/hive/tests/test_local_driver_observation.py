@@ -14,6 +14,7 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+import threading
 from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -409,13 +410,19 @@ class DriverObservationTests(unittest.TestCase):
     def _assert_shutdown_lifespan(self, local_owner, stop_failure):
         # Execute the actual integrated handler with inert service boundaries.
         # Both local-owner and ordinary-host paths have explicit order assertions.
+        # Exercise the actual resource decorator/retirement without creating a
+        # bootstrap attempt, process, cgroup, map worker or real repository map.
+        from hive.core.code_aggregate import _CodeAggregate
         app_source = HERE / 'app.py'
         if not app_source.exists():
             app_source = HERE.parent / 'core/app.py'
         source_text = app_source.read_text()
         tree = ast.parse(source_text)
-        lifespan = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == 'lifespan')
-        code = ast.fix_missing_locations(ast.Module(body=[lifespan], type_ignores=[]))
+        factory = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_create_app')
+        helpers = [n for n in factory.body if isinstance(n, ast.AsyncFunctionDef)
+                   and n.name in ('prepare_installed_map', 'lifespan')]
+        self.assertEqual([n.name for n in helpers], ['prepare_installed_map', 'lifespan'])
+        code = ast.fix_missing_locations(ast.Module(body=helpers, type_ignores=[]))
         # No ast.dump/source digest assertion: the actual handler below must
         # contain stop failures per mind, continue, drain and close in order.
         # The context marker also proves shutdown occurs after the yield.
@@ -432,18 +439,38 @@ class DriverObservationTests(unittest.TestCase):
             events.append('local-start')
         async def local_stop():
             events.append('local-stop')
+        @contextlib.asynccontextmanager
+        async def code_bridge_running(owner):
+            self.assertIs(owner, hive)
+            events.append('code-bridge-start')
+            try:
+                yield
+            finally:
+                events.append('code-bridge-stop')
         def stop(mind):
             events.append(mind)
             if mind == 'A':
                 raise stop_failure
         async def threadpool(fn, *args):
             return fn(*args)
+        # The map is the same explicit synthetic service boundary as the
+        # preflight/gateway stand-ins. Keep the original helper coroutine and
+        # dispatch its one to_thread callback inline, with no shared patch.
+        installed_map = SimpleNamespace(run_once=Mock(), stop=Mock(), worker_failed=Mock())
+        fixture_asyncio = SimpleNamespace(get_running_loop=asyncio.get_running_loop,
+            create_task=asyncio.create_task, wait=asyncio.wait,
+            CancelledError=asyncio.CancelledError, to_thread=threadpool)
         supervisor = SimpleNamespace(stop=stop, shutdown=lambda: events.append('shutdown'))
         hive = SimpleNamespace(events=SimpleNamespace(bind=Mock()), restore=restore,
             db=SimpleNamespace(all=lambda _: [{'id':'A'}, {'id':'B'}]),
-            ask=SimpleNamespace(conductor=SimpleNamespace(aclose=conductor_close)))
+            ask=SimpleNamespace(conductor=SimpleNamespace(aclose=conductor_close)),
+            # gate A r1.3's stored-answer sweeper thread: an inert stand-in that returns at once (start/stop no-ops)
+            mind_idempotency=SimpleNamespace(sweeper=lambda stop: None))
         local = SimpleNamespace(start=local_start, stop=local_stop, preflight=None) if local_owner else None
         settings = SimpleNamespace(data_dir=Path('/__in_memory_lifecycle_fixture__'))
+        aggregate = _CodeAggregate(settings)
+        self.assertFalse(aggregate.start_attempted)
+        self.assertIsNone(aggregate.attempt)
         preflight_result = object()
         def preflight_run(data_dir):
             events.append('preflight')
@@ -460,9 +487,11 @@ class DriverObservationTests(unittest.TestCase):
         preflight.run_and_record = Mock(side_effect=preflight_run)
         fake_supervisor.preflight = preflight
         env = dict(__name__=pkg_name + '.core.app', __package__=pkg_name + '.core',
-            asyncio=asyncio, contextlib=contextlib, logging=logging,
+            asyncio=fixture_asyncio, contextlib=contextlib, logging=logging, threading=threading,
             hive=hive, supervisor=supervisor, reconcile_seconds=0, reconcile=nothing,
             warm_catalog=nothing, app_ask_expiry=nothing, run_in_threadpool=threadpool, local=local, settings=settings,
+            installed_map=installed_map, _code_aggregate=aggregate,
+            code_local_enrolment=SimpleNamespace(running=code_bridge_running),
             gateway=SimpleNamespace(client=SimpleNamespace(aclose=gateway_close)))
         async def run():
             async with env['lifespan'](None):
@@ -473,7 +502,8 @@ class DriverObservationTests(unittest.TestCase):
             exec(compile(code, str(app_source), 'exec'), env)
             with self.assertLogs('hive', level='WARNING') as logs:
                 asyncio.run(run())
-        expected = ['restore', 'context-active', 'shutdown', 'A', 'B', 'conductor-close', 'gateway-close']
+        expected = ['restore', 'code-bridge-start', 'context-active', 'code-bridge-stop',
+                    'shutdown', 'A', 'B', 'conductor-close', 'gateway-close']
         if local_owner:
             expected = ['preflight', 'local-start'] + expected + ['local-stop']
             preflight.run_and_record.assert_called_once_with(settings.data_dir)
@@ -482,6 +512,18 @@ class DriverObservationTests(unittest.TestCase):
             preflight.run_and_record.assert_not_called()
         self.assertEqual(events, expected)
         self.assertTrue(any('unresolved' in row for row in logs.output))
+        installed_map.run_once.assert_called_once_with()
+        installed_map.stop.assert_called_once_with()
+        installed_map.worker_failed.assert_not_called()
+        self.assertTrue(hive._installed_map_job.done())
+        self.assertFalse(hive._installed_map_job.cancelled())
+        self.assertIsNone(hive._installed_map_job.exception())
+        self.assertFalse(aggregate.start_attempted)
+        self.assertIsNone(aggregate.attempt)
+        self.assertEqual(aggregate._runner_contexts, [])
+        self.assertTrue(aggregate.retirement_attempted)
+        self.assertEqual(aggregate.phase, 'retired-no-attempt')
+        self.assertFalse(aggregate.observation_incomplete)
 
     def test_shutdown_attempts_later_minds_and_closes_conductor_and_gateway(self):
         self._assert_shutdown_lifespan(local_owner=False,

@@ -4,7 +4,7 @@ import type { HiveClient } from '../../api/client'
 import { STALE } from '../../lib/identityEpoch'
 import type { DecisionAction } from '../../ui/DecisionDialog'
 
-// Same bounded hook-slot test double used by HostConfirm.test.ts. It runs the real
+// Same bounded hook-slot stand-in used by HostConfirm.test.ts. It runs the real
 // hook/parser, effects and cleanups; it is not a browser/gesture qualification.
 const R = vi.hoisted(() => ({ slots: [] as unknown[], i: 0, ei: 0,
   effects: [] as { deps?: unknown[]; cleanup?: unknown }[], pending: [] as (() => void)[] }))

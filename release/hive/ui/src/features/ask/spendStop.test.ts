@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 /**
  * Spend-stop r1: the Ask's spending stop ("Stopped here: this request reached its spending limit") is never a dead end.
  * It offers New thread and the raise for new threads (an open thread's limit is fixed when it starts; the host has no
- * route to raise it), and the page never sends a limit above $5 (the owner, 2026-10-05). Invented data only.
+ * route to raise it), and the page never sends a limit above $5 (Jon 2026-10-05). Invented data only.
  */
 vi.stubGlobal('window', { location: { hash: '#/', search: '', pathname: '/' }, matchMedia: () => ({ matches: false }), innerWidth: 1200, innerHeight: 800, addEventListener() {}, removeEventListener() {}, localStorage: { getItem: () => null, setItem() {}, removeItem() {} } })
 // A server render reads a zustand store through its server snapshot (the initial state); read the live one instead.

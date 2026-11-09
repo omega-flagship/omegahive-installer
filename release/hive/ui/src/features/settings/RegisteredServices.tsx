@@ -68,7 +68,7 @@ function ServicesList() {
   if (res.status === 'unsupported') return null
   const live = (id: string) => res.data?.find((x) => x.id === id)
   return (
-    <section className="rounded-2xl border border-line bg-white/[0.02] p-4" aria-labelledby="services-h" data-registered-services>
+    <section className="rounded-2xl border border-line bg-tint/[0.02] p-4" aria-labelledby="services-h" data-registered-services>
       <h2 id="services-h" className="eyebrow pb-1">Registered services</h2>
       <p className="pb-3 text-[12.5px] text-ink-3">Separate programs the hive works with, such as the Code service. Off: the hive issues them no new access. Removed: their registration and every access they hold end.</p>
       <ResourceView res={res} errorTitle="Could not list services" empty={{ title: 'No services registered', body: 'A service appears here when it enrols with this hive.' }}>

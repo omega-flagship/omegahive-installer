@@ -59,32 +59,11 @@ class StubContext:
         return goal
 
 
-_RUNNER = None
-
-
 def _maybe_await(value):
-    """Resolve a sync or async program result, as the host does (hive/core/programs.py Programs._call). Every call
-    in one check shares one event loop, so a program may keep loop-bound state (locks, clients) across calls."""
-    if not hasattr(value, "__await__"):
-        return value
-    if _RUNNER is None:
-        return asyncio.run(value)
-    return _RUNNER.run(value)
+    return asyncio.run(value) if hasattr(value, "__await__") else value
 
 
 def check(folder, focus=None, log=print, scenario=False, allow_mutation=False):
-    """Check one app folder against the program contract. view() and act() may be sync or async."""
-    global _RUNNER
-    previous = _RUNNER
-    with asyncio.Runner() as runner:
-        _RUNNER = runner
-        try:
-            return _check(folder, focus, log, scenario, allow_mutation)
-        finally:
-            _RUNNER = previous
-
-
-def _check(folder, focus, log, scenario, allow_mutation):
     folder = pathlib.Path(folder)
     manifest = json.loads((folder / "plugin.json").read_text())
     spec = importlib.util.spec_from_file_location("program_under_check", folder / manifest.get("module", "program.py"))
@@ -100,9 +79,9 @@ def _check(folder, focus, log, scenario, allow_mutation):
         f"actions: {', '.join(sorted(actions)) or 'none'}")
     ctx = StubContext()
 
-    graphs = {stage: validate_graph(pid, desc, _maybe_await(module.view(ctx, focus, stage)), stage, fail) for stage in STAGES}
+    graphs = {stage: validate_graph(pid, desc, module.view(ctx, focus, stage), stage, fail) for stage in STAGES}
     log("views valid in every stage: " + ", ".join(STAGES))
-    again = validate_graph(pid, desc, _maybe_await(module.view(ctx, focus, "unfold")), "unfold", fail)
+    again = validate_graph(pid, desc, module.view(ctx, focus, "unfold"), "unfold", fail)
     first = graphs["unfold"]
     if {i["id"] for i in again["items"]} != {i["id"] for i in first["items"]} or again["revision"] != first["revision"]:
         raise CheckError("two views with no change in between returned different ids or revisions")
@@ -134,7 +113,7 @@ def _check(folder, focus, log, scenario, allow_mutation):
         target = evidence[0]["id"]
         out = validate_result(pid, desc, _maybe_await(module.act(ctx, "correct", [target], {
             "text": "corrected by the contract checker", "note": "checker", "base_revision": first["revision"]})), fail)
-        after = out.get("graph") or validate_graph(pid, desc, _maybe_await(module.view(ctx, focus, "unfold")), "unfold", fail)
+        after = out.get("graph") or validate_graph(pid, desc, module.view(ctx, focus, "unfold"), "unfold", fail)
         if out["status"] != "done":
             raise CheckError(f"correct returned {out['status']}: {out.get('message')}")
         if not {i["id"] for i in first["items"]} <= {i["id"] for i in after["items"]}:

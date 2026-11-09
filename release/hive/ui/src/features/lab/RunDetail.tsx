@@ -192,7 +192,7 @@ export function CaseList({
             ...(skipped ? [{ value: 'skipped' as const, label: `Skipped · ${skipped}` }] : []),
           ]}
         />
-        <label className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-black/25 px-3 focus-within:border-line-2 sm:max-w-xs">
+        <label className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-shade/25 px-3 focus-within:border-line-2 sm:max-w-xs">
           <Icon name="search" size={16} className="shrink-0 text-ink-4" />
           <input value={f.q} onChange={(e) => setF((x) => ({ ...x, q: e.target.value }))} placeholder="Search cases" aria-label="Search cases" className="min-w-0 flex-1 bg-transparent text-[14px] text-ink outline-none placeholder:text-ink-4" />
           {f.q && (
@@ -212,7 +212,7 @@ export function CaseList({
                 key={d}
                 onClick={() => setDim(d)}
                 aria-pressed={on}
-                className={cx('inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[12.5px] transition-colors', on ? 'border-line-2 bg-white/[0.09] text-ink' : 'border-line text-ink-3 hover:text-ink-2')}
+                className={cx('inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[12.5px] transition-colors', on ? 'border-line-2 bg-tint/[0.09] text-ink' : 'border-line text-ink-3 hover:text-ink-2')}
               >
                 {meta && <Icon name={meta.icon} size={13} />}
                 {meta?.label ?? 'Every dimension'}
@@ -226,11 +226,11 @@ export function CaseList({
         {groups.map((g) => {
           const isCollapsed = collapsed[g.group] ?? (big && !filtering && g.failed === 0)
           return (
-            <section key={g.group} className="overflow-hidden rounded-xl border border-line bg-black/15">
+            <section key={g.group} className="overflow-hidden rounded-xl border border-line bg-shade/15">
               <button
                 onClick={() => setCollapsed((c) => ({ ...c, [g.group]: !isCollapsed }))}
                 aria-expanded={!isCollapsed}
-                className="flex min-h-11 w-full items-center gap-2 px-3 text-left hover:bg-white/[0.03]"
+                className="flex min-h-11 w-full items-center gap-2 px-3 text-left hover:bg-tint/[0.03]"
               >
                 <Icon name="chevronDown" size={15} className={cx('shrink-0 text-ink-4 transition-transform', isCollapsed && '-rotate-90')} />
                 <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-ink-2">{labText(g.group) || 'ungrouped'}</span>
@@ -275,7 +275,7 @@ function GroupChips({ passed, failed, skipped }: { passed: number; failed: numbe
   return (
     <span className="flex shrink-0 items-center gap-1.5 text-[11.5px] tabular-nums">
       {failed > 0 && <span className="rounded-full bg-bad/15 px-1.5 py-px font-semibold text-bad">{failed} failed</span>}
-      {skipped > 0 && <span className="rounded-full bg-white/[0.06] px-1.5 py-px text-ink-3">{skipped} skipped</span>}
+      {skipped > 0 && <span className="rounded-full bg-tint/[0.06] px-1.5 py-px text-ink-3">{skipped} skipped</span>}
       <span className="rounded-full bg-good/10 px-1.5 py-px text-good">{passed} passed</span>
     </span>
   )
@@ -297,7 +297,7 @@ function CaseRow({ c, open, onToggle }: { c: LabCase; open: boolean; onToggle: (
       transition={{ duration: 0.5 }}
       className="scroll-mt-24 border-b border-line last:border-b-0"
     >
-      <button onClick={onToggle} disabled={!expandable} aria-expanded={expandable ? open : undefined} className="flex min-h-11 w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-white/[0.03] disabled:cursor-default disabled:hover:bg-transparent">
+      <button onClick={onToggle} disabled={!expandable} aria-expanded={expandable ? open : undefined} className="flex min-h-11 w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-tint/[0.03] disabled:cursor-default disabled:hover:bg-transparent">
         <StatusIcon status={c.status} size={18} />
         <span className="min-w-0 flex-1">
           <span className={cx('block truncate text-[13px]', c.status === 'failed' || c.status === 'error' ? 'text-ink' : 'text-ink-2')} title={labText(c.name)}>
@@ -352,7 +352,7 @@ export function CaseDetail({ c, chips }: { c: LabCase; chips: string[] }) {
       {c.message && (
         <div>
           <div className={cx('mb-1 text-[11.5px] font-semibold', failing ? 'text-bad' : 'text-ink-3')}>{failing ? 'Failure' : c.status === 'skipped' ? 'Why it was skipped' : 'Message'}</div>
-          <pre className={cx('thin-scroll max-h-72 overflow-auto rounded-xl border p-3 font-mono text-[11.5px] leading-relaxed whitespace-pre', failing ? 'border-bad/25 bg-bad/[0.06] text-[#fecdd3]' : 'border-line bg-black/30 text-ink-2')}>{c.message}</pre>
+          <pre className={cx('thin-scroll max-h-72 overflow-auto rounded-xl border p-3 font-mono text-[11.5px] leading-relaxed whitespace-pre', failing ? 'border-bad/25 bg-bad/[0.06] text-[#fecdd3]' : 'border-line bg-shade/30 text-ink-2')}>{c.message}</pre>
         </div>
       )}
       {c.notes && <p className="max-w-3xl text-[13px] leading-relaxed text-ink-2">{labText(c.notes)}</p>}
@@ -366,7 +366,7 @@ export function CaseDetail({ c, chips }: { c: LabCase; chips: string[] }) {
       {charts.length > 0 && (
         <div className={cx('grid gap-3', charts.length > 1 && 'lg:grid-cols-2')}>
           {charts.map((g) => (
-            <figure key={g.map((s) => s.name).join('|')} className="min-w-0 rounded-xl border border-line bg-black/20 p-3">
+            <figure key={g.map((s) => s.name).join('|')} className="min-w-0 rounded-xl border border-line bg-shade/20 p-3">
               <figcaption className="mb-1 text-[12.5px] font-medium text-ink-2">{g.map((s) => seriesTitle(s.name)).join(' vs ')}</figcaption>
               <SeriesChart series={g} label={`${labText(c.name)}: ${g.map((s) => labText(s.name)).join(', ')}`} />
             </figure>
@@ -396,7 +396,7 @@ function RunLog({ runId, running }: { runId: string; running: boolean }) {
         <Icon name="chevronDown" size={15} className={cx('text-ink-4 transition-transform', open && 'rotate-180')} />
       </button>
       {open && (
-        <pre ref={ref} className="thin-scroll mt-2 max-h-64 overflow-auto rounded-xl border border-line bg-black/40 p-3 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap text-ink-2">
+        <pre ref={ref} className="thin-scroll mt-2 max-h-64 overflow-auto rounded-xl border border-line bg-shade/40 p-3 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap text-ink-2">
           {lines.length ? lines.map((l, i) => <div key={i}>{l}</div>) : <span className="text-ink-4">{running ? 'Waiting for output…' : 'No log output.'}</span>}
         </pre>
       )}

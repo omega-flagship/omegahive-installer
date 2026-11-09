@@ -191,7 +191,7 @@ export default function UsageView() {
             onClick={() => setTable(!table)}
             aria-pressed={table}
             aria-label="Show as table"
-            className={cx('ml-auto flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-xl border px-3 text-[13px] transition-colors', table ? 'border-line-2 bg-white/[0.09] text-ink' : 'border-line text-ink-3 hover:text-ink')}
+            className={cx('ml-auto flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-xl border px-3 text-[13px] transition-colors', table ? 'border-line-2 bg-tint/[0.09] text-ink' : 'border-line text-ink-3 hover:text-ink')}
           >
             <Icon name="table" size={16} />
             <span className="hidden sm:inline">Table</span>
@@ -272,7 +272,7 @@ function Tile({ label, value, delta, hero, upIsGood = true, money: isMoney }: { 
       <div className={cx('mt-1 font-sans font-semibold tracking-tight text-ink', hero ? 'text-[44px] leading-none md:text-[48px]' : 'text-xl md:text-2xl')}>{value}</div>
       {delta !== undefined && delta !== null && (
         <div className="mt-1.5 flex flex-wrap items-center gap-x-1 text-[11px] md:text-[12px]">
-          <span className={good ? 'text-[#4ade80]' : 'text-[#fda4af]'}>
+          <span className={good ? 'text-good' : 'text-[#fda4af]'}>
             <Icon name="chevron" size={12} className={cx('inline', up ? '-rotate-90' : 'rotate-90')} /> {Math.abs(delta * 100).toFixed(0)}%
           </span>
           <span className="text-ink-4">vs previous</span>
@@ -348,13 +348,13 @@ function StackedColumns({
         <svg width={width} height={H} role="img" aria-label="Stacked column chart of spend over time. Use the table toggle for exact values.">
           {ticks.map((t) => (
             <g key={t}>
-              <line x1={padL} x2={width} y1={y(t)} y2={y(t)} stroke="rgb(255 255 255 / 0.07)" />
+              <line x1={padL} x2={width} y1={y(t)} y2={y(t)} stroke="color-mix(in oklab, var(--color-ink) 7%, transparent)" />
               <text x={padL - 8} y={y(t)} dy="0.32em" textAnchor="end" fontSize={11} fill="#8a89b3" style={{ fontVariantNumeric: 'tabular-nums' }}>
                 {tickMoney(t)}
               </text>
             </g>
           ))}
-          <line x1={padL} x2={width} y1={y(0)} y2={y(0)} stroke="rgb(255 255 255 / 0.18)" />
+          <line x1={padL} x2={width} y1={y(0)} y2={y(0)} stroke="color-mix(in oklab, var(--color-ink) 18%, transparent)" />
           {cols.map((c, i) => {
             const x = padL + i * band + (band - bw) / 2
             let acc = 0

@@ -41,7 +41,7 @@ function AuditList() {
   const [principal, setPrincipal] = useState('')
   const [applied, setApplied] = useState('')
   return (
-    <section className="rounded-2xl border border-line bg-white/[0.02] p-4" aria-labelledby="ask-audit-h" data-ask-audit>
+    <section className="rounded-2xl border border-line bg-tint/[0.02] p-4" aria-labelledby="ask-audit-h" data-ask-audit>
       <h2 id="ask-audit-h" className="eyebrow pb-1">Ask audit</h2>
       <p className="pb-3 text-[12.5px] text-ink-3">Every person’s Ask turns, newest first, as the hive keeps them. People are told under every Ask thread that admins can review it. A deleted thread keeps its rows without words.</p>
       <form
@@ -53,7 +53,7 @@ function AuditList() {
       >
         <label className="block min-w-[200px] flex-1">
           <span className="text-[12px] text-ink-3">Only one person (their id, like user:p_ada)</span>
-          <input value={principal} onChange={(e) => setPrincipal(e.target.value)} placeholder="Everyone" className="mt-1 min-h-10 w-full rounded-xl border border-line bg-black/30 px-3 text-[13px] text-ink outline-none focus:border-line-2" />
+          <input value={principal} onChange={(e) => setPrincipal(e.target.value)} placeholder="Everyone" className="mt-1 min-h-10 w-full rounded-xl border border-line bg-shade/30 px-3 text-[13px] text-ink outline-none focus:border-line-2" />
         </label>
         <Button type="submit" variant="subtle">Show</Button>
         {applied && <Button type="button" variant="ghost" onClick={() => (setPrincipal(''), setApplied(''))}>Everyone</Button>}
@@ -171,7 +171,7 @@ function AuditTurn({ turnId }: { turnId: string }) {
   if (error) return <p className="text-[12px] text-bad">{error}</p>
   if (!turn) return <p className="text-[12px] text-ink-4">Loading…</p>
   return (
-    <div className="mt-1 rounded-xl border border-line bg-black/20 px-3 py-2 text-[12px]">
+    <div className="mt-1 rounded-xl border border-line bg-shade/20 px-3 py-2 text-[12px]">
       <ol className="space-y-0.5 text-ink-3">
         {frames.map((e) => (
           <li key={e.seq} className="[overflow-wrap:anywhere]">

@@ -16,11 +16,16 @@ import { useAskField, useSeen } from './useAskField'
 import { useAskVoice } from './useAskVoice'
 import { VoiceAnnouncer, VoiceListening, VoiceNoticeView } from './VoiceParts'
 import { shownMind } from './words'
+import { useDraft } from '../../experiences/drafts'
+import { useStillFieldCaret, useStillFieldPart } from './stillField'
 
 const sentence = (c: Candidate) => c.parts.map((p) => p.t).join('')
 
 export function StillLine({ place, inputRef, words }: { place: Placement; inputRef: RefObject<HTMLInputElement | null>; words: string[] }) {
-  const f = useAskField({ experience: 'still' })
+  const part = useStillFieldPart()
+  const draft = useDraft('still:ask')
+  const f = useAskField({ experience: 'still', draft })
+  useStillFieldCaret('floating', inputRef)
   const id = useId()
   const reduced = useReducedMotion()
   const threadOpen = useAskStore((s) => s.threadOpen)
@@ -102,6 +107,8 @@ export function StillLine({ place, inputRef, words }: { place: Placement; inputR
           spellCheck={false}
           enterKeyHint="send"
           data-ask-input=""
+          data-ui-part={part}
+          data-intent="ask.field"
         />
         <button type="button" className="ask-still-btn ask-mic" {...v.button} aria-label={v.label} data-voice={v.state}>
           {v.listening ? 'Stop' : 'Speak'}

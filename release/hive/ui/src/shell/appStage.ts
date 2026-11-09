@@ -15,8 +15,13 @@ export type AppStage =
 let current: AppStage | null = null
 const listeners = new Set<() => void>()
 const same = (a: AppStage | null, b: AppStage | null) => JSON.stringify(a) === JSON.stringify(b)
+// Acquisition order is foreground order. Updating a background measurement must not raise it above a newer stage.
+const publications = new Map<symbol, AppStage | null>()
+const compatibilityOwner = Symbol('setAppStage')
 
-export function setAppStage(next: AppStage | null): void {
+function updateCurrent(): void {
+  let next: AppStage | null = null
+  for (const stage of publications.values()) if (stage !== null) next = stage
   if (same(current, next)) return
   current = next
   if (typeof document !== 'undefined') {
@@ -24,6 +29,34 @@ export function setAppStage(next: AppStage | null): void {
     else delete document.documentElement.dataset.appStage
   }
   for (const l of listeners) l()
+}
+
+/** One publisher per layout-effect lifetime. An outgoing stage can withdraw only its own measurement. */
+export function createAppStagePublisher(): { set: (next: AppStage) => void; release: () => void } {
+  const owner = Symbol('app stage publisher')
+  let released = false
+  // Reserve order now, even if this owner's first measurement arrives after another stage's.
+  publications.set(owner, null)
+  return {
+    set(next) {
+      if (released) return
+      publications.set(owner, next)
+      updateCurrent()
+    },
+    release() {
+      if (released) return
+      released = true
+      publications.delete(owner)
+      updateCurrent()
+    },
+  }
+}
+
+/** Compatibility writer: null releases this slot, never another mounted stage's publication. */
+export function setAppStage(next: AppStage | null): void {
+  if (next === null) publications.delete(compatibilityOwner)
+  else publications.set(compatibilityOwner, next)
+  updateCurrent()
 }
 
 export const appStageNow = () => current

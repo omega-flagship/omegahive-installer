@@ -2,10 +2,12 @@ import { useScene } from '../../scene/sceneStore'
 
 /**
  * The room the docked Ask takes above the bottom edge (CSS px): its place above the bottom safe area plus the capsule
- * and its gap (64); Professional's docked card, measured, plus a gap when it is taller. Pure, and tested.
+ * and its gap (64 minimum). The measured whole floating dock includes its answerer row; Professional keeps its
+ * existing 12 px gap, the other floating skins keep 8 px. Pure, and tested.
  */
-export function askRoom(place: { bottom: number }, isPro: boolean, professionalHeight: number): number {
-  return isPro ? place.bottom + Math.max(64, professionalHeight + 12) : place.bottom + 64
+export function askRoom(place: { bottom: number }, isPro: boolean, measuredHeight: number): number {
+  const height = Number.isFinite(measuredHeight) ? Math.max(0, measuredHeight) : 0
+  return place.bottom + Math.max(64, height + (isPro ? 12 : 8))
 }
 
 /**

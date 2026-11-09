@@ -1,8 +1,6 @@
-> **Closed Source for Product Consideration.** These notes document Evolve (`hive/plugins/omegaevolve`), a closed folder in this repository. Shared privately with the SingularityNET team. Do not publish, redistribute or relicense as open source. See `hive/plugins/omegaevolve/CLOSED_SOURCE.md`.
-
 # OmegaEvolve begins as an Omega and an Iter
 
-the owner's direct correction establishes two initial evolving subjects: one real
+Jon's direct correction establishes two initial evolving subjects: one real
 `kind=omega` mind and one real `kind=iter` mind. Both evolve themselves and can
 propose improvements to the other. Neither exists only as the other's baseline.
 The project also learns how to improve its improvement process.

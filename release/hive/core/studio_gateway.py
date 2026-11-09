@@ -1,6 +1,6 @@
 """J3 host round R4 (money at call time): a Studio maker's paid calls, bound to one step and one execution.
 
-Plan: coordination/omegareview/PLATFORM_J3R4_HOST_O1_O2_G1_PLAN.md §3.6 "Gateway", §6, r1.1 S1 (the monthly total at
+Plan: PLATFORM_J3R4_HOST_O1_O2_G1_PLAN.md §3.6 "Gateway", §6, r1.1 S1 (the monthly total at
 every reservation), S2/E2 (the fence after Stop), S5 (drift at call time and the change routes), K5/E6.3 (O2-e'), r1.2
 E1 (reservation metadata, the send gate on the reservation's own step, settlement on its own labels), E6.1, r1.3 F1 and
 r1.4 G1/G3 (the captured epoch, re-checked inside every consuming transaction), r1.8 L6 (op-id uniqueness) with the
@@ -178,10 +178,7 @@ class StudioGateway:
             rows = hive.db.all("SELECT * FROM key_limits WHERE owner = ? AND grantee = 'self' AND key_id = '*' "
                                "AND revoked_at IS NULL", (principal,))
             return bool(hive.ownhive._active(rows))
-        scope = "person:" + principal[5:]
-        if any(r["scope"] == scope and r["period"] == "month" for r in hive.budgets.rules()):
-            return True
-        return principal.startswith("user:u_") and hive.budgets.member_allowance(principal[5:]) is not None
+        return self._allowance(principal, row["maker_id"], row["key_id"]) is not None
 
     def _call_rows(self, call, base_rows):
         """Inside the reservation transaction: every check, then the two exact-label rows (K5: subject_of is None for
@@ -204,14 +201,25 @@ class StudioGateway:
         session, step = scope_label(row["id"]), step_label(row["id"], call.n)
         if session in labels or step in labels:
             raise StudioRefused(self._err(409, "execution_retired", "That execution is not the open step's."))
-        return [(session, float(row["cap_usd"]), self.scope_spent(session)),
-                (step, float(row["step_cap_usd"]), self.scope_spent(step))]
+        out = [(session, float(row["cap_usd"]), self.scope_spent(session)),
+               (step, float(row["step_cap_usd"]), self.scope_spent(step))]
+        if not row["own_key"]:
+            # the person's month allowance on the hive's money is a row at every reservation, with the same arithmetic as
+            # the member default's row (Budgets.applicable): the owner on the hive's key has no member default there (an
+            # admin), so _allowance's answer is added as that row; concurrent sessions then share it (74df4002 review P1)
+            scope = "person:" + row["principal"][5:]
+            if scope + ":month" not in labels:
+                allowance = self._allowance(row["principal"], row["maker_id"], row["key_id"])
+                if allowance is not None:
+                    out.append((scope + ":month", float(allowance), self.hive.budgets.spent(scope, "month")))
+        return out
 
     def reserve_call(self, call, reservations, key, payload, estimate, budgets, metadata, subjects=None):
         """A maker's reservation (E1, F1, G1): the step and the captured epoch in its metadata, the Studio checks and rows
         inside its transaction, reserved and not dispatched (the send gate dispatches). A refusal reserves nothing; it
         ends the step and pauses or holds the session after the rollback, and raises the HiveError to answer."""
         from .cost_reservations import BudgetExhausted
+        from .hive import HiveError
         call.reservation = key
         try:
             return reservations.reserve(key, payload, estimate, call.budgets(budgets), metadata=call.metadata(metadata),
@@ -222,6 +230,10 @@ class StudioGateway:
         except BudgetExhausted as exc:
             self.gateway_refused(call, ("paused", "budget_exhausted", "refused_budget"))
             raise self._err(402, "reservation_refused", str(exc), scope=exc.scope) from None
+        except HiveError as exc:
+            if exc.status == 402:   # money port r1.2: use refused in the transaction (host_use_check), as studio_check
+                self.gateway_refused(call, ("paused", "budget_exhausted", "refused_budget"))
+            raise
         except ValueError as exc:
             if "payer changed" in str(exc):
                 self.gateway_refused(call, ("held", "binding_drift:payer_changed", "interrupted"))

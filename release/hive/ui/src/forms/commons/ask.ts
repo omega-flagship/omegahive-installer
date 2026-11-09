@@ -3,7 +3,7 @@ import { isConsequential } from './gate'
 import { FILTERS, matches, type Filter, type Sky, type Unfolded } from './model'
 
 /**
- * For the host's shared Ask layer (the owner, 2026-10-05: every app has a floating text and voice input; a request reshapes
+ * For the host's shared Ask layer (Jon, 2026-10-05: every app has a floating text and voice input; a request reshapes
  * the world around it). The form does not build its own input. It offers two pure things:
  *
  *  1. `surfaceOf`: what the commons shows and can do right now (focus, visible entities, available acts with their

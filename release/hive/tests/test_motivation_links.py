@@ -6,6 +6,8 @@ import secrets
 import threading
 import time
 
+import pytest
+
 from hive.core.visibility import Viewer
 from hive.tests.test_core_api import client, load_settings, create_app, FakeSupervisor, PETTA  # noqa: F401  (fixture)
 from hive.tests.test_motivations import goal, ids, motivation, ok, world
@@ -312,7 +314,7 @@ def test_motivation_links_reaches_only_who_reads_the_motivation_and_sees_the_swa
 
 # ---- 8.1 case 13: paired worlds (B3) ---------------------------------------------------------------------------------
 
-ID = re.compile(r"\b(?:mo|g|s|a|r|rq|req)_[0-9a-f]{8}\b")
+ID = re.compile(r"\b(?:mo|g|s|a|r|rq|req)_[0-9a-f]{8}(?:[0-9a-f]{24})?\b")
 TS = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z")
 
 
@@ -449,3 +451,17 @@ def test_group_status_pages_each_column_on_its_own_cursor(client):
     assert code(client.get("/api/tasks", headers=p1, params={"group": "status", "status": "cancelled", "limit": 1, "cursor": open_cursor})) == "cursor_invalid"
     only = ok(client.get("/api/tasks", headers=p1, params={"group": "status", "status": "open,cancelled"}))
     assert list(only["groups"]) == ["open", "cancelled"] and only["counts"]["total"] == 4
+
+
+@pytest.mark.parametrize('width', [8, 32])
+def test_paired_world_normalizer_preserves_equivalence_at_both_identifier_widths(width):
+    for prefix in ('mo', 'g', 's', 'a', 'r', 'rq', 'req'):
+        left = {'id': prefix + '_' + 'a' * width, 'same': prefix + '_' + 'a' * width}
+        right = {'id': prefix + '_' + 'b' * width, 'same': prefix + '_' + 'b' * width}
+        assert normal(left) == normal(right) == json.dumps({'id': 'ID0', 'same': 'ID0'}, sort_keys=True)
+
+
+@pytest.mark.parametrize('width', [7, 9, 16, 31, 33])
+def test_paired_world_normalizer_never_partially_replaces_an_unfamiliar_width(width):
+    value = {'id': 'g_' + 'a' * width}
+    assert normal(value) == json.dumps(value, sort_keys=True)

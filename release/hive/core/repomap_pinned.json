@@ -1,0 +1,92 @@
+{
+  "schema": "repo-map-pins/1",
+  "revisions": [
+    {
+      "repo": "physixsnet-omegahive",
+      "sha": "3a07a6746b080e051c58f0082d319ea6449ebbbb",
+      "digest": "sha256:38b465eb04176486007807fc7af80fe36f054512759a413f5d4c23aa359fb690",
+      "visibility": "hive",
+      "pinned": true,
+      "file": "REAL_repo-map-1.3a07a67.json",
+      "note": "the upstream PhysixSNET tree",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/PhysixSNET/omegahive.git",
+        "ref": "main"
+      }
+    },
+    {
+      "repo": "omegahive-core",
+      "sha": "86eea58f3cd48eb5b5ffd86b5e2bc48be76ebb84",
+      "digest": "sha256:64bfa0acb090bf4388ea591100fef44f058a11256b853394571b7c72e69416cd",
+      "visibility": "hive",
+      "pinned": true,
+      "file": "MAP_omegahive-core.json",
+      "note": "public five-repo split: core (hive/ minus tests and ui)",
+      "source": {
+        "kind": "git",
+        "path_env": "HIVE_REPO_MAP_RELEASE_REPO",
+        "ref": "main",
+        "include": [
+          "hive/"
+        ],
+        "exclude": [
+          "hive/tests/",
+          "hive/ui/"
+        ]
+      }
+    },
+    {
+      "repo": "omegahive-rest",
+      "sha": "5d44e0a65c872204dda39a98d1036494703e6ffb",
+      "digest": "sha256:0b09281aa06f31d0843eda116fdf91c84c4aa68f4c1aa76df49e95ca54dd1604",
+      "visibility": "hive",
+      "pinned": true,
+      "file": "MAP_omegahive-rest.json",
+      "note": "public five-repo split: rest",
+      "source": {
+        "kind": "git",
+        "path_env": "HIVE_REPO_MAP_RELEASE_REPO",
+        "ref": "main",
+        "exclude": [
+          "hive/"
+        ]
+      }
+    },
+    {
+      "repo": "omegahive-tests",
+      "sha": "8c8172249bda04b82848539043bf86cbc1fe49d8",
+      "digest": "sha256:69f73fa0f1b6ef74b86d037a9228e8948fb61bec201a2573ad2a3534e1bafed7",
+      "visibility": "hive",
+      "pinned": true,
+      "file": "MAP_omegahive-tests.json",
+      "note": "public five-repo split: tests",
+      "source": {
+        "kind": "git",
+        "path_env": "HIVE_REPO_MAP_RELEASE_REPO",
+        "ref": "main",
+        "include": [
+          "hive/tests/"
+        ]
+      }
+    },
+    {
+      "repo": "omegahive-ui",
+      "sha": "47accb5d35f2d1359d4d40da58feb21179646b4a",
+      "digest": "sha256:72df533307deef906c1005679c4585dc8d119284a847313e94c6e9d72c6ba1d2",
+      "visibility": "hive",
+      "pinned": true,
+      "file": "MAP_omegahive-ui.json",
+      "note": "public five-repo split: ui",
+      "source": {
+        "kind": "git",
+        "path_env": "HIVE_REPO_MAP_RELEASE_REPO",
+        "ref": "main",
+        "include": [
+          "hive/ui/"
+        ]
+      }
+    }
+  ],
+  "note": "sha/digest/file are the last-built record that bootstraps a fresh hive; source is what the hive tracks and rebuilds from (repomap_sources.py)"
+}

@@ -18,7 +18,7 @@ import { useLook } from './shell/uiVariant'
 import { loadLookBound } from './shell/lookIdentity'
 import { LookPreviewBar } from './shell/LookPreviewBar'
 import { LookConflictNotice } from './shell/LookConflictNotice'
-import { ExperienceHost } from './experiences/ExperienceHost'
+import { ClassicPhaseHost, ClassicProChrome, ExperienceHost } from './experiences/ExperienceHost'
 import { GuideLayer } from './features/guided/GuideLayer'
 import { FpsMeter } from './shell/FpsMeter'
 import { chromeFor, experienceById } from './experiences/registry'
@@ -74,6 +74,7 @@ const LaunchSwarm = lazyRoute(() => import('./features/launch/LaunchSwarm'))
 const RolesPage = lazyRoute(() => import('./features/roles/RolesPage'))
 const ConnectHarness = lazyRoute(() => import('./features/harness/ConnectHarness'))
 const ArtifactsPage = lazyRoute(() => import('./features/artifacts/ArtifactsPage'))
+const ToolsPage = lazyRoute(() => import('./features/tools/ToolsPage'))
 const SetupPage = lazyRoute(() => import('./features/setup/SetupPage'))
 const RecentConversationsPage = lazyRoute(() => import('./features/dot/RecentConversationsPage'))
 const AssetsPage = lazyRoute(() => import('./features/assets/AssetsPage'))
@@ -210,6 +211,8 @@ export function App() {
               <ExperienceHost id={experience} />
             ) : (
               <>
+                <ClassicPhaseHost />
+                <ClassicProChrome>
                 {!page && <TopBar />}
                 <Nav />
                 <ActivityTicker />
@@ -217,6 +220,7 @@ export function App() {
                 <DotDirectory />
                 <EmptyHive />
                 <SetupNudge />
+                </ClassicProChrome>
               </>
             )}
             {/* classic pages, sheets and dialogs: dressed in the experience's chrome when one is active (index.css .xc-dress) */}
@@ -320,6 +324,11 @@ export function App() {
               {route.name === 'artifacts' && (
                 <Lazy key="artifacts">
                   <ArtifactsPage />
+                </Lazy>
+              )}
+              {route.name === 'tools' && (
+                <Lazy key="tools">
+                  <ToolsPage id={route.id} />
                 </Lazy>
               )}
               {route.name === 'conversations' && (

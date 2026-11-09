@@ -1,31 +1,39 @@
 ---
 name: Bug report
-about: Something in the hive, the UI, a mind or an app does not work as documented
+about: Create a report to help us improve
 title: ''
-labels: bug
+labels: ''
 assignees: ''
+type: Bug
+
 ---
 
-Do not report security problems here; see SECURITY.md. Use only synthetic data in this report.
+**Describe the bug**
+A clear and concise description of what the bug is.
 
-**What happened**
-A clear description of the problem.
+**To Reproduce**
+Steps to reproduce the behavior:
+1. Send '...' to agent
+2. Wait for '...'
 
-**What you expected**
+**Expected behavior**
+A clear and concise description of what you expected to happen.
 
-**How to reproduce**
-1. Hive commit (`git rev-parse --short HEAD`):
-2. Area: server / UI / experience (Classic, Cosmos, ...) / mind / app (which, and its version)
-3. Steps:
+**Actual behavior**
+A clear and concise description of what happens.
 
-**Environment**
-- OS and version:
-- Python version (`python --version`):
-- SWI-Prolog version (`swipl --version`) and whether the janus check prints 42:
-- PeTTa commit (`git -C "$PETTA_PATH" rev-parse --short HEAD`):
-- Node version (for UI issues):
-- Browser (for UI issues):
-- Mind model (for example `mock/echo`):
+**Desktop (please complete the following information):**
+ - OS: [e.g. iOS]
+ - Browser [e.g. chrome, safari]
+ - Version [e.g. 22]
 
-**Logs or test output**
-Paste the relevant lines, with secrets removed.
+**Smartphone (please complete the following information):**
+ - Device: [e.g. iPhone6]
+ - OS: [e.g. iOS8.1]
+ - Browser [e.g. stock browser, safari]
+ - Version [e.g. 22]
+
+**Additional context**
+- OmegaClaw version: [e.g. v0.1.10]
+- Communication channel: [e.g. IRC]
+- Model provider: [e.g. Anthropic]

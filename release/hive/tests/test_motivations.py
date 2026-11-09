@@ -363,7 +363,7 @@ def test_motivation_updated_is_judged_against_the_stored_row(client):
         assert not hive.visibility.event_visible(Viewer("user:u_p1", False), json.dumps(broken))
 
 
-# ---- owner Q2: minds create, owned by themselves or their own swarm; they read back what they created ------------------
+# ---- Jon Q2: minds create, owned by themselves or their own swarm; they read back what they created ------------------
 
 def test_minds_create_motivations_only_for_themselves_or_their_own_swarm(client):
     w = world(client)
@@ -445,7 +445,7 @@ def test_the_mcp_tools_create_and_read_back_only_own_motivations(client):
     assert hive.policy.decide(ada, "hive-motivation-create")[0] == "allow"
 
 
-# ---- owner Q1: parent_id exists, refused everywhere while the setting is off ------------------------------------------
+# ---- Jon Q1: parent_id exists, refused everywhere while the setting is off ------------------------------------------
 
 def test_parent_id_is_refused_by_every_route_while_switched_off(client):
     w = world(client)

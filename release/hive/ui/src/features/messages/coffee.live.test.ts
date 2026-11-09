@@ -3,7 +3,7 @@ import { LiveClient } from '../../api/live'
 import { COFFEE_NAME, isCoffee, roomMatches, roomSections } from './coffee'
 
 // Coffee UI r3: the live client path against host r4 (release a17bdda, hive/core/rooms.py view()). The parity audit
-// (coordination/omegaui/UI_BACKEND_PARITY_AUDIT_20261007.md) found the live Messages list drew only the kinds it listed,
+// (UI_BACKEND_PARITY_AUDIT_20261007.md) found the live Messages list drew only the kinds it listed,
 // so the host's Coffee Room was fetched and dropped. These payloads are shaped key for key as rooms.py view() with a
 // viewer: `alias` only on the Coffee Room, `pinned`, `origin`, names only. INVENTED data, no network.
 

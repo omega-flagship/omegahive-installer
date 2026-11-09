@@ -5,6 +5,8 @@ import { openGallery } from '../shell/uiVariant'
 import { setFpsMeter, useFpsMeterOn } from '../shell/fpsMeterState'
 import { HiveDirectory } from './HiveDirectory'
 import { powerMenuItems } from '../features/power/menu'
+import { OmegaGlyph } from '../brand/OmegaGlyph'
+import { LiveOmega } from '../brand/LiveOmega'
 
 export interface OmegaItem {
   label: string
@@ -20,9 +22,9 @@ export interface OmegaSection {
 /**
  * The one thing that never changes: Ω, bottom-left, in every experience and every app. Its menu carries the context's
  * own section (an app: leave, its views, its swarm) and then the same ways around the hive everywhere: everything in
- * the hive, Change UI, search, the frame-rate meter. Arrow keys, Home/End, Escape, focus restored to Ω.
+ * the hive, Change experience, search, the frame-rate meter. Arrow keys, Home/End, Escape, focus restored to Ω.
  */
-export function OmegaMenu({ heading, context, sections = [], footer = [] }: { heading: string; context: string; sections?: OmegaSection[]; footer?: OmegaItem[] }) {
+export function OmegaMenu({ heading, context, mark, sections = [], footer = [] }: { heading: string; context: string; /** what this Ω's mark wears, when not the experience (an app's own material) */ mark?: string; sections?: OmegaSection[]; footer?: OmegaItem[] }) {
   const [open, setOpen] = useState(false)
   const [directory, setDirectory] = useState(false)
   const fps = useFpsMeterOn()
@@ -68,11 +70,11 @@ export function OmegaMenu({ heading, context, sections = [], footer = [] }: { he
     </button>
   )
   const common: OmegaItem[] = [
-    // creating is never more than two clicks away, in every experience and every app (the owner, 2026-10-05)
+    // creating is never more than two clicks away, in every experience and every app (Jon, 2026-10-05)
     { label: 'Start a swarm…', run: () => navigate({ name: 'launch' }) },
     { label: 'New mind…', run: () => navigate({ name: 'new' }) },
     { label: 'Everything in the hive…', run: () => setDirectory(true) },
-    { label: 'Change UI…', run: () => openGallery(true) },
+    { label: 'Change experience…', run: () => openGallery(true) },
     { label: 'Search and commands', run: () => useHive.getState().setPalette(true) },
     { label: fps ? 'Hide frame rate' : 'Show frame rate', run: () => setFpsMeter(!fps) },
   ]
@@ -107,15 +109,15 @@ export function OmegaMenu({ heading, context, sections = [], footer = [] }: { he
       <button
         ref={button}
         data-omega-button=""
-        aria-label="Change UI and other ways out"
+        aria-label="Change experience and other ways out"
         title={heading}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
         className="xc-omega-hit grid size-9 place-items-center pointer-coarse:size-11"
       >
-        <span data-omega-glyph="" aria-hidden="true" className="xc-omega grid size-9 place-items-center rounded-full text-[17px]">
-          Ω
+        <span data-omega-glyph="" aria-hidden="true" className="xc-omega grid size-9 place-items-center rounded-full">
+          <LiveOmega look={mark ?? context} size="corner" className="size-[30px]" fallback={<span className="grid size-full place-items-center"><OmegaGlyph className="h-[19px] w-[21px]" /></span>} />
         </span>
       </button>
     </div>

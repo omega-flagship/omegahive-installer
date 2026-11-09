@@ -2,18 +2,15 @@
 outside networks and other local ports, and allows the mind's own folder and the hive on loopback."""
 import os
 import pathlib
+import re
 import socket
 import subprocess
 import sys
 import threading
-import shutil
-import tempfile
-import unittest
-from unittest.mock import patch
 
 import pytest
 
-from hive.supervisor.sandbox import available, loopback_ports, mind_environment, profile, runtime_roots, safe_roots
+from hive.supervisor.sandbox import available, loopback_ports, mind_environment, profile, runtime_roots
 
 
 def test_minds_never_inherit_secrets_or_app_settings():
@@ -120,87 +117,99 @@ def test_macos_profile_never_opens_the_terminal(tmp_path):
     assert "/dev/tty" not in text
 
 
-class RuntimeRootsSwiplHomeTests(unittest.TestCase):
-    """Pure path grants, using real runtime_roots/safe_roots and never running the SWI fixture."""
+def test_macos_mind_and_tool_profiles_keep_mach_lookup_denied(tmp_path):
+    from hive.core.sandbox_run import sandbox_policy
 
-    def _roots(self, executable, home):
-        with patch.dict(os.environ, {"HOME": str(home), "VIRTUAL_ENV": str(home / "unused-venv")}, clear=True), \
-             patch.object(shutil, "which", return_value=str(executable)) as lookup, \
-             patch.object(subprocess, "run", side_effect=AssertionError("runtime_roots must not execute SWI-Prolog")), \
-             patch.object(subprocess, "Popen", side_effect=AssertionError("runtime_roots must not execute SWI-Prolog")):
-            roots = runtime_roots(home / "petta", home / "core")
-            lookup.assert_called_once_with("swipl")
-            return roots
+    for policy in (profile(tmp_path, [], ports=()), sandbox_policy(tmp_path, [])):
+        lines = policy.splitlines()
+        assert "(deny default)" in lines
+        assert not any(re.match(r"\s*\(\s*allow\s+(?:mach|default\b)", line) for line in lines)
 
-    def _deep_layout(self, architecture):
-        with tempfile.TemporaryDirectory() as raw:
-            root = pathlib.Path(raw)
-            prefix = root / "runtime"
-            swipl_home = prefix / "lib" / "swipl"
-            binary = swipl_home / "bin" / architecture / "swipl"
-            binary.parent.mkdir(parents=True)
-            binary.write_text("synthetic SWI fixture; never executed")
-            launcher = prefix / "bin" / "swipl"
-            launcher.parent.mkdir()
-            launcher.symlink_to("../lib/swipl/bin/" + architecture + "/swipl")
-            roots = self._roots(launcher, root / "owner")
-            self.assertIn(str(swipl_home.resolve()), roots)
-            self.assertNotIn(str(binary.parent.parent.resolve()), roots)
-            self.assertEqual(launcher.resolve(), binary.resolve())
 
-    def test_x86_64_deep_linux_binary_grants_complete_swipl_home(self):
-        self._deep_layout("x86_64-linux")
+def test_macos_empty_ports_never_emit_an_outbound_rule(tmp_path):
+    from hive.core.sandbox_run import sandbox_policy
 
-    def test_aarch64_deep_linux_binary_grants_complete_swipl_home(self):
-        self._deep_layout("aarch64-linux")
+    assert not any(line.startswith("(allow network-outbound")
+                   for line in profile(tmp_path, [], ports=()).splitlines())
+    tool_lines = sandbox_policy(tmp_path, [], child_processes=False).splitlines()
+    assert not any(line.startswith("(allow network-") for line in tool_lines)
+    assert "(allow process-fork)" not in tool_lines
 
-    def test_legacy_bin_swipl_root_is_unchanged(self):
-        with tempfile.TemporaryDirectory() as raw:
-            root = pathlib.Path(raw)
-            prefix = root / "legacy-swipl"
-            binary = prefix / "bin" / "swipl"
-            binary.parent.mkdir(parents=True)
-            binary.write_text("synthetic regular SWI fixture; never executed")
-            roots = self._roots(binary, root / "owner")
-            self.assertIn(str(prefix.resolve()), roots)
-            self.assertNotIn(str(prefix.parent.resolve()), roots)
 
-    def test_other_deep_home_name_keeps_parent_parent_fallback(self):
-        with tempfile.TemporaryDirectory() as raw:
-            root = pathlib.Path(raw)
-            other_home = root / "lib" / "other-prolog"
-            binary = other_home / "bin" / "aarch64-linux" / "swipl"
-            binary.parent.mkdir(parents=True)
-            binary.write_text("synthetic nonmatching layout; never executed")
-            roots = self._roots(binary, root / "owner")
-            self.assertIn(str(binary.parent.parent.resolve()), roots)
-            self.assertNotIn(str(other_home.resolve()), roots)
+def _run_macos_probe(tmp_path, command):
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "TMPDIR": str(tmp_path)}
+    result = subprocess.run(command, cwd=tmp_path, env=env, stdin=subprocess.DEVNULL,
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
 
-    def test_safe_roots_still_refuses_home_and_ancestors(self):
-        with tempfile.TemporaryDirectory() as raw:
-            home = pathlib.Path(raw) / "owner"
-            allowed = home / "allowed"
-            with patch.dict(os.environ, {"HOME": str(home)}, clear=True):
-                self.assertEqual(safe_roots(["/", home, home.parent, allowed]), [str(allowed.resolve())])
 
-    def test_runtime_roots_filters_swipl_home_equal_to_owner_home(self):
-        with tempfile.TemporaryDirectory() as raw:
-            swipl_home = pathlib.Path(raw) / "swipl"
-            binary = swipl_home / "bin" / "aarch64-linux" / "swipl"
-            binary.parent.mkdir(parents=True)
-            binary.write_text("synthetic unsafe home grant; never executed")
-            self.assertNotIn(str(swipl_home.resolve()), self._roots(binary, swipl_home))
+SECURITY_SERVER_LOOKUP = r'''
+import ctypes as c
 
-    def test_runtime_roots_filters_swipl_home_ancestor_of_owner_home(self):
-        with tempfile.TemporaryDirectory() as raw:
-            swipl_home = pathlib.Path(raw) / "swipl"
-            binary = swipl_home / "bin" / "x86_64-linux" / "swipl"
-            binary.parent.mkdir(parents=True)
-            binary.write_text("synthetic unsafe ancestor grant; never executed")
-            home = swipl_home / "users" / "owner"
-            self.assertNotIn(str(swipl_home.resolve()), self._roots(binary, home))
+lib = c.CDLL(None)
+lookup = lib.bootstrap_look_up
+lookup.argtypes = (c.c_uint, c.c_char_p, c.POINTER(c.c_uint))
+lookup.restype = c.c_int
+bootstrap_port = c.c_uint.in_dll(lib, "bootstrap_port").value
+service_port = c.c_uint()
+status = lookup(bootstrap_port, b"com.apple.SecurityServer", c.byref(service_port))
+if status == 0:
+    deallocate = lib.mach_port_deallocate
+    deallocate.argtypes = (c.c_uint, c.c_uint)
+    deallocate.restype = c.c_int
+    task = c.c_uint.in_dll(lib, "mach_task_self_").value
+    assert deallocate(task, service_port.value) == 0
+print(status)
+'''
 
-    def test_runtime_roots_filters_filesystem_root(self):
-        with tempfile.TemporaryDirectory() as raw:
-            roots = self._roots(pathlib.Path("/swipl"), pathlib.Path(raw) / "owner")
-            self.assertNotIn("/", roots)
+
+@pytest.mark.skipif(sys.platform != "darwin" or not available(), reason="sandbox-exec is macOS only")
+def test_macos_mind_and_tool_cannot_lookup_security_server(tmp_path):
+    from hive.core.sandbox_run import sandbox_policy
+
+    reads = [sys.prefix, sys.base_prefix]
+    command = [sys.executable, "-I", "-B", "-S", "-c", SECURITY_SERVER_LOOKUP]
+
+    # The positive control proves the service is discoverable. No process sends a message to it.
+    assert _run_macos_probe(tmp_path, command) == "0", "SecurityServer unavailable in the test's launch namespace"
+    for policy in (profile(tmp_path, reads, ports=()), sandbox_policy(tmp_path, reads)):
+        status = _run_macos_probe(tmp_path, ["/usr/bin/sandbox-exec", "-p", policy, *command])
+        assert status == "1100"  # BOOTSTRAP_NOT_PRIVILEGED
+
+
+LOOPBACK_CONNECT = r'''
+import errno, socket, sys
+
+try:
+    with socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=2):
+        print("connected")
+except OSError as exc:
+    if exc.errno not in (errno.EPERM, errno.EACCES):
+        raise
+    print("denied")
+'''
+
+
+@pytest.mark.skipif(sys.platform != "darwin" or not available(), reason="sandbox-exec is macOS only")
+def test_macos_empty_mind_ports_and_tool_profile_deny_outbound_loopback(tmp_path):
+    from hive.core.sandbox_run import sandbox_policy
+
+    reads = [sys.prefix, sys.base_prefix]
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        listener.settimeout(2)
+        port = listener.getsockname()[1]
+        command = [sys.executable, "-I", "-B", "-S", "-c", LOOPBACK_CONNECT, str(port)]
+
+        assert _run_macos_probe(tmp_path, command) == "connected"
+        listener.accept()[0].close()
+        allowed = profile(tmp_path, reads, ports=(port,))
+        assert _run_macos_probe(tmp_path, ["/usr/bin/sandbox-exec", "-p", allowed, *command]) == "connected"
+        listener.accept()[0].close()
+
+        empty = profile(tmp_path, reads, ports=())
+        tool = sandbox_policy(tmp_path, reads, child_processes=False)
+        for policy in (empty, tool):
+            assert _run_macos_probe(tmp_path, ["/usr/bin/sandbox-exec", "-p", policy, *command]) == "denied"

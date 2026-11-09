@@ -42,7 +42,7 @@ class FakeOpenRouter:
 
     def __init__(self):
         self.chats = []
-        self.good_keys = {"sk-or-good", "sk-or-team", "sk-or-quinn-personal"}
+        self.good_keys = {"sk-or-good", "sk-or-team", "sk-or-jon-personal"}
 
     def handler(self, request: httpx.Request):
         auth = request.headers.get("authorization", "")
@@ -252,7 +252,19 @@ def test_keys_are_listed_with_hints_owner_and_default(client):
     assert [k["label"] for k in listing] == ["Choir", "Team"]
     assert "sk-or-good" not in json.dumps(listing) and "secret" not in json.dumps(listing)
     dup = client.post("/api/keys", json={"provider": "openrouter", "key": "sk-or-team"})
-    assert dup.status_code == 409 and dup.json()["error"]["code"] == "duplicate_key"
+    if os.environ.get("HIVE_MIND_GATEWAY") == "1":
+        # gateway r1ab.4 (Dot's T-KEY1 ruling): the same person sending their own stored key again carries on with it
+        assert dup.status_code == 200 and dup.json()["id"] == second["id"], dup.text
+        assert [k["id"] for k in client.get("/api/keys").json()] == [first["id"], second["id"]]   # nothing added
+    else:
+        assert dup.status_code == 409 and dup.json()["error"]["code"] == "duplicate_key"
+    # anyone else sending a key someone already stores is not told so (sol on 46f13f98: duplicates are per owner): it
+    # is verified and stored as their own row, exactly as a key nobody holds
+    from hive.tests.test_visibility import person
+    other = client.post("/api/keys", headers=person(client, "u_0d0d0d0d"), json={"provider": "openrouter", "key": "sk-or-team"})
+    assert other.status_code == 200, other.text
+    assert other.json()["owner"] == "user:u_0d0d0d0d" and other.json()["id"] not in (first["id"], second["id"])
+    assert "Team" not in other.text
     bad = client.post("/api/keys", json={"provider": "openrouter", "key": "sk-or-wrong"})
     assert bad.status_code == 401
     renamed = client.patch(f"/api/keys/{second['id']}", json={"label": "Team budget", "default": True}).json()

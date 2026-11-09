@@ -8,23 +8,12 @@ from pathlib import Path
 import pytest
 from hive.tests.test_core_api import client, agent_headers
 
-def _sibling_root(app):
-    """The folder holding the closed-source sibling repo `app` checked out next to this one, or None."""
-    return next((p for p in Path(__file__).resolve().parents
-                 if (p / app / "candidates/attachment_bridge").exists() and (p / app / "tests/test_action_bridge.py").exists()), None)
-
-
-def _needs(app):
-    return f"needs closed-source sibling repo {app} (Closed Source for Product Consideration)"
-
-
-ROOTS = {app: _sibling_root(app) for app in ("omegafusion", "omegasocial")}
-ROOT = ROOTS["omegafusion"]
-pytestmark = pytest.mark.skipif(ROOT is None, reason=_needs("omegafusion"))
+ROOT = next((p for p in Path(__file__).resolve().parents if (p / "omegafusion/candidates/attachment_bridge").exists()), None)
+pytestmark = pytest.mark.skipif(ROOT is None, reason="needs owner-local Fusion/Social candidates")
 
 
 def fixture_module(app):
-    path = ROOTS[app] / app / "tests/test_action_bridge.py"
+    path = ROOT / app / "tests/test_action_bridge.py"
     spec = importlib.util.spec_from_file_location("attachment_fixture_" + app, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -44,7 +33,7 @@ def setup_app(client, tmp_path, monkeypatch, app="omegafusion"):
     module = fixture_module(app)
     values = module.setup(client, tmp_path, monkeypatch)
     swarm, mind = values[:2]
-    monkeypatch.setenv("HIVE_PLUGIN_DIRS", str(ROOTS[app] / app / "candidates/attachment_bridge"))
+    monkeypatch.setenv("HIVE_PLUGIN_DIRS", str(ROOT / app / "candidates/attachment_bridge"))
     assert client.post("/api/programs/reload").status_code == 200
     assert client.post(f"/api/programs/{app}/activations", json={"swarm_id": swarm["id"]}).status_code == 403
     named_admin(client)
@@ -60,8 +49,7 @@ def attach(client, app, data):
     return client.post(f"/api/programs/{app}/attachments", json=data)
 
 
-@pytest.mark.parametrize("app", [
-    pytest.param(app, marks=pytest.mark.skipif(ROOTS[app] is None, reason=_needs(app))) for app in ("omegafusion", "omegasocial")])
+@pytest.mark.parametrize("app", ["omegafusion", "omegasocial"])
 def test_actual_app_attachment_retry_effect_and_revoke(client, tmp_path, monkeypatch, app):
     module, values, data, params = setup_app(client, tmp_path, monkeypatch, app)
     _, mind = values[:2]

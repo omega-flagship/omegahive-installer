@@ -32,8 +32,13 @@ export interface SetupFacts {
   people?: { people: number; invites: number } | null
 }
 
+/** Additive answer evidence only; legacy connected/configured never establish readiness. No probe runs here. */
+export const providerAnswerReady = (p: ProviderStatus): boolean => p.readiness === 'answered' && p.answer_ready === true && p.name !== 'mock' && !p.test_only
+/** Retained import name for the setup projection, not the legacy ProviderStatus.connected field. */
+export const providerConnected = providerAnswerReady
+
 export function setupSteps(f: SetupFacts): Step[] {
-  const usable = f.providers?.filter((p) => p.connected || !p.needs_key) ?? null
+  const usable = f.providers?.filter(providerConnected) ?? null
   const payer = f.keys?.find((k) => k.default) ?? null
   const hiveRule = f.budgets?.find((b) => b.scope === 'hive' || b.scope.startsWith('hive:')) ?? null
   const hiveLimit = hiveRule ? hiveRule.limit_usd : f.budgets === undefined || f.budgets === null ? (f.hive?.limits?.hive_budget_usd ?? null) : null
@@ -42,9 +47,9 @@ export function setupSteps(f: SetupFacts): Step[] {
     {
       id: 'provider',
       label: 'Connect an AI provider',
-      why: 'A mind cannot think until a provider is connected with a key.',
+      why: 'A mind needs an answering provider, through a key, sign-in or model on this computer.',
       state: usable === null ? 'unknown' : usable.length ? 'done' : 'todo',
-      found: usable === null ? 'This hive does not list providers here.' : usable.length ? `Connected: ${usable.map((p) => p.label).join(', ')}` : 'No provider is connected yet.',
+      found: usable === null ? 'This hive does not list providers here.' : usable.length ? `Connected: ${usable.map((p) => p.label).join(', ')}` : 'No provider has answered yet.',
       icon: 'cpu',
       route: { name: 'models' },
     },

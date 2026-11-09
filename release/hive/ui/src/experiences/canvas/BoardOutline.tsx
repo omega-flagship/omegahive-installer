@@ -1,3 +1,4 @@
+import { useCanvasCurrent } from './actionAuthority'
 import { plural } from '../../lib/plural'
 import { useId, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { openClassic, shown, useHive } from '../sdk'
@@ -33,6 +34,7 @@ export function BoardOutline({
   onTalk: (id: string) => void
   onAddGoal: (swarmId: string) => void
 }) {
+  const current = useCanvasCurrent()
   const head = useId()
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
@@ -111,7 +113,7 @@ export function BoardOutline({
                         <Btns>
                           <Btn label={`Locate ${shown(m.name)}`} onClick={() => onLocate(m.key)} disabled={!m.onBoard}>Locate</Btn>
                           <Btn label={`Talk with ${shown(m.name)}`} onClick={() => onTalk(m.id)} disabled={!m.onBoard}>Talk</Btn>
-                          {a && <Act label={`${awake ? 'Put' : 'Wake'} ${shown(m.name)}${awake ? ' to sleep' : ''}`} run={() => useHive.getState().agentAction(m.id, awake ? 'sleep' : 'wake')}>{awake ? 'Sleep' : 'Wake'}</Act>}
+                          {a && <Act label={`${awake ? 'Put' : 'Wake'} ${shown(m.name)}${awake ? ' to sleep' : ''}`} run={async () => { if (current()) return useHive.getState().agentAction(m.id, awake ? 'sleep' : 'wake') }}>{awake ? 'Sleep' : 'Wake'}</Act>}
                         </Btns>
                       </Li>
                     )
@@ -196,10 +198,11 @@ const Li = ({ children }: { children: ReactNode }) => <li className="rounded-[10
 const Btns = ({ children }: { children: ReactNode }) => <div className="mt-1 flex flex-wrap gap-1.5">{children}</div>
 
 function Btn({ label, onClick, children, strong, disabled }: { label: string; onClick: () => void; children: ReactNode; strong?: boolean; disabled?: boolean }) {
+  const current = useCanvasCurrent()
   return (
     <button
       aria-label={label}
-      onClick={onClick}
+      onClick={() => { if (current()) onClick() }}
       disabled={disabled}
       className="min-h-[32px] rounded-[8px] px-2.5 text-[12.5px] font-medium disabled:opacity-50"
       style={strong ? { background: 'var(--accent)', color: 'var(--on-accent)' } : { border: '1px solid var(--line-2)', color: 'var(--ink)' }}
@@ -211,6 +214,7 @@ function Btn({ label, onClick, children, strong, disabled }: { label: string; on
 
 /** A button that runs a hive action: busy while it runs, always released, and says so plainly if it failed. */
 export function Act({ label, run, children }: { label: string; run: () => Promise<unknown>; children: ReactNode }) {
+  const current = useCanvasCurrent()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   return (
@@ -220,8 +224,10 @@ export function Act({ label, run, children }: { label: string; run: () => Promis
         aria-busy={busy}
         disabled={busy}
         onClick={async () => {
+          if (!current()) return
           setError(null)
           const r = await withBusy(setBusy, run)
+          if (!current()) return
           if (!r.ok) setError(`Did not work: ${r.error}`)
         }}
         className="min-h-[32px] rounded-[8px] px-2.5 text-[12.5px] font-medium disabled:opacity-50"

@@ -1,4 +1,7 @@
+import { useIsPresent } from 'framer-motion'
+import { useVisibleAuthority } from '../lib/useVisibleAuthority'
 import { useMemo, useState } from 'react'
+import { STALE } from '../lib/identityEpoch'
 import type { Goal } from '../api/types'
 import { shown } from '../lib/displayName'
 import type { DecisionResult } from '../lib/decisionGate'
@@ -16,7 +19,9 @@ import { DecisionDialog } from '../ui/DecisionDialog'
  * GoalDecision; if the goal cannot be read, it stays "not confirmed" with "Check again".
  * Render inside <AnimatePresence>; `seen` is the goal exactly as it was when the person asked.
  */
-export function GoalDecision({ seen, to, session, onClose, dismissLabel, restoreFocus }: {
+export function GoalDecision({ seen, to, session, onClose, dismissLabel, restoreFocus, current }: {
+  /** The opening surface may revoke retained actions when its presentation is hidden or replaced. */
+  current: () => boolean
   seen: Goal
   to: Goal['status']
   /**
@@ -29,6 +34,7 @@ export function GoalDecision({ seen, to, session, onClose, dismissLabel, restore
   /** Where focus goes on close when the opener left with the goal (it moved lists): see useModalContainment. */
   restoreFocus?: (opener: HTMLElement | null) => HTMLElement | null | undefined
 }) {
+  const canAct = useVisibleAuthority('dialog', useIsPresent(), seen.id, current)
   const live = useHive((s) => s.goals[seen.id])
   const swarm = useHive((s) => s.swarms[seen.swarm_id])
   const agents = useHive((s) => s.agents)
@@ -42,9 +48,10 @@ export function GoalDecision({ seen, to, session, onClose, dismissLabel, restore
   const holderName = holder ? shown(holder.name) : seen.claimed_by
   const verb = verbFor(to) ?? 'done'
   // "Check again" after a lost answer whose re-read failed: read the goal once more and say what it shows
-  const recheck = async (): Promise<DecisionResult> => {
-    const r = goalRecheckResult(await useHive.getState().reconcileGoal(seen.id), seen, to, recheck)
-    if (r === true) useHive.getState().toast({ tone: 'success', title: 'The task was updated', body: 'The task was read again: the change is there.' })
+  const recheck = async (allowed = canAct): Promise<DecisionResult> => {
+    if (!allowed()) return 'Open the task again to check it.'
+    const r = goalRecheckResult(await useHive.getState().reconcileGoal(seen.id), seen, to, () => recheck(allowed))
+    if (allowed() && r === true) useHive.getState().toast({ tone: 'success', title: 'The task was updated', body: 'The task was read again: the change is there.' })
     return r
   }
   // The dialog shows a not-confirmed outcome itself (the store stays quiet, so no notice covers it on a phone). Closed
@@ -54,15 +61,16 @@ export function GoalDecision({ seen, to, session, onClose, dismissLabel, restore
       tone: 'error',
       title: 'Not confirmed',
       body,
-      action: { label: 'Check again', run: () => void recheck().then((r) => r !== true && (typeof r === 'string' || 'failed' in r || !r.recheck ? useHive.getState().toast({ tone: 'error', title: 'Not confirmed', body: typeof r === 'string' ? r : 'failed' in r ? r.failed : r.unsettled }) : notice(r.unsettled))) },
+      action: { label: 'Check again', run: () => { if (current()) void recheck(current).then((r) => current() && r !== true && (typeof r === 'string' || 'failed' in r || !r.recheck ? useHive.getState().toast({ tone: 'error', title: 'Not confirmed', body: typeof r === 'string' ? r : 'failed' in r ? r.failed : r.unsettled }) : notice(r.unsettled))) } },
     })
   const close = () => {
-    if (useHive.getState().goalsUnsure[seen.id]) notice(`${NOT_CONFIRMED} “${seen.title}” has not been read again yet; check it before asking again.`)
+    if (canAct() && useHive.getState().goalsUnsure[seen.id]) notice(`${NOT_CONFIRMED} “${seen.title}” has not been read again yet; check it before asking again.`)
     onClose()
   }
   const danger = to === 'cancelled' || to === 'failed'
   return (
     <DecisionDialog
+      canAct={canAct}
       icon={danger ? 'alert' : 'check'}
       eyebrow={`Task · ${seen.status} → ${to}`}
       title={`${GOAL_VERB_LABEL[verb]}: “${seen.title}”?`}
@@ -82,13 +90,21 @@ export function GoalDecision({ seen, to, session, onClose, dismissLabel, restore
           busyLabel: 'Changing',
           tone: danger ? 'danger' : 'primary',
           run: async () => {
+            if (!canAct()) return STALE
             // the same binding, read again at the moment of dispatch
             const drift = goalDrift(snap, useHive.getState().goals[seen.id], to)
             if (drift) return drift
             setSending(true)
             const r = await useHive.getState().writeGoal(seen.id, { status: to }, snap.session, { quiet: true })
+            if (!canAct()) {
+              setSending(false)
+              // Close remains available during a write. Carry an unresolved answer only while its opening
+              // surface is still current; a covered, replaced or revoked surface publishes nothing.
+              if (current() && r.kind === 'unknown') notice(r.why)
+              return STALE
+            }
             if (r.kind !== 'taken') setSending(false)
-            return goalWriteResult(r, recheck)
+            return goalWriteResult(r, () => recheck())
           },
         },
       ]}

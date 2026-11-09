@@ -155,7 +155,7 @@ export default function DotPanel({ id, tab: routeTab, program }: { id: string; t
             transition={{ duration: 0.16 }}
           >
             {tab !== 'chat' && (
-              <button type="button" onClick={() => setTab('chat')} data-back-to-chat="" className="mx-4 mt-1 mb-1 inline-flex min-h-9 shrink-0 items-center gap-1.5 self-start rounded-full px-2 text-[12.5px] font-medium text-ink-2 hover:bg-white/[0.06] hover:text-ink">
+              <button type="button" onClick={() => setTab('chat')} data-back-to-chat="" className="mx-4 mt-1 mb-1 inline-flex min-h-9 shrink-0 items-center gap-1.5 self-start rounded-full px-2 text-[12.5px] font-medium text-ink-2 hover:bg-tint/[0.06] hover:text-ink">
                 <Icon name="back" size={15} />
                 Back to chat
               </button>
@@ -376,7 +376,7 @@ function LastError({ agent, onFix }: { agent: Agent; onFix: () => void }) {
           </p>
         </div>
         {budgetish && (
-          <button onClick={onFix} className="shrink-0 self-center rounded-lg px-2 py-1.5 text-[12px] font-semibold text-ink hover:bg-white/[0.07]">
+          <button onClick={onFix} className="shrink-0 self-center rounded-lg px-2 py-1.5 text-[12px] font-semibold text-ink hover:bg-tint/[0.07]">
             {info.code === 'unpriced_model' ? 'Change model' : 'Fix budget'}
           </button>
         )}
@@ -389,7 +389,7 @@ function Budget({ agent, onOpen }: { agent: Agent; onOpen: () => void }) {
   const unlimited = agent.budget_usd <= 0
   const pct = unlimited ? 0 : agent.spent_usd / agent.budget_usd
   return (
-    <button type="button" onClick={onOpen} aria-label={`${shown(agent.name)} budget: change the cap`} className="flex min-w-0 flex-1 flex-col justify-center rounded-xl border border-line bg-white/[0.025] px-3 py-1.5 text-left hover:border-line-2" data-tour="dot-budget">
+    <button type="button" onClick={onOpen} aria-label={`${shown(agent.name)} budget: change the cap`} className="flex min-w-0 flex-1 flex-col justify-center rounded-xl border border-line bg-tint/[0.025] px-3 py-1.5 text-left hover:border-line-2" data-tour="dot-budget">
       <div className="mb-1.5 flex items-baseline justify-between gap-2 text-meta whitespace-nowrap">
         <span className="flex items-center gap-1 text-ink-3">
           Budget
@@ -469,7 +469,7 @@ function ModelSettings({ agent }: { agent: Agent }) {
         </div>
       </section>
 
-      <button onClick={() => navigate({ name: 'code', target: `mind:${agent.id}` })} className="flex w-full items-center gap-3 rounded-xl border border-line bg-white/[0.02] px-3 py-2.5 text-left text-[13px] text-ink-2 transition-colors hover:border-line-2 hover:bg-white/[0.04]">
+      <button onClick={() => navigate({ name: 'code', target: `mind:${agent.id}` })} className="flex w-full items-center gap-3 rounded-xl border border-line bg-tint/[0.02] px-3 py-2.5 text-left text-[13px] text-ink-2 transition-colors hover:border-line-2 hover:bg-tint/[0.04]">
         <Icon name="terminal" size={16} className="text-ink-3" />
         <span className="min-w-0 flex-1">
           <span className="block">Edit {shown(agent.name)}'s code</span>
@@ -504,7 +504,7 @@ function ModelSettings({ agent }: { agent: Agent }) {
           value={persona}
           onChange={(e) => setPersona(e.target.value)}
           rows={6}
-          className="thin-scroll w-full resize-y rounded-xl border border-line bg-black/25 p-3 text-[14px] leading-relaxed text-ink outline-none focus:border-line-2"
+          className="thin-scroll w-full resize-y rounded-xl border border-line bg-shade/25 p-3 text-[14px] leading-relaxed text-ink outline-none focus:border-line-2"
         />
         <AnimatePresence>
           {dirty && (
@@ -548,7 +548,7 @@ function ModelSettings({ agent }: { agent: Agent }) {
       <section aria-labelledby="budget-h" data-tour="model-budget">
         <h3 id="budget-h" className="eyebrow mb-2">Budget cap</h3>
         <div className="flex items-center gap-2">
-          <div className="flex min-h-11 flex-1 items-center rounded-xl border border-line bg-black/25 px-3 focus-within:border-line-2">
+          <div className="flex min-h-11 flex-1 items-center rounded-xl border border-line bg-shade/25 px-3 focus-within:border-line-2">
             <span className="text-ink-3">$</span>
             <input
               inputMode="decimal"
@@ -634,7 +634,7 @@ function LogTail({ agent }: { agent: Agent }) {
   const last = lines[lines.length - 1]
   return (
     // steps aside while a guided demo's reading step needs the room to show a viewer whole (guided/reading reflow)
-    <div className="shrink-0 border-t border-line bg-black/20" data-reading-yields="">
+    <div className="shrink-0 border-t border-line bg-shade/20" data-reading-yields="">
       <button onClick={() => setOpen(!open)} aria-expanded={open} aria-controls={`log-${agent.id}`} className="flex min-h-11 w-full items-center gap-2 px-4 text-left">
         <Icon name="terminal" size={15} className="shrink-0 text-ink-3" />
         <span className="eyebrow shrink-0">Live log</span>

@@ -1,5 +1,48 @@
 import type { ComponentType } from 'react'
 import { chromeFromSwatch, type ChromeModule, type ExperienceChrome } from './chrome'
+import type { ShellPhase } from '../shell/phase'
+import type { AskPort } from '../features/ask/askPort'
+import type { AwakeApps } from '../shell/awakeApps'
+import type { AskMarkSignal } from '../brand/askMark'
+
+/** What an experience's rest or awake renderer is given (shell/phase.ts owns the state; the experience draws it). */
+export interface PhaseRendererProps {
+  /** A native placement supplied by the experience, when its phases live on the same paper as its Ask. */
+  anchor?: HTMLElement | null
+  /** The shell's state now (the renderer stays mounted through every state, so it can play its own way in and out). */
+  phase: ShellPhase
+  /** The state before the last move (null: none yet). */
+  from: ShellPhase | null
+  reduced: boolean
+  /** The shell's one Ask (Ask-and-apps contract R1 §5): a look focuses, fills and listens through this, never the DOM. */
+  ask: AskPort
+  /** The apps this person can open (contract R1.1 §3): at most 8 shown, the rest behind "more" (shell/awakeApps.ts). */
+  apps: AwakeApps
+  /**
+   * What the one Ask is doing, read-only (contract R1.1 §6): the same signal the Ask's own mark follows (brand/askMark:
+   * listening while it holds words, speaking while an answer streams, plus pulse and hold). Hand it to LiveOmega.
+   */
+  presence: AskMarkSignal
+  /** Notices waiting while the shell rests (0 otherwise; shell/restNotices): the rest shows one quiet count, never the
+   * toasts; on wake they all appear. */
+  waiting: number
+}
+
+/**
+ * One experience from rest to Pro (PLAN_ONE_EXPERIENCE_REST_TO_PRO_R1). Each experience draws rest and awake in its own
+ * engine, materials and motion; Pro is the experience itself, as already built. Everything is optional: an experience
+ * without a renderer for a state goes straight to its home, which is today's behaviour. No shared skinned component.
+ */
+export interface ExperiencePhases {
+  /** Drawn in the rest state: the Ω alone and the faint question. */
+  rest?: ComponentType<PhaseRendererProps>
+  /** Drawn in the awake state: the Ω named, the shell's one field, a few apps, the Pro control and power. */
+  awake?: ComponentType<PhaseRendererProps>
+  /** Awake → Pro is starting (the experience flies out to its full self). */
+  toPro?: (from: ShellPhase) => void | Promise<void>
+  /** Pro → awake is starting (the experience flies back in to its Ω). */
+  fromPro?: () => void | Promise<void>
+}
 
 /**
  * Experiences: whole alternative front ends over the same hive. Unlike a look (tokens on the classic UI), an
@@ -25,6 +68,17 @@ export interface ExperienceDef {
    * build (`UNREVIEWED_ALLOWED`). Never set this without a whole-experience verdict to cite.
    */
   reviewed?: true
+  /**
+   * CANDIDATE (one-experience r1): this experience's rest and awake renderers and its toPro/fromPro hooks, loaded with it.
+   * Set only behind UNREVIEWED_ALLOWED, so a production build compiles them out; at run time they are used only when
+   * the person opted in (shell/phase phasesOptedIn). A whole-experience verdict for these is separate from `reviewed`.
+   */
+  phases?: () => Promise<ExperiencePhases>
+  /**
+   * Released (Ask-and-apps contract R1.1): this experience's rest and awake are on for everyone, in every build, unless
+   * the tab turned them off with `?phases=0`. Set only with a paired review of that look's rest and awake to cite.
+   */
+  phasesReviewed?: true
 }
 
 export const CLASSIC: ExperienceDef = {
@@ -34,6 +88,7 @@ export const CLASSIC: ExperienceDef = {
   blurb: 'Navigation rail, glass panels and the hive scene.',
   swatch: { bg: '#04040f', fg: '#eceaff', accent: '#a493ff' },
   reviewed: true, // the platform's own UI
+  phases: (import.meta.env.PROD ? import.meta.env.MODE === 'surface-preview' : true) ? () => import('./classic/phases') : undefined,
 }
 
 /**
@@ -75,23 +130,16 @@ export const ALL_EXPERIENCES: ExperienceDef[] = [
     blurb: 'Plain navigation, conversations, swarm purposes and tasks.',
     swatch: { bg: '#f6f7f9', fg: '#17212f', accent: '#315ed4' },
     load: () => import('./professional'),
+    phases: () => import('./professional/phases'),
+    phasesReviewed: true, // Jon visual go, JON_GO_LOOKS_PRO_STILL_CONSTRUCT_20261104T100053Z.
     // Whole-experience review professional-release r1, r1.1, r1.2 (SURFACE_PROFESSIONAL_RELEASE_R1{,_1,_2}_REVIEW_REQUEST):
     // r1 and r1.1 verdicts FIX-FIRST (stand-in) and SHIP (Kimi); ships only on SHIP in
     // SURFACE_PROFESSIONAL_RELEASE_R1_2_STANDIN_VERDICT.md and SURFACE_PROFESSIONAL_RELEASE_R1_2_KIMI_VERDICT.md.
-    // An extra look beside Classic, not its replacement (the owner 2026-10-08).
+    // An extra look beside Classic, not its replacement (Jon 2026-10-08).
     reviewed: true,
   },
-  {
-    id: 'omegatown',
-    name: 'OmegaTown',
-    tagline: 'Walk among your minds, people and useful work.',
-    blurb: 'An inhabited workspace with robot residents, nature and specialist places. Local walking; all Hive tools stay directly available.',
-    swatch: { bg: '#f5f2e8', fg: '#203e38', accent: '#286951' },
-    load: () => import('./omegatown'),
-    // Surface SURFACE_REVIEW_OMEGATOWN_PROFESSIONAL_R5_20261008 (SHIP, sim); owner integration r3b: stand-in
-    // STANDIN_OMEGATOWN_PROFESSIONAL_R3B_VERDICT_20261008 SHIP + Kimi r3b-rerun SHIP; released by the owner (2026-10-08)
-    reviewed: true,
-  },
+  // OmegaTown is removed everywhere (Jon 2026-11-02: the town lives in Little World); a saved 'omegatown' resolves to
+  // Classic (resolveExperience: an id this build doesn't offer opens the Classic hive)
   {
     id: 'cosmos',
     name: 'Cosmos',
@@ -101,6 +149,11 @@ export const ALL_EXPERIENCES: ExperienceDef[] = [
     swatch: { bg: '#02030b', fg: '#e6f0ff', accent: '#7cc4ff' },
     load: () => import('./cosmos'),
     reviewed: true, // OmegaReview SURFACE_O_Q_27B9992_REVIEW_VERDICT_20261006 (O + Q source SHIP; Kimi SHIP)
+    // CANDIDATE, unreviewed (cosmos-rest-r1): rest → awake → Pro drawn by Cosmos itself. Compiled out of production.
+    // Ask-and-apps contract R1.1: Cosmos's rest and awake are released (paired review of the contract, its seams and this
+    // switch-on); the person lands per their `landing` pref and `?phases=0` stays the way out for this tab
+    phases: () => import('./cosmos/phases').then((m) => m.phases),
+    phasesReviewed: true,
   },
   {
     id: 'construct',
@@ -110,6 +163,8 @@ export const ALL_EXPERIENCES: ExperienceDef[] = [
     companionLook: 'phosphor',
     swatch: { bg: '#000800', fg: '#b6ffb0', accent: '#39ff7a' },
     load: () => import('./construct'),
+    phases: () => import('./construct/phases'),
+    phasesReviewed: true, // Jon visual go, JON_GO_LOOKS_PRO_STILL_CONSTRUCT_20261104T100053Z.
     reviewed: true, // OmegaReview SURFACE_O_Q_27B9992_REVIEW_VERDICT_20261006 (O + Q source SHIP; Kimi SHIP)
   },
   {
@@ -119,6 +174,8 @@ export const ALL_EXPERIENCES: ExperienceDef[] = [
     blurb: 'No navigation. One question box, one decision at a time, the hive in plain sentences.',
     swatch: { bg: '#f4efe6', fg: '#1b1712', accent: '#a3221b' },
     load: () => import('./still'),
+    phases: () => import('./still/phases'),
+    phasesReviewed: true, // Jon visual go, JON_GO_LOOKS_PRO_STILL_CONSTRUCT_20261104T100053Z.
     reviewed: true, // OmegaReview SURFACE_78fe891_BROWSER_VERDICT_20261005 (R1–R4 closed)
   },
   {

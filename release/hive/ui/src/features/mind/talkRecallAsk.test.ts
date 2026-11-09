@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
  * turned off again, the very next turn has none. A hand-made client plays the host and records each request body.
  */
 const loc = { hash: '#/', search: '', pathname: '/' }
-vi.stubGlobal('window', { location: loc, matchMedia: () => ({ matches: false }) })
+vi.stubGlobal('window', { location: loc, matchMedia: () => ({ matches: false }), addEventListener: vi.fn(), removeEventListener: vi.fn() })
 
 const { useHive } = await import('../../store/store')
 const { useAskStore } = await import('../../store/ask')

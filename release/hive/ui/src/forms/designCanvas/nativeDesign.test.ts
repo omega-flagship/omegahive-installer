@@ -18,7 +18,7 @@ import { DELIVER_NOTE, PICTURE_ACTION } from './words'
 // (omegadesign/poc/surface_model_trace_audit/reproduce.mjs) does. INVENTED scenes only.
 
 const here = (f: string) => new URL(f, import.meta.url)
-// node:fs through a variable, as the other form tests does (the app's tsconfig has no node types)
+// node:fs through a variable, as caseFile/oneDialog.test.ts does (the app's tsconfig has no node types)
 const fsName = 'node:fs'
 type Fs = { readFileSync: (p: string | URL, e?: string) => string & Uint8Array; existsSync: (p: string | URL) => boolean }
 const fs = (await import(/* @vite-ignore */ fsName)) as Fs

@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react'
 import { hsl, shown, useHive, type Agent } from '../sdk'
 import { cosmicClock, planetPos, statusWord, type CosmosLayout, type PlanetLayout, type SystemLayout } from './layout'
 import { labels, useCosmos } from './state'
+import { helperGroupWords, type HelperGroup } from '../../scene/helperGroups'
+import { useHelperGroups } from '../../scene/helperGroupsStore'
 
 /** Registers a DOM element to follow a point in space (the scene writes its transform every frame). */
 function useAnchor(key: string, at: (o: { x: number; y: number; z: number }) => boolean, maxDist: number, minDist = 0) {
@@ -51,6 +53,31 @@ function SystemLabel({ sys, agents, current, hide }: { sys: SystemLayout; agents
   )
 }
 
+/** A folded helper group's label: the keyboard way to open it and close it again (scene/helperGroups). */
+function GroupLabel({ p, group, team }: { p: PlanetLayout; group: HelperGroup; team: string }) {
+  const toggle = useHelperGroups((s) => s.toggle)
+  const hot = useCosmos((s) => s.hovered === p.id)
+  const ref = useAnchor(
+    `grp:${p.id}`,
+    (o) => {
+      planetPos(p, cosmicClock.t, o)
+      o.y -= p.size * 1.25
+      return true
+    },
+    64,
+  )
+  const words = helperGroupWords(group, team)
+  return (
+    <div ref={ref} className="cx-label">
+      <button className="cx-tag cx-focus" data-helper-group={group.id} data-hot={hot ? '1' : '0'} aria-expanded={group.expanded} onClick={() => toggle(group.id)} aria-label={words.aria} style={{ color: '#8f9bb3', opacity: 0.8 }}>
+        <span className="cx-mono" style={{ fontSize: 10, color: '#a9b9d8', letterSpacing: '0.16em' }}>
+          {words.label.toUpperCase()}
+        </span>
+      </button>
+    </div>
+  )
+}
+
 function PlanetLabel({ p, agent, asking, selected }: { p: PlanetLayout; agent: Agent; asking: number; selected: boolean }) {
   const go = useCosmos((s) => s.go)
   const hot = useCosmos((s) => s.hovered === agent.id)
@@ -68,7 +95,7 @@ function PlanetLabel({ p, agent, asking, selected }: { p: PlanetLayout; agent: A
   const busy = thinking === 'llm' || thinking === 'skills'
   return (
     <div ref={ref} className="cx-label">
-      <button className="cx-tag cx-focus" data-presence-ref={`mind:${agent.id}`} data-hot={hot ? '1' : '0'} onClick={() => go({ kind: 'mind', id: agent.id })} aria-label={`Open transmission with ${shown(agent.name)} (${word.toLowerCase()})`} style={{ color: hsl(agent.hue, 90, 74) }}>
+      <button className="cx-tag cx-focus" data-presence-ref={`mind:${agent.id}`} data-hot={hot ? '1' : '0'} onClick={() => go({ kind: 'mind', id: agent.id })} aria-label={`Open transmission with ${p.label ?? shown(agent.name)} (${word.toLowerCase()})`} style={{ color: hsl(agent.hue, 90, 74) }}>
         <span className="flex items-center gap-1.5">
           {asking > 0 && (
             <span className="cx-mono cx-blink" style={{ fontSize: 9.5, color: '#1a1000', background: '#ffc36b', padding: '1px 4px', fontWeight: 600 }}>
@@ -76,7 +103,7 @@ function PlanetLabel({ p, agent, asking, selected }: { p: PlanetLayout; agent: A
             </span>
           )}
           <span className="cx-tag-name cx-caps" style={{ fontSize: 11.5, color: '#eef4ff', letterSpacing: '0.2em' }}>
-            {shown(agent.name)}
+            {p.label ?? shown(agent.name)}
           </span>
         </span>
         <span className="cx-tag-line" />
@@ -108,7 +135,7 @@ export function Labels({ layout }: { layout: CosmosLayout }) {
         <SystemLabel key={s.id} sys={s} agents={agents} current={currentSystem === s.id} hide={view.kind === 'mind'} />
       ))}
       {layout.planets.map((p) =>
-        agents[p.id] ? <PlanetLabel key={p.id} p={p} agent={agents[p.id]} asking={asking[p.id] ?? 0} selected={view.kind === 'mind' && view.id === p.id} /> : null,
+        p.group ? <GroupLabel key={p.id} p={p} group={p.group} team={shown(layout.systemById[p.group.teamId]?.name ?? 'its swarm')} /> : agents[p.id] ? <PlanetLabel key={p.id} p={p} agent={agents[p.id]} asking={asking[p.id] ?? 0} selected={view.kind === 'mind' && view.id === p.id} /> : null,
       )}
     </div>
   )

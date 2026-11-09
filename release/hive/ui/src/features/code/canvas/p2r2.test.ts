@@ -1,5 +1,5 @@
 /**
- * p2r2 (stand-in Review FIX-FIRST on a921ef9, coordination/omegareview/standin/STANDIN_canvasp2_VERDICT_20261006.md):
+ * p2r2 (stand-in Review FIX-FIRST on a921ef9, STANDIN_canvasp2_VERDICT_20261006.md):
  * behavioural tests through what the canvas runs (LanguageSession is what useLanguage renders; RenameCard is the
  * canvas's own preview; IterationsReader is what the drawer renders). Each fix is shown load-bearing by removing it
  * with every module present (receipts p2r2/M*.txt).

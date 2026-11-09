@@ -49,9 +49,7 @@ def test_an_acknowledged_expired_or_dropped_copy_leaves_nothing_in_the_database_
     assert hive.personal_inbox.db.one("SELECT COUNT(*) AS n FROM personal_inbox WHERE payload LIKE ?", (f"%{marker}%",))["n"] == 0
     assert marker.encode() not in _files(hive)
     # the connection's own setting is left as it was
-    import sqlite3
-    default = sqlite3.connect(":memory:").execute("PRAGMA secure_delete").fetchone()[0]   # 1 on some Linux builds
-    assert hive.db.one("PRAGMA secure_delete")["secure_delete"] == default       # the hive's own database is unchanged
+    assert hive.db.one("PRAGMA secure_delete")["secure_delete"] == 0             # the hive's own database is unchanged
     assert hive.personal_inbox.db.one("PRAGMA secure_delete")["secure_delete"] == 1
 
 

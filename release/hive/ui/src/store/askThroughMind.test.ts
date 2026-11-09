@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const loc = { hash: '#/program/omegadesign/s_des', search: '', pathname: '/' }
 const kept = new Map<string, string>()
 const storage = { getItem: (k: string) => kept.get(k) ?? null, setItem: (k: string, v: string) => void kept.set(k, v), removeItem: (k: string) => void kept.delete(k) }
-vi.stubGlobal('window', { location: loc, matchMedia: () => ({ matches: false }), localStorage: storage })
+vi.stubGlobal('window', Object.assign(new EventTarget(), { location: loc, matchMedia: () => ({ matches: false }), localStorage: storage }))
 vi.stubGlobal('localStorage', storage)
 
 const { useHive } = await import('./store')
@@ -13,14 +13,14 @@ type AskBody = import('../api/ask').AskBody
 type HiveClient = import('../api/client').HiveClient
 
 /**
- * ask-fix r2 (Quinn, live a37082e): on Design (OmegaDesign, no coordinator) "Make a poster…" fell back to his own mind.
+ * ask-fix r2 (Jon, live a37082e): on Design (OmegaDesign, no coordinator) "Make a poster…" fell back to his own mind.
  * In a swarm with no coordinator the Ask now addresses a mind there (context.mind), which answers itself on a host
  * with Platform's answer-through-mind route; a host without it refuses no_orchestrator and the turn is sent once more
  * with the r1 fallback. Synthetic host, INVENTED ids and names, no network, no model.
  */
 const deck = { id: 'a_deck', name: 'Design deck maker (native)', swarm_id: 's_des', status: 'asleep' }
 const luke = { id: 'a_luke', name: 'Luke core mind', swarm_id: 's_des', status: 'awake' }
-const me = { id: 'a_me', name: 'Quinn', swarm_id: 's_me' }
+const me = { id: 'a_me', name: 'Jon', swarm_id: 's_me' }
 function host(withRoute: boolean) {
   const posts: AskBody[] = []
   const view = (b: AskBody, mind: { id: string; name: string }) => ({ operation_id: b.operation_id, turn_id: `t_${b.operation_id}`, thread: { id: `th_${mind.id}`, mind, budget_usd: 0.25, spent_usd: 0 }, state: 'accepted' as const, events: [], more: false })
@@ -47,7 +47,7 @@ function start(client: HiveClient) {
     agents: { a_deck: deck, a_luke: luke } as never,
     programs: [{ id: 'omegadesign', name: 'OmegaDesign' }] as never,
   })
-  useAskStore.getState().bind(useHive.getState().session, 'user:p_quinn')
+  useAskStore.getState().bind(useHive.getState().session, 'user:p_jon')
   useAskStore.setState({ settings: { swarm_id: null, thread_budget_usd: 0.25, eligible: [{ id: 's_lyra', name: 'Lyra' }, { id: 's_kelp', name: 'Kelp Commons' }] }, personal: me })
 }
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve() }
@@ -71,9 +71,11 @@ describe('a swarm with no coordinator answers through a mind there', () => {
   it('today’s host refuses (no_orchestrator): sent once more with the r1 fallback, no refusal row, the admin fix offered', async () => {
     const h = host(false)
     start(h.client)
-    await useAskStore.getState().send('Make a poster inviting neighbours to a small community event', ctx)
+    const a = await useAskStore.getState().admit('Make a poster inviting neighbours to a small community event', ctx, { newTurnOnly: true })
     await flush()
     expect(h.posts).toHaveLength(2)
+    expect(a).toEqual({ admitted: true, op: h.posts[1].operation_id, principal: 'user:p_jon' })
+    expect(useAskStore.getState().turns[h.posts[0].operation_id]).toBeUndefined()
     expect(h.posts[0].context).toMatchObject({ mind: 'a_deck' })
     expect(h.posts[1].context).not.toHaveProperty('mind')
     expect(h.posts[1].context).not.toHaveProperty('swarm_id')

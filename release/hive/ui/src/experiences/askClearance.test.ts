@@ -85,8 +85,8 @@ describe('a sheet’s bottom row (the Change UI gallery’s sticky Keep footer) 
     expect(sheet).toContain('var(--xc-omega-floor, 0px), var(--ask-pop-room, 0px))` }}')
   })
 
-  it('Change UI: the gallery body is the sheet’s scroller, so its sticky footer sticks above the sheet’s reserve, not at its edge', () => {
-    const body = /<Sheet label="Change UI"[^\n]*\n(?:\s*\{\/\*[\s\S]*?\*\/\}\n)?\s*<div className="([^"]*)" data-tour="change-ui">/.exec(changeUi)
+  it('Change experience: the gallery body is the sheet’s scroller, so its sticky footer sticks above the sheet’s reserve, not at its edge', () => {
+    const body = /<Sheet label="Change experience"[^\n]*\n(?:\s*\{\/\*[\s\S]*?\*\/\}\n)?\s*<div className="([^"]*)" data-tour="change-ui">/.exec(changeUi)
     expect(body, 'the gallery body').not.toBeNull()
     for (const c of ['min-h-0', 'flex-1', 'overflow-y-auto']) expect(body![1].split(' '), c).toContain(c)
     // the Keep footer is a sticky row inside that body
@@ -94,9 +94,9 @@ describe('a sheet’s bottom row (the Change UI gallery’s sticky Keep footer) 
   })
 
   it('every experience’s floating Ask reports its room while it shows (AskHost), so each sheet’s reserve follows it', () => {
-    // the room (features/ask/askRoom, r5.1): place.bottom + 64; Professional's measured card + 12 when that is taller
+    // Every floating dock reports its actual height plus its gap, with a 64px minimum; Professional keeps 12px.
     expect(askRoom({ bottom: 18 }, false, 0)).toBe(18 + 64)
-    expect(askRoom({ bottom: 74 }, false, 500)).toBe(74 + 64)
+    expect(askRoom({ bottom: 74 }, false, 500)).toBe(74 + 500 + 8)
     expect(askRoom({ bottom: 18 }, true, 40)).toBe(18 + 64)
     expect(askRoom({ bottom: 18 }, true, 120)).toBe(18 + 120 + 12)
     // reported where it is read: --ask-room and the hive map's "ask" inset, the same value; cleared from both
@@ -111,10 +111,12 @@ describe('a sheet’s bottom row (the Change UI gallery’s sticky Keep footer) 
       expect(props.has('--ask-room')).toBe(false)
       expect(useScene.getState().insetSources.ask).toBeUndefined()
     }
-    // AskHost's wiring (mounting AskHost is too heavy for this setup): shown, it reports askRoom(); not shown, and when
-    // the effect is cleaned up (unmount, or before the next report), it clears both
-    expect(askHost).toContain('setAskRoom(root, askRoom(place, isPro, professionalHeight))')
-    expect(askHost).toMatch(/if \(!shown\) \{\s*setAskRoom\(root, null\)/)
+    // The native command prompt reports its measured room; floating fields report askRoom(). With neither owner,
+    // and on cleanup, both the CSS reserve and scene inset are cleared by the same helper.
+    expect(askHost).toContain("const nativeConstruct = !inApp && skin === 'command-line' && constructPlace === 'native' && ownLive")
+    expect(askHost).toContain("useOwnReservation(nativeConstruct ? '.cx-cmd' : null)")
+    expect(askHost).toContain('setAskRoom(root, nativeReservation?.room ?? askRoom(place, isPro, measuredDockHeight))')
+    expect(askHost).toMatch(/if \(!shown && !nativeReservation\) \{\s*setAskRoom\(root, null\)/)
     expect(askHost).toMatch(/return \(\) => \{\s*setAskRoom\(root, null\)/)
     expect(askHost).not.toMatch(/--ask-room|setInset\(/)
   })

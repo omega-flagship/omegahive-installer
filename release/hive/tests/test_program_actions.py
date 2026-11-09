@@ -46,7 +46,7 @@ def act(client, agent, **body):
 def test_the_hive_sets_who_acts_and_refuses_identity_in_the_request(client, tmp_path, monkeypatch):
     _, a, _ = setup(client, tmp_path, monkeypatch)
     client.post("/api/policy", json={"scope": f"agent:{a['id']}", "skill": "program:social:post", "mode": "allow"})
-    for bad in ({"actor": "a_other"}, {"principal": "user:quinn"}, {"swarm_id": "s_x"}):
+    for bad in ({"actor": "a_other"}, {"principal": "user:jon"}, {"swarm_id": "s_x"}):
         r = act(client, a, action="post", items=["p1"], params=bad, idempotency_key="k0")
         assert r.status_code == 400 and r.json()["error"]["code"] == "identity_in_request"
     r = act(client, a, action="post", items=["p1"], params={"text": "hi"}, idempotency_key="k1", actor="a_other")
@@ -138,9 +138,9 @@ def test_person_only_actions_need_a_named_person_and_the_program_hears_decisions
     assert events[-1]["decided_by_named_person"] is False and events[-1]["idempotency_key"] == "rc1"
     refused = act(client, a, **body, approval_id=pending["approval_id"])          # the loopback operator approved it
     assert refused.status_code == 409 and refused.json()["error"]["code"] == "person_approval_required"
-    hive.db.execute("UPDATE approvals SET decided_by = 'user:u_quinn' WHERE id = ?", (pending["approval_id"],))
+    hive.db.execute("UPDATE approvals SET decided_by = 'user:u_jon' WHERE id = ?", (pending["approval_id"],))
     done = act(client, a, **body, approval_id=pending["approval_id"]).json()
-    assert done["detail"]["actor"]["approval"]["approved_by"] == "user:u_quinn"
+    assert done["detail"]["actor"]["approval"]["approved_by"] == "user:u_jon"
     direct = client.post("/api/programs/social/act", json={"swarm_id": swarm["id"], "action": "review-correct", "items": ["p1"], "params": {}})
     assert direct.status_code == 403 and direct.json()["error"]["code"] == "person_required"
 

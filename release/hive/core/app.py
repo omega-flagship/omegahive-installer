@@ -7,16 +7,20 @@ import contextlib
 import hmac
 import hashlib
 import json
+import math
 import logging
 import os
 import pathlib
 import re
 import secrets
+import sqlite3
+import threading
 import time
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from . import keyview
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -24,10 +28,12 @@ from ..supervisor.drivers import Supervisor
 from .ask import TRACE_ENTRY
 from .config import Settings, load_settings
 from .db import now
-from .gateway import Gateway, GatewayError, split_model
+from . import session_launch
+from .gateway import Gateway, GatewayError, billable as gateway_billable, reported_cost, split_model
 from .hive import Hive, HiveError, token_hash
+from .health import people_frame
 from .providers import ProviderError, ProviderStore
-from .sso import SSO, PublicGate
+from .sso import SSO, AccountAttempts, PasswordAttempts, PublicGate
 from .session_ref import SessionRefs
 from .me_decisions import MeDecisions, Person, human_session
 from .people import OAUTH_COOKIE, SIGNIN_COOKIE, People, SignInError
@@ -36,6 +42,7 @@ from .ui_prefs import StalePrefs, UiPrefs, UiPrefsError
 from .services import ServiceError
 from .proposal_tests import SERVICE_BODY_MAX
 from .code import Code, CodeError
+from .code_mind_proof import member_request, note_host_denial
 from .roles import RoleError
 from .mcp import McpError
 from fastapi.responses import Response
@@ -110,8 +117,23 @@ async def _ws_receive(ws):
 
 def create_app(settings: Settings | None = None, supervisor=None, reconcile_seconds=5.0, confidential_factory=None,
                newhive_extractor=None) -> FastAPI:
+    from .code_aggregate import _CodeAggregate
     settings = settings or load_settings()
-    from . import localowner
+    aggregate = _CodeAggregate(settings)
+    try:
+        return _create_app(settings, supervisor, reconcile_seconds, confidential_factory,
+                           newhive_extractor, _code_aggregate=aggregate)
+    except BaseException as primary:
+        # The original traceback retains this local owner/partial attempt. A
+        # cleanup/projection failure cannot replace the construction primary.
+        aggregate.retire(primary)
+        raise
+
+
+def _create_app(settings: Settings | None = None, supervisor=None, reconcile_seconds=5.0, confidential_factory=None,
+                newhive_extractor=None, *, _code_aggregate) -> FastAPI:
+    settings = settings or load_settings()
+    from . import code_local_enrolment, localowner
     from . import newhive as newhive_mod
     local_mode = localowner.enabled()   # J1 installers: everything local-owner is inert unless HIVE_LOCAL_OWNER=1
     # new-hive R1a (plan r1.1 §1/§3): a data folder with the required-feature marker is a new installation and must
@@ -128,7 +150,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
             password_file.write_text(secrets.token_urlsafe(12))
             password_file.chmod(0o600)
         settings.admin_password = password_file.read_text().strip()
-    # Restart prepare (the owner 2026-10-18): a fresh one-time token each start, readable by this account only; none when off.
+    # Restart prepare (Jon 2026-10-18): a fresh one-time token each start, readable by this account only; none when off.
     restart_token_file = settings.data_dir / "restart-prepare.token"
     if settings.restart_prepare:
         fd = os.open(restart_token_file, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600)
@@ -138,20 +160,42 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
     else:
         with contextlib.suppress(FileNotFoundError):
             restart_token_file.unlink()
+    _code_aggregate.start()  # before any constructor can start a worker
     supervisor = supervisor if supervisor is not None else Supervisor(settings)
     hive = Hive(settings, supervisor=supervisor)
+    hive._code_aggregate = _code_aggregate  # original private startup owner, never posted
     session_refs = SessionRefs(settings.data_dir)
     if supervisor:
         supervisor.attach(hive)
     gateway = Gateway(settings.providers)
     gateway.authorize_agent = hive.person_apps.authorize_agent   # P2's require_current, then P14's own-key context rule
-    from .cost_reservations import Reservations, host_budget_snapshot, host_subjects
+    from .cost_reservations import Reservations, host_budget_snapshot, host_subjects, host_use_check
     cost_reservations = Reservations(hive.db)
+    gateway.free_unreconciled = cost_reservations.free_unknown   # sol R2 P1: no further $0 call past an unknown one
 
-    def hold_unknown(reservation):
-        """Keep a call's worst case held as an unknown liability; never raises (used where the caller already has an answer)."""
+    def hold_unknown(reservation, exc=None):
+        """Keep a call's worst case held as an unknown liability; never raises (used where the caller already has an answer).
+        exc, the call's failure if any: a refusal whose body reports a charge settles at that charge (recorded as usage for
+        the reserving mind); a refusal guaranteed unbilled (gateway.unbilled: provider allowlist, no charge evidence) is
+        released. Returns True if the hold was settled or released (no longer held), else False."""
+        from .gateway import refusal_charge, unbilled
+        charge = refusal_charge(exc) if exc is not None else None
+        if charge is not None:
+            with contextlib.suppress(Exception):
+                meta = (cost_reservations.details(reservation) or {}).get("metadata") or {}
+                mind = hive.agent(meta["agent"])
+                usage = {"prompt_tokens": 0, "completion_tokens": 0, "cost_usd": charge, "key_id": meta.get("key")}
+                cost_reservations.settle(reservation, charge,
+                                         lambda: hive.record_usage(mind, meta.get("model") or mind["model"], usage, None,
+                                                                   meta.get("payer")), overrun_flag)
+                return True
+        elif exc is not None and unbilled(exc):
+            with contextlib.suppress(Exception):
+                if cost_reservations.release_unbilled(reservation, exc.status):
+                    return True
         with contextlib.suppress(Exception):
             cost_reservations.unknown(reservation)
+        return False
 
     def overrun_flag(info):
         """An actual cost above what was held: tell people and mark the mind (recorded in cost_overruns as well)."""
@@ -165,8 +209,15 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
             hive.db.execute("UPDATE agents SET last_error = ? WHERE id = ?",
                             (f"budget overrun: ${info['actual_usd']:.4f} against ${info['held_usd']:.4f} held ({info['reservation']})", info["agent"]))
             hive.emit_agent(info["agent"])
+    from .mind_gateway import MindTokens
+    hive.mind_tokens = MindTokens(hive)   # gateway r1c: the mind tokens (inert with HIVE_MIND_GATEWAY unset)
+    from .mind_idempotency import MindIdempotency
+    hive.mind_idempotency = MindIdempotency(hive)   # gate A r1.1: the Idempotency-Key (nothing made with the flag unset)
+    hive.mind_idempotency.sweep_quietly()          # stored answers past their hour go at startup, whatever the flag
+    from .mind_checkpoint import MindCheckpoints
+    hive.mind_checkpoints = MindCheckpoints(hive)   # gateway gate A: the freshness head (no table with the flag unset)
     from .conductor import Conductor
-    # the Ask conductor (conductor.py): idle unless HIVE_ASK_CONDUCTOR=1; it keeps no memory of its own (the owner's ruling)
+    # Ask is ready on a fresh install; HIVE_ASK_CONDUCTOR=0 selects the legacy route. It keeps no memory of its own.
     hive.ask.conductor = Conductor(hive, gateway, cost_reservations, host_budget_snapshot, hold_unknown, overrun_flag)
     from .studio_sessions import StudioSessions
     # J3 host R2 (G1): the studio.session intent kind's admission and session record (studio_sessions.py)
@@ -184,6 +235,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
     gateway.keyring = providers
     hive.keyring = providers   # who owns which key (personal spend views)
     sso = SSO(settings)
+    attempts = PasswordAttempts()
     people = People(hive, gateway.client)
     hive.people = people
     hive.google_connector = GoogleConnector(
@@ -203,6 +255,13 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         with contextlib.suppress(Exception):
             hive.ownhive.count_open_holds_everywhere()
     gateway.own_key_for = hive.ownhive.own_key_for   # a guest or public visitor with no grant pays with their own key
+    from .subscription_cli import SubscriptionGate
+    gateway.subscription_gate = SubscriptionGate(hive)   # every subscription instance: the owner's own private minds only, a day cap each
+    hive.gateway = gateway   # read-only use: Budgets.settlement works out who pays with the gateway's own paying_key
+    hive.reconcile_removed_keys()   # keyview: tombstones of removed keys no mind names any more (orphans from before)
+    from .foundation import HiveFoundation
+    hive.foundation = HiveFoundation(hive)
+    hive.foundation.ensure_quietly()   # host-owned records only; no mind/provider starts
     hive.personal.backfill()   # once at startup: every named person has a personal mind (asleep; nothing starts)
     try:                       # J3 R7, Studio on only: no binding to a deleted mind, no maker of a person without access
         hive.studio_makers.sweep()
@@ -212,6 +271,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
     from .onboarding import Onboarding
     hive.onboarding = Onboarding(hive, gateway)   # First Light R1a: progress, the setup list, the first hello
     PASSWORD_SESSION_SECONDS = 30 * 86400
+    member_attempts = AccountAttempts()   # uniform counters for every typed identifier
 
     async def warm_catalog():
         """Fetch the OpenRouter catalogue once at boot so prices are known before the first call."""
@@ -220,6 +280,42 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         with contextlib.suppress(Exception):
             await providers.models()
 
+    installed_map = newhive_mod.InstalledMapCoordinator(hive)
+    hive.installed_map = installed_map
+    from .repomap_seed import RepoMapSeed
+    hive.repo_map_seed = RepoMapSeed(hive, data_dir=settings.data_dir)   # the pinned map set, loaded by the host at start
+    from .repomap_live import LiveMaps
+    hive.repo_map_live = LiveMaps(hive)   # 1.2: stored files and artifacts mapped as they change (events)
+
+    async def prepare_installed_map():
+        try:
+            await asyncio.to_thread(installed_map.run_once)
+        except asyncio.CancelledError:
+            installed_map.stop()  # cancelling a future never proves its thread stopped
+            raise
+        except Exception:
+            installed_map.worker_failed()
+            logging.getLogger("hive").warning("installed source map: worker_failed")
+
+    async def seed_repo_maps(after):
+        """After the self-map job (whatever its outcome), load every pinned revision that is missing (repomap_seed.py)."""
+        if after is not None:
+            await asyncio.wait({after})
+        try:
+            await asyncio.to_thread(hive.repo_map_seed.run_once)
+            seed = hive.repo_map_seed   # slice 1.1: then keep the tracked maps current, on its own thread
+            threading.Thread(target=seed.sources.loop, args=(lambda: seed.revisions,), name="repo-map-sources",
+                             daemon=True).start()
+            if os.environ.get("HIVE_REPO_MAP_LIVE", "on").strip().lower() not in ("0", "off", "false", "no"):
+                hive.repo_map_live.mark_all()
+                hive.repo_map_live.start()
+        except asyncio.CancelledError:
+            hive.repo_map_seed.stop()
+            raise
+        except Exception:   # noqa: BLE001  (never stops the hive)
+            logging.getLogger("hive").warning("repo map seed: worker_failed")
+
+    @_code_aggregate.lifespan
     @contextlib.asynccontextmanager
     async def lifespan(app):
         hive.events.bind(asyncio.get_running_loop())
@@ -235,40 +331,99 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         nh = getattr(hive, "newhive", None)   # new-hive r1.4-int: test doubles of Hive may not carry it
         watch = asyncio.create_task(nh.watch()) if nh is not None else None
         app_ask_watch = asyncio.create_task(app_ask_expiry())
-        yield
-        app_ask_watch.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await app_ask_watch
-        if watch is not None:
-            watch.cancel()
-        warm.cancel()
-        if task:
-            task.cancel()
-        if supervisor:
-            # A reconcile pass already on a worker thread is not stopped by cancel(): it must not restart a mind these
-            # shutdown stops end (they keep desired=awake for the next restore).
-            shutdown = getattr(supervisor, "shutdown", None)
-            if callable(shutdown):
-                shutdown()
-            failed_stops = []
-            for row in hive.db.all("SELECT id FROM agents WHERE deleted = 0"):
-                try:
-                    await run_in_threadpool(supervisor.stop, row["id"])
-                except Exception as exc:
-                    failed_stops.append(row["id"])
-                    logging.getLogger("hive").warning("shutdown could not confirm mind %s stopped (%s); tracking retained",
-                                                       row["id"], type(exc).__name__)
-            if failed_stops:
-                logging.getLogger("hive").warning("shutdown left %d unresolved mind stops", len(failed_stops))
-        conductor = getattr(hive.ask, "conductor", None)
-        if conductor is not None:   # Ask conductor loops stop and their cut-off calls settle first, within a short grace
+        if hive.code_controller.enabled():
+            hive.code_controller.ensure_watch()   # resumes open controller runs; wakes on goal/request events only
+        if hive.create_plans.enabled():
+            hive.create_plans.ensure_watch()      # resumes open plans; wakes on goal events and the person's routes only
+        # gate A r1.3: the stored-answer sweep's backstop, on its own thread (not the pool, not the reconcile loop)
+        answers_stop = threading.Event()
+        answers = threading.Thread(target=hive.mind_idempotency.sweeper, args=(answers_stop,), name="mind-answer-sweeper",
+                                   daemon=True)
+        answers.start()
+        self_map_job = None
+        seed_job = None
+        shutdown_primary = None
+        try:
             try:
-                await conductor.aclose()
-            except Exception as exc:   # never silent: the settle-before-close guarantee did not hold this time
-                logging.getLogger("hive").warning("ask conductor: shutdown drain failed (%s)", type(exc).__name__)
-        await gateway.client.aclose()
-        if local is not None:
-            await local.stop()
+                self_map_job = asyncio.create_task(prepare_installed_map(), name="installed-repository-map")
+                hive._installed_map_job = self_map_job  # retain ownership through a slow shutdown
+                seed_job = asyncio.create_task(seed_repo_maps(self_map_job), name="repo-map-seed")
+                async with code_local_enrolment.running(hive), session_launch.running(hive, settings):
+                    yield
+            except BaseException as exc:
+                shutdown_primary = exc
+            try:
+                hive.repo_map_seed.stop()
+                hive.repo_map_live.stop()
+                if seed_job is not None and not seed_job.done():
+                    done, _ = await asyncio.wait({seed_job}, timeout=5)
+                    if seed_job not in done:
+                        logging.getLogger("hive").warning("repo map seed: shutdown still pending")
+            except BaseException as exc:   # noqa: BLE001
+                shutdown_primary = shutdown_primary or exc
+            try:
+                installed_map.stop()
+                if self_map_job is not None:
+                    done, _ = await asyncio.wait({self_map_job}, timeout=5)
+                    if self_map_job in done:
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await self_map_job
+                    else:
+                        logging.getLogger("hive").warning("installed source map: shutdown still pending")
+            except BaseException as exc:
+                if shutdown_primary is None:
+                    shutdown_primary = exc
+                else:
+                    with contextlib.suppress(BaseException):
+                        logging.getLogger("hive").warning("installed source map: shutdown also failed; original failure retained")
+        finally:
+            # A self-map wait failure/cancellation cannot skip the pre-existing
+            # owned cleanup tail. Keep its original primary if the tail also fails.
+            try:
+                answers_stop.set()
+                answers.join(5)
+                app_ask_watch.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await app_ask_watch
+                hive.code_controller.close()   # the watcher and the reducer's scratch folder
+                hive.create_plans.close()
+                if watch is not None:
+                    watch.cancel()
+                warm.cancel()
+                if task:
+                    task.cancel()
+                if supervisor:
+                    # A reconcile pass already on a worker thread is not stopped by cancel(): it must not restart a mind these
+                    # shutdown stops end (they keep desired=awake for the next restore).
+                    shutdown = getattr(supervisor, "shutdown", None)
+                    if callable(shutdown):
+                        shutdown()
+                    failed_stops = []
+                    for row in hive.db.all("SELECT id FROM agents WHERE deleted = 0"):
+                        try:
+                            await run_in_threadpool(supervisor.stop, row["id"])
+                        except Exception as exc:
+                            failed_stops.append(row["id"])
+                            logging.getLogger("hive").warning("shutdown could not confirm mind %s stopped (%s); tracking retained",
+                                                               row["id"], type(exc).__name__)
+                    if failed_stops:
+                        logging.getLogger("hive").warning("shutdown left %d unresolved mind stops", len(failed_stops))
+                conductor = getattr(hive.ask, "conductor", None)
+                if conductor is not None:   # Ask conductor loops stop and their cut-off calls settle first, within a short grace
+                    try:
+                        await conductor.aclose()
+                    except Exception as exc:   # never silent: the settle-before-close guarantee did not hold this time
+                        logging.getLogger("hive").warning("ask conductor: shutdown drain failed (%s)", type(exc).__name__)
+                await gateway.client.aclose()
+                if local is not None:
+                    await local.stop()
+            except BaseException:
+                if shutdown_primary is None:
+                    raise
+                with contextlib.suppress(BaseException):
+                    logging.getLogger("hive").warning("shutdown cleanup also failed; original failure retained")
+        if shutdown_primary is not None:
+            raise shutdown_primary
 
     async def app_ask_expiry():
         # Independent of the supervisor/reconcile switch; a dead frame cannot strand a turn.
@@ -296,6 +451,9 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         """One pass of the reconcile coroutine (exposed as app.state.reconcile_once for tests that drive the production
         pass). J3 host R3 (handoff spec r2.4 §1): the Studio sweep runs right after supervisor.check(), outside any mind
         lock; it writes short DB transactions and dispatches worker jobs, never awaiting them."""
+        # gate A r1.2: stored model answers past their hour are erased first, outside the pass's shared try (it never
+        # raises), so no other step's failure can skip it (the mind-answer-sweeper thread is the backstop)
+        await run_in_threadpool(hive.mind_idempotency.sweep_quietly)
         try:
             await run_in_threadpool(hive.supervisor.check)
             try:
@@ -315,6 +473,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
             await hive.delegation.reconcile()
             hive.ask.expire()   # Ask turns past their deadline close as timed_out (or spend_limit)
             hive.personal_inbox.sweep()   # held copies the browser never collected go after 7 days
+            hive.mind_tokens.sweep()      # gateway r1c: expired or orphaned mind tokens leave the redactor
             await run_in_threadpool(hive.notices.sweep)   # G2: a person's held notices go as one digest when due
             await hive.minds.reconcile()
             await run_in_threadpool(hive.sleep_idle_minds)
@@ -337,6 +496,8 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
     # not run a mounted app's lifespan).
     app = FastAPI(title="OmegaHive", version="0.1.0", lifespan=None if settings.base_path else lifespan)
     app.state.hive = hive
+    app.state.password_attempts = attempts
+    app.state.member_attempts = member_attempts
     app.state.gateway = gateway
     app.state.reconcile_once = reconcile_once
     # J1 r2 B2: a local-owner hive allows exactly its own loopback origin; every other hive keeps the wildcard
@@ -396,11 +557,23 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         row = hive.db.one("SELECT * FROM sessions WHERE token_hash = ?", (token_hash(token),))
         if row is None or (row.get("expires_at") and row["expires_at"] <= time.time()):
             return None
-        if public and row.get("kind") != "sso":
+        if row.get("kind") == "member_password" and (local is not None or role_of(row) != "member"):
+            return None
+        if public and not public_session_allowed(row):
             return None  # from outside this machine only a sign-in session counts
         if row.get("kind") == newhive_mod.BOOTSTRAP_KIND:
             return None  # new-hive R1a (r1.1 §3): a setup helper session is never an ordinary session anywhere
         return row
+
+    def member_password_public():
+        """Member passwords count from outside only with HIVE_PUBLIC_PASSWORD=1 and while Google sign-in is not set
+        up (T-101): once HIVE_GOOGLE_* are on, members continue with Google."""
+        return sso.public_password and not people.google_ready
+
+    def public_session_allowed(row):
+        return row.get("kind") == "sso" or (row.get("kind") == "member_password" and member_password_public())
+
+    hive.mind_tokens.public_session_allowed = public_session_allowed
 
     def bootstrap_session(header_token, request: Request):
         """new-hive R1a: a sso-bootstrap session, only on its four allow-listed routes (NewHive.admit), or None."""
@@ -419,6 +592,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         if row is None:
             row = bootstrap_session(header_token, request)
             if row is not None:
+                request.state.hive_session = row   # keyview: the response leaves projected for this caller
                 return row
             raise HiveError(401, "unauthorized", "log in first")
         if check_path:
@@ -428,6 +602,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
             if role_of(row) != "admin":
                 raise HiveError(403, "admin_only", "only a hive admin can do that")
             row = dict(row, include_personal=True)
+        request.state.hive_session = row   # keyview: the response leaves projected for this caller
         return row
 
     def viewer(session):
@@ -442,12 +617,17 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
 
     def role_of(session):
         principal = session.get("principal") or "user:operator"
+        if session.get("kind") == "member_password" and not principal.startswith("user:u_"):
+            return None
         if session.get("kind") == "password" or principal == "user:operator":
             return "admin"  # the hive password is only usable on the hive's own machine
         if principal.startswith("user:u_"):
             person = hive.db.one("SELECT role, disabled FROM people WHERE id = ?", (principal[5:],))
-            return person["role"] if person and not person["disabled"] else None
-        return "admin" if principal[5:] in sso.allowed else None  # webhost sign-in (HIVE_SSO_USERS)
+            if not person or person["disabled"]:
+                return None
+            # a member password session is never admin, even for a row an admin promoted later (T-101)
+            return "member" if session.get("kind") == "member_password" else person["role"]
+        return "admin" if principal[5:] in sso.allowed else None  # family sign-in (HIVE_SSO_USERS)
 
     def admin(request: Request):
         session = operator(request)
@@ -457,8 +637,8 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
 
     def policy_writer(session):
         """host-identity r1: who may change approval rules, however they are written (policy routes, roles): a hive
-        admin or the hive's owner (ownhive.py)."""
-        return role_of(session) == "admin" or hive.ownhive.is_owner(session.get("principal") or "user:operator")
+        admin or the hive's owner while they act as owner (ownhive.py: still an enabled admin, so never a demoted owner)."""
+        return role_of(session) == "admin" or hive.ownhive.acts_as_owner(viewer(session))
 
     def wakeup_principal(session):
         """G1 checks every user namespace against any directly matching disabled-person row."""
@@ -482,7 +662,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         if mind is None:
             raise HiveError(404, "not_found", "no such wakeup")
         reads_text = wakeup_reader(session, agent_id)
-        writes = reads_text or hive.ownhive.is_owner(principal)
+        writes = reads_text or hive.ownhive.acts_as_owner(viewer(session))   # the owner acting as owner, never demoted
         if (write and not writes) or (not write and not reads_text and not viewer(session).sees(mind)):
             raise HiveError(404, "not_found", "no such wakeup")
         return reads_text
@@ -543,15 +723,202 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
                 return hosted
             record = providers.ring["keys"].get(key)
             if record is None:
-                return True   # not a key here: Hive._options refuses it (404 unknown_key), as for a refused one
+                # not a key here (sol on f4bb6907): never visible, so its id is never shown or echoed to anyone else; its
+                # former owner alone still recognises their own deleted key (Kimi on bef0f01b: providers' tombstone). A
+                # changed key naming it is still refused as unknown (check_key_use), exactly as a refused one is
+                return providers.removed_by(key, me)   # its tombstone: live records were checked first, just above
             holder = hive.ownhive.key_person(key)   # the same "is this a hive key" predicate billing uses (key_owner)
             if holder is not None:
                 return holder == me
             return hosted and providers.ring["defaults"].get(record.get("provider")) == key
         return may_use
 
+    def key_seer(session):
+        """keyview (sol on 6dc7a837): which key references this caller may see, by GET /api/keys's own policy
+        (key_permit), or None for everything (a hive admin or the hive's owner)."""
+        return key_permit(session) if session is not None else None
+
+    def provider_key(name):
+        """The key a provider's status describes: its default stored key, else its environment key."""
+        return (providers.ring.get("defaults") or {}).get(name) or f"env:{name}"
+
+    def key_seer_for(principal):
+        """The key policy for a person outside a request (an Ask turn's frames, built for their asker): as key_seer for
+        their own signed-in session; none visible for no one."""
+        # as they are now (Kimi on 593fde34): a disabled or unknown person sees no key at all, and a guest is judged
+        # by key_permit as a guest
+        if not principal or hive.ownhive.access(principal) is None:
+            return lambda key: False
+        return key_seer({"principal": principal, "kind": "sso"})
+    hive.key_seer_for = key_seer_for
+
+    def provider_keys_seen(name, may_see):
+        """How many of a provider's keys this caller may see (its stored keys, and its environment key when that holds a
+        usable secret). Inventory only: whether they can pay is pay_route's answer, never this count."""
+        stored = sum(1 for r in (providers.ring.get("keys") or {}).values() if r["provider"] == name and may_see(r["id"]))
+        env = providers.provider(name).key_env if name in providers.providers else ""
+        return stored + (1 if env and os.environ.get(env, "").strip() and may_see(f"env:{name}") else 0)
+
+    def pay_route(name, me):
+        """keyview R10 (sol on 26e22ed0, Dot): the key a call by THIS person's own mind on provider `name` would be paid
+        with, or None when the gateway would refuse it. The call path's own lookups, read-only (no dispatch, no
+        reservation): Gateway.paying_key (with OwnHive.own_key_for), Hive.payer_for, then OwnHive.person_key_check and
+        use_check, so active grants, own keys and the owner's public hive-key terms admit exactly as they admit a call.
+        Payment entitlement, not visibility: a member granted another person's default key, or a guest on the hive's key,
+        can pay with a key they may not see. Reads only, with one inherited exception: Hive.payer_for and use_check read
+        OwnHive.owner(), whose ensure_owner stores the first admin as the owner on a hive's first use (once, idempotent,
+        the same migration any request reaching it makes)."""
+        gw = getattr(hive, "gateway", None)
+        if gw is None or name not in providers.providers:
+            return None
+        proposed = {"id": "", "name": "your mind", "owner": me, "model": f"{name}/", "options": {}}
+        try:
+            key_id, secret = gw.paying_key(proposed, name)
+        except GatewayError:
+            return None
+        if not secret or not str(secret).strip():
+            return None   # nothing would pay: an unset or empty secret is refused on the call path too
+        key_owner = ((providers.ring.get("keys") or {}).get(key_id) or {}).get("owner")
+        payer, _own = hive.payer_for(proposed, key_owner)
+        try:
+            hive.ownhive.person_key_check(proposed, key_id, user=me)
+            hive.ownhive.use_check(proposed, key_id, payer, user=me)
+        except HiveError:
+            return None
+        return key_id
+
+    def session_person(session):
+        return (session or {}).get("principal") or "user:operator"
+
+    def on_default_route(session, name):
+        """Whether this caller's view of a provider's default-route evidence (readiness, the catalogue's fetch state and
+        fetching it) is theirs: an admin or the hive's owner, or someone whose pay_route is that default route."""
+        return key_seer(session) is None or pay_route(name, session_person(session)) == provider_key(name)
+
+    def provider_view(session):
+        """provider_for for this caller (keyview R10): "can pay" (pay_route) decides connected, configured and models;
+        "can see" (key_permit) decides key details (hint, account, source, the keys count). Readiness and the OpenRouter
+        catalogue's fetch state describe the hive's default paying configuration: kept only when that is the route this
+        caller pays by, else unverified / not shown."""
+        me = session_person(session)
+
+        def provider_for(status, may_see):
+            name = status["name"]
+            seen = provider_keys_seen(name, may_see)
+            if status.get("local") or name == "mock" or not status.get("needs_key", True):
+                return {"keys": seen}
+            route = pay_route(name, me)
+            usable = route is not None
+            source = None
+            if usable and may_see(route):
+                source = "stored" if route in (providers.ring.get("keys") or {}) else "env"
+            out = {"keys": seen, "connected": usable, "configured": usable, "source": source}
+            if route != provider_key(name):   # readiness was measured on the default route, not theirs
+                out.update({"readiness": "unverified", "answer_ready": False})
+                if isinstance(status.get("catalog"), dict):
+                    out["catalog"] = {"count": status["catalog"].get("count", 0), "fetched_at": None, "error": None}
+            return out
+        return provider_for
+
+    def keys_projected(session, value):
+        """What leaves for this caller (HTTP and events): every key reference they may not see removed (keyview)."""
+        may_see = key_seer(session)
+        return value if may_see is None else keyview.project(value, may_see, provider_key, provider_for=provider_view(session))
+
+    class KeyViewResponses:
+        """keyview over HTTP, at the one boundary every answer crosses (plain ASGI: no task of its own, unlike
+        BaseHTTPMiddleware, so a route's context and timing are exactly as without it).
+        - Refusals (any JSON answer with status >= 400), for every caller but a hive admin, agent-token and signed-out
+          callers included: every string in it (no field exempt: codes are never ids, so they come out as they went) through
+          keyview.redact_error, one regex pass by the shared key-id grammar, so no key id, key:<id> budget scope or other
+          person's principal reaches someone the key policy (key_permit) does not let see that exact key. A caller with no
+          session sees none. Key labels are not matched at all: no refusal names one (keyview R7).
+          Internal logs keep the full detail; only the answer is projected.
+        - Other JSON answers for a session operator() resolved: an answer whose text names a key-bearing field
+          ("options", "key_hint") is parsed and projected (keyview.project); others pass byte for byte. A route that
+          projects its own answer (GET /api/agents) marks the request done and its answer passes unheld.
+        A held answer is at most LIMIT; past it, or unreadable when it had to be read, it is refused, never sent raw."""
+
+        LIMIT = 8 * 1024 * 1024
+
+        def __init__(self, app):
+            self.app = app
+
+        @staticmethod
+        def refused(code, message, status=500):
+            body = json.dumps({"error": {"code": code, "message": message}}).encode("utf-8")
+            return ({"type": "http.response.start", "status": status,
+                     "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]},
+                    {"type": "http.response.body", "body": body, "more_body": False})
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] != "http":
+                return await self.app(scope, receive, send)
+            held = {"start": None, "chunks": [], "size": 0, "pass": False, "over": False, "error": False, "text": False}
+
+            async def through(message):
+                if held["pass"]:
+                    return await send(message)
+                if message["type"] == "http.response.start":
+                    state = scope.get("state") or {}
+                    session = state.get("hive_session")
+                    kind = dict(message.get("headers") or []).get(b"content-type", b"")
+                    admin_caller = session is not None and role_of(session) == "admin"   # reads the person only
+                    error = int(message.get("status") or 200) >= 400
+                    json_answer = kind.startswith(b"application/json")
+                    text_error = error and kind.startswith(b"text/")   # sol on 04875179: a plain or HTML refusal too
+                    if (not json_answer and not text_error) or admin_caller or \
+                            (not error and (session is None or state.get("hive_keyview_done"))):
+                        held["pass"] = True
+                        return await send(message)
+                    held["start"], held["error"], held["text"] = message, error, text_error
+                    return None
+                if message["type"] != "http.response.body":
+                    return await send(message)
+                if held["over"]:
+                    return None   # the refusal was already sent; the rest of the answer is dropped
+                held["chunks"].append(message.get("body", b""))
+                held["size"] += len(held["chunks"][-1])
+                if held["size"] > self.LIMIT:
+                    held["over"], held["chunks"] = True, []
+                    for part in self.refused("response_too_large", "This answer is too large to send here."):
+                        await send(part)
+                    return None
+                if message.get("more_body"):
+                    return None
+                body = b"".join(held["chunks"])
+                session = (scope.get("state") or {}).get("hive_session")
+                text = body.decode("utf-8", "replace")
+                try:
+                    if held["error"]:
+                        may_see = key_seer(session) if session is not None else (lambda key: False)   # no session: none
+                        if may_see is not None:
+                            me = (session or {}).get("principal")
+                            if held["text"]:   # the whole text describes the refusal
+                                body = keyview.redact_text(text, may_see, me).encode("utf-8")
+                            else:
+                                body = json.dumps(keyview.redact_error(json.loads(text), may_see, me)).encode("utf-8")
+                    elif keyview.mentions_keys(text) and key_seer(session) is not None:
+                        body = json.dumps(keys_projected(session, json.loads(text))).encode("utf-8")
+                except Exception:   # fail closed, and always finish: an answer that cannot be projected is never sent,
+                    # and the held start is never left open (a fixed 500 instead; sol on 593fde34)
+                    logging.getLogger("hive").exception("keyview: an answer could not be projected")
+                    for part in self.refused("response_unreadable", "This answer could not be prepared."):
+                        await send(part)
+                    return None
+                start = held["start"]
+                headers = [(k, v) for k, v in (start.get("headers") or []) if k.lower() != b"content-length"]
+                await send({**start, "headers": headers + [(b"content-length", str(len(body)).encode("latin-1"))]})
+                await send({"type": "http.response.body", "body": body, "more_body": False})
+
+            return await self.app(scope, receive, through)
+
+    app.add_middleware(KeyViewResponses)
+    from .credentials import RestrictedCredentialGate
+    app.add_middleware(RestrictedCredentialGate, hive=hive)   # R2.8 W-a: restricted bridged credentials only reach /mcp
+
     def agent_from(request: Request):
-        agent = hive.authenticate_agent(_bearer(request.headers.get("authorization")))
+        agent = hive.authenticate_agent(_bearer(request.headers.get("authorization")), surface="rest")
         if agent is None:
             raise HiveError(401, "unauthorized", "invalid agent token")
         return agent
@@ -591,11 +958,73 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
             raise HiveError(403, "password_signin_off",
                             "this hive signs in only through the OmegaHive app on this computer; open OmegaHive again")
         data = await body(request)
-        if not hmac.compare_digest(str(data.get("password", "")), settings.admin_password):
+        if str(data.get("email") or "").strip():
+            return await member_login(request, data)
+        public = request.scope.get("hive_public", False)
+        # Ported operator counter: no await between wait/check/update; parallel requests serialize on this loop.
+        if public:
+            wait = attempts.wait()
+            if wait is None:
+                raise HiveError(429, "password_login_closed", "too many wrong passwords from outside: sign in on the "
+                                "hive's own machine, or rotate the password, to open the password login again")
+            if wait > 0:
+                seconds = math.ceil(wait)
+                return JSONResponse({"error": {"code": "too_many_attempts", "retry_after_seconds": seconds,
+                                               "message": f"too many wrong passwords, try again in {seconds} s"}},
+                                    status_code=429, headers={"Retry-After": str(seconds)})
+        if not hmac.compare_digest(str(data.get("password", "")).encode("utf-8"), settings.admin_password.encode("utf-8")):
+            if public:
+                attempts.failed()
+                logging.getLogger("hive").warning("wrong operator password from outside: %d in a row", attempts.failures)
             raise HiveError(401, "unauthorized", "wrong password")
+        attempts.reset()
         token = secrets.token_urlsafe(32)
         hive.db.insert("sessions", {"token_hash": token_hash(token), "created_at": now(), "kind": "password",
                                     "principal": "user:operator", "expires_at": time.time() + PASSWORD_SESSION_SECONDS})
+        return {"token": token}
+
+    LOCAL_ONLY = {"error": {"code": "password_login_local_only", "message": "sign in with your Google account"}}
+
+    def member_attempt_key(email):
+        # Bound retained state by both entry count and identifier size, without looking up membership.
+        return hashlib.sha256(email.encode("utf-8", "surrogatepass")).hexdigest()
+
+    async def member_login(request, data):
+        """Email + password -> a member_password session for that person (T-101). Every failure is the same 401; from
+        outside, refused like the operator password once Google is on, and wrong guesses wait per typed email."""
+        public = request.scope.get("hive_public", False)
+        if public and not member_password_public():
+            return JSONResponse(LOCAL_ONLY, status_code=403)   # the same body PublicGate gives the operator's
+        email, password = people.normal_email(data.get("email")), str(data.get("password", ""))
+        attempt_key = member_attempt_key(email)
+        if public:
+            wait = member_attempts.wait(attempt_key)
+            if wait is None:
+                raise HiveError(429, "password_login_closed", "too many wrong passwords from outside for this account: "
+                                "sign in on the hive's own machine, or ask an admin to reset the password")
+            if wait > 0:
+                seconds = math.ceil(wait)
+                return JSONResponse({"error": {"code": "too_many_attempts", "retry_after_seconds": seconds,
+                                               "message": f"too many wrong passwords, try again in {seconds} s"}},
+                                    status_code=429, headers={"Retry-After": str(seconds)})
+            member_attempts.failed(attempt_key)   # counted before the slow check, so concurrent guesses wait too
+        person = await asyncio.to_thread(people.member_for_password, email, password)
+        if person is None:
+            if public:
+                logging.getLogger("hive").warning("wrong member password from outside")
+            raise HiveError(401, "unauthorized", "wrong email or password")
+        # Verification ran in a worker: a reset/removal/disable may have committed while it was in flight.
+        # Recheck the exact verified credential and issue its session in one short transaction, without awaiting.
+        with hive.db.transaction():
+            current = hive.db.one("SELECT * FROM people WHERE id = ?", (person["id"],))
+            if (current is None or current["disabled"] or current["role"] not in ("admin", "member")
+                    or current.get("password_hash") != person.get("password_hash")):
+                raise HiveError(401, "unauthorized", "wrong email or password")
+            token = secrets.token_urlsafe(32)
+            hive.db.insert("sessions", {"token_hash": token_hash(token), "created_at": now(), "kind": "member_password",
+                                        "principal": f"user:{person['id']}", "expires_at": time.time() + PASSWORD_SESSION_SECONDS})
+            hive.db.update("people", person["id"], {"last_seen_at": now()})
+        member_attempts.clear(attempt_key)   # only a still-current right password reopens the account
         return {"token": token}
 
     @app.get("/api/auth/methods")
@@ -603,19 +1032,21 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         public = request.scope.get("hive_public", False)
         prefix = request.scope.get("root_path", "") or ""
         own = (prefix or "") + "/api/auth/google/start" if people.google_ready else None
-        webhost = sso.login_location((prefix or "") + "/") if sso.enabled else None
-        # Everyday sign-in uses the webhost sign-in when there is one (its Google callback is registered); the hive's
+        family = sso.login_location((prefix or "") + "/") if sso.enabled else None
+        # Everyday sign-in uses the family sign-in when there is one (its Google callback is registered); the hive's
         # own Google flow carries invitations (its callback must be registered in Google for colleagues to join).
         # The hive's own Google flow is offered first whenever it is set up: only it checks the Google subject a person
         # is bound to (and hd), and the family sign-in refuses every bound person, so offering the family login to them
         # would loop. A family session already in the browser is still used by POST /api/auth/sso on page load.
-        primary = own or webhost
+        primary = own or family
         out = {"password": (not public) or sso.public_password, "public": public,
+               "member_password": (not public) or member_password_public(),
                "sso": {"enabled": bool(own) or sso.enabled, "provider": "google",
                        "login_url": primary, "invite_login_url": own,
                        "invites": people.google_ready}}
         if local is not None:   # J1: the Welcome page signs in through the app's one-time link, never a password
             out["local_owner"] = True
+            out["member_password"] = False
             out["password"] = False   # J1b r1.1: and the login route refuses
         return out
 
@@ -835,9 +1266,21 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         return services.register(_bearer(request.headers.get("authorization")), data,
                                  request.client.host if request.client else "")
 
+    @app.post("/api/services/operations/{operation_id}/ack")
+    async def services_operation_ack(operation_id: str, request: Request):
+        if request.scope.get("hive_public"):
+            raise HiveError(403, "local_only", "services register from this machine only")
+        return services.acknowledge(operation_id, _bearer(request.headers.get("authorization")))
+
+    @app.get("/api/services/operations/{operation_id}")
+    async def services_operation(operation_id: str, request: Request):
+        if request.scope.get("hive_public"):
+            raise HiveError(403, "local_only", "services register from this machine only")
+        return services.operation(operation_id, _bearer(request.headers.get("authorization")))
+
     @app.post("/api/local/restart-prepare")
     async def restart_prepare(request: Request):
-        """The Mac restart script's one try (the owner 2026-10-18): ask each awake mind, residents in keep aside, to sleep
+        """The Mac restart script's one try (Jon 2026-10-18): ask each awake mind, residents in keep aside, to sleep
         once. No retry, no stop, no force; what refused is reported and the script then decides not to restart."""
         if not settings.restart_prepare:
             raise HiveError(404, "not_found", "not found")
@@ -903,6 +1346,20 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         service = service_from(request)
         data = await bounded_body(request, SERVICE_BODY_MAX)
         return _canonical_answer(hive.proposal_tests.bind(service, test_id, data))
+
+    @app.post("/api/services/proposal-tests/{test_id}/sandbox-runs")
+    async def proposal_test_sandbox_run(test_id: str, request: Request):
+        # Registered Code service only; this dedicated cap does not widen any
+        # ordinary hold/status route or create a browser execution endpoint.
+        from .code_project_tests import read_body, launch
+        service = service_from(request)
+        data = await read_body(hive, request)
+        return _canonical_answer(await launch(hive, service, test_id, data))
+
+    @app.get("/api/services/proposal-tests/{test_id}/sandbox-runs/{launch_key}")
+    async def proposal_test_sandbox_result(test_id: str, launch_key: str, request: Request):
+        from .code_project_tests import read_result
+        return _canonical_answer(read_result(hive, service_from(request), test_id, launch_key))
 
     @app.post("/api/services/proposal-tests/{test_id}/holds")
     async def proposal_test_hold(test_id: str, request: Request):
@@ -1000,7 +1457,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         service = services.authenticate(token)
         row = hive.db.one("SELECT * FROM approvals WHERE id = ?", (approval_id,))
         if service is None:
-            agent = hive.authenticate_agent(token)
+            agent = hive.authenticate_agent(token, surface="rest")
             if agent is None:
                 raise HiveError(401, "unauthorized", "invalid token")
             if row is None or row["agent_id"] != agent["id"]:
@@ -1011,7 +1468,9 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
 
     @app.post("/api/agent/approvals/{approval_id}/redeem")
     async def agent_approval_redeem(approval_id: str, request: Request):
-        service_from(request)
+        service = service_from(request)
+        if service["name"] == "omegacode":
+            hive.code.require_local_enrolment()
         data = await body(request)
         return services.redeem(approval_id, data.get("binding"))
 
@@ -1019,7 +1478,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
     async def goal_grants(goal_id: str, request: Request):
         token = _bearer(request.headers.get("authorization"))
         if services.authenticate(token) is None:
-            agent = hive.authenticate_agent(token)
+            agent = hive.authenticate_agent(token, surface="rest")
             goal = hive.db.one("SELECT claimed_by FROM goals WHERE id = ?", (goal_id,))
             if agent is None or goal is None or goal["claimed_by"] != agent["id"]:
                 operator(request)
@@ -1085,12 +1544,26 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
     async def mcp_endpoint(request: Request):
         if request.method != "POST":
             return Response(status_code=405, headers={"Allow": "POST"})  # JSON responses only; no server-sent stream
-        agent = await run_in_threadpool(harnesses.member, _bearer(request.headers.get("authorization")))
+        member_credential = _bearer(request.headers.get("authorization"))
+        # This first authentication excludes invite-redemption identities from proof eligibility;
+        # do not fold it into harnesses.member, which preserves ordinary MCP join behavior.
+        proof_arrival_member = await run_in_threadpool(lambda: hive.authenticate_agent(member_credential, surface="mcp"))
+        # R2.8: a bridged-session credential's restriction (pending, mixed context), read from its own row
+        bridge = (await run_in_threadpool(hive.credentials.context, member_credential)
+                  if member_credential and member_credential.startswith("ohb1_") else None)
+        proof_arrival_tasks = frozenset(row["id"] for row in hive.db.all(
+            "SELECT id FROM goals WHERE claimed_by = ? AND swarm_id = ? AND status = 'claimed'",
+            (proof_arrival_member["id"], proof_arrival_member["swarm_id"]))) if proof_arrival_member else frozenset()
+        agent = await run_in_threadpool(harnesses.member, member_credential)
         if agent is None:
             return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": -32001, "message": "invalid, used or expired code"}},
                                 status_code=401, headers={"WWW-Authenticate": "Bearer"})
         if not harnesses.rate_ok(agent["id"]):
             return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": -32002, "message": "slow down: too many calls"}}, status_code=429)
+        proof_eligible = bool(proof_arrival_member and proof_arrival_member["id"] == agent["id"]
+                              and proof_arrival_member["swarm_id"] == agent["swarm_id"]
+                              and proof_arrival_member["token_hash"] == agent["token_hash"])
+        proof_owned_tasks = proof_arrival_tasks if proof_eligible else frozenset()
         raw = await request.body()
         if len(raw) > 256 * 1024:
             return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "request too large"}}, status_code=413)
@@ -1099,11 +1572,19 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         except ValueError:
             return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}, status_code=400)
         hive.db.update("agents", agent["id"], {"last_active_at": now()})
-        if isinstance(message, list):
-            replies = [r for r in [await harnesses.handle(agent, m) for m in message[:20]] if r is not None]
-            return JSONResponse(replies) if replies else Response(status_code=202)
-        reply = await harnesses.handle(agent, message)
-        return JSONResponse(reply) if reply is not None else Response(status_code=202)
+        with member_request(app, hive, agent, member_credential, eligible=proof_eligible, owned_tasks=proof_owned_tasks):
+            if isinstance(message, list):
+                replies = []
+                for m in message[:20]:   # a batch's whoami activates the credential for the calls after it
+                    r = await (harnesses.handle(agent, m, credential=bridge) if bridge is not None else harnesses.handle(agent, m))
+                    if bridge is not None and bridge["status"] == "pending":
+                        bridge = await run_in_threadpool(hive.credentials.context, member_credential) or bridge
+                    if r is not None:
+                        replies.append(r)
+                return JSONResponse(replies) if replies else Response(status_code=202)
+            reply = await (harnesses.handle(agent, message, credential=bridge) if bridge is not None
+                           else harnesses.handle(agent, message))
+            return JSONResponse(reply) if reply is not None else Response(status_code=202)
 
     # ---- roles (hive/core/roles.py) ----------------------------------------------------------
 
@@ -1136,6 +1617,43 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
 
     code = Code(hive, gateway.client)
     hive.code = code
+
+    @app.api_route("/api/agent/code/relay/{path:path}", methods=["GET", "POST"])
+    async def code_relay_agent(path: str, request: Request):
+        """A mind's Code call through the hive: the mind authenticates with its member token (X-Hive-Token), presents
+        the hc1 capability it was issued, and the hive forwards it on a proved connection (Code R1.4+)."""
+        member = request.headers.get("x-hive-token", "")
+        if not member or hive.authenticate_agent(member, surface="code-relay") is None:
+            raise HiveError(401, "unauthorized", "invalid agent token")
+        chunks, total = [], 0
+        async for chunk in request.stream():   # the raw bytes, capped: Code binds the proof to their exact digest
+            total += len(chunk)
+            if total > 4 * 1024 * 1024:
+                raise HiveError(413, "request_too_large", "this request is limited to 4 MB")
+            chunks.append(chunk)
+        try:
+            status, content, ctype = await code.relay_agent(member, _bearer(request.headers.get("authorization")),
+                                                            request.method, "/" + path, request.url.query, b"".join(chunks))
+        except CodeError as exc:
+            note_host_denial(request.scope, exc)
+            raise
+        return Response(content=content, status_code=status, media_type=ctype.split(";")[0])
+
+    @app.get("/api/agent/code/helper-instruction")
+    async def code_helper_instruction(request: Request):
+        """A request helper's own request instruction (Minds.helper_instruction); no request id is accepted."""
+        return hive.minds.helper_instruction(agent_from(request))
+
+    @app.post("/api/agent/code/test-context")
+    async def code_test_context_agent(request: Request):
+        """The request controller's own proposal-test references for one retained proposal (code_test_intents)."""
+        agent = agent_from(request)
+        if not hive.settings.proposal_test_claims:
+            raise HiveError(503, "proposal_tests_off", "proposal_test capabilities are off on this hive (HIVE_PROPOSAL_TEST_CLAIMS)")
+        hive.code.require_intended_release()
+        data = await body(request)
+        from .code_test_intents import controller_lookup
+        return await controller_lookup(hive.ask.intents, agent, data)
 
     @app.get("/api/agent/code/repositories")
     async def code_repositories_for_minds(request: Request):
@@ -1187,7 +1705,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
     @app.get("/api/people")
     async def people_list(request: Request):
         admin(request)
-        return {"people": people.list(), "invites": people.invites(), "google_ready": people.google_ready}
+        return {"people": people.list(), "invites": people.invites(), "google_ready": people.google_ready, "member_passwords": local is None}
 
     @app.post("/api/invites")
     async def invites_create(request: Request):
@@ -1205,6 +1723,40 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
     async def invites_revoke(invite_id: str, request: Request):
         admin(request)
         return people.revoke_invite(invite_id)
+
+    def member_password_enabled():
+        if local is not None:
+            raise HiveError(403, "password_signin_off", "this hive signs in through its one-time link")
+
+    SHOWN_ONCE = "Shown once: pass it to the member now; the hive keeps only a hash and cannot show it again."
+
+    @app.post("/api/people/members")
+    async def people_add_member(request: Request):
+        member_password_enabled()
+        session = admin(request)
+        data = await body(request)
+        view, password = people.add_member(data.get("email"), data.get("name", ""), by=_who(session))
+        return JSONResponse({"person": view, "password": password, "note": SHOWN_ONCE}, status_code=201)
+
+    @app.get("/api/people/{person_id}")
+    async def people_get(person_id: str, request: Request):
+        admin(request)
+        return people.view(people.get(person_id))
+
+    @app.post("/api/people/{person_id}/password")
+    async def people_reset_password(person_id: str, request: Request):
+        member_password_enabled()
+        session = admin(request)
+        view, password, ended = people.reset_password(person_id, by=_who(session))
+        member_attempts.clear(member_attempt_key(view["email"]))   # an admin's reset opens a closed account
+        return {"person": view, "password": password, "ended_sessions": ended, "note": SHOWN_ONCE}
+
+    @app.delete("/api/people/{person_id}/password")
+    async def people_remove_password(person_id: str, request: Request):
+        member_password_enabled()
+        session = admin(request)
+        view, ended = people.remove_password(person_id, by=_who(session))
+        return {"person": view, "ended_sessions": ended}
 
     # ---- own hive H1 (hive/core/ownhive.py): the owner, limits on your own keys, use invites, asking for a limit ------
 
@@ -1264,7 +1816,10 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
     async def my_key_limit_self(request: Request):
         v = viewer(operator(request))
         hive.ownhive.require_person_or_owner(v)
-        return await run_in_threadpool(hive.ownhive.set_limit, v, "self", await body(request))
+        data = await body(request)
+        if isinstance(data, dict) and "expected_month_usd" in data:   # only if it is still the total they were shown
+            return await run_in_threadpool(hive.ownhive.set_total_if, v, data)
+        return await run_in_threadpool(hive.ownhive.set_limit, v, "self", data)
 
     @app.post("/api/me/key-limits/grants")
     async def my_key_limit_grant(request: Request):
@@ -1283,9 +1838,9 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         # credential into either a person or a non-401 result. Existing operator transport checks still run.
         token = _bearer(request.headers.get("authorization")) or request.query_params.get("token", "")
         def positive(row):
-            if (not isinstance(row, dict) or row.get("kind") not in ("password", "sso")
+            if (not isinstance(row, dict) or row.get("kind") not in ("password", "sso", "member_password")
                     or (row.get("principal") is not None and not isinstance(row["principal"], str))
-                    or (request.scope.get("hive_public", False) and row.get("kind") != "sso")):
+                    or (request.scope.get("hive_public", False) and not public_session_allowed(row))):
                 raise HiveError(401, "unauthorized", "a current signed-in person is required")
             # Validate expiry before session_for's inherited numeric comparison can encounter malformed storage.
             return human_session(hive, row, lambda: role_of(row))
@@ -1349,8 +1904,8 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
             prefix = request.scope.get("root_path", "") or ""
             raise HiveError(401, "sso_required", "sign in with your Google account",
                             {"login_url": sso.login_location(prefix + "/") if sso.enabled else None})
-        # The webhost sign-in verified this Google address (linked account): if it is an enabled named person here, the
-        # session is that person, so person-only surfaces (Flow, reviews) work. The owner approved this mapping 2026-10-04.
+        # The family sign-in verified this Google address (linked account): if it is an enabled named person here, the
+        # session is that person, so person-only surfaces (Flow, reviews) work. Jon approved this mapping 2026-10-04.
         # Bound people, and people who need the Workspace check, sign in through the hive's Google flow: this path
         # carries no Google sub or hd and cannot verify a Google subject. The decision is made before any write, and
         # the decision, any invitation acceptance and the session commit together (one transaction).
@@ -1366,7 +1921,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
             raise HiveError(exc.status, exc.code, exc.message,
                             {"login_url": (prefix + "/api/auth/google/start") if people.google_ready else None}) from None
         if named is not None:
-            if hive.personal.mind_row(f"user:{named['id']}") is None:   # a webhost sign-in mapped to a named person
+            if hive.personal.mind_row(f"user:{named['id']}") is None:   # a family sign-in mapped to a named person
                 await run_in_threadpool(hive.personal.ensure_quietly, f"user:{named['id']}")
             return {"token": token, "user": {"id": named["id"], "email": named["email"], "name": named["name"] or person["name"],
                                              "role": named["role"]}, "expires_at": person["expires"]}
@@ -1561,31 +2116,46 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         tmp.replace(path)
         settings.admin_password = new
         ended = hive.db.execute("DELETE FROM sessions WHERE kind = 'password'").rowcount
+        attempts.reset()
         return {"password": new, "ended_password_sessions": ended,
                 "note": "Shown once. Password sign-ins (including this browser if it used the password) must sign in again."}
 
     @app.get("/api/hive")
     async def hive_summary(request: Request):
         operator(request)
-        return await run_in_threadpool(hive.summary)
+        out = await run_in_threadpool(hive.summary)
+        out["installed_map"] = await run_in_threadpool(installed_map.status)  # DB synchronization stays off the event loop
+        out["code_resources"] = _code_aggregate.status()  # bounded diagnostic DATA, no admission
+        return out
 
     @app.get("/api/models")
     async def models(request: Request):
-        operator(request)
-        return hive.models()
+        session = operator(request)
+        may_see = key_seer(session)
+        if may_see is None:
+            return hive.models()
+        # keyview R10: only the providers this caller could pay with (pay_route: the gateway's own admission), whether or
+        # not they may see the key that pays
+        me = session_person(session)
+        return hive.models(can_pay=lambda name: pay_route(name, me) is not None)
 
     # ---- providers: keys, the OpenRouter catalogue, per-model routing (hive/core/providers.py) ----
 
     @app.get("/api/providers")
     async def providers_list(request: Request):
-        operator(request)
-        return providers.list()
+        session = operator(request)
+        return keys_projected(session, providers.list())
 
     @app.get("/api/providers/{name}")
     async def provider_status(name: str, request: Request):
-        operator(request)
-        await providers.account(name)
-        return providers.status(name)
+        session = operator(request)
+        # keyview R13 (sol on d15396ca): refreshing the default key's account verifies with that credential, so only an
+        # admin or a caller on its route may cause it (as the catalogue and endpoints); seeing the key is not enough.
+        # What the answer shows is still the key policy's (keys_projected). POST /api/keys/{id}/refresh stays on
+        # visibility (key_permit): an explicit check of a key the listing shows this caller, by that policy.
+        if name in providers.providers and on_default_route(session, name):
+            await providers.account(name)
+        return keys_projected(session, providers.status(name))
 
     @app.put("/api/providers/{name}/key")
     async def provider_set_key(name: str, request: Request):
@@ -1675,6 +2245,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
                 continue   # a locked mind keeps the key id and stops (402 key_unavailable), never moves to another payer
             if await run_in_threadpool(hive.unassign_stored_key, agent_id, key_id, by=me):
                 unassigned += 1
+        hive.forget_removed_key_if_unused(key_id)   # keyview: a tombstone only while some mind still names the key
         keys_changed()
         return {"ok": True, "unassigned": unassigned}
 
@@ -1694,11 +2265,86 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         owner = session.get("principal") or "user:operator"
         if role_of(session) != "admin" and data.get("default"):
             raise HiveError(403, "admin_only", "only a hive admin can set the hive's default key")
-        view = await providers.add_key(str(data.get("provider", "")), data.get("key", ""), data.get("label", ""),
-                                       owner=owner,
-                                       make_default=data["default"] if isinstance(data.get("default"), bool) else None)
+        # gateway r1a (plan §2.6, r1.2): an optional month_usd is the key owner's ONE total monthly limit on all their
+        # keys (grantee self, key *), written with the key. r1ab.3 (Dot's ruling on the stand-in r1ab.2 P1): no write is
+        # ever undone, so a failed or concurrent request can only leave the cap the same or lower:
+        # - a total that narrows the live one (no end, and no higher) is written FIRST, before the key; r1ab.5: decided
+        #   and written in one transaction (ownhive.write_total), so a total someone set meanwhile is never overwritten
+        #   by a stale decision; if anything after it fails, the lower cap stays (the safe direction);
+        # - any other total (higher, the first one, or over a total with an end) raises, and is written LAST, after the
+        #   key is stored and the default switched, and only if the live total is still the one this request first
+        #   read: a total set meanwhile stands, and the 200 says monthly_total_applied false with the one that governs;
+        # - the key is stored as a non-default first and the default switched afterwards (explicit, or the first key of
+        #   a provider), so removing it never loses the previous default (r1ab.1, providers._commit). Only a key this
+        #   request added is ever removed (r1ab.5, Kimi r1ab.4 #3);
+        # - r1ab.4 (Dot's T-KEY1 ruling): a raise that fails before its commit is 503 limit_not_raised, retryable (a
+        #   committed write is never reported failed: its notices cannot raise here); the same person sending the same
+        #   provider's key again (their own stored key, providers.own_key) carries on from where it stopped instead of
+        #   409 duplicate_key, under the same order.
+        # month_usd and the retry are read only with HIVE_MIND_GATEWAY=1 (r1ab.2); unset, as on 56b2dbfc.
+        from .ask import gateway_enabled
+        gw = gateway_enabled()
+        month = data.get("month_usd") if gw and "month_usd" in data else None
+        make_default = data["default"] if isinstance(data.get("default"), bool) else None
+        provider_name = str(data.get("provider", ""))
+        existing = providers.own_key(provider_name, data.get("key", ""), owner) if gw else None
+        written = applied = False
+        if month is not None:
+            hive.ownhive.check_total(owner, month, viewer(session))   # every authorization before any write
+            written, seen = await run_in_threadpool(hive.ownhive.write_total, viewer(session), month)
+            applied = written
+        if existing is not None:
+            view, added = providers.key_view(providers.key_record(existing)), False
+        else:
+            try:
+                view = await providers.add_key(provider_name, data.get("key", ""), data.get("label", ""), owner=owner,
+                                               make_default=False if month is not None else make_default)
+            except ProviderError as exc:
+                # own-key one-step (sol on b7de1e5b): the refusal stays 409 duplicate_key, flag on or off, but says when
+                # the stored key is exactly the caller's own (providers.own_key: the same provider, owner and secret,
+                # compared in constant time), with its id and never the secret, so a retry after a lost answer is
+                # recognised exactly; anyone else's copy gets no such detail
+                mine = providers.own_key(provider_name, data.get("key", ""), owner) if exc.code == "duplicate_key" else None
+                if mine is None:
+                    raise
+                raise HiveError(409, "duplicate_key", exc.message, {"own": True, "key_id": mine}) from None
+            added = True
+
+        def governing():
+            row = hive.ownhive.total_row(owner)
+            return round(float(row["month_usd"]), 6) if row else None
+
+        if month is not None or not added:
+            try:
+                if make_default is True or (month is not None and make_default is None
+                                            and not providers.has_default(view["provider"])):
+                    providers.update_key(view["id"], default=True)
+            except BaseException as exc:
+                try:
+                    if added:   # a key this request only found is never removed
+                        providers.remove_key_id(view["id"])
+                        hive.forget_removed_key_if_unused(view["id"])   # just added, so no mind names it: no tombstone
+                except BaseException as undo:   # Kimi r1ab.2 #3: the cause stays attached
+                    raise undo from exc
+                finally:
+                    keys_changed()
+                raise
+            if month is not None and not written:
+                try:
+                    applied, _ = await run_in_threadpool(hive.ownhive.write_total, viewer(session), month, seen)
+                except (sqlite3.Error, OSError) as exc:   # before the commit (Kimi r1ab.4 #5: a HiveError passes as is)
+                    keys_changed()   # the key and its default stand; the old cap governs them
+                    raise HiveError(503, "limit_not_raised",
+                                    "The key was added, but your monthly limit was not raised. Try again.",
+                                    {"key_id": view["id"], "provider": view["provider"],
+                                     "monthly_total_usd": governing()}) from exc
         keys_changed()
-        return next(k for k in keys_listing() if k["id"] == view["id"])
+        out = next(k for k in keys_listing() if k["id"] == view["id"])
+        if month is not None:   # r1ab.5: whether this request's total is the one that governs now, and that total
+            now_usd = governing()
+            out = {**out, "monthly_total_applied": applied or now_usd == round(float(month), 6),
+                   "monthly_total_usd": now_usd}
+        return out
 
     @app.patch("/api/keys/{key_id}")
     async def keys_update(key_id: str, request: Request):
@@ -1710,7 +2356,15 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
 
     @app.post("/api/keys/{key_id}/refresh")
     async def keys_refresh(key_id: str, request: Request):
-        operator(request)
+        session = operator(request)
+        # keyview R13: deliberately on visibility, not the paying route (unlike GET /api/providers/{name}'s implicit refresh):
+        # an explicit check of a key this caller is shown. sol on 7b40fdfe: only a key GET /api/keys shows this caller (its own policy, key_permit: everything for an
+        # admin or the hive's owner) may be refreshed or described. Anyone else's key and a key that does not exist get
+        # the same 404 before any lookup or provider call, so nothing says whether another person's key exists
+        may_use = key_permit(session)
+        listed = next((k for k in keys_listing() if k["id"] == key_id), None)
+        if listed is None or (may_use is not None and not may_use(key_id)):
+            raise HiveError(404, "not_found", "no such key")
         await providers.refresh_account(key_id)
         return next((k for k in keys_listing() if k["id"] == key_id), None) or {"id": key_id, "account": providers.accounts.get(key_id)}
 
@@ -1720,13 +2374,34 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
 
     @app.get("/api/providers/openrouter/catalog")
     async def openrouter_catalog(request: Request, refresh: int = 0):
-        operator(request)
-        return await providers.models(refresh=bool(refresh))
+        """keyview R11 (sol on 4a542223): the catalogue is fetched with the default OpenRouter credential, so only a
+        caller who pays by that route (provider_view's comparison), or an admin, may fetch it (a stale or empty cache,
+        or refresh=1) or read its fetch state. Anyone else reads the cached list as it is, never causing a fetch, with
+        fetched_at and error not shown; refresh=1 from them is refused."""
+        session = operator(request)
+        if on_default_route(session, "openrouter"):
+            return {**await providers.models(refresh=bool(refresh)), "can_refresh": True}
+        if refresh:
+            raise HiveError(403, "refresh_not_allowed", "only someone who pays by the hive's OpenRouter key can refresh "
+                                                        "the catalogue")
+        return {**providers.catalog, "fetched_at": None, "error": None, "can_refresh": False}
 
     @app.get("/api/providers/openrouter/endpoints/{model_id:path}")
     async def openrouter_endpoints(model_id: str, request: Request, refresh: int = 0):
-        operator(request)
-        return {"model": model_id, "endpoints": await providers.model_endpoints(model_id, refresh=bool(refresh))}
+        """keyview R12 (sol on 81359cdf): as the catalogue. A fetch (a cache miss, a stale entry, refresh=1) is made with
+        the default OpenRouter credential and its outcome ("OpenRouter answered 401") describes that key, so only an
+        admin or a caller on the default route may cause one. Anyone else reads what is cached (any age; an empty list
+        and known: false when nothing is), never an outcome, and is refused refresh=1."""
+        session = operator(request)
+        if on_default_route(session, "openrouter"):
+            return {"model": model_id, "endpoints": await providers.model_endpoints(model_id, refresh=bool(refresh)),
+                    "known": True, "can_refresh": True}
+        if refresh:
+            raise HiveError(403, "refresh_not_allowed", "only someone who pays by the hive's OpenRouter key can refresh "
+                                                        "a model's upstreams")
+        cached = providers.endpoints.get(model_id)
+        return {"model": model_id, "endpoints": list(cached[1]) if cached else [], "known": cached is not None,
+                "can_refresh": False}
 
     @app.get("/api/swarms")
     async def swarms(request: Request, archived: int = 0):
@@ -1761,7 +2436,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
     async def delete_swarm(swarm_id: str, request: Request):
         session = admin(request)
         data = await body(request) if (await request.body()).strip() else {}
-        if data.get("with_minds") is True:   # the owner 2026-10-07: one step, behind the swarm's exact name
+        if data.get("with_minds") is True:   # Jon 2026-10-07: one step, behind the swarm's exact name
             return await run_in_threadpool(hive.delete_swarm_with_minds, swarm_id, data.get("confirm"),
                                            (session or {}).get("principal") or "user:operator")
         return await run_in_threadpool(hive.delete_swarm, swarm_id)
@@ -1805,6 +2480,23 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
 
     # ---- agents ---------------------------------------------------------------------------------
 
+    # Screen blocks a screen asked for that nothing draws yet: one task each in the Code swarm (screens_missing.py)
+    from .screens_missing import ScreensMissing
+    screens_missing = ScreensMissing(hive)
+
+    @app.post("/api/screens/missing")
+    async def screens_missing_report(request: Request):
+        session = operator(request)
+        data = await body(request)
+        # every signed-in person's report counts; only an admin's files a task (and sees task ids)
+        return await screens_missing.report(session.get("principal") or "user:operator", data.get("items"),
+                                            admin=role_of(session) == "admin")
+
+    @app.get("/api/screens/missing")
+    async def screens_missing_list(request: Request):
+        admin(request)
+        return {"items": await run_in_threadpool(screens_missing.list)}
+
     @app.get('/api/tools')
     async def tools_catalogue(request: Request):
         operator(request)
@@ -1822,7 +2514,10 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         for a in out:
             if isinstance(a, dict) and a.get("id") in rows:
                 a["coffee"] = hive.rooms.coffee_status(rows[a["id"]])
-        return with_flags(session, out, rows)   # idle-minds r2.4: is_mine, may_remind, may_sleep (never personal_of)
+        # projected here, before serialization (sol on 59dfe1ff P2): the answer is final, so the response wrapper
+        # sends it as it is, unheld, whatever its size
+        request.state.hive_keyview_done = True
+        return keys_projected(session, with_flags(session, out, rows))   # idle-minds r2.4: is_mine, may_remind, may_sleep
 
     @app.post("/api/agents")
     async def create_agent(request: Request):
@@ -1888,6 +2583,22 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         session = operator(request)
         data = await body(request)
         actor = fresh_approval_actor(request, session)
+        may_see = key_seer(session)
+        if may_see is not None and isinstance(data.get("options"), dict) and "key" not in data["options"]:
+            # keyview: the options this caller was shown leave out a key they may not see; sending them back keeps it
+            # (an edit never moves someone else's mind onto another payer by omission)
+            stored = hive.db.one("SELECT options, model FROM agents WHERE id = ? AND deleted = 0", (agent_id,))
+            hidden = (json.loads(stored["options"] or "{}") if stored else {}).get("key")
+            if isinstance(hidden, str) and hidden and not may_see(hidden):
+                # checked here first, in words that name nothing (sol on f06f2915): Hive._options would refuse a model on
+                # another provider naming the key's label and provider, and an error string leaves unprojected
+                record = (providers.ring.get("keys") or {}).get(hidden)
+                hidden_provider = hidden[4:] if hidden.startswith("env:") else (record or {}).get("provider")
+                target = str(data.get("model") or stored["model"] or "").partition("/")[0]
+                if hidden_provider and target and hidden_provider != target:
+                    raise HiveError(400, "key_provider_mismatch", "This mind's key is for another provider; its owner "
+                                    "can change the key or the model.")
+                data["options"] = {**data["options"], "key": hidden}
         # Refuse an unauthorized policy transition before unrelated coffee/role/options side effects.
         if "options" in data:
             from .providers import clean_options
@@ -1897,7 +2608,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
                 raise HiveError(400, "bad_options", str(exc)) from exc
             mind = hive.db.one("SELECT owner, options FROM agents WHERE id = ? AND deleted = 0", (agent_id,))
             if mind is None:
-                raise HiveError(404, "not_found", f"no agent {agent_id}")
+                raise HiveError(404, "not_found", "no such agent")
             old_approval_options = json.loads(mind.get("options") or "{}")
             if old_approval_options.get("approvals") != new_approval_options.get("approvals"):
                 fresh_approval_actor(request, session, setting=True)
@@ -1931,7 +2642,9 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         # OI-13: a changed options.key is checked against who is asking, inside the mind's lock (an unchanged key never is)
         return await run_in_threadpool(hive.update_agent, agent_id, data, expected_tools=expected_tools,
                                        by=session.get("principal") or "user:operator", privileged=privileged,
-                                       may_use_key=key_permit(session) if "options" in data else None,
+                                       # with a model change too: a kept key the caller may not see is judged in words
+                                       # that name nothing (Hive._update_agent_locked); it authorizes nothing more
+                                       may_use_key=key_permit(session) if ("options" in data or "model" in data) else None,
                                        approval_guard=(lambda: fresh_approval_actor(request, session, setting=True)) if "options" in data else None)
 
     @app.delete("/api/agents/{agent_id}")
@@ -1963,6 +2676,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         rows = hive.messages(agent_id, conversation_id, limit, principal=None if audit else principal)
         # by id (hide-others r4): the mind is named, so other people's personal minds are not hidden here; which of its
         # messages a person reads is the per-person scoping above
+        # project_person_message: the one people projection (scheduled text; Health's verified question untagged)
         return [hive.visibility.project_person_message(viewer(session), row) for row in hive.visibility.filter_items(audit_viewer(session), rows)]
 
     @app.post("/api/agents/{agent_id}/messages")
@@ -2228,13 +2942,6 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
             raise RuntimeError(f"HIVE_PORT is not an integer from 1 to 65535: {raw_port!r}")
         port = int(raw_port)
         out = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
-        # A second loopback browser port (HIVE_LOCAL_BROWSER_PORT, e.g. the Linux SSH-tunnel side) is the same browser
-        # surface the local-owner boundary already admits (localowner.ports()); §G must accept it too.
-        raw_browser = os.environ.get("HIVE_LOCAL_BROWSER_PORT", "").strip()
-        if raw_browser:
-            if not re.fullmatch(r"[0-9]{1,5}", raw_browser) or not 1 <= int(raw_browser) <= 65535:
-                raise RuntimeError(f"HIVE_LOCAL_BROWSER_PORT is not an integer from 1 to 65535: {raw_browser!r}")
-            out |= {f"http://127.0.0.1:{int(raw_browser)}", f"http://localhost:{int(raw_browser)}"}
         for name, raw in (("HIVE_PUBLIC_BASE", os.environ.get("HIVE_PUBLIC_BASE", "")),
                           ("HIVE_PUBLIC_URL", settings.public_url or "")):
             raw = raw.strip()
@@ -2473,7 +3180,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
     async def ask_intent_record(operation_id: str, request: Request):
         v, is_admin = g_person_kind(request, mutating=True, admin_only=False)
         data = await g_body(request, G_RECORD_MAX)
-        status, view = hive.ask.intents.record(v, operation_id, data, admin=is_admin)
+        status, view = await hive.ask.intents.record_async(v, operation_id, data, admin=is_admin)
         return JSONResponse(view, status_code=status)
 
     @app.post("/api/ask/intents/{intent_id}/submit")
@@ -2601,6 +3308,19 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
     async def ask_stop(operation_id: str, request: Request):
         return hive.ask.stop(ask_person(request), operation_id)
 
+    @app.post("/api/ask/{operation_id}/done")
+    async def ask_done(operation_id: str, request: Request):
+        """gateway r1b (plan §2.3): the person's browser closes its own browser turn, {outcome}: answered | incomplete |
+        spend_cap | failed | stopped. §G person gate (exact Origin, Bearer header only); the owner only; content-free;
+        releases nothing; idempotent. With HIVE_MIND_GATEWAY unset the route answers exactly as an unknown path does."""
+        from .ask import gateway_enabled
+        if not gateway_enabled():
+            from starlette.exceptions import HTTPException as StarletteHTTPException
+            raise StarletteHTTPException(404)
+        v = g_person(request, mutating=True, admin_only=False)
+        data = await g_body(request, G_SMALL_MAX)
+        return hive.ask.done(v, operation_id, data)
+
     @app.post("/api/ask/{operation_id}/takeover")
     async def ask_takeover(operation_id: str, request: Request):
         """The person took the page back mid-turn (their own click, scroll or Back): the conductor turn ends now and
@@ -2709,6 +3429,69 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         data = await bounded_body(request, 4096)
         return await run_in_threadpool(hive.personal.post, v, data)
 
+    # ---- gateway r1c (PLATFORM_PERSONAL_MIND_GATEWAY_R1_PLAN §2.1, §2.2): the mind token and the gateway --------------
+    # With HIVE_MIND_GATEWAY unset all three answer exactly as an unknown path does.
+
+    def _gateway_off():
+        from .ask import gateway_enabled
+        if not gateway_enabled():
+            from starlette.exceptions import HTTPException as StarletteHTTPException
+            raise StarletteHTTPException(404)
+
+    def _mint_person(request: Request):
+        """§G person gate (exact Origin, Bearer header only, a named admin or member, never the password) and an enabled
+        person; returns (viewer, the parent session's token hash)."""
+        v = g_person(request, mutating=True, admin_only=False)
+        if hive.personal.person(v.principal) is None:
+            raise HiveError(403, "person_required", "a named, signed-in person does this")
+        return v, token_hash(_bearer(request.headers.get("authorization")))
+
+    @app.post("/api/me/mind/session")
+    async def me_mind_session(request: Request):
+        """Mint a mind token: {} -> 201 {token, expires_at, mind {id}, scope ["chat"]}, no-store. 30 minutes, at most 4
+        live per session (a fifth revokes the oldest), stored hashed; accepted only by the gateway below."""
+        _gateway_off()
+        v, session_hash = _mint_person(request)
+        try:
+            data = await g_body(request, G_SMALL_MAX, optional=True)
+        except HiveError as exc:
+            if exc.status == 400:
+                raise HiveError(400, "invalid", "this request takes {}") from None
+            raise
+        if data:
+            raise HiveError(400, "invalid", "this request takes {}")
+        mind = await run_in_threadpool(hive.personal.ensure, v.principal)
+        raw, expires = await run_in_threadpool(hive.mind_tokens.mint, v.principal, mind["id"], session_hash)
+        from .ask import _iso
+        return JSONResponse({"token": raw, "expires_at": _iso(expires), "mind": {"id": mind["id"]}, "scope": ["chat"]},
+                            status_code=201, headers={"Cache-Control": "no-store"})
+
+    @app.delete("/api/me/mind/session")
+    async def me_mind_session_revoke(request: Request):
+        """Revoke every live mind token of the caller's session: {revoked: n}."""
+        _gateway_off()
+        _v, session_hash = _mint_person(request)
+        n = await run_in_threadpool(hive.mind_tokens.revoke_session, session_hash)
+        return JSONResponse({"revoked": n}, headers={"Cache-Control": "no-store"})
+
+    from .mind_gateway import MindGateway
+    mind_gateway = MindGateway(hive, gateway, cost_reservations, hold_unknown, overrun_flag)
+
+    @app.post("/api/me/mind/llm/v1/chat/completions")
+    async def me_mind_chat(request: Request):
+        """One model call of the person's browser turn (mind_gateway.py): the mind token only, X-Mind-Purpose: turn,
+        X-Mind-Turn: <turn_id>; the provider's body unchanged with X-Hive-* money headers on 200 only."""
+        _gateway_off()
+
+        async def read(req, limit):
+            try:
+                return await bounded_body(req, limit)
+            except HiveError as exc:
+                if exc.status == 400:
+                    raise HiveError(400, "invalid", "expected a JSON object") from None
+                raise
+        return await mind_gateway.chat(request, G_ORIGINS, read)
+
     @app.get("/api/me/mind/inbox")
     async def me_mind_inbox(request: Request, after: str = "", limit: int = 50):
         return hive.personal_inbox.items(viewer(operator(request)), after or None, limit)
@@ -2718,6 +3501,42 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         v = viewer(operator(request))
         data = await bounded_body(request, 32768)
         return hive.personal_inbox.ack(v, data)
+
+    # ---- gateway gate A (browser-Iter plan r7.7 §8.3, §11): the freshness checkpoint (mind_checkpoint.py) ---------------
+    # §G person gate, the owner's own row only; content-blind; PUT and DELETE are compare-and-set on If-Match.
+    # With HIVE_MIND_GATEWAY unset all three answer exactly as an unknown path does.
+
+    def _checkpoint_answer(head):
+        from .mind_checkpoint import etag
+        return JSONResponse(head, headers={"ETag": etag(head["seq"]), "Cache-Control": "no-store"})
+
+    @app.get("/api/me/mind/checkpoint")
+    async def me_mind_checkpoint(request: Request):
+        _gateway_off()
+        v = g_person(request, mutating=False, admin_only=False)
+        return _checkpoint_answer(await run_in_threadpool(hive.mind_checkpoints.get, v))
+
+    @app.put("/api/me/mind/checkpoint")
+    async def me_mind_checkpoint_put(request: Request):
+        from .mind_checkpoint import if_match, invalid
+        _gateway_off()
+        v = g_person(request, mutating=True, admin_only=False)
+        try:
+            data = await g_body(request, G_SMALL_MAX)
+        except HiveError as exc:
+            if exc.status == 400:
+                raise invalid() from None
+            raise
+        return _checkpoint_answer(await run_in_threadpool(hive.mind_checkpoints.put, v, data,
+                                                          if_match(request.headers.get("if-match"))))
+
+    @app.delete("/api/me/mind/checkpoint")
+    async def me_mind_checkpoint_reset(request: Request):
+        from .mind_checkpoint import if_match
+        _gateway_off()
+        v = g_person(request, mutating=True, admin_only=False)
+        return _checkpoint_answer(await run_in_threadpool(hive.mind_checkpoints.reset, v,
+                                                          if_match(request.headers.get("if-match"))))
 
     # ---- sessions: a focused working thread with one mind (hive/core/sessions.py) -----------------------
 
@@ -2817,7 +3636,9 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
             reader, mark = None, "included_audited"
         else:
             reader, mark = principal, "excluded"
-        bundle, digest = await run_in_threadpool(lambda: hive.placement.export(agent_id, reader=reader, mark=mark, by=principal))
+        may_see = key_seer(session)   # keyview: a key this caller may not see never leaves inside the bundle either
+        bundle, digest = await run_in_threadpool(lambda: hive.placement.export(agent_id, reader=reader, mark=mark, by=principal,
+                                                                               may_see_key=may_see))
         headers = {"X-Manifest-Sha256": digest, "Content-Disposition": f'attachment; filename="{agent_id}.omegamind.tgz"'}
         if mark:
             headers["X-Personal-Conversations"] = mark
@@ -2945,15 +3766,13 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
             session = await localowner.events_auth(ws, event_session)
             if session is None:
                 return
-            who = viewer(dict(session, include_personal=False))
         else:
             token = ws.query_params.get("token", "")
             session = event_session(token, ws.scope.get("hive_public", False))
             if session is None:
                 await ws.close(code=4401)
                 return
-            who = viewer(dict(session, include_personal=False))   # live audit never exists: audit is HTTP-only (Kimi r2.2 #2)
-            await ws.accept()
+            await ws.accept()   # each frame is judged for the session as it is then (pump); live audit never exists
         tasks: list[asyncio.Task] = []
         failures: list[BaseException] = []
 
@@ -2961,7 +3780,19 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
             try:
                 while True:
                     text = await queue.get()
-                    if hive.visibility.event_visible(who, text):   # R13: each person sees only what they may
+                    # sol on f06f2915: who this connection is for is read again before every frame, never kept from the
+                    # handshake: a signed-out, revoked or expired session closes the socket, and a changed one (role,
+                    # access) is judged as it is now
+                    current = session_for(event_token, ws.scope.get("hive_public", False)) if event_token else None
+                    if current is None:
+                        with contextlib.suppress(Exception):
+                            await ws.close(code=4401)
+                        return
+                    now_who = viewer(dict(current, include_personal=False))
+                    if hive.visibility.event_visible(now_who, text):   # R13: each person sees only what they may
+                        text = people_frame(text)   # Peter on omegahive#50: a verified Health question, untagged
+                        if keyview.mentions_keys(text) and key_seer(current) is not None:   # keyview: key refs too
+                            text = json.dumps(keys_projected(current, json.loads(text)))
                         projected = wakeup_notice(lambda: session_for(event_token, ws.scope.get("hive_public", False)), text)
                         if projected is not None:
                             await _ws_send(ws, projected)
@@ -3029,7 +3860,11 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
 
     @app.websocket("/agent-hub")
     async def agent_hub(ws: WebSocket):
-        agent = hive.authenticate_agent(_bearer(ws.headers.get("authorization")))
+        try:   # R2.8 W-e: a restricted bridged credential is refused before admission or socket registration
+            agent = hive.authenticate_agent(_bearer(ws.headers.get("authorization")), surface="agent-hub")
+        except HiveError:
+            await ws.close(code=4403)
+            return
         if agent is None:
             await ws.close(code=4401)
             return
@@ -3116,6 +3951,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
                 # that started or ended since admission (a new payer) refuses the call rather than billing the old one.
                 if hive.payer_for(hive.agent(agent["id"]), key_owner) != (payer, own_key):
                     raise ValueError("payer changed during admission")
+                host_use_check(hive, agent["id"], key_id, payer)   # money port r1.2: access removed since admission
                 return host_budget_snapshot(hive, agent["id"], key_id, payer, own_key)
             import uuid
             reservation = str(uuid.uuid4())
@@ -3140,10 +3976,10 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         except StudioRefused as exc:
             # refused at the send gate: the hold was released and nothing was sent
             raise exc.error from None
-        except BaseException:
+        except BaseException as exc:
             if studio_call is not None and studio_call.unsent():
                 raise                       # r4.1: never reached the send boundary: released, not held unknown
-            if reservation: hold_unknown(reservation)
+            if reservation: hold_unknown(reservation, exc)   # a refusal with a charge settles; a guaranteed-unbilled one (OpenRouter 402) is released
             raise
         finally:
             if gate_token is not None:
@@ -3164,12 +4000,12 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
                 for field, target in (("id","response_id"),("model","resolved_model")):
                     if isinstance(response.get(field),str): observation[target] = response[field][:200]
             cost_reservations.observe(reservation, observation)
-            counters = response.get("usage") if isinstance(response, dict) else None
-            if not isinstance(counters, dict) or any(type(counters.get(k)) is not int or counters[k] < 0 for k in ("prompt_tokens", "completion_tokens")):
+            if not gateway_billable(response, usage):
                 # Content can still be delivered, but absent usage is not zero cost.
                 hold_unknown(reservation)
                 return response
-            observation["usage_origin"] = "provider-token-counters-rate-derived"
+            counted = isinstance(response, dict) and isinstance(response.get("usage"), dict) and type(response["usage"].get("prompt_tokens")) is int
+            observation["usage_origin"] = "provider-token-counters-rate-derived" if counted else "provider-usage-cost"
             cost_reservations.observe(reservation, observation)
             hive.last_llm[agent["id"]] = (int((time.monotonic() - started) * 1000),
                                           usage["prompt_tokens"] + usage["completion_tokens"])
@@ -3243,16 +4079,18 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         provider = gateway.provider(provider_name)
         if provider.local or provider_name == "mock":
             return await gateway.embeddings(settings.embedding_model, data, agent=agent)
-        # Embeddings are paid calls like any other (they used to bypass every budget).
-        if not provider.priced(model) and not settings.allow_unpriced:
-            raise HiveError(402, "unpriced_model", f"no price is configured for {settings.embedding_model}")
+        # Embeddings are paid calls like any other (they used to bypass every budget). As chat (sol R2 P1): unpriced is
+        # never admitted, whatever HIVE_ALLOW_UNPRICED says, and $0 needs this model's own entry.
+        if not provider.priced(model):
+            raise HiveError(402, "unpriced_model", f"no price is configured for {settings.embedding_model}, so its cost "
+                                                   "can't be reserved; add one to the providers file")
         inputs = data.get("input", "")
         inputs = inputs if isinstance(inputs, list) else [inputs]
         if len(inputs) > MAX_EMBED_INPUTS:
             raise HiveError(400, "too_many_inputs", f"at most {MAX_EMBED_INPUTS} inputs per embeddings call")
         # Per-item floor, and bytes rather than characters, so many tiny or multi-byte inputs cannot under-reserve.
         tokens = sum(max(MIN_EMBED_TOKENS_PER_ITEM, (len(str(t).encode("utf-8")) + 2) // 3) for t in inputs)
-        estimate = gateway.cost(provider, model, tokens, 0) if provider.priced(model) else 0.0
+        estimate = gateway.cost(provider, model, tokens, 0)
         # OI-13 r1.2: embeddings are paid by the provider default (gateway.embeddings sends provider.api_key), so that
         # resolved key and its owner are carried through payer, use and limit checks (a grant's own limit included),
         # the reservation and the recorded usage, exactly as the chat route carries its key
@@ -3284,6 +4122,11 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
                                                agent["id"], provider_name)
                 return await gateway.embeddings("mock/hash", data, agent=agent)
             key_id = send_key = own
+        if estimate <= 0:
+            try:
+                estimate = gateway.free_reserve(provider, model, settings.embedding_model)
+            except GatewayError as exc:
+                raise HiveError(exc.status, exc.code, exc.message) from None
         key_owner = ((gateway.keyring.ring.get("keys") or {}).get(key_id) or {}).get("owner") if gateway.keyring else None
         payer, own_key = hive.payer_for(agent, key_owner)
         studio_call = hive.studio.gateway_call(agent) if estimate > 0 else None   # J3 R4: None unless a live maker
@@ -3300,6 +4143,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
                 # as the chat route: a session or Ask turn that started or ended since admission refuses the call
                 if hive.payer_for(hive.agent(agent["id"]), key_owner) != (payer, own_key):
                     raise ValueError("payer changed during admission")
+                host_use_check(hive, agent["id"], key_id, payer)   # money port r1.2: access removed since admission
                 return host_budget_snapshot(hive, agent["id"], key_id, payer, own_key)
             meta = {"agent": agent["id"], "model": settings.embedding_model, "payer": payer, "key": key_id, "kind": "embeddings"}
             payload = {"agent": agent["id"], "model": settings.embedding_model, "input": data.get("input"), "key": key_id}
@@ -3321,11 +4165,11 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
                                                 **({"key_id": send_key} if send_key else {}))   # R7.3: personal makers only
         except StudioRefused as exc:
             raise exc.error from None       # refused at the send gate: released, nothing sent
-        except BaseException:
+        except BaseException as exc:
             if studio_call is not None and studio_call.unsent():
                 raise                       # never reached the send boundary: released, not held unknown
             if estimate > 0:
-                hold_unknown(reservation)
+                hold_unknown(reservation, exc)   # a refusal with a charge settles; a guaranteed-unbilled one (OpenRouter 402) is released
             raise
         finally:
             if gate_token is not None:
@@ -3334,13 +4178,17 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
             studio_call.made()
         # The provider call succeeded: nothing below may raise to the caller.
         try:
-            used = (response.get("usage") or {}).get("prompt_tokens") if isinstance(response, dict) else None
-            if type(used) is not int or used < 0:
+            reported_usage = (response.get("usage") or {}) if isinstance(response, dict) else {}
+            used = reported_usage.get("prompt_tokens") if isinstance(reported_usage, dict) else None
+            charged = reported_cost(reported_usage)
+            if (type(used) is not int or used < 0) and charged is None:
                 if estimate > 0:
                     hold_unknown(reservation)
                 return response
+            used = used if type(used) is int and used >= 0 else 0
+            # a charge the provider reports is never hidden behind the configured rate (sol R2 P1, as chat)
             usage = {"prompt_tokens": used, "completion_tokens": 0, "key_id": key_id,
-                     "cost_usd": gateway.cost(provider, model, used, 0) if provider.priced(model) else 0.0}
+                     "cost_usd": max(gateway.cost(provider, model, used, 0), charged or 0.0)}
             if estimate > 0:
                 await run_in_threadpool(cost_reservations.settle, reservation, usage["cost_usd"],
                                         lambda: hive.record_usage(agent, settings.embedding_model, usage, None, payer), overrun_flag)
@@ -3410,9 +4258,15 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
     # ---- phase 2: policy and approvals ----------------------------------------------------------
 
     @app.get("/api/policy")
-    async def policy_rules(request: Request):
+    async def policy_rules(request: Request, view: str = "ordinary"):
         operator(request)
-        return hive.policy.rules()
+        if view == "ordinary":
+            return hive.policy.rules()
+        if view == "infrastructure":
+            return hive.policy.infrastructure_rules()
+        if view == "all":
+            return hive.policy.rule_views()
+        raise HiveError(400, "bad_request", "policy view is ordinary, infrastructure or all")
 
     def policy_admin(request: Request):
         """host-identity r1: hive policy rules are written by a hive admin or the hive's owner (ownhive.py), nobody else."""
@@ -3439,7 +4293,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
             if person is not None and person.get("disabled"):
                 raise HiveError(401, "unauthorized", "a current signed-in person is required")
         from .me_decisions import human_session
-        current_role = person["role"] if person is not None else current_host_role
+        current_role = current_host_role if session.get("kind") == "member_password" else person["role"] if person is not None else current_host_role
         human_session(hive, session, current_role)
         return session, identity
 
@@ -3493,14 +4347,14 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
     def answerable(session, approval_id, durable):
         """host-identity r1: who may answer an approval. The person must see its mind (the GET list's own filter, with
         admin audit as on any by-id route); a durable answer (Always, For a time, Never) also needs the mind's owner,
-        a hive admin or the hive's owner (ownhive.py). An approval this person cannot see is not found."""
+        a hive admin or the hive's owner acting as owner (ownhive.py). An approval this person cannot see is not found."""
         row = hive.policy.approval(approval_id)
         if not hive.visibility.filter_items(audit_viewer(session), [row]):
             raise HiveError(404, "not_found", f"no approval {approval_id}")
         if durable:
             principal = session.get("principal") or "user:operator"
             mind = hive.db.one("SELECT owner FROM agents WHERE id = ?", (row["agent_id"],)) or {}
-            if not (role_of(session) == "admin" or hive.ownhive.is_owner(principal) or mind.get("owner") == principal):
+            if not (role_of(session) == "admin" or hive.ownhive.acts_as_owner(viewer(session)) or mind.get("owner") == principal):
                 raise HiveError(403, "owner_only", "only this mind's owner or a hive admin can give a lasting answer; "
                                 "you can approve or refuse this one request")
         return row
@@ -3521,12 +4375,12 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
             if current_role not in ("admin", "member"):
                 raise HiveError(401, "unauthorized", "a current signed-in person is required")
             person = None
-            if current.get("kind") == "sso":
+            if current.get("kind") in ("sso", "member_password"):
                 # Every matching people namespace, not only generated u_ IDs, has an enabled-person guard.
                 person = hive.db.one("SELECT role, disabled FROM people WHERE id = ?", (principal[5:],))
                 if person and (person["disabled"] or person["role"] not in ("admin", "member")):
                     raise HiveError(401, "unauthorized", "a current signed-in person is required")
-            human_session(hive, current, person["role"] if person else current_role)
+            human_session(hive, current, current_role if current.get("kind") == "member_password" else person["role"] if person else current_role)
         return principal
 
     @app.post("/api/approvals/{approval_id}/approve")
@@ -3773,7 +4627,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         """R17: a named person accepts a submitted result (done) or returns it with notes."""
         session = operator(request)
         data = await body(request)
-        if session.get("kind") != "sso" or (session.get("principal") or "user:operator") == "user:operator":
+        if session.get("kind") not in ("sso", "member_password") or (session.get("principal") or "user:operator") == "user:operator":
             raise HiveError(403, "person_required", "a named signed-in person reviews work; the hive password cannot")
         reviewer = {"kind": "person", "principal": session["principal"], "admin": role_of(session) == "admin"}
         return await hive.goals.review(goal_id, reviewer, data.get("decision"), data.get("notes", ""))
@@ -3910,7 +4764,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         operator(request)
         return await run_in_threadpool(lambda: hive.health.mind(hive.agent(agent_id)))
 
-    # ---- idle minds (Health noticing; shapes in coordination/omegareview/PLATFORM_IDLE_MINDS_R1_SHAPES.md) ----------
+    # ---- idle minds (Health noticing; shapes in PLATFORM_IDLE_MINDS_R1_SHAPES.md) ----------
     # Read by an admin or the mind's owner (its creator). A personal mind's idle record is its person's alone (its Health
     # question and the mind's answer sit in its person's own conversation: idle-minds r2), whatever its visibility: making
     # it public or sharing it never grants another admin, the loopback operator or a member its record (stand-in r2.2
@@ -4201,7 +5055,21 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
     @app.get("/api/programs")
     async def programs(request: Request):
         session = operator(request)
-        return hive.programs.list(admin=role_of(session) == "admin")   # pin refusal detail: admins only (Kimi K2)
+        admin = role_of(session) == "admin"
+        rows = hive.programs.list(admin=admin)   # pin refusal detail: admins only (Kimi K2)
+        if admin:
+            return rows
+        # Ask-and-apps contract R1 §3: a member outside a person app's audience does not learn the app exists
+        from .my_apps import in_audience
+        principal = session.get("principal") or "user:operator"
+        return [r for r in rows if r.get("placement") != "person" or in_audience(hive, principal, r["id"])]
+
+    @app.get("/api/me/apps")
+    async def me_apps(request: Request):
+        """The apps this person can open (awake state of every look): discoverable and openable only; no side effects."""
+        session = operator(request)
+        from .my_apps import MyApps
+        return await run_in_threadpool(MyApps(hive).list, viewer(session), session.get("principal") or "user:operator")
 
     @app.post("/api/programs/reload")
     async def programs_reload(request: Request):
@@ -4417,7 +5285,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
 
     @app.get("/api/match/catalogue")
     async def match_catalogue(request: Request, scope: str = ""):
-        actor = hive.authenticate_agent(_bearer(request.headers.get("authorization")))
+        actor = hive.authenticate_agent(_bearer(request.headers.get("authorization")), surface="rest")
         if actor is not None:
             requester = actor.get("swarm_id")
             if not requester:
@@ -4562,7 +5430,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
     @app.post("/api/evolve/swarms/{swarm_id}/records/{record_id}/figures")
     async def attach_evolve_figure(swarm_id: str, record_id: str, request: Request):
         session = operator(request)
-        hive.programs._ready("omegaevolve")
+        evolve_open_or_404()   # as on the reads: a closed app looks like no report, to anyone
         from .evolve_figures import MAX_BYTES, FigureError
         data = await bounded_body(request, MAX_BYTES * 4 // 3 + 64 * 1024)   # base64 of a 4 MiB figure plus its words
         if set(data) - {"sha256", "caption", "source_locator", "content_base64"}:
@@ -4578,10 +5446,20 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
                 raise HiveError(400, "bad_request", "content_base64 is not base64")
         principal = session.get("principal") or "user:operator"
         is_admin = role_of(session) == "admin"
+        who = viewer(session)
+
+        def may_read_swarm(other):
+            # hash-only reuse: the caller must be able to read a report that already holds the figure
+            try:
+                hive.visibility.check_path(who, {"swarm_id": other})
+            except HiveError:
+                return False
+            return True
         try:
             return await run_in_threadpool(hive.evolve_figures.attach, swarm_id, record_id, principal,
                                            lambda report: is_admin or report["author"] == principal,
-                                           data.get("sha256"), data.get("caption"), data.get("source_locator"), raw)
+                                           data.get("sha256"), data.get("caption"), data.get("source_locator"), raw,
+                                           may_read_swarm)
         except FigureError as exc:
             raise figure_error(exc)
 
@@ -4706,7 +5584,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         if session is None:
             raise HiveError(401, "unauthorized", "log in first")
         principal = session.get("principal") or "user:operator"
-        if session.get("kind") != "sso" or principal == "user:operator" or role_of(session) is None:
+        if session.get("kind") not in ("sso", "member_password") or principal == "user:operator" or role_of(session) is None:
             raise HiveError(403, "person_required", "a signed-in person cleans up a swarm's children")
         hive.visibility.check_path(viewer(session), {"swarm_id": swarm_id})
         return recorded(await hive.minds.team_control(principal, role_of(session) == "admin", swarm_id, child_id, await body(request)))
@@ -4798,6 +5676,169 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
             raise HiveError(404, "not_found", f"no request {request_id}")
         return hive.minds.copy_apply_consent(v.principal, request_id, suggestion_id, data, decision)
 
+    @app.get("/api/requests/{request_id}/controller")
+    async def request_controller_state(request_id: str, request: Request):
+        """Create - Code: the MeTTa coding controller's state for one request (phase, candidate, latest test, next action,
+        journal), for a person who may see the request; a request this person may not see is the same 404."""
+        session = operator(request)
+        row = hive.db.one("SELECT from_swarm, to_swarm FROM requests WHERE id = ?", (request_id,))
+        if row is None or not hive.visibility.filter_items(viewer(session), [{"from_swarm": row["from_swarm"],
+                                                                              "to_swarm": row["to_swarm"]}]):
+            raise HiveError(404, "not_found", f"no request {request_id}")
+        state = hive.code_controller.view(request_id)
+        if state is None:
+            raise HiveError(404, "not_found", "this request is not run by the coding controller")
+        return state
+
+    async def _controller_person_action(request_id, request, act, optional=True):
+        """Create · Code Apply / Ask for changes / Discard: the request's own person in their own session (the §G person
+        gate: Origin, Bearer, a named person; never the operator password and never a mind); a request this person may
+        not see is the same 404 as one that does not exist; only the request's person acts."""
+        from .code_controller_engine import EngineError
+        v = g_person(request, mutating=True, admin_only=False)
+        data = await g_body(request, 16 * 1024, optional=optional)
+        row = hive.db.one("SELECT from_swarm, to_swarm FROM requests WHERE id = ?", (request_id,))
+        if row is None or not hive.visibility.filter_items(v, [{"from_swarm": row["from_swarm"], "to_swarm": row["to_swarm"]}]):
+            raise HiveError(404, "not_found", f"no request {request_id}")
+        try:
+            return await act(v.principal, data if isinstance(data, dict) else {})
+        except EngineError as exc:
+            raise HiveError(exc.status, exc.code, str(exc))
+
+    # ---- Create plans (create_plan_engine.py, MeTTa plan controller R4.0) -------------------------------------------
+
+    def _plan_engine():
+        if not hive.create_plans.enabled():
+            raise HiveError(404, "not_found", "Create plans are not switched on on this hive")
+        return hive.create_plans
+
+    async def _plan_person_action(request, act, optional=True):
+        """The plan's own person in their own session (the §G person gate: Origin, Bearer, a named person; never the
+        operator password and never a mind). Someone else's plan is the same 404 as no plan."""
+        from .code_controller_engine import EngineError
+        engine = _plan_engine()
+        v = g_person(request, mutating=True, admin_only=False)
+        data = await g_body(request, 16 * 1024, optional=optional)
+        try:
+            return await act(engine, v.principal, data if isinstance(data, dict) else {})
+        except EngineError as exc:
+            raise HiveError(exc.status, exc.code, str(exc))
+
+    @app.post("/api/create/plans")
+    async def create_plan_start(request: Request):
+        return await _plan_person_action(request, lambda e, who, data: e.start(who, data.get("sentence")), optional=False)
+
+    @app.get("/api/create/plans")
+    async def create_plan_list(request: Request):
+        v = g_person(request, mutating=False, admin_only=False)
+        return _plan_engine().list_for(v.principal)
+
+    @app.get("/api/create/plans/{plan_id}")
+    async def create_plan_view(plan_id: str, request: Request):
+        v = g_person(request, mutating=False, admin_only=False)
+        engine = _plan_engine()
+        run = engine._run(plan_id)
+        if run is None or run["person"] != v.principal:
+            raise HiveError(404, "not_found", f"no plan {plan_id}")
+        return engine.view(plan_id)
+
+    @app.get("/api/create/plans/{plan_id}/files")
+    async def create_plan_files(plan_id: str, request: Request, path: str | None = None, ckpt: str | None = None):
+        from .code_controller_engine import EngineError
+        v = g_person(request, mutating=False, admin_only=False)
+        try:
+            return await _plan_engine().files(plan_id, v.principal, path, ckpt)
+        except EngineError as exc:
+            raise HiveError(exc.status, exc.code, str(exc))
+
+    def _plan_preview(plan_id, request):
+        v = g_person(request, mutating=False, admin_only=False)
+        engine = _plan_engine()
+        run = engine._run(plan_id)
+        if run is None or run["person"] != v.principal:
+            raise HiveError(404, "not_found", f"no plan {plan_id}")
+        preview = engine.view(plan_id)["preview"]
+        if not preview:
+            raise HiveError(404, "not_found", "no preview yet")
+        return engine, preview
+
+    @app.get("/api/create/plans/{plan_id}/preview")
+    async def create_plan_preview(plan_id: str, request: Request):
+        """The current preview's pinned UI bundle, verified against its lock, for the canvas's opaque appFrame
+        (appDocument): every file a piece built (index.html, style.css, app.js and assets such as icon.svg), each with
+        its content type and sha256. Code only, no bridge, no data."""
+        engine, preview = _plan_preview(plan_id, request)
+        from .create_plan_ports import content_type
+        try:
+            files = engine.ports.apps.preview_files(preview["ref"])
+        except (ValueError, OSError) as exc:
+            raise HiveError(409, "preview_unverified", str(exc))
+        return {"ref": preview["ref"], "ckpt": preview["ckpt"], "files": files,
+                "types": {k: content_type(k) for k in files},
+                "digests": {k: "sha256:" + hashlib.sha256(v.encode("utf-8")).hexdigest() for k, v in files.items()}}
+
+    @app.get("/api/create/plans/{plan_id}/preview/file")
+    async def create_plan_preview_file(plan_id: str, path: str, request: Request):
+        """One file of the current preview's bundle, as its own content type, after its lock digest checks. Served
+        sandboxed (CSP sandbox, nothing loads, nosniff): an SVG or HTML file opened directly runs no script."""
+        engine, preview = _plan_preview(plan_id, request)
+        try:
+            got = engine.ports.apps.preview_file(preview["ref"], path)
+        except (ValueError, OSError) as exc:
+            raise HiveError(409, "preview_unverified", str(exc))
+        if got is None:
+            raise HiveError(404, "not_found", "the preview has no such file")
+        raw, ctype, digest = got
+        return Response(raw, media_type=ctype, headers={
+            "Content-Security-Policy": "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox",
+            "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store", "ETag": f'"{digest}"',
+            "Cross-Origin-Resource-Policy": "same-origin"})
+
+    @app.post("/api/create/plans/{plan_id}/answers")
+    async def create_plan_answer(plan_id: str, request: Request):
+        return await _plan_person_action(request, lambda e, who, data: e.answer(plan_id, who, data.get("q"),
+                                                                                 data.get("text")), optional=False)
+
+    @app.post("/api/create/plans/{plan_id}/deploy")
+    async def create_plan_deploy(plan_id: str, request: Request):
+        return await _plan_person_action(request, lambda e, who, data: e.deploy(plan_id, who))
+
+    @app.post("/api/create/plans/{plan_id}/stop")
+    async def create_plan_stop(plan_id: str, request: Request):
+        return await _plan_person_action(request, lambda e, who, data: e.stop(plan_id, who))
+
+    @app.get("/api/me/code-controller")
+    async def my_code_controller_prefs(request: Request):
+        """The signed-in person's own Code controller setting: review_policy (review-required, the default, or
+        review-waivable: a tested proposal may go on unreviewed when no second opinion can run, and the UI says so)."""
+        v = g_person(request, mutating=False, admin_only=False)
+        return {"review_policy": hive.code_controller.review_policy(v.principal), "applies_to": "new Code requests"}
+
+    @app.put("/api/me/code-controller")
+    async def my_code_controller_prefs_put(request: Request):
+        from .code_controller_engine import EngineError
+        v = g_person(request, mutating=True, admin_only=False)
+        data = await g_body(request, G_SMALL_MAX)
+        try:
+            return hive.code_controller.set_review_policy(v.principal, data.get("review_policy"))
+        except EngineError as exc:
+            raise HiveError(exc.status, exc.code, str(exc))
+
+    @app.post("/api/requests/{request_id}/controller/apply")
+    async def request_controller_apply(request_id: str, request: Request):
+        return await _controller_person_action(request_id, request,
+                                               lambda who, data: hive.code_controller.apply(request_id, who))
+
+    @app.post("/api/requests/{request_id}/controller/changes")
+    async def request_controller_changes(request_id: str, request: Request):
+        return await _controller_person_action(request_id, request, lambda who, data: hive.code_controller.request_changes(
+            request_id, who, data.get("text")), optional=False)
+
+    @app.post("/api/requests/{request_id}/controller/discard")
+    async def request_controller_discard(request_id: str, request: Request):
+        return await _controller_person_action(request_id, request,
+                                               lambda who, data: hive.code_controller.discard(request_id, who))
+
     @app.post("/api/requests/{request_id}/cancel")
     async def operator_cancel_request(request_id: str, request: Request):
         """Only the person who issued the request, or an admin (who sees every swarm), cancels it; cancelling also pauses
@@ -4863,6 +5904,9 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
     install_motivations(app, hive, operator, agent_from, viewer, body)
     from .repomap import install_routes as install_repo_maps
     install_repo_maps(app, hive, operator, admin, viewer)
+    from .repomap_seed import install_routes as install_repo_map_seed
+    install_repo_map_seed(app, hive, admin)
+    session_launch.install_routes(app, hive, admin)   # R2.8: owner launch tickets, bridges, disconnect
 
     # Host-owned factory installs the confidential boundary before UI catch-all routes.
     # No factory means no private monitoring or report channel is enabled.
@@ -4871,21 +5915,45 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
 
     # ---- the web UI ---------------------------------------------------------------------------------
 
+    # Gateway r1d (plan §2.5, r1.1 §B, §L): with HIVE_MIND_GATEWAY=1 the browser mind's frame is served only at its
+    # canonical path with its sandbox header; any other spelling of it, or any other .html under mind-iter/, is 404. The
+    # decision is on the resolved file identity, and every other file it serves (the page fallback included) is checked
+    # at request time for a copy of the frame (r1d.2). hive.mind_frame.available() is the browser_mind capability (§2.4).
+    mind_frame = None
+    if settings.mind_gateway:
+        from .mind_frame import MindFrame
+        mind_frame = MindFrame(UI_DIST)
+    hive.mind_frame = mind_frame
+
     if UI_DIST.exists():
         @app.get("/{path:path}")
-        async def ui(path: str):
+        async def ui(path: str, request: Request):
             if path.split("/", 1)[0] in ("api", "llm", "agent-hub"):
                 raise HiveError(404, "not_found", f"no route /{path}")
             target = (UI_DIST / path).resolve()
+            if mind_frame is not None and path and target.is_file() and UI_DIST.resolve() in target.parents:
+                verdict = mind_frame.decide(request.scope, target)
+                if verdict == "deny":
+                    raise HiveError(404, "not_found", f"no file /{path}")
+                if verdict == "frame":
+                    return FileResponse(target, media_type="text/html", headers=mind_frame.headers())
             if path and target.is_file() and UI_DIST.resolve() in target.parents:
                 # hashed build files never change: cache them for good; anything else revalidates
                 immutable = path.startswith("assets/")
-                return FileResponse(target, headers={"Cache-Control": "public, max-age=31536000, immutable" if immutable
-                                                     else "no-cache"})
+                headers = {"Cache-Control": "public, max-age=31536000, immutable" if immutable else "no-cache"}
+                if mind_frame is not None and mind_frame.copies and target == (UI_DIST / "index.html").resolve():
+                    headers["Content-Security-Policy"] = "frame-ancestors 'none'"   # r1de.4: the page, however asked for
+                return FileResponse(target, headers=headers)
             if path.startswith("assets/") or "." in path.rsplit("/", 1)[-1]:
                 # a missing file is a 404, never the page: an old cached page must not run HTML as a script
                 raise HiveError(404, "not_found", f"no file /{path}")
-            return FileResponse(UI_DIST / "index.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+            headers = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+            if mind_frame is not None:
+                if mind_frame.decide(request.scope, (UI_DIST / "index.html").resolve()) != "pass":
+                    raise HiveError(404, "not_found", f"no file /{path}")   # r1d.2: the page itself is never a frame copy
+                if mind_frame.copies:   # r1de.3: a stray copy turns the mind off, not the UI; nothing may frame the page
+                    headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+            return FileResponse(UI_DIST / "index.html", headers=headers)
 
         @app.api_route("/{path:path}", methods=["POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
         async def ui_other_methods(path: str, request: Request):
@@ -4904,6 +5972,7 @@ def create_app(settings: Settings | None = None, supervisor=None, reconcile_seco
         outer = FastAPI(title="OmegaHive", version="0.1.0", lifespan=lifespan, openapi_url=None,
                         docs_url=None, redoc_url=None)
         outer.state.hive, outer.state.gateway = hive, gateway
+        outer.state.password_attempts, outer.state.member_attempts = attempts, member_attempts
         for prefix in settings.base_path.split(","):
             outer.mount(prefix, app)
         outer.mount("/", app)

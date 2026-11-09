@@ -118,7 +118,7 @@ export function Sheet({
   return (
     <>
       <m.div
-        className="xc-dress xc-backdrop fixed inset-0 z-20 bg-black/30"
+        className="xc-dress xc-backdrop fixed inset-0 z-20 bg-shade/30"
         initial={{ opacity: 0 }}
         animate={{ opacity: snap === 'full' ? 1 : 0 }}
         exit={{ opacity: 0 }}
@@ -162,7 +162,7 @@ export function Sheet({
             aria-label={snap === 'full' ? 'Collapse panel' : 'Expand panel'}
             onClick={() => setSnap(snap === 'full' ? 'peek' : 'full')}
           >
-            <span className="h-1.5 w-10 rounded-full bg-white/25" />
+            <span className="h-1.5 w-10 rounded-full bg-tint/25" />
           </button>
         </div>
         <div className="shrink-0 touch-none" onPointerDown={(e) => drag.start(e)}>

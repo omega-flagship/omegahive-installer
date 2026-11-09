@@ -1,3 +1,5 @@
+import { healthCheck } from '../../lib/healthQuestion'
+import { HealthCheckLabel } from '../../ui/HealthCheckLabel'
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { PlainText } from '../sdk'
 import { useDraft } from '../drafts'
@@ -108,6 +110,7 @@ export function Conversation({ agent, ctx }: { agent: Agent; ctx: string }) {
     if (current(ctx)) useHive.getState().dismissPending(id, tempId)
   }
   const sender = (m: Message) => {
+    if (healthCheck(m)) return <HealthCheckLabel className="pr-health-check" />
     if (m.sender.startsWith('user:')) return m.sender
     if (m.sender.startsWith('agent:')) return shown(agents[m.sender.slice(6)]?.name ?? m.sender)
     return m.sender

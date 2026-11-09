@@ -123,18 +123,18 @@ def test_OI10_pin_ordinary_hub_traffic_is_byte_identical(ch):
     ch.daemon.deliver({"type": "user_message", "seq": 1, "text": "dup"})
     ch.daemon.deliver({"type": "error", "code": "x", "message": "y"})
     ch.daemon.deliver({"type": "unknown_kind"})
-    ch.daemon.deliver({"type": "user_message", "seq": 2, "text": json.dumps({"hive": 1, "sender": "user:quinn",
+    ch.daemon.deliver({"type": "user_message", "seq": 2, "text": json.dumps({"hive": 1, "sender": "user:jon",
                                                                               "conversation_id": "c-1", "text": "hi"})})
     assert (ch.folder / "inbox.jsonl").read_bytes() == (
         b'{"seq": 1, "text": "hello"}\n'
-        b'{"seq": 2, "text": "{\\"hive\\": 1, \\"sender\\": \\"user:quinn\\", \\"conversation_id\\": \\"c-1\\", \\"text\\": \\"hi\\"}"}\n')
+        b'{"seq": 2, "text": "{\\"hive\\": 1, \\"sender\\": \\"user:jon\\", \\"conversation_id\\": \\"c-1\\", \\"text\\": \\"hi\\"}"}\n')
     assert (ch.folder / "state.json").read_bytes() == b'{"last_seen_seq": 2}'
     assert json.loads((ch.folder / "status.json").read_text()) == {"received": 2, "sent": 0, "reconnects": 0, "connected": False,
                                                                    "url": "ws://127.0.0.1:1/agent-hub", "last_seen_seq": 2}
     assert sorted(p.name for p in ch.folder.iterdir()) == ["inbox.jsonl", "state.json", "status.json"]
     out = ch.getLastMessage()
     assert out == ("hello\n\nCHANNEL_EVENT\nevent=message\nchannel=hive\nroute=primary\nconversation_id=c-1\n"
-                   "sender=user:quinn\ntext=hi\nexplicit_reply_affordance=send-hive-to c-1 message")
+                   "sender=user:jon\ntext=hi\nexplicit_reply_affordance=send-hive-to c-1 message")
 
 
 # ---- OI-11: maker tools on the MCP surface; non-hub makers refused at admission ----------------------------------------

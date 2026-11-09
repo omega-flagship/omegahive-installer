@@ -1,4 +1,4 @@
-"""the owner's five answers (2026-10-04): Once, For a time, Always, No, Never, for minds' approvals and people's requests."""
+"""Jon's five answers (2026-10-04): Once, For a time, Always, No, Never, for minds' approvals and people's requests."""
 import time
 
 from hive.tests.test_core_api import client, make_swarm_and_agents  # noqa: F401  (fixture)
@@ -55,12 +55,12 @@ def test_app_actions_are_once_only(client):
 
 def test_member_asks_for_a_mind_and_an_admin_answers(client):
     ann = person(client, "u_ann")
-    quinn = person(client, "u_quinn", role="admin")
+    jon = person(client, "u_jon", role="admin")
     sw = client.post("/api/swarms", headers=ann, json={"name": "Ann's"}).json()
     r = client.post("/api/asks", headers=ann, json={"kind": "mind", "payload": {"name": "Helper", "swarm_id": sw["id"]}})
     assert r.status_code == 200 and r.json()["status"] == "pending", r.text
     assert client.post(f"/api/asks/{r.json()['id']}/decide", headers=ann, json={"decision": "once"}).status_code == 403
-    done = client.post(f"/api/asks/{r.json()['id']}/decide", headers=quinn, json={"decision": "always"}).json()
+    done = client.post(f"/api/asks/{r.json()['id']}/decide", headers=jon, json={"decision": "always"}).json()
     assert done["status"] == "granted"
     mind = client.app.state.hive.agent(done["result"]["agent_id"])
     assert mind["owner"] == "user:u_ann" and mind["swarm_id"] == sw["id"]
@@ -74,24 +74,24 @@ def test_member_asks_for_a_mind_and_an_admin_answers(client):
 
 def test_never_declines_this_kind_from_then_on(client):
     ann = person(client, "u_ann")
-    quinn = person(client, "u_quinn", role="admin")
+    jon = person(client, "u_jon", role="admin")
     r = client.post("/api/asks", headers=ann, json={"kind": "allowance", "payload": {"monthly_usd": 80}}).json()
-    client.post(f"/api/asks/{r['id']}/decide", headers=quinn, json={"decision": "never"})
+    client.post(f"/api/asks/{r['id']}/decide", headers=jon, json={"decision": "never"})
     again = client.post("/api/asks", headers=ann, json={"kind": "allowance", "payload": {"monthly_usd": 60}}).json()
     assert again["status"] == "declined"
 
 
 def test_allowance_and_swarm_access_take_effect(client):
     ann = person(client, "u_a0000001")
-    quinn = person(client, "u_quinn", role="admin")
+    jon = person(client, "u_jon", role="admin")
     hive = client.app.state.hive
     r = client.post("/api/asks", headers=ann, json={"kind": "allowance", "payload": {"monthly_usd": 80}}).json()
-    client.post(f"/api/asks/{r['id']}/decide", headers=quinn, json={"decision": "once"})
+    client.post(f"/api/asks/{r['id']}/decide", headers=jon, json={"decision": "once"})
     assert any(x["scope"] == "person:u_a0000001" and x["limit_usd"] == 80 for x in hive.budgets.rules())
-    private = client.post("/api/swarms", headers=quinn, json={"name": "Quinn's"}).json()
+    private = client.post("/api/swarms", headers=jon, json={"name": "Jon's"}).json()
     assert client.get(f"/api/swarms/{private['id']}", headers=ann).status_code == 404
     r = client.post("/api/asks", headers=ann, json={"kind": "swarm_access", "payload": {"swarm_id": private["id"]}}).json()
-    client.post(f"/api/asks/{r['id']}/decide", headers=quinn, json={"decision": "once"})
+    client.post(f"/api/asks/{r['id']}/decide", headers=jon, json={"decision": "once"})
     assert client.get(f"/api/swarms/{private['id']}", headers=ann).status_code == 200
 
 
@@ -123,9 +123,9 @@ def test_answers_become_revisable_evidence_in_the_governance_commons(client):
 
 def test_a_standing_answer_is_not_new_evidence(client):
     ann = person(client, "u_ann")
-    quinn = person(client, "u_quinn", role="admin")
+    jon = person(client, "u_jon", role="admin")
     r = client.post("/api/asks", headers=ann, json={"kind": "allowance", "payload": {"monthly_usd": 80}}).json()
-    client.post(f"/api/asks/{r['id']}/decide", headers=quinn, json={"decision": "never"})
+    client.post(f"/api/asks/{r['id']}/decide", headers=jon, json={"decision": "never"})
     client.post("/api/asks", headers=ann, json={"kind": "allowance", "payload": {"monthly_usd": 60}})
     assert client.app.state.hive.db.one("SELECT count(*) AS n FROM governance_evidence")["n"] == 1
 

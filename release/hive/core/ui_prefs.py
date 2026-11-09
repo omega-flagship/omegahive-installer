@@ -12,7 +12,7 @@ import json
 import re
 
 from .db import now
-from .programs import contrast
+from . import theme_rules
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS ui_prefs (
@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS ui_prefs_epoch (
 
 VARIANT_SCHEMA = "omegasurface.variant/0.1"
 LAYOUTS = ("rail", "topbar", "dock")
+LANDINGS = ("awake", "pro")   # Ask-and-apps contract R1 §7: where this person lands in their look (absent = awake)
 # Inside an app: each app's own declared theme, or the identity set designed by Surface (both host-rendered data).
 APP_IDENTITIES = ("owner", "designed")
 DENSITIES = ("compact", "regular", "roomy")
@@ -36,8 +37,9 @@ MOTIONS = ("none", "calm", "lively")
 SCHEMES = ("dark", "light")
 COLOR_KEYS = ("void", "abyss", "ink", "ink-2", "ink-3", "ink-4", "ink-5", "line", "line-2", "control", "glass",
               "glass-2", "accent", "primary-top", "primary-ink", "accent-2", "good", "warn", "bad")
-# Translucent surfaces and dividers may carry alpha; everything read as text or edge must be solid #rrggbb.
-ALPHA_KEYS = ("line", "line-2", "glass", "glass-2")
+# Translucent surfaces and dividers may carry alpha; everything read as text or edge must be solid #rrggbb. The list is the
+# theme's rules (theme.metta via PeTTa → theme.rules.json), the same file the browser reads.
+ALPHA_KEYS = tuple(theme_rules.RULES["translucent"])
 FONT_KEYS = ("display", "sans", "mono")
 VARIANT_KEYS = {"schema", "id", "name", "blurb", "scheme", "layout", "density", "radius", "motion", "fonts", "colors",
                 "needs", "author"}
@@ -54,9 +56,6 @@ def has_family(stack):
     """A font stack must name at least one real family: a token with a letter, not just commas, quotes or spaces."""
     return any(re.search(r"[A-Za-z]", part.strip(" '")) for part in stack.split(","))
 
-# (token, minimum contrast against `void`): the brand's floors (BRAND.md, hive/core/programs.check_app).
-TEXT_FLOORS = (("ink", 7.0), ("ink-2", 4.5), ("ink-3", 4.5), ("ink-4", 4.5), ("accent", 3.0), ("accent-2", 3.0),
-               ("control", 3.0), ("good", 3.0), ("warn", 3.0), ("bad", 3.0))
 
 
 class UiPrefsError(Exception):
@@ -104,35 +103,28 @@ def check_variant(v):
     solid_ok = True
     for key in COLOR_KEYS:
         value = colors.get(key)
-        if value is None:
-            continue
+        if key not in colors:
+            continue                                        # reported once above, as "colors missing"
         if isinstance(value, str) and (HEX.fullmatch(value) or key in ALPHA_KEYS and RGBA.fullmatch(value)):
             continue
         p.append(f"colors.{key} must be #rrggbb" + (" or rgb(r g b / a)" if key in ALPHA_KEYS else ""))
         solid_ok = False
     if solid_ok and not missing:
-        def hex_pair(a, b):  # contrast is only ever computed on #rrggbb, so a malformed value refuses, never 500s
-            return all(isinstance(colors.get(k), str) and HEX.fullmatch(colors[k]) for k in (a, b))
-        for key, floor in TEXT_FLOORS:
-            if not hex_pair(key, "void"):
-                p.append(f"colors.{key} and colors.void must be #rrggbb to check contrast")
-                continue
-            ratio = contrast(colors[key], colors["void"])
-            if ratio < floor:
-                p.append(f"{key} on void is {ratio:.2f}:1, below {floor:g}:1")
-        if hex_pair("primary-ink", "accent"):
-            ratio = contrast(colors["primary-ink"], colors["accent"])
-            if ratio < 4.5:
-                p.append(f"primary-ink on accent is {ratio:.2f}:1, below 4.5:1")
-        else:
-            p.append("colors.primary-ink and colors.accent must be #rrggbb to check contrast")
+        # the theme's rules, as the browser applies them: a shortfall the rules can repair is accepted (the browser wears
+        # the repaired colour); what still falls short after the repair is refused with its reason
+        for f in theme_rules.check_look(colors):
+            if f["ratio"] is None:
+                p.append(f"{f['token']} on {f['against']} can't be measured: both must be #rrggbb")
+            else:
+                p.append(f"{f['token']} on {f['against']} is {f['ratio']:.2f}:1, below {f['floor']:g}:1 even after repair")
     return p
 
 
 def check_prefs(prefs):
-    """Normalise a PUT body {variant: manifest|null, layout: enum|null, apps: owner|designed|null}; raises UiPrefsError."""
-    if not isinstance(prefs, dict) or set(prefs) - {"variant", "layout", "apps", "experience"}:
-        raise UiPrefsError(["body may only set variant, layout, apps and experience"])
+    """Normalise a PUT body {variant: manifest|null, layout: enum|null, apps: owner|designed|null, experience: slug|null,
+    landing: awake|pro|null}; raises UiPrefsError."""
+    if not isinstance(prefs, dict) or set(prefs) - {"variant", "layout", "apps", "experience", "landing"}:
+        raise UiPrefsError(["body may only set variant, layout, apps, experience and landing"])
     problems = []
     variant = prefs.get("variant")
     if variant is not None:
@@ -146,7 +138,12 @@ def check_prefs(prefs):
     experience = prefs.get("experience")
     if experience is not None and not (isinstance(experience, str) and SLUG.fullmatch(experience)):
         problems.append("experience must be a lowercase slug (an experience the UI ships)")
+    landing = prefs.get("landing")
+    if landing is not None and landing not in LANDINGS:
+        problems.append(f"landing must be one of {', '.join(LANDINGS)}")
     out = {"variant": variant, "layout": layout, "apps": apps, "experience": experience}
+    if landing is not None:   # only stored when set, so every earlier stored shape is unchanged
+        out["landing"] = landing
     if len(json.dumps(out)) > MAX_BYTES:
         problems.append(f"preferences exceed {MAX_BYTES} bytes")
     if problems:

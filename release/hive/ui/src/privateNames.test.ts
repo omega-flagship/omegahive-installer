@@ -7,7 +7,7 @@ import { publicBlurb, publicLabel } from './experiences/publicWords'
 import { scanShown, scanShownTree } from './shownStrings.testkit'
 
 /**
- * Private apps (the owner's standing rule; stand-in TOWN_RELEASE r1/r2 BLOCKING): Atlas and Truth are never named by the UI's
+ * Private apps (Jon's standing rule; stand-in TOWN_RELEASE r1/r2 BLOCKING): Atlas and Truth are never named by the UI's
  * own copy. An app appears by name only when the host lists it for that person (the Apps list, its own page, its own
  * form), never in shared or hard-coded words: directories, blurbs, search words, tours, notices, Change UI.
  * Logic vocabulary ("truth value", "TRUTH" as a belief's colour) is not the app and is not matched.
@@ -20,7 +20,9 @@ const PRIVATE_ANY = /atlas|omega ?truth|\btruth\b(?! values?)/i
  * `file:exact text`.
  */
 const ALLOWED: { at: string; why: string }[] = [
+  { at: 'forms/lifeMap/', why: "Atlas's own form: rendered only on Atlas's own page, which the host opens only where Atlas is installed and permitted for that person (forms/contract BY_PROGRAM)" },
   { at: 'ui/modal-harness-main.tsx', why: 'a developer harness page (modal-harness.html), not part of the hive build' },
+  { at: 'forms/caseFile/fixture.ts', why: 'the synthetic program of the developer harness pages (forms-harness.html, modal-harness.html), not part of the hive build' },
   { at: 'forms/commons/parts.tsx:Truth', why: "a commons belief's truth (a column label in the Commons explorer), not the app" },
   { at: 'forms/commons/parts.tsx:Truth now', why: "a commons belief's current truth, not the app" },
 ]

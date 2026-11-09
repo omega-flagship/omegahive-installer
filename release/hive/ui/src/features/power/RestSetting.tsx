@@ -32,7 +32,7 @@ export function RestSettingDialog({ onClose }: { onClose: () => void }) {
         <fieldset className="mt-3 flex flex-col gap-1">
           <legend className="sr-only">Rest after</legend>
           {REST_CHOICES.map((n) => (
-            <label key={n} className="flex min-h-10 cursor-pointer items-center gap-2.5 rounded-xl px-2.5 text-[13.5px] text-ink-2 hover:bg-white/[0.05]">
+            <label key={n} className="flex min-h-10 cursor-pointer items-center gap-2.5 rounded-xl px-2.5 text-[13.5px] text-ink-2 hover:bg-tint/[0.05]">
               <input
                 ref={n === minutes ? first : undefined}
                 type="radio"
@@ -46,7 +46,7 @@ export function RestSettingDialog({ onClose }: { onClose: () => void }) {
           ))}
         </fieldset>
         <div className="mt-4 flex justify-end">
-          <button type="button" onClick={onClose} className="rounded-full bg-white/[0.08] px-4 py-2 text-[13px] font-semibold text-ink hover:bg-white/[0.12]">
+          <button type="button" onClick={onClose} className="rounded-full bg-tint/[0.08] px-4 py-2 text-[13px] font-semibold text-ink hover:bg-tint/[0.12]">
             Done
           </button>
         </div>

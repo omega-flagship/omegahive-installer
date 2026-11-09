@@ -16,7 +16,7 @@ def registry(tmp_path):
 
 
 def actor(swarm="s1", owner=False):
-    return {"principal": "user:quinn" if owner else "agent:researcher", "swarm_id": swarm,
+    return {"principal": "user:jon" if owner else "agent:researcher", "swarm_id": swarm,
             "kind": "person" if owner else "mind", "role": "owner" if owner else None,
             "local_operator": False}
 
@@ -46,7 +46,7 @@ def test_contribution_has_host_author_and_unresolved_custody(registry):
 
 
 def test_missing_provenance_and_authority_payload_refused(registry):
-    for field, value in (("evidence", []), ("uncertainty", {}), ("adopter", "Quinn"),
+    for field, value in (("evidence", []), ("uncertainty", {}), ("adopter", "Jon"),
                          ("code", "!(import! &self evil)")):
         payload = contribution()
         payload[field] = value
@@ -112,7 +112,7 @@ def test_graph_is_contract_valid(registry):
 
 
 def test_r17_cannot_accept_unreviewed_completion():
-    assert program.validate_result(None, {}, {"adopter": "Quinn", "review": "accepted"}).get("errors")
+    assert program.validate_result(None, {}, {"adopter": "Jon", "review": "accepted"}).get("errors")
 
 
 def test_native_projection_never_embeds_submitted_code(registry):

@@ -435,7 +435,7 @@ class Programs:
         self.disabled: set[str] = set()
         self._authority_guard, self._authority_locks = threading.Lock(), {}
         # where each app last showed a view successfully: so opening an app lands where it works, not on whichever
-        # swarm sorts first (the owner could not see inside apps, 2026-10-04)
+        # swarm sorts first (Jon could not see inside apps, 2026-10-04)
         hive.db.execute("CREATE TABLE IF NOT EXISTS program_homes (program TEXT NOT NULL, swarm TEXT NOT NULL, "
                         "last_ok TEXT NOT NULL, PRIMARY KEY (program, swarm))")
         # Which person an app's own view admitted, where, and when; a refusal from the app removes it (OmegaReview
@@ -921,6 +921,7 @@ class Programs:
                 if not f.is_file() or f.stat().st_size > 600_000:
                     raise self.hive.error(422, "bad_app_ui", f"{program_id}'s ui/ needs {', '.join(self.UI_FILES)} (each at most 600 KB)")
                 files[name] = f.read_bytes().decode("utf-8")
+            files.update(self._ui_assets(program_id, root, captured_lock))
             bundle = {"program": program_id, "files": files}
         bundle = self._ui_identity(program_id, entry, captured_lock, lock_bytes, bundle)
         # Retain P8's final current-release check as well as P1's captured-lock
@@ -930,6 +931,36 @@ class Programs:
         # The pinned P1 identity, when present, adds version to P8's display-only
         # metadata. Both have already been bound to this entry's same digest.
         return dict(bundle, release={**release, **bundle.get("release", {})})
+    UI_ASSET = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}(/[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}){0,7}")
+
+    def _ui_assets(self, program_id, root, lock):
+        """Single-file mode, opt-in: a lock that names ``"assets": [...]`` (pinned text files such as an icon.svg a
+        Create app's pieces built) has them served beside the frame's three files, for appDocument to inline as data:
+        URIs. A lock with no "assets" key keeps the old answer (extra pinned files verified, never served; r17 ruling 3).
+        At most 64 assets, each pinned in the lock, 600 KB, UTF-8 text; 4 MB in all."""
+        if not isinstance(lock, dict) or "assets" not in lock:
+            return {}
+        names, pinned = lock["assets"], lock.get("files") or {}
+        bad = lambda why: self.hive.error(422, "bad_app_ui", f"{program_id}'s ui assets: {why}")  # noqa: E731
+        if not isinstance(names, list) or len(names) > 64 or len(set(map(str, names))) != len(names):
+            raise bad("a list of at most 64 distinct paths")
+        out, total = {}, 0
+        for name in names:
+            if not isinstance(name, str) or not self.UI_ASSET.fullmatch(name) or ".." in name.split("/") or \
+                    name in self.UI_FILES or name == "bundle.lock.json" or name not in pinned:
+                raise bad(f"{str(name)[:80]!r} is not a pinned asset path")
+            f = root / name
+            if f.is_symlink() or not f.is_file() or f.stat().st_size > 600_000:
+                raise bad(f"{name} is missing or larger than 600 KB")
+            try:
+                out[name] = f.read_bytes().decode("utf-8")
+            except UnicodeDecodeError:
+                raise bad(f"{name} is not UTF-8 text") from None
+            total += len(out[name].encode("utf-8"))
+        if total > 4_000_000:
+            raise bad("larger than 4 MB in all")
+        return out
+
     def _ui_identity(self, program_id, entry, lock, lock_bytes, bundle):
         pinned = lock.get("files") if isinstance(lock, dict) else None
         # Parts mode is closed. Legacy single-file mode historically permits
@@ -1145,15 +1176,8 @@ class Programs:
         return {"path": entry["path"], "digest": pin["digest"], "version": entry["version"],
                 "files": dict(pin.get("files", {}))}
 
-    def link_manifest(self, program_id):
-        """Host-only link display metadata from the pinned, hashed manifest.
-
-        This is not target readiness, consent, or activation. A future dispatcher
-        must first consume a genuine generation-bound host activation and enforce
-        the caller's declaration before looking up any target. No route or frame
-        handler is installed by this accessor.
-        """
-        from .app_links import parse_related_apps
+    def _pinned_manifest(self, program_id):
+        """Capture host metadata from the same bytes verified against the admitted release pin; no app hook."""
         entry = self._ready(program_id)
         release = self.pinned_release(program_id)
         if not release or release.get("digest") != entry.get("digest"):
@@ -1169,11 +1193,23 @@ class Programs:
                 or manifest.get("version", "0") != release["version"] \
                 or not isinstance(name, str) or not 0 < len(name) <= 120:
             raise self.hive.error(403, "app_integrity", "the app's link identity changed")
-        related = parse_related_apps(manifest.get("related_apps"))
         if self._ready(program_id) is not entry or entry.get("digest") != digest:
             raise self.hive.error(403, "app_integrity", "the app's link release changed")
+        return manifest, digest
+
+    def link_manifest(self, program_id):
+        """Host-only link display metadata from the pinned, hashed manifest.
+
+        This is not target readiness, consent, or activation. A future dispatcher
+        must first consume a genuine generation-bound host activation and enforce
+        the caller's declaration before looking up any target. No route or frame
+        handler is installed by this accessor.
+        """
+        from .app_links import parse_related_apps
+        manifest, digest = self._pinned_manifest(program_id)
+        related = parse_related_apps(manifest.get("related_apps"))
         from .person_swarms import parse_templates
-        return {"id": program_id, "name": name, "version": manifest.get("version", "0"), "release_digest": digest,
+        return {"id": program_id, "name": manifest.get("name", program_id), "version": manifest.get("version", "0"), "release_digest": digest,
                 "related_apps": related, "capabilities": list(manifest.get("capabilities", [])),
                 "swarm_templates": parse_templates(manifest.get("swarm_templates"))}
 

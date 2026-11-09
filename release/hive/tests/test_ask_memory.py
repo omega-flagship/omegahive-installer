@@ -1,4 +1,4 @@
-"""The Ask conductor's browser-side memory, host piece (the owner, 2026-10-07: "keep the memory local on the browser side and
+"""The Ask conductor's browser-side memory, host piece (Jon 2026-10-07: "keep the memory local on the browser side and
 put cloud hosted memory coming soon"). The host stores nothing about the person: the `remember` tool only emits a live,
 asker-only `memory` frame for the browser to keep; recall comes back as the per-turn memory_notes.
 
@@ -72,7 +72,7 @@ def test_memory_on_without_the_conductor_changes_nothing(client, monkeypatch):  
     w = world(client)
     r = ask(client, w["ann"], "op-mem-noc1", context={"swarm_id": w["swarm"]["id"]})
     assert r.status_code == 202 and r.json()["state"] == "accepted" and "conductor" not in r.json()
-    assert client.get("/api/me/ask", headers=w["ann"]).json()["capabilities"] == {"conductor": False, "memory": False}
+    assert {"conductor": False, "memory": False}.items() <= client.get("/api/me/ask", headers=w["ann"]).json()["capabilities"].items()
 
 
 # ---- notes are accepted and ignored while off; the on/off signal ----------------------------------------------------------
@@ -116,13 +116,14 @@ def test_notes_are_accepted_and_ignored_with_memory_off(client, on, monkeypatch,
 
 def test_the_on_off_signal_on_get_me_ask(client, on, monkeypatch):
     monkeypatch.delenv("HIVE_ASK_MEMORY", raising=False)
-    for who in ("ann", "bob", "quinn"):
+    for who in ("ann", "bob", "jon"):
         caps = client.get("/api/me/ask", headers=on[who]).json()["capabilities"]
-        assert caps == {"conductor": True, "memory": False}
+        # This test owns the Ask/memory signals; other independently advertised capabilities may be present.
+        assert {"conductor": True, "memory": False}.items() <= caps.items()
     monkeypatch.setenv("HIVE_ASK_MEMORY", "on")
-    assert client.get("/api/me/ask", headers=on["ann"]).json()["capabilities"] == {"conductor": True, "memory": True}
+    assert {"conductor": True, "memory": True}.items() <= client.get("/api/me/ask", headers=on["ann"]).json()["capabilities"].items()
     monkeypatch.setenv("HIVE_ASK_CONDUCTOR", "0")
-    assert client.get("/api/me/ask", headers=on["ann"]).json()["capabilities"] == {"conductor": False, "memory": False}
+    assert {"conductor": False, "memory": False}.items() <= client.get("/api/me/ask", headers=on["ann"]).json()["capabilities"].items()
     # signed-in people only: the operator password is not a person
     assert client.get("/api/me/ask").status_code == 403
 
@@ -173,7 +174,7 @@ def test_memory_frames_go_to_the_asker_only_admins_included(client, mem, monkeyp
     text = json.dumps(dict(type="ask", at="now", **{k: v for k, v in m.items() if k != "at"}))
     assert hive.visibility.event_visible(Viewer("user:u_ann", False), text) is True
     assert hive.visibility.event_visible(Viewer("user:u_bob", False), text) is False
-    assert hive.visibility.event_visible(Viewer("user:u_quinn", True), text) is False
+    assert hive.visibility.event_visible(Viewer("user:u_jon", True), text) is False
 
 
 def test_a_correction_kind_without_revises_is_a_remember(client, mem, monkeypatch):

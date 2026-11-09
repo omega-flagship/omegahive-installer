@@ -173,3 +173,105 @@ def test_exact_code_approvals_are_redeemed_once_by_the_service(c):
     assert bad["decision"] == "deny"
     assert c.post("/api/agent/authorize", json={"command": f"(code-publish {DIGEST})"}, headers=agent).json()["decision"] == "deny"
     assert c.post("/api/agent/authorize", json={"command": f'(code-read "{DIGEST}")'}, headers=agent).json()["decision"] == "allow"
+
+
+def _enrol(c, name="omegacode"):
+    return c.post("/api/services/enrol", json={"name": name}, headers=c.admin).json()["enrol_token"]
+
+
+def _op_register(c, enrol_token, op, address="http://127.0.0.1:8724"):
+    body = {"name": "omegacode", "version": "r13", "address": address, "contract": "1", "surfaces": ["code"],
+            "capabilities": ["workspace"], "operation_id": op}
+    return c.post("/api/services/register", json=body, headers={"Authorization": f"Bearer {enrol_token}"})
+
+
+def test_operation_registration_replays_the_same_identity_until_ack(c):
+    tok, op = _enrol(c), "op_" + "a" * 20
+    first = _op_register(c, tok, op)
+    assert first.status_code == 200 and first.json()["receipt"]["status"] == "pending"
+    again = _op_register(c, tok, op)                                   # response lost: the same request replays
+    assert again.status_code == 200
+    for k in ("service_id", "service_token", "capability_secret"):
+        assert again.json()[k] == first.json()[k]
+    svc = first.json()["service_id"]
+    listed = {s["id"]: s for s in c.get("/api/services", headers=c.admin).json()}
+    assert listed[svc]["enabled"] is False                              # not live before the service acknowledges
+    auth = {"Authorization": f"Bearer {first.json()['service_token']}"}
+    ack = c.post(f"/api/services/operations/{op}/ack", headers=auth)
+    assert ack.status_code == 200 and ack.json()["status"] == "active"
+    assert c.post(f"/api/services/operations/{op}/ack", headers=auth).json()["status"] == "active"   # idempotent
+    assert c.get(f"/api/services/operations/{op}", headers=auth).json()["service_id"] == svc
+    assert _op_register(c, tok, op).status_code == 409                  # no credentials handed out after ack
+    listed = {s["id"]: s for s in c.get("/api/services", headers=c.admin).json()}
+    assert listed[svc]["enabled"] is True and len([s for s in listed.values() if s["name"] == "omegacode"]) == 1
+
+
+def test_operation_registration_refuses_conflicts_and_second_identities(c):
+    tok, op = _enrol(c), "op_" + "b" * 20
+    assert _op_register(c, tok, op).status_code == 200
+    assert _op_register(c, tok, op, address="http://127.0.0.1:9999").status_code == 409   # changed request
+    assert _op_register(c, tok, "op_" + "c" * 20).status_code == 403                    # same enrolment, new op
+    other = _enrol(c)
+    assert _op_register(c, other, op).status_code == 409                                # another token cannot recover
+    assert _op_register(c, tok, "short").status_code == 400
+    bad = {"Authorization": "Bearer not-the-token"}
+    assert c.post(f"/api/services/operations/{op}/ack", headers=bad).status_code == 404
+
+
+def test_revoking_a_pending_registration_stops_its_replay(c):
+    tok, op = _enrol(c), "op_" + "d" * 20
+    svc = _op_register(c, tok, op).json()["service_id"]
+    assert c.delete(f"/api/services/{svc}", headers=c.admin).status_code == 200
+    assert _op_register(c, tok, op).status_code == 409
+
+
+def test_registration_is_atomic_when_the_operation_record_cannot_be_written(c, monkeypatch):
+    """A failure after the identity insert rolls the whole step back: the enrolment stays usable and a retry
+    recovers one identity (stand-in review P1)."""
+    services = c.app.state.hive.services if hasattr(c.app.state, "hive") else None
+    tok, op = _enrol(c), "op_" + "e" * 20
+    from hive.core import services as module
+    real_insert = module.Services._insert_service
+    calls = {"n": 0}
+    def failing_then_real(self, row, body, enabled):
+        result = real_insert(self, row, body, enabled)
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("crash between identity and operation record")
+        return result
+    monkeypatch.setattr(module.Services, "_insert_service", failing_then_real)
+    try:
+        _op_register(c, tok, op)
+    except RuntimeError:
+        pass
+    retry = _op_register(c, tok, op)
+    assert retry.status_code == 200
+    names = [s for s in c.get("/api/services", headers=c.admin).json() if s["name"] == "omegacode"]
+    assert len(names) == 1 and names[0]["id"] == retry.json()["service_id"]
+
+
+def test_an_unacknowledged_registration_expires_with_its_enrolment(c):
+    tok, op = _enrol(c), "op_" + "f" * 20
+    svc = _op_register(c, tok, op).json()["service_id"]
+    db = c.app.state.hive.db
+    db.execute("UPDATE service_enrolments SET expires_at = 0 WHERE service_id = ?", (svc,))
+    late = _op_register(c, tok, op)
+    assert late.status_code == 409 and late.json()["error"]["code"] == "operation_expired"
+    assert db.one("SELECT 1 FROM services WHERE id = ?", (svc,)) is None
+    assert db.one("SELECT pending_token FROM service_operations WHERE operation_id = ?", (op,))["pending_token"] is None
+
+
+def test_an_acknowledgement_after_expiry_revokes_instead_of_activating(c):
+    """Stand-in re-review P1: ack must not enable a registration whose enrolment already expired."""
+    tok, op = _enrol(c), "op_" + "g" * 20
+    first = _op_register(c, tok, op).json()
+    svc, auth = first["service_id"], {"Authorization": f"Bearer {first['service_token']}"}
+    db = c.app.state.hive.db
+    db.execute("UPDATE service_enrolments SET expires_at = 0 WHERE service_id = ?", (svc,))
+    late = c.post(f"/api/services/operations/{op}/ack", headers=auth)
+    assert late.status_code == 409 and late.json()["error"]["code"] == "operation_expired"
+    assert db.one("SELECT 1 FROM services WHERE id = ?", (svc,)) is None          # revocation committed
+    assert db.one("SELECT pending_token FROM service_operations WHERE operation_id = ?", (op,))["pending_token"] is None
+    assert c.post(f"/api/services/operations/{op}/ack", headers=auth).status_code == 404
+    assert c.get(f"/api/services/operations/{op}", headers=auth).status_code == 404
+    assert _op_register(c, tok, op).status_code == 409

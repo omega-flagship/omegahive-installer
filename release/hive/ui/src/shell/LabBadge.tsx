@@ -32,12 +32,12 @@ export function LabBadge({ compactMode }: { compactMode?: boolean }) {
       aria-label={label}
       title={`${label} (G L)`}
     >
-      {h.state === 'failing' && <span className="absolute inset-0 rounded-2xl border border-bad/30" style={{ boxShadow: '0 0 18px -4px rgb(251 113 133 / 0.5)' }} aria-hidden="true" />}
+      {h.state === 'failing' && <span className="absolute inset-0 rounded-2xl border border-bad/30" style={{ boxShadow: '0 0 18px -4px color-mix(in oklab, var(--color-bad) 50%, transparent)' }} aria-hidden="true" />}
       <span className="relative">
         <Icon name="flask" size={18} />
         <span
           className={cx('absolute -right-1 -bottom-0.5 size-2 rounded-full', h.state === 'running' && 'animate-pulse')}
-          style={{ background: color, boxShadow: `0 0 0 2px rgb(10 10 30), 0 0 8px ${color}` }}
+          style={{ background: color, boxShadow: `0 0 0 2px var(--color-abyss), 0 0 8px ${color}` }}
           aria-hidden="true"
         />
       </span>
@@ -75,9 +75,9 @@ export function LabGuards() {
   return (
     <button
       onClick={() => navigate({ name: 'lab', suite: 'bench-drift' })}
-      className="group flex min-h-11 w-full items-center gap-3 rounded-xl border border-line bg-white/[0.025] px-3 text-left transition-colors hover:border-line-2 hover:bg-white/[0.05]"
+      className="group flex min-h-11 w-full items-center gap-3 rounded-xl border border-line bg-tint/[0.025] px-3 text-left transition-colors hover:border-line-2 hover:bg-tint/[0.05]"
     >
-      <span className="relative flex size-8 shrink-0 items-center justify-center rounded-lg border border-line bg-black/25 text-ink-2">
+      <span className="relative flex size-8 shrink-0 items-center justify-center rounded-lg border border-line bg-shade/25 text-ink-2">
         <Icon name="shield" size={16} />
         <span className={cx('absolute -top-0.5 -right-0.5 size-2 rounded-full', state === 'running' && 'animate-pulse')} style={{ background: color, boxShadow: `0 0 8px ${color}` }} aria-hidden="true" />
       </span>

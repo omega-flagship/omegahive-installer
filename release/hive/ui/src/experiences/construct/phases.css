@@ -1,0 +1,23 @@
+/* Native terminal composition; the existing command prompt remains the Ask below this block. */
+.cx-root .cx-phase-anchor { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.cx-root .cx-phase-anchor[hidden], .cx-home[hidden], .cx-home [hidden], .cx-home-back[hidden] { display: none; }
+.cx-home { display: flex; flex-direction: column; min-height: 100%; padding: 24px 20px; box-sizing: border-box; }
+.cx-home-core { flex: 0 0 auto; width: min(100%, 600px); margin: auto; text-align: center; }
+.cx-root .cx-home-omega { width: 88px; height: 88px; touch-action: none; color: var(--cx-phos); }
+.cx-home-mark, .cx-home-mark svg { width: 100%; height: 100%; }
+.cx-home-question { color: var(--cx-dim); margin: 18px 0 0; }
+.cx-root .cx-home-rest-apps { margin-top: 18px; min-height: 44px; padding: 8px 16px; border: 1px solid var(--cx-line); }
+.cx-home h1 { margin: 12px 0 26px; font-size: 20px; font-weight: 500; overflow-wrap: anywhere; }
+.cx-home-apps { list-style: none; padding: 0; margin: 18px 0 0; display: grid; gap: 12px; text-align: left; }
+.cx-home-apps button { width: 100%; min-height: 44px; border: 1px solid var(--cx-line); padding: 10px 16px; text-align: left; overflow-wrap: anywhere; }
+.cx-home-apps small { color: var(--cx-dim); }
+.cx-home-controls { display: flex; justify-content: center; gap: 20px; margin-top: 24px; }
+.cx-home-controls button, .cx-root .cx-home-more { min-height: 44px; padding: 8px 16px; border: 1px solid var(--cx-line); }
+.cx-home-more { margin-top: 14px; }
+.cx-home-waiting { margin-top: 16px; color: var(--cx-dim); }
+/* At home, the native prompt's choices occupy real space below the apps' scroll room. */
+.cx-phase-anchor:not([hidden]) ~ .cx-ask-zone .cx-ac { position: relative; inset: auto; margin-bottom: 6px; }
+.cx-home-back { position: fixed; right: 20px; top: 60px; z-index: 65; min-height: 44px; padding: 8px 16px; background: #010805; border: 1px solid #55a564; color: #86e398; font: 13px monospace; }
+html[data-shell-experience='construct'][data-shell-phase='rest'] .cx-root :is(.cx-answerer-line, .cx-hint) { display: none; }
+html[data-shell-experience='construct'][data-shell-phase='rest'] .cx-root .cx-cmd { border-color: var(--cx-line); }
+@media (max-height: 560px) { .cx-home { padding-block: 20px; } .cx-root .cx-home-omega { width: 60px; height: 60px; } }

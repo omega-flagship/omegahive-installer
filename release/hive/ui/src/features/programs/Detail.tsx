@@ -115,7 +115,7 @@ export function Detail({
         {flags.length > 0 && (
           <div className="mt-3 space-y-2">
             {flags.map((f) => (
-              <div key={f} className={cx('flex items-start gap-2.5 rounded-2xl border px-3.5 py-2.5', f === 'affected-by-correction' ? 'border-warn/30 bg-warn/[0.07]' : 'border-line bg-white/[0.03]')} role={f === 'affected-by-correction' ? 'alert' : undefined}>
+              <div key={f} className={cx('flex items-start gap-2.5 rounded-2xl border px-3.5 py-2.5', f === 'affected-by-correction' ? 'border-warn/30 bg-warn/[0.07]' : 'border-line bg-tint/[0.03]')} role={f === 'affected-by-correction' ? 'alert' : undefined}>
                 <Icon name="alert" size={16} className={cx('mt-0.5 shrink-0', f === 'affected-by-correction' ? 'text-warn' : 'text-ink-3')} />
                 <div className="min-w-0 text-[12.5px] leading-snug">
                   <div className="font-semibold text-ink">{FLAG_TEXT[f]?.label ?? f}</div>
@@ -239,7 +239,7 @@ export function Detail({
             <h3 className="eyebrow mb-2">In groups</h3>
             <div className="flex flex-wrap gap-1.5">
               {groups.map((g) => (
-                <span key={g.id} className="rounded-lg border border-line bg-white/[0.03] px-2 py-1 text-[12px] text-ink-2">
+                <span key={g.id} className="rounded-lg border border-line bg-tint/[0.03] px-2 py-1 text-[12px] text-ink-2">
                   {g.label ?? g.id} <span className="text-ink-4">· {g.items.length}</span>
                 </span>
               ))}
@@ -250,7 +250,7 @@ export function Detail({
         {item.atom && (
           <section className="mt-4" aria-label="Atom">
             <h3 className="eyebrow mb-2">Atom</h3>
-            <pre className="thin-scroll overflow-x-auto rounded-xl border border-line bg-black/30 px-3 py-2 font-mono text-[12px] text-ink-2">{item.atom}</pre>
+            <pre className="thin-scroll overflow-x-auto rounded-xl border border-line bg-shade/30 px-3 py-2 font-mono text-[12px] text-ink-2">{item.atom}</pre>
           </section>
         )}
       </div>

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { scanShown, scanShownTree } from './shownStrings.testkit'
 
 /**
- * Wording guard (the owner's standing rule): people never see "goal(s)" or "board(s)". The hive's words are Motivations
+ * Wording guard (Jon's standing rule): people never see "goal(s)" or "board(s)". The hive's words are Motivations
  * (the why) above Tasks (the work), and Canvas is a canvas. Internal identifiers, routes and API fields keep their
  * names; only strings shown to people are scanned: JSX text, the people-facing JSX attributes (aria-label, title,
  * placeholder, label and the like), strings inside JSX expressions, and the people-facing properties of objects
@@ -25,6 +25,8 @@ const ALLOWED: { at: string; why: string }[] = [
   { at: 'features/auditMap.ts', why: 'names API fields (review_by, goal.updated) in the engineering map' },
   { at: 'features/palette/navCommands.ts', why: 'search words, never shown: the old names still find Tasks and Motivations' },
   { at: 'lib/intent/features.ts', why: 'words people may type, never shown: the old names still reach Tasks' },
+  { at: 'forms/caseFile/fixture.ts', why: "sample case text about a library's board (its governing body), not the retired feature" },
+  { at: 'forms/lifeMap/sample.ts', why: "mirrors an app-declared action label; the app's owner renames it first" },
 ]
 const allowed = (rel: string, text: string) => ALLOWED.some((a) => (a.at.endsWith('/') ? rel.startsWith(a.at) : a.at === rel || a.at === `${rel}:${text}`))
 
@@ -61,7 +63,7 @@ describe('wording guard: no "goal" or "board" in what people see', () => {
 })
 
 /**
- * followups-r6 item 10 (the owner): minds were once called "dots", and the old word still showed. A shown "dot" or "dots"
+ * followups-r6 item 10 (Jon): minds were once called "dots", and the old word still showed. A shown "dot" or "dots"
  * meaning a mind fails, the same way. Not caught: the product name OmegaDot(s) (a letter before), code identifiers and
  * routes (features/dot, the route 'dot', DotPanel, data-dot, dot.ts: a letter, -, _, / or . touching it), and keys the
  * scanner never reads.

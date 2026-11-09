@@ -73,33 +73,39 @@ def _has_unescaped_quote(text):
     return False
 
 
-def _metta_expr_syntax_error(expr):
+def _metta_expr_syntax_error(expr, *, allow_triple=False):
     text = str(expr or "").strip()
     if not text:
         return "empty expression"
-    depth = 0
-    in_quote = False
-    escaped = False
-    for ch in text:
-        if in_quote:
+    depth, quote, escaped, i = 0, None, False, 0
+    while i < len(text):
+        ch = text[i]
+        if quote == "triple":
+            if text.startswith('"""', i) and not escaped:
+                quote = None
+                i += 3
+                continue
+        elif quote == "double":
             if ch == '"' and not escaped:
-                in_quote = False
-            escaped = ch == "\\" and not escaped
-            if ch != "\\":
-                escaped = False
+                quote = None
+        elif allow_triple and text.startswith('"""', i):
+            quote = "triple"
+            i += 3
             continue
-        if ch == '"':
-            in_quote = True
+        elif ch == '"':
+            quote = "double"
         elif ch == "(":
             depth += 1
         elif ch == ")":
             depth -= 1
             if depth < 0:
                 return "too many closing parentheses"
-    if in_quote:
+        escaped = ch == "\\" and not escaped if quote else False
+        i += 1
+    if quote is not None:
         return "unterminated string"
     if depth > 0:
-        return "unbalanced parentheses"
+        return "missing closing parenthesis"
     return ""
 
 

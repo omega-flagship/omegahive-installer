@@ -65,10 +65,12 @@ describe('UI variants', () => {
     }
   })
 
-  it('only offers looks that render correctly today', () => {
+  it('offers every seed look, light ones too (light-token round R1); a look that cannot be read is refused with its reason', () => {
     const blocked = SEED_VARIANTS.filter((v) => blockedReason(v)).map((v) => v.id)
-    expect(blocked).toEqual(['paper'])
+    expect(blocked).toEqual([])
     expect(blockedReason(DEFAULT_VARIANT)).toBeNull()
+    const unreadable = { ...DEFAULT_VARIANT, id: 'faint', colors: { ...DEFAULT_VARIANT.colors, void: '#ffffff', abyss: '#f4f4f4' } }
+    expect(blockedReason(unreadable)).toMatch(/can't be read: .+ is [\d.]+:1, and it needs [\d.]+:1/)
   })
 
   it('a layout override beats the variant, which beats the side rail', () => {

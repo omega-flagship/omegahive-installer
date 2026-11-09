@@ -1,3 +1,7 @@
+import { flushSync } from 'react-dom'
+import { useDraft } from '../drafts'
+import { usePhase, wakeIntoAsk } from '../../shell/phase'
+import { constructFieldPlace, useConstructFieldCaret, useConstructFieldPlace, useConstructFieldPart } from '../../features/ask/constructField'
 import { AnimatePresence, m } from 'framer-motion'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useHive, useReducedMotion, useRoute } from '../sdk'
@@ -9,6 +13,7 @@ import { Decode } from './Decode'
 import { useAskField, useSeen } from '../../features/ask/useAskField'
 import { guardComposing } from '../../features/ask/keys'
 import { PanelView } from '../../features/ask/ClassicAsk'
+import { AnswererInline } from '../../features/ask/AnswererPicker'
 import { Thread, ThreadHead, useThreadRows } from '../../features/ask/Thread'
 import { shownMind } from '../../features/ask/words'
 import { presenceCommand } from '../../features/ask/Presence'
@@ -46,7 +51,11 @@ const echoDispatch = ({ you, steering }: { you: string; steering: boolean }) => 
 }
 
 export function CommandLine({ phone }: { phone: boolean }) {
-  const f = useAskField({ experience: 'construct', forcedAsk, onDispatch: echoDispatch })
+  const binding = useMemo(bindEpoch, [])
+  const native = useConstructFieldPlace() === 'native'
+  const fieldPart = useConstructFieldPart()
+  const sharedDraft = useDraft('construct:ask')
+  const f = useAskField({ experience: 'construct', forcedAsk, onDispatch: echoDispatch, draft: sharedDraft, active: native })
   const value = f.value
   const setValue = f.change
   const [tab, setTab] = useState<TabRun | null>(null)
@@ -54,6 +63,7 @@ export function CommandLine({ phone }: { phone: boolean }) {
   const [draft, setDraft] = useState('')
   const [focused, setFocused] = useState(false)
   const input = useRef<HTMLInputElement>(null)
+  useConstructFieldCaret('native', input)
   const id = useId()
   const flash = useC((s) => s.flash)
   const mindId = useC((s) => s.mind)
@@ -71,14 +81,14 @@ export function CommandLine({ phone }: { phone: boolean }) {
   const sel = tab ? tab.i : 0
   const ghost = !tab && comp.token && cands[0] && cands[0].v.toLowerCase().startsWith(comp.token.toLowerCase()) ? cands[0].v.slice(comp.token.length) : ''
   const askList = asking && !f.panel ? f.list : []
-  const who = shownMind(f.thread?.mind.name ?? f.answerer)
+  const who = shownMind(f.answerer)
   const answer = useLatestAnswer()
   // what the orchestrator is doing right now, as the command a second operator would type
   const doing = useAskStore((s) => s.presence[s.presence.length - 1])
 
   useEffect(() => {
-    if (!phone) input.current?.focus({ preventScroll: true })
-  }, [phone])
+    if (!phone && native && !usePhase.getState().phased) input.current?.focus({ preventScroll: true })
+  }, [phone, native])
   // an identity change takes the earlier person's typing with it: the field, a Tab cycle's base, a recalled draft
   useEffect(
     () =>
@@ -96,17 +106,18 @@ export function CommandLine({ phone }: { phone: boolean }) {
       useC.subscribe((s, prev) => {
         if (s.cmdFocus === prev.cmdFocus) return
         const el = input.current
-        if (!el) return
+        if (!el || !native || !binding.current()) return
         if (s.cmdFocus.text != null) {
           setValue(s.cmdFocus.text)
           setTab(null)
         }
         el.focus({ preventScroll: true })
       }),
-    [setValue],
+    [setValue, native, binding],
   )
 
   const accept = (v: string, start = comp.start) => {
+    if (constructFieldPlace() !== 'native' || !binding.current()) return
     const next = value.slice(0, start) + v + ' '
     setValue(next)
     setTab(null)
@@ -114,6 +125,9 @@ export function CommandLine({ phone }: { phone: boolean }) {
   }
 
   const submit = () => {
+    if (constructFieldPlace() !== 'native' || !binding.current()) return
+    const phase = usePhase.getState()
+    if (phase.phased && phase.phase !== 'pro') flushSync(() => usePhase.getState().send('pro'))
     const v = value
     setTab(null)
     setHIdx(-1)
@@ -139,7 +153,7 @@ export function CommandLine({ phone }: { phone: boolean }) {
 
   const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
     // an IME's confirming key is the input method's: never a command, never an Ask (keys.ts; Kimi r2 #1)
-    if (guardComposing(e)) return
+    if (constructFieldPlace() !== 'native' || !binding.current() || guardComposing(e) || e.defaultPrevented) return
     const k = e.key
     // the Ask's own keys while a request is being typed: suggestions, the policy's panel, Esc stepping back
     if (asking || f.panel) {
@@ -244,8 +258,8 @@ export function CommandLine({ phone }: { phone: boolean }) {
     }
   }
 
-  const showList = focused && cands.length > 0 && (value.trim().length > 0 || tab != null)
-  const showAsk = focused && askList.length > 0
+  const showList = native && focused && cands.length > 0 && (value.trim().length > 0 || tab != null)
+  const showAsk = native && focused && askList.length > 0
   // what Enter may act on is what the prompt shows (enter.ts AskSeen): the Ask's lines, or its panel
   useSeen(f.declareSeen, showAsk, focused && !!f.panel)
   const listId = `${id}-ask`
@@ -260,9 +274,10 @@ export function CommandLine({ phone }: { phone: boolean }) {
   const controls = [showList ? cmdListId : '', showAsk ? listId : ''].filter(Boolean).join(' ') || undefined
   return (
     // the Ask's landmark here (one per page: the host's own floating line takes over only when a page covers this)
-    <section aria-label={covered ? undefined : 'Ask'} data-ask-zone="" data-skin="command-line" className="cx-ask-zone">
+    <section aria-hidden={!native || undefined} aria-label={covered ? undefined : 'Ask'} data-ask-zone="" data-skin="command-line" className="cx-ask-zone">
       <AnimatePresence>{threadOpen && !covered && <AskLog key="log" phone={phone} />}</AnimatePresence>
       <div data-xc-keep-clear="" className={`cx-cmd${focused ? ' is-focus' : ''}${asking ? ' is-ask' : ''}${f.answering ? ' is-answering' : ''}`}>
+        <div inert={!native || undefined}>
         <AnimatePresence>
           {(showList || showAsk || f.panel) && (
             <m.div key="ac" className="cx-ac" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }} transition={{ duration: 0.12 }}>
@@ -305,15 +320,17 @@ export function CommandLine({ phone }: { phone: boolean }) {
                         role="option"
                         aria-selected={c === f.active}
                         aria-label={sentence(c)}
-                        className={c === f.active ? 'is-sel' : ''}
+                        aria-describedby={c.pays ? `${id}-pay-${i}` : undefined}
+                        className={`${c === f.active ? 'is-sel' : ''}${c.act?.do === 'mind' ? ' is-mind' : ''}`}
                         onPointerDown={(e) => {
                           e.preventDefault()
                           void f.take(c)
                         }}
                         onMouseMove={() => i !== f.sel && f.setSel(i)}
                       >
-                        <span className="cx-c-cyan">{c.tag.toLowerCase().padEnd(6, ' ')}</span>
+                        {c.act?.do !== 'mind' && <span className="cx-c-cyan">{c.tag.toLowerCase()}</span>}
                         <span className="cx-c-txt">{sentence(c)}</span>
+                        {c.pays && <small id={`${id}-pay-${i}`} className="cx-c-dim cx-ask-pays" data-pays="">{c.pays}</small>}
                       </li>
                     ))}
                   </ul>
@@ -322,8 +339,12 @@ export function CommandLine({ phone }: { phone: boolean }) {
             </m.div>
           )}
         </AnimatePresence>
+        <div className="cx-answerer-line">
+          <AnswererInline look="construct" chip={f.chip ?? (f.answerer ? { kind: 'planned', name: f.answerer } : null)} answering={f.answering} />
+        </div>
         <div className="cx-hint" aria-live="polite">
-          {f.answering ? (
+          <span className="cx-hint-copy">
+          {f.answering ? (f.preparing ? null : (
             <span className="cx-ask-status">
               <span className="cx-c-cyan">{who.toLowerCase()}@hive</span> <span className="cx-spin" aria-hidden />{' '}
               {doing && doing.op === useAskStore.getState().open ? (
@@ -339,7 +360,7 @@ export function CommandLine({ phone }: { phone: boolean }) {
                 stop
               </button>
             </span>
-          ) : asking ? (
+          )) : asking ? (
             <>
               <span className="cx-c-cyan">ask </span>
               <span className="cx-c-dim">· not a command: enter asks the fast path, then {who.toLowerCase()} · </span>
@@ -377,6 +398,7 @@ export function CommandLine({ phone }: { phone: boolean }) {
               )}
             </span>
           )}
+          </span>
           <button type="button" className="cx-key cx-ask-toggle" onClick={() => useAskStore.getState().setThreadOpen(!threadOpen)} aria-expanded={threadOpen} aria-label={threadOpen ? 'Hide the ask log' : 'Show the ask log'}>
             {threadOpen ? 'log ×' : 'ask log'}
           </button>
@@ -392,7 +414,7 @@ export function CommandLine({ phone }: { phone: boolean }) {
               <span className="cx-ghost-v">{value}</span>
               {ghost}
             </span>
-            <input
+            {native ? <input
               ref={input}
               value={value}
               onChange={(e) => {
@@ -401,7 +423,7 @@ export function CommandLine({ phone }: { phone: boolean }) {
                 setHIdx(-1)
               }}
               onKeyDown={onKey}
-              onFocus={() => setFocused(true)}
+              onFocus={() => { if (!binding.current() || constructFieldPlace() !== 'native') return; if (usePhase.getState().phase === 'rest') wakeIntoAsk('type'); setFocused(true) }}
               onBlur={() => setFocused(false)}
               aria-label="Command line: type a command, or ask anything"
               aria-describedby="cx-cmd-help"
@@ -415,16 +437,18 @@ export function CommandLine({ phone }: { phone: boolean }) {
               autoCorrect="off"
               spellCheck={false}
               enterKeyHint="go"
+              data-ui-part={fieldPart}
               data-ask-input=""
               // resting mode: keys typed on the resting screen land here (the prompt is Construct's Ask)
               data-rest-type=""
               placeholder={focused ? '' : f.answering ? 'type to steer it while it works' : phone ? 'type a command, or ask' : 'press / to type a command, or just ask'}
-            />
+            /> : <span aria-hidden="true">{value || '\u00a0'}</span>}
           </span>
         </label>
         <span id="cx-cmd-help" hidden>
           Type a command such as help, ls minds, open a mind, say mind text; anything else is asked. Tab completes, up and down recall history.
         </span>
+        </div>
       </div>
     </section>
   )

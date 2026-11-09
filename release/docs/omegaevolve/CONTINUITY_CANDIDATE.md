@@ -1,5 +1,3 @@
-> **Closed Source for Product Consideration.** These notes document Evolve (`hive/plugins/omegaevolve`), a closed folder in this repository. Shared privately with the SingularityNET team. Do not publish, redistribute or relicense as open source. See `hive/plugins/omegaevolve/CLOSED_SOURCE.md`.
-
 # Source continuity and native research representation
 
 This candidate extends the installed 0.1.0 contribution registry to 0.2.0 on base `433c699f58d49d0998f57caec78b49dc3bd80567`, without modifying the active platform checkout.

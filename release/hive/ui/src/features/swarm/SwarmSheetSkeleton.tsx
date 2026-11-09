@@ -26,7 +26,7 @@ export function SwarmSheetSkeleton({ id }: { id: string }) {
       data-swarm-sheet="loading"
       className="xc-dress xc-page fixed inset-0 z-[25] flex flex-col overflow-hidden md:top-[var(--page-top,12px)] md:bottom-[var(--page-bottom,12px)] md:right-3 md:left-[var(--rail-x,84px)] md:rounded-[24px] md:border md:border-line"
       style={{
-        background: 'linear-gradient(180deg, var(--look-page-a, rgb(10 10 32 / 0.9)), var(--look-page-b, rgb(6 6 22 / 0.94)))',
+        background: 'linear-gradient(180deg, var(--look-page-a, color-mix(in oklab, var(--color-abyss) 90%, transparent)), var(--look-page-b, color-mix(in oklab, var(--color-void) 94%, transparent)))',
         backdropFilter: 'blur(24px) saturate(140%)',
         WebkitBackdropFilter: 'blur(24px) saturate(140%)',
       }}
@@ -47,9 +47,9 @@ export function SwarmSheetSkeleton({ id }: { id: string }) {
       </header>
       <div className="grid min-h-0 flex-1 gap-5 px-3 pb-6 md:grid-cols-[300px_1fr] md:px-6">
         <div className="hidden space-y-3 md:block" aria-hidden="true">
-          <div className="h-4 w-3/4 animate-pulse rounded bg-white/[0.06]" />
-          <div className="h-4 w-1/2 animate-pulse rounded bg-white/[0.06]" />
-          <div className="mt-6 h-24 animate-pulse rounded-2xl bg-white/[0.04]" />
+          <div className="h-4 w-3/4 animate-pulse rounded bg-tint/[0.06]" />
+          <div className="h-4 w-1/2 animate-pulse rounded bg-tint/[0.06]" />
+          <div className="mt-6 h-24 animate-pulse rounded-2xl bg-tint/[0.04]" />
         </div>
         <div className="flex min-h-[320px] items-center justify-center rounded-[20px] border border-line">
           <div className="eyebrow animate-pulse">Opening the commons…</div>

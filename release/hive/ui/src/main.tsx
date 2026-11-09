@@ -6,7 +6,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
 import { createClient } from './api/client'
-import { useHive } from './store/store'
+import { removeToasts, useHive } from './store/store'
 import { useIntro, welcomeNeeded } from './tour/introStore'
 import { installPower, type PowerHooks } from './features/power/store'
 import { shown } from './lib/displayName'
@@ -45,7 +45,8 @@ const powerHooks: PowerHooks = {
   woken: () => {
     const mark = offMark
     offMark = null
-    if (mark !== null) useHive.setState((s) => ({ toasts: s.toasts.filter((t) => t.id <= mark) }))
+    // through the notices' bookkeeping, so no timer or parked entry outlives its toast (Dot R3.1)
+    if (mark !== null) removeToasts((t) => t.id > mark)
     void useHive.getState().hydrate()
   },
   notify: (n) => useHive.getState().toast({ ...n, ttl: n.tone === 'error' ? 20_000 : 8000 }),

@@ -88,7 +88,7 @@ export default function CommandPalette() {
       { id: 'launch', group: 'Actions', label: 'Start a swarm', icon: 'sparkles', keywords: 'team swarm group create launch new start research build debate', run: go(() => navigate({ name: 'launch' })) },
       { id: 'new', group: 'Actions', label: 'Create a new mind', icon: 'plus', keys: ['N'], keywords: 'add spawn birth', run: go(() => navigate({ name: 'new' })) },
       { id: 'stop-all', group: 'Actions', label: 'Stop all minds…', icon: 'power', keywords: 'kill switch emergency halt stop-all panic', run: go(() => setStopAll(true)) },
-      ...(lookAvailable ? [{ id: 'change-ui', group: 'Actions' as const, label: 'Change UI: try a different experience, look or layout', icon: 'sparkles' as const, keywords: 'theme skin colour color layout dock top bar sidebar style appearance look design surface omegasurface reset default', run: go(() => openGallery(true)) }] : []),
+      ...(lookAvailable ? [{ id: 'change-ui', group: 'Actions' as const, label: 'Change experience: try a different experience, look or layout', icon: 'sparkles' as const, keywords: 'theme skin colour color layout dock top bar sidebar style appearance look design surface omegasurface reset default', run: go(() => openGallery(true)) }] : []),
       { id: 'tour', group: 'Actions', label: 'Replay the tour', icon: 'compass', hint: 'about 2 min', keywords: 'guide walkthrough intro help tutorial video onboarding learn', run: () => (close(), useIntro.getState().startTour({})) },
       { id: 'help', group: 'Actions', label: 'Help & shortcuts', icon: 'question', keys: ['?'], keywords: 'keys shortcuts help hotkeys', run: () => (close(), useIntro.getState().setHelp(true)) },
       { id: 'recenter', group: 'Actions', label: 'Recenter the camera', icon: 'locate', keywords: 'overview fit zoom', run: go(() => (navigate({ name: 'hive' }), useScene.getState().engine?.overview())) },
@@ -236,7 +236,7 @@ export default function CommandPalette() {
                   onPointerMove={() => setSel(i)}
                   className={cx('relative flex min-h-12 cursor-pointer items-center gap-3 rounded-xl px-3', i === sel ? 'text-ink' : 'text-ink-2')}
                 >
-                  {i === sel && <m.span layoutId="palette-sel" className="absolute inset-0 rounded-xl border border-line-2 bg-white/[0.08]" transition={{ type: 'spring', stiffness: 700, damping: 45 }} />}
+                  {i === sel && <m.span layoutId="palette-sel" className="absolute inset-0 rounded-xl border border-line-2 bg-tint/[0.08]" transition={{ type: 'spring', stiffness: 700, damping: 45 }} />}
                   <span className="relative flex w-6 justify-center text-ink-3">{c.lead ?? (c.icon && <Icon name={c.icon} size={18} />)}</span>
                   <span className="relative min-w-0 flex-1 truncate text-[14px]">{c.label}</span>
                   {c.hint && <span className="relative truncate text-[12px] text-ink-4">{c.hint}</span>}

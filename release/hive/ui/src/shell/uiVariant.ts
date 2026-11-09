@@ -1,7 +1,9 @@
 import { useSyncExternalStore } from 'react'
-import { setSceneBackdrop } from '../scene/engine'
+import { setSceneBackdrop, setSceneInk } from '../scene/engine'
 import { experienceById } from '../experiences/registry'
 import seeds from './uiVariants.seed.json'
+import { checkLook } from '../theme/themeCheck'
+import checkRules from '../theme/theme.rules.json'
 import { sha256 } from '../lib/askMemory/hash'
 
 /**
@@ -44,6 +46,11 @@ export interface UiPrefs {
   /** Inside apps: each app's own theme (default) or the identity set designed by Surface. */
   apps?: 'owner' | 'designed' | null
   /**
+   * Where this person lands in their look (Ask-and-apps contract R1.1 §7): awake (the Ω, the Ask and the apps) or Pro.
+   * Each principal's own row; absent means awake. Kept through every whole-preference write (carryLanding).
+   */
+  landing?: 'awake' | 'pro' | null
+  /**
    * A whole alternative front end (experiences/registry.ts); null is the Classic hive. `variant` stays the person's
    * own look throughout: an experience's companion look is worn while it is active (wornVariant), never stored.
    */
@@ -84,12 +91,30 @@ export const DEFAULT_VARIANT: UiVariant = {
 
 export const SEED_VARIANTS = seeds as UiVariant[]
 
-/** Light surfaces need the v2 token migration (hex and white-alpha literals assume dark). */
+/**
+ * Whether a look can be worn, and if not why. Light or dark doesn't matter (the light-token round made every surface
+ * follow the look); what matters is that it can be read. That is the theme's rules (theme/theme.metta via PeTTa): each
+ * token must stand out from what it is read against, a shortfall within the rules' limit is repaired, and a look that
+ * still falls short is refused with its reason, so a look a person makes can never hide the interface.
+ */
 export function blockedReason(v: UiVariant): string | null {
   if (v.needs) return v.needs
-  if (v.scheme === 'light') return 'Light themes need the next token update'
-  return null
+  const bad = COLOR_KEYS.find((k) => !lookColourOk(k, v.colors?.[k]))
+  if (bad) return `This look can't be worn: its ${bad} colour must be #rrggbb` + (TRANSLUCENT.has(bad) ? ' or rgb(r g b / a)' : '')
+  const f = checkLook(v.colors).failures[0]
+  if (!f) return null
+  return f.ratio === null ? `This look can't be read: ${f.token} on ${f.against} can't be measured` : `This look can't be read: ${f.token} on ${f.against} is ${f.ratio}:1, and it needs ${f.floor}:1`
 }
+
+// A look a person makes is data, held to the same shape as the host's check (core/ui_prefs.py) and the same rules file:
+// every colour is solid #rrggbb, except the ones the theme's rules let be see-through, which may also be rgb(r g b / a).
+const HEX6 = /^#[0-9a-f]{6}$/i
+const RGBA = /^rgb\(\s*\d{1,3}\s+\d{1,3}\s+\d{1,3}\s*\/\s*(0|1|0?\.\d{1,3})\s*\)$/
+const TRANSLUCENT = new Set<string>(checkRules.translucent)
+const lookColourOk = (k: string, c: unknown): boolean => typeof c === 'string' && (HEX6.test(c) || (TRANSLUCENT.has(k) && RGBA.test(c)))
+/** A font stack a look may set (the host's rule): letters, digits, spaces, commas, quotes and hyphens, naming a family. */
+const safeFont = (f: unknown): string | null =>
+  typeof f === 'string' && /^[A-Za-z0-9 ,'-]{1,200}$/.test(f) && f.split(',').some((part) => /[A-Za-z]/.test(part.replace(/[ ']/g, ''))) ? f : null
 
 /**
  * A look's density is its TEXT size (Kimi r1g P1): a factor on the type scale only, set as `--text-scale` (index.css
@@ -167,13 +192,20 @@ export function ownVariant(p: UiPrefs | null): UiVariant | null {
 export const wornVariant = (p: UiPrefs | null): UiVariant | null => ownVariant(p) ?? companionOf(p)
 
 /**
- * The one way to choose an experience (Change UI, the Ask, the guided demo, Ω → Back to the Classic hive): only
+ * The one way to choose an experience (Change experience, the Ask, the guided demo, Ω → Back to the Classic hive): only
  * the experience changes; the person's own look, layout and app identities are kept, so leaving restores them.
  * 'classic' and null both mean the Classic hive.
  */
+/** A whole-preference write keeps the person's landing unless it sets one itself (contract R1.1 #6; pure, tested). */
+export function carryLanding(next: UiPrefs, from: UiPrefs | null | undefined): UiPrefs {
+  // some callers hand a null look at run time (a reset to nothing); it passes through untouched, never throws
+  if (!next || next.landing !== undefined || !from?.landing) return next
+  return { ...next, landing: from.landing }
+}
+
 export function withExperience(p: UiPrefs | null, id: string | null): UiPrefs {
   const own = ownVariant(p)
-  return { variant: own && asOwnChoice(own, id), layout: p?.layout ?? null, apps: p?.apps ?? null, experience: id === 'classic' ? null : id }
+  return carryLanding({ variant: own && asOwnChoice(own, id), layout: p?.layout ?? null, apps: p?.apps ?? null, experience: id === 'classic' ? null : id }, p)
 }
 
 /** What "your look" is called: the experience while one is active (never its companion seed), else the look's own name. */
@@ -525,10 +557,27 @@ export function setLookBinder(b: () => { commit: LookCommit }): void {
 }
 const bound = (): LookCommit => binder().commit
 
+interface LookTransition { ready?: Promise<unknown>; finished?: Promise<unknown>; updateCallbackDone?: Promise<unknown> }
+/** A superseded look transition is expected; anything else still reaches the console. */
+const quietSkip = (e: unknown) => {
+  if ((e as { name?: string } | null)?.name !== 'AbortError') console.error(e)
+}
+
 function set(patch: Partial<LookState>) {
   if ('saved' in patch) settled = true
+  const before = typeof document === 'undefined' ? null : document.documentElement.dataset.uiVariant
   state = { ...state, ...patch }
-  applyLook(state.preview ?? state.saved)
+  const next = state.preview ?? state.saved, nextId = wornVariant(next)?.id ?? 'default'
+  // a change of look cross-fades (View Transitions), unless motion is reduced or the browser can't
+  const vt = typeof document !== 'undefined' ? (document as Document & { startViewTransition?: (cb: () => void) => LookTransition | undefined }).startViewTransition : undefined
+  const calm = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+  if (vt && !calm && before && before !== nextId) {
+    // each transition applies the look as it is when it runs, so a quick second change never lands under a stale one
+    const t = vt.call(document, () => applyLook(state.preview ?? state.saved))
+    // a second change before the first finishes skips the first, whose promises then reject with AbortError: that is
+    // the browser keeping up with the person, not a failure, so it is observed here and never left unhandled
+    for (const pr of [t?.ready, t?.finished, t?.updateCallbackDone]) pr?.catch(quietSkip)
+  } else applyLook(next)
   subs.forEach((f) => f())
 }
 
@@ -747,6 +796,7 @@ export function forgetLookOwner(): boolean {
  * shell/keepBound) and nothing is written on this page when the person changed while the save was on its way.
  */
 export async function keepLook(client: PrefsClient | null, p: UiPrefs, commit: LookCommit = bound()): Promise<KeepResult> {
+  p = carryLanding(p, state.saved)
   const n = ++issued
   if (state.deviceOnly) {
     showIf(n, () => {
@@ -988,12 +1038,13 @@ const OWNED = [
 const alpha = (hex: string, a: number) => `rgb(${parseInt(hex.slice(1, 3), 16)} ${parseInt(hex.slice(3, 5), 16)} ${parseInt(hex.slice(5, 7), 16)} / ${a})`
 
 export function lookVars(v: UiVariant): Record<string, string> {
-  const c = v.colors
+  const c = checkLook(v.colors).colors as UiVariant['colors']   // the colours as the theme's rules allow them (repaired if they fell short)
   const out: Record<string, string> = {}
   for (const k of COLOR_KEYS) out[`--color-${k}`] = c[k]
-  if (v.fonts?.display) out['--font-display'] = v.fonts.display
-  if (v.fonts?.sans) out['--font-sans'] = v.fonts.sans
-  if (v.fonts?.mono) out['--font-mono'] = v.fonts.mono
+  for (const [slot, f] of [['display', v.fonts?.display], ['sans', v.fonts?.sans], ['mono', v.fonts?.mono]] as const) {
+    const font = safeFont(f)
+    if (font) out[`--font-${slot}`] = font                       // a font string that isn't a plain stack is left out, not applied
+  }
   Object.assign(out, RADIUS[v.radius] ?? {})
   out['--look-page-a'] = alpha(c.abyss, 0.9)
   out['--look-page-b'] = alpha(c.void, 0.94)
@@ -1019,6 +1070,8 @@ export function applyLook(p: UiPrefs | null): void {
   if (v) for (const [k, val] of Object.entries(lookVars(v))) root.style.setProperty(k, val)
   root.dataset.uiLayout = effectiveLayout(p)
   root.dataset.uiVariant = v?.id ?? 'default'
+  root.style.colorScheme = v?.scheme ?? 'dark'                                   // native controls, scrollbars and form fields follow the look
+  root.dataset.uiScheme = v?.scheme ?? 'dark'
   if (v) root.dataset.uiMotion = v.motion
   else delete root.dataset.uiMotion
   // text size through the type scale only; the root rem (and so every spacing and hit target) stays as it is
@@ -1027,7 +1080,10 @@ export function applyLook(p: UiPrefs | null): void {
   for (const [k, val] of Object.entries(scaled)) root.style.setProperty(k, val)
   if (v && scaled['--text-scale']) root.dataset.uiDensity = v.density
   else delete root.dataset.uiDensity
-  setSceneBackdrop(v ? [v.colors.abyss, v.colors.abyss, v.colors.void] : null)
+  // the scene gets the same colours as the page: repaired where the theme's rules repaired them
+  const c = v ? checkLook(v.colors).colors : null
+  setSceneBackdrop(c ? [c.abyss, c.abyss, c.void] : null)
+  setSceneInk(c ? { ink: c.ink, ink2: c['ink-2'], bad: c.bad } : null)   // names drawn into the scene follow the look's ink
 }
 
 applyLook(state.saved)

@@ -1,6 +1,6 @@
 """J3 host R8.3: a hooked Studio app attaches a person's own maker only through its own member_attach declaration.
 
-Dot -> Design / Surface contract (2026-10-20, coordination/inbox/...-member-attach-fix-contract.md): the live Design app
+Dot -> Design / Surface contract (2026-10-20, the member-attach fix contract): the live Design app
 0.4.20 defines offer/bind/unbind, pure and admin-only (``_attachment_admin``), so host ca84ecb2 refused every member's
 own maker (template_ready False, 409 studio_maker_attach_unsupported) and the Ask never offered "Draw live with a mind".
 R8.3, for the configured Studio program only: a hooked app is attachable by the host IF AND ONLY IF it exports a valid
@@ -28,7 +28,7 @@ from hive.tests.test_studio_session_g1 import MIA, PIN, err, s  # noqa: F401
 OFFERED = ["trace", "motion"]                   # the shape of 0.4.20's describe(): every op agents True but save-source
 VALID = {"actions": ["trace", "motion"], "channels": []}
 REAL_0420 = pathlib.Path(os.environ.get("OMEGADESIGN_0420_DIR",
-                                        "/path/to/OmegaHive/.runtime/omegadesign-release/0.4.20"))
+                                        pathlib.Path.home() / "OmegaDot" / ".runtime" / "omegadesign-release" / "0.4.20"))
 _ABSENT = object()
 
 
@@ -151,7 +151,7 @@ def test_R83_the_person_binding_swarm_and_owner_checks_are_unchanged_for_a_decla
     # a live non-host attachment of the mind (e.g. an admin's) is already_attached, as before
     hive.db.insert("app_attachments", {"id": "at_other", "program": PROGRAM, "swarm": mia["swarm_id"], "mind": mia["id"],
                                        "actor": "x", "scope": json.dumps(VALID), "policy": "{}", "expires": None,
-                                       "status": "binding", "by_person": "user:u_quinn", "revoked_by": None,
+                                       "status": "binding", "by_person": "user:u_jon", "revoked_by": None,
                                        "request_key": "admin-1", "payload_digest": "d", "binding": None})
     with pytest.raises(Exception) as e:
         attach(PROGRAM, mia["id"], MIA)
@@ -285,7 +285,7 @@ def test_R83_reconcile_and_an_admin_revoke_end_a_declared_row_without_hooks_and_
     R3.on_loop(p, hive.app_attachments.reconcile)
     att = host_row(hive, m["id"])
     assert att["status"] == "active"
-    r = p.client.delete(f"/api/programs/{PROGRAM}/attachments/{att['id']}", headers=p.quinn)
+    r = p.client.delete(f"/api/programs/{PROGRAM}/attachments/{att['id']}", headers=p.jon)
     assert r.status_code == 200, r.text
     assert hive.db.one("SELECT status FROM app_attachments WHERE id = ?", (att["id"],))["status"] == "revoked"
     # an unbind_pending host row (e.g. a crash mid-revoke) is finished by reconcile, without hooks
@@ -307,7 +307,7 @@ def test_R83_a_deleted_maker_a_disabled_person_and_the_sweep_end_declared_rows_w
     setup(p)
     m2 = maker_of(p)
     assert host_row(hive, m2["id"])["status"] == "active"
-    assert p.client.patch("/api/people/u_mia", headers=p.quinn, json={"disabled": True}).status_code == 200
+    assert p.client.patch("/api/people/u_mia", headers=p.jon, json={"disabled": True}).status_code == 200
     assert hive.db.one("SELECT deleted FROM agents WHERE id = ?", (m2["id"],))["deleted"] == 1
     assert host_row(hive, m2["id"])["status"] == "revoked"
     setup(p, p.bob)
@@ -351,6 +351,6 @@ def test_R83_the_actual_0420_module_is_refused_and_with_a_0421_shaped_declaratio
     att = host_row(hive, maker_of(p)["id"])
     assert (att["status"], att["actor"]) == ("active", HOST_ACTOR)
     assert json.loads(att["scope"]) == {"actions": offered, "channels": []}
-    assert p.client.delete(f"/api/programs/{PROGRAM}/attachments/{att['id']}", headers=p.quinn).status_code == 200
+    assert p.client.delete(f"/api/programs/{PROGRAM}/attachments/{att['id']}", headers=p.jon).status_code == 200
     assert hive.db.one("SELECT status FROM app_attachments WHERE id = ?", (att["id"],))["status"] == "revoked"
     assert calls == []

@@ -1,0 +1,418 @@
+/*
+ * Cosmos rest and awake (CANDIDATE, cosmos-rest-r1): the DOM that follows the one scene. Cosmos's own vocabulary:
+ * near-black blue space, warm stellar light, cool cyan navigation, the wide geometric face, fine corner brackets and
+ * dark holographic glass. The scene writes the Ω's screen point into --cx-ox / --cx-oy every frame.
+ */
+.cxp {
+  --cxp-wide: 'Futura', 'Avenir Next', 'Century Gothic', 'Josefin Sans', system-ui, sans-serif;
+  --cxp-mono: 'IBM Plex Mono', 'SF Mono', ui-monospace, Menlo, monospace;
+  --cxp-ink: #eef4ff;
+  --cxp-ink-2: #c3d1ec;
+  --cxp-ink-3: #9db0d3;
+  --cxp-accent: #7cc4ff;
+  --cxp-warm: #ffd2a1;
+  --cxp-line: rgba(160, 196, 255, 0.3);
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+  color: var(--cxp-ink);
+  font-family: 'Avenir Next', 'Avenir', 'Futura', 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  /* the layer keeps the browser's own pan and pinch-zoom (a person who zooms to read keeps that, Kimi r1 #3); the sky's
+     gesture surface and the Ω read one-finger swipes themselves and keep pinch-zoom */
+  touch-action: pan-x pan-y pinch-zoom;
+}
+.cxp[data-on='1'] {
+  pointer-events: auto;
+}
+.cxp-surface {
+  position: absolute;
+  inset: 0;
+  /* one finger is the sky's (a swipe or a drag, read by the page); two fingers stay the browser's pinch-zoom (stand-in r2 #1) */
+  touch-action: pinch-zoom;
+}
+.cxp-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.cxp button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.cxp button:focus-visible {
+  outline: 1.5px solid var(--cxp-accent);
+  outline-offset: 3px;
+}
+
+/* ---- every part arrives in its turn and leaves together (rest and awake are one layer each) */
+.cxp > :not(.cxp-surface):not(.cxp-sr) {
+  opacity: 0;
+  transition: opacity 0.26s ease;
+}
+.cxp[data-on='1'] > :not(.cxp-surface):not(.cxp-sr) {
+  opacity: 1;
+}
+
+/* ---- the Ω: a real button over the star the scene draws (the star itself is light, not a picture) */
+.cxp-omega {
+  position: absolute;
+  left: var(--cx-ox, 50%);
+  top: var(--cx-oy, 46%);
+  width: 168px;
+  height: 168px;
+  margin: -84px 0 0 -84px;
+  border-radius: 50%;
+  touch-action: pinch-zoom;
+}
+.cxp .cxp-omega:focus-visible {
+  outline: none;
+}
+/* the named Ω is the living brand mark in Cosmos's material, over the scene's star (Ask-and-apps contract R1.1 §6);
+   when it can't run (no WebGL, reduced data) the fallback is nothing, and the scene's own star stays the Ω */
+.cxp-omega-live {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+/* fine corner brackets close in round the star on hover and focus: Cosmos's reticle, never a disk behind the light */
+.cxp-omega-mark {
+  position: absolute;
+  inset: 26px;
+  opacity: 0;
+  transform: scale(1.25);
+  transition: opacity 0.3s ease, transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+  background:
+    linear-gradient(var(--cxp-accent), var(--cxp-accent)) top left / 10px 1.5px no-repeat,
+    linear-gradient(var(--cxp-accent), var(--cxp-accent)) top left / 1.5px 10px no-repeat,
+    linear-gradient(var(--cxp-accent), var(--cxp-accent)) top right / 10px 1.5px no-repeat,
+    linear-gradient(var(--cxp-accent), var(--cxp-accent)) top right / 1.5px 10px no-repeat,
+    linear-gradient(var(--cxp-accent), var(--cxp-accent)) bottom left / 10px 1.5px no-repeat,
+    linear-gradient(var(--cxp-accent), var(--cxp-accent)) bottom left / 1.5px 10px no-repeat,
+    linear-gradient(var(--cxp-accent), var(--cxp-accent)) bottom right / 10px 1.5px no-repeat,
+    linear-gradient(var(--cxp-accent), var(--cxp-accent)) bottom right / 1.5px 10px no-repeat;
+}
+.cxp-omega:hover .cxp-omega-mark,
+.cxp-omega:focus-visible .cxp-omega-mark {
+  opacity: 0.85;
+  transform: none;
+}
+
+/* ---- rest: the faint question */
+.cxp-question {
+  position: absolute;
+  left: var(--cx-ox, 50%);
+  top: calc(var(--cx-oy, 46%) + 70px);
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(86vw, 520px);
+  min-height: 44px;
+  padding: 10px 14px;
+  text-align: center;
+  font-family: var(--cxp-wide);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.9;
+  text-transform: uppercase;
+  letter-spacing: 0.38em;
+  /* quiet in hierarchy, not in contrast: #9db0d3 is 8:1 on the night sky */
+  color: var(--cxp-ink-3);
+  text-shadow: 0 0 18px rgba(1, 2, 8, 0.9);
+}
+.cxp-rest[data-on='1'] .cxp-question {
+  transition: opacity 1.2s ease 0.35s, color 0.3s;
+}
+.cxp-question:hover {
+  color: var(--cxp-ink-2);
+}
+
+/* ---- awake: the name, its status, the apps, Pro and power, in the order the light reaches them */
+.cxp-awake[data-on='1'] .cxp-name { transition: opacity 0.5s ease 0.3s; }
+.cxp-awake[data-on='1'] .cxp-apps { transition: opacity 0.45s ease 0.55s; }
+.cxp-awake[data-on='1'] .cxp-allapps { transition: opacity 0.45s ease 0.8s; }
+.cxp-awake[data-on='1'] .cxp-pro,
+.cxp-awake[data-on='1'] .cxp-power { transition: opacity 0.45s ease 0.85s; }
+
+.cxp-name {
+  position: absolute;
+  left: var(--cx-ox, 50%);
+  top: calc(var(--cx-oy, 46%) + 78px);
+  transform: translateX(-50%);
+  text-align: center;
+  pointer-events: none;
+}
+.cxp-name-word {
+  margin: 0;
+  font-family: var(--cxp-wide);
+  font-size: 24px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.34em;
+  /* the letter spacing trails the last letter: centre the word optically */
+  padding-left: 0.34em;
+  color: var(--cxp-ink);
+  white-space: nowrap;
+  text-shadow: 0 0 22px rgba(255, 196, 140, 0.32), 0 1px 10px rgba(1, 2, 8, 0.95);
+}
+.cxp-status {
+  margin: 10px 0 0;
+  font-family: var(--cxp-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  /* readable, not a readout: brighter ink, sentence words (quality pass r1) */
+  color: var(--cxp-ink-2);
+  white-space: nowrap;
+  text-shadow: 0 1px 8px rgba(1, 2, 8, 0.95);
+}
+.cxp-waiting {
+  pointer-events: auto;
+  min-height: 32px;
+  padding: 0 4px !important;
+  color: #ffc36b !important;
+  letter-spacing: inherit;
+  text-transform: inherit;
+}
+
+.cxp-apps {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  pointer-events: none;
+}
+.cxp-app-slot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  will-change: transform;
+}
+.cxp-app {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 0 10px !important;
+  transform: translate(calc(-50% + var(--cxp-nudge, 0px)), 10px);
+  white-space: nowrap;
+  font-family: var(--cxp-wide);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0.03em;
+  /* quiet beside the Ω: sentence case, no rule, a soft ink; the app's own colour is its body (quality pass r1) */
+  color: var(--cxp-ink-2) !important;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.95), 0 0 2px rgba(0, 0, 0, 0.9);
+  background: radial-gradient(ellipse at center, rgba(1, 3, 12, 0.45), rgba(1, 3, 12, 0.18) 52%, transparent 76%) !important;
+}
+.cxp-app-slot[data-side='t'] .cxp-app { transform: translate(calc(-50% + var(--cxp-nudge, 0px)), calc(-100% - 10px)); }
+.cxp-app-slot[data-side='l'] .cxp-app { transform: translate(calc(-100% - 14px), -50%); }
+.cxp-app-slot[data-side='r'] .cxp-app { transform: translate(14px, -50%); }
+.cxp-app-name {
+  transition: color 0.2s ease, text-shadow 0.2s ease;
+}
+.cxp-app:hover .cxp-app-name,
+.cxp-app:focus-visible .cxp-app-name {
+  color: #fff;
+  text-shadow: 0 0 14px color-mix(in srgb, var(--cxp-hue, #7cc4ff) 80%, transparent), 0 1px 10px rgba(0, 0, 0, 0.95);
+}
+.cxp-badge {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid color-mix(in srgb, var(--cxp-hue, #7cc4ff) 80%, transparent);
+  border-radius: 50%;
+  font-family: var(--cxp-wide);
+  font-size: 9.5px;
+  letter-spacing: 0;
+  color: var(--cxp-ink);
+}
+
+/* rest: apps one press away in every look (Jon 2 Nov), quieter than the question, in the awake list's own type */
+.cxp-rest-apps {
+  position: absolute;
+  left: var(--cx-ox, 50%);
+  top: calc(var(--cx-oy, 46%) + 124px);
+  transform: translateX(-50%);
+  min-height: 44px;
+  padding: 0 14px !important;
+  font-family: var(--cxp-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--cxp-ink-2) !important;
+  white-space: nowrap;
+}
+.cxp-rest-apps:hover { color: #fff !important; }
+.cxp-allapps {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--ask-room, 96px) + 8px);
+  transform: translateX(-50%);
+  min-height: 40px;
+  padding: 0 12px !important;
+  font-family: var(--cxp-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--cxp-ink-2) !important;
+  white-space: nowrap;
+}
+.cxp-allapps:hover { color: #fff !important; }
+
+/* Pro: top right, one small holographic tab. Power: bottom left, beside the shell's Ω. */
+.cxp-pro,
+.cxp-power {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  border: 1px solid var(--cxp-line) !important;
+  background: rgba(6, 10, 24, 0.55) !important;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: var(--cxp-ink-2) !important;
+}
+.cxp-pro {
+  top: calc(14px + env(safe-area-inset-top, 0px));
+  right: calc(14px + env(safe-area-inset-right, 0px));
+  padding: 0 14px !important;
+  font-family: var(--cxp-wide);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+}
+.cxp-pro span { padding-left: 0.34em; }
+.cxp-power {
+  left: calc(62px + env(safe-area-inset-left, 0px));
+  bottom: calc(12px + var(--sab, 0px));
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+}
+/* a thread pinned beside the view (desktop) or a side sheet (landscape): Pro moves beside power, bottom left, clear of
+   the thread's column and of the notices that stack at the top (r1 smoke; r2) */
+/* beside a pinned thread the free area is narrow: app names wrap to two short lines, as on a phone */
+html[data-ask-side] .cxp-app {
+  white-space: normal;
+  max-width: 150px;
+  text-align: center;
+  justify-content: center;
+  line-height: 1.5;
+  padding: 4px 6px !important;
+}
+html[data-ask-side] .cxp-pro {
+  top: auto;
+  right: auto;
+  left: calc(116px + env(safe-area-inset-left, 0px));
+  bottom: calc(12px + var(--sab, 0px));
+}
+@media (pointer: coarse) {
+  .cxp-power { left: calc(60px + env(safe-area-inset-left, 0px)); bottom: calc(8px + var(--sab, 0px)); }
+  .cxp-pro { min-height: 44px; }
+}
+.cxp-pro:hover,
+.cxp-power:hover {
+  color: #fff !important;
+  border-color: var(--cxp-accent) !important;
+  box-shadow: 0 0 18px -6px var(--cxp-accent);
+}
+
+@media (max-width: 600px) {
+  /* inside the orbit on a phone: the name and its status stay within the ring, clear of the bodies passing below */
+  .cxp-omega { width: 132px; height: 132px; margin: -66px 0 0 -66px; }
+  .cxp-name { top: calc(var(--cx-oy, 46%) + 58px); }
+  .cxp-name-word { font-size: 18px; letter-spacing: 0.3em; padding-left: 0.3em; }
+  .cxp-status { white-space: normal; max-width: 180px; margin: 6px auto 0; font-size: 11px; line-height: 1.5; }
+  .cxp-question { font-size: 11px; letter-spacing: 0.3em; }
+  /* a phone's names wrap to two short lines and stay inside the screen */
+  .cxp-app { white-space: normal; max-width: 150px; text-align: center; justify-content: center; letter-spacing: 0.02em; font-size: 11px; line-height: 1.35; padding: 4px 6px !important; }
+}
+
+/* reduced motion: every change is a cut; the words are all still there */
+.cxp[data-reduced='1'] > *,
+.cxp[data-reduced='1'] .cxp-omega-mark {
+  transition: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cxp > *,
+  .cxp .cxp-omega-mark {
+    transition: none !important;
+  }
+}
+
+/* Pro's own chrome while rest or awake is in front: kept mounted (scroll, drafts and the deck's page all stay as they
+   were), unseen and unreachable. Opacity, not visibility: the scene's labels set their own visibility each frame. */
+.cx[data-phase]:not([data-phase='pro']) .cx-pro-layer {
+  opacity: 0 !important;
+  transition: opacity 0.2s ease !important;
+}
+.cx[data-phase='pro'] .cx-pro-layer {
+  transition: opacity 0.5s ease 0.65s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cx[data-phase] .cx-pro-layer { transition: none !important; }
+}
+
+/* the scene's own recovery note, in rest and awake, sits at the top under Pro: clear of the one field and of everything
+   the field opens above itself (its suggestions, its thread), so it stays readable while a person types (r2) */
+.cx[data-phase]:not([data-phase='pro']) .cx-gl-note {
+  top: calc(64px + env(safe-area-inset-top, 0px));
+  bottom: auto;
+  z-index: 31;
+}
+
+/* activated Cosmos only (data-gl is set only when phased): a lost graphics context leaves the canvas blank (white in some
+   browsers), so the dark sky shows instead until the scene is rebuilt (r2; r2.1 moved here: released Cosmos is unchanged) */
+.cx[data-gl='lost'] canvas { visibility: hidden; }
+
+/* Pro's own "Igniting stars" loader sits where the Ω and its name are in rest and awake: there the Ω itself is the
+   sign of life, so the loader's words and ping step aside (quality pass r1: they overlapped the name) */
+html[data-shell-phase='rest'] [data-cx-ignition] > *,
+html[data-shell-phase='awake'] [data-cx-ignition] > * {
+  visibility: hidden;
+}
+
+/* quality pass r1: app labels wait for their place (no pile in the corner while the scene lights), and the name and
+   status keep their contrast over a bright core with a soft dark wash behind them */
+.cxp-app-slot:not([style*='translate']) {
+  visibility: hidden;
+}
+.cxp-name::before {
+  content: '';
+  position: absolute;
+  inset: -14px -28px;
+  z-index: -1;
+  background: radial-gradient(ellipse at center, rgba(1, 3, 12, 0.55), rgba(1, 3, 12, 0.22) 55%, transparent 78%);
+  pointer-events: none;
+}
+
+/* the rest's one quiet count of notices waiting for the wake (no toasts at rest; shell/restNotices) */
+.cxp-rest-waiting {
+  position: absolute;
+  left: var(--cx-ox, 50%);
+  top: calc(var(--cx-oy, 46%) + 116px);
+  transform: translateX(-50%);
+  margin: 0;
+  font-family: var(--cxp-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: #ffc36b;
+  opacity: 0.8;
+  pointer-events: none;
+  text-shadow: 0 1px 8px rgba(1, 2, 8, 0.95);
+}

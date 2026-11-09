@@ -1,3 +1,5 @@
+import { healthCheck } from '../../lib/healthQuestion'
+import { HEALTH_CHECK, HealthCheckLabel } from '../../ui/HealthCheckLabel'
 import { m } from 'framer-motion'
 import { useDraft } from '../drafts'
 import { memo, useEffect, useMemo, useRef, type KeyboardEvent } from 'react'
@@ -74,6 +76,7 @@ export function Reading({ id, onClose }: { id: string; onClose: () => void }) {
   }
 
   const who = (msg: Message) => {
+    if (healthCheck(msg)) return { label: HEALTH_CHECK, me: false }
     if (msg.direction === 'out') return { label: name, me: false }
     if (msg.sender.startsWith('agent:')) return { label: shown(names.get(msg.sender.slice(6))) || 'Another mind', me: false }
     return { label: 'You', me: true }
@@ -237,7 +240,7 @@ const Row = memo(function Row({ msg, label, me, delay, when, reduced }: { msg: M
   return (
     <m.article className="st-msg" data-me={me} initial={reduced ? false : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={reduced ? { duration: 0 } : { ...ROW_SPRING, delay }}>
       <div className="st-msg-who">
-        <b>{label}</b>
+        <b>{healthCheck(msg) ? <HealthCheckLabel className="" /> : label}</b>
         <span>{when}</span>
       </div>
       <Prose text={msg.text} />

@@ -1,0 +1,40 @@
+; The shell's states and its own parts (shell/phase.ts). One owner for every look: the state, the one Ask and the
+; power to rest are the shell's; each look only presents them (UiOwnedBy).
+
+(UiState rest)
+(UiState awake)
+(UiState pro)
+
+(UiNext rest awake wake)
+(UiNext awake rest settle)
+(UiNext awake pro fly-out)
+(UiNext pro awake fly-in)
+(UiNext pro rest settle)
+
+(UiSharedRole ω)
+(UiSharedRole question)
+(UiSharedRole field)
+(UiSharedRole apps)
+(UiSharedRole pro-gesture)
+(UiSharedRole power)
+
+(UiPart shell any phase)
+(UiRole (UiPart shell any phase) state)
+(UiIn (UiPart shell any phase) rest)
+(UiIn (UiPart shell any phase) awake)
+(UiIn (UiPart shell any phase) pro)
+(UiImpl (UiPart shell any phase) zustand usePhase)
+(UiSource usePhase "shell/phase.ts")
+(UiDoc (UiPart shell any phase) "Which of rest, awake and Pro this view is in, and the rules for moving between them. Resting is this view only: minds keep working.")
+(UiHistory (UiPart shell any phase) cosmos-rest-r1 added "2026-10-17")
+
+(UiPart shell any field)
+(UiRole (UiPart shell any field) field)
+(UiIn (UiPart shell any field) awake)
+(UiIn (UiPart shell any field) pro)
+(UiImpl (UiPart shell any field) react AskHost)
+(UiSource AskHost "features/ask/AskHost.tsx")
+(UiSlot (UiPart shell any field) skin)
+(UiIntent (UiPart shell any field) ask.field)
+(UiDoc (UiPart shell any field) "The one Ask: one field, one thread, one identity, in every look and state. Hidden at rest, never remounted; a key typed at rest lands in it.")
+(UiHistory (UiPart shell any field) cosmos-rest-r1 added "2026-10-17")

@@ -1,6 +1,6 @@
 /**
  * The Ask's plain words. Refusals are said by the page, from the closed reason set (Host §7.2); the host's own text
- * is never shown, and neither is any raw error. The answering mind is never called Omega (the owner's ruling; the host
+ * is never shown, and neither is any raw error. The answering mind is never called Omega (Jon's ruling; the host
  * enforces it on the thread label and the page mirrors it).
  */
 import type { DoneOutcome, RefusalReason } from '../../api/ask'
@@ -12,7 +12,7 @@ export interface Offer {
   label: string
 }
 
-/** The owner 2026-10-05: an Ask thread starts at $0.25 and the person may raise it to $5. The page never sends more. */
+/** Jon 2026-10-05: an Ask thread starts at $0.25 and the person may raise it to $5. The page never sends more. */
 export const THREAD_LIMIT_MAX_USD = 5
 /** The steps offered when raising the limit for new threads (never above the host's maximum, never above $5). */
 export const RAISE_STEPS_USD = [1, 2, 5] as const
@@ -187,14 +187,14 @@ export function refusalOf(code: unknown): RefusalReason {
   return typeof code === 'string' && code in REFUSAL_WORDS ? (code as RefusalReason) : code === 'not_found' || code === 'wrong_route' || code === 'bad_request' ? 'invalid' : 'not_available'
 }
 
-/** The answering mind's name as shown. Never presented as Omega (Ω is the hive's mark; Omega is the name of one particular mind). */
+/** The answering mind's name as shown. Never presented as Omega (Ω is the hive's mark; Omega is a family member). */
 export function shownMind(name: string | null | undefined): string {
   const n = (name ?? '').trim()
   if (!n || /^\s*omega\s*$/i.test(n) || /^Ω$/.test(n)) return 'the orchestrator'
   return n.slice(0, 60)
 }
 
-/** "Vega", "Vega about Altair": the thread's label (the owner's ruling: the orchestrator, about the addressed mind). */
+/** "Vega", "Vega about Altair": the thread's label (Jon's ruling: the orchestrator, about the addressed mind). */
 export function threadLabel(mind: string | null | undefined, about?: string | null): string {
   const m = shownMind(mind)
   return about ? `${m} about ${shownMind(about)}` : m

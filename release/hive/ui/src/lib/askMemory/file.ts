@@ -1,5 +1,5 @@
 /**
- * Memory durability M1 (the owner, 2026-10-08: "We need to ensure the local browser version doesn't loose its memory when
+ * Memory durability M1 (Jon, 2026-10-08: "We need to ensure the local browser version doesn't loose its memory when
  * cache is cleared"): the person's own copy of what their mind remembers, as one versioned JSON file they download,
  * and restore from. Nothing here makes a request: the file goes from this browser to the person's disk and back.
  *

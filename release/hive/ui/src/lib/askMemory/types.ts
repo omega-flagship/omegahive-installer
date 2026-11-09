@@ -1,5 +1,5 @@
 /**
- * The Ask's own memory of the person, kept only in their browser (the owner, 2026-10-07: "keep the memory local on the
+ * The Ask's own memory of the person, kept only in their browser (Jon, 2026-10-07: "keep the memory local on the
  * browser side and put cloud hosted memory coming soon"). The hive stores nothing about the person: it sends a live
  * `memory` frame for this browser to keep, and this browser sends a few recalled notes back with each Ask turn
  * (`memory_notes`). Shapes here are this browser's; nothing in this folder makes a request of its own.
@@ -77,7 +77,7 @@ export interface Note {
 }
 
 /**
- * One exchange the person had with a swarm, remembered "like I would" (the owner, 2026-10-08) without waking their personal
+ * One exchange the person had with a swarm, remembered "like I would" (Jon, 2026-10-08) without waking their personal
  * mind: the hive holds a copy only until this browser collects it (GET /api/me/mind/inbox), then this browser keeps
  * it and the hive deletes it (POST /api/me/mind/inbox/ack). Read-only here; the person may forget it.
  */
