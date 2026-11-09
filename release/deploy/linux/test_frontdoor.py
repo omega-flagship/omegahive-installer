@@ -566,6 +566,23 @@ class FixedBrowserRuntimeTests(unittest.TestCase):
                         with self.assertRaises(module.Refused): module.runtime(str(path))
 
 
+class TemplateIdMatchesHiveTests(unittest.TestCase):
+    """The Studio maker template id check in serve.py and control.py accepts exactly the hive's agent ids."""
+
+    def test_launchers_accept_what_the_hive_mints(self):
+        import re
+        hive = (HERE.parent.parent / 'hive' / 'core' / 'studio_sessions.py').read_text(encoding='utf-8')
+        agent_id = re.compile(re.search(r'AGENT_ID = re\.compile\(r"([^"]+)"\)', hive).group(1))
+        samples = ['a_1234abcd', 'a_' + '0123456789abcdef' * 2, 'a_1234abc', 'a_' + 'f' * 31,
+                   'a_' + 'f' * 33, 'a_1234ABCD', 'b_1234abcd', 'a_synthetic']
+        for name in ('serve.py', 'control.py'):
+            source = (HERE / name).read_text(encoding='utf-8')
+            pattern = re.search(r"re\.fullmatch\('(a_[^']+)', template\)", source).group(1)
+            for sample in samples:
+                with self.subTest(file=name, sample=sample):
+                    self.assertEqual(bool(re.fullmatch(pattern, sample)), bool(agent_id.fullmatch(sample)))
+
+
 if __name__ == '__main__':
     unittest.main()
 

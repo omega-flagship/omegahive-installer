@@ -146,7 +146,7 @@ def runtime(path):
             'bound_release_and_port_required')
     runtime_choices(value)
     template = value['studio_maker_template']
-    require(template is None or (type(template) is str and re.fullmatch('a_[a-f0-9]{8}', template)),
+    require(template is None or (type(template) is str and re.fullmatch('a_(?:[a-f0-9]{8}|[a-f0-9]{32})', template)),
             'studio_maker_template_id_required')
     root = directory(value['runtime_root'])
     require(root.is_relative_to(expected.parent / 'releases')
