@@ -211,10 +211,11 @@ def _request_timeout(maximum):
     return min(maximum, remaining)
 
 
-def supervisor_pid(home):
+def _systemctl_show(home, properties, value=False):
     root_program(SYSTEMCTL)
     end = time.monotonic() + _request_timeout(3)
-    process = subprocess.Popen([SYSTEMCTL, '--user', 'show', '-p', 'MainPID', '--value', UNIT],
+    argv = [SYSTEMCTL, '--user', 'show'] + [x for name in properties for x in ('-p', name)] + (['--value'] if value else []) + [UNIT]
+    process = subprocess.Popen(argv,
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                env=desktop_environment(home), close_fds=True)
     selector = selectors.DefaultSelector()
@@ -235,11 +236,7 @@ def supervisor_pid(home):
                 require(sum(map(len, data.values())) <= 4096, 'supervisor_output_limit')
         require(process.wait(timeout=max(.01, end - time.monotonic())) == 0
                 and not data['stderr'], 'supervisor_not_available')
-        require(re.fullmatch(rb'[0-9]{1,10}\n?', data['stdout']) is not None,
-                'supervisor_pid_format')
-        pid = int(data['stdout'])
-        require(1 < pid < 2**31, 'service_not_running')
-        return pid
+        return bytes(data['stdout'])
     finally:
         selector.close()
         if process.poll() is None:
@@ -247,6 +244,47 @@ def supervisor_pid(home):
         process.wait(timeout=1)
         process.stdout.close()
         process.stderr.close()
+
+
+def supervisor_pid(home):
+    raw = _systemctl_show(home, ['MainPID'], value=True)
+    require(re.fullmatch(rb'[0-9]{1,10}\n?', raw) is not None, 'supervisor_pid_format')
+    pid = int(raw)
+    require(1 < pid < 2**31, 'service_not_running')
+    return pid
+
+
+_EXEC_START = re.compile(r'\{ path=(/[^ ;]+) ; argv\[\]=([^;]*?) ; ignore_errors=(?:yes|no) ; start_time=\[[^\]]*\] ; '
+                         r'stop_time=\[[^\]]*\] ; pid=([0-9]{1,10}) ; code=[^;]* ; status=[^;}]* \}')
+
+
+def service_started_from_configured_python(config, home, pid):
+    """systemd's own record of the running service: its main process is the one systemd started from the unit's single
+    ExecStart, which is the configured Python running this release's serve.py with the fixed runtime descriptor (the
+    installer writes that unit; serve.py checks it runs as that Python and execs exactly that Python into the hive)."""
+    raw = _systemctl_show(home, ['MainPID', 'ExecMainPID', 'ExecStart'])
+    try:
+        text = raw.decode('utf-8')
+    except UnicodeDecodeError:
+        return False
+    rows = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition('=')
+        if not sep or key in rows:
+            return False
+        rows[key] = value
+    if set(rows) != {'MainPID', 'ExecMainPID', 'ExecStart'}:
+        return False
+    starts = _EXEC_START.findall(rows['ExecStart'])
+    if len(starts) != 1 or rows['ExecStart'].count('{ path=') != 1:
+        return False
+    path, argv, started = starts[0]
+    serve = str(Path(config['release_root']) / 'deploy/linux/serve.py')
+    descriptor = str(home / '.local/share/omegahive/runtime.json')
+    real = Path(config['python']).resolve(strict=True)
+    return (rows['MainPID'] == rows['ExecMainPID'] == started == str(pid)
+            and path == config['python'] and argv.split(' ') == [config['python'], '-I', '-B', serve, '--runtime', descriptor]
+            and Path(path).resolve(strict=True) == real)
 
 
 def request(config, home, op, expected_pid=None):
@@ -268,7 +306,7 @@ def request(config, home, op, expected_pid=None):
         require(uid == os.getuid() and pid == first == supervisor_pid(home),
                 'supervised_peer_mismatch')
         # The service is not dumpable, so /proc/<pid>/exe is unreadable here; the peer is bound by SO_PEERCRED and
-        # systemd's MainPID, and its hello attests its own executable (checked in validated_hello / exe_matches).
+        # systemd's MainPID, and systemd's ExecStart record binds its executable (validated_hello / exe_matches).
         client.sendall((json.dumps({'op': op}) + '\n').encode())
         raw = bytearray()
         end = time.monotonic() + _request_timeout(5)
@@ -309,19 +347,34 @@ def loader_agreement(config, environ=None):
     return expected
 
 
-def exe_matches(config, hello):
-    """The hive's self-attested executable must be exactly the configured Python (same file, by device and inode)."""
-    exe = hello.get('exe') if type(hello) is dict else None
-    real = os.stat(Path(config['python']).resolve(strict=True))
-    return (type(exe) is dict and set(exe) == {'dev', 'ino'} and all(type(exe[k]) is int for k in exe)
-            and (exe['dev'], exe['ino']) == (real.st_dev, real.st_ino))
+def exe_matches(config, hello, home, pid):
+    """The running hive must be exactly the configured Python.
+
+    The service is not dumpable, so /proc/<pid>/exe is unreadable from here. The current hive's hello does not attest
+    its own executable, so the binding is systemd's record (service_started_from_configured_python), checked on every
+    call. A hive whose hello does attest its executable ('exe': device and inode of /proc/self/exe) must also attest
+    exactly the configured Python's file."""
+    if type(hello) is not dict:
+        return False
+    if 'exe' in hello:
+        exe = hello['exe']
+        real = os.stat(Path(config['python']).resolve(strict=True))
+        if not (type(exe) is dict and set(exe) == {'dev', 'ino'} and all(type(exe[k]) is int for k in exe)
+                and (exe['dev'], exe['ino']) == (real.st_dev, real.st_ino)):
+            return False
+    return service_started_from_configured_python(config, home, pid)
 
 
 def listener_matches(config, hello):
-    """The hive's attested listener must be the only LISTEN socket on 127.0.0.1:<port> in this network namespace,
-    and owned by this account. Checked before any sign-in code is requested."""
-    inode = hello.get('listener_inode') if type(hello) is dict else None
-    if type(inode) is not str or not inode.isdecimal() or inode == '0':
+    """Exactly one LISTEN socket on 127.0.0.1:<port> in this network namespace, owned by this account; checked before any
+    sign-in code is requested. Where the hive's hello attests its listener inode, it must be that socket. The current
+    hive does not attest it; another account can then still never be the listener, and a process of this same account
+    gains nothing it lacks already (it can ask the 0600 control socket for a code itself). Sign-in codes are bound to
+    the hive instance that issued them, so only that hive's listener can redeem one."""
+    if type(hello) is not dict:
+        return False
+    inode = hello.get('listener_inode', None)
+    if 'listener_inode' in hello and (type(inode) is not str or not inode.isdecimal() or inode == '0'):
         return False
     local = '0100007F:' + format(config['port'], '04X')
     fd = os.open('/proc/self/net/tcp', os.O_RDONLY | os.O_NOFOLLOW)
@@ -338,12 +391,12 @@ def listener_matches(config, hello):
             if fields[7] != str(os.getuid()):
                 return False
             listening.add(fields[9])
-    return listening == {inode}
+    return len(listening) == 1 and (inode is None or listening == {inode})
 
 
-def validated_hello(config, answer):
+def validated_hello(config, answer, home):
     hello, pid = answer
-    require(exe_matches(config, hello), 'service_executable_mismatch')
+    require(exe_matches(config, hello, home, pid), 'service_executable_mismatch')
     require(type(hello) is dict and hello.get('ok') is True and hello.get('local_owner') is True
             and type(hello.get('pid')) is int and hello['pid'] == pid
             and type(hello.get('port')) is int and hello['port'] == config['port']
@@ -362,7 +415,7 @@ def wait_for_hello(config, home, previous_instance=None, cancelled=None):
         while True:
             require(cancelled is None or not cancelled(), 'readiness_cancelled')
             try:
-                answer = validated_hello(config, request(config, home, 'hello'))
+                answer = validated_hello(config, request(config, home, 'hello'), home)
                 if previous_instance is None or answer[0]['instance'] != previous_instance:
                     return answer
             except Refused as error:
@@ -397,7 +450,7 @@ def main():
     if args.operation == 'open':
         hello, pid = wait_for_hello(config, home)
     else:
-        hello, pid = validated_hello(config, request(config, home, 'hello'))
+        hello, pid = validated_hello(config, request(config, home, 'hello'), home)
     if args.operation == 'status':
         if args.json:
             print(json.dumps({'running': True, 'local_owner': True, 'pid': pid,

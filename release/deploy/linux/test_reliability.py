@@ -28,7 +28,7 @@ class ReadinessTests(unittest.TestCase):
             return ({'instance':'new'},4000)
         with patch.object(control.time,'monotonic',side_effect=lambda:clock[0]), patch.object(control.time,'sleep',side_effect=sleep), \
                 patch.object(control,'request',side_effect=request), patch.object(control,'supervisor_pid',return_value=4000), \
-                patch.object(control,'validated_hello',side_effect=lambda cfg,answer:answer):
+                patch.object(control,'validated_hello',side_effect=lambda cfg,answer,home:answer):
             try:return control.wait_for_hello({},Path('/synthetic'),previous_instance=previous),clock[0]
             finally:self.assertIsNone(control._HELLO_DEADLINE.get())
 
