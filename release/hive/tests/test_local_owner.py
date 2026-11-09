@@ -9,6 +9,7 @@ import pathlib
 import shutil
 import socket
 import stat
+import sys
 import tempfile
 import time
 
@@ -187,6 +188,12 @@ def test_the_control_socket_is_private_and_issues_codes(local):
     assert stat.S_ISSOCK(os.lstat(sock).st_mode) and stat.S_IMODE(os.lstat(sock).st_mode) == 0o600
     hello = _control(sock, {"op": "hello"})
     assert hello["ok"] and hello["port"] == 8700 and hello["owner"] == local.local.principal and hello["pid"] == os.getpid()
+    # self identity (localowner.self_identity): Linux states exe {dev, ino} and listener_inode; elsewhere neither key
+    if sys.platform.startswith("linux"):
+        exe = os.stat("/proc/self/exe")
+        assert hello["exe"] == {"dev": exe.st_dev, "ino": exe.st_ino} and "listener_inode" in hello
+    else:
+        assert "exe" not in hello and "listener_inode" not in hello
     issued = _control(sock, {"op": "signin"})
     assert issued["url"] == f"{BASE}/local-signin#{issued['code']}" and issued["expires_in"] == 60
     assert local.post("/api/auth/local/exchange", json={"code": issued["code"]}, headers=ORIGIN).status_code == 200

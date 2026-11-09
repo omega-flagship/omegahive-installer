@@ -191,7 +191,7 @@ describe('the fake host follows Platform’s route at 65aa421 (stand-in r1l #5)'
     // @ts-expect-error -- as above
     const { existsSync } = await import('node:fs')
     const home = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.HOME ?? '/nonexistent'
-    const repo = `${home}/OmegaDot/.runtime/sessions/ui-prefs-revision`
+    const repo = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.OMEGA_UI_PREFS_REVISION_REPO ?? `${home}/ui-prefs-revision`
     if (!existsSync(repo)) return // elsewhere: the order test above still binds the fake to the recorded fixture
     const src = (f: string): string => execFileSync('git', ['-C', repo, 'show', `${route.commit}:${f}`], { encoding: 'utf8' })
     const app = src('hive/core/app.py')

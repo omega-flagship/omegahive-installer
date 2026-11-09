@@ -13,7 +13,7 @@ Never port 8700 or 8724, never the live hive or its Code service, never a live d
 
 Skipped (not failed) when the OmegaCode release tree, PeTTa, git or macOS sandbox-exec is missing.
 Release tree: $OMEGACODE_SOURCE, else $OMEGACODE_RELEASES/<INTENDED_SERVICE_RELEASE> (default
-~/OmegaDot/.runtime/omegacode/releases/<pin>). The hops run in file order and share one scratch world (~5 s).
+$OMEGACODE_RELEASES/<pin>). The hops run in file order and share one scratch world (~5 s).
 """
 import datetime
 import hashlib
@@ -40,7 +40,7 @@ from hive.core.hive import token_hash
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PETTA = os.environ.get("PETTA_PATH", str(pathlib.Path.home() / "PeTTa"))
 RELEASES = pathlib.Path(os.environ.get("OMEGACODE_RELEASES",
-                                       str(pathlib.Path.home() / "OmegaDot/.runtime/omegacode/releases")))
+                                       str(pathlib.Path.home() / "omegacode-releases")))
 # OMEGACODE_SOURCE: any folder holding an omegacode package with the proposal-test plane (e.g. a src/ checkout);
 # default: the exact release the hive pins (INTENDED_SERVICE_RELEASE), since that is what the relay tables describe.
 RELEASE = pathlib.Path(os.environ["OMEGACODE_SOURCE"]) if os.environ.get("OMEGACODE_SOURCE") \

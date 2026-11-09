@@ -10,8 +10,8 @@ per swarm the assertions in order through lib_hive's hive-publish!, the way hive
 member, stamps "ev:a:n" as sorted (ev a n), truth values as float reprs). Statements are strings, as the sim holds them.
 Writes src/api/sim/parity/petta-reference.json, which commons.parity.test.ts compares with MeTTaScript.
 
-    PATH=~/swipl-patched/bin:$PATH PETTA_PATH=~/OmegaDot/.runtime/PeTTa \
-      ~/OmegaDot/.runtime/venv312/bin/python -I scripts/showreel-pln-reference.py
+    PATH=<swipl bin>:$PATH PETTA_PATH=<your PeTTa checkout> \
+      <your python 3.12> -I scripts/showreel-pln-reference.py
 """
 import hashlib
 import json
@@ -24,7 +24,7 @@ import sys
 UI = pathlib.Path(__file__).resolve().parent.parent
 REPO = UI.parent.parent
 HERE = UI / "src/features/showreel/pln"
-PETTA = os.environ.get("PETTA_PATH", str(pathlib.Path.home() / "OmegaDot/.runtime/PeTTa"))
+PETTA = os.environ.get("PETTA_PATH", str(pathlib.Path.home() / "PeTTa"))
 sys.path.insert(0, str(pathlib.Path(PETTA) / "python"))
 os.environ.setdefault("LANG", "C.UTF-8")
 from petta import PeTTa  # noqa: E402

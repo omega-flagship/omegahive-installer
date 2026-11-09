@@ -5,8 +5,8 @@ way the hive's own space service does (hive/spaces/service.py: `from petta impor
 the browser runs (src/lib/mindSpace/metta). Writes src/lib/mindSpace/parity/petta.json, which parity.test.ts compares
 with MeTTaScript.
 
-    PATH=~/swipl-patched/bin:$PATH PETTA_PATH=~/OmegaDot/.runtime/PeTTa \
-      ~/OmegaDot/.runtime/venv312/bin/python -I scripts/mind-metta-parity.py
+    PATH=<swipl bin>:$PATH PETTA_PATH=<your PeTTa checkout> \
+      <your python 3.12> -I scripts/mind-metta-parity.py
 """
 import json
 import os
@@ -16,7 +16,7 @@ import sys
 
 UI = pathlib.Path(__file__).resolve().parent.parent
 HERE = UI / "src/lib/mindSpace"
-PETTA = os.environ.get("PETTA_PATH", str(pathlib.Path.home() / "OmegaDot/.runtime/PeTTa"))
+PETTA = os.environ.get("PETTA_PATH", str(pathlib.Path.home() / "PeTTa"))
 sys.path.insert(0, str(pathlib.Path(PETTA) / "python"))
 os.environ.setdefault("LANG", "C.UTF-8")
 from petta import PeTTa  # noqa: E402
