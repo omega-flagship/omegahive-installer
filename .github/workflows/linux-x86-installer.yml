@@ -16,6 +16,8 @@ permissions:
 jobs:
   install:
     runs-on: ubuntu-22.04
+    # ASSIST_READ_TOKEN is an environment secret: a run gets it only after an admin approves (see ci/fetch-private.sh).
+    environment: assist-private
     timeout-minutes: 90
     env:
       HIVE_USER: cihive
@@ -196,6 +198,8 @@ jobs:
   kit:
     # The real newcomer download: one file, run as a fresh user exactly as the guide says.
     runs-on: ubuntu-22.04
+    # ASSIST_READ_TOKEN is an environment secret: a run gets it only after an admin approves (see ci/fetch-private.sh).
+    environment: assist-private
     timeout-minutes: 90
     env:
       HIVE_USER: kituser
@@ -289,6 +293,8 @@ jobs:
   kit-r13:
     # r13 (R21): the same newcomer run with swi-prolog.org blocked and nothing seeded.
     runs-on: ubuntu-22.04
+    # ASSIST_READ_TOKEN is an environment secret: a run gets it only after an admin approves (see ci/fetch-private.sh).
+    environment: assist-private
     timeout-minutes: 90
     env:
       HIVE_USER: kitr13user
@@ -378,6 +384,8 @@ jobs:
   kit-r13-arm:
     # r13 on arm64 (aarch64 package set): same newcomer run, swi-prolog.org blocked, nothing seeded.
     runs-on: ubuntu-22.04-arm
+    # ASSIST_READ_TOKEN is an environment secret: a run gets it only after an admin approves (see ci/fetch-private.sh).
+    environment: assist-private
     timeout-minutes: 90
     env:
       HIVE_USER: kitarmuser
@@ -519,6 +527,8 @@ jobs:
     # needs one, the walk takes the page's own Not now / Later and records what the page says. Test tooling only.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-22.04
+    # ASSIST_READ_TOKEN is an environment secret: a run gets it only after an admin approves (see ci/fetch-private.sh).
+    environment: assist-private
     timeout-minutes: 60
     env:
       HIVE_USER: kituser

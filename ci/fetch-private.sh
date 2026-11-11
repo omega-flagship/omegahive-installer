@@ -7,7 +7,9 @@
 #   ASSIST_READ_TOKEN=<read-only token> sh ci/fetch-private.sh <asset name> <folder>
 #
 # The token stays off every command line (curl reads its header from stdin), and the asset's signed download URL is
-# fetched without it, so the token never goes to another host.
+# fetched without it, so the token never goes to another host. CI takes the token from the assist-private environment,
+# whose secret a run gets only once an admin approves it, so a pull request from a branch of this repo cannot read
+# Assist unreviewed.
 set -eu
 [ "$#" -eq 2 ] || { echo "usage: ASSIST_READ_TOKEN=... sh ci/fetch-private.sh <asset name> <folder>" >&2; exit 64; }
 asset=$1
@@ -17,7 +19,7 @@ tag=r6.1-71d182fb
 api=https://api.github.com/repos/$repo/releases
 
 if [ -z "${ASSIST_READ_TOKEN:-}" ]; then
-    echo "::error::the secret ASSIST_READ_TOKEN is not set, so $asset can't come from the private $repo. Assist is closed (omega-flagship/omegahive#106), and a pull request from a fork gets no secrets." >&2
+    echo "::error::ASSIST_READ_TOKEN is not set (the assist-private environment's secret), so $asset can't come from the private $repo. Assist is closed (omega-flagship/omegahive#106), and a pull request from a fork gets no secrets." >&2
     exit 1
 fi
 auth() { printf 'header = "Authorization: Bearer %s"\n' "$ASSIST_READ_TOKEN"; }
