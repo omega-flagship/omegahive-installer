@@ -1,8 +1,9 @@
 #!/bin/sh
-# Purpose: download one file this public repo must not hold, because it is or carries the closed Assist app, from the
-# r6.1-71d182fb release of the private omega-flagship/omegaassist-app into a folder (omega-flagship/omegahive#106).
-# The caller checks the bytes against the pin it already has: arm-r7-catalogue.json for omegaassist.zip, and the
-# ci/kit/*.sha256 files for the kits.
+# Purpose: download one file this public repo must not hold, because it is or carries a closed part (the Assist app,
+# or Evolve and OmegaTown in the prebuilt UI and the kits), from the r6.1-71d182fb release of the private
+# omega-flagship/omegaassist-app into a folder (omega-flagship/omegahive#106). The caller checks the bytes against the
+# pin it already has: arm-r7-catalogue.json for omegaassist.zip and ui-dist-r2.tar.gz, and the ci/kit/*.sha256 files
+# for the kits.
 #
 #   ASSIST_READ_TOKEN=<read-only token> sh ci/fetch-private.sh <asset name> <folder>
 #

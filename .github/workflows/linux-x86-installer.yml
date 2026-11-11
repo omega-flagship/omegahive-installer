@@ -52,12 +52,15 @@ jobs:
           cp ci/linux-x86/inputs/* /tmp/inputs/
           sha256sum /tmp/inputs/*
 
-      # Assist is closed (omega-flagship/omegahive#106), so its app zip is not in this public repo; it comes from the
-      # private omega-flagship/omegaassist-app, and make_catalogue.py checks it against arm-r7-catalogue.json as before.
-      - name: Assist's app zip from the private omegaassist-app
+      # Assist is closed, and the prebuilt UI holds the built Evolve and OmegaTown chunks (omega-flagship/omegahive#106),
+      # so neither is in this public repo: both come from the private omega-flagship/omegaassist-app, and
+      # make_catalogue.py checks them against arm-r7-catalogue.json as before.
+      - name: Assist's app zip and the prebuilt UI from the private omegaassist-app
         env:
           ASSIST_READ_TOKEN: ${{ secrets.ASSIST_READ_TOKEN }}
-        run: sh ci/fetch-private.sh omegaassist.zip /tmp/inputs
+        run: |
+          sh ci/fetch-private.sh omegaassist.zip /tmp/inputs
+          sh ci/fetch-private.sh ui-dist-r2.tar.gz /tmp/inputs
 
       - uses: actions/setup-python@v5
         with:
