@@ -16,6 +16,8 @@ permissions:
 jobs:
   install:
     runs-on: ubuntu-22.04
+    # ASSIST_READ_TOKEN is an environment secret: a run gets it only after an admin approves (see ci/fetch-private.sh).
+    environment: assist-private
     timeout-minutes: 90
     env:
       HIVE_USER: cihive
@@ -49,6 +51,16 @@ jobs:
           git show HEAD:release/deploy/linux/bootstrap.py > /tmp/inputs/bootstrap.py
           cp ci/linux-x86/inputs/* /tmp/inputs/
           sha256sum /tmp/inputs/*
+
+      # Assist is closed, and the prebuilt UI holds the built Evolve and OmegaTown chunks (omega-flagship/omegahive#106),
+      # so neither is in this public repo: both come from the private omega-flagship/omegaassist-app, and
+      # make_catalogue.py checks them against arm-r7-catalogue.json as before.
+      - name: Assist's app zip and the prebuilt UI from the private omegaassist-app
+        env:
+          ASSIST_READ_TOKEN: ${{ secrets.ASSIST_READ_TOKEN }}
+        run: |
+          sh ci/fetch-private.sh omegaassist.zip /tmp/inputs
+          sh ci/fetch-private.sh ui-dist-r2.tar.gz /tmp/inputs
 
       - uses: actions/setup-python@v5
         with:
@@ -189,6 +201,8 @@ jobs:
   kit:
     # The real newcomer download: one file, run as a fresh user exactly as the guide says.
     runs-on: ubuntu-22.04
+    # ASSIST_READ_TOKEN is an environment secret: a run gets it only after an admin approves (see ci/fetch-private.sh).
+    environment: assist-private
     timeout-minutes: 90
     env:
       HIVE_USER: kituser
@@ -199,6 +213,12 @@ jobs:
           sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
           printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
           sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
+      # The r12 kit embeds the closed Assist app (omega-flagship/omegahive#106), so it comes from the private
+      # omega-flagship/omegaassist-app; the next step checks it against ci/kit/omegahive-linux-r12.sh.sha256 as before.
+      - name: The r12 kit from the private omegaassist-app
+        env:
+          ASSIST_READ_TOKEN: ${{ secrets.ASSIST_READ_TOKEN }}
+        run: sh ci/fetch-private.sh omegahive-linux-r12.sh ci/kit
       - name: Check and stage the download
         run: |
           cd ci/kit && sha256sum -c omegahive-linux-r12.sh.sha256
@@ -276,6 +296,8 @@ jobs:
   kit-r13:
     # r13 (R21): the same newcomer run with swi-prolog.org blocked and nothing seeded.
     runs-on: ubuntu-22.04
+    # ASSIST_READ_TOKEN is an environment secret: a run gets it only after an admin approves (see ci/fetch-private.sh).
+    environment: assist-private
     timeout-minutes: 90
     env:
       HIVE_USER: kitr13user
@@ -286,6 +308,12 @@ jobs:
           sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
           printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
           sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
+      # The r13 kit embeds the closed Assist app (omega-flagship/omegahive#106), so it comes from the private
+      # omega-flagship/omegaassist-app; the next step checks it against ci/kit/omegahive-linux-r13.sh.sha256 as before.
+      - name: The r13 kit from the private omegaassist-app
+        env:
+          ASSIST_READ_TOKEN: ${{ secrets.ASSIST_READ_TOKEN }}
+        run: sh ci/fetch-private.sh omegahive-linux-r13.sh ci/kit
       - name: Check and stage the r13 download; make swi-prolog.org unreachable (no seeding)
         run: |
           cd ci/kit && sha256sum -c omegahive-linux-r13.sh.sha256
@@ -359,6 +387,8 @@ jobs:
   kit-r13-arm:
     # r13 on arm64 (aarch64 package set): same newcomer run, swi-prolog.org blocked, nothing seeded.
     runs-on: ubuntu-22.04-arm
+    # ASSIST_READ_TOKEN is an environment secret: a run gets it only after an admin approves (see ci/fetch-private.sh).
+    environment: assist-private
     timeout-minutes: 90
     env:
       HIVE_USER: kitarmuser
@@ -369,6 +399,12 @@ jobs:
           sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
           printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
           sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
+      # The r13 kit embeds the closed Assist app (omega-flagship/omegahive#106), so it comes from the private
+      # omega-flagship/omegaassist-app; the next step checks it against ci/kit/omegahive-linux-r13.sh.sha256 as before.
+      - name: The r13 kit from the private omegaassist-app
+        env:
+          ASSIST_READ_TOKEN: ${{ secrets.ASSIST_READ_TOKEN }}
+        run: sh ci/fetch-private.sh omegahive-linux-r13.sh ci/kit
       - name: Check and stage the r13 download; make swi-prolog.org unreachable (no seeding)
         run: |
           cd ci/kit && sha256sum -c omegahive-linux-r13.sh.sha256
@@ -494,6 +530,8 @@ jobs:
     # needs one, the walk takes the page's own Not now / Later and records what the page says. Test tooling only.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-22.04
+    # ASSIST_READ_TOKEN is an environment secret: a run gets it only after an admin approves (see ci/fetch-private.sh).
+    environment: assist-private
     timeout-minutes: 60
     env:
       HIVE_USER: kituser
@@ -504,6 +542,12 @@ jobs:
           sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
           printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-omegahive-ci >/dev/null
           sudo chmod 0440 /etc/sudoers.d/90-omegahive-ci && sudo visudo -cf /etc/sudoers.d/90-omegahive-ci
+      # The r13 kit embeds the closed Assist app (omega-flagship/omegahive#106), so it comes from the private
+      # omega-flagship/omegaassist-app; the next step checks it against ci/kit/omegahive-linux-r13.sh.sha256 as before.
+      - name: The r13 kit from the private omegaassist-app
+        env:
+          ASSIST_READ_TOKEN: ${{ secrets.ASSIST_READ_TOKEN }}
+        run: sh ci/fetch-private.sh omegahive-linux-r13.sh ci/kit
       - name: Check and stage the download
         run: |
           cd ci/kit && sha256sum -c omegahive-linux-r13.sh.sha256
