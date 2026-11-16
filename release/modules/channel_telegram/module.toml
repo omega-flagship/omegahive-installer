@@ -1,0 +1,35 @@
+id = "omegaclaw.channel.telegram"
+kind = "channel"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+default_enabled = false
+
+provides = [
+  "channel:telegram",
+  "skill:send-telegram",
+  "skill:send-telegram-base64",
+  "skill:telegram-status",
+]
+
+requires = [
+  "python>=3.10",
+]
+
+[env.TG_BOT_TOKEN]
+secret = true
+
+[env.TG_CHAT_ID]
+default = "configured-at-runtime"
+
+[env.TG_POLL_TIMEOUT]
+default = "20"
+
+[trace]
+writes = [
+  "TelegramMessageReceived",
+  "TelegramMessageSent",
+  "TelegramFileSent",
+]

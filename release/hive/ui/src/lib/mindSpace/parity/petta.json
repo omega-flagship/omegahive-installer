@@ -1,0 +1,411 @@
+{
+ "engine": "PeTTa ae66fa8",
+ "swipl": "SWI-Prolog version 10.1.14 for arm64-darwin",
+ "cases": {
+  "nal Truth_Revision (0.9, 0.5) (0.2, 0.3)": [
+   "(stv 0.6900000000000001 0.588235294117647)"
+  ],
+  "hive hive-truth-revision (0.9, 0.5) (0.2, 0.3)": [
+   "(stv 0.6900000000000001 0.588235294117647)"
+  ],
+  "pln Truth__Revision (0.9, 0.5) (0.2, 0.3)": [
+   "(stv 0.6900000000000001 0.588235294117647)"
+  ],
+  "nal Truth_Revision (1.0, 0.9) (0.0, 0.9)": [
+   "(stv 0.5 0.9473684210526316)"
+  ],
+  "hive hive-truth-revision (1.0, 0.9) (0.0, 0.9)": [
+   "(stv 0.5 0.9473684210526316)"
+  ],
+  "pln Truth__Revision (1.0, 0.9) (0.0, 0.9)": [
+   "(stv 0.5 0.9473684210526316)"
+  ],
+  "nal Truth_Revision (0.5, 0.01) (0.5, 0.01)": [
+   "(stv 0.5 0.019801980198019806)"
+  ],
+  "hive hive-truth-revision (0.5, 0.01) (0.5, 0.01)": [
+   "(stv 0.5 0.019801980198019806)"
+  ],
+  "pln Truth__Revision (0.5, 0.01) (0.5, 0.01)": [
+   "(stv 0.5 0.019801980198019806)"
+  ],
+  "nal Truth_Revision (1.0, 0.99) (1.0, 0.99)": [
+   "(stv 1.0 0.99)"
+  ],
+  "hive hive-truth-revision (1.0, 0.99) (1.0, 0.99)": [
+   "(stv 1.0 0.99)"
+  ],
+  "pln Truth__Revision (1.0, 0.99) (1.0, 0.99)": [
+   "(stv 1.0 0.9949748743718593)"
+  ],
+  "nal Truth_Revision (0.0, 0.999) (1.0, 0.001)": [
+   "(stv 1.0020019999959928e-06 0.99)"
+  ],
+  "hive hive-truth-revision (0.0, 0.999) (1.0, 0.001)": [
+   "(stv 1.0020019999959928e-06 0.99)"
+  ],
+  "pln Truth__Revision (0.0, 0.999) (1.0, 0.001)": [
+   "(stv 1.0020019999959928e-06 0.999000001001)"
+  ],
+  "nal Truth_Revision (0.3, 0.0001) (0.7, 0.9999)": [
+   "(stv 0.6999999959991999 0.99)"
+  ],
+  "hive hive-truth-revision (0.3, 0.0001) (0.7, 0.9999)": [
+   "(stv 0.6999999959991999 0.99)"
+  ],
+  "pln Truth__Revision (0.3, 0.0001) (0.7, 0.9999)": [
+   "(stv 0.6999999959991999 0.9999000000010001)"
+  ],
+  "nal Truth_Revision (0.8, 0.5) (0.8, 0.5)": [
+   "(stv 0.8 0.6666666666666666)"
+  ],
+  "hive hive-truth-revision (0.8, 0.5) (0.8, 0.5)": [
+   "(stv 0.8 0.6666666666666666)"
+  ],
+  "pln Truth__Revision (0.8, 0.5) (0.8, 0.5)": [
+   "(stv 0.8 0.6666666666666666)"
+  ],
+  "nal Truth_Revision (0.0, 0.5) (0.0, 0.5)": [
+   "(stv 0.0 0.6666666666666666)"
+  ],
+  "hive hive-truth-revision (0.0, 0.5) (0.0, 0.5)": [
+   "(stv 0.0 0.6666666666666666)"
+  ],
+  "pln Truth__Revision (0.0, 0.5) (0.0, 0.5)": [
+   "(stv 0.0 0.6666666666666666)"
+  ],
+  "nal Truth_Revision (1.0, 0.98) (0.0, 0.02)": [
+   "(stv 0.9995836802664446 0.9800081599347205)"
+  ],
+  "hive hive-truth-revision (1.0, 0.98) (0.0, 0.02)": [
+   "(stv 0.9995836802664446 0.9800081599347205)"
+  ],
+  "pln Truth__Revision (1.0, 0.98) (0.0, 0.02)": [
+   "(stv 0.9995836802664446 0.9800081599347205)"
+  ],
+  "nal Truth_Revision (0.999999, 0.9) (1e-06, 0.9)": [
+   "(stv 0.5 0.9473684210526316)"
+  ],
+  "hive hive-truth-revision (0.999999, 0.9) (1e-06, 0.9)": [
+   "(stv 0.5 0.9473684210526316)"
+  ],
+  "pln Truth__Revision (0.999999, 0.9) (1e-06, 0.9)": [
+   "(stv 0.5 0.9473684210526316)"
+  ],
+  "edge-nal Truth_Revision (1.0, 1.0) (0.0, 0.5)": [
+   "(PeTTa-exception PrologError)"
+  ],
+  "edge-hive hive-truth-revision (1.0, 1.0) (0.0, 0.5)": [
+   "(PeTTa-exception PrologError)"
+  ],
+  "edge-pln Truth__Revision (1.0, 1.0) (0.0, 0.5)": [],
+  "edge-nal Truth_Revision (0.5, 0.0) (0.5, 0.0)": [
+   "(PeTTa-exception PrologError)"
+  ],
+  "edge-hive hive-truth-revision (0.5, 0.0) (0.5, 0.0)": [
+   "(PeTTa-exception PrologError)"
+  ],
+  "edge-pln Truth__Revision (0.5, 0.0) (0.5, 0.0)": [],
+  "Truth_Deduction (0.9, 0.9) (0.8, 0.9)": [
+   "(stv 0.7200000000000001 0.5832)"
+  ],
+  "Truth_Induction (0.9, 0.9) (0.8, 0.9)": [
+   "(stv 0.9 0.3932038834951457)"
+  ],
+  "Truth_Abduction (0.9, 0.9) (0.8, 0.9)": [
+   "(stv 0.8 0.42163100057836905)"
+  ],
+  "Truth_Deduction (1.0, 0.99) (1.0, 0.99)": [
+   "(stv 1.0 0.9801)"
+  ],
+  "Truth_Induction (1.0, 0.99) (1.0, 0.99)": [
+   "(stv 1.0 0.4949750012625625)"
+  ],
+  "Truth_Abduction (1.0, 0.99) (1.0, 0.99)": [
+   "(stv 1.0 0.4949750012625625)"
+  ],
+  "Truth_Deduction (0.0, 0.9) (1.0, 0.9)": [
+   "(stv 0.0 0.0)"
+  ],
+  "Truth_Induction (0.0, 0.9) (1.0, 0.9)": [
+   "(stv 0.0 0.44751381215469616)"
+  ],
+  "Truth_Abduction (0.0, 0.9) (1.0, 0.9)": [
+   "(stv 1.0 0.0)"
+  ],
+  "Truth_Deduction (0.5, 0.01) (0.5, 0.01)": [
+   "(stv 0.25 2.5e-05)"
+  ],
+  "Truth_Induction (0.5, 0.01) (0.5, 0.01)": [
+   "(stv 0.5 4.999750012499375e-05)"
+  ],
+  "Truth_Abduction (0.5, 0.01) (0.5, 0.01)": [
+   "(stv 0.5 4.999750012499375e-05)"
+  ],
+  "Truth_Deduction (1.0, 0.0001) (0.0001, 1.0)": [
+   "(stv 0.0001 1.0e-08)"
+  ],
+  "Truth_Induction (1.0, 0.0001) (0.0001, 1.0)": [
+   "(stv 1.0 9.999999900000002e-09)"
+  ],
+  "Truth_Abduction (1.0, 0.0001) (0.0001, 1.0)": [
+   "(stv 0.0001 9.999000099990002e-05)"
+  ],
+  "Truth_Deduction (0.999, 0.999) (0.001, 0.001)": [
+   "(stv 0.000999 9.980010000000003e-07)"
+  ],
+  "Truth_Induction (0.999, 0.999) (0.001, 0.001)": [
+   "(stv 0.999 9.98999001999997e-07)"
+  ],
+  "Truth_Abduction (0.999, 0.999) (0.001, 0.001)": [
+   "(stv 0.001 0.0009970059870279403)"
+  ],
+  "deduction |~pln (0.9, 0.9) (0.8, 0.9)": [
+   "(((Inheritance A C) (stv 0.7222222222222223 0.5832)))"
+  ],
+  "induction |~pln (0.9, 0.9) (0.8, 0.9)": [
+   "(((Inheritance B C) (stv 0.7222222222222223 0.3932038834951457)))"
+  ],
+  "abduction |~pln (0.9, 0.9) (0.8, 0.9)": [
+   "(((Inheritance A B) (stv 0.7222222222222223 0.42163100057836905)))"
+  ],
+  "deduction |~pln (1.0, 0.99) (1.0, 0.99)": [
+   "(((Inheritance A C) (stv 1.0 0.9801)))"
+  ],
+  "induction |~pln (1.0, 0.99) (1.0, 0.99)": [
+   "(((Inheritance B C) (stv 1.0 0.4949750012625625)))"
+  ],
+  "abduction |~pln (1.0, 0.99) (1.0, 0.99)": [
+   "(((Inheritance A B) (stv 1.0 0.4949750012625625)))"
+  ],
+  "deduction |~pln (0.0, 0.9) (1.0, 0.9)": [
+   "(((Inheritance A C) (stv 0.0 0.0)))"
+  ],
+  "induction |~pln (0.0, 0.9) (1.0, 0.9)": [
+   "(((Inheritance B C) (stv 0.0 0.44751381215469616)))"
+  ],
+  "abduction |~pln (0.0, 0.9) (1.0, 0.9)": [
+   "(((Inheritance A B) (stv 0.0 0.0)))"
+  ],
+  "deduction |~pln (0.5, 0.01) (0.5, 0.01)": [
+   "(((Inheritance A C) (stv 0.2777777777777778 2.5e-05)))"
+  ],
+  "induction |~pln (0.5, 0.01) (0.5, 0.01)": [
+   "(((Inheritance B C) (stv 0.2777777777777778 4.999750012499375e-05)))"
+  ],
+  "abduction |~pln (0.5, 0.01) (0.5, 0.01)": [
+   "(((Inheritance A B) (stv 0.2777777777777778 4.999750012499375e-05)))"
+  ],
+  "deduction |~pln (0.001, 0.5) (0.999, 0.5)": [
+   "(((Inheritance A C) (stv 0.0011100000000000033 0.00024975)))"
+  ],
+  "induction |~pln (0.001, 0.5) (0.999, 0.5)": [
+   "(((Inheritance B C) (stv 0.0011100000000000033 0.19983996799359874)))"
+  ],
+  "abduction |~pln (0.001, 0.5) (0.999, 0.5)": [
+   "(((Inheritance A B) (stv 0.0011100000000000003 0.0002499375156210947)))"
+  ],
+  "deduction |~pln (1.0, 0.5) (0.0, 0.5)": [
+   "(((Inheritance A C) (stv 0.0 0.0)))"
+  ],
+  "induction |~pln (1.0, 0.5) (0.0, 0.5)": [
+   "(((Inheritance B C) (stv 0.0 0.0)))"
+  ],
+  "abduction |~pln (1.0, 0.5) (0.0, 0.5)": [
+   "(((Inheritance A B) (stv 0.0 0.2)))"
+  ],
+  "Truth__Deduction inconsistent premises": [
+   "(stv 1 0)"
+  ],
+  "Truth__Deduction Qs near 1": [
+   "(stv 1 0)"
+  ],
+  "Truth__Induction sB = 1 (division by zero guarded)": [],
+  "Truth__ModusPonens": [
+   "(stv 0.566 0.3024)"
+  ],
+  "Truth_Expectation (0.0, 0.0)": [
+   "0.5"
+  ],
+  "Truth_Expectation (1.0, 1.0)": [
+   "1.0"
+  ],
+  "Truth_Expectation (0.69, 0.588235294117647)": [
+   "0.6117647058823529"
+  ],
+  "Truth_Expectation (0.5, 0.9)": [
+   "0.5"
+  ],
+  "lib_pln |~ (both orders, unique-atom collapse)": [
+   "(((Inheritance A C) (stv 0.7222222222222223 0.5832)))"
+  ],
+  "lib_nal |- deduction": [
+   "(((--> a c) (stv 0.7200000000000001 0.5832)) ((--> c a) (stv 1.0 0.3683678625568469)))"
+  ],
+  "raw |~pln with no matching rule": [
+   "()"
+  ],
+  "stamp-disjoint? / stamp-merge": [
+   "((ev a 1) (ev b 2) (ev c 3))"
+  ],
+  "pow-math (promotion decay)": [
+   "2.258693870913711"
+  ],
+  "sort of score tuples": [
+   "((-0.69 \"b1\" belief) (-0.5 \"a0\" belief) (-0.5 \"x1\" exchange))"
+  ]
+ },
+ "scenario": [
+  [
+   "2"
+  ],
+  [
+   "(integrated () ((stv 0.9 0.5) ((ev \"m-p\" 1))) (adopted (stv 0.9 0.5) ((ev \"m-p\" 1))))"
+  ],
+  [
+   "(integrated (((stv 0.9 0.5) ((ev \"m-p\" 1)))) ((stv 0.2 0.3) ((ev \"m-p\" 2))) (revised (stv 0.6900000000000001 0.588235294117647) ((ev \"m-p\" 1) (ev \"m-p\" 2))))"
+  ],
+  [
+   "(integrated (((stv 0.6900000000000001 0.588235294117647) ((ev \"m-p\" 1) (ev \"m-p\" 2)))) ((stv 0.2 0.3) ((ev \"m-p\" 2))) (kept (stv 0.6900000000000001 0.588235294117647) ((ev \"m-p\" 1) (ev \"m-p\" 2))))"
+  ],
+  [
+   "(integrated (((stv 0.6900000000000001 0.588235294117647) ((ev \"m-p\" 1) (ev \"m-p\" 2)))) ((stv 0.5 0.95) ((ev \"m-p\" 2))) (chosen (stv 0.5 0.95) ((ev \"m-p\" 2))))"
+  ],
+  [
+   "(refused id-conflict)"
+  ],
+  [
+   "(integrated () ((stv 1.0 0.9) ((ev turn 1))) (adopted (stv 1.0 0.9) ((ev turn 1))))"
+  ],
+  [
+   "(integrated (((stv 1.0 0.9) ((ev turn 1)))) ((stv 1.0 0.9) ((ev turn 1))) (kept (stv 1.0 0.9) ((ev turn 1))))"
+  ],
+  [
+   "(refused id-taken)"
+  ],
+  [
+   "(integrated () ((stv 1.0 0.9) ((ev turn 7))) (adopted (stv 1.0 0.9) ((ev turn 7))))"
+  ],
+  [
+   "(integrated (((stv 1.0 0.9) ((ev turn 7)))) ((stv 1.0 0.9) ((ev turn 7))) (kept (stv 1.0 0.9) ((ev turn 7))))"
+  ],
+  [
+   "(integrated (((stv 1.0 0.9) ((ev turn 1)))) ((stv 1.0 0.5) ((ev turn 2))) (revised (stv 1.0 0.9090909090909091) ((ev turn 1) (ev turn 2))))"
+  ],
+  [
+   "(used \"b1\" 1.0)"
+  ],
+  [
+   "(used \"b1\" 1.615572206672458)"
+  ],
+  [
+   "((cand -0.6786253445526841 \"b1\" Belief 0.8 1.572506891053679 (stv 0.5 0.95) ((ev \"m-p\" 2)) (\"preference\" \"likes short answers\")) (cand -0.48863636363636365 \"x1\" Memory 0.5 0.0 (stv 1.0 0.9090909090909091) ((ev turn 1) (ev turn 2)) (\"exchange\" \"user said keep it short\")))"
+  ],
+  [
+   "((cand -0.6786253445526841 \"b1\" Belief 0.8 1.572506891053679 (stv 0.5 0.95) ((ev \"m-p\" 2)) (\"preference\" \"likes short answers\")))"
+  ],
+  [
+   "(integrated () ((stv 1.0 0.9) ((ev \"m-p\" 3))) (adopted (stv 1.0 0.9) ((ev \"m-p\" 3))))"
+  ],
+  [
+   "(forgot \"b2\" 5 (\"b3\"))"
+  ],
+  [
+   "(refused forgotten)"
+  ],
+  [
+   "(integrated () ((stv 1.0 0.9) ((ev \"m-p\" 4))) (adopted (stv 1.0 0.9) ((ev \"m-p\" 4))))"
+  ],
+  [
+   "(refused forgotten)"
+  ],
+  [
+   "(explained \"b1\" ((Event (ev \"m-p\" 1) learned 100 \"t1\" \"b1\" \"preference\") (Event (ev \"m-p\" 2) adopted 100 \"t1\" \"b1\" (adopted (stv 0.9 0.5) ((ev \"m-p\" 1)))) (Event (ev \"m-p\" 3) revised 101 \"t2\" \"b1\" (revised (stv 0.6900000000000001 0.588235294117647) ((ev \"m-p\" 1) (ev \"m-p\" 2)))) (Event (ev \"m-p\" 4) kept 102 \"t2\" \"b1\" (kept (stv 0.6900000000000001 0.588235294117647) ((ev \"m-p\" 1) (ev \"m-p\" 2)))) (Event (ev \"m-p\" 5) chosen 103 \"t2\" \"b1\" (chosen (stv 0.5 0.95) ((ev \"m-p\" 2)))) (Event (ev \"m-p\" 13) used 200 \"t4\" \"b1\" 1.0) (Event (ev \"m-p\" 14) used 86600 \"t5\" \"b1\" 1.615572206672458)) ((\"t1\" \"x1\")))"
+  ],
+  [
+   "(item Memory \"x1\" (\"exchange\" \"user said keep it short\" 100) (stv 1.0 0.9090909090909091) ((ev turn 1) (ev turn 2)))"
+  ],
+  [
+   "added"
+  ],
+  [
+   "added"
+  ],
+  [
+   "known"
+  ],
+  [
+   "(merged \"b1\" (revised (stv 0.47073170731707314 0.9534883720930232) ((ev \"m-p\" 2) (ev \"m-q\" 1))))"
+  ],
+  [
+   "(merged \"b1\" (kept (stv 0.47073170731707314 0.9534883720930232) ((ev \"m-p\" 2) (ev \"m-q\" 1))))"
+  ],
+  [
+   "(merged \"b5\" (adopted (stv 0.4 0.4) ((ev \"m-q\" 2))))"
+  ],
+  [
+   "(skipped \"b5\")"
+  ],
+  [
+   "(\"x1\")"
+  ],
+  [
+   "(stats 2 1 2 21 -1)"
+  ],
+  [
+   "(forgot-all 800 14)"
+  ],
+  [
+   "(refused forgotten)"
+  ],
+  [
+   "(integrated () ((stv 1.0 0.9) ((ev \"m-p\" 5))) (adopted (stv 1.0 0.9) ((ev \"m-p\" 5))))"
+  ],
+  [
+   "((\"b6\" Memory \"x\" 801))"
+  ],
+  [
+   "(stats 0 1 2 24 800)"
+  ]
+ ],
+ "mind": [
+  "(Current (Memory \"b6\") (stv 1.0 0.9) ((ev \"m-p\" 5)))",
+  "(EvCounter \"m-p\" 5)",
+  "(EvCounter \"m-q\" 5)",
+  "(ForgetAll 800)",
+  "(Forgotten \"b2\" \"fp2\" 400)",
+  "(Forgotten \"zz\" \"fpx\" 600)",
+  "(Promotion \"b6\" 0.0 801)",
+  "(Said \"b6\" \"exchange\" \"x\" 801)",
+  "(Salt \"salt-p\")",
+  "(Self \"m-p\" \"salt-p\")",
+  "(Words \"b6\" \"fp6\")"
+ ],
+ "history": [
+  "(EvCounter \"m-p\" 24)",
+  "(Event (ev \"m-p\" 1) learned 100 \"t1\" \"b1\" \"preference\")",
+  "(Event (ev \"m-p\" 10) adopted 103 \"t3\" \"b2\" (adopted (stv 1.0 0.9) ((ev turn 7))))",
+  "(Event (ev \"m-p\" 11) kept 104 \"t3\" \"b2\" (kept (stv 1.0 0.9) ((ev turn 7))))",
+  "(Event (ev \"m-p\" 12) revised 105 \"t3\" \"x1\" (revised (stv 1.0 0.9090909090909091) ((ev turn 1) (ev turn 2))))",
+  "(Event (ev \"m-p\" 13) used 200 \"t4\" \"b1\" 1.0)",
+  "(Event (ev \"m-p\" 14) used 86600 \"t5\" \"b1\" 1.615572206672458)",
+  "(Event (ev \"m-p\" 15) learned 300 \"t6\" \"b3\" \"fact\")",
+  "(Event (ev \"m-p\" 16) adopted 300 \"t6\" \"b3\" (adopted (stv 1.0 0.9) ((ev \"m-p\" 3))))",
+  "(Event (ev \"m-p\" 17) forgotten 400 \"t7\" \"b2\" 5)",
+  "(Event (ev \"m-p\" 18) purged 400 none \"b3\" 4)",
+  "(Event (ev \"m-p\" 19) learned 450 \"t8\" \"b4\" \"fact\")",
+  "(Event (ev \"m-p\" 2) adopted 100 \"t1\" \"b1\" (adopted (stv 0.9 0.5) ((ev \"m-p\" 1))))",
+  "(Event (ev \"m-p\" 20) adopted 450 \"t8\" \"b4\" (adopted (stv 1.0 0.9) ((ev \"m-p\" 4))))",
+  "(Event (ev \"m-p\" 21) purged 700 none \"x1\" 5)",
+  "(Event (ev \"m-p\" 22) forgot-all 800 \"t9\" none 800)",
+  "(Event (ev \"m-p\" 23) learned 801 \"t10\" \"b6\" \"exchange\")",
+  "(Event (ev \"m-p\" 24) adopted 801 \"t10\" \"b6\" (adopted (stv 1.0 0.9) ((ev \"m-p\" 5))))",
+  "(Event (ev \"m-p\" 3) revised 101 \"t2\" \"b1\" (revised (stv 0.6900000000000001 0.588235294117647) ((ev \"m-p\" 1) (ev \"m-p\" 2))))",
+  "(Event (ev \"m-p\" 4) kept 102 \"t2\" \"b1\" (kept (stv 0.6900000000000001 0.588235294117647) ((ev \"m-p\" 1) (ev \"m-p\" 2))))",
+  "(Event (ev \"m-p\" 5) chosen 103 \"t2\" \"b1\" (chosen (stv 0.5 0.95) ((ev \"m-p\" 2))))",
+  "(Event (ev \"m-p\" 6) learned 100 \"t1\" \"x1\" \"exchange\")",
+  "(Event (ev \"m-p\" 7) adopted 100 \"t1\" \"x1\" (adopted (stv 1.0 0.9) ((ev turn 1))))",
+  "(Event (ev \"m-p\" 8) kept 100 \"t1\" \"x1\" (kept (stv 1.0 0.9) ((ev turn 1))))",
+  "(Event (ev \"m-p\" 9) learned 103 \"t3\" \"b2\" \"fact\")"
+ ]
+}

@@ -1,0 +1,91 @@
+/*
+ * Purpose: the feedback entry's place and shape (FeedbackHost.tsx): in the host's bottom-right corner just left of the
+ * clock's reserved slot (shell/osClock.css --os-clock-slot, --feedback-slot), 36 px tall like the clock and dressed as
+ * the clock is in each experience (osClock.css skins). A pill with its icon and word from 1024 px (shell/clockModel
+ * FEEDBACK_BESIDE_MIN); narrower, where bottom rows are full, its icon alone, standing on the clock (osClock.css
+ * --feedback-lift keeps the column clear).
+ */
+.feedback-entry {
+  position: fixed;
+  right: calc(12px + env(safe-area-inset-right, 0px) + var(--os-clock-slot, 96px) + 8px);
+  bottom: calc(12px + var(--sab, 0px));
+  /* the clock's layer: above pages and non-modal sheets, under menus, the Ask, notices and dialogs */
+  z-index: 31;
+  box-sizing: border-box;
+  height: 36px;
+  max-width: var(--feedback-slot, 112px);
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border-radius: 18px;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.feedback-entry[hidden] { display: none; }
+.feedback-entry:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.feedback-entry-icon { flex: none; }
+/* the word in the skin's typeface but at one size and plain tracking, so it fits the fixed slot whole in every skin:
+   at the clock's own size and tracking it needed 58 to 77 px (Cosmos's spaced mono the widest) against 64. Where a
+   platform draws the skin's face wider still, FeedbackHost's useWordFits sets it just small enough */
+.feedback-entry-word { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 13px; letter-spacing: 0.02em; }
+/* how many drafts wait in the area: a small count on the entry's top-right edge, in the look's accent with the ink each
+   look sets for it (index.css --color-primary-ink, the pair the tour's step counter uses), so no colour is fixed here */
+.feedback-entry-count {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  background: var(--color-accent);
+  color: var(--color-primary-ink);
+}
+
+/* the whole name above the entry on hover and on focus, as the clock shows its date */
+.feedback-entry-hint {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+  background: inherit;
+  border: inherit;
+  box-shadow: inherit;
+  backdrop-filter: inherit;
+  -webkit-backdrop-filter: inherit;
+  color: inherit;
+  font-family: inherit;
+}
+.feedback-entry:hover .feedback-entry-hint,
+.feedback-entry:focus-visible .feedback-entry-hint { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .feedback-entry-hint { transition: none; transform: none; }
+}
+
+@media (max-width: 1023px) {
+  .feedback-entry { right: calc(12px + env(safe-area-inset-right, 0px)); bottom: calc(56px + var(--sab, 0px)); width: 36px; padding: 0; }
+  .feedback-entry-word { display: none; }
+}
+/* a 44 px target for a finger around the 36 px entry, as Ω has */
+@media (pointer: coarse) {
+  .feedback-entry::before { content: ''; position: absolute; inset: -4px; }
+}

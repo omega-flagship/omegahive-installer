@@ -1,0 +1,6 @@
+(SkillTopic "reminder-add" "reminders")
+(SkillTopic "reminder-list" "reminders")
+(SkillCardLine "reminder-add" "reminder-add name when note - store an inspectable reminder atom")
+(SkillCardLine "reminder-list" "reminder-list - inspect active reminder atoms")
+(Risk "reminder-add" "continuity-state")
+(Effect "reminder-add" "writes-reminder-space")

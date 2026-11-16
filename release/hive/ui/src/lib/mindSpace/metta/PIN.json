@@ -1,0 +1,22 @@
+{
+  "note": "NAL and PLN are imported directly from the pinned Singnet dependency; lib_hive is the Hive browser copy. Hashes verify the same semantics.",
+  "release": "6838fab",
+  "files": {
+    "lib_nal.metta": {
+      "from": "third_party/Omega/lib_nal.metta",
+      "sha256": "3f2894d9b1bc4e39fd7d0384aa6c8503b847eed38826222941ffa14dc0610283"
+    },
+    "lib_pln.metta": {
+      "from": "third_party/Omega/lib_pln.metta",
+      "sha256": "05b63266ad79c3cd0b32a83a4596ad47923e612e746303628da7500bbcffa7ae"
+    },
+    "lib_hive.metta": {
+      "from": "hive/spaces/lib_hive.metta",
+      "sha256": "99d38025059c558dacb1370c44c79866e5722b372406cd60492e12124df901ad"
+    }
+  },
+  "engine": {
+    "package": "@mettascript/core + @mettascript/hyperon",
+    "version": "3.4.0"
+  }
+}

@@ -1,0 +1,2 @@
+# The reviewed Janus bridge is built against the installed SWI-Prolog runtime.
+janus-swi==1.5.3

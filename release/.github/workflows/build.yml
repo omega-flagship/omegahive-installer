@@ -1,0 +1,20 @@
+# By hand only. A pull request and a push to main do not spend a GitHub-hosted
+# image build: it does not run the suite, it does not publish, and staging does
+# not use the image. release.yml publishes singularitynet/omegaclaw on a v* tag.
+name: build
+
+on:
+  workflow_dispatch:
+
+# A newer push to a pull request cancels the build still running for the older one, as ci.yml does, so hosted
+# minutes go only to the head that can merge. Pushes to main and manual runs each get their own group and finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    uses: ./.github/workflows/common.yml
+    with:
+      publish_docker: false
+      platforms: 'linux/amd64'

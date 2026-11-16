@@ -1,0 +1,187 @@
+{
+ "_about": "INVENTED values. The KEY SET and nesting are copied from host eb006a94c843e91a2a1aa1d10c810c1fb3c394d3: StudioSessions.ledger (hive/core/studio_sessions.py:607-634), stop_view (studio_handoff.py:1256-1272), handoff_view (studio_handoff.py:1274-), _step_view (studio_steps.py:995-1011), piece_view (studio_steps.py:1023-1029). A Stop that completed: state stopped, maker released, no in_flight (R3 has none), budget.unknown 0.",
+ "ledger": {
+  "session_id": "ss_a",
+  "kind": "studio.session",
+  "intent_id": "ai_studio1",
+  "ask_turn_id": "op_inv1",
+  "thread_id": "th_inv1",
+  "swarm_id": "s_x",
+  "program_id": "omegadesign",
+  "app_pin": {
+   "id": "omegadesign"
+  },
+  "maker_id": "a_m",
+  "goal_id": "g_a",
+  "proposal_artifact_id": "ar_p",
+  "stream_id": "as_aaaaaaaaaaaaaaaaaaaaaaaa",
+  "piece": {
+   "scene_id": "sim-poster",
+   "source_ref": null
+  },
+  "source_artifact_id": null,
+  "key_id": "k1",
+  "model": "invented-model",
+  "role_id": null,
+  "tools": [],
+  "own_key": true,
+  "consent_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "expires_at": "2026-10-18T11:00:00Z",
+  "max_steps": 12,
+  "step_window_s": 180,
+  "state": "stopped",
+  "state_reason": null,
+  "steps": [
+   {
+    "n": 1,
+    "state": "finished",
+    "execution_id": "sx_inv1aaaaaaaa",
+    "token_epoch": 1,
+    "admitted_at": "2026-10-18T10:01:00Z",
+    "deadline": "2026-10-18T10:04:00Z",
+    "read_at": "2026-10-18T10:01:05Z",
+    "piece_read": {
+     "seq": 3,
+     "body_sha256": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+     "scene_ref": {
+      "scene_id": "sim-poster",
+      "revision": 4,
+      "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+     },
+     "edit_generation": 5
+    },
+    "proposal_revision": 1,
+    "proposal_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "published_at": "2026-10-18T10:01:30Z",
+    "more": true,
+    "outcome": "applied",
+    "outcome_reason": null,
+    "piece_upload": {
+     "seq": 3,
+     "body_sha256": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+     "scene_ref": {
+      "scene_id": "sim-poster",
+      "revision": 4,
+      "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+     },
+     "edit_generation": 5
+    },
+    "outcome_at": "2026-10-18T10:01:40Z",
+    "direction_seqs": [],
+    "message_id": "m_inv1aaaaaaaa",
+    "maker_execution": "me_inv1aaaaaaa",
+    "receiver_generation": 7,
+    "mount_epoch": 2,
+    "spend": {
+     "scope": "studiostep:ss_a:1",
+     "spent": 0.04,
+     "held": 0.0
+    }
+   },
+   {
+    "n": 2,
+    "state": "stopped",
+    "execution_id": "sx_inv2aaaaaaaa",
+    "token_epoch": 2,
+    "admitted_at": "2026-10-18T10:02:00Z",
+    "deadline": "2026-10-18T10:05:00Z",
+    "read_at": "2026-10-18T10:02:05Z",
+    "piece_read": {
+     "seq": 3,
+     "body_sha256": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+     "scene_ref": {
+      "scene_id": "sim-poster",
+      "revision": 4,
+      "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+     },
+     "edit_generation": 5
+    },
+    "proposal_revision": null,
+    "proposal_digest": null,
+    "published_at": null,
+    "more": null,
+    "outcome": null,
+    "outcome_reason": null,
+    "piece_upload": null,
+    "outcome_at": null,
+    "direction_seqs": [],
+    "message_id": "m_inv2aaaaaaaa",
+    "maker_execution": "me_inv2aaaaaaa",
+    "receiver_generation": null,
+    "mount_epoch": null,
+    "spend": {
+     "scope": "studiostep:ss_a:2",
+     "spent": 0.0,
+     "held": 0.0
+    }
+   }
+  ],
+  "directions": [],
+  "piece_custody": {
+   "latest": {
+    "seq": 3,
+    "body_sha256": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+    "scene_ref": {
+     "scene_id": "sim-poster",
+     "revision": 4,
+     "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "edit_generation": 5,
+    "acknowledged_at": "2026-10-18T10:01:35Z",
+    "refresh": false
+   },
+   "piece_state": "revoked",
+   "mount": {
+    "mount_epoch": 2,
+    "receiver_generation": 7,
+    "lease_expires_at": null
+   },
+   "execution": {
+    "state": "unprepared",
+    "ready_epoch": null,
+    "handoff": null
+   }
+  },
+  "budget": {
+   "scope": "studio:ss_a",
+   "cap": 2,
+   "spent": 0.04,
+   "held": 0.0,
+   "unknown": 0.0,
+   "step_cap": 0.25,
+   "step_spent": null,
+   "monthly": [
+    {
+     "scope": "own_key:k1",
+     "limit": 10.0,
+     "spent": 3.04,
+     "held": 0.0,
+     "headroom": 6.96
+    }
+   ]
+  },
+  "stop": {
+   "state": "stopped",
+   "stop_verified": true,
+   "stop_failed": false,
+   "release_stale": false,
+   "release_phase": "durable",
+   "maker_released": true,
+   "stopping_deadline": "2026-10-18T10:05:00Z",
+   "settle_deadline": "2026-10-18T10:08:00Z",
+   "message": null,
+   "finish_stopping": false,
+   "fenced_at": "2026-10-18T10:02:10Z",
+   "stopped_at": "2026-10-18T10:02:20Z"
+  },
+  "handoff": {
+   "retries_this_hour": 0,
+   "retries_per_hour": 3,
+   "retries_left": 3,
+   "message": null,
+   "rows": []
+  },
+  "created_at": "2026-10-18T10:00:00Z",
+  "updated_at": "2026-10-18T10:02:20Z"
+ }
+}

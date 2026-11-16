@@ -1,0 +1,11 @@
+!(import! &self (library lib_import))
+!(import_prolog_functions_from_file ./repos/OmegaClaw-Core/hive/runtime/register.pl (register-hive-core))
+!(register-hive-core)
+!(import! &self (library OmegaClaw-Core modules/body_container/entry.metta))
+
+!(println! (match &self (TrustedRuntimeOrgan "body-container") true))
+!(println! (eval (initBodyContainerOrgan)))
+!(println! (eval (body-container-status)))
+!(println! (eval (body-container-self)))
+!(println! (match &self (Provides omegaclaw.body.container $thing) $thing))
+!(println! (match &self (BodyContainerCapability omega-body-vm $capability) $capability))

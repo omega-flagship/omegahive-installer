@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Host check</title>
+<!-- An invented view built on the official MCP Apps SDK (@modelcontextprotocol/ext-apps App), loaded from the domain the
+     view declares. scripts/views-check.mjs saves it as a view resource and reads what it shows: the handshake's result,
+     the host context, and the answers to display-mode and message requests. -->
+<style>
+  body { margin: 0; padding: 16px; font: 14px/1.5 var(--font-sans, system-ui, sans-serif); color: var(--color-text-primary, #222);
+         background: var(--color-background-primary, #fff); }
+  h1 { margin: 0 0 8px; font-size: 16px; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0 0 12px; }
+  dt { color: var(--color-text-secondary, #666); }
+  dd { margin: 0; font-family: var(--font-mono, monospace); }
+  button { margin-right: 8px; padding: 8px 12px; border: 1px solid var(--color-border-primary, #ccc); border-radius: var(--border-radius-md, 8px);
+           color: var(--color-text-primary, #222); background: var(--color-background-secondary, #f4f4f4); font: inherit; cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>Host check</h1>
+<dl id="facts"><dt>status</dt><dd id="status">connecting</dd></dl>
+<button id="full">Full screen</button><button id="send">Send to the mind</button><button id="link">Open the spec</button><button id="save">Save the split</button>
+<script type="module">
+  import { App, applyDocumentTheme, applyHostStyleVariables } from 'https://cdn.jsdelivr.net/npm/@modelcontextprotocol/ext-apps@2.0.4/dist/src/app-with-deps.js'
+  const app = new App({ name: 'Host check', version: '1.0.0' }, { availableDisplayModes: ['inline', 'fullscreen'] })
+  const facts = document.getElementById('facts')
+  const show = (key, value) => {
+    let dd = document.getElementById(key)
+    if (!dd) { facts.insertAdjacentHTML('beforeend', `<dt>${key}</dt><dd id="${key}"></dd>`); dd = document.getElementById(key) }
+    dd.textContent = typeof value === 'string' ? value : JSON.stringify(value)
+  }
+  const context = (ctx) => {
+    if (ctx?.theme) applyDocumentTheme(ctx.theme)
+    if (ctx?.styles?.variables) applyHostStyleVariables(ctx.styles.variables)
+    for (const key of ['theme', 'displayMode', 'availableDisplayModes', 'locale', 'timeZone', 'platform']) if (ctx && key in ctx) show(key, ctx[key])
+    if (ctx?.containerDimensions) show('containerDimensions', ctx.containerDimensions)
+    if (ctx?.styles?.variables) show('styleVariables', String(Object.keys(ctx.styles.variables).length))
+  }
+  app.onhostcontextchanged = (changed) => { context(changed); show('changed', Object.keys(changed).join(',')) }
+  try {
+    await app.connect()
+    show('status', 'connected')
+    show('host', app.getHostVersion()?.name ?? '')
+    show('capabilities', Object.keys(app.getHostCapabilities() ?? {}).sort().join(','))
+    context(app.getHostContext())
+  } catch (e) {
+    show('status', 'failed: ' + (e?.message ?? e))
+  }
+  document.getElementById('full').addEventListener('click', async () => {
+    try { show('displayModeAnswer', (await app.requestDisplayMode({ mode: 'fullscreen' })).mode) } catch (e) { show('displayModeAnswer', 'error: ' + e.message) }
+  })
+  document.getElementById('send').addEventListener('click', async () => {
+    try { await app.sendMessage({ role: 'user', content: [{ type: 'text', text: 'Make the tip 18% for four people.' }] }); show('messageAnswer', 'accepted') }
+    catch (e) { show('messageAnswer', 'error: ' + e.message) }
+  })
+  document.getElementById('link').addEventListener('click', async () => {
+    try { await app.openLink({ url: 'https://modelcontextprotocol.io/extensions/apps' }); show('linkAnswer', 'opened') } catch (e) { show('linkAnswer', 'error: ' + e.message) }
+  })
+  document.getElementById('save').addEventListener('click', async () => {
+    try {
+      await app.downloadFile({ contents: [{ type: 'resource', resource: { uri: 'file:///exports/split.csv', mimeType: 'text/csv', text: 'person,share\nA,30.00\nB,30.00' } }] })
+      show('saveAnswer', 'saved')
+    } catch (e) { show('saveAnswer', 'error: ' + e.message) }
+  })
+  try { await app.callServerTool({ name: 'anything', arguments: {} }); show('toolAnswer', 'answered') }
+  catch (e) { show('toolAnswer', 'refused') }
+</script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "repository": "https://github.com/singnet/Omega.git",
+  "path": "third_party/Omega",
+  "revision": "a6bd77859fa326b43bf924e6b65d327d17204376",
+  "mode": "singnet-core-with-hive-extensions",
+  "iter": {
+    "repository": "https://github.com/patham9/iter.git",
+    "path": "third_party/iter",
+    "branch": "omega",
+    "revision": "c8325de43dc375b8c73f33c3666d8e8c4a53fa5f"
+  },
+  "iter_metta": {
+    "repository": "https://github.com/patham9/iter.git",
+    "path": "third_party/iter-metta",
+    "branch": "metta",
+    "revision": "dc456de33c7ac18d1969b74186870d1834432603"
+  }
+}

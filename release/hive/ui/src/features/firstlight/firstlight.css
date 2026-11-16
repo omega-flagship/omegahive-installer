@@ -1,0 +1,613 @@
+/* First Light (R2): the eight marks, the ring on what a step points at, and one small panel just above the Ask.
+   Colours are the experience's own chrome tokens (--xc-*, written for every experience, light or dark), as the guided
+   demos use; the guest band is amber (--color-warn). Touch targets are at least 44 px on phones and coarse pointers.
+   Reduced motion: no glide, no breathing; the marks light without moving. */
+
+.fl-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 57;
+  pointer-events: none;
+  font-family: var(--xc-font, var(--font-sans, system-ui, sans-serif));
+  --color-ink: var(--xc-ink);
+  --color-float: var(--xc-surface);
+  --color-float-ink: var(--xc-ink);
+  --color-ink-2: var(--xc-ink-2);
+  --color-ink-3: var(--xc-ink-3);
+  --color-accent: var(--xc-accent);
+}
+.fl-live {
+  position: fixed;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+.fl-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---- the marks: eight points, one per beat */
+.fl-marks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin: -2px 0 8px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--xc-edge);
+  color: var(--xc-ink);
+}
+.fl-marks ol {
+  display: flex;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fl-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+}
+.fl-dot {
+  display: block;
+  width: 9px;
+  height: 9px;
+  border-radius: 99px;
+  border: 1.5px solid color-mix(in srgb, var(--xc-ink-3) 80%, transparent);
+  background: transparent;
+  transition: background 0.4s, box-shadow 0.4s, border-color 0.4s;
+}
+.fl-mark[data-state='active'] .fl-dot {
+  border-color: var(--xc-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--xc-accent) 25%, transparent);
+}
+.fl-mark[data-state='ready'] .fl-dot {
+  border-color: var(--xc-accent);
+  background: var(--xc-accent);
+  box-shadow: 0 0 10px 2px color-mix(in srgb, var(--xc-accent) 45%, transparent);
+}
+.fl-mark[data-state='skipped'] .fl-dot {
+  opacity: 0.55;
+}
+.fl-mark[data-state='blocked'] .fl-dot {
+  border-color: var(--color-warn);
+  border-right-color: transparent;
+}
+.fl-mark[data-state='later'] .fl-dot {
+  width: 5px;
+  height: 5px;
+  border-style: dotted;
+  opacity: 0.6;
+}
+.fl-where {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--xc-ink-2);
+}
+
+/* ---- the ring on what the step points at */
+.fl-ring {
+  position: fixed;
+  border-radius: 14px;
+  box-shadow:
+    0 0 0 2px var(--xc-accent),
+    0 0 28px 6px color-mix(in srgb, var(--xc-accent) 30%, transparent);
+  transition: left 0.5s cubic-bezier(0.2, 0.8, 0.2, 1), top 0.5s cubic-bezier(0.2, 0.8, 0.2, 1), width 0.5s, height 0.5s;
+}
+.fl-ring--mind {
+  border-radius: 999px;
+  animation: fl-breathe 3.2s ease-in-out infinite;
+}
+.fl-ring--lit {
+  box-shadow:
+    0 0 0 2px var(--xc-accent),
+    0 0 60px 22px color-mix(in srgb, var(--xc-accent) 45%, transparent);
+  animation: fl-light 1.2s ease-out both;
+}
+@keyframes fl-breathe {
+  50% {
+    box-shadow:
+      0 0 0 2px var(--xc-accent),
+      0 0 40px 12px color-mix(in srgb, var(--xc-accent) 40%, transparent);
+  }
+}
+@keyframes fl-light {
+  from {
+    box-shadow:
+      0 0 0 2px var(--xc-accent),
+      0 0 8px 2px color-mix(in srgb, var(--xc-accent) 30%, transparent);
+  }
+}
+.fl-layer[data-reduced] .fl-ring,
+.fl-layer[data-reduced] .fl-dot {
+  transition: none;
+  animation: none;
+}
+
+/* ---- the panel, just above the Ask */
+.fl-panel {
+  position: fixed;
+  left: 50%;
+  width: min(620px, calc(100vw - 32px));
+  max-height: 66vh;
+  overflow-y: auto;
+  pointer-events: auto;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border-radius: min(var(--xc-radius, 16px), 18px);
+  border: 1px solid var(--xc-edge);
+  /* the look's own surface, made solid: the page under the panel never shows through the caption */
+  background: var(--xc-texture, none), var(--xc-surface);
+  background: var(--xc-texture, none), rgb(from var(--xc-surface) r g b / 0.99);
+  backdrop-filter: var(--xc-blur);
+  -webkit-backdrop-filter: var(--xc-blur);
+  box-shadow: var(--xc-shadow);
+  color: var(--xc-ink);
+  font-size: 14px;
+  line-height: 1.45;
+}
+/* Legacy beat panels are centered with a half-width shift; U1 is a grid item. */
+.fl-panel:not(.fl-u1-panel) { translate: -50% 0; }
+.fl-panel[hidden] {
+  display: none;
+}
+.fl-panel p {
+  margin: 0;
+}
+.fl-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fl-caption {
+  font-size: 15px;
+  color: var(--xc-ink);
+}
+.fl-cc {
+  display: inline-block;
+  padding: 0 4px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
+  font-size: 10px;
+  line-height: 15px;
+  vertical-align: 2px;
+  color: var(--xc-ink-3);
+}
+.fl-sim {
+  margin-bottom: 8px !important;
+  font-size: 12px;
+  color: var(--xc-ink-2);
+}
+.fl-sim-tag {
+  padding: 1px 7px;
+  border-radius: 99px;
+  border: 1px dashed currentColor;
+  font-weight: 600;
+}
+.fl-band {
+  margin-bottom: 8px !important;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--color-warn) 70%, transparent);
+  background: color-mix(in srgb, var(--color-warn) 16%, transparent);
+  color: var(--xc-ink);
+  font-size: 13px;
+}
+.fl-notice {
+  margin-bottom: 8px !important;
+  font-size: 12.5px;
+  color: var(--xc-ink-2);
+}
+.fl-state {
+  font-size: 13px;
+  color: var(--xc-ink-2);
+}
+.fl-state-tag {
+  display: inline-block;
+  padding: 0 7px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid currentColor;
+}
+.fl-state-tag[data-state='ready'] {
+  color: var(--xc-accent);
+}
+.fl-state-tag[data-state='blocked'] {
+  color: var(--color-warn);
+}
+.fl-state-tag[data-state='skipped'] {
+  border-style: dashed;
+}
+.fl-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--xc-edge);
+  background: color-mix(in srgb, var(--xc-ink) 5%, transparent);
+}
+.fl-card-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--xc-ink-3);
+}
+.fl-amount {
+  font-size: 16px;
+  font-weight: 600;
+}
+.fl-bar {
+  height: 6px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--xc-ink) 14%, transparent);
+  overflow: hidden;
+}
+.fl-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--color-warn);
+}
+.fl-pays,
+.fl-small {
+  font-size: 12.5px;
+  color: var(--xc-ink-2);
+}
+.fl-error {
+  font-size: 13px;
+  color: var(--xc-ink);
+}
+.fl-greeting {
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--xc-accent);
+  font-size: 15px;
+  color: var(--xc-ink);
+}
+.fl-chips,
+.fl-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.fl-controls {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--xc-edge);
+}
+.fl-btn {
+  min-height: 36px;
+  padding: 0 13px;
+  border-radius: 99px;
+  border: 1px solid color-mix(in srgb, currentColor 55%, transparent);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.fl-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+.fl-btn:focus-visible,
+.fl-input:focus-visible {
+  outline: 2px solid var(--xc-accent);
+  outline-offset: 2px;
+}
+.fl-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.fl-btn[data-tone='primary'] {
+  border-color: var(--xc-accent);
+  background: color-mix(in srgb, var(--xc-accent) 20%, transparent);
+}
+.fl-btn[data-tone='quiet'] {
+  border-color: transparent;
+  color: var(--xc-ink-3);
+}
+.fl-other {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.fl-input {
+  width: 8em;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--xc-edge);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+@media (pointer: coarse), (max-width: 640px) {
+  .fl-btn,
+  .fl-input {
+    min-height: 44px;
+  }
+}
+
+/* ---- phones: the marks shrink to the top edge; the panel keeps the hive visible above it */
+.fl-layer[data-phone] .fl-marks ol {
+  gap: 7px;
+}
+.fl-layer[data-phone] .fl-where {
+  font-size: 10px;
+}
+.fl-layer[data-phone] .fl-panel {
+  width: calc(100vw - 32px);
+  max-height: 60vh;
+  padding: 10px 12px;
+}
+
+/* ---- each look's own form */
+/* Cosmos: beacons on a dotted flight path, HUD capitals for the label */
+.fl-layer[data-experience='cosmos'] .fl-marks ol {
+  background-image: linear-gradient(90deg, color-mix(in srgb, var(--xc-ink-3) 60%, transparent) 50%, transparent 50%);
+  background-size: 6px 1px;
+  background-repeat: repeat-x;
+  background-position: 0 50%;
+}
+.fl-layer[data-experience='cosmos'] .fl-where {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 10px;
+}
+.fl-layer[data-experience='cosmos'] .fl-ring--mind {
+  border-radius: 999px;
+}
+/* Still: one italic line of type with eight ink points; no glow, no camera */
+.fl-layer[data-experience='still'] .fl-where {
+  font-style: italic;
+}
+.fl-layer[data-experience='still'] .fl-mark[data-state='ready'] .fl-dot {
+  box-shadow: none;
+}
+.fl-layer[data-experience='still'] .fl-ring {
+  border-radius: 3px;
+  box-shadow: 0 0 0 1.5px var(--xc-accent);
+  animation: none;
+}
+.fl-layer[data-experience='still'] .fl-panel {
+  box-shadow: none;
+  border-radius: 6px;
+}
+/* Construct: square, terminal-like */
+.fl-layer[data-experience='construct'] .fl-ring,
+.fl-layer[data-experience='construct'] .fl-panel,
+.fl-layer[data-experience='construct'] .fl-btn,
+.fl-layer[data-experience='construct'] .fl-dot {
+  border-radius: 0;
+}
+
+/* the controls stay in reach when the panel scrolls (a phone with a long card) */
+.fl-controls {
+  position: sticky;
+  bottom: -12px;
+  margin-bottom: -2px;
+  padding-bottom: 2px;
+  background: var(--xc-surface);
+  background: rgb(from var(--xc-surface) r g b / 0.99);
+}
+.fl-layer[data-phone] .fl-caption {
+  font-size: 14px;
+}
+.fl-layer[data-phone] .fl-sim,
+.fl-layer[data-phone] .fl-band {
+  font-size: 12px;
+}
+.fl-layer[data-phone] .fl-controls {
+  gap: 4px;
+}
+.fl-layer[data-phone] .fl-btn {
+  padding: 0 11px;
+}
+
+/* R3: beat 5 (your apps), beat 6 (your Ask) and the hand-off */
+.fl-apps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fl-apps li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  align-items: center;
+}
+.fl-apps li .fl-btn {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+.fl-app-name {
+  font-weight: 650;
+}
+.fl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12.5px;
+}
+.fl-field .fl-input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 14px;
+}
+textarea.fl-input {
+  resize: vertical;
+  min-height: 44px;
+}
+body[data-firstlight-u1-active] #root header { visibility: hidden; pointer-events: none; }
+/* The original, origin-bound Universal Ask remains usable. Its input owns a
+   fixed strip, while the welcome owns the separate area above it. No clone or
+   alternative submit handler is introduced. Its existing intent, status
+   and confirmation UI remain visible; no unseen choice is substituted. */
+body[data-firstlight-u1-active] #ask {
+  position: fixed !important;
+  inset: auto !important;
+  left: 0 !important;
+  right: 0 !important;
+  margin-inline: auto !important;
+  bottom: max(12px, env(safe-area-inset-bottom)) !important;
+  transform: none !important;
+  width: min(600px, calc(100vw - 24px)) !important;
+  height: 48px !important;
+  z-index: 58 !important;
+  pointer-events: auto;
+  color: var(--xc-ink);
+}
+body[data-firstlight-u1-active] #ask :has(input[role='combobox']) {
+  position: static !important;
+  inset: auto !important;
+  translate: none !important;
+  transform: none !important;
+  width: auto !important;
+  max-width: none !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+body[data-firstlight-u1-active] #ask input[role='combobox'] {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 48px !important;
+  box-sizing: border-box;
+  visibility: visible;
+  padding: 10px 16px !important;
+  border: 1px solid var(--xc-edge) !important;
+  border-radius: 16px !important;
+  background: var(--xc-surface) !important;
+  color: var(--xc-ink) !important;
+  pointer-events: auto !important;
+  font: inherit;
+}
+body[data-firstlight-u1-active] #ask .ask-mark,
+body[data-firstlight-u1-active] #ask .ask-aurora,
+body[data-firstlight-u1-active] #ask .ask-stars,
+body[data-firstlight-u1-active] #ask .ask-chips,
+body[data-firstlight-u1-active] #ask .ask-icon,
+body[data-firstlight-u1-active] #ask .ask-answerer-row,
+body[data-firstlight-u1-active] #ask .ask-answerer-inline,
+body[data-firstlight-u1-active] #ask .sl-cards,
+body[data-firstlight-u1-active] #ask .pr-card-head,
+body[data-firstlight-u1-active] #ask .pr-ask-line > button,
+body[data-firstlight-u1-active] .ask-skip { display: none !important; }
+body[data-firstlight-u1-active] #ask .pr-ask-options { position: absolute; bottom: calc(100% + 8px); width: 100%; max-height: min(240px, 40dvh); overflow-y: auto; background: var(--xc-surface); }
+
+/* U1 is a single, viewport-bounded composition. The scrim separates it from
+   the underlying Ask; no measured Ask offset can collapse a Duo-height card. */
+.fl-u1-scrim {
+  position: fixed;
+  inset: 0;
+  pointer-events: auto;
+  background: radial-gradient(ellipse at 24% 42%, color-mix(in srgb, var(--xc-accent) 18%, transparent), transparent 58%), color-mix(in srgb, var(--xc-bg, #151923) 76%, transparent);
+  backdrop-filter: blur(8px);
+}
+.fl-u1-scene {
+  position: fixed;
+  inset: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) calc(max(12px, env(safe-area-inset-bottom)) + 76px) max(16px, env(safe-area-inset-left));
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(0, 540px);
+  justify-content: center;
+  align-items: center;
+  gap: clamp(24px, 4vw, 64px);
+  min-height: 0;
+}
+.fl-u1-scrim[hidden], .fl-u1-scene[hidden] { display: none; }
+.fl-u1-omega { width: 100%; max-height: 220px; color: var(--xc-accent); filter: drop-shadow(0 8px 36px color-mix(in srgb, var(--xc-accent) 24%, transparent)); }
+.fl-u1-panel {
+  position: relative;
+  left: auto;
+  top: auto;
+  bottom: auto;
+  transform: none;
+  width: 100%;
+  max-height: 100%;
+  min-height: 0;
+  padding: clamp(16px, 2.2vw, 26px);
+  border-radius: 22px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+  box-shadow: 0 20px 80px #0005;
+}
+.fl-u1-body { display: grid; gap: 12px; min-width: 0; font-size: 14px; line-height: 1.45; }
+.fl-u1-body h2 { margin: 2px 0 0; font-size: 22px; font-weight: 700; letter-spacing: -.025em; line-height: 1.12; }
+.fl-u1-body p { margin: 0; }
+.fl-u1-eyebrow { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--xc-ink-2); }
+.fl-u1-fields { display: grid; gap: 12px; min-width: 0; }
+.fl-u1-fields > * { min-width: 0; }
+.fl-field-help { font-size: 11px; line-height: 1.35; color: var(--xc-ink-2); }
+.fl-u1-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.fl-u1-actions > [data-tone='primary'] { flex: 1 1 180px; }
+.fl-u1-actions > :not([data-tone='primary']) { flex: 0 1 auto; }
+.fl-u1-body .fl-input { padding: 8px 10px; min-height: 38px; }
+.fl-u1-body textarea.fl-input { height: 60px; min-height: 60px; }
+.fl-u1-body .fl-btn { min-height: 44px; padding: 8px 12px; }
+.fl-u1-body .fl-btn[data-tone='primary'] { font-weight: 650; background: var(--xc-accent); color: var(--xc-accent-ink, #fff); border-color: transparent; box-shadow: 0 4px 14px color-mix(in srgb, var(--xc-accent) 22%, transparent); }
+.fl-u1-thinking { display: grid; gap: 8px; min-width: 0; }
+.fl-u1-body details > summary { cursor: pointer; overflow-wrap: anywhere; list-style: none; }
+.fl-u1-body details > summary::-webkit-details-marker { display: none; }
+.fl-u1-body details > summary::after { content: '+'; margin-left: .5em; color: var(--xc-ink-2); }
+.fl-u1-body details[open] > summary::after { content: '−'; }
+.fl-u1-thinking > details:first-child > summary { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.fl-u1-thinking > details:first-child > summary::after { content: none; }
+.fl-u1-thinking > details:first-child > summary > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.fl-change { flex: none; color: var(--xc-accent); font-size: 12px; }
+.fl-u1-body details[open] > *:not(summary) { margin-top: 8px; }
+.fl-u1-body .fl-chips { display: grid; grid-template-columns: 1fr 1fr; min-width: 0; }
+.fl-u1-body .fl-chips > * { min-width: 0; white-space: normal; }
+.fl-u1-body blockquote { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fl-u1-readback { white-space: pre-wrap; overflow-wrap: anywhere; }
+.fl-u1-spending { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.fl-u1-spending > p { flex: 1 1 240px; }
+.fl-u1-month { color: var(--xc-accent); }
+.fl-u1-month[open] { flex: 1 1 100%; }
+.fl-u1-month > summary::after { content: none !important; }
+.fl-u1-consent { display: grid; gap: 4px; color: var(--xc-ink-2); font-size: 12px; }
+@media (min-width: 600px) {
+  .fl-u1-fields { grid-template-columns: minmax(120px, .8fr) minmax(180px, 1.4fr); align-items: start; }
+}
+@media (max-width: 760px) {
+  .fl-u1-scene { grid-template-columns: minmax(0, 540px); grid-template-rows: auto minmax(0, 1fr); gap: 12px; align-items: center; }
+  .fl-u1-omega { width: 80px; height: 80px; justify-self: center; }
+  .fl-u1-panel { align-self: start; }
+}
+/* Compact cover and Duo layouts keep one bounded scrolling card, never overlap
+   the page's Ask. Browser captures still decide fold/viewport acceptance. */
+@media (max-height: 620px) {
+  .fl-u1-scene { inset: 12px 12px calc(max(12px, env(safe-area-inset-bottom)) + 76px); }
+  .fl-u1-panel { padding: 14px 18px; border-radius: 18px; }
+  .fl-u1-body { gap: 8px; font-size: 13px; line-height: 1.35; }
+  .fl-u1-body h2 { font-size: 22px; }
+  .fl-u1-body textarea.fl-input { height: 48px; min-height: 48px; }
+}
+@media (max-width: 420px) {
+  .fl-u1-scene { inset: 10px 10px calc(max(12px, env(safe-area-inset-bottom)) + 76px); }
+  .fl-u1-panel { padding: 14px; border-radius: 18px; }
+  .fl-u1-body { gap: 10px; font-size: 13px; }
+  .fl-u1-fields { gap: 10px; }
+}

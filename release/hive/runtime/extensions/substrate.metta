@@ -1,0 +1,37 @@
+; OmegaClaw core substrate.
+;
+; This file loads the cognitive substrate and durable runtime spaces only.
+; Modules, attention organs, and the loop are composed after this file so the
+; loop compiles against the active module-provided affordances.
+
+!(import! &self (library lib_spaces))
+!(import! &self (library lib_nars))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/hive_helpers.py))
+(= (memory-file $name) (py-call (hive_services.memory_file $name)))
+!(import! &self (library OmegaClaw-Core ./src/energy.py))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_catalog.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_catalog_core.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_catalog_memory.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_catalog_energy.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_catalog_reasoning.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_catalog_affordance.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skills_core.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skills_runtime_spaces.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skills_memory.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skills_energy.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skills_reasoning_spaces.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skills_affordance.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_affordance_core.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_affordance_memory.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_affordance_reasoning.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_affordance_affordance.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skills_space_mutation.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/symbolic_memory))
+
+!(bind! &persistent (new-space))
+!(bind! &agenda (new-space))
+!(bind! &beliefs (new-space))
+!(bind! &world (new-space))
+!(bind! &events (new-space))
+!(bind! &activity (new-space))
+!(bind! &cleanup (new-space))

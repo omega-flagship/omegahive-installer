@@ -1,0 +1,5 @@
+(SkillTopic "inspect-webcam" "media")
+(SkillTopic "inspect-webcam" "camera")
+(SkillTopic "inspect-webcam" "webcam")
+(SkillTopic "inspect-webcam" "vision")
+(SkillCardLine "inspect-webcam" "inspect-webcam question - capture current webcam frame via OMEGA_WEBCAM_URL, then inspect visually; WEBCAM-CAPTURE-FAILED means camera config is unavailable")

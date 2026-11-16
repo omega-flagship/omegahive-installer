@@ -1,0 +1,131 @@
+# Read-only harness: builds mutation cases from Root's v3 invented fixtures and records Root's reference verdicts
+# (read_result_flat.py, pub-drafts, not edited; python -I -B so no bytecode is written). Output: one JSON file.
+import copy, json, sys
+D, ATOM_ROOT, OUT = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, ATOM_ROOT)
+sys.path.insert(0, D)
+import read_result_flat as rf
+
+fx = json.load(open(f'{D}/read-v3-flat-invented-fixtures.json'))['snapshots']
+by = {s['module']: s for s in fx}
+M = 'invented-mind'
+cases = []
+def add(name, doc, mind=M, module=None, stricter=False):
+    cases.append({'name': name, 'mind': mind, 'module': module or doc.get('module'), 'doc': doc, 'surface_stricter': stricter})
+def cur(m, **kw):
+    d = copy.deepcopy(by[m]); d['state'] = 'current'
+    d['provenance'] = {'source_revision': 'src-1', 'evidence_refs': [], 'read_path': 'host-consent-filtered-snapshot', 'authority': 'none'}
+    d.update(kw); return d
+def unav(m, **kw):
+    d = {k: by[m][k] for k in ('module', 'mind_id', 'qualification', 'explain')}
+    d.update({'revision': None, 'observed_at': None, 'available': False, 'state': 'unavailable', 'unavailable_reason': 'no_reader', 'items': [],
+              'provenance': {'source_revision': None, 'evidence_refs': [], 'read_path': 'none', 'authority': 'none'}})
+    d.update(kw); return d
+
+for m, s in by.items():
+    add(f'fixture:{m}', copy.deepcopy(s))
+    add(f'current:{m}', cur(m))
+    add(f'unavailable:{m}', unav(m))
+    add(f'unavailable-with-module-field:{m}', dict(unav(m), **{({'scratch': 'promotion_reasons', 'energy': 'mode'}.get(m) or rf.shared.CONTENT[m][0]): []}))
+    add(f'unavailable-observed-at:{m}', unav(m, observed_at='2026-10-08T00:00:00Z'))
+    add(f'mind-mismatch:{m}', cur(m), mind='other-mind')
+    add(f'executed-now:{m}', cur(m, executed_now=False))
+    add(f'banked-wrong-path:{m}', dict(copy.deepcopy(by[m]), state='banked'))
+add('module-mismatch', cur('attention'), module='energy')
+add('unavailable-items', unav('self', items=[{'id': 'i', 'kind': 'k', 'explain': 'x'}]))
+add('unavailable-reason-null', unav('self', unavailable_reason=None))
+add('current-null-source', cur('energy', provenance={'source_revision': None, 'evidence_refs': [], 'read_path': 'host-consent-filtered-snapshot', 'authority': 'none'}))
+add('synthetic-host-path', dict(copy.deepcopy(by['energy']), provenance={'source_revision': None, 'evidence_refs': [], 'read_path': 'host-consent-filtered-snapshot', 'authority': 'none'}))
+add('list-budget', cur('energy', budget=[by['energy']['budget']]))
+add('mode-not-published', cur('energy', mode='sleep'))
+add('budget-negative', cur('energy', budget=dict(by['energy']['budget'], spent=-1)))
+add('string-selection', cur('self', selected_skill='sample-skill'))
+add('digest-prefixed', cur('self', skills=[dict(by['self']['skills'][0], source_digest='sha256:' + 'a' * 64)]))
+add('availability-not-published', cur('self', skills=[dict(by['self']['skills'][0], availability='missing')]))
+add('reason-not-published', cur('attention', ranked_items=[dict(by['attention']['ranked_items'][0], reason_codes=['goal-pin'])]))
+add('duplicate-ranked-ids', cur('attention', ranked_items=[by['attention']['ranked_items'][0]] * 2))
+add('ranked-missing-label', cur('attention', ranked_items=[{k: v for k, v in by['attention']['ranked_items'][0].items() if k != 'label'}]))
+add('attention-focus-and-edges-no-items', cur('attention', ranked_items=[], spread_edges=[{'from': 'a', 'to': 'b', 'weight': 1, 'explain': 'x'}]))
+add('attention-65-items', cur('attention', ranked_items=[dict(by['attention']['ranked_items'][0], id=f'i{i}') for i in range(65)]))
+add('general-item-labelled', cur('attention', items=[{'id': 'g1', 'kind': 'note', 'label': 'General', 'explain': 'x'}]))
+add('general-item-no-explain', cur('attention', items=[{'id': 'g1', 'kind': 'note'}]))
+add('scratch-item-label', cur('scratch', items=[dict(by['scratch']['items'][0], label='Note')]))
+add('scratch-state-not-published', cur('scratch', items=[dict(by['scratch']['items'][0], promotion_state='promoted')]))
+add('scratch-empty', cur('scratch', items=[], promotion_reasons=[], demotion_reasons=[]))
+ev = by['temporal']['events'][0]; ex = by['temporal']['expectations'][0]
+add('iso-event-time', cur('temporal', events=[dict(ev, occurrence_time='2026-10-08T00:00:00Z')]))
+add('interval-object', cur('temporal', events=[dict(ev, valid_interval={'start': 10, 'end': 12})]))
+add('interval-backwards', cur('temporal', events=[dict(ev, valid_interval=[12, 10])]))
+add('interval-empty', cur('temporal', events=[dict(ev, valid_interval=[10, 10])]))
+add('due-backwards', cur('temporal', expectations=[dict(ex, due_interval=[22, 20])]))
+add('truth-known', cur('temporal', events=[dict(ev, truth={'f': 0.9, 'c': 0.8})]))
+add('truth-c-one', cur('temporal', events=[dict(ev, truth={'f': 0.9, 'c': 1})]))
+add('evidence-canonical', cur('temporal', events=[dict(ev, evidence_refs=['ev:atom-owner:1', 'ev:a:b:2'])]))
+add('evidence-leading-zero', cur('temporal', events=[dict(ev, evidence_refs=['ev:atom-owner:01'])]))
+add('evidence-duplicate', cur('temporal', events=[dict(ev, evidence_refs=['ev:atom-owner:1', 'ev:atom-owner:1'])]))
+add('evidence-not-atom', cur('temporal', events=[dict(ev, evidence_refs=['atom:a'])]))
+add('provenance-evidence-canonical', cur('energy', provenance={'source_revision': 's', 'evidence_refs': ['ev:o:3'], 'read_path': 'host-consent-filtered-snapshot', 'authority': 'none'}))
+add('temporal-id-shared', cur('temporal', expectations=[dict(ex, id='sample-event')]))
+add('projection-typed', cur('temporal', projection={'source_time': 10, 'target_time': 20, 'truth_before': None, 'truth_after': {'f': 0.5, 'c': 0.4}, 'model_ref': 'm', 'explain': 'x'}))
+add('projection-unknown-field', cur('temporal', projection={'unknown_field': 'fabricated'}))
+add('relation-typed', cur('temporal', interval_relations=[{'left_ref': 'a', 'right_ref': 'b', 'relation': 'before', 'explain': 'x'}]))
+add('relation-not-published', cur('temporal', interval_relations=[{'left_ref': 'a', 'right_ref': 'b', 'relation': 'near', 'explain': 'x'}]))
+add('observed-feb-30', cur('energy', observed_at='2026-02-30T12:00:00Z'))
+add('observed-apr-31', cur('energy', observed_at='2026-04-31T12:00:00Z'))
+add('observed-offset', cur('energy', observed_at='2026-10-08T12:00:00+02:00'))
+add('wake-no-seconds', cur('energy', next_wake_at='2026-10-08T12:00Z'))
+add('assume-prediction-unknown', cur('assume', prediction={'unknown_field': 'fabricated'}))
+add('assume-observed-typed', cur('assume', observed_target={'target_ref': 'sample-node', 'value': 2, 'unit': 'sample', 'observed_at': '2026-10-08T00:00:00Z', 'explain': 'x'}))
+add('v2-aggregate-layout', json.load(open(f'{D}/read-v2-invented-fixtures.json'))['snapshots'][0] | {'mind_id': M})
+add('empty-attention-secondary-focus', cur('attention', ranked_items=[], focus_ref='f', spread_edges=[]))
+add('empty-self-reasons-only', cur('self', skills=[], selected_skill=None, selection_reason_codes=['selection-unavailable']))
+add('empty-self', cur('self', skills=[], selected_skill=None, selection_reason_codes=[]))
+add('empty-assume-model-only', cur('assume', nodes=[], edges=[], prediction=None, model_ref='m'))
+add('empty-assume', cur('assume', nodes=[], edges=[], prediction=None, model_ref=None))
+add('empty-temporal', cur('temporal', events=[], expectations=[]))
+add('empty-temporal-relation-only', cur('temporal', events=[], expectations=[], interval_relations=[{'left_ref': 'a', 'right_ref': 'b', 'relation': 'before', 'explain': 'x'}]))
+add('energy-null-mode', cur('energy', mode=None))
+add('fullwidth-digits', cur('energy', observed_at='\uff12\uff10\uff12\uff16-10-08T00:00:00Z'))
+add('private-marker-time', cur('energy', observed_at='PRIVATE_MARKER'))
+add('private-marker-key', dict(cur('energy'), PRIVATE_MARKER=1))
+# r5: Root's calendar probe vectors (161705Z, probe e0857ed4), stand-in r4 P2/P3 vectors
+for stamp in ['0001-01-01T00:00:00Z', '0004-02-29T00:00:00Z', '0099-12-31T23:59:59Z', '0100-01-01T00:00:00Z', '0000-01-01T00:00:00Z', '0100-02-29T00:00:00Z', '2026-02-30T00:00:00Z']:
+    add(f'calendar:{stamp}', cur('energy', observed_at=stamp))
+add('calendar:0099-10-08-wake', cur('energy', next_wake_at='0099-10-08T00:00:00Z'))
+add('fraction-10-digits', cur('energy', observed_at='2026-10-08T00:00:00.1234567890Z'))
+add('fraction-1-digit', cur('energy', observed_at='2026-10-08T00:00:00.5+00:00'))
+add('fraction-empty', cur('energy', observed_at='2026-10-08T00:00:00.Z'))
+ri = by['attention']['ranked_items'][0]
+add('unicode-lone-surrogate-label', cur('attention', ranked_items=[dict(ri, label='a\ud800b')]))
+add('unicode-lone-surrogate-explain', cur('attention', ranked_items=[dict(ri, explain='\udc00x')]))
+add('unicode-lone-surrogate-id', cur('attention', ranked_items=[dict(ri, id='id\udbff')]))
+add('unicode-lone-surrogate-unit', cur('energy', budget=dict(by['energy']['budget'], unit='\ud800')))
+add('unicode-lone-surrogate-qualification', cur('energy', qualification='q\ud800'))
+add('unicode-pair-ok', cur('attention', ranked_items=[dict(ri, label='ok \U0001F600 pair')]))
+add('unavailable-with-revision', unav('energy', revision='r1'))
+add('unavailable-with-words-revision', unav('energy', revision='Goals board'), stricter=True)
+deep = 0
+for _ in range(40): deep = [deep]
+add('depth-40', cur('energy', PRIVATE_DEEP=deep))
+# r6: stand-in r5 P3, the byte-limit boundary. The reference raises read-byte-limit inside its try block and its
+# ValueError handler turns it into unreadable-value; Surface returns the same code. Both are clearly over 64 KB in
+# either serialisation (an exact-boundary case would only compare JSON spacing, not the check).
+add('over-byte-limit-current', cur('attention', ranked_items=[dict(ri, id=f'i{i}', explain='e' * 1100) for i in range(64)]))
+add('over-byte-limit-unavailable', unav('energy', explain='e' * 70000))
+# Surface stricter than v3 (Surface refuses where the reference accepts)
+add('revision-words', cur('attention', revision='Goals board'), stricter=True)
+add('version-not-semver', cur('self', skills=[dict(by['self']['skills'][0], version='Goals board')]), stricter=True)
+add('selection-not-listed', cur('self', selected_skill={'id': 'other', 'selected_at': '2026-10-08T00:00:00Z'}), stricter=True)
+add('control-char-label', cur('attention', ranked_items=[dict(by['attention']['ranked_items'][0], label='a\u0007b')]), stricter=True)
+
+for c in cases:
+    for area in ('current', 'guided'):
+        try:
+            v = rf.read_result_flat(json.dumps(c['doc']), expected_mind_id=c['mind'], expected_module=c['module'], area=area)
+            c[f'ref_{area}'] = 'accept'
+            c['ref_present_fields'] = rf.meaningful_state(v)['present_fields']
+        except Exception as e:
+            c[f'ref_{area}'] = 'refuse:' + str(e)[:60]
+json.dump({'source': {'reference': 'read_result_flat.py aafc45d8 (v3 r2)', 'schema': 'read-result-v3-flat-proposal.schema.json d535fa8b', 'contract': 'read-contract-v3-flat-proposal.json db2866eb', 'fixtures': 'read-v3-flat-invented-fixtures.json d943ac2b'}, 'cases': cases}, open(OUT, 'w'), indent=1, sort_keys=True)
+print(len(cases), 'cases')
+for c in cases: print(f"{c['name']:42} cur={c['ref_current'][:40]:42} guided={c['ref_guided'][:40]}")

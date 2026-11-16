@@ -1,0 +1,32 @@
+id = "omegaclaw.app.home-assistant"
+kind = "body-app"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+default_enabled = false
+
+provides = [
+  "app:home-assistant",
+  "sense:house-state",
+  "affordance:house-control",
+]
+
+requires = [
+  "python>=3.10",
+  "home-assistant:long-lived-access-token",
+]
+
+[env]
+HOME_ASSISTANT_URL = { required = true, secret = false }
+HOME_ASSISTANT_TOKEN = { required = true, secret = true }
+OMEGACLAW_HA_TRACE = { required = false, default = "0" }
+
+[trace]
+default_enabled = false
+writes = [
+  "HouseObservation",
+  "HouseActionTrace",
+  "HouseOutcomeTrace",
+]

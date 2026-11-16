@@ -1,0 +1,10 @@
+sentence-transformers
+chromadb
+janus-swi
+openai
+uagents
+requests
+websocket-client
+PyYAML>=6
+ddgs>=9.14.4
+py-landlock==0.1.1; sys_platform == "linux"

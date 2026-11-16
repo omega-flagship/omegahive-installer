@@ -1,0 +1,71 @@
+{
+ "note": "Written by scripts/showreel-pln-reference.py: each case of cases.json run on PeTTa with the repository's lib_nal.metta and lib_pln.metta. Do not edit by hand.",
+ "engine": "PeTTa ae66fa8",
+ "swipl": "SWI-Prolog version 10.1.14 for arm64-darwin",
+ "libs": {
+  "lib_nal.metta": "3f2894d9b1bc4e39fd7d0384aa6c8503b847eed38826222941ffa14dc0610283",
+  "lib_pln.metta": "05b63266ad79c3cd0b32a83a4596ad47923e612e746303628da7500bbcffa7ae"
+ },
+ "cases": {
+  "pln-c2w": {
+   "expr": "(Truth__c2w 0.9)",
+   "result": "9.000000000000002"
+  },
+  "pln-w2c": {
+   "expr": "(Truth__w2c 9)",
+   "result": "0.9"
+  },
+  "pln-mp-room": {
+   "expr": "(Truth__ModusPonens (stv 0.9 0.9) (stv 0.8 0.9))",
+   "result": "(stv 0.7220000000000001 0.5832)"
+  },
+  "nal-ded-studio": {
+   "expr": "(Truth_Deduction (stv 0.9 0.9) (stv 0.95 0.9))",
+   "result": "(stv 0.855 0.69255)"
+  },
+  "pln-ind-tools": {
+   "expr": "(Truth__Induction (stv 0.1 0.9) (stv 0.1 0.9) (stv 0.1 0.9) (stv 0.7 0.9) (stv 0.6 0.8))",
+   "result": "(stv 0.43333333333333335 0.3016759776536313)"
+  },
+  "pln-rev-stalled": {
+   "expr": "(Truth__Revision (stv 0.8 0.9) (stv 0.6 0.5))",
+   "result": "(stv 0.78 0.9090909090909091)"
+  },
+  "nal-rev-stalled": {
+   "expr": "(Truth_Revision (stv 0.8 0.9) (stv 0.6 0.5))",
+   "result": "(stv 0.78 0.9090909090909091)"
+  },
+  "pln-mp-stalled": {
+   "expr": "(Truth__ModusPonens (stv 0.78 0.9090909090909091) (stv 0.9 0.9))",
+   "result": "(stv 0.7064 0.5743636363636364)"
+  },
+  "pln-ded-compare": {
+   "expr": "(Truth__Deduction (stv 0.1 0.9) (stv 0.1 0.9) (stv 0.1 0.9) (stv 0.9 0.9) (stv 0.8 0.9))",
+   "result": "(stv 0.7222222222222223 0.5832)"
+  },
+  "pln-rev-cap": {
+   "expr": "(Truth__Revision (stv 0.9 0.99) (stv 0.7 0.95))",
+   "result": "(stv 0.8677966101694915 0.9915966386554622)"
+  },
+  "nal-rev-cap": {
+   "expr": "(Truth_Revision (stv 0.9 0.99) (stv 0.7 0.95))",
+   "result": "(stv 0.8677966101694915 0.99)"
+  },
+  "pln-abd-health": {
+   "expr": "(Truth__Abduction (stv 0.1 0.9) (stv 0.1 0.9) (stv 0.1 0.9) (stv 0.9 0.9) (stv 0.8 0.9))",
+   "result": "(stv 0.7222222222222223 0.42163100057836905)"
+  },
+  "nal-rev-mind": {
+   "expr": "(Truth_Revision (stv 0.8 0.8) (stv 0.9 0.5))",
+   "result": "(stv 0.8200000000000002 0.8333333333333334)"
+  },
+  "pln-ded-inconsistent": {
+   "expr": "(Truth__Deduction (stv 0.2 0.9) (stv 0.1 0.9) (stv 0.1 0.9) (stv 0.9 0.9) (stv 0.5 0.9))",
+   "result": "(stv 1 0)"
+  },
+  "pln-ded-q-near-1": {
+   "expr": "(Truth__Deduction (stv 0.5 0.9) (stv 1 0.9) (stv 0.5 0.9) (stv 1 0.9) (stv 0.5 0.9))",
+   "result": "(stv 0.5 0.405)"
+  }
+ }
+}

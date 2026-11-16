@@ -1,0 +1,198 @@
+{
+  "lib_pln.metta": [
+    "05b63266ad79c3cd0b32a83a4596ad47923e612e746303628da7500bbcffa7ae"
+  ],
+  "hive/ui/src/lib/mindSpace/metta/lib_pln.metta": [
+    "05b63266ad79c3cd0b32a83a4596ad47923e612e746303628da7500bbcffa7ae"
+  ],
+  "hive/ui/src/lib/mindSpace/metta/lib_nal.metta": [
+    "3f2894d9b1bc4e39fd7d0384aa6c8503b847eed38826222941ffa14dc0610283"
+  ],
+  "lib_llm_ext.py": [
+    "c5101a7d0d1dc683926fb51a4c80440c508943905fcd23e8d3cc33d3ac58eaa9",
+    "0c44ce53d4e47ffa6cee54546a0fba14f531ef533f663dc32601007b52ca8ece",
+    "bc55eceed0347a78e6750cb2caafbc31e27d89e80df081a41a36f3cecc3e265d"
+  ],
+  "lib_omegaclaw_core.metta": [
+    "8de65765e4c0a85898036732a30f0cd6160607343d0ed6576556e25537044e63"
+  ],
+  "lib_omegaclaw_attention.metta": [
+    "2aaa2fe83d5d04fd0584df80ae05832899af107c60f028463dfc288ac9070a68"
+  ],
+  "lib_nal.metta": [
+    "3f2894d9b1bc4e39fd7d0384aa6c8503b847eed38826222941ffa14dc0610283"
+  ],
+  "src/skill_signatures_channels.metta": [
+    "23275facedba35468a6d1cdde35cf09801be17cf9342520750221a1e1275354d"
+  ],
+  "src/skill_affordance_core.metta": [
+    "6dc2ff4794106e746cc4bb87097c24ac434918dca1b6afb47fbcaadacf3c8904",
+    "d7b9aad03ee544571efdd4f4bdcf7b4b8af9ff08c43ad7c6f5ee19350ed1fa62"
+  ],
+  "src/helper_skill_recall.py": [
+    "9761a1acc6a7edc2dfdf8ff7d3c04aaef9163f2cbe2fa8f1730fb530132265cc"
+  ],
+  "src/helper_command_parser.py": [
+    "a2c9639736af48f0fb082b50894391cb1477229d86cda724ce997d9dd1d01e43",
+    "2b242f8d359947df490b484b3793a064630a228e6463c0850882c8483599e42a",
+    "4af6c90655506e1f2ecc53780c6d0c8a1e21b853321ea4b5e3dd0ec57049e5ae",
+    "b791466a2e090519914f37b8cacda78bf03a9bb40b2c14c1cd32c603379a99f9",
+    "dab974b8a31649c7350340ebaf53d4607b0450ad35faef0298b9d5cadead64fe"
+  ],
+  "src/skill_signatures_core.metta": [
+    "ce9c0cc52cf35201f82e6b37eff6fd63cb64472e99773aa8aa1415eb163a7fcd"
+  ],
+  "src/skills.metta": [
+    "8d21222f1b8f3364af54bf474ddffbf36fbd6aec5bf8e3c8ca5009c1dcaed574"
+  ],
+  "src/helper_promotion.py": [
+    "aec1e94eaf1b34909c10404fc5c8be9448c2ba1e70e5f78dd54d7405c1b93277"
+  ],
+  "src/skill_signatures_memory.metta": [
+    "d29dd0fe79da2f52aee78ae709caa804f5ed6a0042468bb456fe24009a225cc5"
+  ],
+  "src/skill_affordance_reasoning.metta": [
+    "6c8adf7ac31de35b1bdb6ec6b16e6c92d731516f2a6e322e997a49bf9c3a9cac"
+  ],
+  "src/loop.metta": [
+    "594f1d294e102e1b207ebbb95d6b16f9b072c5e04c6e04ff63626860f84f6ca6",
+    "a2c99c7ef661479303368a7c35f285f38bb83cc7c843cafde3cacd27697128e4",
+    "0622bb1cc370c61bcd8578c03b47e64ec4a5e183bd4915c001ca837b42fe1456",
+    "60bd6b9b22bbab90984ddb77e4357e5ffda151df483064394fa11a2a91558562",
+    "70f99548878ed2ceced9e099bc358d10d43a5a519b98fd20201adbd3c6a74cf5",
+    "ae2b7b0e05832cf44580aba99ec457b5a592a61ab5cc49a2ca89173faf7fb7df"
+  ],
+  "src/skill_catalog_core.metta": [
+    "1003558dc76bf78cf84df9d4a39d62d8555eb6e7424b47f45de36f3b1ea5dd31",
+    "21422861fa3f25936d95675b6f503cb4727dbabd90574f69ec6c0ed5b0022071"
+  ],
+  "src/skill_signatures_energy.metta": [
+    "8368f750972493e11b5412de12f3546b272f03e6228d289bf009b22c6eb75ff6"
+  ],
+  "src/skill_catalog_reasoning.metta": [
+    "1c27571cc4bda1951a632c522380a8bd038a5d6c1cbdb51aca3b8b9f34bcf109"
+  ],
+  "src/skills_attention.metta": [
+    "ad8f8dedeb12118ea232d71e8898ee2d172a346efe8e1748244279532c3a0331"
+  ],
+  "src/skills.pl": [
+    "f03e0a983e71f0ed958f790cd785d96d35c62291926a41322c38bbc10233c7ad"
+  ],
+  "src/skills_runtime_spaces.metta": [
+    "ce6e86fdfebf037bcc59ff91162e2abfa1dadc2904cde10f5dcc6f1165b837a9"
+  ],
+  "src/skills_space_mutation.metta": [
+    "53dd373bb8f976c727a099bf52e7f108a230c1659263bb26bef4e459d1302c71"
+  ],
+  "src/skill_affordance_body.metta": [
+    "23275facedba35468a6d1cdde35cf09801be17cf9342520750221a1e1275354d"
+  ],
+  "src/skill_signatures_attention.metta": [
+    "80ae2aff3bf3f6bb9052af7228873e0422aa493971f34ea842f7c0a5f5b82462"
+  ],
+  "src/helper_history.py": [
+    "507345ae95ee9674a4eeba118c49fec5eb662ae7af650348d01e82446bce705c"
+  ],
+  "src/skill_signatures_body.metta": [
+    "23275facedba35468a6d1cdde35cf09801be17cf9342520750221a1e1275354d"
+  ],
+  "src/helper_tools.py": [
+    "6db73ecc8ed6135ad4ac243bffa61882715c873297dc770094ffe06ed0b20ee3",
+    "f2b3694a8befce024d5687d97ab2e01ca0ba895e702ff565a20f8b237db4f838"
+  ],
+  "src/skill_catalog_memory.metta": [
+    "823e6b0021db4297553bc660a2094efcc413d0b98f4b9a0d45355cd379b7661f"
+  ],
+  "src/skill_catalog_body.metta": [
+    "23275facedba35468a6d1cdde35cf09801be17cf9342520750221a1e1275354d"
+  ],
+  "src/helper_reboot.py": [
+    "d15193a827c46b3e4e92062d5aa4b142b1b6b284fff623c5e40e03c588e187e7"
+  ],
+  "src/helper_metta.py": [
+    "875706c993943846172b2ee92fc68311bec5a002b109039e0147720a2a0a7845",
+    "f9d385e86ba9f102a381655833881be82b71f4da04f5b35244a832c41b0c0079"
+  ],
+  "src/skill_catalog_energy.metta": [
+    "9daf0f1815fc77e38bae0868ca39abac43a1e5726a82f57d61824a8d21d273a1"
+  ],
+  "src/skill_affordance_energy.metta": [
+    "a595e7c657b0a267b49a515bbd2ccfc574f92f2574ba7e0b3cdb5781a490ac90"
+  ],
+  "src/skill_catalog_affordance.metta": [
+    "a2af9cf907fcce8949b8e2afc4f55b7e90639e6441e2446029b480f31457b80a"
+  ],
+  "src/skill_affordance_memory.metta": [
+    "2346dcf95e5a87f5289b10118e8e391fc345d283999c917a13b9a47a0e835bcc"
+  ],
+  "src/channels.metta": [
+    "23275facedba35468a6d1cdde35cf09801be17cf9342520750221a1e1275354d"
+  ],
+  "src/skill_catalog.metta": [
+    "9b02b59c7485781ad545f0a3e3e6ef25039919935cca39b91e44404a8f926e86"
+  ],
+  "src/skills_core.metta": [
+    "6a5533f3d5455a9f1ee701621b3cc9bed0c59cf0f960bbe7e75fe5cacc971ad1"
+  ],
+  "src/utils.metta": [
+    "7602d4065c9be3976b105c29dc3c65eb3adfa16506bf69b0621b1cfce6eb3cc5"
+  ],
+  "src/skill_signatures_affordance.metta": [
+    "9336c30c9fac059a8abb70f04434baff340061512fd975c0d3cb41e63df3dffb"
+  ],
+  "src/skills_reasoning_spaces.metta": [
+    "8cc51d947304b4e9ae020efc8b0e55fea6df3bdcd066fb05399562b6a8bd885d"
+  ],
+  "src/skill_affordance_attention.metta": [
+    "c6764e8d5bdc9ed9eeb8a8b1131c0063b483d158660875a84ed7c188c3f44add"
+  ],
+  "src/skill_catalog_channels.metta": [
+    "23275facedba35468a6d1cdde35cf09801be17cf9342520750221a1e1275354d"
+  ],
+  "src/helper.py": [
+    "f5c7a42082f9de84fb4dd85a206132acec43704d3928bdc96077599454714aeb",
+    "155cd34b31cd7b7ded69e2e0cabbd8639205343aaab84fa20e56fba71d38e5f1",
+    "2753e9dbb272f51e1d65276b90af8211cadd9ed2860174b5867bb027e2ff831f",
+    "90e6936396f5ae32f2e2993101f3d2ffbf8047f699024dfc98ceedf7d1564292",
+    "967125c9dba7634d02d7182b6b43174a3d01f7a020e5013330d6bb3d740d40e5",
+    "9bcf913ecb2d135d621ecd6d6ea31527b0926ead2914ee4ac298eea819a1254a",
+    "bf990887896d4a63b7bbc4635e4dacaf019c1b74e6c7bad479779758c5e703ef"
+  ],
+  "src/skill_catalog_attention.metta": [
+    "9d53d3e1ef4e44a9538115235682e56afda06265a2137d4c1e7866b160ad63b8"
+  ],
+  "src/helper_metta_syntax.py": [
+    "9d3dded80629569ee85e13158da9fc0e8d0bfcb5c2807ed71931899ae8ef0436",
+    "47a9b3a1b5832050519910cd4c5de226b8abcbfd958b8de0abe4f0decf084dd6"
+  ],
+  "src/memory.metta": [
+    "d47252d41b48fe0a4e82d8e039201a245267d1f65d2628397db3af26d58f1ec3"
+  ],
+  "src/skills_body.metta": [
+    "23275facedba35468a6d1cdde35cf09801be17cf9342520750221a1e1275354d"
+  ],
+  "src/skill_signatures_reasoning.metta": [
+    "d115262509f9d9e0a37a96dc89888b5e0b0ba61c06bc43713c7c99fc2894ebc6"
+  ],
+  "src/skill_signatures.metta": [
+    "46b95017770cb3eb1cbe85804e5eba082f6c7efbbdaded59a221fb9c352a4e69"
+  ],
+  "src/helper_recall.py": [
+    "135b64955aceab8599d2d0bd85a7c3f383aca7f3e165eda451c2034647cafb38"
+  ],
+  "src/skills_memory.metta": [
+    "1a86f78850adc0d72b9e62e74258cc7dad2221c678f6f08e35c73b100d582979"
+  ],
+  "src/skill_affordance_affordance.metta": [
+    "2ca5db0e53dcb47f233c00b345e33ce894e2398346103dd138b7e7aa80cca291"
+  ],
+  "src/skills_affordance.metta": [
+    "76930d6000d481089a2575cc5bdb41569a763e04dd112e5f1776891d5dd4221d"
+  ],
+  "src/skill_affordance_channels.metta": [
+    "23275facedba35468a6d1cdde35cf09801be17cf9342520750221a1e1275354d"
+  ],
+  "src/skills_energy.metta": [
+    "ce2363ead9b899d4112d06c48fa320d202be34741f654603fd63fe26aa22f901"
+  ]
+}

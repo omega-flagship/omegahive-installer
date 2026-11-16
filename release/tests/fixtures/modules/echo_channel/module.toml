@@ -1,0 +1,19 @@
+id = "openclaw.channel.echo"
+kind = "channel"
+version = "0.1.0"
+entrypoint = "entry.metta"
+optional = true
+
+provides = [
+  "channel:echo",
+  "skill:send-channel",
+]
+
+requires = [
+  "executable:any",
+]
+
+[trace]
+writes = [
+  "ChannelMessageSent",
+]

@@ -1,0 +1,168 @@
+{
+ "source": "python 3.9.6 json.dumps(sort_keys=True, separators=(',', ':'), ensure_ascii=False)",
+ "file_bytes_utf8": "Invented note for the ledger fixture.\n",
+ "vectors": [
+  {
+   "name": "defaults",
+   "payload": {
+    "items": [],
+    "params": {},
+    "base_revision": null
+   },
+   "canonical": "{\"base_revision\":null,\"items\":[],\"params\":{}}",
+   "digest": "sha256:5e6570a4ca3809cd8b0b4c6834b71f56d01fd8a6323924dc601b10d7f4537a09"
+  },
+  {
+   "name": "items-and-revision",
+   "payload": {
+    "items": [
+     "c1",
+     "e3"
+    ],
+    "params": {},
+    "base_revision": "r42"
+   },
+   "canonical": "{\"base_revision\":\"r42\",\"items\":[\"c1\",\"e3\"],\"params\":{}}",
+   "digest": "sha256:bd52d3482476437d09f06de7e2444e339287b379f916fe8bb301f5541764df24"
+  },
+  {
+   "name": "nested-keys-sorted",
+   "payload": {
+    "items": [
+     "q1"
+    ],
+    "params": {
+     "zeta": {
+      "b": 2,
+      "a": [
+       3,
+       {
+        "y": true,
+        "x": null
+       }
+      ]
+     },
+     "alpha": "first",
+     "Beta": false
+    },
+    "base_revision": "r1"
+   },
+   "canonical": "{\"base_revision\":\"r1\",\"items\":[\"q1\"],\"params\":{\"Beta\":false,\"alpha\":\"first\",\"zeta\":{\"a\":[3,{\"x\":null,\"y\":true}],\"b\":2}}}",
+   "digest": "sha256:36f279dc7fc4ad7f8b171c1b9fcb9088e54e10c7f4afdc21768a03e1fedae5b7"
+  },
+  {
+   "name": "unicode",
+   "payload": {
+    "items": [
+     "ü1"
+    ],
+    "params": {
+     "note": "Grüße, 世界 — “quotes” ☃ 😀",
+     "émoji": "🧪"
+    },
+    "base_revision": null
+   },
+   "canonical": "{\"base_revision\":null,\"items\":[\"ü1\"],\"params\":{\"note\":\"Grüße, 世界 — “quotes” ☃ 😀\",\"émoji\":\"🧪\"}}",
+   "digest": "sha256:dea4d591678bcfda431abc5012f1120e5313d075e6e4cc99d64e2aba596732f9"
+  },
+  {
+   "name": "astral-vs-bmp-key-order",
+   "payload": {
+    "items": [],
+    "params": {
+     "￿": 1,
+     "😀": 2,
+     "a": 3,
+     "é": 4
+    },
+    "base_revision": null
+   },
+   "canonical": "{\"base_revision\":null,\"items\":[],\"params\":{\"a\":3,\"é\":4,\"￿\":1,\"😀\":2}}",
+   "digest": "sha256:a768ba929a781b67c5dffa4f9bdbcdc3fef3eb0b8d9b70998a3edaaebab44bc1"
+  },
+  {
+   "name": "escapes",
+   "payload": {
+    "items": [],
+    "params": {
+     "s": "line1\nline2\ttab \"q\" back\\slash \u0001 \u001f      </script>"
+    },
+    "base_revision": null
+   },
+   "canonical": "{\"base_revision\":null,\"items\":[],\"params\":{\"s\":\"line1\\nline2\\ttab \\\"q\\\" back\\\\slash \\u0001 \\u001f      </script>\"}}",
+   "digest": "sha256:1fca4cee2f9540d3dcbf11e2c22bd09f2f022ee55916aabc63c76431b08c705c"
+  },
+  {
+   "name": "integers",
+   "payload": {
+    "items": [],
+    "params": {
+     "max": 9007199254740991,
+     "min": -9007199254740991,
+     "zero": 0,
+     "neg": -42,
+     "list": [
+      1,
+      2,
+      3
+     ]
+    },
+    "base_revision": null
+   },
+   "canonical": "{\"base_revision\":null,\"items\":[],\"params\":{\"list\":[1,2,3],\"max\":9007199254740991,\"min\":-9007199254740991,\"neg\":-42,\"zero\":0}}",
+   "digest": "sha256:57cba2feca56f596f9ffb80e413b76fcd284ec7dff0a1d89df53756d0aa7d4c7"
+  },
+  {
+   "name": "file",
+   "payload": {
+    "items": [],
+    "params": {},
+    "base_revision": null,
+    "file": {
+     "name": "invented-note.txt",
+     "mime": "text/plain",
+     "size": 38,
+     "sha256": "sha256:f43c9bf00477322e4949be78b259cd0057b50091afbac522e4fc816d9ce99d86"
+    }
+   },
+   "canonical": "{\"base_revision\":null,\"file\":{\"mime\":\"text/plain\",\"name\":\"invented-note.txt\",\"sha256\":\"sha256:f43c9bf00477322e4949be78b259cd0057b50091afbac522e4fc816d9ce99d86\",\"size\":38},\"items\":[],\"params\":{}}",
+   "digest": "sha256:bc4f11de45bbeee1f45be18762d886ca749fdb560e4fbe4b6079da6f9d2272fa"
+  },
+  {
+   "name": "file-with-params",
+   "payload": {
+    "items": [
+     "n1"
+    ],
+    "params": {
+     "label": "Invented ✓",
+     "count": 3
+    },
+    "base_revision": "r7",
+    "file": {
+     "name": "invented-note.txt",
+     "mime": "text/plain",
+     "size": 38,
+     "sha256": "sha256:f43c9bf00477322e4949be78b259cd0057b50091afbac522e4fc816d9ce99d86"
+    }
+   },
+   "canonical": "{\"base_revision\":\"r7\",\"file\":{\"mime\":\"text/plain\",\"name\":\"invented-note.txt\",\"sha256\":\"sha256:f43c9bf00477322e4949be78b259cd0057b50091afbac522e4fc816d9ce99d86\",\"size\":38},\"items\":[\"n1\"],\"params\":{\"count\":3,\"label\":\"Invented ✓\"}}",
+   "digest": "sha256:52c6a2191300cca4d6cebb08e84490a22becf38f3e3524f4f2f04a28e3786980"
+  },
+  {
+   "name": "empty-strings-and-lists",
+   "payload": {
+    "items": [],
+    "params": {
+     "empty": "",
+     "none": null,
+     "list": [],
+     "obj": {}
+    },
+    "base_revision": ""
+   },
+   "canonical": "{\"base_revision\":\"\",\"items\":[],\"params\":{\"empty\":\"\",\"list\":[],\"none\":null,\"obj\":{}}}",
+   "digest": "sha256:98f10d73d444fb4d3b67e002e7695476c762549f439f524e38d1bedad8a40276"
+  }
+ ]
+}

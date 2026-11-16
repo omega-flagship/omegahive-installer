@@ -1,0 +1,223 @@
+/* Cosmos: everything is scoped under .cx so nothing leaks into the classic UI. */
+.cx {
+  --cx-sans: 'Avenir Next', 'Avenir', 'Futura', 'Century Gothic', 'Josefin Sans', 'Montserrat', 'Segoe UI', system-ui, sans-serif;
+  --cx-wide: 'Futura', 'Avenir Next', 'Century Gothic', 'Josefin Sans', system-ui, sans-serif;
+  --cx-mono: 'IBM Plex Mono', 'SF Mono', ui-monospace, Menlo, monospace;
+  --cx-ink: #eef4ff;
+  --cx-ink-2: #c3d1ec;
+  --cx-ink-3: #9db0d3; /* = chrome.ts ink3; every text ink ≥4.5:1 on the glass even over a white glow (contrast.test.ts) */
+  --cx-line: rgba(160, 196, 255, 0.16);
+  --cx-line-2: rgba(160, 196, 255, 0.32);
+  --cx-glass: linear-gradient(180deg, rgba(10, 18, 40, 0.88), rgba(4, 8, 22, 0.92));
+  --cx-accent: #7cc4ff;
+  --cx-amber: #ffc36b;
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #010208;
+  color: var(--cx-ink);
+  font-family: var(--cx-sans);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  touch-action: none;
+}
+.cx ::selection { background: rgba(124, 196, 255, 0.35); }
+.cx-mono { font-family: var(--cx-mono); font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+.cx-caps { text-transform: uppercase; letter-spacing: 0.24em; font-weight: 500; }
+.cx-wide { font-family: var(--cx-wide); text-transform: uppercase; letter-spacing: 0.42em; font-weight: 500; }
+.cx-selectable { user-select: text; }
+
+.cx-focus:focus-visible, .cx button:focus-visible, .cx input:focus-visible, .cx [role='tab']:focus-visible {
+  outline: 1.5px solid var(--cx-accent);
+  outline-offset: 2px;
+}
+
+/* Holographic glass */
+.cx-glass {
+  background: var(--cx-glass);
+  border: 1px solid var(--cx-line);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(200, 225, 255, 0.07);
+}
+.cx-glass::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(180deg, rgba(160, 200, 255, 0.025) 0 1px, transparent 1px 3px);
+  mix-blend-mode: screen;
+}
+/* corner brackets */
+.cx-corners > i {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+  border-color: var(--cx-hue, var(--cx-accent));
+  opacity: 0.9;
+}
+.cx-corners > i:nth-of-type(1) { top: -1px; left: -1px; border-top: 1.5px solid; border-left: 1.5px solid; }
+.cx-corners > i:nth-of-type(2) { top: -1px; right: -1px; border-top: 1.5px solid; border-right: 1.5px solid; }
+.cx-corners > i:nth-of-type(3) { bottom: -1px; left: -1px; border-bottom: 1.5px solid; border-left: 1.5px solid; }
+.cx-corners > i:nth-of-type(4) { bottom: -1px; right: -1px; border-bottom: 1.5px solid; border-right: 1.5px solid; }
+
+.cx-rule { height: 1px; background: linear-gradient(90deg, transparent, var(--cx-line-2) 12%, var(--cx-line-2) 88%, transparent); }
+
+.cx-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--cx-line-2);
+  background: rgba(120, 170, 255, 0.06);
+  color: var(--cx-ink);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  font-weight: 600;
+  transition: background 0.18s, border-color 0.18s, color 0.18s, box-shadow 0.18s;
+  cursor: pointer;
+}
+.cx-btn:hover { background: rgba(120, 170, 255, 0.14); border-color: rgba(170, 205, 255, 0.55); }
+.cx-btn:disabled { opacity: 0.5; cursor: default; }
+.cx-btn-hue { border-color: var(--cx-hue); box-shadow: inset 0 0 18px -6px var(--cx-hue); }
+.cx-btn-hue:hover { background: color-mix(in oklab, var(--cx-hue) 18%, transparent); }
+.cx-icon-btn {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--cx-line);
+  background: rgba(6, 12, 28, 0.55);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: var(--cx-ink-2);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.cx-icon-btn:hover { color: var(--cx-ink); border-color: var(--cx-line-2); background: rgba(20, 34, 70, 0.6); }
+
+/* labels that ride the 3D scene */
+.cx-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  visibility: hidden;
+  opacity: 0;
+  will-change: transform, opacity;
+  pointer-events: none;
+}
+.cx-label > button { pointer-events: auto; }
+.cx-tag {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform: translate(-50%, 14px);
+  white-space: nowrap;
+  background: none;
+  border: 0;
+  color: var(--cx-ink);
+  cursor: pointer;
+  padding: 4px 6px;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.9);
+  background: radial-gradient(ellipse at center, rgba(1, 3, 12, 0.62), rgba(1, 3, 12, 0.35) 45%, transparent 72%);
+}
+.cx-tag:hover .cx-tag-name, .cx-tag[data-hot='1'] .cx-tag-name { color: #fff; }
+.cx-tag:hover .cx-tag-line, .cx-tag[data-hot='1'] .cx-tag-line { width: 100%; opacity: 1; }
+.cx-tag-line { height: 1px; width: 40%; opacity: 0.6; background: currentColor; transition: width 0.25s, opacity 0.25s; margin-top: 3px; }
+
+/* the incoming-transmission beacon */
+@keyframes cx-ping { 0% { transform: scale(0.6); opacity: 0.9; } 100% { transform: scale(2.6); opacity: 0; } }
+@keyframes cx-sweep { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+@keyframes cx-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes cx-bars { 0%, 100% { transform: scaleY(0.25); } 50% { transform: scaleY(1); } }
+@keyframes cx-flicker { 0% { opacity: 0; } 8% { opacity: 0.7; } 10% { opacity: 0.2; } 16% { opacity: 1; } 100% { opacity: 1; } }
+.cx-beacon {
+  background-image: linear-gradient(90deg, rgba(255, 195, 107, 0.06) 0%, rgba(255, 195, 107, 0.22) 50%, rgba(255, 195, 107, 0.06) 100%);
+  background-size: 200% 100%;
+  animation: cx-sweep 3.2s linear infinite;
+}
+.cx-ping { animation: cx-ping 1.8s cubic-bezier(0.2, 0.6, 0.3, 1) infinite; }
+.cx-blink { animation: cx-blink 1.4s ease-in-out infinite; }
+.cx-bar { display: inline-block; width: 2px; height: 10px; background: currentColor; transform-origin: bottom; animation: cx-bars 0.9s ease-in-out infinite; }
+.cx-flicker { animation: cx-flicker 0.6s steps(1, end) both; }
+
+.cx-scroll { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(160, 196, 255, 0.25) transparent; touch-action: pan-y; }
+.cx-hscroll { overflow-x: auto; scrollbar-width: none; touch-action: pan-x; }
+.cx-hscroll::-webkit-scrollbar { display: none; }
+
+.cx-input {
+  width: 100%;
+  resize: none;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--cx-ink);
+  font-family: var(--cx-sans);
+  font-size: 15px;
+  line-height: 1.45;
+}
+.cx-input::placeholder { color: var(--cx-ink-3); }
+
+@media (prefers-reduced-motion: reduce) {
+  .cx-beacon, .cx-ping, .cx-blink, .cx-bar, .cx-flicker { animation: none !important; }
+}
+
+/* the host's escape button owns the bottom-left 56px on phones */
+@media (max-width: 767px) {
+  .cx .cx-clear-escape { padding-left: 62px; }
+}
+.cx-composer:focus-within { border-color: var(--cx-hue, var(--cx-accent)) !important; box-shadow: 0 0 0 1px var(--cx-hue, var(--cx-accent)), 0 0 24px -8px var(--cx-hue, var(--cx-accent)); }
+.cx textarea:focus-visible { outline: none; }
+
+/* native selects in the HUD */
+.cx-select {
+  appearance: none;
+  -webkit-appearance: none;
+  color-scheme: dark;
+  border-color: var(--cx-line-2);
+  background: rgba(0, 0, 0, 0.3) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2393a6c9' stroke-width='1.3'/%3E%3C/svg%3E") no-repeat right 12px center;
+  color: var(--cx-ink);
+  font-family: var(--cx-sans);
+  padding-right: 32px;
+  border-radius: 0;
+  outline: none;
+}
+.cx-select:focus-visible { border-color: var(--cx-accent); box-shadow: 0 0 0 1px var(--cx-accent); }
+.cx-select option { background: #0a1228; color: var(--cx-ink); }
+.cx textarea.cx-input:focus-visible, .cx input.cx-input:focus-visible { outline: none; }
+.cx textarea.cx-input:focus, .cx [class*='border'] > .cx-input:focus { outline: none; }
+.cx textarea.cx-input.border:focus { border-color: var(--cx-accent); box-shadow: 0 0 0 1px var(--cx-accent); }
+
+/* the note shown when the 3D sky cannot run or was taken back by the GPU (Surface O) */
+.cx .cx-gl-note {
+  position: fixed;
+  left: 50%;
+  bottom: calc(96px + var(--sab, 0px));
+  transform: translateX(-50%);
+  z-index: 15;
+  max-width: min(440px, calc(100vw - 32px));
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--cx-ink);
+  text-align: center;
+}
+
+/* compact sizes for a mouse; on touch every control a finger can hit is at least 44px (Surface O) */
+.cx .cx-btn-sm { min-height: 32px; }
+.cx .cx-btn-md { min-height: 36px; }
+.cx .cx-icon-sm { width: 36px; height: 36px; }
+@media (pointer: coarse) {
+  .cx .cx-btn,
+  .cx .cx-btn-sm,
+  .cx .cx-btn-md,
+  .cx [role='tab'] { min-height: 44px; }
+  .cx .cx-icon-btn,
+  .cx .cx-icon-sm { min-width: 44px; min-height: 44px; }
+  .cx .cx-beacon { min-height: 44px; }
+  .cx .cx-crumb { min-height: 44px; min-width: 44px; }
+}

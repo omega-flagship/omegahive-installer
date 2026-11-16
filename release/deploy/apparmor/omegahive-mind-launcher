@@ -1,0 +1,37 @@
+# AppArmor profile for the OmegaHive mind launcher, hive/supervisor/landlock.py.
+#
+# The launcher puts every mind in its own user, mount, network, pid and ipc namespaces before Landlock confines it.
+# Ubuntu 23.10 and later refuse an unprivileged user namespace to any program no profile grants `userns`
+# (kernel.apparmor_restrict_unprivileged_userns=1), so there the launcher fails at /proc/self/setgroups and exits 78.
+# This profile grants that one permission to the launcher and leaves the sysctl at 1.
+#
+# It attaches to the launcher file inside a release under /opt/omegahive/releases, which the staging release script
+# makes root-owned, so the omegahive account cannot put another program at a matching path. The release folder is
+# matched as {*,??} because on Ubuntu 26.04 (kernel 7.0, AppArmor 5.0.2) a plain * misses every name of exactly two
+# characters, such as r2, an attachment-matching defect like gitlab.com/apparmor/apparmor/-/issues/660. There {*,??}
+# and {*,} matched names of every length tried, though {*,[^/][^/]} did not, so this form is a measured workaround, not
+# a rule; 24.04 matches every form. The hive starts the launcher by its own path
+# (sandbox.launcher); started as `python landlock.py` the kernel executes the interpreter instead and this profile
+# does not apply. flags=(unconfined) is the form Ubuntu ships for programs that need only `userns` (its chrome and
+# brave profiles): it adds no file, network or capability rule, so the sandbox is still Landlock, seccomp and the
+# namespaces, as on 22.04. A mind inherits the profile, as it inherits unrestricted namespaces on 22.04.
+# Whoever can execute the launcher chooses what runs under this profile (its HIVE_SANDBOX_PYTHON, or LD_PRELOAD), so
+# keep each release root-owned and closed to accounts other than root and the hive's group.
+#
+# Load it as root, before the hive starts:
+#   install -m 644 deploy/apparmor/omegahive-mind-launcher /etc/apparmor.d/ && apparmor_parser -r /etc/apparmor.d/omegahive-mind-launcher
+# Check it is loaded:
+#   grep '^omegahive-mind-launcher ' /sys/kernel/security/apparmor/profiles
+# A mind's own view of its label (from inside, e.g. `cat /proc/self/attr/current`) reads
+#   omegahive-mind-launcher (unconfined)
+# A launcher this profile does not reach, where the restriction is on, fails at /proc/self/setgroups and exits 78
+# with a message saying it runs unconfined.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile omegahive-mind-launcher /opt/omegahive/releases/{*,??}/omegahive/hive/supervisor/landlock.py flags=(unconfined) {
+  userns,
+
+  # Site-specific additions and overrides. See local/README for details.
+  include if exists <local/omegahive-mind-launcher>
+}

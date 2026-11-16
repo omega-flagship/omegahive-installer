@@ -1,0 +1,27 @@
+id = "omegaclaw.sense.webcam"
+kind = "sense"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+default_enabled = true
+
+provides = [
+  "sense:webcam",
+  "skill:webcam-status",
+  "skill:capture-webcam",
+  "skill:inspect-webcam",
+  "skill:webcam-observation-log",
+]
+
+requires = [
+  "python>=3.10",
+]
+
+[trace]
+writes = [
+  "WebcamCapture",
+  "WebcamInspection",
+  "WebcamObservation",
+]

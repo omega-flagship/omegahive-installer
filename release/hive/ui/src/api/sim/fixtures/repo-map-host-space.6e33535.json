@@ -1,0 +1,302 @@
+{
+ "host_commit": "6e33535486ca2ab2bfd5debf79cbca17ef8866aa",
+ "fixture": "repo-map-1.synthetic.json (Code's shape fixture)",
+ "header_sequence_new_revision": [
+  {
+   "repo": "fixture-mini",
+   "sha": "0000000000000000000000000000000000000002",
+   "schema": "repo-map/1",
+   "state": "partial",
+   "reason": "1 of 4 Python files failed to parse",
+   "extractor": {
+    "id": "omegacode.repository_facts",
+    "parser": "python-ast-3.12",
+    "version": "fixture"
+   },
+   "generated_at": "2026-10-11T19:00:00Z",
+   "receipt": {
+    "artifact_ref": "fixture://repo-map/fixture-mini@0000001",
+    "digest": "sha256:synthetic"
+   },
+   "counts": {
+    "edges": 5,
+    "edges_by_basis": {
+     "declared": 1,
+     "heuristic": 1,
+     "syntax": 3
+    },
+    "edges_by_kind": {
+     "calls-expression": 1,
+     "defines": 1,
+     "imports": 1,
+     "test-doc-link": 2
+    },
+    "nodes": 6,
+    "nodes_by_kind": {
+     "def": 1,
+     "doc": 1,
+     "file": 3,
+     "test": 1
+    },
+    "refs": 10,
+    "unresolved": 1
+   },
+   "digest": "sha256:69075b9108e458aa46888e2c8faf4bcaf89bd562bf4b4f0dd7fd05dbc480b8cc",
+   "visibility": "hive",
+   "pinned": false,
+   "revision_state": "partial",
+   "revision_reason": "1 of 4 Python files failed to parse",
+   "snapshot_digest": "sha256:synthetic-fixture-not-a-real-digest",
+   "coverage": {
+    "kinds": [
+     "file",
+     "module",
+     "def",
+     "import",
+     "test",
+     "doc"
+    ],
+    "languages": [
+     "python"
+    ],
+    "unresolved": [
+     {
+      "issue": "SyntaxError line 3",
+      "path": "pkg/broken.py"
+     }
+    ]
+   },
+   "space": {
+    "id": "repo:fixture-mini@0000000000000000000000000000000000000002",
+    "kind": "read-only",
+    "status": "mounting",
+    "atoms": 0,
+    "added": 0,
+    "total": 23
+   }
+  },
+  {
+   "repo": "fixture-mini",
+   "sha": "0000000000000000000000000000000000000002",
+   "schema": "repo-map/1",
+   "state": "partial",
+   "reason": "1 of 4 Python files failed to parse",
+   "extractor": {
+    "id": "omegacode.repository_facts",
+    "parser": "python-ast-3.12",
+    "version": "fixture"
+   },
+   "generated_at": "2026-10-11T19:00:00Z",
+   "receipt": {
+    "artifact_ref": "fixture://repo-map/fixture-mini@0000001",
+    "digest": "sha256:synthetic"
+   },
+   "counts": {
+    "edges": 5,
+    "edges_by_basis": {
+     "declared": 1,
+     "heuristic": 1,
+     "syntax": 3
+    },
+    "edges_by_kind": {
+     "calls-expression": 1,
+     "defines": 1,
+     "imports": 1,
+     "test-doc-link": 2
+    },
+    "nodes": 6,
+    "nodes_by_kind": {
+     "def": 1,
+     "doc": 1,
+     "file": 3,
+     "test": 1
+    },
+    "refs": 10,
+    "unresolved": 1
+   },
+   "digest": "sha256:69075b9108e458aa46888e2c8faf4bcaf89bd562bf4b4f0dd7fd05dbc480b8cc",
+   "visibility": "hive",
+   "pinned": false,
+   "revision_state": "partial",
+   "revision_reason": "1 of 4 Python files failed to parse",
+   "snapshot_digest": "sha256:synthetic-fixture-not-a-real-digest",
+   "coverage": {
+    "kinds": [
+     "file",
+     "module",
+     "def",
+     "import",
+     "test",
+     "doc"
+    ],
+    "languages": [
+     "python"
+    ],
+    "unresolved": [
+     {
+      "issue": "SyntaxError line 3",
+      "path": "pkg/broken.py"
+     }
+    ]
+   },
+   "space": {
+    "id": "repo:fixture-mini@0000000000000000000000000000000000000002",
+    "kind": "read-only",
+    "status": "mounted",
+    "atoms": 23
+   }
+  }
+ ],
+ "space_before_any_read_older": {
+  "id": "repo:fixture-mini@0000000000000000000000000000000000000001",
+  "kind": "read-only",
+  "status": "unmounted",
+  "atoms": 0
+ },
+ "header_sequence_older_revision_on_demand": [
+  {
+   "repo": "fixture-mini",
+   "sha": "0000000000000000000000000000000000000001",
+   "schema": "repo-map/1",
+   "state": "partial",
+   "reason": "1 of 4 Python files failed to parse",
+   "extractor": {
+    "id": "omegacode.repository_facts",
+    "parser": "python-ast-3.12",
+    "version": "fixture"
+   },
+   "generated_at": "2026-10-11T19:00:00Z",
+   "receipt": {
+    "artifact_ref": "fixture://repo-map/fixture-mini@0000001",
+    "digest": "sha256:synthetic"
+   },
+   "counts": {
+    "edges": 5,
+    "edges_by_basis": {
+     "declared": 1,
+     "heuristic": 1,
+     "syntax": 3
+    },
+    "edges_by_kind": {
+     "calls-expression": 1,
+     "defines": 1,
+     "imports": 1,
+     "test-doc-link": 2
+    },
+    "nodes": 6,
+    "nodes_by_kind": {
+     "def": 1,
+     "doc": 1,
+     "file": 3,
+     "test": 1
+    },
+    "refs": 10,
+    "unresolved": 1
+   },
+   "digest": "sha256:d24e899e4207fd0332748dc5b8dea35682067e43da5367926e8a43c22114efaf",
+   "visibility": "hive",
+   "pinned": false,
+   "revision_state": "partial",
+   "revision_reason": "1 of 4 Python files failed to parse",
+   "snapshot_digest": "sha256:synthetic-fixture-not-a-real-digest",
+   "coverage": {
+    "kinds": [
+     "file",
+     "module",
+     "def",
+     "import",
+     "test",
+     "doc"
+    ],
+    "languages": [
+     "python"
+    ],
+    "unresolved": [
+     {
+      "issue": "SyntaxError line 3",
+      "path": "pkg/broken.py"
+     }
+    ]
+   },
+   "space": {
+    "id": "repo:fixture-mini@0000000000000000000000000000000000000001",
+    "kind": "read-only",
+    "status": "mounted",
+    "atoms": 23
+   }
+  }
+ ],
+ "header_sequence_failed_mount": [
+  {
+   "repo": "fixture-mini",
+   "sha": "0000000000000000000000000000000000000002",
+   "schema": "repo-map/1",
+   "state": "partial",
+   "reason": "1 of 4 Python files failed to parse",
+   "extractor": {
+    "id": "omegacode.repository_facts",
+    "parser": "python-ast-3.12",
+    "version": "fixture"
+   },
+   "generated_at": "2026-10-11T19:00:00Z",
+   "receipt": {
+    "artifact_ref": "fixture://repo-map/fixture-mini@0000001",
+    "digest": "sha256:synthetic"
+   },
+   "counts": {
+    "edges": 5,
+    "edges_by_basis": {
+     "declared": 1,
+     "heuristic": 1,
+     "syntax": 3
+    },
+    "edges_by_kind": {
+     "calls-expression": 1,
+     "defines": 1,
+     "imports": 1,
+     "test-doc-link": 2
+    },
+    "nodes": 6,
+    "nodes_by_kind": {
+     "def": 1,
+     "doc": 1,
+     "file": 3,
+     "test": 1
+    },
+    "refs": 10,
+    "unresolved": 1
+   },
+   "digest": "sha256:69075b9108e458aa46888e2c8faf4bcaf89bd562bf4b4f0dd7fd05dbc480b8cc",
+   "visibility": "hive",
+   "pinned": false,
+   "revision_state": "partial",
+   "revision_reason": "1 of 4 Python files failed to parse",
+   "snapshot_digest": "sha256:synthetic-fixture-not-a-real-digest",
+   "coverage": {
+    "kinds": [
+     "file",
+     "module",
+     "def",
+     "import",
+     "test",
+     "doc"
+    ],
+    "languages": [
+     "python"
+    ],
+    "unresolved": [
+     {
+      "issue": "SyntaxError line 3",
+      "path": "pkg/broken.py"
+     }
+    ]
+   },
+   "space": {
+    "id": "repo:fixture-mini@0000000000000000000000000000000000000002",
+    "kind": "read-only",
+    "status": "mounted",
+    "atoms": 23
+   }
+  }
+ ]
+}

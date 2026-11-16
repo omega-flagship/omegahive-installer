@@ -1,0 +1,16 @@
+{
+  "schema": "omegahive-linux-kit-inputs/1",
+  "ready": false,
+  "github": {
+    "repository": "https://github.com/PhysixSNET/omegahive",
+    "branch": "release/linux-test-20261028",
+    "commit": null,
+    "tree": null,
+    "source_tarball_url": null,
+    "source_prefix": null
+  },
+  "forbidden_public_terms": null,
+  "installer_template": null,
+  "release_manifest": null,
+  "artifacts": []
+}

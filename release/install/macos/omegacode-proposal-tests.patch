@@ -1,0 +1,539 @@
+diff --git a/omegacode/__main__.py b/omegacode/__main__.py
+index 330820b..344e35e 100644
+--- a/omegacode/__main__.py
++++ b/omegacode/__main__.py
+@@ -1,4 +1,4 @@
+-"""Run with an owner-local configuration file; never expose operator credentials in argv."""
++"""Purpose: run the registered Code service from an owner-local configuration file."""
+ import argparse
+ import fcntl
+ import json
+@@ -10,6 +10,7 @@ import uvicorn
+ from .purpose_startup import create_purpose_app
+ from .service import Service
+ from .service_lock import ServiceLock, LockError
++from .disposable_copy_policy import configured_policy
+ 
+ 
+ SERVICE_HOST = "127.0.0.1"
+@@ -53,7 +54,9 @@ def main():
+         service = Service(root, token_path.read_text().strip(),
+                           config["repositories"], config.get("hive_url"), service_token=service_token, toolchains=config.get("toolchains"),
+                           language_servers=config.get("language_servers"), owner=owner)
+-        uvicorn.run(create_purpose_app(service, port, enabled=config.get("proposal_tests_enabled", False), capacity=config.get("proposal_status_capacity", 8)), host=SERVICE_HOST, port=port,
++        service.copy_effect_policy = configured_policy(service, config.get('copy_effect_policy'))
++        enabled = config.get("proposal_tests_enabled", False)
++        uvicorn.run(create_purpose_app(service, port, enabled=enabled, capacity=config.get("proposal_status_capacity", 8), sandbox_enabled=enabled and config.get("sandbox_project_tests_enabled", False)), host=SERVICE_HOST, port=port,
+                     access_log=False, log_level="warning")
+     finally:
+         try:
+diff --git a/omegacode/api.py b/omegacode/api.py
+index d3fae62..edbc251 100644
+--- a/omegacode/api.py
++++ b/omegacode/api.py
+@@ -1,4 +1,4 @@
+-"""Loopback HTTP boundary; caller identity comes exclusively from scoped grants."""
++"""Purpose: expose the loopback HTTP API with identity derived exclusively from scoped grants."""
+ from contextlib import asynccontextmanager
+ from typing import Annotated, Literal
+ import asyncio
+@@ -202,6 +202,7 @@ class WorkspaceResponse(Model):
+     created_by: str
+     created_at: float
+     profile: str
++    execution_policy: Literal['trusted-native', 'proposal-only'] | None = None
+     environment: dict[str,str]
+     history: list[WorkspaceHistoryResponse]
+     fork_origin: WorkspaceForkOrigin | None = None
+diff --git a/omegacode/confinement.py b/omegacode/confinement.py
+index 4cc973a..a098cdf 100644
+--- a/omegacode/confinement.py
++++ b/omegacode/confinement.py
+@@ -1,4 +1,4 @@
+-"""Disposable Python execution profile candidate; no service/authority integration."""
++"""Purpose: pin and confine private Python batch runs and their declared runtime tools."""
+ import json
+ from pathlib import Path
+ 
+@@ -33,15 +33,65 @@ def profile(workspace, python):
+ import hashlib
+ import platform
+ 
++SANDBOX_EXEC = Path('/usr/bin/sandbox-exec')
++
++
++def _portable_identity(config):
++    fields = {'kind', 'python', 'python_sha256', 'node', 'node_sha256', 'sandbox_exec_sha256'}
++    if set(config) != fields:
++        raise ValueError('exact portable runtime configuration required')
++    interpreter = Path(config['python']).resolve(strict=True)
++    node = Path(config['node']).resolve(strict=True)
++    runtime = interpreter.parent.parent
++    if interpreter.parent.name != 'bin' or node.parent != interpreter.parent \
++            or runtime == Path.home() or runtime in Path.home().parents:
++        raise ValueError('Python and Node must share a private runtime bin directory')
++    binaries = {str(interpreter): config['python_sha256'], str(node): config['node_sha256'],
++                str(SANDBOX_EXEC): config['sandbox_exec_sha256']}
++    if len(binaries) != 3 or not all(type(pin) is str and len(pin) == 64
++                                   and all(c in '0123456789abcdef' for c in pin) for pin in binaries.values()):
++        raise ValueError('runtime SHA256 pins required')
++    # Time: b bytes hashed, b = total size of the three pinned executables.
++    for path, pin in binaries.items():
++        if hashlib.sha256(Path(path).read_bytes()).hexdigest() != pin:
++            raise ValueError('confinement runtime pin changed')
++    return {'kind': config['kind'], 'python': str(interpreter), 'node': str(node),
++            'runtime_root': str(runtime), 'binaries': binaries,
++            'generator_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
++
++
++def _portable_profile(workspace, pinned):
++    workspace = Path(workspace).resolve(strict=True)
++    if not workspace.is_dir() or workspace == Path('/'):
++        raise ValueError('existing private workspace required')
++    runtime = Path(pinned['runtime_root'])
++    q = lambda path: json.dumps(str(path), ensure_ascii=True)
++    metadata = sorted(set(workspace.parents) | set(runtime.parents), key=str)
++    return '\n'.join([
++        '(version 1)', '(deny default)',
++        '(allow process-fork)',
++        '(allow process-exec (literal ' + q(pinned['python']) + ') (literal ' + q(pinned['node']) + '))',
++        '(allow sysctl-read)', '(allow ipc-posix-shm)',
++        '(allow file-read* (literal "/"))',
++        '(allow file-read* ' + ' '.join('(subpath ' + q(p) + ')' for p in
++                                       [workspace, runtime, Path('/System'), Path('/usr/lib')]) + ')',
++        '(allow file-read-metadata ' + ' '.join('(literal ' + q(p) + ')' for p in metadata) + ')',
++        '(allow file-read* (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random"))',
++        '(allow file-write* (subpath ' + q(workspace) + ') (literal "/dev/null") (literal "/dev/dtracehelper"))',
++    ]) + '\n'
++
+ 
+ def identity(config):
++    if platform.system() == 'Darwin' and isinstance(config, dict) \
++            and config.get('kind') == 'macos-seatbelt-python-node-v1':
++        return _portable_identity(config)
+     if platform.system() != 'Darwin' or not isinstance(config,dict) or set(config) != {
+             'kind','python','python_sha256','application_sha256','sandbox_exec_sha256'} or config['kind'] != 'macos-seatbelt-python-v1':
+         raise ValueError('exact operator-pinned macOS confinement configuration required')
+     interpreter=Path(config['python']).resolve(strict=True)
+     application=(interpreter.parent.parent/'Resources/Python.app/Contents/MacOS/Python').resolve(strict=True)
+     binaries={str(interpreter):config['python_sha256'],str(application):config['application_sha256'],
+-              '/usr/bin/sandbox-exec':config['sandbox_exec_sha256']}
++              str(SANDBOX_EXEC):config['sandbox_exec_sha256']}
+     if not all(isinstance(value,str) and len(value)==64 and all(c in '0123456789abcdef' for c in value) for value in binaries.values()):
+         raise ValueError('runtime SHA256 pins required')
+     for path,pin in binaries.items():
+@@ -56,20 +106,23 @@ def prepare(root,config,logical_argv):
+     if not logical_argv or str(Path(logical_argv[0]).resolve(strict=True))!=pinned['python']:
+         raise ValueError('this execution profile admits only its pinned Python command')
+     root=Path(root).resolve(strict=True)
+-    policy=profile(root/'tree',pinned['python'])
++    policy = _portable_profile(root/'tree', pinned) if pinned['kind'] == 'macos-seatbelt-python-node-v1' \
++        else profile(root/'tree',pinned['python'])
+     target=root/'confinement.sb'
+     if target.exists() or target.is_symlink():
+         raise ValueError('confinement profile already exists')
+     with target.open('x') as handle:handle.write(policy)
+     record={**pinned,'policy_sha256':hashlib.sha256(policy.encode()).hexdigest(),
+             'logical_argv':list(logical_argv),'policy_file':'confinement.sb',
+-            'qualification':'macos-python-batch-candidate; not general shell or PTY'}
+-    return ['/usr/bin/sandbox-exec','-f',str(target),pinned['python'],*logical_argv[1:]],record
++            'qualification': 'macos-pinned-python-node-batch; no network or general shell'
++            if pinned['kind'] == 'macos-seatbelt-python-node-v1'
++            else 'macos-python-batch-candidate; not general shell or PTY'}
++    return [str(SANDBOX_EXEC),'-f',str(target),pinned['python'],*logical_argv[1:]],record
+ 
+ 
+ def validate(root,spec):
+     root=Path(root).resolve(strict=True);record=spec['confinement']
+-    if record.get('kind')!='macos-seatbelt-python-v1' or record.get('policy_file')!='confinement.sb':
++    if record.get('kind') not in {'macos-seatbelt-python-v1', 'macos-seatbelt-python-node-v1'} or record.get('policy_file')!='confinement.sb':
+         raise ValueError('invalid confinement kind or profile path')
+     target=root/'confinement.sb'
+     if target.is_symlink() or hashlib.sha256(target.read_bytes()).hexdigest()!=record['policy_sha256']:
+@@ -79,7 +132,7 @@ def validate(root,spec):
+     for path,pin in record['binaries'].items():
+         if hashlib.sha256(Path(path).read_bytes()).hexdigest()!=pin:
+             raise ValueError('confinement runtime changed before launch')
+-    expected=['/usr/bin/sandbox-exec','-f',str(target),record['python'],*record['logical_argv'][1:]]
++    expected=[str(SANDBOX_EXEC),'-f',str(target),record['python'],*record['logical_argv'][1:]]
+     if spec['argv']!=expected or str(Path(record['logical_argv'][0]).resolve(strict=True))!=record['python']:
+         raise ValueError('confinement wrapper does not match original command')
+     return {'kind':record['kind'],'policy_sha256':record['policy_sha256'],'validated_before_launch':True,
+diff --git a/omegacode/disposable_copy_policy.py b/omegacode/disposable_copy_policy.py
+new file mode 100644
+index 0000000..092d61e
+--- /dev/null
++++ b/omegacode/disposable_copy_policy.py
+@@ -0,0 +1,48 @@
++"""Purpose: classify owner-declared disposable app writes without permitting file deletion or truncation."""
++from .common import MAX_FILE, canonical, digest, safe_path
++
++
++def configured_policy(service, config):
++    """Keep automatic copying disabled unless the owner names a repository and exact file ceiling."""
++    if config is None:
++        return None
++    if not isinstance(config, dict) or set(config) != {'kind', 'repository_id', 'paths'} \
++            or config['kind'] != 'disposable-app-files-v1' \
++            or config['repository_id'] not in service.repositories:
++        raise ValueError('exact disposable app copy policy required')
++    paths = config['paths']
++    if not isinstance(paths, list) or not paths or any(type(p) is not str for p in paths) \
++            or len(set(paths)) != len(paths):
++        raise ValueError('distinct disposable app files required')
++    for path in paths:
++        safe_path(path)
++    permitted = frozenset(paths)
++    repository = config['repository_id']
++
++    def classify(binding, edits):
++        answer = {'binding': binding, 'classification': 'unresolved'}
++        workspace = service.workspace(binding['workspace_id'])
++        if workspace['repository_id'] != repository \
++                or (workspace['generation'], workspace['tree_digest']) != (binding['generation'], binding['tree_digest']) \
++                or binding['edits_digest'] != digest(canonical(edits)) \
++                or not isinstance(edits, list) or not edits:
++            return answer
++        files = service.manifest(workspace, binding['tree_digest'])['files']
++        seen = set()
++        # Time: n edits + b bytes encoded, n = len(edits), b = total UTF-8 content size.
++        for edit in edits:
++            if not isinstance(edit, dict) or set(edit) != {'path', 'expected_digest', 'content'}:
++                return answer
++            path, content = edit['path'], edit['content']
++            if type(path) is not str or path not in permitted or path in seen or type(content) is not str:
++                return answer
++            seen.add(path)
++            old = files.get(path)
++            if edit['expected_digest'] != (old['digest'] if old else None):
++                return answer
++            size = len(content.encode('utf-8'))
++            if not content.strip() or size > MAX_FILE or (old and size < old['size']):
++                return answer
++        return {'binding': binding, 'classification': 'non_deleting'}
++
++    return classify
+diff --git a/omegacode/proposal_tests/assembly.py b/omegacode/proposal_tests/assembly.py
+index f8e735f..c873150 100644
+--- a/omegacode/proposal_tests/assembly.py
++++ b/omegacode/proposal_tests/assembly.py
+@@ -1,11 +1,11 @@
+-"""Disposable four-route composition. No production wiring or monitor setup."""
++"""Purpose: compose the selected proposal-test routes with the registered service authority."""
+ from .preparation_api import install as preparation
+ from .launch_api import install as launching
+ from .result_api import install as results
+ from .purpose_auth import PurposeAuthority
+ 
+-def install(app, service, authority, host, *, enabled=False):
+-    if type(enabled) is not bool:
++def install(app, service, authority, host, *, enabled=False, sandbox=False):
++    if type(enabled) is not bool or type(sandbox) is not bool:
+         raise ValueError('explicit boolean enablement required')
+     if not enabled:
+         return False
+@@ -17,6 +17,10 @@ def install(app, service, authority, host, *, enabled=False):
+         if not callable(getattr(host, name, None)):
+             raise ValueError('existing complete purpose host adapter required')
+     preparation(app, service, authority, host, enabled=True)
+-    launching(app, service, authority, host, enabled=True)
+-    results(app, service, authority, host, enabled=True)
++    if sandbox:
++        from .sandbox_api import install as sandbox_routes
++        sandbox_routes(app, service, authority, host)
++    else:
++        launching(app, service, authority, host, enabled=True)
++        results(app, service, authority, host, enabled=True)
+     return True
+diff --git a/omegacode/proposal_tests/purpose_auth.py b/omegacode/proposal_tests/purpose_auth.py
+index 7ebdacf..24a9a79 100644
+--- a/omegacode/proposal_tests/purpose_auth.py
++++ b/omegacode/proposal_tests/purpose_auth.py
+@@ -1,4 +1,4 @@
+-"""Uninstalled default-off extension of existing Authority; no new issuer/ledger.
++"""Purpose: validate exclusive proposal-test claims through the existing Authority.
+ 
+ Only hc1 signatures verified by the inherited authenticate path can reach this
+ validation/status branch. Generic source/run actions remain absent.
+@@ -38,7 +38,7 @@ def validate(claims, service_id):
+     if type(claims.get('member_hash')) is not str or re.fullmatch('[a-f0-9]{64}', claims['member_hash']) is None:
+         invalid()
+     integer(claims.get('max_runs'), 0, 0)
+-    integer(claims.get('max_runtime_seconds'), 1, 600)
++    integer(claims.get('max_runtime_seconds'), 600, 600)
+     for name in ['iat', 'exp']:
+         if type(claims.get(name)) not in (int, float) or not math.isfinite(claims[name]) or claims[name] <= 0:
+             invalid()
+@@ -92,9 +92,9 @@ def validate(claims, service_id):
+     exact(a, ['until', 'per_launch_max_runtime_seconds', 'test', 'request', 'usd'])
+     if type(a['until']) is not str or not 1 <= len(a['until']) <= 100:
+         invalid()
+-    integer(a['per_launch_max_runtime_seconds'], 1, 600)
+-    if claims['max_runtime_seconds'] > a['per_launch_max_runtime_seconds']:
+-        invalid()
++    # The envelope stays fixed while the lease and remaining budgets shrink.
++    # Launch admission and dispatch enforce the allowance for each actual run.
++    integer(a['per_launch_max_runtime_seconds'], 0, 600)
+     for (name, runs, seconds) in [('test', 4, 600), ('request', 8, 1800)]:
+         exact(a[name], ['runs_remaining', 'runtime_seconds_remaining'])
+         integer(a[name]['runs_remaining'], 0, runs)
+diff --git a/omegacode/proposal_tests/sandbox_api.py b/omegacode/proposal_tests/sandbox_api.py
+new file mode 100644
+index 0000000..4477470
+--- /dev/null
++++ b/omegacode/proposal_tests/sandbox_api.py
+@@ -0,0 +1,185 @@
++"""Purpose: execute retained proposal snapshots through the hive's original sandbox and result ledger."""
++import base64
++import json
++from typing import Annotated, Literal
++
++import httpx
++from fastapi import APIRouter, Depends, Header, Query
++from pydantic import BaseModel, ConfigDict, Field, StrictStr
++
++from omegacode.common import CodeError, canonical, digest
++from .launch_admission import candidate, scope_binding
++from .preparation_bind import BIND
++from .proposal_host_wire import fail, key
++
++KIND = 'proposal_sandbox_dispatch'
++MAX_SNAPSHOT = 20 * 1024 * 1024
++MAX_RESPONSE = 512 * 1024
++
++
++class LaunchBody(BaseModel):
++    model_config = ConfigDict(extra='forbid', strict=True)
++    launch_key: Annotated[StrictStr, Field(pattern='^[A-Za-z0-9_.:-]{8,120}$')]
++    runtime: Literal['python']
++    argv: Annotated[list[Annotated[StrictStr, Field(min_length=1, max_length=4096)]], Field(min_length=1, max_length=32)]
++    runtime_seconds: Annotated[int, Field(ge=6, le=120)]
++
++
++def host_call(host, method, path, body=None):
++    """The host's launch deadline owns execution; a lost reply never causes another dispatch."""
++    try:
++        with host._http.stream(method, host._url + path, json=body,
++                               headers={'Authorization': 'Bearer ' + host._token}, timeout=None) as response:
++            raw = bytearray()
++            for chunk in response.iter_bytes():
++                raw.extend(chunk)
++                if len(raw) > MAX_RESPONSE:
++                    fail('proposal_host_oversize')
++            value = json.loads(raw)
++            if response.status_code not in (200, 202):
++                error = value.get('error', {}) if isinstance(value, dict) else {}
++                code = error.get('code') if isinstance(error, dict) else error
++                raise CodeError(response.status_code, code or 'proposal_host_refused', 'host sandbox refused the original request')
++            if not isinstance(value, dict):
++                fail('proposal_host_shape')
++            return value
++    except (httpx.HTTPError, ValueError, UnicodeError):
++        fail('proposal_host_unavailable')
++
++
++def prepared(service, claims):
++    p = claims['proposal_test']
++    row = service.store.get('proposal_preparation', p['test_id'])
++    bound = service.store.get(BIND, p['test_id'])
++    fork = service.workspace(row['fork_workspace_id'])
++    expected = dict(workspace_id=fork['id'], preparation_digest='sha256:' + row['preparation_digest'])
++    if row['binding'] != scope_binding(claims) or bound['state'] != 'acknowledged' \
++            or bound['fingerprint'] != digest(canonical(bound['body'])) \
++            or p['fork'] != expected or fork.get('proposal_test_id') != p['test_id'] \
++            or fork['generation'] != 2 or fork['tree_digest'] != row['test_tree_digest']:
++        fail('proposal_sandbox_binding')
++    return row, fork
++
++
++def snapshot(service, authority, principal, command):
++    candidate(service, authority, principal)
++    claims = principal.grant
++    row, fork = prepared(service, claims)
++    p = claims['proposal_test']
++    binding = {name: p[name] for name in ('test_id', 'request_id', 'lease_id', 'controller_id', 'issuer', 'proposal', 'parent', 'fork')}
++    binding.update(schema='omegacode-project-test-binding/1', service_id=claims['aud'], capability_id=claims['id'],
++                   repository_id=claims['repository_id'], test_tree_digest='sha256:' + row['test_tree_digest'], **command)
++    manifest = service.manifest(fork)
++    if len(manifest['files']) > 2000 or digest(canonical(manifest)) != row['test_tree_digest']:
++        fail('proposal_sandbox_snapshot')
++    files, size = {}, 0
++    # Time: n files + b source bytes encoded. Space: b encoded source bytes.
++    for path, meta in manifest['files'].items():
++        data = service.store.read_blob(meta['digest'], fork['id'])
++        size += len(data)
++        if len(data) != meta['size'] or digest(data) != meta['digest'] \
++                or len(data) > 2 * 1024 * 1024 or size > 15 * 1024 * 1024:
++            fail('proposal_sandbox_snapshot')
++        files[path] = base64.b64encode(data).decode('ascii')
++    raw = canonical(dict(schema='hive-code-project-snapshot/1', binding=binding, manifest=manifest,
++                         tree_digest=row['test_tree_digest'], argv=command['argv'],
++                         interpreter=command['argv'][0], files=files))
++    if len(raw) > MAX_SNAPSHOT:
++        fail('proposal_sandbox_snapshot')
++    return binding, raw
++
++
++def currency(service, claims, binding):
++    parent = service.workspace(binding['parent']['workspace_id'])
++    row, fork = prepared(service, claims)
++    return 'current' if parent['generation'] == binding['parent']['generation'] \
++        and 'sha256:' + parent['tree_digest'] == binding['parent']['tree_digest'] \
++        and 'sha256:' + row['test_tree_digest'] == binding['test_tree_digest'] else 'stale'
++
++
++def projection(service, claims, saved, value, *, historical=False):
++    record = value.get('result') if historical else value
++    binding = saved['binding']
++    if not isinstance(record, dict) or record.get('test_id') != binding['test_id'] \
++            or record.get('launch_key') != saved['launch_key']:
++        fail('proposal_sandbox_result')
++    receipt = record.get('receipt')
++    unresolved = record.get('schema') == 'omegacode-sandbox-dispatch/1'
++    if unresolved:
++        if record.get('binding') != binding or record.get('state') != 'dispatch_unresolved':
++            fail('proposal_sandbox_result')
++    elif record.get('schema') != 'omegacode-sandbox-dispatch-result/1' or not isinstance(receipt, dict) \
++            or receipt.get('binding') != binding or receipt.get('snapshot_digest') != saved['body']['snapshot_digest'] \
++            or receipt.get('digest') != 'sha256:' + digest(canonical({k: v for k, v in receipt.items() if k != 'digest'})):
++        fail('proposal_sandbox_result')
++    source = 'unknown' if historical else currency(service, claims, binding)
++    execution = value.get('execution_currency', 'unknown') if historical else 'current'
++    if execution not in ('current', 'stale', 'unknown'):
++        fail('proposal_sandbox_result')
++    return dict(record=record, currency=source, execution_currency=execution,
++                tested=not historical and not unresolved and source == execution == 'current'
++                and receipt.get('command_outcome') == 'succeeded', accepted_source=False)
++
++
++def install(app, service, authority, host):
++    def principal(authorization: Annotated[str | None, Header()] = None,
++                  x_hive_token: Annotated[str | None, Header()] = None):
++        if not authorization or not authorization.startswith('Bearer '):
++            raise CodeError(401, 'authentication_required', 'a scoped bearer capability is required')
++        return authority.authenticate(authorization[7:], x_hive_token)
++
++    router = APIRouter()
++
++    @router.post('/v1/proposal-tests/{test_id}/launches', status_code=201)
++    def start(test_id: str, body: LaunchBody, p=Depends(principal)):
++        authority.require_route(p, 'POST', f'/v1/proposal-tests/{test_id}/launches')
++        command = body.model_dump(exclude={'launch_key'})
++        id_ = 'ps_' + digest(canonical([test_id, body.launch_key]))
++        with service.store.transaction():
++            service._check_owner(required=True)
++            saved = next((r for r in service.store.list(KIND) if r['id'] == id_), None)
++            if saved is None:
++                if sum(r['test_id'] == test_id for r in service.store.list(KIND)) >= 4:
++                    fail('proposal_sandbox_limit')
++                limits = p.grant['proposal_test']['allowance']
++                if not any(body.argv[:len(prefix)] == prefix for prefix in p.grant['argv_prefixes']):
++                    fail('proposal_launch_argv')
++                if body.runtime_seconds > min(limits['per_launch_max_runtime_seconds'],
++                                               limits['test']['runtime_seconds_remaining'],
++                                               limits['request']['runtime_seconds_remaining']) \
++                        or min(limits['test']['runs_remaining'], limits['request']['runs_remaining']) < 1:
++                    fail('proposal_launch_allowance')
++                binding, raw = snapshot(service, authority, p, command)
++                request = dict(capability_id=p.grant['id'], launch_key=body.launch_key, **command,
++                               snapshot_digest='sha256:' + digest(raw), snapshot_b64=base64.b64encode(raw).decode('ascii'))
++                saved = dict(id=id_, test_id=test_id, launch_key=body.launch_key, binding=binding,
++                             body=request, fingerprint=digest(canonical(request)))
++                service.store.put(KIND, saved)
++            elif any(saved['binding'][k] != v for k, v in command.items()):
++                fail('operation_conflict')
++            if saved['fingerprint'] != digest(canonical(saved['body'])):
++                fail('proposal_sandbox_binding')
++            prepared(service, p.grant)
++        # The host's durable original-key/body latch decides recovery, never a new capability or reconstructed snapshot.
++        value = host_call(host, 'POST', f'/api/services/proposal-tests/{test_id}/sandbox-runs', saved['body'])
++        authority.require_route(p, 'GET', f'/v1/proposal-tests/{test_id}')
++        return projection(service, p.grant, saved, value)
++
++    @router.get('/v1/proposal-tests/{test_id}')
++    def result(test_id: str, launch_key: Annotated[str | None, Query()] = None, p=Depends(principal)):
++        authority.require_route(p, 'GET', f'/v1/proposal-tests/{test_id}')
++        if launch_key is not None:
++            key(launch_key)
++        service._check_owner(required=True)
++        entries = []
++        for saved in service.store.list(KIND):
++            if saved['test_id'] != test_id or launch_key is not None and saved['launch_key'] != launch_key:
++                continue
++            value = host_call(host, 'GET', f'/api/services/proposal-tests/{test_id}/sandbox-runs/{saved["launch_key"]}')
++            out = projection(service, p.grant, saved, value, historical=True)
++            entries.append(dict(test_id=test_id, launch_key=saved['launch_key'], result=out['record'],
++                                source_currency='unknown', **{k: out[k] for k in ('currency', 'execution_currency', 'tested', 'accepted_source')}))
++        authority.require_route(p, 'GET', f'/v1/proposal-tests/{test_id}')
++        return dict(test_id=test_id, results=entries, no_work=True, accepted_source=False)
++
++    app.include_router(router)
+diff --git a/omegacode/purpose_startup.py b/omegacode/purpose_startup.py
+index 7748f5f..913e881 100644
+--- a/omegacode/purpose_startup.py
++++ b/omegacode/purpose_startup.py
+@@ -1,4 +1,4 @@
+-"""Default-off composition candidate over existing app, authority and monitor.
++"""Purpose: start the default-off proposal-test plane with the existing app, authority and monitor.
+ 
+ The server owns the running ASGI loop. No loop, scheduler, claim issuer, grant
+ or controller is created here. The candidate entrypoint calls this; deployed enablement is separate.
+@@ -37,7 +37,10 @@ class BoundedHost(HostClient):
+         return dict(body, http_status=reply['http_status'])
+ 
+ 
+-def create_purpose_app(service, port=8724, *, enabled=False, capacity=8):
++def create_purpose_app(service, port=8724, *, enabled=False, capacity=8, sandbox_enabled=False):
++    if type(enabled) is not bool or type(sandbox_enabled) is not bool:
++        raise ValueError('explicit boolean sandbox enablement required')
++    enabled = enabled or sandbox_enabled
+     if type(enabled) is not bool:
+         raise ValueError('explicit boolean enablement required')
+     app = create_app(service, port)
+@@ -75,7 +78,7 @@ def create_purpose_app(service, port=8724, *, enabled=False, capacity=8):
+             service._check_owner(required=True)
+             if service._watcher is not None or service._proposal_watchdog is not None:
+                 raise ValueError("configure once before the existing monitor starts")
+-            install(app, service, authority, host, enabled=True)
++            install(app, service, authority, host, enabled=True, sandbox=sandbox_enabled)
+             service.install_proposal_watchdog(host.watch_status, capacity=capacity)
+             app.state.purpose_host = host
+             app.state.purpose_authority = authority
+diff --git a/omegacode/service.py b/omegacode/service.py
+index 86f9c62..d51ad24 100644
+--- a/omegacode/service.py
++++ b/omegacode/service.py
+@@ -1,4 +1,4 @@
+-"""Revision-bound workspaces, durable operations, frozen native runs and observed receipts."""
++"""Purpose: maintain revision-bound workspaces, durable operations and policy-bound execution receipts."""
+ 
+ from __future__ import annotations
+ 
+@@ -386,6 +386,9 @@ class Service(Suggestions, Iterations, RunResults):
+         return files, resolved
+ 
+     def _authorize(self, principal, action, workspace, payload):
++        if workspace and action in ('run', 'terminal', 'debug') \
++                and self.repositories[workspace['repository_id']].get('execution_policy') == 'proposal-only':
++            raise CodeError(403, 'proposal_only', 'this repository executes only retained proposal snapshots through the host sandbox')
+         self.authority.scope(principal, action, workspace, payload)
+         self.authority.check_claim(principal, cancelling=action == "cancel",
+                                    historical=action in ("read", "events", "artifact"))
+@@ -428,6 +431,8 @@ class Service(Suggestions, Iterations, RunResults):
+                   "base_tree_digest": tree, "created_by": principal.actor, "created_at": stamp(),
+                   "profile": "trusted-native", "environment": {"python": sys.version, "platform": platform.platform()},
+                   "history": [{"generation": 1, "tree_digest": tree, "author": principal.actor}]}
++            if self.repositories[payload['repository_id']].get('execution_policy') == 'proposal-only':
++                ws['execution_policy'] = 'proposal-only'
+             self.store.put("workspace", ws)
+             self.store.emit(ws, "workspace.created", ws)
+             return ws
+@@ -446,6 +451,8 @@ class Service(Suggestions, Iterations, RunResults):
+             if self._manifest(manifest['files'], id_) != tree_digest:
+                 raise CodeError(409, 'fork_integrity', 'fork manifest differs from retained parent')
+         ws = {key:current[key] for key in ('repository_id','task_id','swarm_id','base_commit','base_ref','base_tree_digest','profile','environment')}
++        if 'execution_policy' in current:
++            ws['execution_policy'] = current['execution_policy']
+         ws.update(id=id_,generation=1,tree_digest=current['tree_digest'],created_by=actor,created_at=stamp(),
+                   fork_origin={'workspace_id':ws_id,'generation':current['generation'],'tree_digest':current['tree_digest']},
+                   history=[{'generation':1,'tree_digest':current['tree_digest'],'author':actor}])

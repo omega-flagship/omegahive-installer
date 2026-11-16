@@ -1,0 +1,5 @@
+(SkillContextHint "studio" "Studio step (a studio_step event names session, step and execution_id): hive-studio-context ss_id ex_id first | hive-studio-publish ar_id ex_id parent_or_none {json} once | hive-studio-done ss_id n ex_id true|false.")
+(SkillCatalog "Hive Studio: hive-studio-context ss_id ex_id | hive-studio-publish ar_id ex_id parent body | hive-studio-done ss_id n ex_id more")
+(SkillHelp "hive-studio-context" "hive-studio-context ss_id ex_id - read your Studio step first: the piece, the person's directions, the proposal artifact and its parent")
+(SkillHelp "hive-studio-publish" "hive-studio-publish ar_id ex_id parent_or_none {omega-maker-revision-2 JSON} - publish this step's one proposal; every item carries its own op_id (1-16, distinct, new in this session); the body is stored exactly as written")
+(SkillHelp "hive-studio-done" "hive-studio-done ss_id n ex_id true|false - finish step n (true when the piece needs another step of yours); after this the step makes no more calls")

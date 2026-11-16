@@ -1,0 +1,19 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+httpx>=0.27
+# web search for minds runs on the host (hive/core/webtools.py); the mind image no longer installs it
+ddgs==9.14.4
+websockets>=12
+# 8.4 added pytest.RaisesExc and xfail's acceptance of it, which hive/tests/known_failures.py uses
+pytest>=8.4
+pillow>=10
+# a PDF's text, for web-fetch and for a mind reading a PDF a person added (webtools.pdf_text runs it in a
+# limited child process); pinned as the installers ship it
+pypdf==7.0.1
+
+# Google connector backend B; exact versions are also frozen in the hash lock.
+-c google-constraints.txt
+google-auth==2.62.0
+google-auth-oauthlib==1.5.0
+google-api-python-client==2.201.0
+xkcdpass==1.30.0

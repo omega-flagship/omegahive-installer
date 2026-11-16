@@ -1,0 +1,21 @@
+{
+  "about": "A Code target's run as GET /api/code/targets answers it, per configuration: policy is the Code service config's execution_policy for the repository (null: no service config named), prefixes its HIVE_CODE_REPOS argv_prefixes (null: none), refusal the relay's answer to POST /v1/runs (null: relayed with these prefixes in the capability). hive/tests/test_code_api.py checks every case against the hive itself.",
+  "cases": [
+    {"name": "none-granted", "policy": "trusted-native", "prefixes": null,
+     "run": {"available": false, "why_not": "the hive's operator has allowed no commands for this repository", "argv_prefixes": []}, "refusal": null},
+    {"name": "granted", "policy": "trusted-native", "prefixes": [["/opt/omegahive/venv/bin/python", "check_app.py"], ["python3", "-m", "pytest"]],
+     "run": {"available": true, "why_not": null, "argv_prefixes": [["/opt/omegahive/venv/bin/python", "check_app.py"], ["python3", "-m", "pytest"]]}, "refusal": null},
+    {"name": "granted-one", "policy": "trusted-native", "prefixes": [["make", "check"]],
+     "run": {"available": true, "why_not": null, "argv_prefixes": [["make", "check"]]}, "refusal": null},
+    {"name": "invalid", "policy": "trusted-native", "prefixes": [[]],
+     "run": {"available": false, "why_not": "the hive operator's list of commands allowed for this repository is not valid", "argv_prefixes": []},
+     "refusal": [503, "repository_config_invalid"]},
+    {"name": "proposal-only", "policy": "proposal-only", "prefixes": [["python3", "-m", "pytest"]],
+     "run": {"available": false, "why_not": "the Code service here takes proposals only, so it runs no commands", "argv_prefixes": []},
+     "refusal": [403, "proposal_only_execution_forbidden"]},
+    {"name": "unreadable-policy", "policy": null, "prefixes": [["python3", "-m", "pytest"]],
+     "run": {"available": false, "why_not": "the Code service's own settings could not be read, so the hive starts no commands", "argv_prefixes": []},
+     "refusal": [503, "repository_policy_unavailable"]}
+  ],
+  "unregistered": {"available": false, "why_not": "the Code service has no editable copy of this repository registered", "argv_prefixes": []}
+}

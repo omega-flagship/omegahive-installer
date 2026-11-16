@@ -1,0 +1,72 @@
+; Agentverse remote-agent organ.
+;
+; Agentverse is an external agent network surface, not the agent's cognition. This
+; module declares remote-agent affordances and keeps request/response execution
+; behind a Python membrane with explicit trace records.
+
+(Module omegaclaw.remote.agentverse)
+(ModuleKind omegaclaw.remote.agentverse remote-agent-organ)
+(ModuleVersion omegaclaw.remote.agentverse "0.1.0")
+(ModuleEntrypoint omegaclaw.remote.agentverse "entry.metta")
+(ModuleOptional omegaclaw.remote.agentverse True)
+(ModuleDefaultEnabled omegaclaw.remote.agentverse False)
+(ModuleImplementation omegaclaw.remote.agentverse uagents-agentverse-membrane)
+
+(Space agentverse)
+(RemoteAgentNetwork agentverse)
+(RuntimeOrgan "agentverse" (initAgentverseOrgan))
+(TrustedRuntimeOrgan "agentverse")
+
+(Provides omegaclaw.remote.agentverse (Space agentverse))
+(Provides omegaclaw.remote.agentverse (RuntimeOrgan agentverse))
+(Provides omegaclaw.remote.agentverse (Provider agentverse))
+(Provides omegaclaw.remote.agentverse (Skill agentverse-status))
+(Provides omegaclaw.remote.agentverse (Skill agentverse-listener-status))
+(Provides omegaclaw.remote.agentverse (Skill agentverse-listener-start))
+(Provides omegaclaw.remote.agentverse (Skill agentverse-listener-stop))
+(Provides omegaclaw.remote.agentverse (Skill agentverse-discover))
+(Provides omegaclaw.remote.agentverse (Skill agentverse-remote-agents))
+(Provides omegaclaw.remote.agentverse (Skill agentverse-register-agent))
+(Provides omegaclaw.remote.agentverse (Skill agentverse-call))
+(Provides omegaclaw.remote.agentverse (Skill agentverse-ask))
+(Provides omegaclaw.remote.agentverse (Skill agentverse-trace))
+(Provides omegaclaw.remote.agentverse (Skill agentverse-inbox))
+
+(RemoteAgentCapability agentverse mailbox)
+(RemoteAgentCapability agentverse local-listener)
+(RemoteAgentCapability agentverse agent-chat-protocol)
+(RemoteAgentCapability agentverse discovery)
+(RemoteAgentCapability agentverse external-agent-call)
+
+(OrganPrinciple agentverse "Agentverse is a remote-agent organ. the agent chooses whether to ask it; it does not route thought or own identity.")
+(OrganPrinciple agentverse "Discovery comes first: search Agentverse, inspect candidates, register a chosen RemoteAgent atom, then call it.")
+(OrganPrinciple agentverse "Known remote agents live as inspectable RemoteAgent atoms in &agentverse; no remote capability is privileged in core.")
+(OrganPrinciple agentverse "Remote agent calls cross the VM/network boundary and should leave compact request/response/error traces.")
+(OrganPrinciple agentverse "Optional dependency failure must be visible as status, not a boot-time cognition failure.")
+
+(RuntimeDependency omegaclaw.remote.agentverse python ">=3.10")
+(RuntimeDependency omegaclaw.remote.agentverse uagents ">=0.22")
+(RuntimeConfig omegaclaw.remote.agentverse AGENTVERSE_API_KEY "optional-secret-for-registration")
+(RuntimeConfig omegaclaw.remote.agentverse AGENTVERSE_SEED_PHRASE "optional-secret-for-hosted-agent")
+(RuntimeState omegaclaw.remote.agentverse OMEGACLAW_AGENTVERSE_REGISTRY ignored)
+
+(TraceWrites omegaclaw.remote.agentverse AgentverseRequest)
+(TraceWrites omegaclaw.remote.agentverse AgentverseResponse)
+(TraceWrites omegaclaw.remote.agentverse AgentverseAcknowledgement)
+(TraceWrites omegaclaw.remote.agentverse AgentverseOutbound)
+(TraceWrites omegaclaw.remote.agentverse AgentverseInbound)
+(TraceWrites omegaclaw.remote.agentverse AgentverseListenerStopped)
+(TraceWrites omegaclaw.remote.agentverse AgentverseListenerStarted)
+(TraceWrites omegaclaw.remote.agentverse AgentverseListenerObserved)
+(TraceWrites omegaclaw.remote.agentverse AgentverseRequestQueued)
+(TraceWrites omegaclaw.remote.agentverse AgentverseError)
+(TraceWrites omegaclaw.remote.agentverse RemoteAgentObserved)
+(TraceWrites omegaclaw.remote.agentverse AgentverseDiscovery)
+(TraceWrites omegaclaw.remote.agentverse RemoteAgentRegistered)
+
+!(bind! &agentverse (new-space))
+!(import! &self (car-atom (collapse (library OmegaClaw-Core ./modules/agentverse/src/agentverse_bridge.py))))
+!(import! &self (car-atom (collapse (library OmegaClaw-Core ./modules/agentverse/catalog.metta))))
+!(import! &self (car-atom (collapse (library OmegaClaw-Core ./modules/agentverse/affordance.metta))))
+!(import! &self (car-atom (collapse (library OmegaClaw-Core ./modules/agentverse/signatures.metta))))
+!(import! &self (car-atom (collapse (library OmegaClaw-Core ./modules/agentverse/skills.metta))))

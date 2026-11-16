@@ -1,0 +1,278 @@
+{
+ "about": "A research hand-over turn, start to report, as the hive sends it: live, each frame as the asker's page receives it, and stored, each frame as a personal turn keeps it (content-free, read back by GET /api/ask/{op}). Ids, times and spends stand in for the run's own. hive/tests/test_ask_frame_phases.py makes these the hive's own frames; hive/ui/src/store/ask.test.ts plays them on the page.",
+ "live": [
+  {
+   "type": "ask",
+   "at": "2026-11-16T05:23:00Z",
+   "operation_id": "operation-id-1",
+   "turn_id": "turn-id-1",
+   "principal": "user:u_ann",
+   "seq": 1,
+   "phase": "accepted",
+   "thread": {
+    "id": "id-1",
+    "mind": {
+     "id": "id-2",
+     "name": "Orchestra"
+    },
+    "budget_usd": 0.25,
+    "spent_usd": 0.01,
+    "addressed": null
+   },
+   "acting_as": null,
+   "speaks_as": {
+    "mind_id": "id-2",
+    "name": "Orchestra"
+   }
+  },
+  {
+   "type": "ask",
+   "at": "2026-11-16T05:23:00Z",
+   "operation_id": "operation-id-1",
+   "turn_id": "turn-id-1",
+   "principal": "user:u_ann",
+   "seq": 2,
+   "phase": "intent",
+   "intent_id": "intent-id-1",
+   "state": "pending",
+   "links_rev": 1
+  },
+  {
+   "type": "ask",
+   "at": "2026-11-16T05:23:00Z",
+   "operation_id": "operation-id-1",
+   "turn_id": "turn-id-1",
+   "principal": "user:u_ann",
+   "seq": 3,
+   "phase": "intent",
+   "intent_id": "intent-id-1",
+   "state": "dispatching",
+   "links_rev": 2,
+   "dispatch_id": "dispatch-id-1"
+  },
+  {
+   "type": "ask",
+   "at": "2026-11-16T05:23:00Z",
+   "operation_id": "operation-id-1",
+   "turn_id": "turn-id-1",
+   "principal": "user:u_ann",
+   "seq": 4,
+   "phase": "intent",
+   "intent_id": "intent-id-1",
+   "state": "linked",
+   "links_rev": 3,
+   "request_id": "request-id-1",
+   "goal_id": "goal-id-1"
+  },
+  {
+   "type": "ask",
+   "at": "2026-11-16T05:23:00Z",
+   "operation_id": "operation-id-1",
+   "turn_id": "turn-id-1",
+   "principal": "user:u_ann",
+   "seq": 5,
+   "phase": "dispatched",
+   "intent_id": "intent-id-1",
+   "intent_kind": "research.request",
+   "to": {
+    "kind": "swarm",
+    "ref": "ref-1",
+    "name": "Research"
+   },
+   "label": "Research it"
+  },
+  {
+   "type": "ask",
+   "at": "2026-11-16T05:23:00Z",
+   "operation_id": "operation-id-1",
+   "turn_id": "turn-id-1",
+   "principal": "user:u_ann",
+   "seq": 6,
+   "phase": "answer",
+   "text": "I've sent that off.",
+   "message_id": "message-id-1"
+  },
+  {
+   "type": "ask",
+   "at": "2026-11-16T05:23:00Z",
+   "operation_id": "operation-id-1",
+   "turn_id": "turn-id-1",
+   "principal": "user:u_ann",
+   "seq": 7,
+   "phase": "done",
+   "spent_usd": 0.01,
+   "turn_spent_usd": 0.01,
+   "outcome": "complete"
+  },
+  {
+   "type": "ask",
+   "at": "2026-11-16T05:23:00Z",
+   "operation_id": "operation-id-1",
+   "turn_id": "turn-id-1",
+   "principal": "user:u_ann",
+   "seq": 8,
+   "phase": "research",
+   "intent_id": "intent-id-1",
+   "request_id": "request-id-1",
+   "state": "done",
+   "research": {
+    "request_id": "request-id-1",
+    "title": "Cepheid distances",
+    "state": "done",
+    "report": {
+     "summary": "Cepheids pulse with a period tied to their luminosity.",
+     "sections": [
+      {
+       "heading": "The relation",
+       "claims": [
+        {
+         "text": "Brighter Cepheids pulse more slowly.",
+         "cited": true,
+         "citations": [
+          {
+           "url": "https://example.org/cepheids",
+           "fetched_at": "2026-11-16T05:23:00Z",
+           "match": "exact",
+           "verified": true,
+           "audited_at": "2026-11-16T05:23:00Z",
+           "title": "Invented Page"
+          }
+         ]
+        },
+        {
+         "text": "The relation was found in 1908.",
+         "cited": false,
+         "citations": [
+          {
+           "url": "https://example.org/never-fetched",
+           "fetched_at": "2026-11-16T05:23:00Z",
+           "match": null,
+           "verified": false
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "open_questions": [
+      "How large is the metallicity effect?"
+     ],
+     "checks": {
+      "claims": 2,
+      "cited": 1,
+      "uncited": 1,
+      "path_matched": 0
+     }
+    },
+    "by": {
+     "mind_id": "mind-id-1",
+     "name": "foundation.researcher.v1 0000"
+    },
+    "created_at": "2026-11-16T05:23:00Z",
+    "finished_at": "2026-11-16T05:23:00Z"
+   }
+  }
+ ],
+ "stored": [
+  {
+   "operation_id": "operation-id-1",
+   "turn_id": "turn-id-1",
+   "principal": "user:u_ann",
+   "seq": 1,
+   "phase": "accepted",
+   "at": "2026-11-16T05:23:00Z",
+   "thread": {
+    "id": "id-1",
+    "mind": {
+     "id": "id-2"
+    },
+    "budget_usd": 0.25,
+    "spent_usd": 0.01
+   },
+   "acting_as": null,
+   "personal": true
+  },
+  {
+   "operation_id": "operation-id-1",
+   "turn_id": "turn-id-1",
+   "principal": "user:u_ann",
+   "seq": 2,
+   "phase": "intent",
+   "intent_id": "intent-id-1",
+   "state": "pending",
+   "links_rev": 1,
+   "at": "2026-11-16T05:23:00Z",
+   "personal": true
+  },
+  {
+   "operation_id": "operation-id-1",
+   "turn_id": "turn-id-1",
+   "principal": "user:u_ann",
+   "seq": 3,
+   "phase": "intent",
+   "intent_id": "intent-id-1",
+   "state": "dispatching",
+   "links_rev": 2,
+   "dispatch_id": "dispatch-id-1",
+   "at": "2026-11-16T05:23:00Z",
+   "personal": true
+  },
+  {
+   "operation_id": "operation-id-1",
+   "turn_id": "turn-id-1",
+   "principal": "user:u_ann",
+   "seq": 4,
+   "phase": "intent",
+   "intent_id": "intent-id-1",
+   "state": "linked",
+   "links_rev": 3,
+   "request_id": "request-id-1",
+   "at": "2026-11-16T05:23:00Z",
+   "personal": true
+  },
+  {
+   "operation_id": "operation-id-1",
+   "turn_id": "turn-id-1",
+   "principal": "user:u_ann",
+   "seq": 5,
+   "phase": "dispatched",
+   "intent_id": "intent-id-1",
+   "at": "2026-11-16T05:23:00Z",
+   "personal": true
+  },
+  {
+   "operation_id": "operation-id-1",
+   "turn_id": "turn-id-1",
+   "principal": "user:u_ann",
+   "seq": 6,
+   "phase": "answer",
+   "message_id": "message-id-1",
+   "at": "2026-11-16T05:23:00Z",
+   "personal": true
+  },
+  {
+   "operation_id": "operation-id-1",
+   "turn_id": "turn-id-1",
+   "principal": "user:u_ann",
+   "seq": 7,
+   "phase": "done",
+   "spent_usd": 0.01,
+   "turn_spent_usd": 0.01,
+   "outcome": "complete",
+   "at": "2026-11-16T05:23:00Z",
+   "personal": true
+  },
+  {
+   "operation_id": "operation-id-1",
+   "turn_id": "turn-id-1",
+   "principal": "user:u_ann",
+   "seq": 8,
+   "phase": "research",
+   "intent_id": "intent-id-1",
+   "request_id": "request-id-1",
+   "state": "done",
+   "at": "2026-11-16T05:23:00Z",
+   "personal": true
+  }
+ ]
+}

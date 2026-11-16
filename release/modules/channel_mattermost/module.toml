@@ -1,0 +1,22 @@
+id = "omegaclaw.channel.mattermost"
+kind = "channel"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+default_enabled = false
+
+provides = [
+  "channel:mattermost",
+]
+
+requires = [
+  "python>=3.10",
+]
+
+[trace]
+writes = [
+  "MattermostMessageReceived",
+  "MattermostMessageSent",
+]

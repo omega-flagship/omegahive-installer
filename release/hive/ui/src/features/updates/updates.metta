@@ -1,0 +1,186 @@
+; The Updates and holds page, one hold on it and one app on it, declared as atoms (screens/lib_screens.metta composes
+; them). The page composes each hold and each app for its own facts, and the updates screen stacks them.
+;
+; Facts the page states each time:
+;   updates: the resource facts (value resource, resource.stale; data resource.error), updates.loaded; can.hold can.apply
+;            can.request can.check;
+;            platform.update platform.supervised platform.held platform.requested platform.release;
+;            platform.installer platform.current platform.offer platform.deferred platform.updating platform.failed
+;            platform.busy platform.checking platform.check-failed (an installed Mac hive's updater); apps.one;
+;            (count holds.all) (count apps.all) (count apps.waiting) (count platform.commits) (count history.all)
+;   updates-hold: can.release
+;   updates-app: app.attention (an update or a load error) app.broken app.same-version app.removed app.requested
+;                app.held; can.hold can.apply
+
+(Screen updates "Updates")
+
+; ---------- checking for updates: the shared resource states (lib_screens.metta Resource), in this page's words
+(Resource updates 1 ((waiting "Checking for updates") (unsupported "This hive does not report updates yet.") (unsupported-icon ban)
+  (failed-title "Could not check for updates") (retry retry)))
+
+; asking for an update: a note to whoever applies updates (admins whose hive takes requests)
+(Part updates 9 buttons ((items ((button "Ask for an update…" ask-update ((icon replay)))))))
+(When updates 9 (on updates.loaded))
+(When updates 9 (on can.request))
+
+; ---------- holds: what must not be interrupted
+(Part updates 10 section ((tour update-holds) (title "Holds") (body "Nothing is held. Hold the platform or an app below when work must not be interrupted.")))
+(When updates 10 (on updates.loaded))
+(When updates 10 (none holds.all))
+(Part updates 11 section ((tour update-holds) (title (bind holds.heading))))
+(When updates 11 (on updates.loaded))
+(When updates 11 (has holds.all))
+(Part updates 12 buttons ((items ((button "Hold everything…" hold-all ((icon pause)))))))
+(When updates 12 (on updates.loaded))
+(When updates 12 (on can.hold))
+(Part updates 13 stack ((source holds.all) (label "Holds")))
+(When updates 13 (on updates.loaded))
+(When updates 13 (has holds.all))
+
+; ---------- the platform: the running build, what waits for a restart, and restarting
+(Part updates 20 section ((title "Platform") (body (bind platform.running))))
+(When updates 20 (on updates.loaded))
+; up to date only where this hive's own check can tell: an installed release (platform.release) is no git checkout,
+; and its installer, not this page, brings the next release
+(Part updates 21 note ((text "Up to date.")))
+(When updates 21 (on updates.loaded))
+(When updates 21 (off platform.update))
+(When updates 21 (off platform.release))
+(Part updates 22 note ((text (bind platform.waiting))))
+(When updates 22 (on updates.loaded))
+(When updates 22 (on platform.update))
+(Part updates 23 code ((label "Changes waiting for a restart") (text (bind platform.commits))))
+(When updates 23 (on updates.loaded))
+(When updates 23 (on platform.update))
+(When updates 23 (has platform.commits))
+(Part updates 24 note ((text (bind platform.request))))
+(When updates 24 (on updates.loaded))
+(When updates 24 (on platform.update))
+(When updates 24 (on platform.requested))
+(Part updates 25 note ((text "This hive can't restart itself; restart it on its host.")))
+(When updates 25 (on updates.loaded))
+(When updates 25 (on platform.update))
+(When updates 25 (off platform.supervised))
+; an installed Mac hive: its updater's word that it runs the newest release, or the release it offers, how Update now
+; goes, a Not now still waiting, an update under way, and a try that did not finish
+(Part updates 26 note ((text (bind platform.current))))
+(When updates 26 (on updates.loaded))
+(When updates 26 (on platform.current))
+(Part updates 27 notice ((text (bind platform.offer))))
+(When updates 27 (on updates.loaded))
+(When updates 27 (on platform.offer))
+(Part updates 28 note ((text (bind platform.offer-how))))
+(When updates 28 (on updates.loaded))
+(When updates 28 (on platform.offer))
+(When updates 28 (off platform.updating))
+(Part updates 29 note ((text (bind platform.deferred))))
+(When updates 29 (on updates.loaded))
+(When updates 29 (on platform.deferred))
+(When updates 29 (off platform.updating))
+(Part updates 30 note ((text (bind platform.updating))))
+(When updates 30 (on updates.loaded))
+(When updates 30 (on platform.updating))
+(Part updates 31 notice ((tone bad) (text (bind platform.failed))))
+(When updates 31 (on updates.loaded))
+(When updates 31 (on platform.failed))
+(When updates 31 (off platform.updating))
+; restarting (only a hive that restarts itself, on a hive that can apply updates), updating an installed release
+; (while its updater is not already at it), checking for a newer one now rather than at the updater's next hourly run
+; (while it is not checking or installing already), and holding restarts, side by side
+(Part updates 32 buttons ((items ((button "Restart to update" restart ((variant primary)))))))
+(Row updates 32 platform-actions)
+(When updates 32 (on updates.loaded))
+(When updates 32 (on platform.update))
+(When updates 32 (none-of ((off platform.supervised) (off can.apply) (on platform.held))))
+(Part updates 33 buttons ((items ((button "Restart (on hold)" restart ())))))
+(Row updates 33 platform-actions)
+(When updates 33 (on updates.loaded))
+(When updates 33 (on platform.update))
+(When updates 33 (on platform.held))
+(When updates 33 (none-of ((off platform.supervised) (off can.apply))))
+(Part updates 34 buttons ((items ((button "Update now" update-now ((variant primary)))))))
+(Row updates 34 platform-actions)
+(When updates 34 (on updates.loaded))
+(When updates 34 (on platform.offer))
+(When updates 34 (none-of ((off can.apply) (on platform.held) (on platform.updating))))
+(Part updates 35 buttons ((items ((button "Update now (on hold)" update-now ())))))
+(Row updates 35 platform-actions)
+(When updates 35 (on updates.loaded))
+(When updates 35 (on platform.offer))
+(When updates 35 (on platform.held))
+(When updates 35 (none-of ((off can.apply) (on platform.updating))))
+(Part updates 36 buttons ((items ((button "Check now" check-now ((icon replay)))))))
+(Row updates 36 platform-actions)
+(When updates 36 (on updates.loaded))
+(When updates 36 (on platform.installer))
+(When updates 36 (on can.check))
+(When updates 36 (none-of ((on platform.checking) (on platform.busy))))
+(Part updates 37 buttons ((items ((button "Hold restarts…" hold-restarts ((icon pause)))))))
+(Row updates 37 platform-actions)
+(When updates 37 (on updates.loaded))
+(When updates 37 (on can.hold))
+; what Check now is doing, and why the updater's last check could not tell whether a newer release is out
+(Part updates 38 note ((text "Checking for a newer release…")))
+(When updates 38 (on updates.loaded))
+(When updates 38 (on platform.checking))
+(Part updates 39 notice ((tone warn) (text (bind platform.check-failed))))
+(When updates 39 (on updates.loaded))
+(When updates 39 (on platform.check-failed))
+(When updates 39 (off platform.checking))
+
+; ---------- apps: which need attention, each with its own hold and reload
+(Part updates 40 section ((title "Apps") (body (bind apps.attention))))
+(When updates 40 (on updates.loaded))
+(When updates 40 (has apps.waiting))
+(Part updates 41 section ((title "Apps") (body "The one app is running what is on disk.")))
+(When updates 41 (on updates.loaded))
+(When updates 41 (none apps.waiting))
+(When updates 41 (on apps.one))
+(Part updates 42 section ((title "Apps") (body (bind apps.calm))))
+(When updates 42 (on updates.loaded))
+(When updates 42 (none apps.waiting))
+(When updates 42 (off apps.one))
+(Part updates 43 stack ((source apps.all) (frame inset) (label "Apps")))
+(When updates 43 (on updates.loaded))
+(When updates 43 (has apps.all))
+
+; ---------- what was applied lately
+(Part updates 50 section ((title "Recent")))
+(When updates 50 (on updates.loaded))
+(When updates 50 (has history.all))
+(Part updates 51 list ((source history.all) (title title) (meta (problem overrode)) (label "Recent")))
+(When updates 51 (on updates.loaded))
+(When updates 51 (has history.all))
+
+; placing, lifting and asking: dialogs with their own forms, drawn by the page (an island)
+(Part updates 60 island ((name update-dialogs)))
+(When updates 60 (on updates.loaded))
+(Part updates 61 note ((text "A mind can apply updates only if an admin gives it the exact skill hive-update-apply; no default or wildcard rule grants it, and minds can never override a hold.")))
+(When updates 61 (on updates.loaded))
+
+(Screen updates-hold "A hold")
+(Part updates-hold 10 line ((title (bind hold.stops)) (meta (bind hold.detail)) (badge "On hold") (tone warn)))
+(Part updates-hold 20 buttons ((items ((button "Lift…" lift ())))))
+(When updates-hold 20 (on can.release))
+
+(Screen updates-app "An app")
+(Part updates-app 10 line ((title (bind app.name)) (meta (bind app.version))))
+(Part updates-app 20 notice ((tone bad) (text (bind app.problem))))
+(When updates-app 20 (on app.broken))
+(Part updates-app 21 note ((text "Same version number, changed code.")))
+(When updates-app 21 (on app.same-version))
+(Part updates-app 22 notice ((tone warn) (text "Its folder is gone; it keeps running until the next restart.")))
+(When updates-app 22 (on app.removed))
+(Part updates-app 23 note ((text (bind app.request))))
+(When updates-app 23 (on app.requested))
+; holding and reloading, side by side: reload only when the app needs it and this hive can apply updates
+(Part updates-app 30 buttons ((items ((button "Hold…" hold-app ((aria "Hold reloads of {app.name}") (icon pause) (variant ghost)))))))
+(Row updates-app 30 app-actions)
+(When updates-app 30 (on can.hold))
+(Part updates-app 31 buttons ((items ((button "Reload" reload ((variant primary)))))))
+(Row updates-app 31 app-actions)
+(When updates-app 31 (none-of ((off app.attention) (off can.apply) (on app.held))))
+(Part updates-app 32 buttons ((items ((button "Reload (on hold)" reload ())))))
+(Row updates-app 32 app-actions)
+(When updates-app 32 (on app.held))
+(When updates-app 32 (none-of ((off app.attention) (off can.apply))))

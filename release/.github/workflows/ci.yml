@@ -1,0 +1,288 @@
+# OmegaHive CI. Every job is blocking: no continue-on-error anywhere.
+#
+# - core-tests:  the OmegaClaw Core unittest suite under tests/ (PeTTa-free).
+# - hive-petta-smoke (pull_request) and hive-petta (workflow_dispatch, by hand): both use the
+#                toolchain in .github/actions/petta-toolchain; the smoke runs a fixed selection of hive/tests and then
+#                every hive test module the pull request adds or changes (scripts/ci/pr_hive_tests.py), hive-petta all
+#                of it. A change to conftest.py or a helper module adds no module to the smoke; the full run covers it.
+#                Both also run tests/'s runtime tests, which boot the core runtime and so skip in core-tests
+#                (scripts/ci/runtime-tests.sh): the smoke when the pull request touches the runtime or the CI that runs
+#                them (scripts/ci/pr_hive_tests.py --runtime), hive-petta always.
+#                Both end with the mind-sandbox tests under AppArmor's restriction. The notes below describe the toolchain.
+# - toolchain:   builds the pinned toolchain with scripts/dev/setup_petta_env.sh (the same pins as
+#                deploy/setup_runtime.sh: Python 3.12, SWI-Prolog 10.1.14 from swipl-devel built against that Python,
+#                PeTTa ae66fa8, janus-swi 1.5.3), caches it by pin, and runs hive/tests with PETTA_PATH set.
+#                Most hive tests start PeTTa, so this job is the hive gate; there is no PeTTa-free hive job.
+#                Tests that need macOS sandbox-exec, Docker, HIVE_E2E=1, or a closed-source sibling repo
+#                (omegafusion, omegasocial, ...) skip themselves and say why in the pytest summary (-rs).
+# - hive-ui:     Node 22.12+ (vitest 5 and vite 8 need it): typecheck, lint, vitest, production build.
+#
+# Runners: our own, not GitHub's (since 2026-11-05; GitHub-hosted until then). Two self-hosted org runners in the
+# runner group omegahive-ci, both Ubuntu 24.04 x86_64 on one machine. core-tests and hive-ui run on either
+# (label omegahive-ci). hive-petta-smoke and hive-petta run on runner 1 only (label omegahive-petta), so they never
+# run two at once: they share the kernel's AppArmor sysctl and /opt/omegahive.
+# The machine is prepared once, as GitHub prepares its image, by ci-runner-setup (run by hand by an admin): build
+# packages, the launcher's AppArmor profile, a tmpfs for job files, the firewall, and root-owned job hooks that
+# start and end every job without the toolchain folders, setup-python's Python, caches and the release, with the
+# restriction at 1 (actions/cache restores the toolchain). Jobs have no general sudo: runner 1 may only set the
+# AppArmor restriction to 0 or 1 and run the release helper (scripts/ci/release-tests.sh); runner 2 has none.
+# The petta jobs end with scripts/ci/host-check.sh, which fails if the job changed the restriction,
+# /etc/apparmor.d or the installed packages.
+#
+# First runs on GitHub Actions (2026-10-10): core-tests and hive-ui pass; hive-petta built the pinned toolchain and
+# passed 2402 hive tests. Its 19 failures were the Linux mind-sandbox tests, which need unprivileged user namespaces
+# (Ubuntu 24.04 blocks them by default through AppArmor), and one test that assumed SQLite's secure_delete default.
+name: hive-ci
+
+# Once per pull request commit (a newer commit on the same pull request cancels the run still in progress), and the full
+# suite on a dispatch by hand (after substantial merges). There is no schedule. A push alone starts no run.
+on:
+  pull_request:
+  workflow_dispatch:   # the full run: hive-petta, and failure-notice if it fails
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  SWIPL_TAG: V10.1.14
+  PETTA_REF: ae66fa8
+  JANUS_VERSION: 1.5.3
+
+jobs:
+  core-tests:
+    runs-on: [self-hosted, omegahive-ci]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test runner (one module imports pytest helpers)
+        run: python -m pip install -c hive/ci-constraints.txt -r tests/ci-requirements.txt
+      - name: Fetch and prepare the pinned Singnet dependency
+        run: python scripts/setup_core.py
+      - name: tests/ (OmegaClaw Core, unittest)
+        run: python -m unittest discover -q -s tests
+
+  hive-petta-smoke:
+    # On pull_request: the toolchain (cached; setup_petta_env.sh's MeTTa run), a fixed smoke selection of hive/tests,
+    # the hive test modules the pull request adds or changes, tests/'s runtime tests when it touches the core runtime,
+    # and the mind-sandbox tests with AppArmor's restriction on. The full hive/tests runs in hive-petta below.
+    if: github.event_name == 'pull_request'
+    runs-on: [self-hosted, omegahive-petta]
+    # 240, like hive-petta: minutes on our own machine cost nothing, a cold toolchain build (no self-hosted cache entry
+    # in this PR's or main's scope yet) must be able to finish, a pull request that changes most of hive/tests runs
+    # most of it here (#82 changes 238 of its 312 test modules against main), and the runtime tests may follow.
+    timeout-minutes: 240
+    steps:
+      - name: AppArmor restriction on (repairs a run whose runner or machine died with it off)
+        run: sudo -n /usr/sbin/sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # The merge commit and its two parents (the base tip and the pull request), for scripts/ci/pr_hive_tests.py.
+          fetch-depth: 2
+      - name: Host baseline (restriction, /etc/apparmor.d, installed packages)
+        run: bash scripts/ci/host-check.sh baseline "$RUNNER_TEMP/host-check"
+      - name: Job files on tmpfs (TMPDIR), with a peak-use sampler
+        run: bash scripts/ci/job-tmp.sh start
+      - uses: ./.github/actions/petta-toolchain
+      - name: PeTTa in place (the PeTTa tests skip without PETTA_PATH, which would read as a pass)
+        id: petta
+        run: |
+          [ -d "${PETTA_PATH:-}" ] || { echo "PETTA_PATH unset or not a directory: the PeTTa tests would skip"; exit 1; }
+      - name: hive/tests, smoke selection (the mind-sandbox tests and one in-process PeTTa test)
+        # A path list, so a renamed or deleted file fails the step (pytest exits 4). test_share_body_through_harness.py
+        # runs MeTTa through PeTTa inside pytest; it skips without PETTA_PATH, which the step above checks.
+        # The step limit is below the job's, so the always() steps below get their time.
+        id: smoke
+        timeout-minutes: 20
+        run: |
+          python -m pytest -q -rs -p no:cacheprovider --basetemp="$TMPDIR/pytest" hive/tests/test_mind_sandbox_linux.py \
+            hive/tests/test_sandbox_run.py hive/tests/test_mind_sandbox.py hive/tests/test_mind_sandbox_default.py \
+            hive/tests/test_share_body_through_harness.py
+      - name: hive/tests the pull request adds or changes
+        # Every hive test module the pull request adds, changes or renames to (scripts/ci/pr_hive_tests.py compares
+        # HEAD^1, the base tip, with HEAD, the merge), with the full run's flags, so each failure, error, skip,
+        # expected failure and unexpected pass is named. It runs when the fixed selection above failed too, so a pull
+        # request's own tests always get a result, but not when PeTTa is missing. The step limit is the full run's,
+        # below the job's.
+        if: ${{ !cancelled() && steps.petta.outcome == 'success' }}
+        timeout-minutes: 150
+        run: |
+          files=$(python scripts/ci/pr_hive_tests.py)
+          if [ -z "$files" ]; then
+            echo "This pull request adds or changes no hive test module."
+            exit 0
+          fi
+          mapfile -t files <<<"$files"
+          echo "The ${#files[@]} hive test modules this pull request adds or changes:"
+          printf '  %s\n' "${files[@]}"
+          python -m pytest -q -rfEsxX --durations=25 -o faulthandler_timeout=300 -p no:cacheprovider \
+            --basetemp="$TMPDIR/pytest-pr" "${files[@]}"
+      - name: tests/'s runtime tests, when the pull request touches the core runtime
+        # The tests under tests/ that boot the core runtime through PeTTa, which core-tests skips, having no PeTTa. They
+        # run when the pull request touches the runtime, those tests or the CI that runs them
+        # (scripts/ci/pr_hive_tests.py --runtime), and scripts/ci/runtime-tests.sh prepares what they need. Like the
+        # step above, this one runs when the fixed selection failed too, but not when PeTTa is missing. The five took
+        # 5.7 minutes on runner 1 with setup (run 43153512772), so 30 leaves room for a cold pip cache and a slow day.
+        if: ${{ !cancelled() && steps.petta.outcome == 'success' }}
+        timeout-minutes: 30
+        run: |
+          files=$(python scripts/ci/pr_hive_tests.py --runtime)
+          if [ -z "$files" ]; then
+            echo "This pull request touches neither the core runtime nor the CI that runs its tests."
+            exit 0
+          fi
+          mapfile -t files <<<"$files"
+          bash scripts/ci/runtime-tests.sh "${files[@]}"
+      - name: Mind sandbox with AppArmor's restriction on, from a release with the launcher's profile loaded
+        # Runs when the fixed selection passed, as before the steps above existed, whatever the pull request's own
+        # tests did.
+        if: ${{ !cancelled() && steps.smoke.outcome == 'success' }}
+        run: bash scripts/ci/release-tests.sh
+      - name: Restriction back on and release removed (also after a failure, a cancel or the job timeout)
+        if: always()
+        run: |
+          sudo -n /usr/sbin/sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+          sudo -n /usr/local/sbin/omegahive-ci-release --remove
+      - name: Host compare against the baseline, and the tmpfs peak
+        if: always()
+        run: |
+          rc=0
+          bash scripts/ci/host-check.sh compare "$RUNNER_TEMP/host-check" || rc=$?
+          bash scripts/ci/job-tmp.sh peak || true
+          exit "$rc"
+
+  hive-petta:
+    # workflow_dispatch (by hand, on any branch): the full hive/tests, tests/'s runtime tests, then the mind-sandbox
+    # tests with AppArmor's restriction on. If it fails or hits its time limit, failure-notice below reports it on the
+    # issue tracker.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, omegahive-petta]
+    # The full hive/tests ran 49% in 50 minutes on runner 1 (run 43104919549), so it gets room to finish: 150 minutes,
+    # then up to 30 for the runtime tests, with time left for the always() steps.
+    timeout-minutes: 240
+    permissions:
+      contents: read
+    steps:
+      - name: AppArmor restriction on (repairs a run whose runner or machine died with it off)
+        run: sudo -n /usr/sbin/sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Host baseline (restriction, /etc/apparmor.d, installed packages)
+        run: bash scripts/ci/host-check.sh baseline "$RUNNER_TEMP/host-check"
+      - name: Job files on tmpfs (TMPDIR), with a peak-use sampler
+        run: bash scripts/ci/job-tmp.sh start
+      - uses: ./.github/actions/petta-toolchain
+        id: toolchain
+      - name: hive/tests
+        # The step limit is below the job's, so the always() steps below get their time. -rfEsxX names every failure,
+        # error, skip, expected failure and unexpected pass (hive/tests/known_failures.py gives each expected failure
+        # its issue), --durations the slowest tests, and faulthandler_timeout dumps every thread's stack when one test
+        # runs past 300 s (pytest-timeout is not installed), so a hang names itself.
+        timeout-minutes: 150
+        run: python -m pytest -q -rfEsxX --durations=25 -o faulthandler_timeout=300 -p no:cacheprovider --basetemp="$TMPDIR/pytest" hive/tests
+      - name: tests/'s runtime tests
+        # Every test under tests/ that boots the core runtime through PeTTa (scripts/ci/runtime-tests.sh with no files
+        # runs them all), which core-tests skips, having no PeTTa. It runs when hive/tests failed too, so a full run
+        # always reports them, but not when the toolchain failed. 30 minutes, as in the smoke.
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        timeout-minutes: 30
+        run: bash scripts/ci/runtime-tests.sh
+      - name: Mind sandbox with AppArmor's restriction on, from a release with the launcher's profile loaded
+        run: bash scripts/ci/release-tests.sh
+      - name: Restriction back on and release removed (also after a failure, a cancel or the job timeout)
+        if: always()
+        run: |
+          sudo -n /usr/sbin/sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+          sudo -n /usr/local/sbin/omegahive-ci-release --remove
+      - name: Host compare against the baseline, and the tmpfs peak
+        if: always()
+        run: |
+          rc=0
+          bash scripts/ci/host-check.sh compare "$RUNNER_TEMP/host-check" || rc=$?
+          bash scripts/ci/job-tmp.sh peak || true
+          exit "$rc"
+
+  hive-ui:
+    runs-on: [self-hosted, omegahive-ci]
+    defaults:
+      run:
+        working-directory: hive/ui
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'   # latest 22.x LTS (>= 22.12)
+          cache: npm
+          cache-dependency-path: hive/ui/package-lock.json
+      - name: Fetch Singnet sources used by the browser interpreter
+        working-directory: .
+        run: python3 scripts/setup_core.py
+      - run: npm ci
+      - run: npx tsc -b --noEmit
+      - run: npm run lint
+      - run: npx vitest run
+      - run: npm run build
+
+  failure-notice:
+    # After a full run (workflow_dispatch) whose hive-petta did not succeed: a failure, or the job's time limit, opens
+    # or comments on the issue "hive-petta failed", naming the branch and linking the run. A job of its own, because
+    # GitHub ends a timed-out job as cancelled and skips its failure() steps. A timeout and a person's cancel both end
+    # the job cancelled; the job's check-run annotations tell them apart, and a person's cancel is not reported.
+    needs: hive-petta
+    if: always() && github.event_name == 'workflow_dispatch' && needs.hive-petta.result != 'success'
+    runs-on: [self-hosted, omegahive-ci]
+    timeout-minutes: 5
+    permissions:
+      contents: read  # gh issue list reads the repository's default branch
+      actions: read   # hive-petta's job id in this run
+      checks: read    # that job's annotations
+      issues: write   # open or comment on the issue
+    steps:
+      - name: Report a failed or timed-out hive-petta on the issue tracker
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.hive-petta.result }}
+        run: |
+          case "$RESULT" in
+            failure) why='failed' ;;
+            cancelled)
+              id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
+                --jq '.jobs[] | select(.name == "hive-petta") | .id')
+              notes=$(gh api "repos/$GITHUB_REPOSITORY/check-runs/${id:?no hive-petta job in this run}/annotations" \
+                --jq '.[] | select(.annotation_level == "failure") | .message')
+              if by=$(grep -m1 -o '^The run was canceled by @[^ ]*' <<<"$notes"); then
+                by=${by#The run was canceled by @}
+                echo "hive-petta was cancelled by ${by%.}: not reported."
+                exit 0
+              elif limit=$(grep -m1 -o 'exceeded the maximum execution time of [^ ]*' <<<"$notes"); then
+                limit=${limit##* }
+                why="hit its time limit (${limit%.})"
+              else
+                why='was cancelled (its annotations name no person)'
+              fi ;;
+            *) echo "hive-petta ended $RESULT: not reported."; exit 0 ;;
+          esac
+          title='hive-petta failed'
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          body="hive-petta $why on branch \`$GITHUB_REF_NAME\` at $GITHUB_SHA,"
+          body+=" started by $GITHUB_TRIGGERING_ACTOR: $run_url"
+          echo "$body"
+          n=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "in:title \"$title\"" --json number,title \
+            --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          if [ -n "$n" ]; then
+            gh issue comment "$n" -R "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create -R "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi

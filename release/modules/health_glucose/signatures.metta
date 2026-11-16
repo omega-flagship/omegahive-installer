@@ -1,0 +1,7 @@
+(SkillSignature glucose-app-status)
+(SkillSignature observe-glucose (Arg text person))
+(SkillSignature glucose-history (Arg text person) (Arg number count))
+(SkillSignature set-glucose-watch (Arg text person) (Arg number low) (Arg number high) (Arg number stale_minutes) (Arg text channel) (Arg rest-text note))
+(SkillSignature glucose-watch-status (Arg text person))
+(SkillSignature clear-glucose-watch (Arg text person))
+(SkillSignature glucose-rings (Arg text person))

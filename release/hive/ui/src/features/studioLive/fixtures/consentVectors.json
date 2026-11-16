@@ -1,0 +1,1919 @@
+{
+  "functions_only_not_admission": true,
+  "host_pin": "75b3c381e4f8339390b7d9c60e70c1bc756e278c",
+  "mandatory_disclosures": [
+    "maker_restarts_between_steps",
+    "maker_reads_unsaved_piece_while_live"
+  ],
+  "mutations": [
+    {
+      "consent_digest": "sha256:18c48a55341ef11908098181dc4b1e26b67cc41d14d00d0fe7167c073dc1fdd1",
+      "field": "swarm_id",
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678-changed",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "consent_digest": "sha256:bb579be635613614ba9f98492000074adfc5dfa849ba947e3bfd778e78596f0b",
+      "field": "program_id",
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign-changed",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "consent_digest": "sha256:8e711277f577f4c99e70c12d3003bfa1cf42154a7054988c020ef6e64a0e3e5c",
+      "field": "app_pin",
+      "payload": {
+        "app_pin": {
+          "changed": true
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "consent_digest": "sha256:a6022b7e4d3968dd45108698d0d016f17ef3c34ffcdd408f502b18efef02a32d",
+      "field": "maker_id",
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678-changed",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "consent_digest": "sha256:80a9a591941499b336f6acfa6da37a598407dd9fb65859e86513feef0bbffa0f",
+      "field": "model",
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider-changed",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "consent_digest": "sha256:21c4c25c6950b4b7712435a760a95462a68d1508afc918290803cc7e77fcb96b",
+      "field": "key_id",
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678-changed",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "consent_digest": "sha256:74d866abb6c26719780fc4880d05f00f3ca93306b42bca343f92225e3bf3cdf7",
+      "field": "role_id",
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": "changed",
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "consent_digest": "sha256:4b5823aa086ce13fe070c082e67daf34df2c75dff0732d6308dbba780172f2af",
+      "field": "tools",
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [
+          "changed"
+        ],
+        "window_minutes": 20
+      }
+    },
+    {
+      "consent_digest": "sha256:bca179d3929bc287824448d575c32122ce30e9a0842be958d390481ff9f5a2a2",
+      "field": "payer",
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key-changed",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "consent_digest": "sha256:8b93444696dff9652cbc479e30046d7094855187da8ba2cc04e83750ca578967",
+      "field": "monthly",
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "changed": true
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "consent_digest": "sha256:58bbcb3360c8caca739a8433edadbd1095c865c07cbebe46d0b94e99e48f7886",
+      "field": "cap_micros",
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000001,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "consent_digest": "sha256:9fe5b4139de4e0e159e07b896bc7c6db96ad1bac91553ac2e7c99e8876aaf3e8",
+      "field": "step_cap_micros",
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250001,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "consent_digest": "sha256:069cdd1970315450484d4d6cd60030b86b2743e019c051bf59a59288667519fd",
+      "field": "step_window_s",
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 181,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "consent_digest": "sha256:50ec478c208a9dc8161b9b60d85ddbe8e6d1f6d7c4c834877c6e341be1180ba0",
+      "field": "max_steps",
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 9,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "consent_digest": "sha256:3a084777869f02ff08f8da1c2cbd0484776637b24aad3d2399c2e3a12d777001",
+      "field": "window_minutes",
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 21
+      }
+    },
+    {
+      "consent_digest": "sha256:ec1214c2cf1042f9fd691e786f4087e45a13d8823f498ef2175ee9629250bbf5",
+      "field": "piece",
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "changed": true
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "consent_digest": "sha256:8af89a7b95256cdec58e75150b91b4e3a85355d344d088c2e2f038c2e6689b1f",
+      "field": "coordinator_exclusive",
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": true,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "consent_digest": "sha256:952e695016034ef51fc81af2af67bbcd0471edbaa3c0d765d2997a4148dd3b34",
+      "field": "title",
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster-changed",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "consent_digest": "sha256:fd18990ff9b7a842244f1721db428dcb04ce55d16f45746aa4faa73c33eea48a",
+      "field": "detail",
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only-changed",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "consent_digest": "sha256:56699676280ce8c0460e5b6765c5be5c496da6d109ac8ba7db16d60a022a1285",
+      "field": "disclosures",
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "changed"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    }
+  ],
+  "schema": "omegacode.studio-consent-vectors/1",
+  "vectors": [
+    {
+      "canonical_json": "{\"app_pin\":{\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"omegadesign\",\"version\":\"synthetic-1\"},\"cap_micros\":2000000,\"coordinator_exclusive\":false,\"detail\":\"Synthetic fixture only\",\"disclosures\":[\"maker_restarts_between_steps\",\"maker_reads_unsaved_piece_while_live\"],\"key_id\":\"k_12345678\",\"maker_id\":\"a_12345678\",\"max_steps\":8,\"model\":\"synthetic/no-provider\",\"monthly\":{\"kind\":\"own_key_limit\",\"limit_micros\":10000000},\"payer\":\"own_key\",\"piece\":{\"scene_id\":\"synthetic-poster\",\"source_ref\":null},\"program_id\":\"omegadesign\",\"role_id\":null,\"schema\":\"omega-studio-consent-1\",\"step_cap_micros\":250000,\"step_window_s\":180,\"swarm_id\":\"s_12345678\",\"title\":\"Invented poster\",\"tools\":[],\"window_minutes\":20}",
+      "canonical_utf8_hex": "7b226170705f70696e223a7b22646967657374223a227368613235363a61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c226964223a226f6d65676164657369676e222c2276657273696f6e223a2273796e7468657469632d31227d2c226361705f6d6963726f73223a323030303030302c22636f6f7264696e61746f725f6578636c7573697665223a66616c73652c2264657461696c223a2253796e7468657469632066697874757265206f6e6c79222c22646973636c6f7375726573223a5b226d616b65725f72657374617274735f6265747765656e5f7374657073222c226d616b65725f72656164735f756e73617665645f70696563655f7768696c655f6c697665225d2c226b65795f6964223a226b5f3132333435363738222c226d616b65725f6964223a22615f3132333435363738222c226d61785f7374657073223a382c226d6f64656c223a2273796e7468657469632f6e6f2d70726f7669646572222c226d6f6e74686c79223a7b226b696e64223a226f776e5f6b65795f6c696d6974222c226c696d69745f6d6963726f73223a31303030303030307d2c227061796572223a226f776e5f6b6579222c227069656365223a7b227363656e655f6964223a2273796e7468657469632d706f73746572222c22736f757263655f726566223a6e756c6c7d2c2270726f6772616d5f6964223a226f6d65676164657369676e222c22726f6c655f6964223a6e756c6c2c22736368656d61223a226f6d6567612d73747564696f2d636f6e73656e742d31222c22737465705f6361705f6d6963726f73223a3235303030302c22737465705f77696e646f775f73223a3138302c22737761726d5f6964223a22735f3132333435363738222c227469746c65223a22496e76656e74656420706f73746572222c22746f6f6c73223a5b5d2c2277696e646f775f6d696e75746573223a32307d",
+      "consent_digest": "sha256:9b5f2e0526f36a500fa378a8d24b93a8cca6ea8b743a7f686d6a50b192364a86",
+      "disposition": "well_formed",
+      "id": "defaults",
+      "monthly": [
+        "own_key_limit",
+        10
+      ],
+      "own_key": true,
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      },
+      "request": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_usd": 2,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "step_cap_usd": 0.25,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "canonical_json": "{\"app_pin\":{\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"omegadesign\",\"version\":\"synthetic-1\"},\"cap_micros\":2000000,\"coordinator_exclusive\":false,\"detail\":\"Synthetic fixture only\",\"disclosures\":[\"maker_restarts_between_steps\",\"maker_reads_unsaved_piece_while_live\"],\"key_id\":\"k_12345678\",\"maker_id\":\"a_12345678\",\"max_steps\":8,\"model\":\"synthetic/no-provider\",\"monthly\":{\"kind\":\"member_allowance\",\"limit_micros\":20000000},\"payer\":\"hive_key\",\"piece\":{\"scene_id\":\"synthetic-poster\",\"source_ref\":null},\"program_id\":\"omegadesign\",\"role_id\":null,\"schema\":\"omega-studio-consent-1\",\"step_cap_micros\":250000,\"step_window_s\":180,\"swarm_id\":\"s_12345678\",\"title\":\"Invented poster\",\"tools\":[],\"window_minutes\":20}",
+      "canonical_utf8_hex": "7b226170705f70696e223a7b22646967657374223a227368613235363a61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c226964223a226f6d65676164657369676e222c2276657273696f6e223a2273796e7468657469632d31227d2c226361705f6d6963726f73223a323030303030302c22636f6f7264696e61746f725f6578636c7573697665223a66616c73652c2264657461696c223a2253796e7468657469632066697874757265206f6e6c79222c22646973636c6f7375726573223a5b226d616b65725f72657374617274735f6265747765656e5f7374657073222c226d616b65725f72656164735f756e73617665645f70696563655f7768696c655f6c697665225d2c226b65795f6964223a226b5f3132333435363738222c226d616b65725f6964223a22615f3132333435363738222c226d61785f7374657073223a382c226d6f64656c223a2273796e7468657469632f6e6f2d70726f7669646572222c226d6f6e74686c79223a7b226b696e64223a226d656d6265725f616c6c6f77616e6365222c226c696d69745f6d6963726f73223a32303030303030307d2c227061796572223a22686976655f6b6579222c227069656365223a7b227363656e655f6964223a2273796e7468657469632d706f73746572222c22736f757263655f726566223a6e756c6c7d2c2270726f6772616d5f6964223a226f6d65676164657369676e222c22726f6c655f6964223a6e756c6c2c22736368656d61223a226f6d6567612d73747564696f2d636f6e73656e742d31222c22737465705f6361705f6d6963726f73223a3235303030302c22737465705f77696e646f775f73223a3138302c22737761726d5f6964223a22735f3132333435363738222c227469746c65223a22496e76656e74656420706f73746572222c22746f6f6c73223a5b5d2c2277696e646f775f6d696e75746573223a32307d",
+      "consent_digest": "sha256:5c703b58e8a54e7c91f841bc0103c9cf07374af4fdc9e5e0a94c2f720dd05fb2",
+      "disposition": "well_formed",
+      "id": "hive-payer",
+      "monthly": [
+        "member_allowance",
+        20
+      ],
+      "own_key": false,
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "member_allowance",
+          "limit_micros": 20000000
+        },
+        "payer": "hive_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      },
+      "request": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_usd": 2,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "step_cap_usd": 0.25,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "canonical_json": "{\"app_pin\":{\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"omegadesign\",\"version\":\"synthetic-1\"},\"cap_micros\":2000000,\"coordinator_exclusive\":false,\"detail\":\"Synthetic fixture only\",\"disclosures\":[\"maker_restarts_between_steps\",\"maker_reads_unsaved_piece_while_live\"],\"key_id\":\"k_12345678\",\"maker_id\":\"a_12345678\",\"max_steps\":8,\"model\":\"synthetic/no-provider\",\"monthly\":{\"kind\":\"own_key_limit\",\"limit_micros\":null},\"payer\":\"own_key\",\"piece\":{\"scene_id\":\"synthetic-poster\",\"source_ref\":null},\"program_id\":\"omegadesign\",\"role_id\":null,\"schema\":\"omega-studio-consent-1\",\"step_cap_micros\":250000,\"step_window_s\":180,\"swarm_id\":\"s_12345678\",\"title\":\"Invented poster\",\"tools\":[],\"window_minutes\":20}",
+      "canonical_utf8_hex": "7b226170705f70696e223a7b22646967657374223a227368613235363a61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c226964223a226f6d65676164657369676e222c2276657273696f6e223a2273796e7468657469632d31227d2c226361705f6d6963726f73223a323030303030302c22636f6f7264696e61746f725f6578636c7573697665223a66616c73652c2264657461696c223a2253796e7468657469632066697874757265206f6e6c79222c22646973636c6f7375726573223a5b226d616b65725f72657374617274735f6265747765656e5f7374657073222c226d616b65725f72656164735f756e73617665645f70696563655f7768696c655f6c697665225d2c226b65795f6964223a226b5f3132333435363738222c226d616b65725f6964223a22615f3132333435363738222c226d61785f7374657073223a382c226d6f64656c223a2273796e7468657469632f6e6f2d70726f7669646572222c226d6f6e74686c79223a7b226b696e64223a226f776e5f6b65795f6c696d6974222c226c696d69745f6d6963726f73223a6e756c6c7d2c227061796572223a226f776e5f6b6579222c227069656365223a7b227363656e655f6964223a2273796e7468657469632d706f73746572222c22736f757263655f726566223a6e756c6c7d2c2270726f6772616d5f6964223a226f6d65676164657369676e222c22726f6c655f6964223a6e756c6c2c22736368656d61223a226f6d6567612d73747564696f2d636f6e73656e742d31222c22737465705f6361705f6d6963726f73223a3235303030302c22737465705f77696e646f775f73223a3138302c22737761726d5f6964223a22735f3132333435363738222c227469746c65223a22496e76656e74656420706f73746572222c22746f6f6c73223a5b5d2c2277696e646f775f6d696e75746573223a32307d",
+      "consent_digest": "sha256:8f7b58536a95121e2a52cdf5aafaab23a2a3153c54c6ff47e81c87454fe89296",
+      "disposition": "encoding_only_not_admissible",
+      "id": "missing-monthly",
+      "monthly": [
+        "own_key_limit",
+        null
+      ],
+      "own_key": true,
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": null
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      },
+      "request": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_usd": 2,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "step_cap_usd": 0.25,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "canonical_json": "{\"app_pin\":{\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"omegadesign\",\"version\":\"synthetic-1\"},\"cap_micros\":2000000,\"coordinator_exclusive\":false,\"detail\":\"\u4e2d\u6587 / \u0395\u03bb\u03bb\u03b7\u03bd\u03b9\u03ba\u03ac / \u0627\u0644\u0639\u0631\u0628\u064a\u0629\",\"disclosures\":[\"maker_restarts_between_steps\",\"maker_reads_unsaved_piece_while_live\"],\"key_id\":\"k_12345678\",\"maker_id\":\"a_12345678\",\"max_steps\":8,\"model\":\"synthetic/no-provider\",\"monthly\":{\"kind\":\"own_key_limit\",\"limit_micros\":10000000},\"payer\":\"own_key\",\"piece\":{\"scene_id\":\"synthetic-poster\",\"source_ref\":null},\"program_id\":\"omegadesign\",\"role_id\":null,\"schema\":\"omega-studio-consent-1\",\"step_cap_micros\":250000,\"step_window_s\":180,\"swarm_id\":\"s_12345678\",\"title\":\"Omega \u03a9 \ud83d\ude80 caf\u00e9\",\"tools\":[],\"window_minutes\":20}",
+      "canonical_utf8_hex": "7b226170705f70696e223a7b22646967657374223a227368613235363a61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c226964223a226f6d65676164657369676e222c2276657273696f6e223a2273796e7468657469632d31227d2c226361705f6d6963726f73223a323030303030302c22636f6f7264696e61746f725f6578636c7573697665223a66616c73652c2264657461696c223a22e4b8ade69687202f20ce95cebbcebbceb7cebdceb9cebaceac202f20d8a7d984d8b9d8b1d8a8d98ad8a9222c22646973636c6f7375726573223a5b226d616b65725f72657374617274735f6265747765656e5f7374657073222c226d616b65725f72656164735f756e73617665645f70696563655f7768696c655f6c697665225d2c226b65795f6964223a226b5f3132333435363738222c226d616b65725f6964223a22615f3132333435363738222c226d61785f7374657073223a382c226d6f64656c223a2273796e7468657469632f6e6f2d70726f7669646572222c226d6f6e74686c79223a7b226b696e64223a226f776e5f6b65795f6c696d6974222c226c696d69745f6d6963726f73223a31303030303030307d2c227061796572223a226f776e5f6b6579222c227069656365223a7b227363656e655f6964223a2273796e7468657469632d706f73746572222c22736f757263655f726566223a6e756c6c7d2c2270726f6772616d5f6964223a226f6d65676164657369676e222c22726f6c655f6964223a6e756c6c2c22736368656d61223a226f6d6567612d73747564696f2d636f6e73656e742d31222c22737465705f6361705f6d6963726f73223a3235303030302c22737465705f77696e646f775f73223a3138302c22737761726d5f6964223a22735f3132333435363738222c227469746c65223a224f6d65676120cea920f09f9a8020636166c3a9222c22746f6f6c73223a5b5d2c2277696e646f775f6d696e75746573223a32307d",
+      "consent_digest": "sha256:6519e9d70640555ff59fe9d7f493e7d1b7a92d480d87ac2b9d066b10cd864681",
+      "disposition": "well_formed",
+      "id": "unicode",
+      "monthly": [
+        "own_key_limit",
+        10
+      ],
+      "own_key": true,
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "\u4e2d\u6587 / \u0395\u03bb\u03bb\u03b7\u03bd\u03b9\u03ba\u03ac / \u0627\u0644\u0639\u0631\u0628\u064a\u0629",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Omega \u03a9 \ud83d\ude80 caf\u00e9",
+        "tools": [],
+        "window_minutes": 20
+      },
+      "request": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_usd": 2,
+        "coordinator_exclusive": false,
+        "detail": "\u4e2d\u6587 / \u0395\u03bb\u03bb\u03b7\u03bd\u03b9\u03ba\u03ac / \u0627\u0644\u0639\u0631\u0628\u064a\u0629",
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "step_cap_usd": 0.25,
+        "swarm_id": "s_12345678",
+        "title": "Omega \u03a9 \ud83d\ude80 caf\u00e9",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "canonical_json": "{\"app_pin\":{\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"omegadesign\",\"version\":\"synthetic-1\"},\"cap_micros\":2000000,\"coordinator_exclusive\":false,\"detail\":\"quote \\\" slash / backslash \\\\ newline\\n tab\\t nul\\u0000\",\"disclosures\":[\"maker_restarts_between_steps\",\"maker_reads_unsaved_piece_while_live\"],\"key_id\":\"k_12345678\",\"maker_id\":\"a_12345678\",\"max_steps\":8,\"model\":\"synthetic/no-provider\",\"monthly\":{\"kind\":\"own_key_limit\",\"limit_micros\":10000000},\"payer\":\"own_key\",\"piece\":{\"scene_id\":\"synthetic-poster\",\"source_ref\":null},\"program_id\":\"omegadesign\",\"role_id\":null,\"schema\":\"omega-studio-consent-1\",\"step_cap_micros\":250000,\"step_window_s\":180,\"swarm_id\":\"s_12345678\",\"title\":\"Invented poster\",\"tools\":[],\"window_minutes\":20}",
+      "canonical_utf8_hex": "7b226170705f70696e223a7b22646967657374223a227368613235363a61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c226964223a226f6d65676164657369676e222c2276657273696f6e223a2273796e7468657469632d31227d2c226361705f6d6963726f73223a323030303030302c22636f6f7264696e61746f725f6578636c7573697665223a66616c73652c2264657461696c223a2271756f7465205c2220736c617368202f206261636b736c617368205c5c206e65776c696e655c6e207461625c74206e756c5c7530303030222c22646973636c6f7375726573223a5b226d616b65725f72657374617274735f6265747765656e5f7374657073222c226d616b65725f72656164735f756e73617665645f70696563655f7768696c655f6c697665225d2c226b65795f6964223a226b5f3132333435363738222c226d616b65725f6964223a22615f3132333435363738222c226d61785f7374657073223a382c226d6f64656c223a2273796e7468657469632f6e6f2d70726f7669646572222c226d6f6e74686c79223a7b226b696e64223a226f776e5f6b65795f6c696d6974222c226c696d69745f6d6963726f73223a31303030303030307d2c227061796572223a226f776e5f6b6579222c227069656365223a7b227363656e655f6964223a2273796e7468657469632d706f73746572222c22736f757263655f726566223a6e756c6c7d2c2270726f6772616d5f6964223a226f6d65676164657369676e222c22726f6c655f6964223a6e756c6c2c22736368656d61223a226f6d6567612d73747564696f2d636f6e73656e742d31222c22737465705f6361705f6d6963726f73223a3235303030302c22737465705f77696e646f775f73223a3138302c22737761726d5f6964223a22735f3132333435363738222c227469746c65223a22496e76656e74656420706f73746572222c22746f6f6c73223a5b5d2c2277696e646f775f6d696e75746573223a32307d",
+      "consent_digest": "sha256:024ce86f0e6264aebc7c379866384ca0488b3c947440133410450df2ae9b27aa",
+      "disposition": "well_formed",
+      "id": "escaping",
+      "monthly": [
+        "own_key_limit",
+        10
+      ],
+      "own_key": true,
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "quote \" slash / backslash \\ newline\n tab\t nul\u0000",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      },
+      "request": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_usd": 2,
+        "coordinator_exclusive": false,
+        "detail": "quote \" slash / backslash \\ newline\n tab\t nul\u0000",
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "step_cap_usd": 0.25,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "canonical_json": "{\"app_pin\":{\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"omegadesign\",\"version\":\"synthetic-1\"},\"cap_micros\":2000000,\"coordinator_exclusive\":false,\"detail\":\"Synthetic fixture only\",\"disclosures\":[\"maker_restarts_between_steps\",\"maker_reads_unsaved_piece_while_live\"],\"key_id\":\"k_12345678\",\"maker_id\":\"a_12345678\",\"max_steps\":8,\"model\":\"synthetic/no-provider\",\"monthly\":{\"kind\":\"own_key_limit\",\"limit_micros\":10000000},\"payer\":\"own_key\",\"piece\":{\"scene_id\":\"synthetic-poster\",\"source_ref\":null},\"program_id\":\"omegadesign\",\"role_id\":null,\"schema\":\"omega-studio-consent-1\",\"step_cap_micros\":250000,\"step_window_s\":180,\"swarm_id\":\"s_12345678\",\"title\":\"Cafe\u0301\",\"tools\":[],\"window_minutes\":20}",
+      "canonical_utf8_hex": "7b226170705f70696e223a7b22646967657374223a227368613235363a61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c226964223a226f6d65676164657369676e222c2276657273696f6e223a2273796e7468657469632d31227d2c226361705f6d6963726f73223a323030303030302c22636f6f7264696e61746f725f6578636c7573697665223a66616c73652c2264657461696c223a2253796e7468657469632066697874757265206f6e6c79222c22646973636c6f7375726573223a5b226d616b65725f72657374617274735f6265747765656e5f7374657073222c226d616b65725f72656164735f756e73617665645f70696563655f7768696c655f6c697665225d2c226b65795f6964223a226b5f3132333435363738222c226d616b65725f6964223a22615f3132333435363738222c226d61785f7374657073223a382c226d6f64656c223a2273796e7468657469632f6e6f2d70726f7669646572222c226d6f6e74686c79223a7b226b696e64223a226f776e5f6b65795f6c696d6974222c226c696d69745f6d6963726f73223a31303030303030307d2c227061796572223a226f776e5f6b6579222c227069656365223a7b227363656e655f6964223a2273796e7468657469632d706f73746572222c22736f757263655f726566223a6e756c6c7d2c2270726f6772616d5f6964223a226f6d65676164657369676e222c22726f6c655f6964223a6e756c6c2c22736368656d61223a226f6d6567612d73747564696f2d636f6e73656e742d31222c22737465705f6361705f6d6963726f73223a3235303030302c22737465705f77696e646f775f73223a3138302c22737761726d5f6964223a22735f3132333435363738222c227469746c65223a2243616665cc81222c22746f6f6c73223a5b5d2c2277696e646f775f6d696e75746573223a32307d",
+      "consent_digest": "sha256:845720a9a985ba8484281c64dbd3715f8ae157b3f7cc5dc53d005072f21b041f",
+      "disposition": "well_formed",
+      "id": "decomposed-unicode",
+      "monthly": [
+        "own_key_limit",
+        10
+      ],
+      "own_key": true,
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Cafe\u0301",
+        "tools": [],
+        "window_minutes": 20
+      },
+      "request": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_usd": 2,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "step_cap_usd": 0.25,
+        "swarm_id": "s_12345678",
+        "title": "Cafe\u0301",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "canonical_json": "{\"app_pin\":{\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"omegadesign\",\"version\":\"synthetic-1\"},\"cap_micros\":2000000,\"coordinator_exclusive\":false,\"detail\":\"Synthetic fixture only\",\"disclosures\":[\"maker_restarts_between_steps\",\"maker_reads_unsaved_piece_while_live\"],\"key_id\":\"k_12345678\",\"maker_id\":\"a_12345678\",\"max_steps\":8,\"model\":\"synthetic/no-provider\",\"monthly\":{\"kind\":\"own_key_limit\",\"limit_micros\":10000000},\"payer\":\"own_key\",\"piece\":{\"scene_id\":\"synthetic-poster\",\"source_ref\":null},\"program_id\":\"omegadesign\",\"role_id\":null,\"schema\":\"omega-studio-consent-1\",\"step_cap_micros\":250000,\"step_window_s\":180,\"swarm_id\":\"s_12345678\",\"title\":\"Caf\u00e9\",\"tools\":[],\"window_minutes\":20}",
+      "canonical_utf8_hex": "7b226170705f70696e223a7b22646967657374223a227368613235363a61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c226964223a226f6d65676164657369676e222c2276657273696f6e223a2273796e7468657469632d31227d2c226361705f6d6963726f73223a323030303030302c22636f6f7264696e61746f725f6578636c7573697665223a66616c73652c2264657461696c223a2253796e7468657469632066697874757265206f6e6c79222c22646973636c6f7375726573223a5b226d616b65725f72657374617274735f6265747765656e5f7374657073222c226d616b65725f72656164735f756e73617665645f70696563655f7768696c655f6c697665225d2c226b65795f6964223a226b5f3132333435363738222c226d616b65725f6964223a22615f3132333435363738222c226d61785f7374657073223a382c226d6f64656c223a2273796e7468657469632f6e6f2d70726f7669646572222c226d6f6e74686c79223a7b226b696e64223a226f776e5f6b65795f6c696d6974222c226c696d69745f6d6963726f73223a31303030303030307d2c227061796572223a226f776e5f6b6579222c227069656365223a7b227363656e655f6964223a2273796e7468657469632d706f73746572222c22736f757263655f726566223a6e756c6c7d2c2270726f6772616d5f6964223a226f6d65676164657369676e222c22726f6c655f6964223a6e756c6c2c22736368656d61223a226f6d6567612d73747564696f2d636f6e73656e742d31222c22737465705f6361705f6d6963726f73223a3235303030302c22737465705f77696e646f775f73223a3138302c22737761726d5f6964223a22735f3132333435363738222c227469746c65223a22436166c3a9222c22746f6f6c73223a5b5d2c2277696e646f775f6d696e75746573223a32307d",
+      "consent_digest": "sha256:db209db9edcbe6e9135f8d0d6bf3f702ffdbd105f5cb67e140ab1287f1dff9c7",
+      "disposition": "well_formed",
+      "id": "composed-unicode",
+      "monthly": [
+        "own_key_limit",
+        10
+      ],
+      "own_key": true,
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Caf\u00e9",
+        "tools": [],
+        "window_minutes": 20
+      },
+      "request": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_usd": 2,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "step_cap_usd": 0.25,
+        "swarm_id": "s_12345678",
+        "title": "Caf\u00e9",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "canonical_json": "{\"app_pin\":{\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"omegadesign\",\"version\":\"synthetic-1\"},\"cap_micros\":2000000,\"coordinator_exclusive\":false,\"detail\":\"before\u2028between\u2029after\",\"disclosures\":[\"maker_restarts_between_steps\",\"maker_reads_unsaved_piece_while_live\"],\"key_id\":\"k_12345678\",\"maker_id\":\"a_12345678\",\"max_steps\":8,\"model\":\"synthetic/no-provider\",\"monthly\":{\"kind\":\"own_key_limit\",\"limit_micros\":10000000},\"payer\":\"own_key\",\"piece\":{\"scene_id\":\"synthetic-poster\",\"source_ref\":null},\"program_id\":\"omegadesign\",\"role_id\":null,\"schema\":\"omega-studio-consent-1\",\"step_cap_micros\":250000,\"step_window_s\":180,\"swarm_id\":\"s_12345678\",\"title\":\"Invented poster\",\"tools\":[],\"window_minutes\":20}",
+      "canonical_utf8_hex": "7b226170705f70696e223a7b22646967657374223a227368613235363a61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c226964223a226f6d65676164657369676e222c2276657273696f6e223a2273796e7468657469632d31227d2c226361705f6d6963726f73223a323030303030302c22636f6f7264696e61746f725f6578636c7573697665223a66616c73652c2264657461696c223a226265666f7265e280a86265747765656ee280a96166746572222c22646973636c6f7375726573223a5b226d616b65725f72657374617274735f6265747765656e5f7374657073222c226d616b65725f72656164735f756e73617665645f70696563655f7768696c655f6c697665225d2c226b65795f6964223a226b5f3132333435363738222c226d616b65725f6964223a22615f3132333435363738222c226d61785f7374657073223a382c226d6f64656c223a2273796e7468657469632f6e6f2d70726f7669646572222c226d6f6e74686c79223a7b226b696e64223a226f776e5f6b65795f6c696d6974222c226c696d69745f6d6963726f73223a31303030303030307d2c227061796572223a226f776e5f6b6579222c227069656365223a7b227363656e655f6964223a2273796e7468657469632d706f73746572222c22736f757263655f726566223a6e756c6c7d2c2270726f6772616d5f6964223a226f6d65676164657369676e222c22726f6c655f6964223a6e756c6c2c22736368656d61223a226f6d6567612d73747564696f2d636f6e73656e742d31222c22737465705f6361705f6d6963726f73223a3235303030302c22737465705f77696e646f775f73223a3138302c22737761726d5f6964223a22735f3132333435363738222c227469746c65223a22496e76656e74656420706f73746572222c22746f6f6c73223a5b5d2c2277696e646f775f6d696e75746573223a32307d",
+      "consent_digest": "sha256:ee0e7c19812328cacf72cf8b644e24ec139f87e97efe64b574071f1959355e94",
+      "disposition": "well_formed",
+      "id": "line-separators",
+      "monthly": [
+        "own_key_limit",
+        10
+      ],
+      "own_key": true,
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "before\u2028between\u2029after",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      },
+      "request": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_usd": 2,
+        "coordinator_exclusive": false,
+        "detail": "before\u2028between\u2029after",
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "step_cap_usd": 0.25,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "canonical_json": "{\"app_pin\":{\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"omegadesign\",\"version\":\"synthetic-1\"},\"cap_micros\":2000001,\"coordinator_exclusive\":false,\"detail\":\"Synthetic fixture only\",\"disclosures\":[\"maker_restarts_between_steps\",\"maker_reads_unsaved_piece_while_live\"],\"key_id\":\"k_12345678\",\"maker_id\":\"a_12345678\",\"max_steps\":8,\"model\":\"synthetic/no-provider\",\"monthly\":{\"kind\":\"own_key_limit\",\"limit_micros\":10000001},\"payer\":\"own_key\",\"piece\":{\"scene_id\":\"synthetic-poster\",\"source_ref\":null},\"program_id\":\"omegadesign\",\"role_id\":null,\"schema\":\"omega-studio-consent-1\",\"step_cap_micros\":250001,\"step_window_s\":180,\"swarm_id\":\"s_12345678\",\"title\":\"Invented poster\",\"tools\":[],\"window_minutes\":20}",
+      "canonical_utf8_hex": "7b226170705f70696e223a7b22646967657374223a227368613235363a61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c226964223a226f6d65676164657369676e222c2276657273696f6e223a2273796e7468657469632d31227d2c226361705f6d6963726f73223a323030303030312c22636f6f7264696e61746f725f6578636c7573697665223a66616c73652c2264657461696c223a2253796e7468657469632066697874757265206f6e6c79222c22646973636c6f7375726573223a5b226d616b65725f72657374617274735f6265747765656e5f7374657073222c226d616b65725f72656164735f756e73617665645f70696563655f7768696c655f6c697665225d2c226b65795f6964223a226b5f3132333435363738222c226d616b65725f6964223a22615f3132333435363738222c226d61785f7374657073223a382c226d6f64656c223a2273796e7468657469632f6e6f2d70726f7669646572222c226d6f6e74686c79223a7b226b696e64223a226f776e5f6b65795f6c696d6974222c226c696d69745f6d6963726f73223a31303030303030317d2c227061796572223a226f776e5f6b6579222c227069656365223a7b227363656e655f6964223a2273796e7468657469632d706f73746572222c22736f757263655f726566223a6e756c6c7d2c2270726f6772616d5f6964223a226f6d65676164657369676e222c22726f6c655f6964223a6e756c6c2c22736368656d61223a226f6d6567612d73747564696f2d636f6e73656e742d31222c22737465705f6361705f6d6963726f73223a3235303030312c22737465705f77696e646f775f73223a3138302c22737761726d5f6964223a22735f3132333435363738222c227469746c65223a22496e76656e74656420706f73746572222c22746f6f6c73223a5b5d2c2277696e646f775f6d696e75746573223a32307d",
+      "consent_digest": "sha256:8f19806bf518c045dc3ef68f115ac1a9e85a3e379bea281f1ee3c38535c43ff0",
+      "disposition": "well_formed",
+      "id": "submicro",
+      "monthly": [
+        "own_key_limit",
+        10.0000001
+      ],
+      "own_key": true,
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000001,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000001
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250001,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      },
+      "request": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_usd": 2.0000001,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "step_cap_usd": 0.2500001,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "canonical_json": "{\"app_pin\":{\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"omegadesign\",\"version\":\"synthetic-1\"},\"cap_micros\":1,\"coordinator_exclusive\":false,\"detail\":\"Synthetic fixture only\",\"disclosures\":[\"maker_restarts_between_steps\",\"maker_reads_unsaved_piece_while_live\"],\"key_id\":\"k_12345678\",\"maker_id\":\"a_12345678\",\"max_steps\":8,\"model\":\"synthetic/no-provider\",\"monthly\":{\"kind\":\"own_key_limit\",\"limit_micros\":1000000},\"payer\":\"own_key\",\"piece\":{\"scene_id\":\"synthetic-poster\",\"source_ref\":null},\"program_id\":\"omegadesign\",\"role_id\":null,\"schema\":\"omega-studio-consent-1\",\"step_cap_micros\":1,\"step_window_s\":180,\"swarm_id\":\"s_12345678\",\"title\":\"Invented poster\",\"tools\":[],\"window_minutes\":20}",
+      "canonical_utf8_hex": "7b226170705f70696e223a7b22646967657374223a227368613235363a61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c226964223a226f6d65676164657369676e222c2276657273696f6e223a2273796e7468657469632d31227d2c226361705f6d6963726f73223a312c22636f6f7264696e61746f725f6578636c7573697665223a66616c73652c2264657461696c223a2253796e7468657469632066697874757265206f6e6c79222c22646973636c6f7375726573223a5b226d616b65725f72657374617274735f6265747765656e5f7374657073222c226d616b65725f72656164735f756e73617665645f70696563655f7768696c655f6c697665225d2c226b65795f6964223a226b5f3132333435363738222c226d616b65725f6964223a22615f3132333435363738222c226d61785f7374657073223a382c226d6f64656c223a2273796e7468657469632f6e6f2d70726f7669646572222c226d6f6e74686c79223a7b226b696e64223a226f776e5f6b65795f6c696d6974222c226c696d69745f6d6963726f73223a313030303030307d2c227061796572223a226f776e5f6b6579222c227069656365223a7b227363656e655f6964223a2273796e7468657469632d706f73746572222c22736f757263655f726566223a6e756c6c7d2c2270726f6772616d5f6964223a226f6d65676164657369676e222c22726f6c655f6964223a6e756c6c2c22736368656d61223a226f6d6567612d73747564696f2d636f6e73656e742d31222c22737465705f6361705f6d6963726f73223a312c22737465705f77696e646f775f73223a3138302c22737761726d5f6964223a22735f3132333435363738222c227469746c65223a22496e76656e74656420706f73746572222c22746f6f6c73223a5b5d2c2277696e646f775f6d696e75746573223a32307d",
+      "consent_digest": "sha256:94b80901580ed5a6342c56e3130c90e2c292b0715e1ebf2b91621b445b4d302c",
+      "disposition": "well_formed",
+      "id": "one-micro",
+      "monthly": [
+        "own_key_limit",
+        1
+      ],
+      "own_key": true,
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 1,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 1000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 1,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      },
+      "request": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_usd": 1e-06,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "step_cap_usd": 1e-06,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "canonical_json": "{\"app_pin\":{\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"omegadesign\",\"version\":\"synthetic-1\"},\"cap_micros\":2000000,\"coordinator_exclusive\":false,\"detail\":\"Synthetic fixture only\",\"disclosures\":[\"maker_restarts_between_steps\",\"maker_reads_unsaved_piece_while_live\"],\"key_id\":\"k_12345678\",\"maker_id\":\"a_12345678\",\"max_steps\":8,\"model\":\"synthetic/no-provider\",\"monthly\":{\"kind\":\"own_key_limit\",\"limit_micros\":10000000},\"payer\":\"own_key\",\"piece\":{\"scene_id\":\"synthetic-poster\",\"source_ref\":{\"artifact_id\":\"ar_12345678\",\"digest\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"revision\":3}},\"program_id\":\"omegadesign\",\"role_id\":null,\"schema\":\"omega-studio-consent-1\",\"step_cap_micros\":250000,\"step_window_s\":180,\"swarm_id\":\"s_12345678\",\"title\":\"Invented poster\",\"tools\":[],\"window_minutes\":20}",
+      "canonical_utf8_hex": "7b226170705f70696e223a7b22646967657374223a227368613235363a61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c226964223a226f6d65676164657369676e222c2276657273696f6e223a2273796e7468657469632d31227d2c226361705f6d6963726f73223a323030303030302c22636f6f7264696e61746f725f6578636c7573697665223a66616c73652c2264657461696c223a2253796e7468657469632066697874757265206f6e6c79222c22646973636c6f7375726573223a5b226d616b65725f72657374617274735f6265747765656e5f7374657073222c226d616b65725f72656164735f756e73617665645f70696563655f7768696c655f6c697665225d2c226b65795f6964223a226b5f3132333435363738222c226d616b65725f6964223a22615f3132333435363738222c226d61785f7374657073223a382c226d6f64656c223a2273796e7468657469632f6e6f2d70726f7669646572222c226d6f6e74686c79223a7b226b696e64223a226f776e5f6b65795f6c696d6974222c226c696d69745f6d6963726f73223a31303030303030307d2c227061796572223a226f776e5f6b6579222c227069656365223a7b227363656e655f6964223a2273796e7468657469632d706f73746572222c22736f757263655f726566223a7b2261727469666163745f6964223a2261725f3132333435363738222c22646967657374223a227368613235363a62626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262222c227265766973696f6e223a337d7d2c2270726f6772616d5f6964223a226f6d65676164657369676e222c22726f6c655f6964223a6e756c6c2c22736368656d61223a226f6d6567612d73747564696f2d636f6e73656e742d31222c22737465705f6361705f6d6963726f73223a3235303030302c22737465705f77696e646f775f73223a3138302c22737761726d5f6964223a22735f3132333435363738222c227469746c65223a22496e76656e74656420706f73746572222c22746f6f6c73223a5b5d2c2277696e646f775f6d696e75746573223a32307d",
+      "consent_digest": "sha256:0452e97abb698784d808ade39abda2126ae1afc70b93069cde8abc946e05d897",
+      "disposition": "well_formed",
+      "id": "saved-piece",
+      "monthly": [
+        "own_key_limit",
+        10
+      ],
+      "own_key": true,
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": {
+            "artifact_id": "ar_12345678",
+            "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "revision": 3
+          }
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      },
+      "request": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_usd": 2,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": {
+            "artifact_id": "ar_12345678",
+            "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "revision": 3
+          }
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "step_cap_usd": 0.25,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "canonical_json": "{\"app_pin\":{\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"omegadesign\",\"version\":\"synthetic-1\"},\"cap_micros\":2000000,\"coordinator_exclusive\":false,\"detail\":\"Synthetic fixture only\",\"disclosures\":[\"maker_restarts_between_steps\",\"maker_reads_unsaved_piece_while_live\"],\"key_id\":\"k_12345678\",\"maker_id\":\"a_12345678\",\"max_steps\":8,\"model\":\"synthetic/no-provider\",\"monthly\":{\"kind\":\"own_key_limit\",\"limit_micros\":10000000},\"payer\":\"own_key\",\"piece\":{\"scene_id\":\"synthetic-poster\",\"source_ref\":null},\"program_id\":\"omegadesign\",\"role_id\":\"r_12345678\",\"schema\":\"omega-studio-consent-1\",\"step_cap_micros\":250000,\"step_window_s\":180,\"swarm_id\":\"s_12345678\",\"title\":\"Invented poster\",\"tools\":[\"read\",\"search\"],\"window_minutes\":20}",
+      "canonical_utf8_hex": "7b226170705f70696e223a7b22646967657374223a227368613235363a61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c226964223a226f6d65676164657369676e222c2276657273696f6e223a2273796e7468657469632d31227d2c226361705f6d6963726f73223a323030303030302c22636f6f7264696e61746f725f6578636c7573697665223a66616c73652c2264657461696c223a2253796e7468657469632066697874757265206f6e6c79222c22646973636c6f7375726573223a5b226d616b65725f72657374617274735f6265747765656e5f7374657073222c226d616b65725f72656164735f756e73617665645f70696563655f7768696c655f6c697665225d2c226b65795f6964223a226b5f3132333435363738222c226d616b65725f6964223a22615f3132333435363738222c226d61785f7374657073223a382c226d6f64656c223a2273796e7468657469632f6e6f2d70726f7669646572222c226d6f6e74686c79223a7b226b696e64223a226f776e5f6b65795f6c696d6974222c226c696d69745f6d6963726f73223a31303030303030307d2c227061796572223a226f776e5f6b6579222c227069656365223a7b227363656e655f6964223a2273796e7468657469632d706f73746572222c22736f757263655f726566223a6e756c6c7d2c2270726f6772616d5f6964223a226f6d65676164657369676e222c22726f6c655f6964223a22725f3132333435363738222c22736368656d61223a226f6d6567612d73747564696f2d636f6e73656e742d31222c22737465705f6361705f6d6963726f73223a3235303030302c22737465705f77696e646f775f73223a3138302c22737761726d5f6964223a22735f3132333435363738222c227469746c65223a22496e76656e74656420706f73746572222c22746f6f6c73223a5b2272656164222c22736561726368225d2c2277696e646f775f6d696e75746573223a32307d",
+      "consent_digest": "sha256:5c2ea2c362506ba550f2b7d54d36d26a12763aa11308364810ae37b6d1c2d7c6",
+      "disposition": "well_formed",
+      "id": "effective-role-tools",
+      "monthly": [
+        "own_key_limit",
+        10
+      ],
+      "own_key": true,
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": "r_12345678",
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [
+          "read",
+          "search"
+        ],
+        "window_minutes": 20
+      },
+      "request": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_usd": 2,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": "r_12345678",
+        "step_cap_usd": 0.25,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [
+          "read",
+          "search"
+        ],
+        "window_minutes": 20
+      }
+    },
+    {
+      "canonical_json": "{\"app_pin\":{\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"omegadesign\",\"version\":\"synthetic-1\"},\"cap_micros\":2000000,\"coordinator_exclusive\":true,\"detail\":\"Synthetic fixture only\",\"disclosures\":[\"maker_restarts_between_steps\",\"maker_reads_unsaved_piece_while_live\"],\"key_id\":\"k_12345678\",\"maker_id\":\"a_12345678\",\"max_steps\":8,\"model\":\"synthetic/no-provider\",\"monthly\":{\"kind\":\"own_key_limit\",\"limit_micros\":10000000},\"payer\":\"own_key\",\"piece\":{\"scene_id\":\"synthetic-poster\",\"source_ref\":null},\"program_id\":\"omegadesign\",\"role_id\":null,\"schema\":\"omega-studio-consent-1\",\"step_cap_micros\":250000,\"step_window_s\":180,\"swarm_id\":\"s_12345678\",\"title\":\"Invented poster\",\"tools\":[],\"window_minutes\":20}",
+      "canonical_utf8_hex": "7b226170705f70696e223a7b22646967657374223a227368613235363a61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c226964223a226f6d65676164657369676e222c2276657273696f6e223a2273796e7468657469632d31227d2c226361705f6d6963726f73223a323030303030302c22636f6f7264696e61746f725f6578636c7573697665223a747275652c2264657461696c223a2253796e7468657469632066697874757265206f6e6c79222c22646973636c6f7375726573223a5b226d616b65725f72657374617274735f6265747765656e5f7374657073222c226d616b65725f72656164735f756e73617665645f70696563655f7768696c655f6c697665225d2c226b65795f6964223a226b5f3132333435363738222c226d616b65725f6964223a22615f3132333435363738222c226d61785f7374657073223a382c226d6f64656c223a2273796e7468657469632f6e6f2d70726f7669646572222c226d6f6e74686c79223a7b226b696e64223a226f776e5f6b65795f6c696d6974222c226c696d69745f6d6963726f73223a31303030303030307d2c227061796572223a226f776e5f6b6579222c227069656365223a7b227363656e655f6964223a2273796e7468657469632d706f73746572222c22736f757263655f726566223a6e756c6c7d2c2270726f6772616d5f6964223a226f6d65676164657369676e222c22726f6c655f6964223a6e756c6c2c22736368656d61223a226f6d6567612d73747564696f2d636f6e73656e742d31222c22737465705f6361705f6d6963726f73223a3235303030302c22737465705f77696e646f775f73223a3138302c22737761726d5f6964223a22735f3132333435363738222c227469746c65223a22496e76656e74656420706f73746572222c22746f6f6c73223a5b5d2c2277696e646f775f6d696e75746573223a32307d",
+      "consent_digest": "sha256:8af89a7b95256cdec58e75150b91b4e3a85355d344d088c2e2f038c2e6689b1f",
+      "disposition": "well_formed",
+      "id": "coordinator-exclusive",
+      "monthly": [
+        "own_key_limit",
+        10
+      ],
+      "own_key": true,
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": true,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      },
+      "request": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_usd": 2,
+        "coordinator_exclusive": true,
+        "detail": "Synthetic fixture only",
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "step_cap_usd": 0.25,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "canonical_json": "{\"app_pin\":{\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"omegadesign\",\"version\":\"synthetic-1\"},\"cap_micros\":2000000,\"coordinator_exclusive\":false,\"detail\":\"Synthetic fixture only\",\"disclosures\":[\"maker_restarts_between_steps\",\"maker_reads_unsaved_piece_while_live\"],\"key_id\":\"k_12345678\",\"maker_id\":\"a_12345678\",\"max_steps\":8,\"model\":\"synthetic/no-provider\",\"monthly\":{\"kind\":\"own_key_limit\",\"limit_micros\":10000000},\"payer\":\"own_key\",\"piece\":{\"scene_id\":\"synthetic-poster\",\"source_ref\":null},\"program_id\":\"omegadesign\",\"role_id\":null,\"schema\":\"omega-studio-consent-1\",\"step_cap_micros\":250000,\"step_window_s\":180,\"swarm_id\":\"s_12345678\",\"title\":\"bad-\ud800\",\"tools\":[],\"window_minutes\":20}",
+      "canonical_utf8_hex": "7b226170705f70696e223a7b22646967657374223a227368613235363a61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c226964223a226f6d65676164657369676e222c2276657273696f6e223a2273796e7468657469632d31227d2c226361705f6d6963726f73223a323030303030302c22636f6f7264696e61746f725f6578636c7573697665223a66616c73652c2264657461696c223a2253796e7468657469632066697874757265206f6e6c79222c22646973636c6f7375726573223a5b226d616b65725f72657374617274735f6265747765656e5f7374657073222c226d616b65725f72656164735f756e73617665645f70696563655f7768696c655f6c697665225d2c226b65795f6964223a226b5f3132333435363738222c226d616b65725f6964223a22615f3132333435363738222c226d61785f7374657073223a382c226d6f64656c223a2273796e7468657469632f6e6f2d70726f7669646572222c226d6f6e74686c79223a7b226b696e64223a226f776e5f6b65795f6c696d6974222c226c696d69745f6d6963726f73223a31303030303030307d2c227061796572223a226f776e5f6b6579222c227069656365223a7b227363656e655f6964223a2273796e7468657469632d706f73746572222c22736f757263655f726566223a6e756c6c7d2c2270726f6772616d5f6964223a226f6d65676164657369676e222c22726f6c655f6964223a6e756c6c2c22736368656d61223a226f6d6567612d73747564696f2d636f6e73656e742d31222c22737465705f6361705f6d6963726f73223a3235303030302c22737465705f77696e646f775f73223a3138302c22737761726d5f6964223a22735f3132333435363738222c227469746c65223a226261642deda080222c22746f6f6c73223a5b5d2c2277696e646f775f6d696e75746573223a32307d",
+      "consent_digest": "sha256:be609ae1d21490600b02ce44ab5bd4a4755c5440dd2c76bd4e029c554a0cacea",
+      "disposition": "requires_ui_refusal",
+      "id": "lone-surrogate",
+      "monthly": [
+        "own_key_limit",
+        10
+      ],
+      "own_key": true,
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "bad-\ud800",
+        "tools": [],
+        "window_minutes": 20
+      },
+      "request": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_usd": 2,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "step_cap_usd": 0.25,
+        "swarm_id": "s_12345678",
+        "title": "bad-\ud800",
+        "tools": [],
+        "window_minutes": 20
+      }
+    },
+    {
+      "canonical_json": "{\"app_pin\":{\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"omegadesign\",\"version\":\"synthetic-1\"},\"cap_micros\":2000000,\"coordinator_exclusive\":false,\"detail\":\"Synthetic fixture only\",\"disclosures\":[\"maker_restarts_between_steps\",\"maker_reads_unsaved_piece_while_live\"],\"key_id\":\"k_12345678\",\"maker_id\":\"a_12345678\",\"max_steps\":8,\"model\":\"synthetic/no-provider\",\"monthly\":{\"kind\":\"own_key_limit\",\"limit_micros\":10000000000000000},\"payer\":\"own_key\",\"piece\":{\"scene_id\":\"synthetic-poster\",\"source_ref\":null},\"program_id\":\"omegadesign\",\"role_id\":null,\"schema\":\"omega-studio-consent-1\",\"step_cap_micros\":250000,\"step_window_s\":180,\"swarm_id\":\"s_12345678\",\"title\":\"Invented poster\",\"tools\":[],\"window_minutes\":20}",
+      "canonical_utf8_hex": "7b226170705f70696e223a7b22646967657374223a227368613235363a61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c226964223a226f6d65676164657369676e222c2276657273696f6e223a2273796e7468657469632d31227d2c226361705f6d6963726f73223a323030303030302c22636f6f7264696e61746f725f6578636c7573697665223a66616c73652c2264657461696c223a2253796e7468657469632066697874757265206f6e6c79222c22646973636c6f7375726573223a5b226d616b65725f72657374617274735f6265747765656e5f7374657073222c226d616b65725f72656164735f756e73617665645f70696563655f7768696c655f6c697665225d2c226b65795f6964223a226b5f3132333435363738222c226d616b65725f6964223a22615f3132333435363738222c226d61785f7374657073223a382c226d6f64656c223a2273796e7468657469632f6e6f2d70726f7669646572222c226d6f6e74686c79223a7b226b696e64223a226f776e5f6b65795f6c696d6974222c226c696d69745f6d6963726f73223a31303030303030303030303030303030307d2c227061796572223a226f776e5f6b6579222c227069656365223a7b227363656e655f6964223a2273796e7468657469632d706f73746572222c22736f757263655f726566223a6e756c6c7d2c2270726f6772616d5f6964223a226f6d65676164657369676e222c22726f6c655f6964223a6e756c6c2c22736368656d61223a226f6d6567612d73747564696f2d636f6e73656e742d31222c22737465705f6361705f6d6963726f73223a3235303030302c22737465705f77696e646f775f73223a3138302c22737761726d5f6964223a22735f3132333435363738222c227469746c65223a22496e76656e74656420706f73746572222c22746f6f6c73223a5b5d2c2277696e646f775f6d696e75746573223a32307d",
+      "consent_digest": "sha256:c4ea1e5036a219732d70c7349947ba32a5f6e25222f447b3f4cc3a6f718c7e96",
+      "disposition": "requires_ui_refusal",
+      "id": "unsafe-js-integer-monthly",
+      "monthly": [
+        "own_key_limit",
+        10000000000
+      ],
+      "own_key": true,
+      "payload": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_micros": 2000000,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "disclosures": [
+          "maker_restarts_between_steps",
+          "maker_reads_unsaved_piece_while_live"
+        ],
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "monthly": {
+          "kind": "own_key_limit",
+          "limit_micros": 10000000000000000
+        },
+        "payer": "own_key",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "schema": "omega-studio-consent-1",
+        "step_cap_micros": 250000,
+        "step_window_s": 180,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      },
+      "request": {
+        "app_pin": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "id": "omegadesign",
+          "version": "synthetic-1"
+        },
+        "cap_usd": 2,
+        "coordinator_exclusive": false,
+        "detail": "Synthetic fixture only",
+        "key_id": "k_12345678",
+        "maker_id": "a_12345678",
+        "max_steps": 8,
+        "model": "synthetic/no-provider",
+        "piece": {
+          "scene_id": "synthetic-poster",
+          "source_ref": null
+        },
+        "program_id": "omegadesign",
+        "role_id": null,
+        "step_cap_usd": 0.25,
+        "swarm_id": "s_12345678",
+        "title": "Invented poster",
+        "tools": [],
+        "window_minutes": 20
+      }
+    }
+  ]
+}

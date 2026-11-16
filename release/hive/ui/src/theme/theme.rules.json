@@ -1,0 +1,156 @@
+{
+ "source": "src/theme/theme.metta via PeTTa",
+ "checks": [
+  {
+   "token": "ink",
+   "against": "void",
+   "floor": 4.5,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "ink",
+   "against": "abyss",
+   "floor": 4.5,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "ink-2",
+   "against": "void",
+   "floor": 4.5,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "ink-2",
+   "against": "abyss",
+   "floor": 4.5,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "ink-3",
+   "against": "void",
+   "floor": 4.5,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "ink-3",
+   "against": "abyss",
+   "floor": 4.5,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "ink-4",
+   "against": "void",
+   "floor": 4.5,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "ink-4",
+   "against": "abyss",
+   "floor": 4.5,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "control",
+   "against": "void",
+   "floor": 3.0,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "control",
+   "against": "abyss",
+   "floor": 3.0,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "accent",
+   "against": "void",
+   "floor": 3.0,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "accent",
+   "against": "abyss",
+   "floor": 3.0,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "accent-2",
+   "against": "void",
+   "floor": 3.0,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "accent-2",
+   "against": "abyss",
+   "floor": 3.0,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "good",
+   "against": "void",
+   "floor": 3.0,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "good",
+   "against": "abyss",
+   "floor": 3.0,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "warn",
+   "against": "void",
+   "floor": 3.0,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "warn",
+   "against": "abyss",
+   "floor": 3.0,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "bad",
+   "against": "void",
+   "floor": 3.0,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "bad",
+   "against": "abyss",
+   "floor": 3.0,
+   "repair": "lightness-nearest"
+  },
+  {
+   "token": "primary-ink",
+   "against": "accent",
+   "floor": 4.5,
+   "repair": "lightness-nearest"
+  }
+ ],
+ "derive": {
+  "tint": "ink",
+  "shade": "black"
+ },
+ "giveUpAfter": 0.35,
+ "roles": {
+  "ink": "text",
+  "ink-2": "text",
+  "ink-3": "text",
+  "ink-4": "text",
+  "ink-5": "decoration",
+  "control": "edge",
+  "accent": "edge",
+  "accent-2": "focus",
+  "good": "signal",
+  "warn": "signal",
+  "bad": "signal",
+  "primary-ink": "text-on-accent"
+ },
+ "translucent": [
+  "line",
+  "line-2",
+  "glass",
+  "glass-2"
+ ]
+}

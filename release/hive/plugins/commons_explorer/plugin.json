@@ -1,0 +1,10 @@
+{
+  "id": "commons-explorer",
+  "name": "Commons Explorer",
+  "version": "0.1.0",
+  "contract": "0.1",
+  "description": "What does this swarm believe, and why? Each shared belief unfolds into the reports behind it, its rivals and the research it is missing.",
+  "module": "program.py",
+  "capabilities": ["commons:read", "goals:write"],
+  "icon": "orbit"
+}

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>OmegaFlow · Flow studio</title><link rel="stylesheet" href="./style.css"></head>
+<body>
+<header><a class="brand" href="./">◈ <strong>OmegaFlow</strong><span> / Flow studio</span></a><span class="environment">LOCAL DRAFT</span><button id="new-flow">New flow</button><button id="templates">Templates</button><button id="export">Export revision</button><label class="button">Import<input id="import" type="file" accept="application/json,.json" hidden></label></header>
+<main>
+<section class="workspace">
+<div class="titlebar"><div><p class="eyebrow">OMEGAHIVE / AUTHORING</p><h1 id="flow-title">Garden volunteer sign-up</h1><p>Arrange objects. Give connections meaning. Export to keep your draft.</p></div><div class="flow-state"><span class="dot"></span> Draft · not running</div></div>
+<nav aria-label="Canvas tools"><button id="add-node">＋ Object</button><button id="add-relation">◇ Relation</button><button id="connect">↗ Transition</button><button id="add-event">◷ Event</button><button id="add-constraint">⊢ Constraint</button><button id="add-subflow">▣ Subflow</button><span class="spacer"></span><button id="undo" disabled>Undo</button><button id="redo" disabled>Redo</button><button id="fit">Fit view</button></nav>
+<div id="canvas-wrap"><svg id="canvas" tabindex="0" role="application" aria-label="Flow canvas. Select objects in the element list; use arrow keys on a selected object to move it." viewBox="0 0 1200 740"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" class="arrow-head"/></marker></defs><g id="edges"></g><g id="objects"></g></svg><div id="canvas-help">Drag objects to arrange · select a connection to inspect · scroll to zoom</div></div>
+<footer><span id="notice" role="status" aria-live="polite">Loading flow…</span><span id="element-count"></span></footer>
+</section>
+<aside>
+<div class="panel-head"><p class="eyebrow">INSPECTOR</p><h2 id="selection-title">Select an object</h2></div>
+<div id="inspector"></div>
+<details open><summary>Elements <span id="list-count"></span></summary><div id="element-list"></div></details>
+<details open><summary>Structural checks</summary><div id="checks" aria-live="polite"></div><p class="muted small">Host identity, permissions and execution still require qualification.</p></details>
+<details><summary>Revision &amp; representation</summary><label class="field">Semantic fingerprint<code id="digest">—</code></label><p class="muted small">Moving objects changes layout only. Editing meaning creates a new fingerprint.</p><button id="show-atoms">View MeTTa data</button></details>
+</aside>
+</main>
+<dialog id="atoms-dialog"><h2>MeTTa data representation</h2><p>Fixed predicates and inert encoded values. These atoms grant no execution authority.</p><pre id="atoms"></pre><button id="close-atoms">Close</button></dialog>
+<dialog id="templates-dialog"><h2>Start from a template</h2><p>Choose a starting shape, then edit it for your work. Templates load as local drafts. Saving, adoption and running remain separate actions.</p><div id="template-list"></div><button id="close-templates">Close</button></dialog>
+<script type="module" src="./app.js"></script>
+</body></html>

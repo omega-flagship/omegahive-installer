@@ -1,0 +1,29 @@
+{
+  "commit": "65aa421",
+  "branch": "platform/ui-prefs-revision",
+  "header": "x-ui-base-rev",
+  "headerMaxDigits": 18,
+  "put": [
+    { "step": "too_large", "file": "hive/core/app.py", "anchor": "raise HiveError(413, \"too_large\"" },
+    { "step": "body_json", "file": "hive/core/app.py", "anchor": "raise HiveError(400, \"bad_request\", \"expected a JSON body\")" },
+    { "step": "body_object", "file": "hive/core/app.py", "anchor": "raise HiveError(400, \"bad_request\", \"expected a JSON object\")" },
+    { "step": "base_rev_header", "file": "hive/core/app.py", "anchor": "base_rev = _ui_base_rev(request)" },
+    { "step": "check_prefs", "file": "hive/core/ui_prefs.py", "anchor": "return self._write(principal, check_prefs(prefs), base_rev)" },
+    { "step": "compare_and_set", "file": "hive/core/ui_prefs.py", "anchor": "if base_rev is not None and base_rev != current[\"rev\"]:" }
+  ],
+  "delete": [
+    { "step": "base_rev_header", "file": "hive/core/app.py", "anchor": "base_rev = _ui_base_rev(request)" },
+    { "step": "compare_and_set", "file": "hive/core/ui_prefs.py", "anchor": "if base_rev is not None and base_rev != current[\"rev\"]:" }
+  ],
+  "headerParse": [
+    { "step": "getlist", "file": "hive/core/app.py", "anchor": "values = request.headers.getlist(\"x-ui-base-rev\")" },
+    { "step": "absent_unconditional", "file": "hive/core/app.py", "anchor": "if not values:" },
+    { "step": "strip_first", "file": "hive/core/app.py", "anchor": "value = values[0].strip()" },
+    { "step": "one_ascii_digits_max18", "file": "hive/core/app.py", "anchor": "if len(values) != 1 or not value.isascii() or not value.isdigit() or len(value) > 18:" }
+  ],
+  "revision": [
+    { "step": "never_written_epoch_minus_one", "file": "hive/core/ui_prefs.py", "anchor": "rev = self.epoch - 1" },
+    { "step": "restart_moves_on", "file": "hive/core/ui_prefs.py", "anchor": "rev = row[\"rev\"] + (self.epoch - row[\"epoch\"])" },
+    { "step": "write_increments", "file": "hive/core/ui_prefs.py", "anchor": "rev = current[\"rev\"] + 1" }
+  ]
+}

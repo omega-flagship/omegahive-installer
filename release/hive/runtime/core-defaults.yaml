@@ -1,0 +1,2 @@
+# Hive retains its existing result budget; remaining defaults come from the core.
+maxFeedback: 40000

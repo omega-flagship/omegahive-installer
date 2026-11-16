@@ -1,0 +1,31 @@
+id = "omegaclaw.channel.router"
+kind = "channel-router"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+default_enabled = true
+
+provides = [
+  "runtime-organ:channel-router",
+  "skill:initChannels",
+  "skill:receive",
+  "skill:send",
+  "skill:send-control",
+  "skill:send-control-base64",
+  "skill:send-file",
+  "skill:send-file-caption",
+  "skill:list-inbox",
+]
+
+requires = [
+  "python>=3.10",
+]
+
+[trace]
+writes = [
+  "ChannelRouteObserved",
+  "ChannelMessageDispatched",
+  "ChannelDispatchError",
+]

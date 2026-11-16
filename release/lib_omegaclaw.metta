@@ -1,0 +1,13 @@
+; Hive composition over the pinned Singnet core. No embedded core fallback.
+!(import! &self (library OmegaClaw-Core ./hive/runtime/native_core.py))
+!(py-call (native_core.bootstrap))
+!(import! &self (py-call (native_core.foundation_path)))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/hive_services.py))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/substrate))
+!(import! &self (py-call (hive_services.module_loader)))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/attention))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/hive_provider.py))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/loop_hooks.metta))
+!(import! &self (py-call (native_core.loop_path)))
+(= (omegaclaw) (omega))
+(= (omegaclaw $k) (omega $k))

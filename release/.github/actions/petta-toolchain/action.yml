@@ -1,0 +1,72 @@
+# The pinned hive-petta toolchain, shared by hive-ci's hive-petta-smoke and hive-petta jobs so the two cannot drift.
+# Expects the repository checked out. Sets PATH, PETTA_PATH and LD_LIBRARY_PATH for the steps after it.
+name: petta-toolchain
+description: Python 3.12, hive requirements under hive/ci-constraints.txt, and SWI-Prolog + PeTTa built (or restored) by pin.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      id: py
+      with:
+        python-version: '3.12'
+        cache: pip
+        cache-dependency-path: |
+          hive/requirements.txt
+          hive/ci-constraints.txt
+    - name: Build prerequisites are installed (ci-runner-setup installs them; jobs have no apt-get)
+      shell: bash
+      run: |
+        missing=()
+        for p in cmake ninja-build libssl-dev libarchive-dev libpcre2-dev libyaml-dev zlib1g-dev libedit-dev libgmp-dev; do
+          case "$(dpkg-query -W -f='${db:Status-Abbrev}' "$p" 2>/dev/null)" in ii*) ;; *) missing+=("$p") ;; esac
+        done
+        if [ "${#missing[@]}" -gt 0 ]; then
+          echo "::error::not installed: ${missing[*]}. Run ci-runner-setup on this machine."
+          exit 1
+        fi
+    - name: Restore SWI-Prolog and PeTTa (keyed by pin, Python and machine kind)
+      # runner.environment (github-hosted / self-hosted) is in the key: a toolchain built on GitHub's machine is bound to
+      # its paths (/home/runner, setup-python under /opt/hostedtoolcache) and restores off-path on ours, and on a key hit
+      # nothing is saved, so a self-hosted build would never be cached.
+      id: petta-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          ~/swipl-patched
+          ~/PeTTa
+        key: petta-${{ runner.os }}-${{ runner.environment }}-py${{ steps.py.outputs.python-version }}-swipl-${{ env.SWIPL_TAG }}-petta-${{ env.PETTA_REF }}-v1
+    - name: Allow unprivileged user namespaces (the Linux mind sandbox needs them)
+      # Ubuntu 24.04 restricts them through AppArmor by default, and deploy/apparmor/omegahive-mind-launcher lifts that
+      # for the launcher only inside a release (deploy/RUNBOOK.md, section 0), which this checkout is not, so the
+      # restriction is off for hive/tests here. The job's release step runs the sandbox tests with it back on, and an
+      # always() step and the runner's root-owned job hooks set it back to 1. The sudoers rule allows exactly this
+      # command line and the same with =1.
+      shell: bash
+      run: sudo -n /usr/sbin/sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+    - name: Install hive requirements
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -r hive/requirements.txt -c hive/ci-constraints.txt
+    - name: Installed Python packages are exactly hive/ci-constraints.txt (before the toolchain adds janus-swi)
+      shell: bash
+      run: python scripts/dev/check_ci_constraints.py hive/ci-constraints.txt --requirements hive/requirements.txt
+    - name: Pinned toolchain (builds on a cache miss; always re-checks the bridges and a MeTTa run)
+      shell: bash
+      run: bash scripts/dev/setup_petta_env.sh --prefix "$HOME/swipl-patched" --petta "$HOME/PeTTa" --python "$(which python)" --runtime "$RUNNER_TEMP/omegadots-runtime"
+    - name: Save SWI-Prolog and PeTTa
+      # Saved as soon as the toolchain checks pass (PhysixSNET #70), so a failing hive/tests step still leaves the next
+      # run the cache.
+      if: steps.petta-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          ~/swipl-patched
+          ~/PeTTa
+        key: ${{ steps.petta-cache.outputs.cache-primary-key }}
+    - name: Toolchain environment
+      shell: bash
+      run: |
+        echo "PATH=$HOME/swipl-patched/bin:$PATH" >> "$GITHUB_ENV"
+        echo "PETTA_PATH=$HOME/PeTTa" >> "$GITHUB_ENV"
+        echo "LD_LIBRARY_PATH=$(python -c 'import sys; print(sys.base_prefix)')/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"

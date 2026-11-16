@@ -1,0 +1,4 @@
+# Exclude legacy harness fixtures from GitHub language statistics.
+# These files remain tracked and reviewable, but should not dominate the
+# repository language bar for the core architecture.
+Autotests/** linguist-vendored

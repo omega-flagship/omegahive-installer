@@ -1,0 +1,57 @@
+; Classic glass home: one stable Omega, one shell-owned Ask in the bottom dock.
+(UiPart classic rest ω)
+(UiRole (UiPart classic rest ω) ω)
+(UiIn (UiPart classic rest ω) rest)
+(UiIntent (UiPart classic rest ω) shell.omega)
+(UiImpl (UiPart classic rest ω) react ClassicHome)
+
+(UiPart classic rest question)
+(UiRole (UiPart classic rest question) question)
+(UiIn (UiPart classic rest question) rest)
+(UiIntent (UiPart classic rest question) shell.question)
+(UiImpl (UiPart classic rest question) react ClassicHome)
+
+(UiPart classic awake ω)
+(UiRole (UiPart classic awake ω) ω)
+(UiIn (UiPart classic awake ω) awake)
+(UiIntent (UiPart classic awake ω) shell.omega)
+(UiImpl (UiPart classic awake ω) react ClassicHome)
+
+(UiPart classic awake name)
+(UiRole (UiPart classic awake name) ω)
+(UiIn (UiPart classic awake name) awake)
+(UiIntent (UiPart classic awake name) shell.omega)
+(UiImpl (UiPart classic awake name) react ClassicHome)
+
+(UiPart classic awake field)
+(UiRole (UiPart classic awake field) field)
+(UiIn (UiPart classic awake field) awake)
+(UiIntent (UiPart classic awake field) ask.field)
+(UiImpl (UiPart classic awake field) react AskHost)
+(UiOwnedBy (UiPart classic awake field) (UiPart shell any field))
+
+(UiPart classic awake apps)
+(UiRole (UiPart classic awake apps) apps)
+(UiIn (UiPart classic awake apps) awake)
+(UiIntent (UiPart classic awake apps) apps.open)
+(UiImpl (UiPart classic awake apps) react ClassicHome)
+
+(UiPart classic awake pro)
+(UiRole (UiPart classic awake pro) pro-gesture)
+(UiIn (UiPart classic awake pro) awake)
+(UiIntent (UiPart classic awake pro) shell.pro)
+(UiImpl (UiPart classic awake pro) react ClassicHome)
+
+(UiPart classic awake power)
+(UiRole (UiPart classic awake power) power)
+(UiIn (UiPart classic awake power) awake)
+(UiIntent (UiPart classic awake power) shell.power)
+(UiImpl (UiPart classic awake power) react ClassicHome)
+
+(UiPart classic pro back)
+(UiRole (UiPart classic pro back) pro-gesture)
+(UiIn (UiPart classic pro back) pro)
+(UiIntent (UiPart classic pro back) shell.back)
+(UiImpl (UiPart classic pro back) react ClassicHome)
+
+(UiSource ClassicHome "experiences/classic/phases.tsx")

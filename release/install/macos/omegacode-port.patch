@@ -1,0 +1,19 @@
+--- a/omegacode/__main__.py
++++ b/omegacode/__main__.py
+@@ -17,11 +17,12 @@
+ 
+ 
+ def configured_service_port(config):
+-    """Keep the production API on the reviewed loopback endpoint only."""
++    """Keep the production API on loopback only, on the config's port (8724 when it names none), so each own hive on
++    one Mac runs its own Code service."""
+     port = config.get("port", SERVICE_PORT)
+-    if type(port) is not int or port != SERVICE_PORT:
+-        raise ValueError("OmegaCode must bind to 127.0.0.1:8724")
+-    return SERVICE_PORT
++    if type(port) is not int or not 1024 <= port <= 65535:
++        raise ValueError("OmegaCode must bind to 127.0.0.1 on a port from 1024 to 65535")
++    return port
+ 
+ 
+ def main():

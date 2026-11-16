@@ -1,0 +1,10 @@
+{
+  "schema": "surface-design-source-save-wire-pin-1",
+  "origin": "omegadesign/poc/studio_creative_package_r5/client/source-save-wire.mjs",
+  "sha256": "3d7bb5a4512bf4dbe6a65d4f46642505a89534c1b14aca6ef4446235297eea9d",
+  "byte_exact": true,
+  "status": "suggested-owner-candidate-not-adopted",
+  "existing_native_PIN_unchanged": true,
+  "limit_bytes": 2097152,
+  "normalized_preflight_base_revision": null
+}

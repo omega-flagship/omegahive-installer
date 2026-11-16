@@ -1,0 +1,5 @@
+(SkillTopic "glucose-app-status" "health")
+(SkillTopic "observe-glucose" "health")
+(SkillTopic "set-glucose-watch" "health")
+(SkillCardLine "observe-glucose" "observe-glucose person - inspect glucose app data")
+(Risk "observe-glucose" "health-data")

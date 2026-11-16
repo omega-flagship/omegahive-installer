@@ -1,0 +1,188 @@
+# Purpose: build one current Linux test kit and prove its fresh-user install on both supported Ubuntu releases.
+name: Linux v0.33 test kit
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["ci/linux-x86-v033-public"]
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/hive-20261109
+          sparse-checkout: release/deploy/linux
+      - name: Test the unchanged Linux installer before comparing the public successor
+        run: TMPDIR="$RUNNER_TEMP" python3 -B -m unittest discover -v -s release/deploy/linux -p 'test_*.py'
+  build:
+    runs-on: ubuntu-22.04
+    env:
+      PREFIX: omegahive-linux-v033
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use runner scratch outside the tested tree
+        run: printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Confirm the immutable release tree and test the Linux launcher
+        run: |
+          test "$(git rev-parse HEAD:release)" = "$(cat ci/RELEASE_TREE)"
+          test "$(cat release/RELEASE_COMMIT)" = "$(cat ci/RELEASE_COMMIT)"
+          python3 -B -m unittest discover -v -s release/deploy/linux -p 'test_*.py'
+      - name: Export the source without generated UI or dependencies
+        run: |
+          mkdir -p "$RUNNER_TEMP/inputs"
+          cp ci/linux-x86/inputs/* "$RUNNER_TEMP/inputs/"
+          git archive --format=tar --prefix="$PREFIX/" HEAD:release | gzip -n > "$RUNNER_TEMP/inputs/source.tar.gz"
+      - name: Use the fresh UI from the exact rc3 Mac build
+        run: |
+          cd ci/linux-x86/inputs
+          sha256sum -c ui-dist-v033.tar.gz.sha256
+          tar -xzf ui-dist-v033.tar.gz -C "$GITHUB_WORKSPACE/release/hive/ui"
+      - name: Fetch checksum-pinned uv and compile the current x86_64 lock
+        run: |
+          readarray -t PIN < <(python3 -c "import json; p=json.load(open('ci/linux-x86/x86_64-pins.json'))['uv']; print(p['url']); print(p['sha256'])")
+          curl -fLsS "${PIN[0]}" -o "$RUNNER_TEMP/uv.tar.gz"
+          printf '%s  %s\n' "${PIN[1]}" "$RUNNER_TEMP/uv.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/uv.tar.gz" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/uv-x86_64-unknown-linux-gnu/uv" --no-config pip compile \
+            release/hive/requirements.txt ci/linux-x86/janus-runtime.in \
+            --python-version 3.12 --python-platform x86_64-unknown-linux-gnu \
+            --generate-hashes --no-header -o "$RUNNER_TEMP/inputs/core.lock"
+      - name: Bind current input hashes, build the catalogue and pack the download
+        run: |
+          python3 -B ci/linux-x86/prepare_release.py --source release --inputs "$RUNNER_TEMP/inputs" \
+            --catalogue ci/linux-x86/public-catalogue.json --tree "$(cat ci/RELEASE_TREE)" \
+            --output "$RUNNER_TEMP/catalogue.json" --built-with "Mac rc3 vite build at 04:57; provenance ci/linux-x86/ui-provenance.json"
+          python3 -I -B -S ci/linux-x86/make_catalogue.py \
+            --base-catalogue "$RUNNER_TEMP/catalogue.json" --pins ci/linux-x86/x86_64-pins.json \
+            --source-tar "$RUNNER_TEMP/inputs/source.tar.gz" --prefix "$PREFIX" \
+            --commit "$(cat ci/RELEASE_COMMIT)" --tree "$(cat ci/RELEASE_TREE)" \
+            --inputs "$RUNNER_TEMP/inputs" --bundle "$RUNNER_TEMP/bundle" --release-id linux-hive-v0.33
+          mkdir -p "$RUNNER_TEMP/kit"
+          python3 -I -B ci/linux-x86/pack_kit.py --bundle "$RUNNER_TEMP/bundle" \
+            --template release/deploy/linux/installer.sh --out "$RUNNER_TEMP/kit/omegahive-linux.sh"
+          cd "$RUNNER_TEMP/kit"
+          sha256sum -c omegahive-linux.sh.sha256
+          stat -c '%s %n' omegahive-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omegahive-linux-v033-kit
+          path: ${{ runner.temp }}/kit/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omegahive-linux-v033-bundle
+          path: ${{ runner.temp }}/bundle/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-v033-build-inputs
+          path: |
+            ${{ runner.temp }}/catalogue.json
+            ${{ runner.temp }}/inputs/core.lock
+            ${{ runner.temp }}/inputs/ui-dist-v033.manifest.json
+
+  install:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+        entry: [install, kit]
+    runs-on: ${{ matrix.os }}
+    env:
+      HIVE_USER: hiveuser
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use runner scratch outside the tested tree
+        run: printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          name: omegahive-linux-v033-kit
+          path: ${{ runner.temp }}/kit
+      - uses: actions/download-artifact@v4
+        with:
+          name: omegahive-linux-v033-bundle
+          path: ${{ runner.temp }}/bundle
+      - name: Fresh user with test-only package-install and linger permission
+        run: |
+          uname -a
+          lsb_release -ds
+          sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
+          printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-hive-ci > /dev/null
+          printf 'Defaults!/usr/bin/apt-get env_keep += "DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l"\n' | sudo tee -a /etc/sudoers.d/90-hive-ci > /dev/null
+          sudo chmod 0440 /etc/sudoers.d/90-hive-ci
+          sudo visudo -cf /etc/sudoers.d/90-hive-ci
+          cd "$RUNNER_TEMP/kit"
+          sha256sum -c omegahive-linux.sh.sha256
+          sudo install -o "$HIVE_USER" -m 0600 omegahive-linux.sh "/home/$HIVE_USER/omegahive-linux.sh"
+          sudo cp -r "$RUNNER_TEMP/bundle" "/home/$HIVE_USER/bundle"
+          sudo cp "$GITHUB_WORKSPACE/ci/linux-x86/run_install.py" "$GITHUB_WORKSPACE/ci/linux-x86/trace_helper.py" "/home/$HIVE_USER/"
+          sudo chown -R "$HIVE_USER:$HIVE_USER" "/home/$HIVE_USER"
+      - name: Run the exact download or its installer entry as the fresh user
+        env:
+          ENTRY: ${{ matrix.entry }}
+        run: |
+          if [ "$ENTRY" = install ]; then
+            readarray -t PIN < <(python3 -c "import json; p=json.load(open('ci/linux-x86/x86_64-pins.json'))['python_stripped']; print(p['url']); print(p['sha256'])")
+            curl -fLsS "${PIN[0]}" -o "$RUNNER_TEMP/python.tar.gz"
+            printf '%s  %s\n' "${PIN[1]}" "$RUNNER_TEMP/python.tar.gz" | sha256sum -c -
+            sudo tar -xzf "$RUNNER_TEMP/python.tar.gz" -C "/home/$HIVE_USER"
+            sudo chown -R "$HIVE_USER:$HIVE_USER" "/home/$HIVE_USER/python"
+            # shellcheck disable=SC2088
+            COMMAND='~/python/bin/python3.12 -I -B -S ~/run_install.py ~/bundle'
+          else
+            COMMAND='sh ~/omegahive-linux.sh'
+          fi
+          set +e
+          # The runner owns this log; sudo changes only the installer's identity.
+          # shellcheck disable=SC2024
+          sudo -iu "$HIVE_USER" bash -c "umask 077; script -qec '$COMMAND' /dev/null" > "$RUNNER_TEMP/install.out" 2>&1
+          code=$?
+          set -e
+          python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/install.out"
+          if [ "$code" != 0 ]; then
+            # shellcheck disable=SC2024
+            sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR="/run/user/$(id -u "$HIVE_USER")" journalctl --user -u omegahive.service --no-pager -n 80 > "$RUNNER_TEMP/journal.out" 2>&1 || true
+            python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/journal.out"
+          fi
+          exit "$code"
+      - name: Open, sign in, restart, and prove persistence after logout
+        run: |
+          sudo python3 ci/linux-x86/smoke_release.py verify "$HIVE_USER" "$RUNNER_TEMP/verification.json"
+      - name: Export the verified Ubuntu 22.04 runtime without conversations or auth data
+        if: matrix.os == 'ubuntu-22.04' && matrix.entry == 'kit'
+        run: |
+          mkdir -p "$RUNNER_TEMP/installed-runtime"
+          id -u "$HIVE_USER" > "$RUNNER_TEMP/installed-runtime/uid.txt"
+          sudo tar -C "/home/$HIVE_USER" --exclude='*/runtime/swipl-build' --exclude='*/runtime/swipl-source' \
+            -czf "$RUNNER_TEMP/installed-runtime/runtime.tar.gz" \
+            .local/share/omegahive/releases .local/share/omegahive/runtime.json \
+            .local/share/omegahive/installation-state.json .local/bin/omegahive .config/systemd/user/omegahive.service
+          sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/installed-runtime/runtime.tar.gz"
+          cd "$RUNNER_TEMP/installed-runtime"
+          sha256sum runtime.tar.gz > runtime.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-22.04' && matrix.entry == 'kit'
+        with:
+          name: linux-v033-installed-runtime
+          path: ${{ runner.temp }}/installed-runtime/
+      - name: Retain secret-free verification receipts
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/receipts"
+          python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/install.out" > "$RUNNER_TEMP/receipts/install.out"
+          test ! -f "$RUNNER_TEMP/verification.json" || cp "$RUNNER_TEMP/verification.json" "$RUNNER_TEMP/receipts/"
+          git rev-parse HEAD > "$RUNNER_TEMP/receipts/installer-commit.txt"
+          lsb_release -ds > "$RUNNER_TEMP/receipts/os.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-v033-${{ matrix.os }}-${{ matrix.entry }}-receipts
+          path: ${{ runner.temp }}/receipts/

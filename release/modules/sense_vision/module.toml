@@ -1,0 +1,26 @@
+id = "omegaclaw.sense.vision"
+kind = "sense"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+default_enabled = true
+
+provides = [
+  "sense:image",
+  "skill:observe-image",
+  "skill:inspect-image",
+  "skill:media-observation-log",
+]
+
+requires = [
+  "python>=3.10",
+]
+
+[trace]
+writes = [
+  "ImageObserved",
+  "ImageInspection",
+  "MediaObservation",
+]

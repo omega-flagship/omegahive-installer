@@ -1,0 +1,216 @@
+{
+  "status": "invented-only; no host or native execution; guided review only",
+  "source_fixture_sha256": "d5ea91528723539c9020840dee6cee0e6b46ee7ab86bf9f53faa9ff5aa56f885",
+  "snapshots": [
+    {
+      "module": "attention",
+      "mind_id": "invented-mind",
+      "revision": "invented-1",
+      "observed_at": "2026-10-08T00:00:00Z",
+      "qualification": "Invented fixture; not obtained from any mind or memory.",
+      "available": true,
+      "state": "synthetic",
+      "unavailable_reason": null,
+      "items": [],
+      "provenance": {
+        "source_revision": null,
+        "evidence_refs": [],
+        "read_path": "synthetic-fixture",
+        "authority": "none"
+      },
+      "explain": "Invented fixture; not obtained from any mind or memory.",
+      "focus_ref": "sample-a",
+      "ranked_items": [
+        {
+          "id": "sample-a",
+          "label": "Invented sample A",
+          "score": 0.4,
+          "reason_codes": [
+            "freshness-contribution"
+          ],
+          "explain": "Invented fixture; not obtained from any mind or memory."
+        }
+      ],
+      "spread_edges": []
+    },
+    {
+      "module": "energy",
+      "mind_id": "invented-mind",
+      "revision": "invented-1",
+      "observed_at": "2026-10-08T00:00:00Z",
+      "qualification": "Invented fixture; not obtained from any mind or memory.",
+      "available": true,
+      "state": "synthetic",
+      "unavailable_reason": null,
+      "items": [],
+      "provenance": {
+        "source_revision": null,
+        "evidence_refs": [],
+        "read_path": "synthetic-fixture",
+        "authority": "none"
+      },
+      "explain": "Invented fixture; not obtained from any mind or memory.",
+      "mode": "observe",
+      "budget": {
+        "unit": "sample-tokens",
+        "limit": 10,
+        "reserved": 2,
+        "spent": 1
+      },
+      "next_wake_at": null,
+      "sleep_until": null
+    },
+    {
+      "module": "self",
+      "mind_id": "invented-mind",
+      "revision": "invented-1",
+      "observed_at": "2026-10-08T00:00:00Z",
+      "qualification": "Invented fixture; not obtained from any mind or memory.",
+      "available": true,
+      "state": "synthetic",
+      "unavailable_reason": null,
+      "items": [],
+      "provenance": {
+        "source_revision": null,
+        "evidence_refs": [],
+        "read_path": "synthetic-fixture",
+        "authority": "none"
+      },
+      "explain": "Invented fixture; not obtained from any mind or memory.",
+      "skills": [
+        {
+          "id": "sample-skill",
+          "version": "0.1",
+          "label": "Invented skill",
+          "availability": "available",
+          "source_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "explain": "Invented fixture; not obtained from any mind or memory."
+        }
+      ],
+      "selected_skill": {
+        "id": "sample-skill",
+        "selected_at": "2026-10-08T00:00:00Z"
+      },
+      "selection_reason_codes": [
+        "prerequisites-present"
+      ]
+    },
+    {
+      "module": "scratch",
+      "mind_id": "invented-mind",
+      "revision": "invented-1",
+      "observed_at": "2026-10-08T00:00:00Z",
+      "qualification": "Invented fixture; not obtained from any mind or memory.",
+      "available": true,
+      "state": "synthetic",
+      "unavailable_reason": null,
+      "items": [
+        {
+          "id": "sample-note",
+          "kind": "sample",
+          "promotion_state": "proposed",
+          "expiry": null,
+          "explain": "Invented fixture; not obtained from any mind or memory."
+        }
+      ],
+      "provenance": {
+        "source_revision": null,
+        "evidence_refs": [],
+        "read_path": "synthetic-fixture",
+        "authority": "none"
+      },
+      "explain": "Invented fixture; not obtained from any mind or memory.",
+      "promotion_reasons": [
+        "owner-review-required"
+      ],
+      "demotion_reasons": []
+    },
+    {
+      "module": "assume",
+      "mind_id": "invented-mind",
+      "revision": "invented-1",
+      "observed_at": "2026-10-08T00:00:00Z",
+      "qualification": "Invented fixture; not obtained from any mind or memory.",
+      "available": true,
+      "state": "synthetic",
+      "unavailable_reason": null,
+      "items": [],
+      "provenance": {
+        "source_revision": null,
+        "evidence_refs": [],
+        "read_path": "synthetic-fixture",
+        "authority": "none"
+      },
+      "explain": "Invented fixture; not obtained from any mind or memory.",
+      "model_ref": "sample-model",
+      "nodes": [
+        {
+          "id": "sample-node",
+          "kind": "sample",
+          "label": "Invented node",
+          "explain": "Invented fixture; not obtained from any mind or memory."
+        }
+      ],
+      "edges": [],
+      "prediction": {
+        "target_ref": "sample-node",
+        "value": 1,
+        "unit": "sample",
+        "explain": "Invented fixture; not obtained from any mind or memory."
+      },
+      "observed_target": null,
+      "update_delta": null
+    },
+    {
+      "module": "temporal",
+      "mind_id": "invented-mind",
+      "revision": "invented-1",
+      "observed_at": "2026-10-08T00:00:00Z",
+      "qualification": "Invented fixture; not obtained from any mind or memory.",
+      "available": true,
+      "state": "synthetic",
+      "unavailable_reason": null,
+      "items": [],
+      "provenance": {
+        "source_revision": null,
+        "evidence_refs": [],
+        "read_path": "synthetic-fixture",
+        "authority": "none"
+      },
+      "explain": "Invented fixture; not obtained from any mind or memory.",
+      "events": [
+        {
+          "id": "sample-event",
+          "term": "sample-bell",
+          "occurrence_time": 10,
+          "recorded_time": 11,
+          "valid_interval": [
+            10,
+            12
+          ],
+          "truth": null,
+          "evidence_refs": [],
+          "explain": "Invented fixture; not obtained from any mind or memory."
+        }
+      ],
+      "rules": [],
+      "expectations": [
+        {
+          "id": "sample-expectation",
+          "rule_ref": "sample-rule",
+          "term": "sample-light",
+          "due_interval": [
+            20,
+            22
+          ],
+          "state": "pending",
+          "late": false,
+          "explain": "Invented fixture; not obtained from any mind or memory."
+        }
+      ],
+      "projection": null,
+      "interval_relations": [],
+      "explanation_refs": []
+    }
+  ]
+}

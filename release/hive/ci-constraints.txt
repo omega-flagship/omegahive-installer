@@ -1,0 +1,79 @@
+# Exact versions for every package hive CI installs (pip constraints file: -c hive/ci-constraints.txt).
+# hive/requirements.txt keeps the floors and the exact pins the installers ship (ddgs, xkcdpass, and the Google backend
+# through -c google-constraints.txt); this file pins what CI actually gets. Both jobs in .github/workflows/ci.yml
+# install with -c here, and scripts/dev/check_ci_constraints.py fails hive-petta when the installed set and this file
+# disagree in any direction, or when a name in hive/requirements.txt has no line here at or above its floor, or at its
+# exact pin.
+#
+# Taken from hive-ci run 41352900940 (hive-petta, ubuntu-24.04, Python 3.12), the set pip resolved from
+# hive/requirements.txt alone. The packages dev/latest added (ddgs and the Google backend) were resolved on 11 Nov 2026
+# in a fresh Linux Python 3.12 venv with those versions held, which moved one of them: opentelemetry-api, to the 1.45.1
+# that google-constraints.txt pins. To regenerate, in a fresh Linux Python 3.12 venv (pip also applies the
+# -c google-constraints.txt line inside hive/requirements.txt):
+#   python -m pip install -r hive/requirements.txt
+#   python -m pip freeze --all --exclude pip --exclude setuptools --exclude wheel
+# and replace the lines below with that output. A failing check prints the same freeze.
+#
+# omegahive-deploy's python-constraints.txt must agree with this file for the packages they share; this file is the
+# source, and deploy follows on its next pin bump.
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.16.0
+brotli==1.2.1
+certifi==2026.10.23
+cffi==2.1.1
+charset-normalizer==3.5.2
+click==8.5.0
+cryptography==50.0.2
+ddgs==9.14.4
+fake-useragent==2.2.0
+fastapi==0.162.0
+google-api-core==2.43.0
+google-api-python-client==2.201.0
+google-auth==2.62.0
+google-auth-httplib2==0.4.4
+google-auth-oauthlib==1.5.0
+googleapis-common-protos==1.76.0
+h11==0.16.0
+h2==4.4.1
+hpack==4.2.0
+httpcore==1.0.9
+httplib2==0.32.0
+httptools==0.9.0
+httpx==0.28.1
+hyperframe==6.1.0
+idna==3.20
+iniconfig==2.3.1
+lxml==6.1.3
+oauthlib==4.0.0
+opentelemetry-api==1.45.1
+packaging==26.3
+pillow==13.0.0
+pluggy==1.7.0
+primp==2.0.1
+proto-plus==1.29.0
+protobuf==7.36.2
+pyasn1==0.6.4
+pyasn1-modules==0.4.2
+pycparser==3.12
+pydantic==2.14.2
+pydantic-core==2.50.2
+pygments==2.21.0
+pyparsing==3.3.3
+pypdf==7.0.1
+pytest==9.2.0
+python-dotenv==1.2.4
+pyyaml==6.0.3
+requests==2.34.2
+requests-oauthlib==2.0.0
+socksio==1.0.0
+starlette==1.10.0
+typing-extensions==4.16.0
+typing-inspection==0.4.4
+uritemplate==4.2.0
+urllib3==2.8.0
+uvicorn==0.54.0
+uvloop==0.23.0
+watchfiles==1.3.0
+websockets==17.4
+xkcdpass==1.30.0

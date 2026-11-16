@@ -1,0 +1,102 @@
+/* the demo cursor and the draw layer (features/ink): shared by the showreel and guided-play */
+/* the demo cursor */
+.sr-cursor {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 91;
+  pointer-events: none;
+  transition: transform 0.75s cubic-bezier(0.25, 0.8, 0.25, 1);
+  filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.45));
+}
+.sr-cursor[data-jump] {
+  transition: none;
+}
+.sr-cursor svg path {
+  fill: var(--xc-ink);
+  stroke: var(--xc-surface, #000);
+  stroke-width: 1.4;
+}
+.sr-click {
+  position: absolute;
+  left: -10px;
+  top: -10px;
+  width: 24px;
+  height: 24px;
+  border-radius: 99px;
+  border: 2px solid var(--xc-accent);
+  animation: sr-click 0.5s ease-out both;
+}
+.sr-cursor[data-jump] .sr-click {
+  animation: none;
+  opacity: 0.8;
+}
+@keyframes sr-click {
+  from {
+    transform: scale(0.4);
+    opacity: 1;
+  }
+  to {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+/* the draw layer */
+.sr-ink {
+  position: fixed;
+  inset: 0;
+  /* above a warning the step opened (dialogs sit at z 80); aria-hidden and never takes a pointer */
+  z-index: 90;
+  pointer-events: none;
+}
+.sr-ink svg {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+.sr-ink ellipse,
+.sr-ink path {
+  fill: none;
+  stroke: var(--xc-accent);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.sr-draw,
+.sr-draw path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: sr-stroke 0.9s cubic-bezier(0.4, 0, 0.2, 1) 0.1s forwards;
+}
+@keyframes sr-stroke {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.sr-ink-label {
+  position: absolute;
+  max-width: 210px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  border: 1.5px solid var(--xc-accent);
+  background: var(--xc-surface);
+  color: var(--xc-ink);
+  font-family: var(--xc-font);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sr-cursor {
+    transition: none;
+  }
+  .sr-draw,
+  .sr-draw path,
+  .sr-click {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}

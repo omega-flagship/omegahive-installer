@@ -1,0 +1,28 @@
+name: release
+
+# Publishes the Docker image only on a version tag (v1.2.3) or by hand, never on a published GitHub release: the
+# hive's installer releases are GitHub releases too (tags like mac-hive-v0.23) and must not move the image.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag to publish (run this workflow on that tag)'
+        required: true
+        type: string
+      move_latest:
+        description: 'Move latest to this tag'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  release:
+    uses: ./.github/workflows/common.yml
+    with:
+      publish_docker: true
+      tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
+      move_latest: ${{ github.event_name != 'workflow_dispatch' || inputs.move_latest }}
+    secrets: inherit

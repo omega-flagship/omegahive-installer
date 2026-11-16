@@ -1,0 +1,5 @@
+(SkillCatalog "send-channel channel chat message - send text through a mounted channel")
+(SkillCatalog "read-channel channel chat - read messages from a mounted channel")
+(SkillCatalog "list-channel-inbox channel - list inbox state for a mounted channel")
+(SkillCatalog "send-whatsapp-mention-to chat phone message - WhatsApp-specific mention extension")
+(SkillHelp channels "Modules declare Channel, ChannelCapability, Provides, RuntimeDependency, RuntimeState, and TraceWrites atoms.")

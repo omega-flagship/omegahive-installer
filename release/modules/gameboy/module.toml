@@ -1,0 +1,41 @@
+id = "omegaclaw.simulation.gameboy"
+kind = "simulation"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+default_enabled = false
+
+provides = [
+  "simulation:gameboy",
+  "skill:gb-status",
+  "skill:gb-load",
+  "skill:gb-observe",
+  "skill:gb-step",
+  "skill:gb-screenshot",
+  "skill:gb-save-state",
+  "skill:gb-stop",
+  "skill:gb-load-state",
+  "skill:gb-last-trace",
+]
+
+requires = [
+  "python>=3.10",
+  "pyboy>=2",
+  "pillow>=10",
+]
+
+[env]
+OMEGACLAW_GAMEBOY_ROM_DIR = { required = false, runtime_state = true }
+
+[trace]
+writes = [
+  "GameBoyLoaded",
+  "GameBoyObserved",
+  "GameBoyActionTaken",
+  "GameBoyScreenshotSaved",
+  "GameBoyStateSaved",
+  "GameBoyStateLoaded",
+  "GameBoyStopped",
+]

@@ -1,0 +1,31 @@
+id = "omegaclaw.channel.whatsapp"
+kind = "channel"
+version = "0.1.0"
+entrypoint = "entry.metta"
+catalog = "catalog.metta"
+signatures = "signatures.metta"
+optional = true
+
+provides = [
+  "channel:whatsapp",
+  "skill:send-channel",
+  "skill:read-channel",
+  "skill:list-channel-inbox",
+  "skill:send-whatsapp-mention-to",
+]
+
+requires = [
+  "python>=3.10",
+  "node>=20",
+]
+
+[env]
+OMEGACLAW_WA_PORT = { required = false }
+OMEGACLAW_WA_AUTH_DIR = { required = false, runtime_state = true }
+
+[trace]
+writes = [
+  "ChannelMessageReceived",
+  "ChannelMessageSent",
+  "ChannelReadStateChanged",
+]

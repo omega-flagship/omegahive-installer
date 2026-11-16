@@ -1,0 +1,11 @@
+[submodule "third_party/Omega"]
+	path = third_party/Omega
+	url = https://github.com/singnet/Omega.git
+[submodule "third_party/iter"]
+	path = third_party/iter
+	url = https://github.com/patham9/iter.git
+	branch = omega
+[submodule "third_party/iter-metta"]
+	path = third_party/iter-metta
+	url = https://github.com/patham9/iter.git
+	branch = metta

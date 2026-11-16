@@ -1,0 +1,5 @@
+; look facts the story may name (standing in for omega-mark.metta's env/behaviour facts)
+(look-env cosmos 0.8)
+(look-env bush 1.2)
+(look-env cake 1.5)
+(look-env neonfur 2.0)

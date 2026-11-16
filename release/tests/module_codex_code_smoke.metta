@@ -1,0 +1,10 @@
+!(import! &self (library lib_import))
+!(import_prolog_functions_from_file ./repos/OmegaClaw-Core/hive/runtime/register.pl (register-hive-core))
+!(register-hive-core)
+!(import! &self (library OmegaClaw-Core modules/codex_code/entry.metta))
+
+!(println! (eval (codex-code-status)))
+!(println! (eval (codex-code-atoms)))
+!(println! (eval (codex-code-containment-check)))
+!(println! (match &self (Provides omegaclaw.coding.codex $thing) $thing))
+!(println! (match &self (UsesModel codex-code $model) $model))

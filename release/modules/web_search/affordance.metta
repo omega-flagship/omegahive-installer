@@ -1,0 +1,15 @@
+(SkillTopic "web-search" "search")
+(SkillTopic "web-search" "current-info")
+(SkillCardLine "web-search" "web-search query - search current external information through the hive")
+(Risk "web-search" "external-network")
+(Effect "web-search" "external-information-observed")
+
+(SkillTopic "web-fetch" "web")
+(SkillTopic "web-fetch" "current-info")
+(SkillCardLine "web-fetch" "web-fetch url - read one https page through the hive; cite its URL and fetch time")
+(Risk "web-fetch" "external-network")
+(Effect "web-fetch" "external-information-observed")
+
+(SkillTopic "web-search" "web-search")
+(SkillTopic "web-fetch" "web-fetch")
+(SkillTopic "search" "search")

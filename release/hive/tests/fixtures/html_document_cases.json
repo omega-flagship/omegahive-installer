@@ -1,0 +1,22 @@
+{
+ "_about": "Saved texts the hive treats as HTML documents (served as a view when the person asks) and texts it keeps as text. Read by hive/tests/test_artifact_views.py and hive/ui/src/features/views/views.test.ts, so the server's and the page's rule cannot drift apart.",
+ "document": [
+  "<!doctype html><p>",
+  "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01//EN\">",
+  "\ufeff\n\t <html lang=en>",
+  "<html>",
+  "<HTML\n>",
+  "  <!doctype html>\n<h1>Day 1</h1>"
+ ],
+ "text": [
+  "",
+  "Day 1",
+  "<b>Note</b>",
+  "<!doctype htmlx>",
+  "<htmlx>",
+  "<!-- c --> plain",
+  "x <html>",
+  "<head>",
+  "Day 1: the north bank; <b>lunch</b> at the weir"
+ ]
+}
