@@ -57,7 +57,8 @@ class BootstrapTests(unittest.TestCase):
     def owner(self):
         config = {"port": 8700, "app_pins": {}, "plugin_dirs": [], "studio_maker_template": None}
         hello = {"ok": True, "local_owner": True, "pid": 123, "port": 8700,
-                 "instance": "instance", "owner": "user:u_test"}
+                 "instance": "instance", "owner": "user:u_test",
+                 "preflight": {"status": "incomplete", "minds": True, "tools": False, "reason": "tools unverified"}}
         control = SimpleNamespace(loader_agreement=Mock(), wait_for_hello=Mock(return_value=(hello, 123)),
                                   exe_matches=Mock(return_value=True), listener_matches=Mock(return_value=True))
         return config, hello, control
@@ -92,6 +93,17 @@ class BootstrapTests(unittest.TestCase):
             getattr(control, name).return_value = False
             with self.assertRaises(bootstrap.Refused):
                 bootstrap.verify_owner(control, config, Path("/home/test"))
+
+    def test_hive_whose_preflight_refuses_minds_fails_with_its_reason(self):
+        reason = "sandbox checks failed: mind.userns"
+        for preflight in ({"status": "fail", "minds": False, "tools": False, "reason": reason}, None, {"minds": "yes"}):
+            config, hello, control = self.owner()
+            hello["preflight"] = preflight
+            with self.subTest(preflight=preflight), self.assertRaises(bootstrap.MindsRefused) as caught:
+                bootstrap.verify_owner(control, config, Path("/home/test"))
+            message = bootstrap.failure_message(caught.exception)
+            self.assertTrue(message.startswith("Your hive started, but its minds can't run in their sandbox"))
+            self.assertEqual(reason in message, preflight is not None and preflight.get("reason") == reason)
 
 
 if __name__ == "__main__":

@@ -35,9 +35,17 @@ The final r3 archive still needs its own exact inventory before release. Require
 must match that tree; missing/different modules refuse. Nothing is injected into
 or substituted for the selected release tree to make this condition pass.
 
-Only the fixed package and linger commands are elevated. Each may prompt through the controlling terminal; passwords never enter Python or the install log. Package configuration is noninteractive and needrestart is list-only for that command, without changing system policy. There are no root
+Only the fixed package and linger commands are elevated, plus two more where AppArmor restricts unprivileged user namespaces (Ubuntu 23.10 and later, on by default from 24.04). Each may prompt through the controlling terminal; passwords never enter Python or the install log. Package configuration is noninteractive and needrestart is list-only for that command, without changing system policy. There are no root
 application folders, builder accounts, global pip changes, global loader edits
-or privileged service files. Runtime archives are SHA256 checked before use;
+or privileged service files. On a restricted host the one root-owned file is
+`/etc/apparmor.d/omegahive-mind-launcher-<uid>`: the hive starts its mind launcher
+(`hive/supervisor/landlock.py`) by its own path, and this profile attaches to that
+exact path in the account's release, granting only `userns`, the same shape as
+`deploy/apparmor/omegahive-mind-launcher` for a server release. `/usr/bin/install`
+puts it there and `apparmor_parser -r` loads it; apparmor.service loads it again at
+boot. The plain `unshare` probe is skipped there, since only the launcher is
+granted; the hive's own start-time sandbox preflight must then report that minds
+can run, or `bootstrap.py` fails the install. Runtime archives are SHA256 checked before use;
 CPython's exact python-build-standalone archive is pinned separately from uv.
 uv creates the private environment and syncs the hash-locked closure of the six
 Hive base roots plus the explicitly reviewed Janus bridge and every other
@@ -225,7 +233,7 @@ Defaults!/usr/bin/apt-get env_keep += "DEBIAN_FRONTEND=noninteractive NEEDRESTAR
 Validate policy edits with `visudo`. This does not authorize apt by itself and
 needs neither unrestricted `env` execution nor a broad `SETENV` grant. The installer
 never edits sudoers or silently drops the noninteractive package settings when a
-restricted policy refuses them. CI uses exact apt and linger argument lists.
+restricted policy refuses them. CI uses exact apt, linger and launcher-profile argument lists.
 
 Group/world-writable paths remain refused, including Ubuntu's commonly created
 0775 `~/.config`. For user-owned paths the error prints a shell-quoted

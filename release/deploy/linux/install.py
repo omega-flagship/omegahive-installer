@@ -1,7 +1,8 @@
 """Purpose: install a public Hive release and its private runtime for one unprivileged Linux user.
 
 The release catalogue must be complete and ready before any privileged action.
-Only the apt phase may use sudo. All application/runtime work is per-user.
+Only the system setup phase may use sudo: packages, linger and, where AppArmor restricts user namespaces,
+the mind launcher's profile. All application/runtime work is per-user.
 """
 from __future__ import annotations
 
@@ -37,6 +38,13 @@ APT = ("ca-certificates", "curl", "git", "build-essential", "cmake", "ninja-buil
        "pkg-config", "libssl-dev", "libgmp-dev", "libedit-dev", "libpcre2-dev",
        "libyaml-dev", "zlib1g-dev", "libarchive-dev", "sqlite3", "xz-utils", "acl", "util-linux",
        "dbus-user-session", "xdg-utils", "procps")
+SUPPORTED_UBUNTU = ("22.04", "24.04")
+# Ubuntu 23.10 and later (on by default from 24.04) let a program create a user namespace only when its AppArmor
+# profile grants `userns`; 22.04's kernels have no such file. rootlesskit reads the same file (pkg/parent/warn.go).
+USERNS_RESTRICTION = P("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
+APPARMOR_PROFILES = P("/etc/apparmor.d")
+APPARMOR_PARSER = "/usr/sbin/apparmor_parser"
+PATH_CHARACTERS = "Your installation path can use only letters, numbers, dots, underscores, hyphens and slashes."
 HOSTS = {"github.com", "nodejs.org", "files.pythonhosted.org", "www.swi-prolog.org",
          "download.swi-prolog.org", "astral.sh", "releases.astral.sh"}
 UNIT = "omegahive.service"
@@ -567,16 +575,55 @@ def preflight(home, minimum):
     for line in P("/etc/os-release").read_text().splitlines():
         if "=" in line:
             key, value = line.split("=", 1); release[key] = value.strip('"')
-    need(release.get("ID") == "ubuntu" and release.get("VERSION_ID") == "22.04",
-         "This installer supports Ubuntu 22.04. Please use that release for this preview.")
+    need(release.get("ID") == "ubuntu" and release.get("VERSION_ID") in SUPPORTED_UBUNTU,
+         "This installer supports Ubuntu 22.04 and 24.04. Please use one of those releases for this preview.")
     arch = platform.machine(); need(arch in {"x86_64", "aarch64"}, "This preview supports x86_64 and arm64 Ubuntu.")
     need(shutil.disk_usage(home).free >= minimum,
          "OmegaHive needs about " + str((minimum + 1024**3 - 1) // 1024**3)
          + " GB free in your home folder. Please free some space, then run the installer again.")
     libc = ctypes.CDLL(None, use_errno=True)
     abi = libc.syscall(ctypes.c_long(444), None, ctypes.c_size_t(0), ctypes.c_uint32(1))
-    need(abi >= 1, "This computer's Linux can't keep your hive's helpers safely apart (it needs a feature called Landlock). Please use the standard Ubuntu 22.04 kernel.")
+    need(abi >= 1, "This computer's Linux can't keep your hive's helpers safely apart (it needs a feature called Landlock). Please use Ubuntu's standard kernel.")
     return arch
+
+
+def userns_restricted():
+    """Whether AppArmor lets only programs whose profile grants `userns` create user namespaces here."""
+    try:
+        return USERNS_RESTRICTION.read_text().strip() == "1"
+    except FileNotFoundError:
+        return False
+
+
+def packages(restricted):
+    """The fixed package set; where AppArmor restricts user namespaces, also its tools, which load the launcher's profile."""
+    return APT + (("apparmor",) if restricted else ())
+
+
+def plain_path_text(path):
+    """The path as text, refused unless it is plain enough to stand unquoted in a systemd unit and an AppArmor rule."""
+    text = str(path)
+    need(re.fullmatch(r"/[A-Za-z0-9._/-]+", text) is not None, PATH_CHARACTERS)
+    return text
+
+
+def launcher_profile_name(uid):
+    return "omegahive-mind-launcher-" + str(int(uid))
+
+
+def launcher_profile(uid, launcher):
+    """The AppArmor profile that lets this account's mind launcher set up the namespaces each mind runs in.
+
+    The hive starts the launcher by its own path (hive/supervisor/sandbox.py, launcher()), so the profile attaches
+    to that one file, as deploy/apparmor/omegahive-mind-launcher does for a server release and as rootlesskit's hint
+    does for a binary in a home folder. It grants only `userns` and stays unconfined otherwise: the mind's boundary is
+    still Landlock, seccomp and the namespaces, and the account gets back what every Ubuntu 22.04 account has."""
+    name = launcher_profile_name(uid)
+    text = ("# Purpose: let OmegaHive's mind launcher for uid " + str(int(uid)) + " set up the user namespace each mind runs in.\n"
+            "abi <abi/4.0>,\ninclude <tunables/global>\n\n"
+            "profile " + name + " " + plain_path_text(launcher) + " flags=(unconfined) {\n"
+            "  userns,\n\n  include if exists <local/" + name + ">\n}\n")
+    return name, text
 
 
 def clean_env(home, path):
@@ -960,7 +1007,8 @@ class Installer:
     def sudo(self, argv, *, timeout, package_environment=False):
         assignments = (["DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=l"]
                        if package_environment else [])
-        need(not package_environment or argv == ["/usr/bin/apt-get", "install", "-y", "--no-install-recommends", *APT],
+        need(not package_environment or any(argv == ["/usr/bin/apt-get", "install", "-y", "--no-install-recommends", *packages(r)]
+                                            for r in (False, True)),
              "Package environment is only allowed for the fixed package installation.")
         # The shell wrapper consumes stdin, and run() deliberately detaches each
         # child session. Give sudo its own terminal fd; never read the password.
@@ -987,18 +1035,33 @@ class Installer:
             finally:
                 termios.tcsetattr(terminal, termios.TCSAFLUSH, saved)
 
-    def apt(self):
+    def apt(self, runtime):
+        """Every privileged step, each one fixed command: packages, linger and, where AppArmor restricts user
+        namespaces, the mind launcher's profile, installed and loaded. Returns whether that profile was loaded."""
+        restricted = userns_restricted()
+        if restricted:
+            # Written and checked before the first password prompt, so an unusable path stops before any system change.
+            name, text = launcher_profile(os.getuid(), runtime / "app/hive/supervisor/landlock.py")
+            source = runtime / "launcher.apparmor"; write_new(source, text.encode())
         # Detached sudo sessions cannot reliably share cached authentication.
         # Each fixed command may prompt; do not weaken sudo policy to avoid it.
-        print("OmegaHive needs permission to add standard Ubuntu packages and keep running when you log out. "
-              "You may be asked for your password for each of the three system setup steps.", flush=True)
+        print("OmegaHive needs permission to add standard Ubuntu packages"
+              + (", let its minds start in their sandbox" if restricted else "")
+              + " and keep running when you log out. You may be asked for your password for each of the "
+              + ("five" if restricted else "three") + " system setup steps.", flush=True)
         self.sudo(["/usr/bin/apt-get", "update"], timeout=600)
         # Package hooks must not ask hidden questions through logged stdout.
         # Report pending restarts; leave host service restarts to its operator.
-        self.sudo(["/usr/bin/apt-get", "install", "-y", "--no-install-recommends", *APT],
+        self.sudo(["/usr/bin/apt-get", "install", "-y", "--no-install-recommends", *packages(restricted)],
                   timeout=900, package_environment=True)
         # Linger keeps this user's own service manager running after logout and at boot.
         self.sudo(["/usr/bin/loginctl", "enable-linger", linger_user()], timeout=60)
+        if restricted:
+            # /etc/apparmor.d is what apparmor.service loads at boot, before linger starts this account's hive.
+            target = str(APPARMOR_PROFILES / name)
+            self.sudo(["/usr/bin/install", "-o", "root", "-g", "root", "-m", "0644", str(source), target], timeout=60)
+            self.sudo([APPARMOR_PARSER, "-r", target], timeout=120)
+        return restricted
 
     def install(self):
         # Check existing launch/service ancestors before creating progress or using sudo.
@@ -1059,8 +1122,10 @@ class Installer:
                     "files": {row["path"]: row["sha256"] for row in spec["files"]}}
                 plugins.append(str(folder))
             # No sudo occurs until the complete source/module/app inventories have matched.
-            self.apt()
-            self.run(["/usr/bin/unshare", "--user", "--map-root-user", "--mount", "--net", "--pid", "--fork", "/usr/bin/true"], timeout=10)
+            if not self.apt(runtime):
+                # Where AppArmor restricts user namespaces only the launcher's profile grants one, so this plain probe
+                # can't pass there; the hive's own start-time preflight, which bootstrap.py requires, proves the launcher.
+                self.run(["/usr/bin/unshare", "--user", "--map-root-user", "--mount", "--net", "--pid", "--fork", "/usr/bin/true"], timeout=10)
             uvroot = runtime / "runtime/uv"
             extract_tool(self.fetch(selected["uv"]), uvroot)
             uv = uvroot / "uv"
@@ -1208,8 +1273,7 @@ class Installer:
             if key in {"PYTHON", "SERVE", "RUNTIME"}: value = value.replace("$", "$$")
             quoted = quote(value)
             if key == "WORKDIR":
-                need(re.fullmatch(r"/[A-Za-z0-9._/-]+", value) is not None,
-                     "Your installation path can use only letters, numbers, dots, underscores, hyphens and slashes.")
+                plain_path_text(value)
             body = body.replace("@" + key + "@", value if key == "WORKDIR" else quoted)
         need(not re.search("@[A-Z_]+@", body), "The service template is incomplete.")
         owned_file(self.home, "unit", body.encode())
@@ -1243,7 +1307,7 @@ def manage_locked(command, home, json_output=False):
     if incomplete and command == "uninstall":
         recover_partial(home)
         print("OmegaHive is removed. Your conversations were kept in ~/.local/share/omegahive/data")
-        print(LINGER_NOTE + pwd.getpwuid(os.getuid()).pw_name)
+        print_removal_notes()
         return 0
     if incomplete:
         need(command in {"status", "stop", "tunnel"} and present(root / "installation-state.json"),
@@ -1304,7 +1368,7 @@ def manage_locked(command, home, json_output=False):
         plain(data, directory=True); shutil.rmtree(data)
     print("OmegaHive is removed, with all its data." if answer == "DELETE"
           else "OmegaHive is removed. Your conversations were kept in ~/.local/share/omegahive/data")
-    print(LINGER_NOTE + pwd.getpwuid(os.getuid()).pw_name)
+    print_removal_notes()
     return 0
 
 
@@ -1316,6 +1380,16 @@ def linger_user():
 
 LINGER_NOTE = ("Your account still keeps background services running after you log out. "
                "To turn that off: sudo loginctl disable-linger ")
+APPARMOR_NOTE = ("Your account's mind launcher may still set up its own sandboxes on this computer. "
+                 "To withdraw that: sudo " + APPARMOR_PARSER + " -R {profile} && sudo rm {profile}")
+
+
+def print_removal_notes():
+    """What uninstall leaves for the account's administrator, since only sudo can undo it."""
+    print(LINGER_NOTE + pwd.getpwuid(os.getuid()).pw_name)
+    profile = APPARMOR_PROFILES / launcher_profile_name(os.getuid())
+    if profile.exists():
+        print(APPARMOR_NOTE.format(profile=profile))
 
 
 def lock_installation(home):

@@ -61,7 +61,10 @@ Render `omegahive.service.in` to
 `$HOME/.config/systemd/user/omegahive.service`. No root system unit, User/Group
 creation. The single privileged phase also runs exactly `sudo -n /usr/bin/loginctl enable-linger <user>` (user from
 the kernel uid) so the user manager, and with it the hive, keeps running after logout and starts at boot. Uninstall
-leaves linger on (other user services may rely on it), runs no sudo, and prints the one `disable-linger` command. Restart is off for first L0 acceptance; the unit
+leaves linger on (other user services may rely on it), runs no sudo, and prints the one `disable-linger` command. Where
+AppArmor restricts unprivileged user namespaces, the same phase installs `/etc/apparmor.d/omegahive-mind-launcher-<uid>`
+(only `userns`, attached to this account's launcher path) with `/usr/bin/install -o root -g root -m 0644` and loads it
+with `/usr/sbin/apparmor_parser -r`; uninstall leaves it and prints the two commands that withdraw it. Restart is off for first L0 acceptance; the unit
 retains `KillMode=control-group`,30second stop,umask0077 and no core dumps.
 
 Exactly six placeholders exist: PYTHON is the named descriptor Python, SERVE

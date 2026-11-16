@@ -1,4 +1,4 @@
-"""Purpose: verify the installed public hive's named local owner without creating apps, minds or model calls."""
+"""Purpose: verify the installed public hive's named local owner and that its minds can run in their sandbox, without creating apps, minds or model calls."""
 from __future__ import annotations
 
 import argparse
@@ -17,6 +17,10 @@ CONTROL_PIN = (26945, "1d9a6909c72106ac42bba4758b7a1dc9404fb59201f85a928b8b282ac
 
 class Refused(Exception):
     pass
+
+
+class MindsRefused(Refused):
+    """The hive started, but its own start-time sandbox preflight refuses every mind on this computer."""
 
 
 def require(value, reason="The installed hive could not be verified."):
@@ -86,6 +90,13 @@ def verify_owner(control, config, home):
             and type(hello.get("instance")) is str and type(hello.get("owner")) is str
             and re.fullmatch(r"user:u_[A-Za-z0-9_-]+", hello["owner"]))
     require(control.exe_matches(config, hello, home, pid) and control.listener_matches(config, hello))
+    # The hive ran its sandbox preflight before it answered (hive/core/app.py lifespan): minds must have passed, or
+    # every mind would be refused. Tools are not required: this release has no tool runtime.
+    preflight = hello.get("preflight")
+    if not (type(preflight) is dict and preflight.get("minds") is True):
+        reason = preflight.get("reason") if type(preflight) is dict else None
+        raise MindsRefused("Your hive started, but its minds can't run in their sandbox on this computer"
+                           + (": " + reason if type(reason) is str and reason else "") + ".")
 
 
 def bootstrap(runtime):
@@ -112,6 +123,8 @@ def main():
 def failure_message(error=None):
     if error is not None and type(error).__name__ == "Refused" and str(error) == "control_reply_timeout":
         return "Final setup failed: Hive readiness timed out. Check omegahive status and journalctl --user -u omegahive.service. Rerun this installer after the service is healthy."
+    if error is not None and type(error).__name__ == "MindsRefused":
+        return str(error) + " Check journalctl --user -u omegahive.service, then rerun this installer."
     return "The installed hive could not confirm its local owner. Check omegahive status and the user-service journal."
 
 

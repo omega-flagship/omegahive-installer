@@ -7,20 +7,36 @@ import pathlib
 import pwd
 import re
 import subprocess
+import time
 import urllib.error
 import urllib.request
 
 
+def redacted(text):
+    """Text with every one-use sign-in fragment removed."""
+    return re.sub(r"local-signin#[A-Za-z0-9_-]+", "local-signin#<redacted>", text)
+
+
 def redact(path):
     """Print installer diagnostics with all one-use sign-in fragments removed."""
-    text = pathlib.Path(path).read_text(errors="replace")
-    print(re.sub(r"local-signin#[A-Za-z0-9_-]+", "local-signin#<redacted>", text), end="")
+    print(redacted(pathlib.Path(path).read_text(errors="replace")), end="")
+
+
+def until(predicate, seconds):
+    """Poll a fast local state change (a session appearing, a unit becoming active) for at most `seconds`."""
+    end = time.monotonic() + seconds
+    while True:
+        value = predicate()
+        if value or time.monotonic() >= end:
+            return value
+        time.sleep(0.5)
 
 
 def verify(user, output):
-    """Use the installer's public commands and browser exchange before and after a service-manager restart."""
+    """Use the installer's public commands and browser exchange through hive and user-manager restarts and a logout."""
     account = pwd.getpwnam(user)
     home = pathlib.Path(account.pw_dir)
+    manager = f"user@{account.pw_uid}.service"
     env = ["env", f"XDG_RUNTIME_DIR=/run/user/{account.pw_uid}"]
     cli = str(home / ".local/bin/omegahive")
     facts = {"user": user, "checks": []}
@@ -29,11 +45,34 @@ def verify(user, output):
         return subprocess.run(["sudo", "-iu", user, *env, *argv], check=True,
                               capture_output=True, text=True).stdout
 
-    def check(name, value):
+    def check(name, value, detail=None):
         if not value:
-            raise RuntimeError(f"Linux smoke check failed: {name}")
+            raise RuntimeError(f"Linux smoke check failed: {name}" + (f": {detail}" if detail else ""))
         facts["checks"].append(name)
         print(name + ": passed", flush=True)
+
+    def diagnose(title, *argv):
+        done = subprocess.run(list(argv), capture_output=True, text=True)
+        print(f"--- {title} (exit {done.returncode}) ---\n" + redacted(done.stdout + done.stderr), flush=True)
+
+    def system(*argv):
+        """A root systemctl or loginctl step; on failure the user manager's own account of why is printed first."""
+        done = subprocess.run(list(argv), capture_output=True, text=True)
+        if done.returncode != 0:
+            print(redacted(done.stdout + done.stderr), flush=True)
+            diagnose("manager status", "systemctl", "status", manager, "--no-pager", "-l", "-n", "40")
+            diagnose("manager journal", "journalctl", "-b", "-u", manager, "--no-pager", "-n", "120", "-o", "short-precise")
+            diagnose("account journal", "journalctl", "-b", f"_UID={account.pw_uid}", "--no-pager", "-n", "80", "-o", "short-precise")
+            diagnose("login state", "loginctl", "user-status", user, "--no-pager")
+            raise RuntimeError(f"Linux smoke step failed: {' '.join(argv)} exited {done.returncode}")
+
+    def sessions():
+        return subprocess.check_output(["loginctl", "show-user", user, "-p", "Sessions", "--value"], text=True).split()
+
+    def hive_state():
+        done = subprocess.run(["sudo", "-iu", user, *env, "systemctl", "--user", "is-active", "omegahive.service"],
+                              capture_output=True, text=True)
+        return done.stdout.strip()
 
     def signin():
         opened = command(cli, "open")
@@ -66,6 +105,12 @@ def verify(user, output):
             version = json.load(response)["version"]
         check("installed hive reports v0.33", re.search(r"\bv0\.33\b", version) is not None)
         facts["version"] = version
+        # The hive's start-time preflight decides whether minds may start (hive/supervisor/sandbox.py report()).
+        settings = urllib.request.Request("http://127.0.0.1:8700/api/settings", headers=headers)
+        with opener.open(settings) as response:
+            sandbox = json.load(response)["mind_sandbox"]
+        check("minds can start in their sandbox", sandbox.get("state") == "on", sandbox.get("summary"))
+        facts["mind_sandbox"] = sandbox.get("summary")
         with opener.open(urllib.request.Request("http://127.0.0.1:8700/", headers=headers)) as response:
             check("web UI opens", response.status == 200 and b"<html" in response.read().lower())
         return {key: identity[key] for key in ("principal", "kind", "role", "person_kind", "local_operator")}
@@ -78,11 +123,22 @@ def verify(user, output):
         check("status is available", bool(json.loads(command(cli, "status", "--json"))))
         command("systemctl", "--user", "restart", "omegahive.service")
         check("owner survives hive restart", signin() == first)
-        sessions = subprocess.check_output(["loginctl", "show-user", user, "-p", "Sessions", "--value"], text=True).split()
-        for session in sessions:
-            subprocess.run(["loginctl", "terminate-session", session], check=True)
-        check("hive survives logout", command("systemctl", "--user", "is-active", "omegahive.service").strip() == "active")
-        subprocess.run(["systemctl", "restart", f"user@{account.pw_uid}.service"], check=True)
+        # A real login session (su's PAM stack registers one with logind), then every session ended, as at logout.
+        login = subprocess.Popen(["su", "-l", user, "-c", "exec sleep 600"], stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        check("a login session is open", until(sessions, 30), "logind registered no session for su -l")
+        ended = sessions()
+        for session in ended:
+            system("loginctl", "terminate-session", session)
+        login.wait()
+        facts["sessions_ended"] = len(ended)
+        check("every login session ended", until(lambda: not sessions(), 30), " ".join(sessions()))
+        check("hive survives logout", hive_state() == "active")
+        # A reboot, as far as one runner can show it: the manager stopped, then started the way linger starts it at
+        # boot, and the hive must come up by itself before anyone runs omegahive open.
+        system("systemctl", "stop", manager)
+        system("systemctl", "start", manager)
+        check("hive starts with the user manager", until(lambda: hive_state() == "active", 60), hive_state())
         check("owner survives user-manager restart", signin() == first)
         facts["passed"] = True
     finally:

@@ -324,13 +324,75 @@ class InstallerTests(unittest.TestCase):
         commands = []
         instance = install.Installer(Path('/unused'), {}, Path('/unused-home'))
         instance.sudo = lambda argv, **kwargs: commands.append((argv, kwargs))
-        with patch.object(install, 'linger_user', return_value='fresh-user'):
-            instance.apt()
+        with patch.object(install, 'linger_user', return_value='fresh-user'), \
+             patch.object(install, 'userns_restricted', return_value=False):
+            self.assertFalse(instance.apt(Path('/unused-runtime')))
         self.assertEqual(commands[0], (['/usr/bin/apt-get', 'update'], {'timeout': 600}))
         self.assertEqual(commands[1][1], {'timeout': 900, 'package_environment': True})
         self.assertEqual(commands[1][0], ['/usr/bin/apt-get', 'install', '-y', '--no-install-recommends', *install.APT])
         self.assertEqual(commands[2], (['/usr/bin/loginctl', 'enable-linger', 'fresh-user'], {'timeout': 60}))
         self.assertEqual(len(commands), 3)
+
+    def test_apt_loads_the_launcher_profile_where_apparmor_restricts_user_namespaces(self):
+        with tempfile.TemporaryDirectory() as name:
+            runtime = Path(name).resolve() / 'releases/test-1'; runtime.mkdir(parents=True)
+            commands = []
+            instance = install.Installer(Path('/unused'), {}, Path('/unused-home'))
+            instance.sudo = lambda argv, **kwargs: commands.append((argv, kwargs))
+            with patch.object(install, 'linger_user', return_value='fresh-user'), \
+                 patch.object(install, 'userns_restricted', return_value=True), \
+                 patch.object(install.os, 'getuid', return_value=1002):
+                self.assertTrue(instance.apt(runtime))
+            source, target = runtime / 'launcher.apparmor', '/etc/apparmor.d/omegahive-mind-launcher-1002'
+            self.assertEqual([argv for argv, _kwargs in commands], [
+                ['/usr/bin/apt-get', 'update'],
+                ['/usr/bin/apt-get', 'install', '-y', '--no-install-recommends', *install.APT, 'apparmor'],
+                ['/usr/bin/loginctl', 'enable-linger', 'fresh-user'],
+                ['/usr/bin/install', '-o', 'root', '-g', 'root', '-m', '0644', str(source), target],
+                [install.APPARMOR_PARSER, '-r', target]])
+            self.assertTrue(commands[1][1]['package_environment'])
+            text = source.read_text()
+            launcher = runtime / 'app/hive/supervisor/landlock.py'
+            self.assertTrue(text.startswith('# Purpose: '))
+            self.assertIn('abi <abi/4.0>,\ninclude <tunables/global>\n', text)
+            self.assertIn('profile omegahive-mind-launcher-1002 ' + str(launcher) + ' flags=(unconfined) {\n  userns,\n', text)
+            self.assertIn('include if exists <local/omegahive-mind-launcher-1002>', text)
+            self.assertEqual(source.stat().st_mode & 0o777, 0o600)
+
+    def test_unplain_launcher_path_stops_before_any_password_prompt(self):
+        with tempfile.TemporaryDirectory() as name:
+            runtime = Path(name).resolve() / 'release {one}'; runtime.mkdir()
+            commands = []
+            instance = install.Installer(Path('/unused'), {}, Path('/unused-home'))
+            instance.sudo = lambda argv, **kwargs: commands.append(argv)
+            with patch.object(install, 'userns_restricted', return_value=True), \
+                 self.assertRaisesRegex(install.Refused, 'installation path can use only'):
+                instance.apt(runtime)
+            self.assertEqual(commands, [])
+            self.assertFalse((runtime / 'launcher.apparmor').exists())
+
+    def test_userns_restriction_reads_the_apparmor_switch(self):
+        with tempfile.TemporaryDirectory() as name:
+            switch = Path(name) / 'apparmor_restrict_unprivileged_userns'
+            with patch.object(install, 'USERNS_RESTRICTION', switch):
+                self.assertFalse(install.userns_restricted())   # 22.04's kernels have no switch
+                switch.write_text('0\n'); self.assertFalse(install.userns_restricted())
+                switch.write_text('1\n'); self.assertTrue(install.userns_restricted())
+
+    def test_preflight_accepts_ubuntu_22_04_and_24_04_only(self):
+        for text, ok in (('ID=ubuntu\nVERSION_ID="22.04"\n', True), ('ID=ubuntu\nVERSION_ID="24.04"\n', True),
+                         ('ID=ubuntu\nVERSION_ID="20.04"\n', False), ('ID=ubuntu\nVERSION_ID="26.04"\n', False),
+                         ('ID=debian\nVERSION_ID="12"\n', False), ('VERSION_ID="22.04"\n', False)):
+            with self.subTest(release=text), patch.object(install.P, 'read_text', return_value=text), \
+                 patch.object(install.platform, 'machine', return_value='x86_64'), \
+                 patch.object(install.shutil, 'disk_usage', return_value=SimpleNamespace(free=10 * 1024**3)), \
+                 patch.object(install.ctypes, 'CDLL') as native:
+                native.return_value.syscall.return_value = 4
+                if ok:
+                    self.assertEqual(install.preflight(Path('/unused'), 5 * 1024**3), 'x86_64')
+                else:
+                    with self.assertRaisesRegex(install.Refused, 'supports Ubuntu 22.04 and 24.04'):
+                        install.preflight(Path('/unused'), 5 * 1024**3)
 
     def test_linger_user_comes_from_the_uid_and_refuses_odd_names(self):
         for name, ok in (('ann', True), ('l0r7demo', True), ('_svc-1', True), ('Ann', False), ('a b', False), ('-x', False), ('', False)):
@@ -716,7 +778,8 @@ class InstallerTests(unittest.TestCase):
                 install.manage('uninstall', home)
             run.assert_not_called(); self.assertEqual((runtime / 'keep').read_text(), 'unrecorded')
 
-    def test_failure_after_extraction_can_rerun_complete_workflow_without_losing_data(self):
+    def complete_workflow(self, restricted):
+        """Fail once after extraction, rerun to completion, and return every command with the hive's private root."""
         with tempfile.TemporaryDirectory() as name:
             home = Path(name); root = home / '.local/share/omegahive'; root.mkdir(parents=True, mode=0o700)
             for folder in ('data', 'cache'):
@@ -751,6 +814,7 @@ class InstallerTests(unittest.TestCase):
                 destination.mkdir(parents=True); return b'{}'
             with ExitStack() as stack:
                 stack.enter_context(patch.object(install, 'preflight', return_value='aarch64'))
+                stack.enter_context(patch.object(install, 'userns_restricted', return_value=restricted))
                 stack.enter_context(patch.object(install, 'validate_lock'))
                 stack.enter_context(patch.object(install.Installer, 'local', return_value=payload))
                 stack.enter_context(patch.object(install.Installer, 'fetch', return_value=payload))
@@ -783,6 +847,22 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual((descriptor['port'], descriptor['browser_port']), (8700, 8701))
             self.assertEqual(len(descriptor), 18)
             self.assertEqual([argv[0] for argv in commands if len(argv) > 1 and argv[1] == '-g'], [str(canonical_swipl)])
+            return commands, root, (root / 'releases/test-1/launcher.apparmor').exists()
+
+    def test_failure_after_extraction_can_rerun_complete_workflow_without_losing_data(self):
+        commands, _root, profile_written = self.complete_workflow(restricted=False)
+        self.assertIn(['/usr/bin/unshare', '--user', '--map-root-user', '--mount', '--net', '--pid', '--fork', '/usr/bin/true'], commands)
+        self.assertFalse(profile_written)
+        self.assertFalse(any(install.APPARMOR_PARSER in argv for argv in commands))
+
+    def test_restricted_userns_host_loads_the_launcher_profile_instead_of_the_plain_probe(self):
+        commands, root, profile_written = self.complete_workflow(restricted=True)
+        self.assertFalse(any(argv[:1] == ['/usr/bin/unshare'] for argv in commands))
+        self.assertTrue(profile_written)
+        target = '/etc/apparmor.d/' + install.launcher_profile_name(install.os.getuid())
+        source = root / 'releases/test-1/launcher.apparmor'
+        self.assertIn(['/usr/bin/sudo', '-S', '/usr/bin/install', '-o', 'root', '-g', 'root', '-m', '0644', str(source), target], commands)
+        self.assertIn(['/usr/bin/sudo', '-S', install.APPARMOR_PARSER, '-r', target], commands)
 
     def test_disk_refusal_names_required_gb_before_native_sandbox_check(self):
         with patch.object(install.P, 'read_text', return_value='ID=ubuntu\nVERSION_ID="22.04"\n'), \
@@ -814,9 +894,13 @@ class InstallerTests(unittest.TestCase):
     def test_password_explanation_safe_failure_copy_and_full_path_return_advice(self):
         instance = install.Installer(Path('/unused'), {}, Path('/unused-home'))
         instance.sudo = lambda *_args, **_kwargs: None
-        output = io.StringIO()
-        with redirect_stdout(output): instance.apt()
-        self.assertIn('each of the three system setup steps', output.getvalue())
+        for restricted, steps in ((False, 'three'), (True, 'five')):
+            with tempfile.TemporaryDirectory() as name, self.subTest(restricted=restricted):
+                output = io.StringIO()
+                with patch.object(install, 'userns_restricted', return_value=restricted), redirect_stdout(output):
+                    instance.apt(Path(name).resolve())
+                self.assertIn('each of the ' + steps + ' system setup steps', output.getvalue())
+                self.assertEqual('let its minds start in their sandbox' in output.getvalue(), restricted)
         source = Path(install.__file__).read_text()
         self.assertIn('Next time, open it with:  ~/.local/bin/omegahive open', source)
         self.assertIn('open a new terminal after signing out and in', source)
@@ -1222,6 +1306,7 @@ class WorkingDirectoryR13Tests(unittest.TestCase):
             data = instance.root / 'data'; data.mkdir(); (data / 'keep').write_text('retained conversation')
             output = io.StringIO()
             with patch.object(install.subprocess, 'run') as run, \
+                 patch.object(install, 'APPARMOR_PROFILES', home / 'no-apparmor-profiles'), \
                  patch.object(install.pwd, 'getpwuid', return_value=SimpleNamespace(pw_name='fixture-user')), \
                  redirect_stdout(output):
                 self.assertEqual(install.manage('uninstall', home), 0)
@@ -1231,6 +1316,23 @@ class WorkingDirectoryR13Tests(unittest.TestCase):
                 install.LINGER_NOTE + 'fixture-user'])
             self.assertEqual((data / 'keep').read_text(), 'retained conversation')
             self.assertFalse(runtime.exists())
+
+    def test_uninstall_names_how_to_withdraw_the_launcher_profile(self):
+        with tempfile.TemporaryDirectory() as name:
+            home = Path(name); _instance, _runtime = partial_fixture(home)
+            profiles = home / 'apparmor.d'; profiles.mkdir()
+            profile = profiles / install.launcher_profile_name(install.os.getuid()); profile.write_text('loaded')
+            output = io.StringIO()
+            with patch.object(install.subprocess, 'run') as run, \
+                 patch.object(install, 'APPARMOR_PROFILES', profiles), \
+                 patch.object(install.pwd, 'getpwuid', return_value=SimpleNamespace(pw_name='fixture-user')), \
+                 redirect_stdout(output):
+                self.assertEqual(install.manage('uninstall', home), 0)
+                run.assert_not_called()
+            self.assertEqual(output.getvalue().splitlines()[1:], [
+                install.LINGER_NOTE + 'fixture-user', install.APPARMOR_NOTE.format(profile=profile)])
+            self.assertIn('apparmor_parser -R ' + str(profile) + ' && sudo rm ' + str(profile), output.getvalue())
+            self.assertTrue(profile.exists())
 
 
 class InheritedAclTests(unittest.TestCase):

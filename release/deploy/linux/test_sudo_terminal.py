@@ -166,6 +166,17 @@ class TerminalTests(unittest.TestCase):
                 instance.sudo(['/usr/bin/true'], timeout=1, package_environment=True)
         run.assert_not_called()
 
+    def test_package_environment_allows_only_the_two_fixed_package_sets(self):
+        instance = install.Installer(Path('/unused'), {}, Path('/unused'))
+        base = ['/usr/bin/apt-get', 'install', '-y', '--no-install-recommends']
+        with patch('builtins.open', side_effect=OSError('no tty')), patch.object(instance, 'run') as run:
+            instance.sudo([*base, *install.packages(True)], timeout=900, package_environment=True)
+            for extra in (['apparmor-utils'], ['apparmor', 'apparmor']):
+                with self.subTest(extra=extra), self.assertRaises(install.Refused):
+                    instance.sudo([*base, *install.APT, *extra], timeout=900, package_environment=True)
+        run.assert_called_once_with(['/usr/bin/sudo', '-n', 'DEBIAN_FRONTEND=noninteractive', 'NEEDRESTART_MODE=l',
+                                     *base, *install.APT, 'apparmor'], timeout=900)
+
     def test_permission_guidance_is_specific_and_does_not_chmod(self):
         with tempfile.TemporaryDirectory() as name:
             path = Path(name) / "user's config"

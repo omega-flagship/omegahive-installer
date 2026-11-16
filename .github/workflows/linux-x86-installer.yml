@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  RELEASE_ID: linux-hive-v0.33
+
 jobs:
   baseline:
     runs-on: ubuntu-22.04
@@ -69,7 +72,7 @@ jobs:
             --base-catalogue "$RUNNER_TEMP/catalogue.json" --pins ci/linux-x86/x86_64-pins.json \
             --source-tar "$RUNNER_TEMP/inputs/source.tar.gz" --prefix "$PREFIX" \
             --commit "$(cat ci/RELEASE_COMMIT)" --tree "$(cat ci/RELEASE_TREE)" \
-            --inputs "$RUNNER_TEMP/inputs" --bundle "$RUNNER_TEMP/bundle" --release-id linux-hive-v0.33
+            --inputs "$RUNNER_TEMP/inputs" --bundle "$RUNNER_TEMP/bundle" --release-id "$RELEASE_ID"
           mkdir -p "$RUNNER_TEMP/kit"
           python3 -I -B ci/linux-x86/pack_kit.py --bundle "$RUNNER_TEMP/bundle" \
             --template release/deploy/linux/installer.sh --out "$RUNNER_TEMP/kit/omegahive-linux.sh"
@@ -115,12 +118,19 @@ jobs:
         with:
           name: omegahive-linux-v033-bundle
           path: ${{ runner.temp }}/bundle
-      - name: Fresh user with test-only package-install and linger permission
+      - name: Fresh user with test-only permission for the installer's fixed system setup commands
         run: |
           uname -a
           lsb_release -ds
+          # A fresh 24.04 computer lets only programs whose AppArmor profile grants userns create user namespaces.
+          restriction=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          printf 'AppArmor userns restriction on this runner: %s\n' "$(cat "$restriction" 2>/dev/null || echo absent)"
+          if [ "$(lsb_release -rs)" = 24.04 ]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1; fi
           sudo useradd --create-home --shell /bin/bash "$HIVE_USER"
-          printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s\n' "$HIVE_USER" "$HIVE_USER" | sudo tee /etc/sudoers.d/90-hive-ci > /dev/null
+          profile="/etc/apparmor.d/omegahive-mind-launcher-$(id -u "$HIVE_USER")"
+          source="/home/$HIVE_USER/.local/share/omegahive/releases/$RELEASE_ID/launcher.apparmor"
+          printf '%s ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/loginctl enable-linger %s, /usr/bin/install -o root -g root -m 0644 %s %s, /usr/sbin/apparmor_parser -r %s\n' \
+            "$HIVE_USER" "$HIVE_USER" "$source" "$profile" "$profile" | sudo tee /etc/sudoers.d/90-hive-ci > /dev/null
           printf 'Defaults!/usr/bin/apt-get env_keep += "DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l"\n' | sudo tee -a /etc/sudoers.d/90-hive-ci > /dev/null
           sudo chmod 0440 /etc/sudoers.d/90-hive-ci
           sudo visudo -cf /etc/sudoers.d/90-hive-ci
@@ -153,15 +163,15 @@ jobs:
           set -e
           python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/install.out"
           if [ "$code" != 0 ]; then
+            # shellcheck disable=SC2016,SC2024
+            sudo bash -c 'tail -n 150 -- "$1"/.local/share/omegahive/logs/install-*.log' bash "/home/$HIVE_USER" > "$RUNNER_TEMP/install-log.out" 2>&1 || true
+            python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/install-log.out"
             # shellcheck disable=SC2024
             sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR="/run/user/$(id -u "$HIVE_USER")" journalctl --user -u omegahive.service --no-pager -n 80 > "$RUNNER_TEMP/journal.out" 2>&1 || true
             python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/journal.out"
           fi
           exit "$code"
-      - name: Open, sign in, restart, and prove persistence after logout
-        run: |
-          sudo python3 ci/linux-x86/smoke_release.py verify "$HIVE_USER" "$RUNNER_TEMP/verification.json"
-      - name: Export the verified Ubuntu 22.04 runtime without conversations or auth data
+      - name: Export the installed Ubuntu 22.04 runtime without conversations or auth data
         if: matrix.os == 'ubuntu-22.04' && matrix.entry == 'kit'
         run: |
           mkdir -p "$RUNNER_TEMP/installed-runtime"
@@ -178,6 +188,9 @@ jobs:
         with:
           name: linux-v033-installed-runtime
           path: ${{ runner.temp }}/installed-runtime/
+      - name: Open, sign in, restart, log out, and restart the user manager
+        run: |
+          sudo python3 ci/linux-x86/smoke_release.py verify "$HIVE_USER" "$RUNNER_TEMP/verification.json"
       - name: Retain secret-free verification receipts
         if: always()
         run: |
