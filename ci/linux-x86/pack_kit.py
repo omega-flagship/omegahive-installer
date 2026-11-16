@@ -1,4 +1,4 @@
-"""Pack the one-file newcomer download from the CI bundle (test kit for local user testing, never a published release).
+"""Purpose: pack one checksum-bound public Linux download from the verified CI bundle.
 
 Takes the bundle that make_catalogue.py built and checked, marks its catalogue copy ready (the same ready=True shape
 run_install.py validates), packs it as the flat tar.gz the download expects, and fills the release's own
@@ -46,7 +46,8 @@ def main():
     with gzip.GzipFile(fileobj=out_gz, mode="wb", mtime=0, filename="") as g:
         g.write(buf.getvalue())
     raw = out_gz.getvalue()
-    assert 0 < len(raw) <= 64 * 1024**2, "bundle exceeds the download's 64 MB limit"
+    # Base64 uses four bytes per three bundle bytes; the complete script is checked after its header is bound.
+    assert 0 < len(raw) <= 3 * ((96 * 1024**2) // 4), "bundle exceeds the script's base64 capacity"
 
     template = P(a.template).read_text()
     # The marker line (real newlines) occurs once, at the very end; the Python body names it only as an escaped literal.

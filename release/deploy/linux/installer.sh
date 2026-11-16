@@ -1,5 +1,5 @@
 #!/bin/sh
-# One downloaded script. The published artifact embeds the reviewed bundle.
+# Purpose: verify and launch the public Linux release embedded in one downloaded script.
 # This Source template deliberately refuses before filesystem or sudo effects.
 set -eu
 ROOT_BOUND_RELEASE=0
@@ -40,7 +40,7 @@ def installer_environment(ambient):
     return value
 
 script, size, digest = sys.argv[1:]
-if not size.isdecimal() or not 0 < int(size) <= 64 * 1024**2 or not re.fullmatch('[a-f0-9]{64}', digest):
+if not size.isdecimal() or not 0 < int(size) <= 3 * ((96 * 1024**2) // 4) or not re.fullmatch('[a-f0-9]{64}', digest):
     refuse()
 fd = os.open(script, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
 try:
