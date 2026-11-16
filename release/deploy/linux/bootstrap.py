@@ -109,9 +109,15 @@ def main():
     bootstrap(parser.parse_args().runtime)
 
 
+def failure_message(error=None):
+    if error is not None and type(error).__name__ == "Refused" and str(error) == "control_reply_timeout":
+        return "Final setup failed: Hive readiness timed out. Check omegahive status and journalctl --user -u omegahive.service. Rerun this installer after the service is healthy."
+    return "The installed hive could not confirm its local owner. Check omegahive status and the user-service journal."
+
+
 if __name__ == "__main__":
     try:
         main()
-    except Exception:
-        print("The installed hive could not confirm its local owner. Check omegahive status and the user-service journal.", file=sys.stderr)
+    except Exception as error:
+        print(failure_message(error), file=sys.stderr)
         raise SystemExit(1)
