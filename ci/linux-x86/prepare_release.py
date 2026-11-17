@@ -57,11 +57,16 @@ def prepare(args):
     revision = json.loads((source / "core-dependency.json").read_text())["revision"]
     assert re.fullmatch("[a-f0-9]{40}", revision), "core-dependency.json pins no full revision"
     base["omega_core"] = pin(inputs / f"omega-core-{revision[:7]}.bundle")
+    # Create's Code service, the published omegacode release the hive accepts (hive/core/code.py), as the Mac zip ships it.
+    published = re.search(r'^PUBLISHED_SERVICE_RELEASE = "([a-f0-9]{64})"$', (source / "hive/core/code.py").read_text(), re.M)
+    assert published, "hive/core/code.py names no published Code service release"
+    base["code_service"] = pin(inputs / f"omegacode-{published.group(1)[:5]}.tgz")
     for name in ("install", "bootstrap"):
         shutil.copyfile(source / f"deploy/linux/{name}.py", inputs / f"{name}.py")
     pathlib.Path(args.output).write_text(json.dumps(base, indent=2, sort_keys=True) + "\n")
     print(json.dumps({"source_commit": commit, "source_tree": tree,
-                      "ui": base["ui_prebuilt"], "core_lock": pin(inputs / "core.lock"), "omega_core": base["omega_core"]}))
+                      "ui": base["ui_prebuilt"], "core_lock": pin(inputs / "core.lock"), "omega_core": base["omega_core"],
+                      "code_service": base["code_service"]}))
 
 
 if __name__ == "__main__":

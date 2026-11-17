@@ -1,0 +1,36 @@
+# Purpose: Create's Code service for one account, in the reviewed command form the hive's Code guard checks
+# (hive/core/code.py _linux_release_facts_problem), confined by the account's AppArmor profile. The installer fills
+# each placeholder with a plain absolute path; nothing here is quoted, since the guard reads ExecStart word by word.
+[Unit]
+Description=OmegaHive Create's Code service
+After=omegahive.service
+PartOf=omegahive.service
+
+[Service]
+Type=simple
+UMask=0077
+LimitCORE=0
+WorkingDirectory=@WORKDIR@
+Environment=PYTHONPATH=@RELEASE@
+Environment=HOME=@HOME@
+Environment=TMPDIR=@TMPDIR@
+Environment=PATH=/usr/bin:/bin
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Environment=GIT_CONFIG_NOSYSTEM=1
+Environment=GIT_TERMINAL_PROMPT=0
+Environment=LD_LIBRARY_PATH=@LIBPYTHON@
+UnsetEnvironment=LD_PRELOAD LD_AUDIT PYTHONHOME
+ExecStart=@PYTHON@ -B -s -m omegacode --config @CONFIG@
+NoNewPrivileges=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+AppArmorProfile=@PROFILE@
+Restart=always
+RestartSec=10
+TimeoutStopSec=10
+StandardOutput=append:@LOG@
+StandardError=append:@LOG@
+
+[Install]
+WantedBy=default.target

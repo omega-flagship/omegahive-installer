@@ -35,10 +35,18 @@ The final r3 archive still needs its own exact inventory before release. Require
 must match that tree; missing/different modules refuse. Nothing is injected into
 or substituted for the selected release tree to make this condition pass.
 
-Only the fixed package and linger commands are elevated, plus two more where AppArmor restricts unprivileged user namespaces (Ubuntu 23.10 and later, on by default from 24.04). Each may prompt through the controlling terminal; passwords never enter Python or the install log. Package configuration is noninteractive and needrestart is list-only for that command, without changing system policy. There are no root
+Only five fixed commands are elevated: the package update and install, linger, and installing and loading this
+account's one AppArmor profile file. Each may prompt through the controlling terminal; passwords never enter Python or the install log. Package configuration is noninteractive and needrestart is list-only for that command, without changing system policy. There are no root
 application folders, builder accounts, global pip changes, global loader edits
-or privileged service files. On a restricted host the one root-owned file is
-`/etc/apparmor.d/omegahive-mind-launcher-<uid>`: the hive starts its mind launcher
+or privileged service files. The one root-owned file is `/etc/apparmor.d/omegahive-<uid>`.
+It always holds the profile Create's Code service runs in (`omegahive-code-<uid>`,
+named by its user unit's `AppArmorProfile=`): a user unit's ProtectSystem and the
+rest need an unprivileged user namespace, and where Ubuntu restricts those systemd
+runs the unit without them and says nothing, so the profile confines the service
+the way the Mac's seatbelt profile does, with no user namespace. The installer
+refuses where AppArmor is off rather than run the service unconfined. Where AppArmor
+restricts unprivileged user namespaces (Ubuntu 23.10 and later, on by default from
+24.04), the file also holds `omegahive-mind-launcher-<uid>`: the hive starts its mind launcher
 (`hive/supervisor/landlock.py`) by its own path, and this profile attaches to that
 exact path in the account's release, granting only `userns`, the same shape as
 `deploy/apparmor/omegahive-mind-launcher` for a server release. `/usr/bin/install`

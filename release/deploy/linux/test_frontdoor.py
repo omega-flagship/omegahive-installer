@@ -108,7 +108,10 @@ class BoundaryTests(unittest.TestCase):
                'petta_path': '/selected/petta', 'plugin_dirs': ['/selected/plugins'],
                'app_pins': {}, 'libpython_dir': '/selected/lib', 'studio_maker_template': None,
                'default_model': 'openrouter/example/real-model', 'embedding_model': 'mock/hash',
-               'ssh_target': None}
+               'ssh_target': None,
+               'code_service': {'release': 'e' * 64, 'root': '/home/test/.local/share/omegahive/code',
+                                'config': '/home/test/.local/share/omegahive/code/config.json',
+                                'repository': '/home/test/.local/share/omegahive/repos/small-app', 'port': 8724}}
         for template in (None, 'a_1234abcd'):
             cfg['studio_maker_template'] = template
             with self.subTest(template=template), \
@@ -120,6 +123,7 @@ class BoundaryTests(unittest.TestCase):
                      'OPENAI_API_KEY': 'FAKE_SENTINEL', 'HIVE_GOOGLE_CLIENT_ID': 'FAKE_SENTINEL',
                      'LD_LIBRARY_PATH': cfg['libpython_dir']}, clear=True), \
                  mock.patch.object(serve, 'runtime', return_value=(cfg, Path('/home/test'), 'pin')), \
+                 mock.patch.object(serve, 'directory', side_effect=lambda value, private=False: Path(value)), \
                  mock.patch.object(serve.os, 'umask'), \
                  mock.patch.object(serve.os, 'chdir'), \
                  mock.patch.object(serve.os, 'execve') as execute:
@@ -137,6 +141,8 @@ class BoundaryTests(unittest.TestCase):
                 self.assertEqual(env['HIVE_ASK_CONDUCTOR_MODEL'], cfg['default_model'])
                 self.assertNotEqual(env['HIVE_DEFAULT_MODEL'], 'mock/echo')
                 self.assertEqual(env['HIVE_APP_PINS_REQUIRED'], '1')
+                self.assertEqual((env['XDG_RUNTIME_DIR'], env['HIVE_CODE_SERVICE_RELEASE'], env['HIVE_CODE_SERVICE_CONFIG'],
+                                  env['HIVE_COPY_APPLY_CLAIMS']), ('/run/user/1000', 'e' * 64, cfg['code_service']['config'], 'on'))
                 if template is None:
                     self.assertNotIn('HIVE_STUDIO_MAKER_TEMPLATE', env)
                 else:
@@ -527,15 +533,18 @@ class FixedBrowserRuntimeTests(unittest.TestCase):
         for executable in (python, swipl):
             executable.parent.mkdir(parents=True, exist_ok=True)
             executable.write_bytes(b'synthetic regular executable, never run'); executable.chmod(0o700)
-        cfg = {'schema': 'studio-linux-user-runtime/2', 'runtime_root': str(root), 'release_root': str(app),
+        code = home / '.local/share/omegahive/code'; code.mkdir(parents=True, exist_ok=True); code.chmod(0o700)
+        cfg = {'schema': 'studio-linux-user-runtime/3', 'runtime_root': str(root), 'release_root': str(app),
             'python': str(python), 'sandbox_python': str(python), 'petta_path': str(petta), 'data_dir': str(data),
             'port': 8700, 'browser_port': 8701, 'source_revision': 'a' * 40, 'plugin_dirs': [], 'app_pins': {},
             'swipl_bin': str(swipl), 'libpython_dir': None, 'studio_maker_template': None,
-            'default_model': 'openrouter/example/real', 'embedding_model': 'mock/hash', 'ssh_target': None}
+            'default_model': 'openrouter/example/real', 'embedding_model': 'mock/hash', 'ssh_target': None,
+            'code_service': {'release': 'e' * 64, 'root': str(code), 'config': str(code / 'config.json'),
+                             'repository': str(home / '.local/share/omegahive/repos/small-app'), 'port': 8724}}
         path = data.parent / 'runtime.json'
         return cfg, path
 
-    def test_both_runtime_readers_accept_the_same_closed_eighteen_key_schema(self):
+    def test_both_runtime_readers_accept_the_same_closed_nineteen_key_schema(self):
         with tempfile.TemporaryDirectory() as name:
             home = Path(name).resolve(); cfg, path = self.fixture(home)
             path.write_text(json.dumps(cfg)); path.chmod(0o600)
@@ -545,7 +554,7 @@ class FixedBrowserRuntimeTests(unittest.TestCase):
                         mock.patch.object(module.sys, 'executable', cfg['python']):
                     actual, selected_home, _ = module.runtime(str(path))
                 self.assertEqual(actual, cfg)
-                self.assertEqual(len(actual), 18)
+                self.assertEqual(len(actual), 19)
                 self.assertEqual(selected_home, home)
 
     def test_both_runtime_readers_refuse_missing_legacy_extra_or_nonfixed_ports(self):
@@ -553,6 +562,9 @@ class FixedBrowserRuntimeTests(unittest.TestCase):
             home = Path(name).resolve(); cfg, path = self.fixture(home)
             faults = [('browser_port', 8702), ('browser_port', 8700), ('browser_port', True),
                       ('port', 8701), ('port', 8702), ('port', True), ('schema', 'studio-linux-user-runtime/1'),
+                      ('schema', 'studio-linux-user-runtime/2'), ('code_service', None),
+                      ('code_service', dict(cfg['code_service'], port=8725)),
+                      ('code_service', dict(cfg['code_service'], root='/elsewhere/code')),
                       ('missing_browser_port', None), ('unexpected', 1)]
             for key, value in faults:
                 bad = dict(cfg)

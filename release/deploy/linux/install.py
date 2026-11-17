@@ -7,6 +7,7 @@ the mind launcher's profile. All application/runtime work is per-user.
 from __future__ import annotations
 
 import argparse
+import ast
 import ctypes
 import errno
 import fcntl
@@ -17,6 +18,7 @@ import pathlib
 import platform
 import pwd
 import re
+import secrets
 import selectors
 import shlex
 import shutil
@@ -38,7 +40,7 @@ CORE_ROOTS = {"fastapi", "uvicorn", "httpx", "websockets", "pytest", "pillow"}
 APT = ("ca-certificates", "curl", "git", "build-essential", "cmake", "ninja-build",
        "pkg-config", "libssl-dev", "libgmp-dev", "libedit-dev", "libpcre2-dev",
        "libyaml-dev", "zlib1g-dev", "libarchive-dev", "sqlite3", "xz-utils", "acl", "util-linux",
-       "dbus-user-session", "xdg-utils", "procps")
+       "dbus-user-session", "xdg-utils", "procps", "apparmor", "patch")
 SUPPORTED_UBUNTU = ("22.04", "24.04", "26.04")
 # A fresh Ubuntu installs its own updates soon after it starts and holds the package lock meanwhile; apt waits this long
 # for it (DPkg::Lock::Timeout) instead of failing the setup at once.
@@ -48,10 +50,19 @@ APT_LOCK_WAIT = 1800
 USERNS_RESTRICTION = P("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
 APPARMOR_PROFILES = P("/etc/apparmor.d")
 APPARMOR_PARSER = "/usr/sbin/apparmor_parser"
+# The kernel's own switch: "Y" where AppArmor confines programs, as on every standard Ubuntu install.
+APPARMOR_ENABLED = P("/sys/module/apparmor/parameters/enabled")
 PATH_CHARACTERS = "Your installation path can use only letters, numbers, dots, underscores, hyphens and slashes."
 HOSTS = {"github.com", "nodejs.org", "files.pythonhosted.org", "www.swi-prolog.org",
          "download.swi-prolog.org", "astral.sh", "releases.astral.sh"}
 UNIT = "omegahive.service"
+# Create's Code service: the user unit the hive's Code guard reads by this name (hive/core/code.py CODE_UNIT), on the
+# hive's port plus install/macos/pins.sh's CODE_PORT_OFFSET (8700 + 24), the published omegacode release's own port.
+CODE_UNIT = "omegacode.service"
+CODE_PORT = 8724
+# install/macos/setup-code.sh's adapters: they bind each hive's port and the fixed-envelope proposal-test contract.
+CODE_PATCHES = ("omegacode-port.patch", "omegacode-proposal-tests.patch")
+UNITS = (UNIT, CODE_UNIT)
 STOP = False
 BOOTSTRAP_TIMEOUT = 480  # two 180s readiness waits, 50s API work, restart and overhead
 OPEN_TIMEOUT = 210
@@ -130,7 +141,7 @@ def validate_catalogue(value):
     required = {"schema", "ready", "release_id", "source_revision", "source_tree", "min_free_bytes",
                 "core_roots", "python_version", "uv_version", "swipl_version", "ui_prebuilt",
                 "petta_commit", "platforms", "apps", "bootstrap", "module_files",
-                "default_model", "embedding_model", "ssh_target", "omega_core"}
+                "default_model", "embedding_model", "ssh_target", "omega_core", "code_service"}
     need(type(value) is dict and set(value) == required and value["schema"] == "studio-linux-user-release/2",
          "This is not an OmegaHive Linux release catalogue.")
     need(value["ready"] is True, "This installer is a review copy and has not been published yet.")
@@ -193,6 +204,12 @@ def validate_catalogue(value):
          and type(core["bytes"]) is int and 0 < core["bytes"] <= 64 * 1024**2
          and type(core["sha256"]) is str and re.fullmatch("[a-f0-9]{64}", core["sha256"]),
          "The Omega core the minds run on is not checksum-pinned.")
+    code = value["code_service"]
+    need(type(code) is dict and set(code) == {"path", "bytes", "sha256"}
+         and type(code["path"]) is str and re.fullmatch(r"omegacode-[a-f0-9]{5,64}\.tgz", code["path"])
+         and type(code["bytes"]) is int and 0 < code["bytes"] <= 64 * 1024**2
+         and type(code["sha256"]) is str and re.fullmatch("[a-f0-9]{64}", code["sha256"]),
+         "Create's Code service release is not checksum-pinned.")
     # Studio, shown as Create, is the one app package; Assist stays out of public releases (omega-flagship/omegahive#106).
     need(type(value["apps"]) is list and [app.get("id") if type(app) is dict else None for app in value["apps"]] == ["omegadesign"],
          "The public Linux release carries Studio (omegadesign) as its one app package.")
@@ -574,6 +591,36 @@ def program_digest(folder, rows):
     return "sha256:" + digest.hexdigest()
 
 
+def code_releases(app):
+    """The omegacode releases this hive accepts, read from its own hive/core/code.py without importing it: the
+    published release the kit's tarball holds, and the portable release its two adapters make of it."""
+    names = {"PUBLISHED_SERVICE_RELEASE", "PORTABLE_SERVICE_RELEASE"}
+    found = {}
+    for node in ast.parse((app / "hive/core/code.py").read_text(encoding="utf-8")).body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id in names and isinstance(node.value, ast.Constant)):
+            found[node.targets[0].id] = node.value.value
+    need(set(found) == names and all(type(v) is str and re.fullmatch("[a-f0-9]{64}", v) for v in found.values()),
+         "This release does not name the Code service release it accepts.")
+    return found["PUBLISHED_SERVICE_RELEASE"], found["PORTABLE_SERVICE_RELEASE"]
+
+
+def module_digest(package):
+    """hive/core/code.py's Code._module_digest, implemented independently as program_digest is: sha256 over sorted
+    (path relative to the package, NUL, file sha256, LF) for every .py module outside __pycache__, links refused.
+    Time: b bytes hashed, b = the package's .py bytes; one sort of its m modules."""
+    rows = []
+    for path in package.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        need(not path.is_symlink() and path.is_file(), "The Code service release contains a link.")
+        rows.append((str(path.relative_to(package)), hashlib.sha256(path.read_bytes()).hexdigest()))
+    digest = hashlib.sha256()
+    for rel, value in sorted(rows):
+        digest.update(rel.encode() + b"\0" + value.encode() + b"\n")
+    return digest.hexdigest()
+
+
 def materialize_venv_python(venv, source):
     """Keep pyvenv.cfg discovery while meeting the sandbox's plain-file rule."""
     need(source == source.resolve(strict=True), "The base Python is not canonical.")
@@ -626,18 +673,20 @@ def userns_restricted():
         return False
 
 
-def packages(restricted):
-    """The fixed package set; where AppArmor restricts user namespaces, also its tools, which load the launcher's profile."""
-    return APT + (("apparmor",) if restricted else ())
+def apparmor_enabled():
+    try:
+        return APPARMOR_ENABLED.read_text().strip() == "Y"
+    except FileNotFoundError:
+        return False
 
 
 def apt_get(*argv):
     return ["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=" + str(APT_LOCK_WAIT), *argv]
 
 
-def package_install(restricted):
+def package_install():
     """The one command the package environment may run: the fixed package set, without recommends."""
-    return apt_get("install", "-y", "--no-install-recommends", *packages(restricted))
+    return apt_get("install", "-y", "--no-install-recommends", *APT)
 
 
 def plain_path_text(path):
@@ -651,6 +700,15 @@ def launcher_profile_name(uid):
     return "omegahive-mind-launcher-" + str(int(uid))
 
 
+def code_profile_name(uid):
+    return "omegahive-code-" + str(int(uid))
+
+
+def apparmor_file_name(uid):
+    """The one /etc/apparmor.d file holding this account's OmegaHive profiles."""
+    return "omegahive-" + str(int(uid))
+
+
 def launcher_profile(uid, launcher):
     """The AppArmor profile that lets this account's mind launcher set up the namespaces each mind runs in.
 
@@ -659,11 +717,73 @@ def launcher_profile(uid, launcher):
     does for a binary in a home folder. It grants only `userns` and stays unconfined otherwise: the mind's boundary is
     still Landlock, seccomp and the namespaces, and the account gets back what every Ubuntu 22.04 account has."""
     name = launcher_profile_name(uid)
-    text = ("# Purpose: let OmegaHive's mind launcher for uid " + str(int(uid)) + " set up the user namespace each mind runs in.\n"
-            "abi <abi/4.0>,\ninclude <tunables/global>\n\n"
+    return ("# OmegaHive's mind launcher for uid " + str(int(uid)) + ": the user namespace each mind runs in.\n"
             "profile " + name + " " + plain_path_text(launcher) + " flags=(unconfined) {\n"
             "  userns,\n\n  include if exists <local/" + name + ">\n}\n")
-    return name, text
+
+
+def code_profile(uid, runtime, code, repo):
+    """The AppArmor profile Create's Code service runs in, named by its user unit's AppArmorProfile=.
+
+    A user unit's ProtectSystem, ProtectHome, ReadWritePaths and PrivateTmp need an unprivileged user namespace, and
+    where Ubuntu restricts those (24.04 and later) systemd runs the unit without them and says nothing (systemd 255;
+    block/buzz#5670, LHelge/hoster#6), so the WSL unit form of install/macos/omegahive.sh would leave the service
+    unconfined here. This profile confines it the way setup-code.sh's seatbelt profile does on a Mac, with no user
+    namespace: the system read-only, the account's home closed but for the service's own folders, writable only its
+    state, temp, working folder, home, logs and the repository it builds in. It runs git and its own interpreter in
+    this profile, and lets the hive's Code guard read its /proc facts and systemd signal it."""
+    name = code_profile_name(uid)
+    runtime, code, repo = plain_path_text(runtime), plain_path_text(code), plain_path_text(repo)
+    lines = [
+        "# Create's Code service for uid " + str(int(uid)) + ", as install/macos/code-runtime.py's seatbelt profile confines it on a Mac.",
+        "profile " + name + " flags=(attach_disconnected) {",
+        "  include <abstractions/base>",
+        "  include <abstractions/python>",
+        "  / r,",
+        "  /{etc,usr,opt}/** r,",
+        "  /{,usr/}{bin,sbin}/** mrix,",
+        "  /{,usr/}lib{,32,64,exec}/** mrix,",
+        "  @{PROC}/ r,",
+        "  @{PROC}/@{pid}/** r,",
+        "  @{PROC}/{cpuinfo,meminfo,stat,loadavg,uptime,version,filesystems,mounts} r,",
+        "  @{PROC}/sys/** r,",
+        "  /sys/devices/system/** r,",
+        "  /sys/fs/cgroup/** r,",
+        "  /dev/{null,zero,full,random,urandom} rw,",
+        "  /dev/pts/* rw,",
+        "  " + runtime + "/runtime/python/** mrix,",
+        "  " + runtime + "/venv/** mrix,",
+        "  " + code + "/ r,",
+        "  " + code + "/releases/** r,",
+        "  " + code + "/{config.json,operator-token} r,",
+        "  " + code + "/{state,tmp,wd,home}/ rw,",
+        "  " + code + "/{state,tmp,wd,home}/** rwlk,",
+        "  " + code + "/logs/ r,",
+        "  " + code + "/logs/** rw,",
+        "  " + repo + "/ rw,",
+        "  " + repo + "/** rwlk,",
+        "  network inet stream,",
+        "  network inet6 stream,",
+        "  unix,",
+        "  signal (send, receive) peer=" + name + ",",
+        "  signal (receive) peer=unconfined,",
+        "  ptrace (readby) peer=unconfined,",
+        "",
+        "  include if exists <local/" + name + ">",
+        "}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def apparmor_profiles(uid, runtime, code, repo, restricted):
+    """This account's one profile file: the Code service's profile always, and the mind launcher's where AppArmor
+    restricts user namespaces. `userns` needs AppArmor 4 (24.04 and later); 22.04's parser knows abi 3.0 only."""
+    text = ("# Purpose: OmegaHive's AppArmor profiles for uid " + str(int(uid)) + ".\n"
+            "abi <abi/" + ("4.0" if restricted else "3.0") + ">,\ninclude <tunables/global>\n\n"
+            + code_profile(uid, runtime, code, repo))
+    if restricted:
+        text += "\n" + launcher_profile(uid, runtime / "app/hive/supervisor/landlock.py")
+    return apparmor_file_name(uid), text
 
 
 def clean_env(home, path):
@@ -735,6 +855,7 @@ def owned_json(path):
 def progress_paths(home):
     root = home / ".local/share/omegahive"
     return {"unit": home / ".config/systemd/user" / UNIT,
+            "code_unit": home / ".config/systemd/user" / CODE_UNIT,
             "manager": root / "bin/install.py", "shim": home / ".local/bin/omegahive",
             "state": root / "installation-state.json"}
 
@@ -825,10 +946,11 @@ def recover_partial(home, expected_release=None):
         data = owned_json(descriptor)
         need(type(data) is dict and data.get("runtime_root") == str(runtime)
              and data.get("data_dir") == str(root / "data"), "The runtime record is not this incomplete setup.")
-    if "unit" in existing:
+    if {"unit", "code_unit"} & set(existing):
         env = control_env(home)
-        subprocess.run(["/usr/bin/systemctl", "--user", "stop", UNIT], env=env, check=True, timeout=35)
-        subprocess.run(["/usr/bin/systemctl", "--user", "disable", UNIT], env=env, check=True, timeout=15)
+        units = [unit for kind, unit in (("unit", UNIT), ("code_unit", CODE_UNIT)) if kind in existing]
+        subprocess.run(["/usr/bin/systemctl", "--user", "stop", *units], env=env, check=True, timeout=35)
+        subprocess.run(["/usr/bin/systemctl", "--user", "disable", *units], env=env, check=True, timeout=15)
     # Service-manager waits do not preserve custody of a named directory.
     # Refuse replacements before retiring any recovery command, then rejoin again at deletion.
     def rejoin_runtime():
@@ -848,9 +970,9 @@ def recover_partial(home, expected_release=None):
     private_dir(root / "logs")
     write_new(root / "logs" / ("incomplete-" + value["attempt"] + "-" + uuid.uuid4().hex + ".json"),
               (json.dumps(value, sort_keys=True) + "\n").encode())
-    for kind in ("shim", "unit", "manager", "state"):
+    for kind in ("shim", "unit", "code_unit", "manager", "state"):
         if kind in existing: paths[kind].unlink()
-    if "unit" in existing:
+    if {"unit", "code_unit"} & set(existing):
         subprocess.run(["/usr/bin/systemctl", "--user", "daemon-reload"], env=env, check=True, timeout=15)
     if present(runtime):
         if value["runtime_identity"] is None:
@@ -1047,7 +1169,7 @@ class Installer:
     def sudo(self, argv, *, timeout, package_environment=False):
         assignments = (["DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=l"]
                        if package_environment else [])
-        need(not package_environment or any(argv == package_install(r) for r in (False, True)),
+        need(not package_environment or argv == package_install(),
              "Package environment is only allowed for the fixed package installation.")
         # The shell wrapper consumes stdin, and run() deliberately detaches each
         # child session. Give sudo its own terminal fd; never read the password.
@@ -1075,31 +1197,31 @@ class Installer:
                 termios.tcsetattr(terminal, termios.TCSAFLUSH, saved)
 
     def apt(self, runtime):
-        """Every privileged step, each one fixed command: packages, linger and, where AppArmor restricts user
-        namespaces, the mind launcher's profile, installed and loaded. Returns whether that profile was loaded."""
+        """Every privileged step, each one fixed command: packages, linger and this account's AppArmor profiles,
+        installed and loaded: the Code service's always, and where AppArmor restricts user namespaces the mind
+        launcher's too. Returns whether user namespaces are restricted here."""
         restricted = userns_restricted()
-        if restricted:
-            # Written and checked before the first password prompt, so an unusable path stops before any system change.
-            name, text = launcher_profile(os.getuid(), runtime / "app/hive/supervisor/landlock.py")
-            source = runtime / "launcher.apparmor"; write_new(source, text.encode())
+        need(apparmor_enabled(), "Create's Code service runs confined by AppArmor, which is turned off on this computer. "
+             "Ubuntu has it on unless it was switched off; turn it back on, restart, and run the installer again.")
+        # Written and checked before the first password prompt, so an unusable path stops before any system change.
+        name, text = apparmor_profiles(os.getuid(), runtime, self.root / "code", self.root / "repos/small-app", restricted)
+        source = runtime / "omegahive.apparmor"; write_new(source, text.encode())
         # Detached sudo sessions cannot reliably share cached authentication.
         # Each fixed command may prompt; do not weaken sudo policy to avoid it.
-        print("OmegaHive needs permission to add standard Ubuntu packages"
-              + (", let its minds start in their sandbox" if restricted else "")
-              + " and keep running when you log out. You may be asked for your password for each of the "
-              + ("five" if restricted else "three") + " system setup steps. If Ubuntu is installing its own updates, "
-              "setup waits for them to finish.", flush=True)
+        print("OmegaHive needs permission to add standard Ubuntu packages, keep running when you log out, keep Create's "
+              "Code service in its own sandbox" + (" and let its minds start in theirs" if restricted else "")
+              + ". You may be asked for your password for each of the five system setup steps. If Ubuntu is installing "
+              "its own updates, setup waits for them to finish.", flush=True)
         self.sudo(apt_get("update"), timeout=APT_LOCK_WAIT + 600)
         # Package hooks must not ask hidden questions through logged stdout.
         # Report pending restarts; leave host service restarts to its operator.
-        self.sudo(package_install(restricted), timeout=APT_LOCK_WAIT + 900, package_environment=True)
+        self.sudo(package_install(), timeout=APT_LOCK_WAIT + 900, package_environment=True)
         # Linger keeps this user's own service manager running after logout and at boot.
         self.sudo(["/usr/bin/loginctl", "enable-linger", linger_user()], timeout=60)
-        if restricted:
-            # /etc/apparmor.d is what apparmor.service loads at boot, before linger starts this account's hive.
-            target = str(APPARMOR_PROFILES / name)
-            self.sudo(["/usr/bin/install", "-o", "root", "-g", "root", "-m", "0644", str(source), target], timeout=60)
-            self.sudo([APPARMOR_PARSER, "-r", target], timeout=120)
+        # /etc/apparmor.d is what apparmor.service loads at boot, before linger starts this account's services.
+        target = str(APPARMOR_PROFILES / name)
+        self.sudo(["/usr/bin/install", "-o", "root", "-g", "root", "-m", "0644", str(source), target], timeout=60)
+        self.sudo([APPARMOR_PARSER, "-r", target], timeout=120)
         return restricted
 
     def install(self):
@@ -1123,6 +1245,7 @@ class Installer:
         for spec in self.catalogue["bootstrap"].values(): self.local(spec)
         for key in ("archive", "manifest"): self.local(self.catalogue["ui_prebuilt"][key])
         self.local(self.catalogue["omega_core"])
+        self.local(self.catalogue["code_service"])
         logpath = self.root / "logs" / ("install-" + uuid.uuid4().hex + ".log")
         lockfd = lock_installation(self.home)
         try:
@@ -1206,16 +1329,18 @@ class Installer:
             self.run([str(venv), "-I", "-B", "-c", "import janus_swi as j; assert j.query_once('X is 1+1')['X'] == 2"], timeout=30)
             self.run([str(swipl), "-g", "use_module(library(janus)),py_call(operator:add(20,22),V),(V=:=42->halt(0);halt(1))"], timeout=30)
             self.omega_core(app, venv)
+            code = self.code_service(app, venv)
             data = self.root / "data"
             if not data.exists(): private_dir(data)
             plain(data, directory=True); need(stat.S_IMODE(data.stat().st_mode) == 0o700, "Your hive data folder must be private.")
             need(len(str(data / "run/control.sock").encode()) < 100, "Your home path is too long for the private control socket.")
-            descriptor = {"schema": "studio-linux-user-runtime/2", "runtime_root": str(runtime), "release_root": str(app),
+            descriptor = {"schema": "studio-linux-user-runtime/3", "runtime_root": str(runtime), "release_root": str(app),
                 "python": str(venv), "petta_path": str(pettasrc), "data_dir": str(data), "port": 8700, "browser_port": 8701,
                 "sandbox_python": str(venv), "source_revision": self.catalogue["source_revision"],
                 "plugin_dirs": plugins, "app_pins": pins, "swipl_bin": str(swipl), "libpython_dir": str(libpython),
                 "studio_maker_template": None, "default_model": self.catalogue["default_model"],
-                "embedding_model": self.catalogue["embedding_model"], "ssh_target": self.catalogue["ssh_target"]}
+                "embedding_model": self.catalogue["embedding_model"], "ssh_target": self.catalogue["ssh_target"],
+                "code_service": code}
             atomic_json(self.root / "runtime.json", descriptor)
             for row in self.catalogue["module_files"]:
                 pin_file(app / str(relative(row["path"])), row)
@@ -1250,6 +1375,80 @@ class Installer:
              "The bundled Omega core is not the revision this release pins.")
         self.run([str(python), "-I", "-B", str(app / "scripts/setup_core.py"), "--source", str(bundle)], timeout=300)
 
+    def code_service(self, app, python):
+        """Create · Code's service, set up as install/macos/setup-code.sh sets it up, all inside this hive's folder:
+        the published omegacode release unpacked from the kit's pinned tarball and checked, made the portable release
+        the hive accepts by the release's two adapters, checked again and left read-only; one disposable small-app
+        repository the minds build in, with the installer's project check; a private config and operator token; and
+        empty private working, home and temp folders. Rerunning keeps the release, repository, token and state."""
+        published, portable = code_releases(app)
+        code = self.root / "code"
+        private_dir(code)
+        for name in ("releases", "state", "wd", "tmp", "home", "logs"):
+            private_dir(code / name)
+        release = code / "releases" / portable
+        if not present(release / "omegacode/__init__.py"):
+            staging = code / "releases" / (portable + ".new")
+            if present(staging):
+                plain(staging, directory=True); shutil.rmtree(staging)
+            private_dir(staging)
+            extract_tool(self.local(self.catalogue["code_service"]), staging / "omegacode")
+            need(module_digest(staging / "omegacode") == published,
+                 "The bundled Code service is not the published release this hive accepts.")
+            for adapter in CODE_PATCHES:
+                self.run(["/usr/bin/patch", "-p1", "-s", "-d", str(staging), "-i", str(app / "install/macos" / adapter)], timeout=60)
+            for path in (staging / "omegacode").rglob("*"):
+                if path.is_file() and not path.is_symlink():
+                    path.chmod(stat.S_IMODE(path.stat().st_mode) & ~0o222)
+            os.rename(staging, release)
+        need(module_digest(release / "omegacode") == portable,
+             "The Code service's files are not the portable release this hive accepts.")
+        # Only the selected release runs; one an older setup unpacked goes.
+        for old in (code / "releases").iterdir():
+            if old != release:
+                plain(old, directory=True); shutil.rmtree(old)
+        repo = self.root / "repos/small-app"
+        private_dir(self.root / "repos")
+        if not present(repo / ".git"):
+            private_dir(repo)
+            files = {
+                "README.md": "# Small app\n\nA repository your hive's minds build small web apps in: index.html loads "
+                             "style.css and app.js,\nand app.js draws into <main id=\"app\">. Nothing here is kept.\n",
+                "index.html": "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n"
+                              "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+                              "  <title>Small app</title>\n  <link rel=\"stylesheet\" href=\"./style.css\">\n</head>\n<body>\n"
+                              "  <main id=\"app\"></main>\n  <script type=\"module\" src=\"./app.js\"></script>\n</body>\n</html>\n",
+                "app.js": "// The app the hive builds lives here. It draws into <main id=\"app\"> in index.html.\n"
+                          "const app = document.getElementById(\"app\");\n"
+                          "app.textContent = \"Nothing here yet: ask the hive to build something.\";\n",
+                "style.css": "body {\n  font-family: system-ui, sans-serif;\n  margin: 2rem;\n}\n",
+            }
+            for name, text in files.items():
+                write_new(repo / name, text.encode())
+            write_new(repo / "check_app.py", (app / "install/macos/check-app.py").read_bytes())
+            git = ["/usr/bin/git", "-C", str(repo)]
+            self.run(git + ["init", "-q", "-b", "main"], timeout=30, env=self.git_env())
+            self.run(git + ["add", "README.md", "index.html", "app.js", "style.css", "check_app.py"], timeout=30, env=self.git_env())
+            self.run(git + ["-c", "user.name=Your hive", "-c", "user.email=hive@localhost", "commit", "-qm", "Start the small app"],
+                     timeout=30, env=self.git_env())
+        token = code / "operator-token"
+        if not present(token):
+            write_new(token, secrets.token_urlsafe(48).encode())
+        # install/macos/code-runtime.py prepare's config, as it writes it off a Mac: no proposal or project tests.
+        config = {"data_root": str(code / "state"), "operator_token_file": str(token), "port": CODE_PORT,
+                  "hive_url": "http://127.0.0.1:8700", "repositories": {"small-app": {"path": str(repo)}},
+                  "proposal_tests_enabled": False, "sandbox_project_tests_enabled": False,
+                  "copy_effect_policy": {"kind": "disposable-app-files-v1", "repository_id": "small-app",
+                                         "paths": ["index.html", "app.js", "style.css", "README.md"]}}
+        atomic_json(code / "config.json", config)
+        return {"release": portable, "root": str(code), "config": str(code / "config.json"),
+                "repository": str(repo), "port": CODE_PORT}
+
+    def git_env(self):
+        """git for the small-app repository only: no system or account configuration, no prompts."""
+        return dict(clean_env(self.home, "/usr/bin:/bin"), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null",
+                    GIT_TERMINAL_PROMPT="0")
+
     def resume_setup(self):
         progress = progress_record(self.home, self.catalogue["release_id"])
         need(all(progress[k] == self.catalogue[k] for k in ("source_revision", "source_tree")),
@@ -1281,9 +1480,10 @@ class Installer:
         plain(libpython, directory=True)
         self.env = dict(clean_env(self.home, "/usr/bin:/bin"), LD_LIBRARY_PATH=str(libpython))
         print("Keeping the installed runtime and data; resuming final setup…", flush=True)
-        for operation in ("daemon-reload", "enable", "start"):
-            argv = ["/usr/bin/systemctl", "--user", operation] + ([] if operation == "daemon-reload" else [UNIT])
-            self.run(argv, timeout=90, env=control_env(self.home))
+        self.run(["/usr/bin/systemctl", "--user", "daemon-reload"], timeout=90, env=control_env(self.home))
+        self.run(["/usr/bin/systemctl", "--user", "enable", *UNITS], timeout=90, env=control_env(self.home))
+        for name in UNITS:
+            self.run(["/usr/bin/systemctl", "--user", "start", name], timeout=90, env=control_env(self.home))
         self.complete_setup(app, python, libpython)
 
     def complete_setup(self, app, python, libpython):
@@ -1314,7 +1514,9 @@ class Installer:
         if not config.exists(): config.mkdir(mode=0o700)
         plain(config, directory=True); parent_chain(config, config / "systemd/user")
         unit = config / "systemd/user" / UNIT
-        need(not unit.exists(), "An OmegaHive user service already exists. Stop or uninstall that installation first.")
+        code_unit = config / "systemd/user" / CODE_UNIT
+        need(not unit.exists() and not code_unit.exists(),
+             "An OmegaHive user service already exists. Stop or uninstall that installation first.")
         def quote(value):
             need(not any(c in value for c in "\x00\n\r%"), "A service path contains an unsupported character.")
             return '"' + value.replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%') + '"'
@@ -1331,6 +1533,21 @@ class Installer:
             body = body.replace("@" + key + "@", value if key == "WORKDIR" else quoted)
         need(not re.search("@[A-Z_]+@", body), "The service template is incomplete.")
         owned_file(self.home, "unit", body.encode())
+        code = descriptor["code_service"]
+        code_root = P(code["root"])
+        code_values = {"WORKDIR": code_root / "wd", "RELEASE": code_root / "releases" / code["release"],
+                       "HOME": code_root / "home", "TMPDIR": str(code_root / "tmp") + "/",
+                       "LIBPYTHON": descriptor["libpython_dir"] or "", "PYTHON": python, "CONFIG": code["config"],
+                       "PROFILE": code_profile_name(os.getuid()), "LOG": code_root / "logs/service.log"}
+        code_body = (app / "deploy/linux/omegacode.service.in").read_text()
+        for key, value in code_values.items():
+            text = str(value)
+            if key != "PROFILE" and text:
+                # Every path stands unquoted: the guard reads ExecStart and Environment word by word.
+                plain_path_text(text.rstrip("/"))
+            code_body = code_body.replace("@" + key + "@", text)
+        need(not re.search("@[A-Z_]+@", code_body), "The Code service template is incomplete.")
+        owned_file(self.home, "code_unit", code_body.encode())
         manager_env = control_env(self.home)
         try:
             # systemd before 258 binds a verify run's private bus socket at $XDG_RUNTIME_DIR/systemd/private, replacing
@@ -1338,14 +1555,16 @@ class Installer:
             # 24.04 ships 255, where every later `systemctl --user` then fails unless a user D-Bus socket exists. So the
             # check gets a runtime directory of its own, which goes when it ends.
             with tempfile.TemporaryDirectory(prefix="verify-", dir=manager_env["XDG_RUNTIME_DIR"]) as scratch:
-                self.run(["/usr/bin/systemd-analyze", "--user", "verify", str(unit)], timeout=30,
+                self.run(["/usr/bin/systemd-analyze", "--user", "verify", str(unit), str(code_unit)], timeout=30,
                          env=dict(manager_env, XDG_RUNTIME_DIR=scratch))
         except (Refused, OSError, subprocess.SubprocessError):
             raise Refused("Your Ubuntu user service could not be validated. Setup stopped before starting it; keep the private log for review.") from None
         private_dir(self.root / "bin"); manager = self.root / "bin/install.py"
         manager_raw = P(__file__).read_bytes()
         owned_file(self.home, "manager", manager_raw, 0o444)
-        state = {"schema": "studio-linux-user-installation/2", "runtime_root": descriptor["runtime_root"], "unit": str(unit), "unit_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        state = {"schema": "studio-linux-user-installation/3", "runtime_root": descriptor["runtime_root"], "unit": str(unit), "unit_sha256": hashlib.sha256(body.encode()).hexdigest(),
+                 "code_unit": str(code_unit), "code_unit_sha256": hashlib.sha256(code_body.encode()).hexdigest(),
+                 "code_root": code["root"],
                  "python": str(python), "control": str(app / "deploy/linux/control.py"), "data_dir": descriptor["data_dir"],
                   "libpython_dir": descriptor["libpython_dir"],
                   "manager_pin": {"bytes": len(manager_raw), "sha256": hashlib.sha256(manager_raw).hexdigest()}}
@@ -1357,8 +1576,10 @@ class Installer:
             + shlex.quote(str(python)) + " -I -B " + shlex.quote(str(manager)) + " \"$@\"\n"
         owned_file(self.home, "shim", shim.encode(), 0o700)
         self.run(["/usr/bin/systemctl", "--user", "daemon-reload"], timeout=15, env=manager_env)
-        self.run(["/usr/bin/systemctl", "--user", "enable", UNIT], timeout=30, env=manager_env)
-        self.run(["/usr/bin/systemctl", "--user", "start", UNIT], timeout=90, env=manager_env)
+        self.run(["/usr/bin/systemctl", "--user", "enable", *UNITS], timeout=30, env=manager_env)
+        # The hive first, then its Code service, which registers with it once bootstrap.py enrols it.
+        for name in UNITS:
+            self.run(["/usr/bin/systemctl", "--user", "start", name], timeout=90, env=manager_env)
 
 
 def manage_locked(command, home, json_output=False):
@@ -1377,8 +1598,10 @@ def manage_locked(command, home, json_output=False):
     need(present(statepath), "There is no complete installation record. Unrecorded files were kept; please keep the logs for review.")
     state = owned_json(statepath)
     fields = {"schema", "runtime_root", "unit", "unit_sha256", "python", "control", "data_dir", "libpython_dir"}
+    code_fields = {"code_unit", "code_unit_sha256", "code_root"}
     need(type(state) is dict and ((state.get("schema") == "studio-linux-user-installation/1" and set(state) == fields)
-         or (state.get("schema") == "studio-linux-user-installation/2" and set(state) == fields | {"manager_pin"})),
+         or (state.get("schema") == "studio-linux-user-installation/2" and set(state) == fields | {"manager_pin"})
+         or (state.get("schema") == "studio-linux-user-installation/3" and set(state) == fields | {"manager_pin"} | code_fields)),
          "The installation record has an unsupported shape.")
     runtime = P(state["runtime_root"])
     releases = root / "releases"; plain(releases, directory=True)
@@ -1396,8 +1619,18 @@ def manage_locked(command, home, json_output=False):
     plain(home / ".local/bin/omegahive")
     need(str(unit) == state["unit"] and hashlib.sha256(unit.read_bytes()).hexdigest() == state["unit_sha256"],
          "Your service was changed. Please review it before using stop or uninstall.")
+    units = [UNIT]
+    code_root = None
+    if state["schema"] == "studio-linux-user-installation/3":
+        code_unit = unit.parent / CODE_UNIT; plain(code_unit)
+        need(str(code_unit) == state["code_unit"]
+             and hashlib.sha256(code_unit.read_bytes()).hexdigest() == state["code_unit_sha256"],
+             "Your Code service was changed. Please review it before using stop or uninstall.")
+        code_root = root / "code"
+        need(state["code_root"] == str(code_root), "The installation record points outside this hive.")
+        units.append(CODE_UNIT)
     manager = root / "bin/install.py"
-    if state["schema"] == "studio-linux-user-installation/2":
+    if state["schema"] in {"studio-linux-user-installation/2", "studio-linux-user-installation/3"}:
         need(type(state["manager_pin"]) is dict and set(state["manager_pin"]) == {"bytes", "sha256"},
              "The installed command pin is invalid.")
         if present(manager):
@@ -1406,26 +1639,34 @@ def manage_locked(command, home, json_output=False):
     env = control_env(home)
     if command in {"open", "status", "tunnel"}:
         if command == "open":
-            subprocess.run(["/usr/bin/systemctl", "--user", "start", UNIT], env=env, check=True, timeout=90)
+            for name in units:
+                subprocess.run(["/usr/bin/systemctl", "--user", "start", name], env=env, check=True, timeout=90)
         argv = [state["python"], "-I", "-B", state["control"], "--runtime", str(root / "runtime.json"), command]
         if json_output: argv.append("--json")
         return subprocess.run(argv, timeout=OPEN_TIMEOUT if command == "open" else 15,
                               env=control_env(home, state["libpython_dir"], browser=command == "open")).returncode
-    subprocess.run(["/usr/bin/systemctl", "--user", "stop", UNIT], env=env, check=True, timeout=35)
+    subprocess.run(["/usr/bin/systemctl", "--user", "stop", *reversed(units)], env=env, check=True, timeout=35)
     if command == "stop":
         print("OmegaHive is stopped. Open it again with: omegahive open"); return 0
     answer = input("Also delete your conversations and everything your hive remembers? This can't be undone. Type DELETE to delete, or press Enter to keep them: ")
-    subprocess.run(["/usr/bin/systemctl", "--user", "disable", UNIT], env=env, check=True, timeout=15)
+    subprocess.run(["/usr/bin/systemctl", "--user", "disable", *units], env=env, check=True, timeout=15)
     # Remove the entry point before any destructive step can retire its interpreter.
     (home / ".local/bin/omegahive").unlink()
-    if state["schema"] == "studio-linux-user-installation/2" and present(manager): manager.unlink()
-    unit.unlink(); subprocess.run(["/usr/bin/systemctl", "--user", "daemon-reload"], env=env, check=True, timeout=15)
+    if state["schema"] != "studio-linux-user-installation/1" and present(manager): manager.unlink()
+    unit.unlink()
+    if code_root is not None: (unit.parent / CODE_UNIT).unlink()
+    subprocess.run(["/usr/bin/systemctl", "--user", "daemon-reload"], env=env, check=True, timeout=15)
     # No arbitrary manifest path can become a deletion target. Shared caches, account files and unrelated releases are not removed.
     plain(runtime, directory=True); shutil.rmtree(runtime)
+    # The Code service's release, state and token are the runtime's; the repository the minds built in is data.
+    if code_root is not None and present(code_root):
+        plain(code_root, directory=True); shutil.rmtree(code_root)
     (root / "runtime.json").unlink(); statepath.unlink()
     if answer == "DELETE":
         data = root / "data"; need(str(data) == state["data_dir"], "The data record changed.")
         plain(data, directory=True); shutil.rmtree(data)
+        if present(root / "repos"):
+            plain(root / "repos", directory=True); shutil.rmtree(root / "repos")
     print("OmegaHive is removed, with all its data." if answer == "DELETE"
           else "OmegaHive is removed. Your conversations were kept in ~/.local/share/omegahive/data")
     print_removal_notes()
@@ -1440,16 +1681,17 @@ def linger_user():
 
 LINGER_NOTE = ("Your account still keeps background services running after you log out. "
                "To turn that off: sudo loginctl disable-linger ")
-APPARMOR_NOTE = ("Your account's mind launcher may still set up its own sandboxes on this computer. "
-                 "To withdraw that: sudo " + APPARMOR_PARSER + " -R {profile} && sudo rm {profile}")
+APPARMOR_NOTE = ("Your account's OmegaHive AppArmor profiles stay loaded on this computer. "
+                 "To remove them: sudo " + APPARMOR_PARSER + " -R {profile} && sudo rm {profile}")
 
 
 def print_removal_notes():
     """What uninstall leaves for the account's administrator, since only sudo can undo it."""
     print(LINGER_NOTE + pwd.getpwuid(os.getuid()).pw_name)
-    profile = APPARMOR_PROFILES / launcher_profile_name(os.getuid())
-    if profile.exists():
-        print(APPARMOR_NOTE.format(profile=profile))
+    for name in (apparmor_file_name(os.getuid()), launcher_profile_name(os.getuid())):
+        profile = APPARMOR_PROFILES / name
+        if profile.exists():
+            print(APPARMOR_NOTE.format(profile=profile))
 
 
 def lock_installation(home):

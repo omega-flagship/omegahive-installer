@@ -71,7 +71,7 @@ class ResumeTests(unittest.TestCase):
         python=runtime/'venv/bin/python';python.parent.mkdir(parents=True);python.write_bytes(b'never executed')
         lib=runtime/'runtime/python/lib';lib.mkdir(parents=True)
         (home/'.config/systemd/user').mkdir(parents=True)
-        install.owned_file(home,'unit',b'synthetic unit')
+        install.owned_file(home,'unit',b'synthetic unit');install.owned_file(home,'code_unit',b'synthetic code unit')
         install.owned_file(home,'state',json.dumps({'python':str(python)}).encode())
         cfg={'runtime_root':str(runtime),'release_root':str(app),'python':str(python),'libpython_dir':str(lib),
              'data_dir':str(instance.root/'data'),'source_revision':cat['source_revision']}
@@ -85,7 +85,7 @@ class ResumeTests(unittest.TestCase):
             with patch.object(instance,'run') as run,patch.object(instance,'complete_setup') as complete,patch.object(install,'control_env',return_value={}):
                 instance.resume_setup()
             complete.assert_called_once()
-            self.assertEqual([x.args[0][2] for x in run.call_args_list],['daemon-reload','enable','start'])
+            self.assertEqual([x.args[0][2:] for x in run.call_args_list],[['daemon-reload'],['enable','omegahive.service','omegacode.service'],['start','omegahive.service'],['start','omegacode.service']])
             self.assertTrue(all(x.args[0][0]=='/usr/bin/systemctl' for x in run.call_args_list))
             self.assertEqual((instance.root/'data/sentinel').read_bytes(),b'keep')
             self.assertEqual((instance.root/'cache/sentinel').read_bytes(),b'keep')

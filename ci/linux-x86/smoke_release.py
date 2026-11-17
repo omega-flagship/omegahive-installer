@@ -137,6 +137,15 @@ def verify(user, output):
             with opener.open(urllib.request.Request("http://127.0.0.1:8700" + path, data, headers, method=method)) as reply:
                 raw = reply.read()
             return json.loads(raw) if raw else None
+
+        def status_of(method, path):
+            """A route's status and body, an error status included (call() raises on one)."""
+            try:
+                with opener.open(urllib.request.Request("http://127.0.0.1:8700" + path, None, headers, method=method)) as reply:
+                    return reply.status, reply.read()
+            except urllib.error.HTTPError as error:
+                return error.code, error.read()
+        call.status_of = status_of
         return {key: identity[key] for key in ("principal", "kind", "role", "person_kind", "local_operator")}, call
 
     def first_light(call):
@@ -172,6 +181,24 @@ def verify(user, output):
         check("Create is on the owner's home screen", len(create) == 1, json.dumps(apps)[:400])
         facts["create"] = create[0]["open"]
 
+    def code_service(call):
+        """Create's Code service (deploy/linux/install.py code_service and bootstrap.py enrol_code): its unit runs, its
+        AppArmor profile confines it, the hive lists it at its port, and the hive's Code guard accepts it, so a request
+        through the hive's relay passes the release check (503 service_release_mismatch) and reaches the route list,
+        which answers not_relayed for a route it doesn't carry."""
+        unit = ["systemctl", "--user", "show", "-p", "ActiveState", "-p", "MainPID", "omegacode.service"]
+        state = dict(line.split("=", 1) for line in command(*unit).splitlines() if "=" in line)
+        check("Create's Code service is running", state.get("ActiveState") == "active", json.dumps(state))
+        label = pathlib.Path(f"/proc/{state['MainPID']}/attr/current").read_text().strip()
+        check("Create's Code service runs in its AppArmor profile", f"omegahive-code-{account.pw_uid}" in label, label)
+        facts["code_confinement"] = label
+        listed = [row for row in call("GET", "/api/services") if row.get("name") == "omegacode"]
+        check("the hive lists its Code service", len(listed) == 1 and listed[0].get("address") == "http://127.0.0.1:8724",
+              json.dumps(listed)[:300])
+        status, body = call.status_of("GET", "/api/code/proxy/v1/smoke-unlisted-route")
+        check("the hive's Code guard accepts its Code service", status == 404 and b"not_relayed" in body,
+              f"{status} {body[:300]!r}")
+
     try:
         check("linger is enabled", subprocess.check_output(
             ["loginctl", "show-user", user, "-p", "Linger", "--value"], text=True).strip() == "yes")
@@ -180,6 +207,7 @@ def verify(user, output):
         first, call = signin()
         first_light(call)
         create_listed(call)
+        code_service(call)
         check("status is available", bool(json.loads(command(cli, "status", "--json"))))
         command("systemctl", "--user", "restart", "omegahive.service")
         check("owner survives hive restart", signin()[0] == first)
@@ -205,6 +233,7 @@ def verify(user, output):
         again, call = signin()
         check("owner survives user-manager restart", again == first)
         create_listed(call)
+        code_service(call)
         facts["passed"] = True
     finally:
         pathlib.Path(output).write_text(json.dumps(facts, indent=2) + "\n")

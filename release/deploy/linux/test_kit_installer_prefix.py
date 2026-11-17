@@ -80,6 +80,7 @@ def release_catalogue(rows):
                       'files': [{'path': 'plugin.json', 'bytes': 0, 'sha256': hashlib.sha256(b'').hexdigest(), 'mode': '100644'}]}],
             'bootstrap': {'helper': {'path': 'helper.py', 'bytes': 1, 'sha256': 'e' * 64}},
             'omega_core': {'path': 'omega-core-abcdef1.bundle', 'bytes': 1, 'sha256': 'c' * 64},
+            'code_service': {'path': 'omegacode-309df.tgz', 'bytes': 1, 'sha256': '8' * 64},
             'module_files': modules, 'default_model': 'openrouter/example/model',
             'embedding_model': 'mock/hash', 'ssh_target': None}
 

@@ -124,6 +124,7 @@ def release_fixture():
                       'bytes': 1, 'sha256': '9' * 64, 'digest': 'sha256:' + 'd' * 64, 'files': []}],
             'bootstrap': {'helper': {'path': 'bootstrap.py'}},
             'omega_core': {'path': 'omega-core-abcdef1.bundle', 'bytes': 1, 'sha256': 'f' * 64},
+            'code_service': {'path': 'omegacode-309df.tgz', 'bytes': 1, 'sha256': '8' * 64},
             'module_files': [], 'default_model': 'openrouter/example/model',
             'embedding_model': 'mock/hash', 'ssh_target': None}
 

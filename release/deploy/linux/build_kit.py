@@ -427,7 +427,7 @@ def references(release):
     required = {'schema', 'ready', 'release_id', 'source_revision', 'source_tree', 'min_free_bytes',
                 'core_roots', 'python_version', 'uv_version', 'ui_prebuilt', 'swipl_version',
                 'petta_commit', 'platforms', 'apps', 'bootstrap', 'module_files',
-                'default_model', 'embedding_model', 'ssh_target', 'omega_core'}
+                'default_model', 'embedding_model', 'ssh_target', 'omega_core', 'code_service'}
     require(type(release) is dict and set(release) == required
             and release.get('ready') is True and release.get('schema') == 'studio-linux-user-release/2', 'release_not_ready')
     require(type(release['release_id']) is str and re.fullmatch('[a-z0-9][a-z0-9._-]{1,79}', release['release_id'])
@@ -465,6 +465,13 @@ def references(release):
             and type(core['bytes']) is int and 0 < core['bytes'] <= 64 * 1024**2
             and type(core['sha256']) is str and re.fullmatch('[a-f0-9]{64}', core['sha256']), 'omega_core_pin_required')
     refs.add(core['path'])
+    # Create's Code service, the published omegacode release (install.py Installer.code_service).
+    code = release['code_service']
+    require(type(code) is dict and set(code) == {'path', 'bytes', 'sha256'}
+            and type(code['path']) is str and re.fullmatch(r'omegacode-[a-f0-9]{5,64}\.tgz', code['path'])
+            and type(code['bytes']) is int and 0 < code['bytes'] <= 64 * 1024**2
+            and type(code['sha256']) is str and re.fullmatch('[a-f0-9]{64}', code['sha256']), 'code_service_pin_required')
+    refs.add(code['path'])
     payload = None
     for platform in release['platforms'].values():
         require(type(platform) is dict and set(platform) == {'uv', 'python', 'swipl_source',
@@ -579,6 +586,7 @@ def main():
         item = ui[key]
         require(artifacts.get(item['path']) == item, 'ui_artifact_pin_mismatch')
     require(artifacts.get(release['omega_core']['path']) == release['omega_core'], 'omega_core_pin_mismatch')
+    require(artifacts.get(release['code_service']['path']) == release['code_service'], 'code_service_pin_mismatch')
     ui_files = inspect_ui_manifest(bodies[ui['manifest']['path']], ui, terms)
     inspect_ui_archive(bodies[ui['archive']['path']], ui_files, terms)
     template = read_exact(INPUT_ROOT, spec['installer_template'])

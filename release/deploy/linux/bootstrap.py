@@ -18,9 +18,11 @@ import sys
 import time
 import types
 
-CONTROL_PIN = (26945, "1d9a6909c72106ac42bba4758b7a1dc9404fb59201f85a928b8b282ac86d8a87")
+CONTROL_PIN = (27643, "a5a407577365be37c5090a98d00ddd497cb261742f806872c7b895523f68d871")
 MAX_BODY = 256 * 1024
 STUDIO = "omegadesign"
+# Create's Code service, by the name the hive's service registry and Code guard know it (hive/core/code.py).
+CODE = "omegacode"
 # The foundation's Create · Code team leader (hive/core/foundation.py ensure): Create opens in its swarm.
 CONTROLLER = "Create · Code controller"
 # Create · Code's builds spend from the controller's budget; the Mac installer raises it to this (install/macos/omegahive.sh create()).
@@ -162,7 +164,7 @@ class OwnerAPI:
     """The named local owner's own session on its hive, for the few fixed routes setup needs (the 9 Nov kit's client)."""
 
     PATHS = re.compile(r"/api/auth/(?:local/exchange|me|logout)|/api/agents(?:/a_[A-Za-z0-9_-]{1,96})?|/api/me/apps"
-                       r"|/api/programs/" + STUDIO + r"(?:/install|/activations)?")
+                       r"|/api/programs/" + STUDIO + r"(?:/install|/activations)?|/api/services(?:/enrol)?")
 
     def __init__(self, control, config, home, pid, hello, deadline):
         self.control, self.config, self.home, self.pid, self.hello = control, config, home, pid, hello
@@ -256,6 +258,65 @@ def number(value):
     return type(value) in (int, float) and math.isfinite(value)
 
 
+def loopback_listener_owned(port):
+    """Whether the one LISTEN socket on 127.0.0.1:<port> belongs to this account, so a token sent there stays ours."""
+    fd = os.open("/proc/" + str(os.getpid()) + "/net/tcp", os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            raw = stream.read(4 * 1024**2 + 1)
+    finally:
+        os.close(fd)
+    require(len(raw) <= 4 * 1024**2)
+    local = "0100007F:" + format(port, "04X")
+    owners = {fields[7] for fields in (line.split() for line in raw.decode("ascii").splitlines()[1:])
+              if len(fields) >= 10 and fields[1] == local and fields[3] == "0A"}
+    return owners == {str(os.getuid())}
+
+
+def code_register(port, token, enrol_token, deadline):
+    """POST /v1/operator/register on the Code service, with its operator token, once its listener is up and ours."""
+    while not loopback_listener_owned(port):
+        require(time.monotonic() + 1 < deadline, "Create's Code service did not start listening in time.")
+        time.sleep(0.5)
+    body = json.dumps({"enrol_token": enrol_token}, separators=(",", ":")).encode()
+    head = ("POST /v1/operator/register HTTP/1.1\r\nHost: 127.0.0.1:" + str(port) + "\r\nAuthorization: Bearer " + token
+            + "\r\nContent-Type: application/json\r\nAccept: application/json\r\nConnection: close\r\nContent-Length: "
+            + str(len(body)) + "\r\n\r\n").encode("ascii")
+    connection = socket.create_connection(("127.0.0.1", port), timeout=max(0.1, min(10, deadline - time.monotonic())))
+    try:
+        connection.sendall(head + body)
+        raw = bytearray()
+        while b"\r\n" not in raw:
+            block = connection.recv(4096)
+            require(block and len(raw) + len(block) <= 65536, "Create's Code service gave no answer.")
+            raw.extend(block)
+    finally:
+        connection.close()
+    status = re.match(rb"HTTP/1\.[01] ([0-9]{3}) ", bytes(raw))
+    require(status is not None and 200 <= int(status.group(1)) < 300,
+            "Create's Code service refused its registration with your hive"
+            + (" (" + status.group(1).decode() + ")" if status is not None else "") + ".")
+
+
+def enrol_code(api, config):
+    """Create's Code service joins this hive as install/macos/omegahive.sh create() enrols it: the owner asks the hive
+    for an enrolment token, and the service, asked with its own operator token, registers with it."""
+    def enrolled():
+        services = api.request("GET", "/api/services")
+        require(type(services) is list)
+        return any(type(row) is dict and row.get("name") == CODE and row.get("enabled", True) for row in services)
+    if enrolled():
+        return
+    answer = api.request("POST", "/api/services/enrol", {"name": CODE})
+    require(type(answer) is dict and type(answer.get("enrol_token")) is str and answer["enrol_token"])
+    enrol_token = answer.pop("enrol_token")
+    code = config["code_service"]
+    token = read_owned(Path(code["root"]) / "operator-token", 4096, private=True).decode("ascii").strip()
+    require(re.fullmatch(r"[A-Za-z0-9_-]{32,128}", token) is not None)
+    code_register(code["port"], token, enrol_token, api.deadline)
+    require(enrolled(), "Create's Code service registered, but your hive doesn't list it.")
+
+
 def create_controller(api):
     """The Create · Code controller's row, once the foundation has made it (at start, or at this sign-in)."""
     while True:
@@ -328,10 +389,11 @@ def bootstrap(runtime):
     try:
         api.login(signin.pop("code", None), hello["owner"])
         signin.clear()
+        enrol_code(api, config)
         put_in_create(api, studio_pin(config))
     finally:
         signin.clear(); api.logout()
-    print("Your public hive and its local owner are ready, and Create is on your home screen.")
+    print("Your public hive and its local owner are ready, and Create, with its Code service, is on your home screen.")
 
 
 def main():

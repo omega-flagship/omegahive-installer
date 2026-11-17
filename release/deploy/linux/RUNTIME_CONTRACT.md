@@ -61,11 +61,21 @@ Render `omegahive.service.in` to
 `$HOME/.config/systemd/user/omegahive.service`. No root system unit, User/Group
 creation. The single privileged phase also runs exactly `sudo -n /usr/bin/loginctl enable-linger <user>` (user from
 the kernel uid) so the user manager, and with it the hive, keeps running after logout and starts at boot. Uninstall
-leaves linger on (other user services may rely on it), runs no sudo, and prints the one `disable-linger` command. Where
-AppArmor restricts unprivileged user namespaces, the same phase installs `/etc/apparmor.d/omegahive-mind-launcher-<uid>`
-(only `userns`, attached to this account's launcher path) with `/usr/bin/install -o root -g root -m 0644` and loads it
-with `/usr/sbin/apparmor_parser -r`; uninstall leaves it and prints the two commands that withdraw it. Restart is off for first L0 acceptance; the unit
+leaves linger on (other user services may rely on it), runs no sudo, and prints the one `disable-linger` command. The
+same phase installs `/etc/apparmor.d/omegahive-<uid>` with `/usr/bin/install -o root -g root -m 0644` and loads it with
+`/usr/sbin/apparmor_parser -r`: the Code service's profile always, and where AppArmor restricts unprivileged user
+namespaces also the mind launcher's (only `userns`, attached to this account's launcher path). Uninstall leaves it and
+prints the two commands that remove it. Restart is off for first L0 acceptance; the unit
 retains `KillMode=control-group`,30second stop,umask0077 and no core dumps.
+
+Create's Code service runs as a second user unit, `omegacode.service`, rendered from `omegacode.service.in` in the
+exact command form the hive's Code guard checks (hive/core/code.py): the release's own Python with
+`-B -s -m omegacode --config <code>/config.json`, PYTHONPATH naming only `<code>/releases/<portable release>`, an
+empty private working folder, NoNewPrivileges, a `@system-service` seccomp filter and `AppArmorProfile=omegahive-code-<uid>`.
+It starts after the hive and stops with it. Its release, state, token, temp, home and logs live in
+`~/.local/share/omegahive/code`; the small-app repository its builds change lives in `repos/small-app` and is kept, like
+conversations, unless uninstall is told DELETE. serve.py gives the hive its release, config and copy-apply claims, and
+its runtime directory, since the guard asks the user manager about the unit.
 
 Exactly six placeholders exist: PYTHON is the named descriptor Python, SERVE
 the installed absolute serve.py, RUNTIME the fixed descriptor, WORKDIR the

@@ -18,5 +18,10 @@
     "sha256": "e40a65eeb866c74048477de16418318152d8af22e38f526594129ee013417712",
     "digest": "sha256:64abf47808a469d37154be509266977b1a3887f0d39f0b974d7d5c3bce7f6f6e",
     "ui_bundle_lock_sha256": "71402503b1c0d07885cfc39af26a64c74c80920d1ff2c694311f034f0f911089"
+  },
+  "code_service": {
+    "mac_zip_member": "Omega Hive v0.34/omegahive/install/macos/omegacode-309df.tgz",
+    "bytes": 212230,
+    "sha256": "64cbe4a1087a0fa5332b4a0aefec13b23f431cbe806f9dfe595466f51d868a08"
   }
 }

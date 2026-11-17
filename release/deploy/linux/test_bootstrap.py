@@ -209,5 +209,68 @@ class CreateTests(unittest.TestCase):
         self.assertTrue(bootstrap.failure_message(bootstrap.Refused()).startswith("The installed hive could not confirm"))
 
 
+class CodeEnrolmentTests(unittest.TestCase):
+    TOKEN = "t" * 48
+
+    def config(self, folder):
+        root = Path(folder) / "code"; root.mkdir(mode=0o700)
+        token = root / "operator-token"; token.write_text(self.TOKEN); token.chmod(0o600)
+        return {"code_service": {"root": str(root), "port": 8724}}
+
+    def test_an_enrolled_service_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as folder:
+            api = FakeHive({("GET", "/api/services"): [{"name": "omegacode", "enabled": True}]})
+            with unittest.mock.patch.object(bootstrap, "code_register") as register:
+                bootstrap.enrol_code(api, self.config(folder))
+            register.assert_not_called()
+            self.assertNotIn("POST", [m for m, _p, _b in api.calls])
+
+    def test_the_owner_enrols_and_the_service_registers_with_its_own_token(self):
+        with tempfile.TemporaryDirectory() as folder:
+            api = FakeHive({("GET", "/api/services"): Turns([[], [{"name": "omegacode"}]]),
+                            ("POST", "/api/services/enrol"): {"enrol_token": "e" * 40}})
+            with unittest.mock.patch.object(bootstrap, "code_register") as register:
+                bootstrap.enrol_code(api, self.config(folder))
+            self.assertIn(("POST", "/api/services/enrol", {"name": "omegacode"}), api.calls)
+            register.assert_called_once_with(8724, self.TOKEN, "e" * 40, api.deadline)
+
+    def test_a_service_the_hive_does_not_list_after_registering_refuses(self):
+        with tempfile.TemporaryDirectory() as folder:
+            api = FakeHive({("GET", "/api/services"): [], ("POST", "/api/services/enrol"): {"enrol_token": "e" * 40}})
+            with unittest.mock.patch.object(bootstrap, "code_register"), self.assertRaisesRegex(bootstrap.Refused, "doesn't list it"):
+                bootstrap.enrol_code(api, self.config(folder))
+
+    def serve(self, status):
+        """One loopback HTTP server this account owns, answering every POST with `status`, recording what came."""
+        import http.server, threading
+        seen = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                seen.append((self.path, self.headers.get("Authorization"),
+                             json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+                self.send_response(status); self.send_header("Content-Length", "2"); self.end_headers(); self.wfile.write(b"{}")
+
+            def log_message(self, *_args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close); self.addCleanup(server.shutdown)
+        return server.server_address[1], seen
+
+    def test_registration_goes_to_our_own_loopback_listener_with_the_operator_token(self):
+        port, seen = self.serve(200)
+        bootstrap.code_register(port, self.TOKEN, "e" * 40, bootstrap.time.monotonic() + 10)
+        self.assertEqual(seen, [("/v1/operator/register", "Bearer " + self.TOKEN, {"enrol_token": "e" * 40})])
+
+    def test_a_refused_registration_or_a_port_nobody_listens_on_refuses(self):
+        port, _seen = self.serve(403)
+        with self.assertRaisesRegex(bootstrap.Refused, "refused its registration"):
+            bootstrap.code_register(port, self.TOKEN, "e" * 40, bootstrap.time.monotonic() + 10)
+        with unittest.mock.patch.object(bootstrap.time, "sleep"), self.assertRaisesRegex(bootstrap.Refused, "did not start listening"):
+            bootstrap.code_register(1, self.TOKEN, "e" * 40, bootstrap.time.monotonic() + 2)
+
+
 if __name__ == "__main__":
     unittest.main()

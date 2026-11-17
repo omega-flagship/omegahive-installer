@@ -20,11 +20,11 @@ import subprocess
 import sys
 import time
 
-SCHEMA = 'studio-linux-user-runtime/2'
+SCHEMA = 'studio-linux-user-runtime/3'
 KEYS = {'schema', 'runtime_root', 'release_root', 'python', 'petta_path',
         'data_dir', 'port', 'sandbox_python', 'source_revision', 'plugin_dirs',
         'app_pins', 'swipl_bin', 'libpython_dir', 'studio_maker_template',
-        'default_model', 'embedding_model', 'ssh_target', 'browser_port'}
+        'default_model', 'embedding_model', 'ssh_target', 'browser_port', 'code_service'}
 UNIT = 'omegahive.service'
 SYSTEMCTL = '/usr/bin/systemctl'
 OPENER = '/usr/bin/xdg-open'
@@ -185,6 +185,14 @@ def runtime(path):
                     and '..' not in Path(rel).parts and '\x00' not in rel
                     and type(digest) is str
                     and re.fullmatch('(?:sha256:)?[a-f0-9]{64}', digest), 'app_file_pin')
+    # Create's Code service: the portable omegacode release in the hive's own code folder (install.py code_service).
+    code, hive = value['code_service'], expected.parent
+    require(type(code) is dict and set(code) == {'release', 'root', 'config', 'repository', 'port'}
+            and type(code['release']) is str and re.fullmatch('[a-f0-9]{64}', code['release'])
+            and code['root'] == str(hive / 'code') and code['config'] == str(hive / 'code/config.json')
+            and code['repository'] == str(hive / 'repos/small-app')
+            and type(code['port']) is int and code['port'] == 8724, 'code_service_record_required')
+    directory(code['root'], private=True)
     return value, home, hashlib.sha256(raw).hexdigest()
 
 

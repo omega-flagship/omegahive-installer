@@ -56,6 +56,7 @@ jobs:
           sha256sum -c ui-dist.tar.gz.sha256
           sha256sum -c omega-core-*.bundle.sha256
           sha256sum -c omegadesign-*.zip.sha256
+          sha256sum -c omegacode-*.tgz.sha256
           tar -xzf ui-dist.tar.gz -C "$GITHUB_WORKSPACE/release/hive/ui"
       - name: Fetch checksum-pinned uv and compile the current x86_64 lock
         run: |
@@ -240,6 +241,9 @@ jobs:
           # systemd makes its private socket a moment after the container starts; systemctl needs it to answer at all
           for _ in $(seq 1 60); do docker exec fresh test -S /run/systemd/private && break; sleep 1; done
           docker exec fresh systemctl is-system-running --wait || docker exec fresh systemctl --failed --no-pager
+          # A real Ubuntu boot mounts securityfs, where apparmor_parser loads profiles; a container's systemd skips it.
+          docker exec fresh sh -c 'mountpoint -q /sys/kernel/security || mount -t securityfs securityfs /sys/kernel/security'
+          docker exec fresh sh -c 'test -d /sys/kernel/security/apparmor && echo "AppArmor policy loadable"'
           docker exec fresh sh -c '. /etc/os-release && echo "$PRETTY_NAME"'
           for tool in cc cmake ninja git curl pkg-config; do
             if docker exec fresh sh -c "command -v $tool"; then echo "the fresh image already has $tool"; exit 1; fi

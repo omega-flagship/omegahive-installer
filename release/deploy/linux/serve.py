@@ -122,9 +122,9 @@ def runtime(path):
     keys = {'schema', 'runtime_root', 'release_root', 'python', 'petta_path',
             'data_dir', 'port', 'sandbox_python', 'source_revision', 'plugin_dirs',
             'app_pins', 'swipl_bin', 'libpython_dir', 'studio_maker_template',
-        'default_model', 'embedding_model', 'ssh_target', 'browser_port'}
+        'default_model', 'embedding_model', 'ssh_target', 'browser_port', 'code_service'}
     require(type(value) is dict and set(value) == keys
-            and value['schema'] == 'studio-linux-user-runtime/2',
+            and value['schema'] == 'studio-linux-user-runtime/3',
             'closed_runtime_descriptor_required')
     require(type(value['port']) is int and value['port'] == 8700
             and type(value['browser_port']) is int and value['browser_port'] == 8701
@@ -172,6 +172,14 @@ def runtime(path):
                     and '..' not in Path(rel).parts and '\x00' not in rel
                     and type(digest) is str
                     and re.fullmatch('(?:sha256:)?[a-f0-9]{64}', digest), 'app_file_pin')
+    # Create's Code service: the portable omegacode release in the hive's own code folder (install.py code_service).
+    code, hive = value['code_service'], expected.parent
+    require(type(code) is dict and set(code) == {'release', 'root', 'config', 'repository', 'port'}
+            and type(code['release']) is str and re.fullmatch('[a-f0-9]{64}', code['release'])
+            and code['root'] == str(hive / 'code') and code['config'] == str(hive / 'code/config.json')
+            and code['repository'] == str(hive / 'repos/small-app')
+            and type(code['port']) is int and code['port'] == 8724, 'code_service_record_required')
+    directory(code['root'], private=True)
     return value, home, hashlib.sha256(raw).hexdigest()
 
 
@@ -225,6 +233,13 @@ def main():
         env['HIVE_SANDBOX_RUN_APPS'] = ','.join(sorted(config['app_pins']))
     if 'omegadesign' in config['app_pins']:
         env['HIVE_STUDIO_SESSIONS'] = 'on'
+    # Create's Code service: the release the hive's Code guard accepts and the config it reads the port from. The
+    # guard asks this account's user manager about the service's unit (systemctl --user show), which needs the
+    # runtime directory; copy-apply claims let Create apply a built change into a copy of an app (code-runtime.py).
+    code = config['code_service']
+    env.update({'XDG_RUNTIME_DIR': str(directory('/run/user/' + str(os.getuid()), private=True)),
+                'HIVE_CODE_SERVICE_RELEASE': code['release'], 'HIVE_CODE_SERVICE_CONFIG': code['config'],
+                'HIVE_COPY_APPLY_CLAIMS': 'on'})
     if config['libpython_dir'] is not None:
         env['LD_LIBRARY_PATH'] = config['libpython_dir']
     require(runtime(args.runtime)[2] == fingerprint, 'descriptor_changed_before_exec')

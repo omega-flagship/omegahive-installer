@@ -6,8 +6,10 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import shlex
+import subprocess
 import tarfile
 import tempfile
 from types import SimpleNamespace
@@ -24,13 +26,22 @@ def row(path, raw=b'', mode='100644'):
     return {'path': path, 'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(), 'mode': mode}
 
 
+CODE_TEMPLATE = Path(__file__).with_name('omegacode.service.in').read_text()
+
+
+def code_record(root):
+    """The descriptor's Code service record for a hive root, as Installer.code_service returns it."""
+    return {'release': 'e' * 64, 'root': str(root / 'code'), 'config': str(root / 'code/config.json'),
+            'repository': str(root / 'repos/small-app'), 'port': 8724}
+
+
 def catalogue():
     artifact = {'url': 'https://github.com/publisher/releases/download/reviewed/archive.tar.gz',
                 'bytes': 1, 'sha256': 'a' * 64}
     platform = {key: dict(artifact) for key in ('uv', 'python', 'swipl_source', 'petta_source')}
     platform.update({key: {'path': 'payload/' + key, 'bytes': 1, 'sha256': 'b' * 64}
                      for key in ('core_lock', 'build_lock', 'source_payload')})
-    modules = [row('deploy/linux/' + name) for name in ('install.py', 'control.py', 'serve.py', 'omegahive.service.in')]
+    modules = [row('deploy/linux/' + name) for name in ('install.py', 'control.py', 'serve.py', 'omegahive.service.in', 'omegacode.service.in')]
     platform['source_payload']['files'] = [row('hive/requirements.txt')] + copy.deepcopy(modules)
     platform['source_payload']['prefix'] = 'source-root'
     # Studio (omegadesign), shown as Create, is the release's one app package; the digest is what the e2e tests'
@@ -49,7 +60,8 @@ def catalogue():
                 'source_revision': '4' * 40, 'source_tree': '5' * 40},
             'default_model': 'openrouter/vendor/model', 'embedding_model': 'mock/hash', 'ssh_target': None,
             'bootstrap': {'helper': {'path': 'payload/helper', 'bytes': 1, 'sha256': 'e' * 64}},
-            'omega_core': {'path': 'omega-core-abcdef1.bundle', 'bytes': 1, 'sha256': 'c' * 64}}
+            'omega_core': {'path': 'omega-core-abcdef1.bundle', 'bytes': 1, 'sha256': 'c' * 64},
+            'code_service': {'path': 'omegacode-309df.tgz', 'bytes': 1, 'sha256': '8' * 64}}
 
 
 def installed_fixture(home):
@@ -328,45 +340,61 @@ class InstallerTests(unittest.TestCase):
             root = Path(name); file = root / 'payload'; file.write_bytes(b'changed')
             with self.assertRaises(install.Refused): install.pin_file(file, row('payload', b'original'))
 
-    def test_apt_uses_only_three_fixed_privileged_commands(self):
-        commands = []
-        instance = install.Installer(Path('/unused'), {}, Path('/unused-home'))
-        instance.sudo = lambda argv, **kwargs: commands.append((argv, kwargs))
-        with patch.object(install, 'linger_user', return_value='fresh-user'), \
-             patch.object(install, 'userns_restricted', return_value=False):
-            self.assertFalse(instance.apt(Path('/unused-runtime')))
-        wait = ['/usr/bin/apt-get', '-o', 'DPkg::Lock::Timeout=' + str(install.APT_LOCK_WAIT)]
-        self.assertEqual(commands[0], ([*wait, 'update'], {'timeout': install.APT_LOCK_WAIT + 600}))
-        self.assertEqual(commands[1][1], {'timeout': install.APT_LOCK_WAIT + 900, 'package_environment': True})
-        self.assertEqual(commands[1][0], [*wait, 'install', '-y', '--no-install-recommends', *install.APT])
-        self.assertEqual(commands[2], (['/usr/bin/loginctl', 'enable-linger', 'fresh-user'], {'timeout': 60}))
-        self.assertEqual(len(commands), 3)
+    def apt_commands(self, restricted, uid=1002):
+        """The apt step's privileged commands and the profile file it wrote, on a host restricted or not."""
+        with tempfile.TemporaryDirectory() as name:
+            runtime = Path(name).resolve() / 'releases/test-1'; runtime.mkdir(parents=True)
+            commands = []
+            instance = install.Installer(Path('/unused'), {}, Path(name).resolve() / 'home')
+            instance.sudo = lambda argv, **kwargs: commands.append((argv, kwargs))
+            with patch.object(install, 'linger_user', return_value='fresh-user'), \
+                 patch.object(install, 'userns_restricted', return_value=restricted), \
+                 patch.object(install, 'apparmor_enabled', return_value=True), \
+                 patch.object(install.os, 'getuid', return_value=uid):
+                self.assertEqual(instance.apt(runtime), restricted)
+            source = runtime / 'omegahive.apparmor'
+            return commands, source.read_text(), source.stat().st_mode & 0o777, source, instance.root
 
-    def test_apt_loads_the_launcher_profile_where_apparmor_restricts_user_namespaces(self):
+    def test_apt_uses_five_fixed_privileged_commands_and_loads_the_code_profile_on_every_release(self):
+        for restricted in (False, True):
+            with self.subTest(restricted=restricted):
+                commands, text, mode, source, root = self.apt_commands(restricted)
+                target = '/etc/apparmor.d/omegahive-1002'
+                wait = ['/usr/bin/apt-get', '-o', 'DPkg::Lock::Timeout=' + str(install.APT_LOCK_WAIT)]
+                self.assertEqual(commands[0], ([*wait, 'update'], {'timeout': install.APT_LOCK_WAIT + 600}))
+                self.assertEqual(commands[1], ([*wait, 'install', '-y', '--no-install-recommends', *install.APT],
+                                               {'timeout': install.APT_LOCK_WAIT + 900, 'package_environment': True}))
+                self.assertEqual([argv for argv, _kwargs in commands[2:]], [
+                    ['/usr/bin/loginctl', 'enable-linger', 'fresh-user'],
+                    ['/usr/bin/install', '-o', 'root', '-g', 'root', '-m', '0644', str(source), target],
+                    [install.APPARMOR_PARSER, '-r', target]])
+                self.assertIn('apparmor', install.APT); self.assertIn('patch', install.APT)
+                self.assertTrue(text.startswith('# Purpose: '))
+                self.assertIn('abi <abi/' + ('4.0' if restricted else '3.0') + '>,\ninclude <tunables/global>\n', text)
+                self.assertIn('profile omegahive-code-1002 flags=(attach_disconnected) {', text)
+                for rule in ('  ' + str(root / 'code') + '/{state,tmp,wd,home}/** rwlk,', '  ' + str(root / 'repos/small-app') + '/** rwlk,',
+                             '  ptrace (readby) peer=unconfined,', '  signal (receive) peer=unconfined,'):
+                    self.assertIn(rule, text)
+                self.assertEqual('profile omegahive-mind-launcher-1002 ' in text, restricted)
+                self.assertEqual(mode, 0o600)
+
+    def test_apt_refuses_where_apparmor_is_off_before_any_prompt(self):
         with tempfile.TemporaryDirectory() as name:
             runtime = Path(name).resolve() / 'releases/test-1'; runtime.mkdir(parents=True)
             commands = []
             instance = install.Installer(Path('/unused'), {}, Path('/unused-home'))
-            instance.sudo = lambda argv, **kwargs: commands.append((argv, kwargs))
-            with patch.object(install, 'linger_user', return_value='fresh-user'), \
-                 patch.object(install, 'userns_restricted', return_value=True), \
-                 patch.object(install.os, 'getuid', return_value=1002):
-                self.assertTrue(instance.apt(runtime))
-            source, target = runtime / 'launcher.apparmor', '/etc/apparmor.d/omegahive-mind-launcher-1002'
-            self.assertEqual([argv for argv, _kwargs in commands], [
-                install.apt_get('update'),
-                install.apt_get('install', '-y', '--no-install-recommends', *install.APT, 'apparmor'),
-                ['/usr/bin/loginctl', 'enable-linger', 'fresh-user'],
-                ['/usr/bin/install', '-o', 'root', '-g', 'root', '-m', '0644', str(source), target],
-                [install.APPARMOR_PARSER, '-r', target]])
-            self.assertTrue(commands[1][1]['package_environment'])
-            text = source.read_text()
-            launcher = runtime / 'app/hive/supervisor/landlock.py'
-            self.assertTrue(text.startswith('# Purpose: '))
-            self.assertIn('abi <abi/4.0>,\ninclude <tunables/global>\n', text)
-            self.assertIn('profile omegahive-mind-launcher-1002 ' + str(launcher) + ' flags=(unconfined) {\n  userns,\n', text)
-            self.assertIn('include if exists <local/omegahive-mind-launcher-1002>', text)
-            self.assertEqual(source.stat().st_mode & 0o777, 0o600)
+            instance.sudo = lambda argv, **kwargs: commands.append(argv)
+            with patch.object(install, 'apparmor_enabled', return_value=False), \
+                 self.assertRaisesRegex(install.Refused, 'AppArmor'):
+                instance.apt(runtime)
+            self.assertEqual(commands, [])
+            self.assertFalse((runtime / 'omegahive.apparmor').exists())
+
+    def test_restricted_host_profile_file_carries_the_exact_launcher_profile(self):
+        _commands, text, _mode, source, _root = self.apt_commands(True)
+        launcher = source.parent / 'app/hive/supervisor/landlock.py'
+        self.assertIn('profile omegahive-mind-launcher-1002 ' + str(launcher) + ' flags=(unconfined) {\n  userns,\n', text)
+        self.assertIn('include if exists <local/omegahive-mind-launcher-1002>', text)
 
     def test_unplain_launcher_path_stops_before_any_password_prompt(self):
         with tempfile.TemporaryDirectory() as name:
@@ -375,10 +403,11 @@ class InstallerTests(unittest.TestCase):
             instance = install.Installer(Path('/unused'), {}, Path('/unused-home'))
             instance.sudo = lambda argv, **kwargs: commands.append(argv)
             with patch.object(install, 'userns_restricted', return_value=True), \
+                 patch.object(install, 'apparmor_enabled', return_value=True), \
                  self.assertRaisesRegex(install.Refused, 'installation path can use only'):
                 instance.apt(runtime)
             self.assertEqual(commands, [])
-            self.assertFalse((runtime / 'launcher.apparmor').exists())
+            self.assertFalse((runtime / 'omegahive.apparmor').exists())
 
     def test_userns_restriction_reads_the_apparmor_switch(self):
         with tempfile.TemporaryDirectory() as name:
@@ -555,6 +584,7 @@ class InstallerTests(unittest.TestCase):
             home = Path(name); root = home / '.local/share/omegahive'; root.mkdir(parents=True)
             app = root / 'releases/test/app'; module = app / 'deploy/linux'; module.mkdir(parents=True)
             (module / 'omegahive.service.in').write_text('[Service]\nExecStart=@PYTHON@ -I -B @SERVE@ --runtime @RUNTIME@\nWorkingDirectory=@WORKDIR@\nEnvironment=@SANDBOX_ENV@\nEnvironment=@LIBPYTHON_ENV@\n')
+            (module / 'omegacode.service.in').write_text(CODE_TEMPLATE)
             instance = install.Installer(Path('/unused'), {}, home); calls = []; runtimes = []
             runtime = home / 'run'; runtime.mkdir(mode=0o700)
             def run(argv, **kwargs):
@@ -562,7 +592,7 @@ class InstallerTests(unittest.TestCase):
                 runtimes.append((scratch, scratch.is_dir())); self.assertEqual(kwargs['env']['TEST'], 'owned-session')
             instance.run = run
             python = root / 'releases/test/venv/bin/python'
-            descriptor = {'runtime_root': str(app.parent), 'sandbox_python': str(python), 'data_dir': str(root / 'data'), 'libpython_dir': str(app.parent / 'runtime/python/lib')}
+            descriptor = {'runtime_root': str(app.parent), 'sandbox_python': str(python), 'data_dir': str(root / 'data'), 'libpython_dir': str(app.parent / 'runtime/python/lib'), 'code_service': code_record(root)}
             with patch.object(install, 'control_env', return_value={'TEST': 'owned-session', 'XDG_RUNTIME_DIR': str(runtime)}):
                 instance.activate(app, python, descriptor)
             lines = (home / '.local/bin/omegahive').read_text().splitlines()
@@ -570,18 +600,32 @@ class InstallerTests(unittest.TestCase):
             shim = lines[2]
             self.assertEqual(shlex.split(shim), ['LD_LIBRARY_PATH=' + descriptor['libpython_dir'], 'exec', str(python), '-I', '-B', str(root / 'bin/install.py'), '$@'])
             self.assertIn('Environment="LD_LIBRARY_PATH=' + descriptor['libpython_dir'] + '"', (home / '.config/systemd/user/omegahive.service').read_text())
-            self.assertEqual(calls, [['/usr/bin/systemd-analyze', '--user', 'verify', str(home / '.config/systemd/user/omegahive.service')], ['/usr/bin/systemctl', '--user', 'daemon-reload'], ['/usr/bin/systemctl', '--user', 'enable', 'omegahive.service'], ['/usr/bin/systemctl', '--user', 'start', 'omegahive.service']])
+            units = home / '.config/systemd/user'
+            self.assertEqual(calls, [['/usr/bin/systemd-analyze', '--user', 'verify', str(units / 'omegahive.service'), str(units / 'omegacode.service')],
+                                     ['/usr/bin/systemctl', '--user', 'daemon-reload'],
+                                     ['/usr/bin/systemctl', '--user', 'enable', 'omegahive.service', 'omegacode.service'],
+                                     ['/usr/bin/systemctl', '--user', 'start', 'omegahive.service'],
+                                     ['/usr/bin/systemctl', '--user', 'start', 'omegacode.service']])
+            code_unit = (units / 'omegacode.service').read_text()
+            code = code_record(root)
+            self.assertIn('ExecStart=' + str(python) + ' -B -s -m omegacode --config ' + code['config'] + '\n', code_unit)
+            self.assertIn('Environment=PYTHONPATH=' + code['root'] + '/releases/' + code['release'] + '\n', code_unit)
+            self.assertIn('WorkingDirectory=' + code['root'] + '/wd\n', code_unit)
+            self.assertIn('AppArmorProfile=omegahive-code-' + str(install.os.getuid()) + '\n', code_unit)
+            self.assertNotRegex(code_unit, '@[A-Za-z_]+@')
+            self.assertEqual(json.loads((root / 'installation-state.json').read_text())['schema'], 'studio-linux-user-installation/3')
             # verify ran in a runtime directory of its own, gone now, so it never replaced the manager's private socket.
             (scratch, existed), *managed = runtimes
             self.assertEqual(scratch.parent, runtime); self.assertTrue(scratch.name.startswith('verify-'))
             self.assertTrue(existed); self.assertFalse(scratch.exists())
-            self.assertEqual(managed, [(runtime, True)] * 3)
+            self.assertEqual(managed, [(runtime, True)] * 4)
 
     def test_rendered_service_verification_failure_refuses_before_start_or_shim(self):
         with tempfile.TemporaryDirectory() as name:
             home = Path(name); root = home / '.local/share/omegahive'; root.mkdir(parents=True)
             app = root / 'releases/test-1/app'; module = app / 'deploy/linux'; module.mkdir(parents=True)
             (module / 'omegahive.service.in').write_text('[Service]\nExecStart=@PYTHON@ -I -B @SERVE@ --runtime @RUNTIME@\nWorkingDirectory=@WORKDIR@\nEnvironment=@SANDBOX_ENV@\nEnvironment=@LIBPYTHON_ENV@\n')
+            (module / 'omegacode.service.in').write_text(CODE_TEMPLATE)
             instance = install.Installer(Path('/unused'), {}, home); calls = []; scratches = []
             runtime = home / 'run'; runtime.mkdir(mode=0o700)
             def refuse(argv, **kwargs):
@@ -590,11 +634,12 @@ class InstallerTests(unittest.TestCase):
             instance.run = refuse
             python = root / 'releases/test-1/venv/bin/python'
             descriptor = {'runtime_root': str(app.parent), 'sandbox_python': str(python),
-                          'data_dir': str(root / 'data'), 'libpython_dir': None}
+                          'data_dir': str(root / 'data'), 'libpython_dir': None, 'code_service': code_record(root)}
             with patch.object(install, 'control_env', return_value={'TEST': 'owned-session', 'XDG_RUNTIME_DIR': str(runtime)}):
                 with self.assertRaisesRegex(install.Refused, 'user service could not be validated'):
                     instance.activate(app, python, descriptor)
-            self.assertEqual(calls, [['/usr/bin/systemd-analyze', '--user', 'verify', str(home / '.config/systemd/user/omegahive.service')]])
+            self.assertEqual(calls, [['/usr/bin/systemd-analyze', '--user', 'verify', str(home / '.config/systemd/user/omegahive.service'),
+                                      str(home / '.config/systemd/user/omegacode.service')]])
             self.assertEqual(scratches[0].parent, runtime); self.assertFalse(scratches[0].exists())
             self.assertFalse((home / '.local/bin/omegahive').exists())
             self.assertFalse((root / 'installation-state.json').exists())
@@ -606,11 +651,12 @@ class InstallerTests(unittest.TestCase):
             home = Path(name); root = home / '.local/share/omegahive'; root.mkdir(parents=True)
             app = root / 'releases/percent%release/app'; module = app / 'deploy/linux'; module.mkdir(parents=True)
             (module / 'omegahive.service.in').write_text('[Service]\nExecStart=@PYTHON@\n')
+            (module / 'omegacode.service.in').write_text(CODE_TEMPLATE)
             instance = install.Installer(Path('/unused'), {}, home); calls = []
             instance.run = lambda argv, **kwargs: calls.append(argv)
             python = app.parent / 'venv/bin/python'
             with self.assertRaises(install.Refused):
-                instance.activate(app, python, {'runtime_root': str(app.parent), 'sandbox_python': str(python), 'data_dir': str(root / 'data'), 'libpython_dir': None})
+                instance.activate(app, python, {'runtime_root': str(app.parent), 'sandbox_python': str(python), 'data_dir': str(root / 'data'), 'libpython_dir': None, 'code_service': code_record(root)})
             self.assertEqual(calls, [])
             self.assertFalse((home / '.config/systemd/user/omegahive.service').exists())
 
@@ -871,6 +917,9 @@ class InstallerTests(unittest.TestCase):
                 stack.enter_context(patch.object(install, 'preflight', return_value='aarch64'))
                 stack.enter_context(patch.object(install, 'userns_restricted', return_value=restricted))
                 stack.enter_context(patch.object(install.Installer, 'omega_core', lambda obj, app, python: commands.append(['omega-core', str(app)])))
+                stack.enter_context(patch.object(install, 'apparmor_enabled', return_value=True))
+                stack.enter_context(patch.object(install.Installer, 'code_service', lambda obj, app, python: (
+                    commands.append(['code-service', str(app)]), code_record(root))[1]))
                 stack.enter_context(patch.object(install, 'validate_lock'))
                 stack.enter_context(patch.object(install.Installer, 'local', return_value=payload))
                 stack.enter_context(patch.object(install.Installer, 'fetch', return_value=payload))
@@ -895,34 +944,38 @@ class InstallerTests(unittest.TestCase):
             self.assertTrue(list((root / 'logs').glob('completed-*.json')))
             self.assertEqual((root / 'data/keep').read_text(), 'data')
             self.assertEqual((root / 'cache/keep').read_text(), 'cache')
-            self.assertIn(['/usr/bin/systemctl', '--user', 'enable', 'omegahive.service'], commands)
+            self.assertIn(['/usr/bin/systemctl', '--user', 'enable', 'omegahive.service', 'omegacode.service'], commands)
+            self.assertLess(commands.index(['/usr/bin/systemctl', '--user', 'start', 'omegahive.service']),
+                            commands.index(['/usr/bin/systemctl', '--user', 'start', 'omegacode.service']))
             # The executable now sits at the prefix's bin and its installed place links to it (place_swipl).
             canonical_swipl = root / 'releases/test-1/runtime/swipl/bin/swipl'
             self.assertTrue(canonical_swipl.is_file() and not canonical_swipl.is_symlink())
             self.assertEqual((root / 'releases/test-1/runtime/swipl/lib/swipl/bin/aarch64-linux/swipl').resolve(), canonical_swipl)
             self.assertEqual(json.loads((root / 'runtime.json').read_text())['swipl_bin'], str(canonical_swipl))
             descriptor = json.loads((root / 'runtime.json').read_text())
-            self.assertEqual(descriptor['schema'], 'studio-linux-user-runtime/2')
+            self.assertEqual(descriptor['schema'], 'studio-linux-user-runtime/3')
+            self.assertEqual(descriptor['code_service'], code_record(root))
             self.assertEqual((descriptor['port'], descriptor['browser_port']), (8700, 8701))
-            self.assertEqual(len(descriptor), 18)
+            self.assertEqual(len(descriptor), 19)
             self.assertEqual([argv[0] for argv in commands if len(argv) > 1 and argv[1] == '-g'], [str(canonical_swipl)])
             core = commands.index(['omega-core', str(root / 'releases/test-1/app')])
-            self.assertLess(core, commands.index(['/usr/bin/systemctl', '--user', 'enable', 'omegahive.service']))
+            self.assertLess(core, commands.index(['/usr/bin/systemctl', '--user', 'enable', 'omegahive.service', 'omegacode.service']))
             self.assertGreater(core, max(i for i, argv in enumerate(commands) if len(argv) > 1 and argv[1] == '-g'))
-            return commands, root, (root / 'releases/test-1/launcher.apparmor').exists()
+            return commands, root, (root / 'releases/test-1/omegahive.apparmor').exists()
 
     def test_failure_after_extraction_can_rerun_complete_workflow_without_losing_data(self):
         commands, _root, profile_written = self.complete_workflow(restricted=False)
         self.assertIn(['/usr/bin/unshare', '--user', '--map-root-user', '--mount', '--net', '--pid', '--fork', '/usr/bin/true'], commands)
-        self.assertFalse(profile_written)
-        self.assertFalse(any(install.APPARMOR_PARSER in argv for argv in commands))
+        # The Code service's profile is loaded on every release; only a restricted host also needs the launcher's.
+        self.assertTrue(profile_written)
+        self.assertTrue(any(install.APPARMOR_PARSER in argv for argv in commands))
 
     def test_restricted_userns_host_loads_the_launcher_profile_instead_of_the_plain_probe(self):
         commands, root, profile_written = self.complete_workflow(restricted=True)
         self.assertFalse(any(argv[:1] == ['/usr/bin/unshare'] for argv in commands))
         self.assertTrue(profile_written)
-        target = '/etc/apparmor.d/' + install.launcher_profile_name(install.os.getuid())
-        source = root / 'releases/test-1/launcher.apparmor'
+        target = '/etc/apparmor.d/' + install.apparmor_file_name(install.os.getuid())
+        source = root / 'releases/test-1/omegahive.apparmor'
         self.assertIn(['/usr/bin/sudo', '-S', '/usr/bin/install', '-o', 'root', '-g', 'root', '-m', '0644', str(source), target], commands)
         self.assertIn(['/usr/bin/sudo', '-S', install.APPARMOR_PARSER, '-r', target], commands)
 
@@ -956,13 +1009,15 @@ class InstallerTests(unittest.TestCase):
     def test_password_explanation_safe_failure_copy_and_full_path_return_advice(self):
         instance = install.Installer(Path('/unused'), {}, Path('/unused-home'))
         instance.sudo = lambda *_args, **_kwargs: None
-        for restricted, steps in ((False, 'three'), (True, 'five')):
+        for restricted, steps in ((False, 'five'), (True, 'five')):
             with tempfile.TemporaryDirectory() as name, self.subTest(restricted=restricted):
                 output = io.StringIO()
-                with patch.object(install, 'userns_restricted', return_value=restricted), redirect_stdout(output):
+                with patch.object(install, 'userns_restricted', return_value=restricted), \
+                        patch.object(install, 'apparmor_enabled', return_value=True), redirect_stdout(output):
                     instance.apt(Path(name).resolve())
                 self.assertIn('each of the ' + steps + ' system setup steps', output.getvalue())
-                self.assertEqual('let its minds start in their sandbox' in output.getvalue(), restricted)
+                self.assertIn("keep Create's Code service in its own sandbox", output.getvalue())
+                self.assertEqual('let its minds start in theirs' in output.getvalue(), restricted)
         source = Path(install.__file__).read_text()
         self.assertIn('Next time, open it with:  ~/.local/bin/omegahive open', source)
         self.assertIn('open a new terminal after signing out and in', source)
@@ -1302,6 +1357,8 @@ class NativePackageCompilerTests(unittest.TestCase):
                 stack.enter_context(patch.dict(install.os.environ, {"CC": "clang-from-ambient", "CXX": "clang++-from-ambient", "PATH": "/untrusted"}))
                 stack.enter_context(patch.object(install, "preflight", return_value="aarch64"))
                 stack.enter_context(patch.object(install.Installer, "omega_core", lambda obj, app, python: None))
+                stack.enter_context(patch.object(install.Installer, "code_service", lambda obj, app, python: code_record(root)))
+                stack.enter_context(patch.object(install, "apparmor_enabled", return_value=True))
                 stack.enter_context(patch.object(install, "validate_lock"))
                 stack.enter_context(patch.object(install.Installer, "local", return_value=payload))
                 stack.enter_context(patch.object(install.Installer, "fetch", return_value=payload))
@@ -1339,11 +1396,12 @@ class WorkingDirectoryR13Tests(unittest.TestCase):
                 root = home / '.local/share/omegahive'; root.mkdir(parents=True)
                 app = root / 'releases/test/app'; module = app / 'deploy/linux'; module.mkdir(parents=True)
                 (module / 'omegahive.service.in').write_text(template)
+                (module / 'omegacode.service.in').write_text(CODE_TEMPLATE)
                 instance = install.Installer(Path('/unused'), {}, home); calls = []
                 instance.run = lambda argv, **kwargs: calls.append(argv)
                 python = root / 'releases/test/venv/bin/python'
                 descriptor = {'runtime_root': str(app.parent), 'sandbox_python': str(python),
-                              'data_dir': str(root / 'data'), 'libpython_dir': None}
+                              'data_dir': str(root / 'data'), 'libpython_dir': None, 'code_service': code_record(root)}
                 runtime = home / 'run'; runtime.mkdir(mode=0o700)
                 with patch.object(install, 'control_env', return_value={'TEST': 'owned-session', 'XDG_RUNTIME_DIR': str(runtime)}):
                     instance.activate(app, python, descriptor)
@@ -1355,8 +1413,9 @@ class WorkingDirectoryR13Tests(unittest.TestCase):
                 self.assertIn('Environment="HIVE_SANDBOX_PYTHON=' + str(python) + '"', lines)
                 self.assertIn('Environment="LD_LIBRARY_PATH="', lines)
                 self.assertEqual(calls[0], ['/usr/bin/systemd-analyze', '--user', 'verify',
-                                          str(home / '.config/systemd/user/omegahive.service')])
-                self.assertEqual(calls[-1], ['/usr/bin/systemctl', '--user', 'start', 'omegahive.service'])
+                                          str(home / '.config/systemd/user/omegahive.service'),
+                                          str(home / '.config/systemd/user/omegacode.service')])
+                self.assertEqual(calls[-1], ['/usr/bin/systemctl', '--user', 'start', 'omegacode.service'])
 
     def test_working_directory_refuses_nonplain_characters_before_unit_write_or_commands(self):
         template = '[Service]\nExecStart=@PYTHON@\nWorkingDirectory=@WORKDIR@\n'
@@ -1367,10 +1426,11 @@ class WorkingDirectoryR13Tests(unittest.TestCase):
                 root = home / '.local/share/omegahive'; root.mkdir(parents=True)
                 app = root / 'releases/test/app'; module = app / 'deploy/linux'; module.mkdir(parents=True)
                 (module / 'omegahive.service.in').write_text(template)
+                (module / 'omegacode.service.in').write_text(CODE_TEMPLATE)
                 calls = []
                 python = root / 'releases/test/venv/bin/python'
                 descriptor = {'runtime_root': str(app.parent), 'sandbox_python': str(python),
-                              'data_dir': str(root / 'data'), 'libpython_dir': None}
+                              'data_dir': str(root / 'data'), 'libpython_dir': None, 'code_service': code_record(root)}
                 message = ("home folder's name has a % sign" if '%' in component else
                            'unsupported character' if any(c in component for c in '\n\r') else
                            'installation path can use only')
@@ -1443,3 +1503,103 @@ class InheritedAclTests(unittest.TestCase):
                 else:
                     with self.assertRaises(install.Refused):
                         install.strip_inherited_acl(Path(raw))
+
+
+class CodeServiceTests(unittest.TestCase):
+    """Create's Code service setup (Installer.code_service), checked on a synthetic omegacode release."""
+
+    def test_module_digest_is_the_hives_own_recipe(self):
+        # The hive's Code._module_digest, taken from the release's own source and run beside the installer's.
+        source = (Path(__file__).parents[2] / 'hive/core/code.py').read_text()
+        tree = ast.parse(source)
+        code_class = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'Code')
+        method = next(n for n in code_class.body if isinstance(n, ast.FunctionDef) and n.name == '_module_digest')
+        method.decorator_list = []
+        namespace = {}
+        exec(compile(ast.Module(body=[method], type_ignores=[]), 'code.py', 'exec'), namespace)
+        with tempfile.TemporaryDirectory() as name:
+            package = Path(name) / 'omegacode'; (package / 'sub/__pycache__').mkdir(parents=True)
+            (package / '__init__.py').write_text('A = 1\n'); (package / 'sub/b.py').write_text('B = 2\n')
+            (package / 'sub/__pycache__/c.py').write_text('skipped\n'); (package / 'data.json').write_text('{}')
+            self.assertEqual(install.module_digest(package), namespace['_module_digest'](package))
+
+    def test_release_pins_are_read_from_the_hive_source_without_importing_it(self):
+        published, portable = install.code_releases(Path(__file__).parents[2])
+        self.assertRegex(published, '^[a-f0-9]{64}$'); self.assertRegex(portable, '^[a-f0-9]{64}$')
+        self.assertNotEqual(published, portable)
+        with tempfile.TemporaryDirectory() as name:
+            (Path(name) / 'hive/core').mkdir(parents=True)
+            (Path(name) / 'hive/core/code.py').write_text('PUBLISHED_SERVICE_RELEASE = "short"\n')
+            with self.assertRaises(install.Refused):
+                install.code_releases(Path(name))
+
+    def synthetic(self, base):
+        """A release app folder, an omegacode tarball and the two adapters, as the kit and release carry them."""
+        app = base / 'app'; (app / 'hive/core').mkdir(parents=True); (app / 'install/macos').mkdir(parents=True)
+        package = base / 'build/omegacode'; package.mkdir(parents=True)
+        (package / '__init__.py').write_text('PORT = 8724\n'); (package / '__main__.py').write_text('MODE = "published"\n')
+        published = install.module_digest(package)
+        archive = base / 'omegacode-309df.tgz'
+        with tarfile.open(archive, 'w:gz') as tar:
+            tar.add(package, arcname='omegacode')
+        (app / 'install/macos/omegacode-port.patch').write_text(
+            '--- a/omegacode/__init__.py\n+++ b/omegacode/__init__.py\n@@ -1 +1 @@\n-PORT = 8724\n+PORT = 8725\n')
+        (app / 'install/macos/omegacode-proposal-tests.patch').write_text(
+            '--- a/omegacode/__main__.py\n+++ b/omegacode/__main__.py\n@@ -1 +1 @@\n-MODE = "published"\n+MODE = "portable"\n')
+        (package / '__init__.py').write_text('PORT = 8725\n'); (package / '__main__.py').write_text('MODE = "portable"\n')
+        portable = install.module_digest(package)
+        (app / 'hive/core/code.py').write_text(f'PUBLISHED_SERVICE_RELEASE = "{published}"\nPORTABLE_SERVICE_RELEASE = "{portable}"\n')
+        (app / 'install/macos/check-app.py').write_text('# the installer-owned project check\n')
+        raw = archive.read_bytes()
+        return app, archive, {'path': archive.name, 'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}, portable
+
+    def test_unpacks_patches_checks_and_keeps_the_release_read_only_with_its_repository_and_config(self):
+        if not Path('/usr/bin/patch').exists() or not Path('/usr/bin/git').exists():
+            self.skipTest('needs /usr/bin/patch and /usr/bin/git')
+        with tempfile.TemporaryDirectory(prefix='code-') as name:
+            base = Path(name).resolve(); home = base / 'home'; home.mkdir(mode=0o700)
+            app, archive, pin, portable = self.synthetic(base)
+            instance = install.Installer(base, {'code_service': pin}, home)
+            instance.root.mkdir(parents=True, mode=0o700)
+            instance.env = install.clean_env(home, '/usr/bin:/bin')
+            with open(os.devnull, 'wb') as log:
+                instance.log = log
+                with patch.object(instance, 'local', return_value=archive):
+                    record = instance.code_service(app, Path('/unused-python'))
+                    again = instance.code_service(app, Path('/unused-python'))
+            code = instance.root / 'code'
+            self.assertEqual(record, again)
+            self.assertEqual(record, {'release': portable, 'root': str(code), 'config': str(code / 'config.json'),
+                                      'repository': str(instance.root / 'repos/small-app'), 'port': 8724})
+            release = code / 'releases' / portable / 'omegacode'
+            self.assertEqual((release / '__init__.py').read_text(), 'PORT = 8725\n')
+            self.assertFalse(any(path.stat().st_mode & 0o222 for path in release.rglob('*') if path.is_file()))
+            self.assertEqual([p.name for p in (code / 'releases').iterdir()], [portable])
+            for folder in ('state', 'wd', 'tmp', 'home', 'logs'):
+                self.assertEqual((code / folder).stat().st_mode & 0o777, 0o700)
+            self.assertEqual(list((code / 'wd').iterdir()), [])
+            token = code / 'operator-token'
+            self.assertEqual(token.stat().st_mode & 0o777, 0o600); self.assertGreaterEqual(len(token.read_text()), 43)
+            config = json.loads((code / 'config.json').read_text())
+            self.assertEqual((config['port'], config['hive_url'], config['proposal_tests_enabled']), (8724, 'http://127.0.0.1:8700', False))
+            repo = instance.root / 'repos/small-app'
+            self.assertEqual(sorted(p.name for p in repo.iterdir()), ['.git', 'README.md', 'app.js', 'check_app.py', 'index.html', 'style.css'])
+            log = subprocess.run(['/usr/bin/git', '-C', str(repo), 'log', '--format=%an %s'], capture_output=True, text=True,
+                                 env=instance.git_env(), check=True).stdout
+            self.assertEqual(log, 'Your hive Start the small app\n')
+
+    def test_a_tarball_that_is_not_the_published_release_refuses_before_patching(self):
+        with tempfile.TemporaryDirectory(prefix='code-') as name:
+            base = Path(name).resolve(); home = base / 'home'; home.mkdir(mode=0o700)
+            app, archive, pin, _portable = self.synthetic(base)
+            # The hive accepts another published release than the tarball holds.
+            portable_line = (app / 'hive/core/code.py').read_text().split('\n')[1]
+            (app / 'hive/core/code.py').write_text('PUBLISHED_SERVICE_RELEASE = "' + '0' * 64 + '"\n' + portable_line + '\n')
+            instance = install.Installer(base, {'code_service': pin}, home)
+            instance.root.mkdir(parents=True, mode=0o700)
+            commands = []
+            instance.run = lambda argv, **kwargs: commands.append(argv)
+            with patch.object(instance, 'local', return_value=archive), \
+                    self.assertRaisesRegex(install.Refused, 'not the published release'):
+                instance.code_service(app, Path('/unused-python'))
+            self.assertEqual(commands, [])
