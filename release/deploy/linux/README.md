@@ -58,10 +58,22 @@ resolving a symlink to the base interpreter would lose the installed environment
 The live service and sandbox both select this canonical environment executable.
 SWI is built
 into the same versioned home release, then the existing bridge directions are
-checked before the service starts. Exact selected uv support for the flags,
+checked before the service starts. The installer then moves the SWI executable to
+the prefix's `bin/swipl` and leaves a link at its installed place, as the Mac
+bundle does: a mind's sandbox may read the folder two above the `swipl` the hive
+finds, and only from there does that folder hold `libswipl` and SWI's library.
+The core lock holds hive/requirements.txt, the Janus bridge and the packages a
+mind imports beyond them (openai, chromadb, py-landlock: install/macos/python-lock.py's
+MINDS, at the versions its linux-64 lock pins). Minds run on singnet/Omega at the
+revision core-dependency.json pins; the kit carries it as the git bundle the Mac
+zip ships (`omega_core` in the release manifest), and the installer runs the
+release's own `scripts/setup_core.py --source` on it, which needs no network.
+Exact selected uv support for the flags,
 CPython/SWI compatibility and both platform locks require actual Linux checks.
 
-The installer refuses unsupported Ubuntu releases, root, unsafe home paths,
+The installer supports Ubuntu 22.04, 24.04 and 26.04. Its package steps wait up to
+30 minutes for Ubuntu's own updates, which a fresh computer installs soon after it
+starts, instead of failing on the package lock. It refuses other releases, root, unsafe home paths,
 missing Landlock ABI, failed user namespace isolation, insufficient disk,
 modified archives, an existing installation and an unreviewed Studio seed.
 Module pins must join both platform Source vectors before sudo. Both dependency

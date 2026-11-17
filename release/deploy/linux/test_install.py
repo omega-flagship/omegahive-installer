@@ -44,7 +44,8 @@ def catalogue():
                 'manifest': {'path': 'payload/ui.json', 'bytes': 1, 'sha256': 'e' * 64},
                 'source_revision': '4' * 40, 'source_tree': '5' * 40},
             'default_model': 'openrouter/vendor/model', 'embedding_model': 'mock/hash', 'ssh_target': None,
-            'bootstrap': {'helper': {'path': 'payload/helper', 'bytes': 1, 'sha256': 'e' * 64}}}
+            'bootstrap': {'helper': {'path': 'payload/helper', 'bytes': 1, 'sha256': 'e' * 64}},
+            'omega_core': {'path': 'omega-core-abcdef1.bundle', 'bytes': 1, 'sha256': 'c' * 64}}
 
 
 def installed_fixture(home):
@@ -327,9 +328,10 @@ class InstallerTests(unittest.TestCase):
         with patch.object(install, 'linger_user', return_value='fresh-user'), \
              patch.object(install, 'userns_restricted', return_value=False):
             self.assertFalse(instance.apt(Path('/unused-runtime')))
-        self.assertEqual(commands[0], (['/usr/bin/apt-get', 'update'], {'timeout': 600}))
-        self.assertEqual(commands[1][1], {'timeout': 900, 'package_environment': True})
-        self.assertEqual(commands[1][0], ['/usr/bin/apt-get', 'install', '-y', '--no-install-recommends', *install.APT])
+        wait = ['/usr/bin/apt-get', '-o', 'DPkg::Lock::Timeout=' + str(install.APT_LOCK_WAIT)]
+        self.assertEqual(commands[0], ([*wait, 'update'], {'timeout': install.APT_LOCK_WAIT + 600}))
+        self.assertEqual(commands[1][1], {'timeout': install.APT_LOCK_WAIT + 900, 'package_environment': True})
+        self.assertEqual(commands[1][0], [*wait, 'install', '-y', '--no-install-recommends', *install.APT])
         self.assertEqual(commands[2], (['/usr/bin/loginctl', 'enable-linger', 'fresh-user'], {'timeout': 60}))
         self.assertEqual(len(commands), 3)
 
@@ -345,8 +347,8 @@ class InstallerTests(unittest.TestCase):
                 self.assertTrue(instance.apt(runtime))
             source, target = runtime / 'launcher.apparmor', '/etc/apparmor.d/omegahive-mind-launcher-1002'
             self.assertEqual([argv for argv, _kwargs in commands], [
-                ['/usr/bin/apt-get', 'update'],
-                ['/usr/bin/apt-get', 'install', '-y', '--no-install-recommends', *install.APT, 'apparmor'],
+                install.apt_get('update'),
+                install.apt_get('install', '-y', '--no-install-recommends', *install.APT, 'apparmor'),
                 ['/usr/bin/loginctl', 'enable-linger', 'fresh-user'],
                 ['/usr/bin/install', '-o', 'root', '-g', 'root', '-m', '0644', str(source), target],
                 [install.APPARMOR_PARSER, '-r', target]])
@@ -379,9 +381,10 @@ class InstallerTests(unittest.TestCase):
                 switch.write_text('0\n'); self.assertFalse(install.userns_restricted())
                 switch.write_text('1\n'); self.assertTrue(install.userns_restricted())
 
-    def test_preflight_accepts_ubuntu_22_04_and_24_04_only(self):
+    def test_preflight_accepts_ubuntu_22_04_24_04_and_26_04_only(self):
         for text, ok in (('ID=ubuntu\nVERSION_ID="22.04"\n', True), ('ID=ubuntu\nVERSION_ID="24.04"\n', True),
-                         ('ID=ubuntu\nVERSION_ID="20.04"\n', False), ('ID=ubuntu\nVERSION_ID="26.04"\n', False),
+                         ('ID=ubuntu\nVERSION_ID="26.04"\n', True), ('ID=ubuntu\nVERSION_ID="20.04"\n', False),
+                         ('ID=ubuntu\nVERSION_ID="25.10"\n', False),
                          ('ID=debian\nVERSION_ID="12"\n', False), ('VERSION_ID="22.04"\n', False)):
             with self.subTest(release=text), patch.object(install.P, 'read_text', return_value=text), \
                  patch.object(install.platform, 'machine', return_value='x86_64'), \
@@ -391,8 +394,38 @@ class InstallerTests(unittest.TestCase):
                 if ok:
                     self.assertEqual(install.preflight(Path('/unused'), 5 * 1024**3), 'x86_64')
                 else:
-                    with self.assertRaisesRegex(install.Refused, 'supports Ubuntu 22.04 and 24.04'):
+                    with self.assertRaisesRegex(install.Refused, 'supports Ubuntu 22.04, 24.04 and 26.04'):
                         install.preflight(Path('/unused'), 5 * 1024**3)
+
+    def test_catalogue_needs_a_pinned_omega_core_bundle(self):
+        install.validate_catalogue(catalogue())
+        for change in (lambda c: c.pop('omega_core'), lambda c: c['omega_core'].update(path='omega-core.bundle'),
+                       lambda c: c['omega_core'].update(path='payload/omega-core-abcdef1.bundle'),
+                       lambda c: c['omega_core'].update(sha256=None), lambda c: c['omega_core'].update(bytes=0),
+                       lambda c: c['omega_core'].update(revision='a' * 40)):
+            value = catalogue(); change(value)
+            with self.subTest(core=value.get('omega_core')), self.assertRaises(install.Refused):
+                install.validate_catalogue(value)
+
+    def test_omega_core_is_set_up_from_the_bundle_of_the_pinned_revision(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name).resolve(); bundle = root / 'bundle'; app = root / 'app'; bundle.mkdir(); app.mkdir()
+            raw = b'synthetic git bundle, never fetched'
+            for revision, ok in (('abcdef1' + '0' * 33, True), ('1234567' + '0' * 33, False)):
+                with self.subTest(revision=revision):
+                    (app / 'core-dependency.json').write_text(json.dumps({'revision': revision}))
+                    path = bundle / 'omega-core-abcdef1.bundle'; path.unlink(missing_ok=True); path.write_bytes(raw)
+                    spec = {'path': path.name, 'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}
+                    instance = install.Installer(bundle, {'omega_core': spec}, root / 'home')
+                    calls = []; instance.run = lambda argv, **kwargs: calls.append(argv)
+                    if ok:
+                        instance.omega_core(app, root / 'venv/bin/python')
+                        self.assertEqual(calls, [[str(root / 'venv/bin/python'), '-I', '-B', str(app / 'scripts/setup_core.py'),
+                                                  '--source', str(path)]])
+                    else:
+                        with self.assertRaisesRegex(install.Refused, 'not the revision this release pins'):
+                            instance.omega_core(app, root / 'venv/bin/python')
+                        self.assertEqual(calls, [])
 
     def test_linger_user_comes_from_the_uid_and_refuses_odd_names(self):
         for name, ok in (('ann', True), ('l0r7demo', True), ('_svc-1', True), ('Ann', False), ('a b', False), ('-x', False), ('', False)):
@@ -815,6 +848,7 @@ class InstallerTests(unittest.TestCase):
             with ExitStack() as stack:
                 stack.enter_context(patch.object(install, 'preflight', return_value='aarch64'))
                 stack.enter_context(patch.object(install, 'userns_restricted', return_value=restricted))
+                stack.enter_context(patch.object(install.Installer, 'omega_core', lambda obj, app, python: commands.append(['omega-core', str(app)])))
                 stack.enter_context(patch.object(install, 'validate_lock'))
                 stack.enter_context(patch.object(install.Installer, 'local', return_value=payload))
                 stack.enter_context(patch.object(install.Installer, 'fetch', return_value=payload))
@@ -840,13 +874,19 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual((root / 'data/keep').read_text(), 'data')
             self.assertEqual((root / 'cache/keep').read_text(), 'cache')
             self.assertIn(['/usr/bin/systemctl', '--user', 'enable', 'omegahive.service'], commands)
-            canonical_swipl = root / 'releases/test-1/runtime/swipl/lib/swipl/bin/aarch64-linux/swipl'
+            # The executable now sits at the prefix's bin and its installed place links to it (place_swipl).
+            canonical_swipl = root / 'releases/test-1/runtime/swipl/bin/swipl'
+            self.assertTrue(canonical_swipl.is_file() and not canonical_swipl.is_symlink())
+            self.assertEqual((root / 'releases/test-1/runtime/swipl/lib/swipl/bin/aarch64-linux/swipl').resolve(), canonical_swipl)
             self.assertEqual(json.loads((root / 'runtime.json').read_text())['swipl_bin'], str(canonical_swipl))
             descriptor = json.loads((root / 'runtime.json').read_text())
             self.assertEqual(descriptor['schema'], 'studio-linux-user-runtime/2')
             self.assertEqual((descriptor['port'], descriptor['browser_port']), (8700, 8701))
             self.assertEqual(len(descriptor), 18)
             self.assertEqual([argv[0] for argv in commands if len(argv) > 1 and argv[1] == '-g'], [str(canonical_swipl)])
+            core = commands.index(['omega-core', str(root / 'releases/test-1/app')])
+            self.assertLess(core, commands.index(['/usr/bin/systemctl', '--user', 'enable', 'omegahive.service']))
+            self.assertGreater(core, max(i for i, argv in enumerate(commands) if len(argv) > 1 and argv[1] == '-g'))
             return commands, root, (root / 'releases/test-1/launcher.apparmor').exists()
 
     def test_failure_after_extraction_can_rerun_complete_workflow_without_losing_data(self):
@@ -1129,6 +1169,22 @@ class SwiplLauncherTests(unittest.TestCase):
         with self.assertRaisesRegex(install.Refused, r'^An installation path is not a plain file or folder\.$'):
             install.swipl_executable(alias)
 
+    def test_place_puts_the_executable_at_the_prefix_bin_and_links_its_installed_place(self):
+        target = self.internal_target(); self.launcher.symlink_to('../lib/swipl/bin/aarch64-linux/swipl')
+        self.assertEqual(install.place_swipl(self.prefix), self.launcher)
+        self.assertTrue(self.launcher.is_file() and not self.launcher.is_symlink())
+        self.assertEqual(self.launcher.read_bytes(), b'synthetic SWI payload, never execute\n')
+        self.assertTrue(target.is_symlink())
+        self.assertEqual(target.resolve(), self.launcher)
+        # the sandbox grants the folder two above the swipl the hive finds: the whole prefix, SWI's home included
+        self.assertEqual(self.launcher.resolve().parent.parent, self.prefix)
+        self.assertEqual(install.place_swipl(self.prefix), self.launcher)   # a second call changes nothing
+
+    def test_place_keeps_a_launcher_that_is_already_the_executable(self):
+        self.launcher.write_bytes(b'never execute'); self.launcher.chmod(0o755)
+        self.assertEqual(install.place_swipl(self.prefix), self.launcher)
+        self.assertEqual(self.launcher.read_bytes(), b'never execute')
+
 
 class HeadlessFinalOpenTests(unittest.TestCase):
     def context(self):
@@ -1222,6 +1278,7 @@ class NativePackageCompilerTests(unittest.TestCase):
             with ExitStack() as stack:
                 stack.enter_context(patch.dict(install.os.environ, {"CC": "clang-from-ambient", "CXX": "clang++-from-ambient", "PATH": "/untrusted"}))
                 stack.enter_context(patch.object(install, "preflight", return_value="aarch64"))
+                stack.enter_context(patch.object(install.Installer, "omega_core", lambda obj, app, python: None))
                 stack.enter_context(patch.object(install, "validate_lock"))
                 stack.enter_context(patch.object(install.Installer, "local", return_value=payload))
                 stack.enter_context(patch.object(install.Installer, "fetch", return_value=payload))

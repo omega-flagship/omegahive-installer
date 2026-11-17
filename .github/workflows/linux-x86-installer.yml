@@ -1,4 +1,4 @@
-# Purpose: build one current Linux test kit and prove its fresh-user install on both supported Ubuntu releases.
+# Purpose: build one current Linux test kit and prove its fresh-user install on every supported Ubuntu release.
 name: Linux v0.33 test kit
 
 on:
@@ -48,10 +48,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/inputs"
           cp ci/linux-x86/inputs/* "$RUNNER_TEMP/inputs/"
           git archive --format=tar --prefix="$PREFIX/" HEAD:release | gzip -n > "$RUNNER_TEMP/inputs/source.tar.gz"
-      - name: Use the fresh UI from the exact rc3 Mac build
+      - name: Use the fresh UI and the Omega core from the exact rc3 Mac build
         run: |
           cd ci/linux-x86/inputs
           sha256sum -c ui-dist-v033.tar.gz.sha256
+          sha256sum -c omega-core-*.bundle.sha256
           tar -xzf ui-dist-v033.tar.gz -C "$GITHUB_WORKSPACE/release/hive/ui"
       - name: Fetch checksum-pinned uv and compile the current x86_64 lock
         run: |
@@ -59,15 +60,16 @@ jobs:
           curl -fLsS "${PIN[0]}" -o "$RUNNER_TEMP/uv.tar.gz"
           printf '%s  %s\n' "${PIN[1]}" "$RUNNER_TEMP/uv.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/uv.tar.gz" -C "$RUNNER_TEMP"
+          python3 -B ci/linux-x86/minds_requirements.py --release release --out "$RUNNER_TEMP/minds.in"
           "$RUNNER_TEMP/uv-x86_64-unknown-linux-gnu/uv" --no-config pip compile \
-            release/hive/requirements.txt ci/linux-x86/janus-runtime.in \
+            release/hive/requirements.txt ci/linux-x86/janus-runtime.in "$RUNNER_TEMP/minds.in" \
             --python-version 3.12 --python-platform x86_64-unknown-linux-gnu \
             --generate-hashes --no-header -o "$RUNNER_TEMP/inputs/core.lock"
       - name: Bind current input hashes, build the catalogue and pack the download
         run: |
           python3 -B ci/linux-x86/prepare_release.py --source release --inputs "$RUNNER_TEMP/inputs" \
             --catalogue ci/linux-x86/public-catalogue.json --tree "$(cat ci/RELEASE_TREE)" \
-            --output "$RUNNER_TEMP/catalogue.json" --built-with "Mac rc3 vite build at 04:57; provenance ci/linux-x86/ui-provenance.json"
+            --output "$RUNNER_TEMP/catalogue.json" --built-with "Mac rc3 vite build at 04:57; provenance ci/linux-x86/mac-zip-inputs.json"
           python3 -I -B -S ci/linux-x86/make_catalogue.py \
             --base-catalogue "$RUNNER_TEMP/catalogue.json" --pins ci/linux-x86/x86_64-pins.json \
             --source-tar "$RUNNER_TEMP/inputs/source.tar.gz" --prefix "$PREFIX" \
@@ -101,7 +103,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-24.04]
+        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04]
         entry: [install, kit]
     runs-on: ${{ matrix.os }}
     env:
@@ -122,10 +124,10 @@ jobs:
         run: |
           uname -a
           lsb_release -ds
-          # A fresh 24.04 computer lets only programs whose AppArmor profile grants userns create user namespaces.
+          # A fresh 24.04 or 26.04 computer lets only programs whose AppArmor profile grants userns make user namespaces.
           restriction=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
           printf 'AppArmor userns restriction on this runner: %s\n' "$(cat "$restriction" 2>/dev/null || echo absent)"
-          if [ "$(lsb_release -rs)" = 24.04 ]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1; fi
+          case "$(lsb_release -rs)" in 24.04|26.04) sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1;; esac
           sudo sh ci/linux-x86/test_account.sh "$HIVE_USER" "$RELEASE_ID"
           cd "$RUNNER_TEMP/kit"
           sha256sum -c omegahive-linux.sh.sha256
@@ -172,7 +174,8 @@ jobs:
           sudo tar -C "/home/$HIVE_USER" --exclude='*/runtime/swipl-build' --exclude='*/runtime/swipl-source' \
             -czf "$RUNNER_TEMP/installed-runtime/runtime.tar.gz" \
             .local/share/omegahive/releases .local/share/omegahive/runtime.json \
-            .local/share/omegahive/installation-state.json .local/bin/omegahive .config/systemd/user/omegahive.service
+            .local/share/omegahive/installation-state.json .local/share/omegahive/bin .local/bin/omegahive \
+            .config/systemd/user/omegahive.service .cache/omegahive
           sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/installed-runtime/runtime.tar.gz"
           cd "$RUNNER_TEMP/installed-runtime"
           sha256sum runtime.tar.gz > runtime.tar.gz.sha256
@@ -189,6 +192,9 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/receipts"
           python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/install.out" > "$RUNNER_TEMP/receipts/install.out"
+          # shellcheck disable=SC2016,SC2024
+          sudo bash -c 'cat -- "$1"/.local/share/omegahive/logs/install-*.log' bash "/home/$HIVE_USER" > "$RUNNER_TEMP/install-log.raw" 2>&1 || true
+          python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/install-log.raw" > "$RUNNER_TEMP/receipts/install-log.txt"
           test ! -f "$RUNNER_TEMP/verification.json" || cp "$RUNNER_TEMP/verification.json" "$RUNNER_TEMP/receipts/"
           git rev-parse HEAD > "$RUNNER_TEMP/receipts/installer-commit.txt"
           lsb_release -ds > "$RUNNER_TEMP/receipts/os.txt"
@@ -207,7 +213,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        release: ["22.04", "24.04"]
+        release: ["22.04", "24.04", "26.04"]
     runs-on: ubuntu-${{ matrix.release }}
     env:
       HIVE_USER: hiveuser
@@ -227,6 +233,8 @@ jobs:
           docker build --build-arg RELEASE="$RELEASE" -t fresh-ubuntu -f ci/linux-x86/fresh-ubuntu.Dockerfile ci/linux-x86
           docker run -d --name fresh --privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             --tmpfs /run --tmpfs /run/lock fresh-ubuntu
+          # systemd makes its private socket a moment after the container starts; systemctl needs it to answer at all
+          for _ in $(seq 1 60); do docker exec fresh test -S /run/systemd/private && break; sleep 1; done
           docker exec fresh systemctl is-system-running --wait || docker exec fresh systemctl --failed --no-pager
           docker exec fresh sh -c '. /etc/os-release && echo "$PRETTY_NAME"'
           for tool in cc cmake ninja git curl pkg-config; do
@@ -265,6 +273,9 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/receipts"
           test ! -f "$RUNNER_TEMP/install.out" || python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/install.out" > "$RUNNER_TEMP/receipts/install.out"
+          # shellcheck disable=SC2016
+          docker exec fresh bash -c 'cat -- "$1"/.local/share/omegahive/logs/install-*.log' bash "/home/$HIVE_USER" > "$RUNNER_TEMP/install-log.raw" 2>&1 || true
+          python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/install-log.raw" > "$RUNNER_TEMP/receipts/install-log.txt"
           docker cp fresh:/root/verification.json "$RUNNER_TEMP/receipts/verification.json" || true
           docker exec fresh sh -c '. /etc/os-release && echo "$PRETTY_NAME"' > "$RUNNER_TEMP/receipts/os.txt" || true
           git rev-parse HEAD > "$RUNNER_TEMP/receipts/installer-commit.txt"

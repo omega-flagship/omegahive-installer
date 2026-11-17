@@ -38,7 +38,10 @@ APT = ("ca-certificates", "curl", "git", "build-essential", "cmake", "ninja-buil
        "pkg-config", "libssl-dev", "libgmp-dev", "libedit-dev", "libpcre2-dev",
        "libyaml-dev", "zlib1g-dev", "libarchive-dev", "sqlite3", "xz-utils", "acl", "util-linux",
        "dbus-user-session", "xdg-utils", "procps")
-SUPPORTED_UBUNTU = ("22.04", "24.04")
+SUPPORTED_UBUNTU = ("22.04", "24.04", "26.04")
+# A fresh Ubuntu installs its own updates soon after it starts and holds the package lock meanwhile; apt waits this long
+# for it (DPkg::Lock::Timeout) instead of failing the setup at once.
+APT_LOCK_WAIT = 1800
 # Ubuntu 23.10 and later (on by default from 24.04) let a program create a user namespace only when its AppArmor
 # profile grants `userns`; 22.04's kernels have no such file. rootlesskit reads the same file (pkg/parent/warn.go).
 USERNS_RESTRICTION = P("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
@@ -126,7 +129,7 @@ def validate_catalogue(value):
     required = {"schema", "ready", "release_id", "source_revision", "source_tree", "min_free_bytes",
                 "core_roots", "python_version", "uv_version", "swipl_version", "ui_prebuilt",
                 "petta_commit", "platforms", "apps", "bootstrap", "module_files",
-                "default_model", "embedding_model", "ssh_target"}
+                "default_model", "embedding_model", "ssh_target", "omega_core"}
     need(type(value) is dict and set(value) == required and value["schema"] == "studio-linux-user-release/2",
          "This is not an OmegaHive Linux release catalogue.")
     need(value["ready"] is True, "This installer is a review copy and has not been published yet.")
@@ -183,6 +186,12 @@ def validate_catalogue(value):
              and type(item["sha256"]) is str and re.fullmatch("[a-f0-9]{64}", item["sha256"]),
              "The prebuilt UI archive or manifest is not checksum-pinned.")
         relative(item["path"])
+    core = value["omega_core"]
+    need(type(core) is dict and set(core) == {"path", "bytes", "sha256"}
+         and type(core["path"]) is str and re.fullmatch(r"omega-core-[a-f0-9]{7}\.bundle", core["path"])
+         and type(core["bytes"]) is int and 0 < core["bytes"] <= 64 * 1024**2
+         and type(core["sha256"]) is str and re.fullmatch("[a-f0-9]{64}", core["sha256"]),
+         "The Omega core the minds run on is not checksum-pinned.")
     need(value["apps"] == [], "The public Linux release carries its apps in the source tree, without external app packages.")
     for app in value["apps"]:
         need(type(app) is dict and type(app.get("digest")) is str
@@ -261,6 +270,25 @@ def swipl_executable(prefix):
     info = plain(executable)
     need(info.st_mode & stat.S_IXUSR, "The SWI-Prolog launcher is not executable by its owner.")
     return executable
+
+
+def place_swipl(prefix):
+    """Make <prefix>/bin/swipl the executable itself, and its installed place a link to it.
+
+    A mind's sandbox may read the folder two above the swipl the hive finds on its PATH
+    (hive/supervisor/sandbox.py runtime_roots). SWI's install puts the executable in <home>/bin/<arch>/, whose
+    grandparent <home>/bin holds neither libswipl nor SWI's library, so every mind stopped at
+    "swipl: error while loading shared libraries: libswipl.so.10". The Mac bundle moves the executable for the same
+    reason (install/macos/build-swipl-bundle.sh); here its grandparent becomes the whole private SWI installation.
+    swipl still finds its home, since the install compiled the absolute one in."""
+    executable = swipl_executable(prefix)
+    launcher = prefix / "bin/swipl"
+    if executable != launcher:
+        need(launcher.is_symlink(), "SWI-Prolog's launcher is not the link its install makes.")
+        launcher.unlink()
+        os.rename(executable, launcher)
+        os.symlink(os.path.relpath(launcher, executable.parent), executable)
+    return swipl_executable(prefix)
 
 
 def strip_inherited_acl(path):
@@ -576,7 +604,7 @@ def preflight(home, minimum):
         if "=" in line:
             key, value = line.split("=", 1); release[key] = value.strip('"')
     need(release.get("ID") == "ubuntu" and release.get("VERSION_ID") in SUPPORTED_UBUNTU,
-         "This installer supports Ubuntu 22.04 and 24.04. Please use one of those releases for this preview.")
+         "This installer supports Ubuntu 22.04, 24.04 and 26.04. Please use one of those releases for this preview.")
     arch = platform.machine(); need(arch in {"x86_64", "aarch64"}, "This preview supports x86_64 and arm64 Ubuntu.")
     need(shutil.disk_usage(home).free >= minimum,
          "OmegaHive needs about " + str((minimum + 1024**3 - 1) // 1024**3)
@@ -598,6 +626,15 @@ def userns_restricted():
 def packages(restricted):
     """The fixed package set; where AppArmor restricts user namespaces, also its tools, which load the launcher's profile."""
     return APT + (("apparmor",) if restricted else ())
+
+
+def apt_get(*argv):
+    return ["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=" + str(APT_LOCK_WAIT), *argv]
+
+
+def package_install(restricted):
+    """The one command the package environment may run: the fixed package set, without recommends."""
+    return apt_get("install", "-y", "--no-install-recommends", *packages(restricted))
 
 
 def plain_path_text(path):
@@ -1007,8 +1044,7 @@ class Installer:
     def sudo(self, argv, *, timeout, package_environment=False):
         assignments = (["DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=l"]
                        if package_environment else [])
-        need(not package_environment or any(argv == ["/usr/bin/apt-get", "install", "-y", "--no-install-recommends", *packages(r)]
-                                            for r in (False, True)),
+        need(not package_environment or any(argv == package_install(r) for r in (False, True)),
              "Package environment is only allowed for the fixed package installation.")
         # The shell wrapper consumes stdin, and run() deliberately detaches each
         # child session. Give sudo its own terminal fd; never read the password.
@@ -1048,12 +1084,12 @@ class Installer:
         print("OmegaHive needs permission to add standard Ubuntu packages"
               + (", let its minds start in their sandbox" if restricted else "")
               + " and keep running when you log out. You may be asked for your password for each of the "
-              + ("five" if restricted else "three") + " system setup steps.", flush=True)
-        self.sudo(["/usr/bin/apt-get", "update"], timeout=600)
+              + ("five" if restricted else "three") + " system setup steps. If Ubuntu is installing its own updates, "
+              "setup waits for them to finish.", flush=True)
+        self.sudo(apt_get("update"), timeout=APT_LOCK_WAIT + 600)
         # Package hooks must not ask hidden questions through logged stdout.
         # Report pending restarts; leave host service restarts to its operator.
-        self.sudo(["/usr/bin/apt-get", "install", "-y", "--no-install-recommends", *packages(restricted)],
-                  timeout=900, package_environment=True)
+        self.sudo(package_install(restricted), timeout=APT_LOCK_WAIT + 900, package_environment=True)
         # Linger keeps this user's own service manager running after logout and at boot.
         self.sudo(["/usr/bin/loginctl", "enable-linger", linger_user()], timeout=60)
         if restricted:
@@ -1083,6 +1119,7 @@ class Installer:
         for spec in self.catalogue["apps"]: self.local(spec)
         for spec in self.catalogue["bootstrap"].values(): self.local(spec)
         for key in ("archive", "manifest"): self.local(self.catalogue["ui_prebuilt"][key])
+        self.local(self.catalogue["omega_core"])
         logpath = self.root / "logs" / ("install-" + uuid.uuid4().hex + ".log")
         lockfd = lock_installation(self.home)
         try:
@@ -1157,7 +1194,7 @@ class Installer:
                       "-DCMAKE_INSTALL_RPATH=" + str(libpython)], timeout=300)
             self.run(["/usr/bin/cmake", "--build", str(build), "--parallel", "2"], timeout=1800)
             self.run(["/usr/bin/cmake", "--install", str(build)], timeout=300)
-            swipl = swipl_executable(swi)
+            swipl = place_swipl(swi)
             self.env.update(PATH=str(swi / "bin") + ":" + str(runtime / "venv/bin") + ":" + self.env["PATH"], LD_LIBRARY_PATH=str(libpython))
             # Locks cover current Hive requirements/constraints, the explicit Janus bridge, and reviewed runtime/build dependencies.
             self.run([str(uv), "--no-config", "pip", "sync", "--python", str(venv), "--require-hashes", "--require-build-hashes",
@@ -1165,6 +1202,7 @@ class Installer:
                       env=dict(self.env, CC="/usr/bin/gcc", CXX="/usr/bin/g++"))
             self.run([str(venv), "-I", "-B", "-c", "import janus_swi as j; assert j.query_once('X is 1+1')['X'] == 2"], timeout=30)
             self.run([str(swipl), "-g", "use_module(library(janus)),py_call(operator:add(20,22),V),(V=:=42->halt(0);halt(1))"], timeout=30)
+            self.omega_core(app, venv)
             data = self.root / "data"
             if not data.exists(): private_dir(data)
             plain(data, directory=True); need(stat.S_IMODE(data.stat().st_mode) == 0o700, "Your hive data folder must be private.")
@@ -1195,6 +1233,19 @@ class Installer:
         finally:
             if self.log is not None: self.log.close()
             os.close(lockfd)
+
+    def omega_core(self, app, python):
+        """Minds run on singnet/Omega at the revision core-dependency.json pins (hive/runtime/core.py), and a release
+        tree carries none of it. The kit carries it as the git bundle the Mac zip ships, so this needs no network: the
+        release's own scripts/setup_core.py clones it into third_party/Omega, checks the revision and stamps it where
+        the hive and its minds look (native_core.runtime_directory), as omegahive.sh's core step does on the Mac.
+        Iter, pinned beside it, is cloned by the hive when a mind first needs it."""
+        bundle = self.local(self.catalogue["omega_core"])
+        revision = strict_json((app / "core-dependency.json").read_bytes()).get("revision")
+        need(type(revision) is str and re.fullmatch("[a-f0-9]{40}", revision) is not None
+             and bundle.name == "omega-core-" + revision[:7] + ".bundle",
+             "The bundled Omega core is not the revision this release pins.")
+        self.run([str(python), "-I", "-B", str(app / "scripts/setup_core.py"), "--source", str(bundle)], timeout=300)
 
     def resume_setup(self):
         progress = progress_record(self.home, self.catalogue["release_id"])

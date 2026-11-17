@@ -77,6 +77,7 @@ def release_catalogue(rows):
             'platforms': {'x86_64': copy.deepcopy(platform), 'aarch64': copy.deepcopy(platform)},
             'apps': [],
             'bootstrap': {'helper': {'path': 'helper.py', 'bytes': 1, 'sha256': 'e' * 64}},
+            'omega_core': {'path': 'omega-core-abcdef1.bundle', 'bytes': 1, 'sha256': 'c' * 64},
             'module_files': modules, 'default_model': 'openrouter/example/model',
             'embedding_model': 'mock/hash', 'ssh_target': None}
 

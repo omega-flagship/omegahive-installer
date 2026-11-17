@@ -427,7 +427,7 @@ def references(release):
     required = {'schema', 'ready', 'release_id', 'source_revision', 'source_tree', 'min_free_bytes',
                 'core_roots', 'python_version', 'uv_version', 'ui_prebuilt', 'swipl_version',
                 'petta_commit', 'platforms', 'apps', 'bootstrap', 'module_files',
-                'default_model', 'embedding_model', 'ssh_target'}
+                'default_model', 'embedding_model', 'ssh_target', 'omega_core'}
     require(type(release) is dict and set(release) == required
             and release.get('ready') is True and release.get('schema') == 'studio-linux-user-release/2', 'release_not_ready')
     require(type(release['release_id']) is str and re.fullmatch('[a-z0-9][a-z0-9._-]{1,79}', release['release_id'])
@@ -458,6 +458,13 @@ def references(release):
     require(ui['archive']['path'] != ui['manifest']['path']
             and ui['manifest']['bytes'] <= 2 * 1024**2, 'ui_artifact_paths_or_manifest_size')
     refs.update(ui_pins)
+    # The Omega core minds run on, as the git bundle the Mac zip ships (install.py Installer.omega_core).
+    core = release['omega_core']
+    require(type(core) is dict and set(core) == {'path', 'bytes', 'sha256'}
+            and type(core['path']) is str and re.fullmatch(r'omega-core-[a-f0-9]{7}\.bundle', core['path'])
+            and type(core['bytes']) is int and 0 < core['bytes'] <= 64 * 1024**2
+            and type(core['sha256']) is str and re.fullmatch('[a-f0-9]{64}', core['sha256']), 'omega_core_pin_required')
+    refs.add(core['path'])
     payload = None
     for platform in release['platforms'].values():
         require(type(platform) is dict and set(platform) == {'uv', 'python', 'swipl_source',
@@ -569,6 +576,7 @@ def main():
     for key in ('archive', 'manifest'):
         item = ui[key]
         require(artifacts.get(item['path']) == item, 'ui_artifact_pin_mismatch')
+    require(artifacts.get(release['omega_core']['path']) == release['omega_core'], 'omega_core_pin_mismatch')
     ui_files = inspect_ui_manifest(bodies[ui['manifest']['path']], ui, terms)
     inspect_ui_archive(bodies[ui['archive']['path']], ui_files, terms)
     template = read_exact(INPUT_ROOT, spec['installer_template'])

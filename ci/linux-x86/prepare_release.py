@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Purpose: pin a fresh Linux release's UI and dependency lock before building its catalogue."""
+"""Purpose: pin a fresh Linux release's UI, dependency lock and Omega core before building its catalogue."""
 import argparse
 import gzip
 import hashlib
 import io
 import json
 import pathlib
+import re
 import shutil
 import tarfile
 
@@ -51,11 +52,15 @@ def prepare(args):
                            "source_revision": commit, "source_tree": tree}
     for platform in base["platforms"].values():
         platform["core_lock"] = pin(inputs / "core.lock")
+    # The minds' core, singnet/Omega at the revision the release pins, as the git bundle its Mac zip ships.
+    revision = json.loads((source / "core-dependency.json").read_text())["revision"]
+    assert re.fullmatch("[a-f0-9]{40}", revision), "core-dependency.json pins no full revision"
+    base["omega_core"] = pin(inputs / f"omega-core-{revision[:7]}.bundle")
     for name in ("install", "bootstrap"):
         shutil.copyfile(source / f"deploy/linux/{name}.py", inputs / f"{name}.py")
     pathlib.Path(args.output).write_text(json.dumps(base, indent=2, sort_keys=True) + "\n")
     print(json.dumps({"source_commit": commit, "source_tree": tree,
-                      "ui": base["ui_prebuilt"], "core_lock": pin(inputs / "core.lock")}))
+                      "ui": base["ui_prebuilt"], "core_lock": pin(inputs / "core.lock"), "omega_core": base["omega_core"]}))
 
 
 if __name__ == "__main__":

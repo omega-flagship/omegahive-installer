@@ -94,6 +94,7 @@ def main():
         stage(app["path"], app)
     for key in ("archive", "manifest"):
         stage(base["ui_prebuilt"][key]["path"], base["ui_prebuilt"][key])
+    stage(base["omega_core"]["path"], base["omega_core"])
     boot = dict(base["bootstrap"])
     # The owner-route helper is the release's own deploy/linux/bootstrap.py (it pins this release's control.py).
     helper = stage("bootstrap.py")

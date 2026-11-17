@@ -122,6 +122,7 @@ def release_fixture():
             'platforms': {'x86_64': platform, 'aarch64': copy.deepcopy(platform)},
             'apps': [],
             'bootstrap': {'helper': {'path': 'bootstrap.py'}},
+            'omega_core': {'path': 'omega-core-abcdef1.bundle', 'bytes': 1, 'sha256': 'f' * 64},
             'module_files': [], 'default_model': 'openrouter/example/model',
             'embedding_model': 'mock/hash', 'ssh_target': None}
 
@@ -348,7 +349,9 @@ class KitContract(unittest.TestCase):
         self.assertIn(release['ui_prebuilt']['manifest']['path'], refs)
         self.assertNotIn('node_version', release)
         self.assertTrue(all('node' not in item for item in release['platforms'].values()))
-        for variant in ('legacy-node-version', 'legacy-platform-node', 'missing-ui', 'missing-ui-manifest', 'shared-ui-path', 'unhashed-ui'):
+        self.assertIn(release['omega_core']['path'], refs)
+        for variant in ('legacy-node-version', 'legacy-platform-node', 'missing-ui', 'missing-ui-manifest', 'shared-ui-path', 'unhashed-ui',
+                        'missing-omega-core', 'odd-omega-core-name', 'unhashed-omega-core'):
             bad = copy.deepcopy(release)
             if variant == 'legacy-node-version': bad['node_version'] = '20.0.0'
             if variant == 'legacy-platform-node': bad['platforms']['x86_64']['node'] = dict(bad['platforms']['x86_64']['uv'])
@@ -356,6 +359,9 @@ class KitContract(unittest.TestCase):
             if variant == 'missing-ui-manifest': del bad['ui_prebuilt']['manifest']
             if variant == 'shared-ui-path': bad['ui_prebuilt']['manifest']['path'] = bad['ui_prebuilt']['archive']['path']
             if variant == 'unhashed-ui': bad['ui_prebuilt']['archive']['sha256'] = None
+            if variant == 'missing-omega-core': del bad['omega_core']
+            if variant == 'odd-omega-core-name': bad['omega_core']['path'] = 'payload/core.bundle'
+            if variant == 'unhashed-omega-core': bad['omega_core']['sha256'] = None
             with self.subTest(variant=variant), self.assertRaises(kit.Refused):
                 kit.references(bad)
 

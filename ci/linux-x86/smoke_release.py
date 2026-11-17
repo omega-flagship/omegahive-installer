@@ -113,16 +113,49 @@ def verify(user, output):
         facts["mind_sandbox"] = sandbox.get("summary")
         with opener.open(urllib.request.Request("http://127.0.0.1:8700/", headers=headers)) as response:
             check("web UI opens", response.status == 200 and b"<html" in response.read().lower())
-        return {key: identity[key] for key in ("principal", "kind", "role", "person_kind", "local_operator")}
+
+        def call(method, path, payload=None):
+            data = None if payload is None else json.dumps(payload).encode()
+            with opener.open(urllib.request.Request("http://127.0.0.1:8700" + path, data, headers, method=method)) as reply:
+                raw = reply.read()
+            return json.loads(raw) if raw else None
+        return {key: identity[key] for key in ("principal", "kind", "role", "person_kind", "local_operator")}, call
+
+    def first_light(call):
+        """A real mind starts in its sandbox and answers First Light. A fresh hive's personal mind is on the
+        demonstration model, which needs no key, so this runs every part of a mind but the model provider."""
+        mind = call("GET", "/api/me/mind")["mind"]
+        check("the personal mind starts on the demonstration model", mind["model"].startswith("mock/"), mind["model"])
+        call("POST", "/api/me/personal-mind/hello", {})
+
+        def greeted():
+            hello = (call("GET", "/api/me/personal-mind/hello") or {}).get("hello") or {}
+            if hello.get("state") == "greeted":
+                return (hello.get("greeting") or {}).get("text") or None
+            if call("GET", "/api/agents/" + mind["id"])["status"] in ("error", "failed", "stopped"):
+                return False
+            return None
+        text = None
+        end = time.monotonic() + 600   # a mind's first start (PeTTa loading the core) and its one turn
+        while text is None and time.monotonic() < end:
+            text = greeted()
+            if text is None:
+                time.sleep(3)
+        if not text:
+            diagnose("mind log", "tail", "-n", "60", str(home / ".local/share/omegahive/data/agents" / mind["id"] / "agent.log"))
+        check("a mind starts in its sandbox and answers First Light", bool(text), "no greeting")
+        facts["first_light"] = redacted(text)[:200]
+        call("POST", "/api/agents/" + mind["id"] + "/sleep", {})
 
     try:
         check("linger is enabled", subprocess.check_output(
             ["loginctl", "show-user", user, "-p", "Linger", "--value"], text=True).strip() == "yes")
         check("service is enabled", command("systemctl", "--user", "is-enabled", "omegahive.service").strip() == "enabled")
-        first = signin()
+        first, call = signin()
+        first_light(call)
         check("status is available", bool(json.loads(command(cli, "status", "--json"))))
         command("systemctl", "--user", "restart", "omegahive.service")
-        check("owner survives hive restart", signin() == first)
+        check("owner survives hive restart", signin()[0] == first)
         # A real login session (su's PAM stack registers one with logind), then every session ended, as at logout.
         login = subprocess.Popen(["su", "-l", user, "-c", "exec sleep 600"], stdin=subprocess.DEVNULL,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -139,7 +172,7 @@ def verify(user, output):
         system("systemctl", "stop", manager)
         system("systemctl", "start", manager)
         check("hive starts with the user manager", until(lambda: hive_state() == "active", 60), hive_state())
-        check("owner survives user-manager restart", signin() == first)
+        check("owner survives user-manager restart", signin()[0] == first)
         facts["passed"] = True
     finally:
         pathlib.Path(output).write_text(json.dumps(facts, indent=2) + "\n")
