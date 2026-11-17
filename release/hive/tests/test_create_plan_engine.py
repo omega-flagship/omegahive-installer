@@ -193,6 +193,7 @@ class FakePerChangeEngine:
         self.runs, self.calls, self.held = {}, [], {}
         self.plant = {}                 # piece -> {path: text} someone else writes onto that piece's fork
         self.fail_delivery = set()      # pieces whose first member_integrated is lost (a crash)
+        self.refusals = {}              # task_id -> the member's last refusal in words (last_refusal)
 
     def _run(self, task_id):
         return self.runs.get(task_id)
@@ -234,6 +235,9 @@ class FakePerChangeEngine:
         m = json.loads(self.runs[tid]["member"])
         return {"type": "code.controller.member_ready", "plan_id": m["plan_id"], "piece": m["piece"],
                 "cand": self.runs[tid]["candidate"], "task_id": tid}
+
+    def last_refusal(self, task_id):
+        return self.refusals.get(task_id)
 
     async def member_refix(self, task_id, op, cand, failing_ref, failing=None):
         assert self.runs[task_id]["candidate"] == cand
@@ -355,6 +359,8 @@ def world(client, monkeypatch, tmp_path):  # noqa: F811
     # the person's own Make team and mind, as studio_makers.ensure makes them (owned by the person)
     hive.db.execute("UPDATE swarms SET owner = 'user:u_jon' WHERE id = ?", (make["id"],))
     hive.db.execute("UPDATE agents SET owner = 'user:u_jon' WHERE id = ?", (maker["id"],))
+    # Create (Studio) on in that team, as studio-on.py turns it on, so a deployed app has a place to go
+    hive.db.execute("INSERT INTO app_activations VALUES (?, ?, 1, ?)", ("omegadesign", make["id"], "user:u_jon"))
     minds = FakeMinds(engine)
     space = MemorySpace(engine, SCAFFOLD)
     code = FakePerChangeEngine(minds, space)
@@ -495,6 +501,11 @@ def test_slice1_end_to_end_plan_test_first_red_build_review_fix_green_preview_go
     assert app_id.endswith(pid[len("plan_"):])                                                 # one app per plan, full id
     ui = w.hive.programs.ui_bundle(app_id)
     assert ui["files"]["app.js"] == APP_FIXED
+    # it's in the person's Apps where Create is, so Open finds it: v0.35 rc1 installed it on in no swarm, and its Open
+    # said "This app isn't available to you here" under "It's in your Apps now"
+    apps = w.client.get("/api/me/apps", headers=w.jon).json()["apps"]
+    assert [a["open"] for a in apps if a["id"] == app_id] == [{"kind": "swarm", "swarm_id": w.make["id"],
+                                                                "swarm_name": "Make"}], apps
     # typed events across the run
     seen = {k for k, _ in w.events}
     assert {"create.plan.status", "create.plan.piece", "create.plan.question", "create.plan.preview"} <= seen
@@ -542,6 +553,24 @@ def test_a_working_member_wakes_the_plan_with_member_ready_only(world):
     view = w.engine.view(pid)
     assert view["phase"] == "ready-to-deploy", (view["phase"], view["last_error"])
     assert "unknown" not in kinds(view)
+
+
+def test_a_member_that_blocks_wakes_its_plan_which_says_why(world):
+    """A member refused three answers and blocked; its plan, woken only by member_ready, stayed building with no error
+    and asked nobody. Every member status change wakes it now, and the blocked piece says the builder's last refusal."""
+    w = world
+    w.minds.question = False
+    w.code.defer = True
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    pid, tid = view["plan_id"], next(iter(w.code.held))
+    w.code.held.pop(tid)
+    w.code.runs[tid].update(phase="blocked", status="needs_you")
+    w.code.refusals[tid] = "The last attempt was refused: it wrote summary outside this piece's files."
+    w.client.portal.call(w.engine.on_event, {"type": "code.controller.status", "request_id": tid, "status": "needs_you",
+                                             "phase": "blocked", "candidate": None})
+    view = w.engine.view(pid)
+    assert view["phase"] == "blocked" and view["status"] == "needs_you", (view["phase"], view["last_error"])
+    assert "it wrote summary" in json.dumps(view)
 
 
 def test_stop_ends_every_open_member(world):
@@ -661,6 +690,19 @@ def test_routes_need_the_person_gate(world):
     assert w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).status_code == 404
 
 
+def test_the_render_reads_the_app_interface_however_its_tags_are_written():
+    # a fresh install's builder wrote single-quoted tags; the render refused them, and the design review read as
+    # "nobody independent can review"
+    files = {"index.html": "<head><link rel='stylesheet' href='./style.css'></head><body><p id=x></p>"
+                           "<script type='module' src='./app.js'></script></body>",
+             "style.css": "p { color: red }", "app.js": "document.getElementById('x').textContent = 'hi'"}
+    doc = frame_document(files)
+    assert '<style nonce="' in doc and "p { color: red }" in doc and "textContent = 'hi'" in doc
+    assert "./style.css" not in doc and "./app.js" not in doc
+    with pytest.raises(ValueError):   # a classic script would run differently inlined as a module
+        frame_document({**files, "index.html": files["index.html"].replace("type='module' ", "")})
+
+
 def test_check_output_parsing_never_guesses_a_pass():
     assert parse_check_output("", 0)["outcome"] == "unknown"
     assert parse_check_output('CREATE-CHECK {"passed": true, "failing": []}', 1)["outcome"] == "unknown"
@@ -765,6 +807,26 @@ def test_a_review_that_answers_later_finishes(world):
     assert len(dispatched_reviews) == 4 and "unknown" not in kinds(view)        # page, style, app twice (after its fix)
 
 
+def test_a_plan_waiting_on_a_mind_refused_for_spending_says_which_and_why(world):
+    """A test hive with a 1 USD month limit refused its planner's calls for spending, and the plan sat at "planning"
+    with no line, no error and no question for 30 minutes. The view names the waiting mind and the hive's words."""
+    w = world
+    w.minds.question = False
+    w.minds.pending = {"plan"}
+    pid = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()["plan_id"]
+    assert w.engine.view(pid)["waiting"] is None
+    effect = next(e for e in w.engine.view(pid)["effects"] if e["state"] == "waiting")
+    # the planner's goal as GoalMinds makes it (the fake minds only name it): assigned to the Maker
+    w.hive.goals._create_record(w.make["id"], f"Create plan {pid}: plan", "Finish with result data", 0.6,
+                                created_by=f"create-plan:{pid}", assignee=w.maker["id"], goal_id=effect["goal_id"])
+    mind = w.hive.agent(w.maker["id"])
+    said = "Spending faster than this month allows: a call this size fits again in about 999 minutes."
+    w.hive.note_refusal(mind, "spend_rate", said)
+    assert w.engine.view(pid)["waiting"] == {"mind": mind["id"], "name": mind["name"], "code": "spend_rate", "message": said}
+    w.hive.note_admitted(mind)                       # a call of its admitted again: nothing to say
+    assert w.engine.view(pid)["waiting"] is None
+
+
 def test_a_finished_goal_missed_while_the_hive_was_down_is_collected_on_resume(world):
     """Review F4: a waiting effect whose goal finished with no event (a restart) resumes from the goal row."""
     w = world
@@ -823,6 +885,128 @@ def test_a_builder_cannot_own_or_replace_the_check(world):
     cheat = space._ck({**space.ckpts[good], cpe.CHECK_PATH: 'print("CREATE-CHECK " + %r)\n' % json.dumps({"passed": True, "failing": []})})
     out = asyncio.run(w.engine.ports.run_check(run, cheat, cpe.CHECK_PATH, good))
     assert out["outcome"] == "fail", out
+
+
+def test_the_planner_is_told_every_rule_the_plan_check_refuses_for():
+    # on a fresh install's first real plans the planner, told only the fields' names, broke one rule after another: the
+    # shape now carries the check's own table, so the two can't drift
+    from hive.core.create_plan_ports import ANSWER_SHAPES
+    assert all(rule in ANSWER_SHAPES["plan"] for rule in cpe.PLAN_RULES.values())
+    base = {"acceptance": ["x"], "pieces": [{"id": "p", "kinds": ["code"], "files": ["app.js"]}]}
+    review = lambda evidence: {**base, "needs": {"reviews": [{"artifact_kind": "code", "review_kind": "security",
+                                                               "evidence": evidence}]}}
+    # evidence nothing produces would hold the review for ever: refused as the plan is checked
+    assert cpe.validate_plan(review("tests")) == (None, "invalid_needs")
+    assert all(cpe.validate_plan(review(e))[1] is None for e in cpe.REVIEW_EVIDENCE)
+
+
+def test_a_refused_plan_tells_the_planner_the_rule_it_broke_and_its_corrected_plan_is_taken(world):
+    # a fresh install's first plans: a piece with no files was refused again and again, no reason was given back, and
+    # the planner answered the same plan each time; now the next packet names the broken rule, beside the hive's reviews
+    w = world
+    w.minds.question = False
+    real = w.minds._answer
+
+    def first_without_files(kind, body, packet, agent):
+        answer = real(kind, body, packet, agent)
+        if kind == "plan" and "last_plan_refused" not in packet:
+            answer["plan"]["pieces"][0]["files"] = []
+        return answer
+    w.minds._answer = first_without_files
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    plans = [packet for kind, _, packet in w.minds.calls if kind == "plan"]
+    assert len(plans) == 2 and "last_plan_refused" not in plans[0]
+    assert plans[1]["last_plan_refused"] == {"code": "invalid_files", "rule": cpe.PLAN_RULES["invalid_files"]}
+    assert {(r["artifact_kind"], r["review_kind"], r["evidence"]) for r in plans[0]["hive_reviews"]} == \
+        {("code", "review", "none"), ("design", "design-review", "render")}
+    assert any(r["kind"] == "planned" for r in view["journal"])   # the corrected plan is the plan
+
+
+# the planner can never cause these: the host writes the Plan atom as revision 1 with no parent, and reports planned
+# only for the open plan
+HOST_INTERNAL_PLAN_CODES = {"stale_revision", "not-the-open-plan"}
+
+
+def _plan_refusal_codes():
+    """Every code a plan can be refused with, read from the rules themselves: validate_plan's returns and the engine's
+    own refusal of a translated plan (its source), and the reducer's on-planned, graph-fault and unknowns-fault."""
+    import ast
+    import re
+    source = pathlib.Path(cpe.__file__).read_text()
+    codes = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.FunctionDef) and node.name == "validate_plan":
+            codes |= {r.value.elts[1].value for r in ast.walk(node) if isinstance(r, ast.Return)
+                      and isinstance(r.value, ast.Tuple) and isinstance(r.value.elts[-1], ast.Constant)
+                      and isinstance(r.value.elts[-1].value, str)}
+        if isinstance(node, ast.Dict):
+            codes |= {v.value for k, v in zip(node.keys, node.values)
+                      if isinstance(k, ast.Constant) and k.value == "invalid" and isinstance(v, ast.Constant)}
+    reducer = (pathlib.Path(cpe.__file__).resolve().parents[2] / "modules/create/controller/"
+               "create_plan_controller_r4_4.metta").read_text()
+
+    def body(name):                                   # its forms without their comments, which name other things
+        start = reducer.index(f"(= ({name} ")
+        end = reducer.find("\n(= (", start + 1)
+        return re.sub(r";[^\n]*", "", reducer[start:end])
+    codes |= set(re.findall(r"\(rej \$st ([A-Za-z_][\w-]*)\)", body("on-planned")))
+    for name in ("graph-fault", "unknowns-fault"):   # codes are the symbols with an underscore; functions are hyphenated
+        codes |= set(re.findall(r"(?<![\w(?$-])([a-z]+(?:_[a-z]+)+)(?![\w?-])", body(name)))
+    return codes
+
+
+def test_every_code_a_plan_is_refused_with_has_its_rule_in_the_planners_words():
+    # read from the rules themselves, so a rule the host or the reducer adds can't go unsaid: on fresh installs the
+    # reducer refused a plan four times as design-pieces-carry-the-design, a rule the planner was never told
+    from hive.core.create_plan_ports import ANSWER_SHAPES
+    codes = _plan_refusal_codes()
+    assert {"design-pieces-carry-the-design", "no-review-for-artifact-kind", "file_owned_twice", "dependency_cycle",
+            "invalid_files", "piece_owns_a_reserved_path", "invalid_unknowns"} <= codes   # the reading finds them
+    unsaid = {c for c in codes - HOST_INTERNAL_PLAN_CODES if cpe.plan_rule(c) == c}
+    assert unsaid == set()
+    assert all(cpe.plan_rule(c) in ANSWER_SHAPES["plan"] for c in codes - HOST_INTERNAL_PLAN_CODES)
+
+
+def test_a_plan_the_reducer_refuses_comes_back_to_the_planner_as_its_rule(world):
+    # fresh installs: the planner asked for a design step beside design pieces, and given only the reducer's code it
+    # sent the same plan four times; the next packet now says the rule, and the corrected plan is taken
+    w = world
+    w.minds.question = False
+    real = w.minds._answer
+
+    def first_with_a_design_step(kind, body, packet, agent):
+        answer = real(kind, body, packet, agent)
+        if kind == "plan" and "last_plan_refused" not in packet:
+            answer["plan"]["needs"] = {**answer["plan"]["needs"], "design": "design"}
+        return answer
+    w.minds._answer = first_with_a_design_step
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    plans = [packet for kind, _, packet in w.minds.calls if kind == "plan"]
+    assert len(plans) == 2
+    assert plans[1]["last_plan_refused"] == {"code": "design-pieces-carry-the-design",
+                                             "rule": cpe.PLAN_RULES["design-pieces-carry-the-design"]}
+    assert any(r["kind"] == "planned" for r in view["journal"])
+
+
+def test_a_detect_plan_on_a_scaffold_with_no_check_comes_back_as_its_rule(world):
+    # a fresh install's scaffold has no acceptance check: a plan that chose to detect one asked the scaffold for it
+    # four times and stopped on lost steps; the planner is told what the scaffold holds, and such a plan is refused
+    w = world
+    w.minds.question = False
+    real = w.minds._answer
+
+    def first_detecting(kind, body, packet, agent):
+        answer = real(kind, body, packet, agent)
+        if kind == "plan" and "last_plan_refused" not in packet:
+            answer["plan"]["needs"] = {**answer["plan"]["needs"], "tests": "detect"}
+        return answer
+    w.minds._answer = first_detecting
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    plans = [packet for kind, _, packet in w.minds.calls if kind == "plan"]
+    assert len(plans) == 2 and plans[0]["scaffold_has_acceptance_check"] is False
+    assert plans[1]["last_plan_refused"] == {"code": "detect_without_a_check",
+                                             "rule": cpe.PLAN_RULES["detect_without_a_check"]}
+    assert any(r["kind"] == "planned" for r in view["journal"])
 
 
 def test_an_untranslatable_model_result_goes_to_a_readback_not_an_exception(world):
@@ -1097,6 +1281,22 @@ def test_a_plan_proposed_through_the_goal_record_is_read_as_the_plan():
     assert out["plan"]["title"] == "Monkey site" and out["by"] == "a_p"
 
 
+@pytest.mark.parametrize("status", ["failed", "cancelled", "stalled"])
+def test_a_mind_call_whose_goal_gets_no_answer_ends_at_once(status):
+    """A goal the hive stalled (its claims lapsed with no result) gets no answer, as a failed or cancelled one: the plan's
+    wait ends there, its plan failing and any other call read back as unknown, never waiting on an update."""
+    import asyncio
+    from hive.core.create_plan_ports import GoalMinds
+
+    class DB:
+        def one(self, sql, args):
+            return {"id": "g_x", "status": status, "assignee": "a_p", "claimed_by": "a_p", "result_data": None}
+    ports = GoalMinds.__new__(GoalMinds)
+    ports.hive = type("H", (), {"db": DB()})()
+    assert asyncio.run(ports.collect({"plan_id": "p"}, "plan", {}, "g_x")) == {"failed": "goal ended"}
+    assert asyncio.run(ports.collect({"plan_id": "p"}, "review", {}, "g_x")) == {"unknown": f"goal {status}"}
+
+
 # ---- a broken authored check goes back to its author (R4.4) -------------------------------------------------------
 
 UNITTEST_CHECK = """import unittest
@@ -1170,6 +1370,33 @@ def test_a_broken_check_goes_back_to_its_author_and_the_plan_recovers_without_as
         assert "unittest" in brief["contract"]
     broken = next(c for c in view["checks"] if c["state"] == "unknown")
     assert broken["reason"] == "crashed"
+
+
+# the 18 Nov Windows shape: a finding printed, then an exit before the verdict, on the scaffold that has the finding
+EARLY_EXIT_CHECK = ("import sys\n"
+                    "page = open('index.html').read().lower()\n"
+                    "if 'moon' not in page:\n"
+                    "    print('FAIL: index.html has no moon heading')\n"
+                    "    sys.exit(1)\n"
+                    "print('CREATE-CHECK {\"passed\": true, \"failing\": [], \"notes\": []}')\n")
+
+
+def test_a_check_that_stops_before_its_verdict_is_told_so_and_the_plan_recovers(world):
+    """A test build's author wrote four checks that printed "FAIL: missing file index.html" and exited 1 before their
+    CREATE-CHECK line, so each read crashed and the plan asked whether to try again. The contract says a finding is no
+    reason to stop, and the repair brief names that exact fault."""
+    w = world
+    w.minds.question = False
+    w.minds.authored = [EARLY_EXIT_CHECK]
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    view = w.engine.view(view["plan_id"])
+    assert view["phase"] == "ready-to-deploy", (view["phase"], view["status"], view["last_error"])
+    briefs = [pk for k, _a, pk in w.minds.calls if k == "author-tests"]
+    assert len(briefs) == 2 and "never stop early" in briefs[0]["contract"]
+    prev = briefs[1]["previous_attempt"]
+    assert (prev["reason"], prev["why"]) == ("crashed", "no CREATE-CHECK line") and "FAIL: index.html has no moon" in prev["output"]
+    assert "It printed its findings and stopped (exit 1) before its CREATE-CHECK line" in briefs[1]["contract"]
+    assert "stopped (exit" not in briefs[0]["contract"]
 
 
 def test_a_permanently_broken_author_spends_the_budget_then_asks_in_plain_words(world):

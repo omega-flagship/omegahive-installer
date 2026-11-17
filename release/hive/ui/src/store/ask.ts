@@ -37,7 +37,7 @@ import { EXPERIENCES } from '../experiences/registry'
 import { featureById } from '../features/registry'
 import { domUnsaved, hasUnsaved } from '../features/ask/dirty'
 import type { KeySetup } from '../features/ownKey/addOwnKey'
-import { DONE_OFFERS, DONE_WORDS, doneErrorWords, readDoneLimit, refusalOf, RESEARCH_WORDS, setOwnMind, spendStop, TAKEOVER_WORDS, THREAD_LIMIT_MAX_USD, type Offer } from '../features/ask/words'
+import { DONE_OFFERS, DONE_WORDS, doneErrorWords, readDoneLimit, refusalOf, refusedSay, RESEARCH_WORDS, setOwnMind, spendStop, THREAD_LIMIT_MAX_USD, type Offer } from '../features/ask/words'
 import { href, navigate, parse, type Route } from '../lib/router'
 import { asOwnChoice, DEFAULT_VARIANT, keepLook, lookName, lookState, previewLook, SEED_VARIANTS, withExperience, type Layout, type UiPrefs, type UiVariant } from '../shell/uiVariant'
 import { hiveBus, useHive } from './store'
@@ -65,6 +65,8 @@ export type AskOpts = {
   newTurnOnly?: boolean
   /** The turn joins the person's thread without opening it (Create's Code bench shows its own work stream). */
   quiet?: boolean
+  /** Set only by Continue; never inherited by typed or retried words. */
+  continues?: string
   /**
    * Told once, with exactly what the hive admitted these words under (or why it did not). Never stored with held or
    * retried words. Additive: callers that do not pass it are unchanged. Read it through `admit`.
@@ -92,8 +94,8 @@ export type AskAdmission =
   | { admitted: false; reason: 'not_available' | 'refused' | 'unknown' | 'held' | 'unsupported' | 'capped' | 'failed' | 'not_admitted'; receipt?: AskOperationReceipt }
 /** The opts as they may be kept (held or retried later): never with an admission callback. */
 const kept = (o: AskOpts): AskOpts => {
-  const { admission: _a, onOperation: _o, ...rest } = o
-  void _a; void _o
+  const { admission: _a, onOperation: _o, continues: _c, ...rest } = o
+  void _a; void _o; void _c
   return rest
 }
 
@@ -223,6 +225,12 @@ export interface AskRow {
   streaming?: boolean
   /** a stop's own way on (spend-stop r1: a spending stop offers New thread and the raise for new threads) */
   offer?: Offer[]
+  /**
+   * the row of the frame that closed a request (its done or refusal): the facts its way on is composed from
+   * (features/ask/thread.metta ask-stopped): `early` when it ended before its answer (endedEarly), `latest` while it
+   * is the thread's latest request, `until` the time it is kept to (stoppedUntil)
+   */
+  ending?: { early: boolean; latest: boolean; until: number }
 }
 
 /** What the page did with a frame (only the page knows; the host's frame says what was asked). */
@@ -280,11 +288,12 @@ export interface TurnMeta {
   notes: { after: number; text: string }[]
   steers: PendingSteer[]
   moves: number
-  /** the person touched the page during this turn: the mind's moves are paused until they steer again */
+  /**
+   * the person touched the page during this turn: the mind's moves of the page are held (an act answers stale_origin,
+   * a proposed move becomes a Go card) until they steer again. The turn itself runs on: the person's use of the page
+   * never ends it (Jon, 17 Nov: "Ask should exist above UI - stop shouldn't happen").
+   */
   tookOver: boolean
-  /** the takeover as the host has it: sent once the turn is admitted (never while it is still being sent or checked, when
-   *  the host has no turn yet to end), confirmed, or failed (the page says so; the person may stop the turn) */
-  takeover?: 'sending' | 'sent' | 'inert' | 'failed'
   presence: number
   step?: string
   recovering?: boolean
@@ -427,6 +436,12 @@ interface AskActions {
   showAppTurn(op: string): Promise<void>
   /** Retry only the exact request rendered for this identity; callers also own presentation lifetime. */
   retryLast(requestId: string, identityEpoch: number, context: string | null): Promise<void>
+  /**
+   * Continue the request that ended before its answer, only while it is still the last one sent for this identity (the
+   * same guards as retryLast): `words` (Continue, from features/ask/thread.metta) become the person's next request,
+   * asked where and of whom the stopped one was, and the conversation it carries holds what that one did.
+   */
+  continueStopped(requestId: string, identityEpoch: number, context: string | null, words: string): Promise<void>
   /** Check again whether an Ask of unknown admission reached the hive (the same request, under the same id). */
   checkAgain(op: string): Promise<void>
   onEvent(e: unknown): void
@@ -659,13 +674,12 @@ export function turnRows(t: TurnMeta, mindName?: string, thread?: { spent_usd: n
         break
       case 'done': {
         // a turn the host stopped at a limit says so, in the page's words (never the host's); the person's own
-        // takeover is said plainly, not as a stop or an error
         // j0-fixes r1: a spending stop names the limit that stopped it and offers only a remedy that helps (words.ts)
         // (ask-limits r1); a model with no price or a missing key is its own error, not a limit
-        const stop = !e.taken_over && e.outcome === 'spend_cap' ? spendStop(readDoneLimit(e.limit), thread) : null
+        const stop = e.outcome === 'spend_cap' ? spendStop(readDoneLimit(e.limit), thread) : null
         // a turn the page carried and stopped itself: where the words went, never "This request was stopped"
-        const said = t.carried && e.outcome === 'cancelled' ? t.carried : e.taken_over ? TAKEOVER_WORDS : stop ? stop.text : e.outcome === 'error' ? doneErrorWords(e.error) : e.outcome ? DONE_WORDS[e.outcome] : null
-        const offer = stop ? (stop.offer.length ? stop.offer : undefined) : !e.taken_over && e.outcome ? DONE_OFFERS[e.outcome] : undefined
+        const said = t.carried && e.outcome === 'cancelled' ? t.carried : stop ? stop.text : e.outcome === 'error' ? doneErrorWords(e.error) : e.outcome ? DONE_WORDS[e.outcome] : null
+        const offer = stop ? (stop.offer.length ? stop.offer : undefined) : e.outcome ? DONE_OFFERS[e.outcome] : undefined
         if (said) rows.push({ ...base, kind: 'note', text: said, ...(offer ? { offer } : {}) })
         break
       }
@@ -696,12 +710,74 @@ export function turnRows(t: TurnMeta, mindName?: string, thread?: { spent_usd: n
 /** The whole thread, in order. */
 export function threadRows(s: Pick<AskState, 'log' | 'turns' | 'thread' | 'local'>): AskRow[] {
   const out: AskRow[] = []
+  // the thread's latest request: Continue carries on only from there
+  const last = [...s.log].reverse().find((e) => e.kind === 'turn' && s.turns[e.op])
+  const latest = last && last.kind === 'turn' ? last.op : null
   for (const e of s.log) {
     if (e.kind === 'row') out.push({ ...e.row, ...s.local[e.row.id] })
     // a turn row's later state (a conductor act's Undo that ran) is kept the same way as a fast-path row's
-    else if (s.turns[e.op]) for (const r of turnRows(s.turns[e.op], s.thread?.mind.name, s.thread)) out.push(s.local[r.id] ? { ...r, ...s.local[r.id] } : r)
+    else if (s.turns[e.op]) {
+      const t = s.turns[e.op]
+      const end = closingRowId(t)
+      const ending = { early: endedEarly(t), latest: t.op === latest, until: stoppedUntil(t) }
+      for (const r of turnRows(t, s.thread?.mind.name, s.thread)) {
+        const row = s.local[r.id] ? { ...r, ...s.local[r.id] } : r
+        out.push(row.id === end ? { ...row, ending } : row)
+      }
+    }
   }
   return out
+}
+
+/** The frame that closed a turn the hive took: its done or its refusal, the last of either. */
+const closing = (t: TurnMeta) => [...t.events].reverse().find((e) => e.phase === 'done' || e.phase === 'refused')
+
+/**
+ * A request that ended before its answer (Haley, testers' group, 17 Nov: "if it's going to stop, please have a
+ * 'continue task' button... Ask currently doesn't remember what it was working on"): the hive took it (an `accepted`
+ * frame), then closed it with a refusal (a stop, a lost hive, its time) or a done that is not its whole answer. Never a
+ * spending stop, whose way on is New thread or a higher limit, and never words the page carried somewhere else.
+ */
+export function endedEarly(t: TurnMeta): boolean {
+  if ((t.state !== 'done' && t.state !== 'refused') || t.carried || !t.events.some((e) => e.phase === 'accepted')) return false
+  const end = closing(t)
+  if (!end) return false
+  if (end.phase === 'refused') return end.reason !== 'spend_limit'
+  return end.outcome !== undefined && end.outcome !== 'complete' && end.outcome !== 'spend_cap'
+}
+
+/**
+ * How long a request that ended early is kept and offered for Continue (Jon on #394: "time limit on what's kept"): the
+ * hive acts on a turn's hand-overs for 24 hours from its start and refuses one after (hive/core/ask_intents.py
+ * TURN_MAX_AGE, turn_too_old), so past that what it handed over is no way on. askContinue.test.ts reads the host's value.
+ */
+export const STOPPED_KEEP_MS = 24 * 3_600_000
+
+/** Until when a request that ended early is kept (epoch ms): its turn's start, as the hive timed its acceptance, plus STOPPED_KEEP_MS; 0 when not known. */
+export function stoppedUntil(t: TurnMeta): number {
+  const start = Date.parse(t.events.find((e) => e.phase === 'accepted')?.at ?? '')
+  return Number.isFinite(start) ? start + STOPPED_KEEP_MS : 0
+}
+
+/** The row turnRows draws for the frame that closed the turn: the one that says how it ended. */
+const closingRowId = (t: TurnMeta): string | null => {
+  const end = closing(t)
+  return end ? `${t.op}#${end.seq}` : null
+}
+
+/**
+ * What a request that ended early said and did, and why it stopped, in the words its thread showed: the answer so far,
+ * the moves, hand-overs and notes, and the stop. Kept as its exchange in the person's conversation (lib/askMemory), so
+ * the next request, Continue or the person's own words, carries on from there with no model call of its own.
+ */
+export function stoppedAnswer(t: TurnMeta): string {
+  return turnRows(t)
+    .filter((r) => r.kind !== 'you' && r.kind !== 'step' && r.kind !== 'steer')
+    .map((r) => (r.kind === 'refused' ? refusedSay(r.reason, r.spentUsd) : r.text).trim())
+    .filter(Boolean)
+    // each line a sentence: the conversation folds lines into one paragraph (askMemory clip), which keeps them apart
+    .map((x) => (/[.!?…]$/.test(x) ? x : `${x}.`))
+    .join('\n')
 }
 
 /** The mind's moves this turn, in order, for the trail. */
@@ -741,45 +817,6 @@ export const useAskStore = create<AskStore>()((set, get) => {
       if (!t) return s
       return { turns: { ...s.turns, [op]: { ...t, ...(typeof p === 'function' ? p(t) : p) } } }
     })
-    sendTakeover(op)
-  }
-  /**
-   * The person took over (ask-takeover r3): the host is told once the turn is admitted, whichever path admits it (the
-   * POST's answer, an `accepted` frame, a check or a recovery), so a takeover made while the request is still being sent
-   * is kept, not lost to a 404. If the host does not take it, the turn is stopped instead; if that fails too, the page
-   * says so rather than implying the hive stopped.
-   */
-  function sendTakeover(op: string) {
-    const t = get().turns[op]
-    const client = useHive.getState().client
-    if (!t || !t.tookOver || t.takeover || t.state !== 'open' || !client?.askTakeover) return
-    const snap = snapshot()
-    patchTurn(op, { takeover: 'sending' })
-    client.askTakeover(op).then(
-      () => {
-        if (snap.ok()) patchTurn(op, { takeover: 'sent' })
-      },
-      async (err: unknown) => {
-        // conductor-live: 404 not_available is the host saying this is not a conductor turn (the conductor is off):
-        // inert, never a stop of the coordinator's answer, and nothing said as an error
-        if (err instanceof ApiError && err.status === 404 && err.code === 'not_available') {
-          if (snap.ok()) patchTurn(op, { takeover: 'inert' })
-          return
-        }
-        // followups-r8 (found by the helper-effect scan): the stop is a second write after the takeover's answer, so it
-        // is sent only while the thread, sign-in and client it was taken under are still current
-        if (!snap.ok()) return
-        try {
-          if (!client.askStop) throw new Error('no stop')
-          await client.askStop(op)
-          if (snap.ok()) patchTurn(op, { takeover: 'sent' })
-        } catch {
-          if (!snap.ok()) return
-          patchTurn(op, { takeover: 'failed' })
-          noteAfter(op, 'The hive didn’t confirm that the orchestrator stopped. Stop it to be sure.')
-        }
-      },
-    )
   }
   const outcome = (op: string, seq: number, o: Outcome) => patchTurn(op, (t) => ({ outcomes: { ...t.outcomes, [seq]: o } }))
   const noteAfter = (op: string, text: string) => patchTurn(op, (t) => ({ notes: [...t.notes, { after: t.lastSeq, text }] }))
@@ -791,6 +828,7 @@ export const useAskStore = create<AskStore>()((set, get) => {
     silence.delete(op)
     patchTurn(op, { state, step: undefined })
     set((s) => ({ open: s.open === op ? null : s.open }))
+    if (hostClosed) keepStopped(op)
     const attached = browser
     if (hostClosed && get().turns[op]?.answerOwner && !get().turns[op]?.browserClosed) {
       patchTurn(op, { browserClosed: true, unsure: undefined })
@@ -801,6 +839,21 @@ export const useAskStore = create<AskStore>()((set, get) => {
         } catch { noteAfter(op, 'The browser mind could not finish its cleanup. Check before leaving.') }
       }
     }
+  }
+  /**
+   * A request the hive closed before its answer joins the person's conversation like an answered one (lib/askMemory
+   * rememberTurn: the same store, forgets, export and caps), its answer what it said and did and why it stopped, kept
+   * only until stoppedUntil. Never a private app's words; a request whose whole answer was kept already stays as it was
+   * (one exchange per turn).
+   */
+  const keepStopped = (op: string) => {
+    const t = get().turns[op]
+    if (!t || t.privatePage || !t.you || !endedEarly(t)) return
+    const by = t.speaksAs ?? (t.answerer ? { mind_id: t.answerer.id, name: t.answerer.name } : undefined)
+    const turnId = t.events.find((e) => e.phase === 'accepted')?.turn_id
+    const answer = stoppedAnswer(t)
+    if (!by || !turnId || !answer) return
+    void askMemory.rememberTurn({ turn_id: turnId, mind_id: by.mind_id, mind_name: by.name, words: t.you, answer, until: stoppedUntil(t) })
   }
   const watch = (op: string) => {
     clearTimeout(silence.get(op))
@@ -1525,7 +1578,7 @@ export const useAskStore = create<AskStore>()((set, get) => {
       // through convo"); never from a private app's page
       const conversation = privatePage ? [] : askMemory.conversation()
       // the original request: kept as sent, so a check can send exactly it again under the same id (Review B1, 45392df)
-      const body: AskBody = { operation_id: op, text: words.slice(0, 4000), context, via: opts.via ?? 'typed', ...(recalled.notes.length ? { memory_notes: recalled.notes } : {}), ...(conversation.length ? { conversation } : {}) }
+      const body: AskBody = { operation_id: op, text: words.slice(0, 4000), context, via: opts.via ?? 'typed', ...(opts.continues ? { continues: opts.continues } : {}), ...(recalled.notes.length ? { memory_notes: recalled.notes } : {}), ...(conversation.length ? { conversation } : {}) }
       // This is the original body kept for unknown-admission readback/retry, never a second request or a new owner.
       if (useBrowser) body.answer_in = 'browser'
       const pendingTurn: TurnMeta = { ...newTurn(op, words, opts.where, opts.about), memorySince, privatePage, ...(pageSwarm ? { swarm: pageSwarm } : {}), ...(around.note ? { rerouted: around.note } : {}), ...(around.why ? { reroutedWhy: around.why } : {}), ...(around.fixSwarm ? { fixSwarm: around.fixSwarm } : {}) }
@@ -1539,7 +1592,7 @@ export const useAskStore = create<AskStore>()((set, get) => {
           // A copied or reworded row can still be unsent; keep changed words as device-local rows.
           if (!unsent || unsent.op !== op || typeof unsent.you !== 'string' || unsent.where !== opts.where || unsent.about !== opts.about || unsent.state !== 'sending' || unsent.lastSeq !== 0
             || unsent.events.length || unsent.ahead.length || unsent.notes.length || unsent.steers.length || Object.keys(unsent.outcomes).length
-            || unsent.unsure || unsent.held?.length || unsent.refusedEarly || unsent.appAsk || unsent.appAskTurnId || unsent.gap || unsent.takeover || unsent.recovering
+            || unsent.unsure || unsent.held?.length || unsent.refusedEarly || unsent.appAsk || unsent.appAskTurnId || unsent.gap || unsent.recovering
             || unsent.moves !== 0 || unsent.tookOver || unsent.presence !== 0 || admissionReceipts.has(op)) return s
           const { [op]: removed, ...turns } = s.turns
           void removed
@@ -1821,6 +1874,16 @@ export const useAskStore = create<AskStore>()((set, get) => {
       if (t && (t.state === 'sending' || t.state === 'open')) return
       // settled (answered, or the host's own no): asking again is a new request, under a new id
       if (last) await get().send(last.text, last.context, last.opts)
+    },
+
+    async continueStopped(requestId, identityEpoch, context, words) {
+      // as retryLast: never for a newer request or another person, and only once the stopped one is settled
+      if (!liveBound() || identityEpoch !== currentEpoch() || !last || last.identityEpoch !== identityEpoch || requestId !== lastOp || !context || context !== askRetryContext(requestId, identityEpoch)) return
+      const t = get().turns[requestId]
+      if (!t || !endedEarly(t) || !(Date.now() < stoppedUntil(t)) || !words.trim()) return
+      const continues = t.events.find((e) => e.phase === 'accepted')?.turn_id
+      if (!continues) return
+      await get().send(words, last.context, { ...last.opts, continues })
     },
 
     async checkAgain(op) {
@@ -2139,12 +2202,11 @@ export const useAskStore = create<AskStore>()((set, get) => {
       liveBound()
       const op = get().open
       const t = op ? get().turns[op] : undefined
-      // sending or checking (admission not known yet): the intent is kept and sent once the turn is admitted (sendTakeover)
+      // also while it is still being sent or checked: the hold is the page's own, so it needs no admitted turn
       if (!op || !t || t.tookOver || (t.state !== 'open' && t.state !== 'sending' && t.state !== 'checking')) return
       noteAfter(op, 'You took over. The orchestrator won’t move the page again unless you tell it to.')
-      // the host is told (POST /api/ask/{op}/takeover), now or once the turn is admitted (sendTakeover): it ends the
-      // turn with a done frame (taken_over). A 404 not_available (the conductor is off: not a conductor turn) is
-      // inert: the page's own pause above holds, and nothing is said as an error
+      // the page alone holds the mind's moves from here (conductor.ts answers its acts stale_origin; mindMove makes a
+      // proposed move a Go card); the host is never asked to end the turn, which runs on to its answer
       patchTurn(op, { tookOver: true })
     },
 

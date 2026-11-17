@@ -366,6 +366,7 @@ export class AskMemoryStore {
             this.readOk = true
             // the host's switches may have arrived before this read: they still decide
             this.set({ talkRecall: snap.talk_recall === true, conversationSince: snap.conversation_since, heard: snap.heard, forgets: forgetsOf(snap.tombs, snap.gen_at), beliefs: snap.beliefs, trace: snap.trace, talks: snap.talks, ready: true, hive: hiveState(this.view.capabilities, learnedIn(snap.trace), this.view.capabilities ? this.view.hive : 'unknown') })
+            this.expireTalks()
           }),
         () => this.guarded(at, () => this.set({ ready: true, writeFailed: true })),
       )
@@ -403,9 +404,21 @@ export class AskMemoryStore {
         this.salt = snap.salt
         for (const id of this.vectors.keys()) if (!snap.beliefs.some((b) => b.id === id)) this.vectors.delete(id)
         this.set({ talkRecall: snap.talk_recall === true, conversationSince: Math.max(this.view.conversationSince, snap.conversation_since), heard: laterMarks(this.view.heard, snap.heard), forgets: forgetsOf(snap.tombs, this.genAt), beliefs: snap.beliefs, trace: snap.trace, talks: snap.talks, ...(learnedIn(snap.trace) && this.view.hive !== 'off' ? { hive: 'learning' as const } : {}) })
+        this.expireTalks()
       })
       return
     }
+  }
+
+  /**
+   * The exchanges kept only until a time that has passed (a request that stopped before its answer) go, here and in
+   * storage, with no tombstone: nobody forgot them, so the memory page counts no forget. Time: t, t = talks kept.
+   */
+  private expireTalks(): void {
+    const now = this.deps.now()
+    if (!this.key || !this.view.talks.some((t) => t.until !== undefined && t.until <= now)) return
+    this.set({ talks: this.view.talks.filter((t) => t.until === undefined || t.until > now) })
+    this.commit({ op: 'expire_talks', at: now })
   }
 
   /**
@@ -824,14 +837,15 @@ export class AskMemoryStore {
    * answers (Jon, 16 Nov), and a later thread with the person's own mind recalls those it answered (mind-voice r1).
    * Never a private app's words. Resolves true once written.
    */
-  async rememberTurn(x: { turn_id: string; mind_id: string; mind_name?: string | null; words: string; answer: string }): Promise<boolean> {
+  async rememberTurn(x: { turn_id: string; mind_id: string; mind_name?: string | null; words: string; answer: string; until?: number }): Promise<boolean> {
     const at = this.owner
     if (!this.key || !/^[A-Za-z0-9_-]{1,64}$/.test(x.mind_id)) return false
     const id = `${MIND_TALK_PREFIX}${x.turn_id.replace(/[^A-Za-z0-9_-]/g, '')}`.slice(0, 64)
     if (this.view.talks.some((t) => t.id === id)) return true
     const now = this.deps.now()
+    if (x.until !== undefined && !(x.until > now)) return false   // already past its time: never kept
     const name = (x.mind_name ?? '').trim().slice(0, MIND_NAME_MAX)
-    const talk: Talk = { id, turn_id: x.turn_id.slice(0, 128), at: now, words: x.words.slice(0, TALK_TEXT_MAX), answer: x.answer.slice(0, TALK_TEXT_MAX), truncated: x.words.length > TALK_TEXT_MAX || x.answer.length > TALK_TEXT_MAX, kept_at: now, mind_id: x.mind_id, ...(name ? { mind_name: name } : {}) }
+    const talk: Talk = { id, turn_id: x.turn_id.slice(0, 128), at: now, words: x.words.slice(0, TALK_TEXT_MAX), answer: x.answer.slice(0, TALK_TEXT_MAX), truncated: x.words.length > TALK_TEXT_MAX || x.answer.length > TALK_TEXT_MAX, kept_at: now, mind_id: x.mind_id, ...(name ? { mind_name: name } : {}), ...(x.until !== undefined ? { until: x.until } : {}) }
     if (!talkOk(talk) || namesPrivate(talk.words) || namesPrivate(talk.answer)) return false
     const r = await this.commitNow({ op: 'talks', talks: [talk] })
     if (!r?.ok || !this.still(at)) return false
@@ -846,15 +860,19 @@ export class AskMemoryStore {
   conversationTalks(): Talk[] {
     if (!this.key || !this.view.ready) return []
     const since = this.view.conversationSince
-    return this.view.talks.filter((t) => t.mind_id !== undefined && t.at > since && !namesPrivate(t.words) && !namesPrivate(t.answer))
+    const now = this.deps.now()
+    return this.view.talks.filter((t) => t.mind_id !== undefined && t.at > since && (t.until === undefined || t.until > now) && !namesPrivate(t.words) && !namesPrivate(t.answer))
   }
 
   /**
    * The conversation as the next Ask carries it, whichever mind answers (Jon, 16 Nov: "context and continuity are
    * consistently persistent regardless of which model you interact", "without needing additional LLM calls to pass
    * through convo"), within the host's caps (`carried`).
+   * An exchange kept only until a time that has passed goes from this browser here too, as at every load
+   * (expireTalks).
    */
   conversation(): Exchange[] {
+    this.expireTalks()
     return carried(this.conversationTalks())
   }
 

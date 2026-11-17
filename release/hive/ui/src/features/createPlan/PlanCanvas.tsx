@@ -14,6 +14,7 @@ import { Screen } from '../../screens/Screen'
 import { useCompose } from '../../screens/useCompose'
 import { guardComposing } from '../ask/keys'
 import { cx } from '../../lib/cx'
+import { useHive } from '../../store/store'
 import type { PlanView } from './contract'
 import { planFacts } from './planFacts'
 import { usePlan } from './usePlan'
@@ -99,9 +100,15 @@ function BoundPlanCanvas() {
   }
   const onAction = (action: string) => {
     if (action === 'stop-ask') setStopAsking(true)
+    else if (action === 'open-limits') navigate({ name: 'usage' })
     else if (action === 'stop-no') setStopAsking(false)
     else if (action === 'stop-yes') { setStopAsking(false); plan.stop() }
-    else if (action === 'open-app' && view?.installed) navigate({ name: 'program', id: view.installed.app_id })
+    else if (action === 'open-app' && view?.installed) {
+      // The page's programs list was read before this plan deployed its app, and the app page names only what that list
+      // holds: read once, Open went to "This app isn't available to you here" (v0.35 rc2, a fresh Mac install).
+      const id = view.installed.app_id
+      void useHive.getState().loadPrograms().catch(() => undefined).finally(() => navigate({ name: 'program', id }))
+    }
     else if (action === 'fresh') { setStopAsking(false); plan.fresh() }
   }
   return (

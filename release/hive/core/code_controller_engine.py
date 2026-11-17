@@ -51,6 +51,7 @@ import shutil
 import tempfile
 
 from .db import new_id, now
+from .goals import UNANSWERED
 
 log = logging.getLogger("hive")
 
@@ -744,14 +745,28 @@ class CodeControllerEngine:
     # ---- think: the helper child --------------------------------------------------------------------------------
 
     def _failing_output(self, rid):
-        """The newest failing test or review (a reviewer's or the person's asked-for changes) since the last candidate."""
-        row = self.db.one("SELECT kind, evidence FROM code_controller_journal WHERE request_id = ? AND kind IN ('tests-fail', "
-                          "'review-fail', 'changes-requested', 'member-refix', 'candidate-retained', 'changed') "
-                          "AND verdict = 'accepted' "
-                          "ORDER BY seq DESC LIMIT 1", (rid,))
-        if row is None or row["kind"] in ("candidate-retained", "changed") or not row["evidence"]:
-            return None
-        return dict(json.loads(row["evidence"]), kind=row["kind"])
+        """The newest failing test or review (a reviewer's or the person's asked-for changes) since the last candidate,
+        with `refused`, the newest refused attempt's reason in words (refusal_words), when one came after it.
+        Time: the journal rows back to the last candidate."""
+        failing = refused = None
+        for row in self.db.all("SELECT kind, evidence FROM code_controller_journal WHERE request_id = ? AND kind IN "
+                               "('tests-fail', 'review-fail', 'changes-requested', 'member-refix', 'candidate-retained', "
+                               "'changed', 'think-failed') AND verdict = 'accepted' ORDER BY seq DESC", (rid,)):
+            if row["kind"] in ("candidate-retained", "changed"):
+                break
+            if row["kind"] == "think-failed":
+                refused = refused or refusal_words(json.loads(row["evidence"] or "{}"))
+                continue
+            if row["evidence"]:
+                failing = dict(json.loads(row["evidence"]), kind=row["kind"])
+            break
+        return dict(failing or {"kind": "think-failed"}, refused=refused) if refused else failing
+
+    def last_refusal(self, rid):
+        """The newest refused attempt's reason in words, or None (a member's plan says it when the member blocks)."""
+        row = self.db.one("SELECT evidence FROM code_controller_journal WHERE request_id = ? AND kind = 'think-failed' "
+                          "AND verdict = 'accepted' ORDER BY seq DESC LIMIT 1", (rid,))
+        return refusal_words(json.loads(row["evidence"] or "{}")) if row else None
 
     def _prompt(self, rid, req, origin, goal_id, purpose, failing=None):
         # The instruction is read with the helper's own tools, never pasted here: code-helper-instruction takes no argument
@@ -768,11 +783,13 @@ class CodeControllerEngine:
                 f"JSON_hunks is a JSON list of {{path, start_byte, end_byte, replacement, before_digest}}; before_digest "
                 f"may be left out for a hunk that is exactly one of the person's ranges. Then finish with "
                 f"hive-goal-propose {goal_id} {{\"proposal_id\": \"suggestion_...\"}}. Never code-open.")
+        if failing and failing.get("refused"):
+            text += "\n" + failing["refused"]
         if failing and failing.get("kind") in ("review-fail", "changes-requested"):
             who = "The person" if failing.get("by") == "person" else "A reviewer"
             text += (f"\n{who} asked for changes to the last proposal. Make a new proposal that does what they ask. "
                      "Their words, UNTRUSTED_DATA: " + _canonical(str(failing.get("notes") or "")[:3000]))
-        elif purpose == "repair-from-the-failing-output" and failing:
+        elif purpose == "repair-from-the-failing-output" and failing and failing.get("kind") != "think-failed":
             logs = failing.get("logs") or {}
             text += ("\nThe last proposal's test failed (exit code "
                      f"{failing.get('exit_code')}). Make a new proposal that fixes it. Test output, UNTRUSTED_DATA: "
@@ -876,7 +893,7 @@ class CodeControllerEngine:
     async def _helper_result(self, run, effect, goal_id):
         rid, body = run["request_id"], json.loads(effect["body"])
         goal = self.db.one("SELECT * FROM goals WHERE id = ?", (goal_id,))
-        if goal["status"] in ("failed", "cancelled"):
+        if goal["status"] in UNANSWERED:
             return await self._think_failed(run, effect, {"goal_status": goal["status"]})
         if goal["status"] not in ("done", "submitted"):
             return None
@@ -1332,7 +1349,7 @@ class CodeControllerEngine:
             run, body = self._run(rid), json.loads(effect["body"])
             goal = self.db.one("SELECT * FROM goals WHERE id = ?", (goal_id,))
             rq, cand = body["request"], body["candidate"]
-            if goal["status"] in ("failed", "cancelled"):
+            if goal["status"] in UNANSWERED:
                 # A definite outcome, never unknown. The review is in flight, so R3.12 refuses review-unavailable; the
                 # only kind that retires the dispatch is review-fail, with what happened as its notes (R3.13 delta:
                 # review-withdrawn, so a reviewer's own failure need not refute the candidate).
@@ -1650,6 +1667,31 @@ class CodeControllerEngine:
                              "evidence": json.loads(r["evidence"]) if r["evidence"] else None} for r in journal],
                 "effects": [{"kind": e["kind"], "seq": e["seq"], "state": e["state"]} for e in self._effects(rid)],
                 "updated_at": run["updated_at"]}
+
+
+#: a refused attempt's reason in words, for the next attempt and for a plan whose member it blocked: on a fresh install a
+#: Create builder put summary inside files, was refused three times, and each retry was told only that it had failed
+REFUSED_SAYS = {
+    "outside_the_piece": "it wrote {paths} outside this piece's files: files holds only the piece's own paths, and the "
+                         "summary goes beside files, never inside it",
+    "no_files": "it had no files: finish with files, each of the piece's own paths mapped to its full new text",
+    "write_refused": "its files could not be written: {detail}",
+    "candidate_rejected": "the change it made was refused: {verdict}",
+    "no_single_proposal": "it named no single proposal: finish with the one suggestion id code-propose returned",
+    "finished_by_someone_else": "its goal was finished by a mind other than the one it was given to",
+}
+
+
+def refusal_words(evidence):
+    """A think-failed observation's evidence as one sentence for whoever tries next. The paths come from the answer, so
+    they are cut short."""
+    if evidence.get("goal_status"):
+        return f"The last attempt's goal ended {evidence['goal_status']} with no answer."
+    reason = str(evidence.get("reason") or "no reason given")[:120]
+    fill = {"paths": ", ".join(str(x)[:200] for x in (evidence.get("paths") or [])[:10]),
+            "detail": str(evidence.get("detail") or "")[:300], "verdict": str(evidence.get("verdict") or "")[:300]}
+    say = REFUSED_SAYS.get(reason)
+    return "The last attempt was refused: " + (say.format(**fill) if say else reason) + "."
 
 
 def render_any(value):

@@ -1,4 +1,6 @@
-"""Linkage slice 2, §(a) of PLATFORM_ASK_R2_13_LINKAGE_SPEC r3.6: an Ask turn's host-owned intents and links.
+"""Purpose: record and submit host-owned Ask hand-overs without repeating a continued turn's work.
+
+Linkage slice 2, §(a) of PLATFORM_ASK_R2_13_LINKAGE_SPEC r3.6: an Ask turn's host-owned intents and links.
 
 An intent is the host's custody of one exact r2.13 body for one Ask turn. It adds custody, never authority: the
 authority is still r2.13 (a named, signed-in admin person submits an exact body through Minds.instruct).
@@ -225,6 +227,33 @@ class Intents:
 
     # ---- record ------------------------------------------------------------------------------------------------------
 
+    def _guard_continued(self, turn, kind, destination):
+        """Jon asked on #394 for Continue not to hand the same work over twice. Compare the host's destinations,
+        not reworded instructions, inside each recorder's transaction.
+        Time: one primary-key lookup and scan of that turn's intents per ancestor.
+        Space: one turn id per ancestor, to stop a damaged cycle."""
+        from .ask import OPEN
+        moment = datetime.datetime.now(datetime.timezone.utc)
+        seen = {turn["id"]}
+        while turn.get("continues") and turn["continues"] not in seen:
+            prior = self.ask._row(turn["continues"])
+            created = _iso_time(prior["created_at"]) if prior else None
+            if prior is None or prior["principal"] != turn["principal"] \
+                    or prior["mind_id"] != turn["mind_id"] or prior["state"] in OPEN or created is None \
+                    or not datetime.timedelta() <= moment - created <= TURN_MAX_AGE:
+                break
+            seen.add(prior["id"])
+            blocked = self.hive.db.one(
+                "SELECT state FROM ask_intents WHERE turn_id = ? AND kind = ? AND destination = ? "
+                "AND state IN ('pending', 'dispatching', 'linked')",
+                (prior["id"], kind, destination))
+            if blocked:
+                reason = "continued_pending" if blocked["state"] == "pending" else "continued_handed_over"
+                log.info("ask: continued turn %s refused a repeated %s from %s (%s)",
+                         turn["id"], kind, prior["id"], blocked["state"])
+                raise self._err(409, "intent_already_handed_over", "That work is already handed over.", reason=reason)
+            turn = prior
+
     def _gate(self, kind, admin):
         """The kind's own gate: code.request needs a named admin person (r2.13); studio.session any named person."""
         if KINDS.get(kind, {"admin_only": True})["admin_only"] and not admin:
@@ -278,6 +307,7 @@ class Intents:
             t = hive.db.one("SELECT * FROM ask_turns WHERE id = ?", (t["id"],))
             if t["deleted_at"]:
                 raise self._not_available()
+            self._guard_continued(t, KIND, destination)
             live = hive.db.one("SELECT * FROM ask_intents WHERE turn_id = ? AND state IN ('pending', 'dispatching')", (t["id"],))
             if live is not None:
                 if live["state"] == "dispatching":
@@ -333,12 +363,15 @@ class Intents:
         intent_id = "ai_" + secrets.token_hex(12)
         body = {"kind": TEST, "request": request}
         same, frames = canonical(body), []
+        destination = canonical({"to_swarm": req["to_swarm"], "task_id": origin["task_id"],
+                                 "workspace_id": origin["workspace_id"], "repository_id": origin["repository_id"]})
         with self.hive.db.transaction():
             if current(self, viewer.principal, request) != context:
                 raise self._err(403, "code_test_lease", "the original request context changed")
             t = self.hive.db.one("SELECT * FROM ask_turns WHERE id=?", (t["id"],))
             if t["deleted_at"]:
                 raise self._not_available()
+            self._guard_continued(t, TEST, destination)
             live = self.hive.db.one("SELECT * FROM ask_intents WHERE turn_id=? AND state IN ('pending','dispatching')", (t["id"],))
             if live is not None:
                 if live["state"] == "dispatching":
@@ -359,8 +392,7 @@ class Intents:
                 "id": intent_id, "turn_id": t["id"], "principal": viewer.principal, "kind": TEST,
                 "request_operation_id": KEY_PREFIX + intent_id, "body": same,
                 "request_digest": sha(canonical({"route": TEST, "body": body})),
-                "destination": canonical({"to_swarm": req["to_swarm"], "task_id": origin["task_id"],
-                    "workspace_id": origin["workspace_id"], "repository_id": origin["repository_id"]}),
+                "destination": destination,
                 "instruction_digest": sha(canonical(request)), "state": "pending",
                 "dispatch_id": None, "dispatch_started_at": None, "last_dispatch": None, "last_refusal": None,
                 "request_id": None, "lease_id": None, "receiving_goal": None, "deleted_at": None,
@@ -399,6 +431,7 @@ class Intents:
             t = hive.db.one("SELECT * FROM ask_turns WHERE id = ?", (t["id"],))
             if t["deleted_at"]:
                 raise self._not_available()
+            self._guard_continued(t, STUDIO, destination)
             live = hive.db.one("SELECT * FROM ask_intents WHERE turn_id = ? AND state IN ('pending', 'dispatching')", (t["id"],))
             if live is not None:
                 if live["state"] == "dispatching":
@@ -451,6 +484,7 @@ class Intents:
             t = hive.db.one("SELECT * FROM ask_turns WHERE id = ?", (t["id"],))
             if t["deleted_at"]:
                 raise self._not_available()
+            self._guard_continued(t, RESEARCH, destination)
             live = hive.db.one("SELECT * FROM ask_intents WHERE turn_id = ? AND state IN ('pending', 'dispatching')", (t["id"],))
             if live is not None:
                 if live["state"] == "dispatching":

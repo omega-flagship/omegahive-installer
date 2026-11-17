@@ -27,6 +27,10 @@ STATUSES = {"open", "claimed", "waiting", "stalled", "submitted", "done", "faile
 # Where a status change may not go from: a finished goal stays finished (a retry of a failed goal is a fresh start).
 TERMINAL_NEXT = {"done": set(), "cancelled": set(), "failed": {"open"}}
 UNFINISHED = ("open", "claimed", "waiting", "stalled", "submitted")
+# No answer comes from a goal in these without a person: it failed, was cancelled, or stalled (its claims lapsed
+# MAX_ATTEMPTS times with no result). Whoever waits on its answer ends the wait here, never at an update that may
+# not come: a Create builder that claimed its goal and went quiet left its plan writing with no error.
+UNANSWERED = ("failed", "cancelled", "stalled")
 MAX_RETURNS = 3   # a reviewer may send work back this many times; then the goal fails rather than loop
 MAX_ATTEMPTS = 3
 MAX_DEPTH = 4

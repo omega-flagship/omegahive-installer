@@ -78,7 +78,10 @@ def prepare(home, code, repo, hive_port, code_port, release, plist):
     write_private(code / 'config.json', json.dumps(config, indent=2) + '\n')
     write_private(code / 'omegacode.sb', service_profile(home, code, repo, release, hive_port, code_port))
     settings = {'HIVE_CODE_SERVICE_RELEASE': release, 'HIVE_CODE_SERVICE_CONFIG': str(code / 'config.json'),
-                'HIVE_CODE_AGENT_PLIST': str(plist), 'HIVE_COPY_APPLY_CLAIMS': 'on'}
+                'HIVE_CODE_AGENT_PLIST': str(plist), 'HIVE_COPY_APPLY_CLAIMS': 'on',
+                # Make starts each plan from this repository: index.html, style.css, app.js and a README, the scaffold
+                # create_plan_ports.py builds on (its default name, create-web-scaffold, no install registers)
+                'HIVE_CREATE_SCAFFOLD_REPO': 'small-app'}
     if mac:
         values = {}
         for line in (home / 'hive.env').read_text().splitlines():

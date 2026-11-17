@@ -1,7 +1,8 @@
 """r17 "app frame parts": the rules for an app interface whose ui/bundle.lock.json declares ``"scripts"``.
 
 Pure checks, each returning a refusal reason or None. ``hive/ui/src/lib/appFrame.ts`` applies the same rules before it
-inlines anything (PROGRAMS.md §9). A bundle without a ``scripts`` key never reaches this module.
+inlines anything (PROGRAMS.md §9). A bundle without a ``scripts`` key never reaches these checks; its single-file frame
+finds its stylesheet link and module script with ``frame_tags``, on the same tokenizing.
 
 index.html must end with the canonical part block: the listed parts' module tags, in order, separated only by
 whitespace, then ``</body>`` (and optionally ``</html>``). Everything before the block is scanned the way the browser
@@ -116,20 +117,23 @@ def html_reason(html, scripts):
     return None
 
 
-def _skip_tag(s, k):
-    """From just after a tag name to just after its '>', following the HTML tokenizer's attribute states; -1 if the
-    tag never closes (an open quote would swallow the rest of the page)."""
-    n = len(s)
+def _tag_attrs(s, k):
+    """From just after a tag name to just after its '>', following the HTML tokenizer's attribute states: (its
+    attributes, names ASCII-lowercased and the first of a repeated name kept, values quoted either way or bare, where
+    the tag ends). The end is -1 if the tag never closes (an open quote would swallow the rest of the page)."""
+    n, attrs = len(s), {}
     while True:
         while k < n and (s[k] in WS or s[k] == "/"):
             k += 1
         if k >= n:
-            return -1
+            return attrs, -1
         if s[k] == ">":
-            return k + 1
+            return attrs, k + 1
+        first = k
         k += 1                                               # first name character, '=' included
         while k < n and s[k] not in WS and s[k] not in "/>=":
             k += 1
+        name, value = ascii_lower(s[first:k]), ""
         while k < n and s[k] in WS:
             k += 1
         if k < n and s[k] == "=":
@@ -139,11 +143,18 @@ def _skip_tag(s, k):
             if k < n and s[k] in "\"'":
                 close = s.find(s[k], k + 1)
                 if close < 0:
-                    return -1
-                k = close + 1
+                    return attrs, -1
+                value, k = s[k + 1:close], close + 1
             else:
+                bare = k
                 while k < n and s[k] not in WS and s[k] != ">":
                     k += 1
+                value = s[bare:k]
+        attrs.setdefault(name, value)
+
+
+def _skip_tag(s, k):
+    return _tag_attrs(s, k)[1]
 
 
 def _raw_end(low, name, k):
@@ -157,6 +168,63 @@ def _raw_end(low, name, k):
         if after < len(low) and (low[after] in WS or low[after] in "/>"):
             return k
         k = after
+
+
+def frame_tags(html):
+    """A single-file frame (no scripts list): where index.html loads style.css and app.js, as ((start, end) of its
+    first stylesheet link to ./style.css, (start, end) of its first module script element for ./app.js, end tag
+    included), read the way the browser tokenizes: any quoting, attribute order, case or other attributes, never a
+    tag inside a comment or a raw-text element. None for a file it doesn't load that way; a classic script is never
+    taken, since inlined as a module it would run differently. appFrame.ts frameTags is the same rule.
+    Time: one pass over html."""
+    s, low, i, link, script = html, ascii_lower(html), 0, None, None
+    while link is None or script is None:
+        j = s.find("<", i)
+        if j < 0:
+            break
+        if low.startswith("<!--", j):
+            if low.startswith("<!-->", j) or low.startswith("<!--->", j):   # an empty comment closes at once
+                i = s.find(">", j) + 1
+                continue
+            close = s.find("-->", j + 4)
+            if close < 0:
+                break
+            i = close + 3
+            continue
+        nxt = s[j + 1:j + 2]
+        if nxt in ("!", "?") or (nxt == "/" and not ALPHA.match(s, j + 2)):
+            close = s.find(">", j)                           # doctype or bogus comment: ends at the first '>'
+            if close < 0:
+                break
+            i = close + 1
+            continue
+        end_tag = nxt == "/"
+        m = TAG_NAME.match(s, j + (2 if end_tag else 1))
+        if not m:
+            i = j + 1                                        # a bare '<' is text
+            continue
+        name = ascii_lower(m.group(0))
+        attrs, k = _tag_attrs(s, m.end())
+        if k < 0:
+            break
+        if end_tag:
+            i = k
+            continue
+        if (name == "link" and link is None and "stylesheet" in re.split("[ \t\n\f\r]+", ascii_lower(attrs.get("rel", "")))
+                and attrs.get("href", "").strip(WS) == "./style.css"):
+            link = (j, k)
+        if name in RAW_TEXT:
+            close = _raw_end(low, name, k)
+            close = s.find(">", close) if close >= 0 else -1
+            if close < 0:
+                break
+            if (name == "script" and script is None and ascii_lower(attrs.get("type", "")).strip(WS) == "module"
+                    and attrs.get("src", "").strip(WS) == "./app.js"):
+                script = (j, close + 1)
+            i = close + 1
+            continue
+        i = k
+    return link, script
 
 
 def inert_reason(prefix):

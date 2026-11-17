@@ -39,7 +39,6 @@ function fakeClient(over: Partial<HiveClient> = {}): HiveClient {
     mode: 'sim',
     ask: vi.fn(async (b: { operation_id: string }) => ({ operation_id: b.operation_id, turn_id: 't1', thread, state: 'accepted' as const })),
     askTurn: vi.fn(async (op: string, after = 0) => ({ operation_id: op, turn_id: 't1', events: (frames[op] ?? []).filter((e) => e.seq > after), more: false })),
-    askTakeover: vi.fn(async () => ({})),
     ...over,
   } as unknown as HiveClient
 }

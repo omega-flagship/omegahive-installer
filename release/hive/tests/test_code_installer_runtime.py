@@ -60,6 +60,7 @@ def test_fresh_install_configures_the_exact_host_contract_but_enrols_before_acti
     assert 'code-project-test' in json.loads(shlex.split(values['HIVE_APP_PINS'])[0])
     assert values['KEEP'] == 'preserved'
     assert shlex.split(values['HIVE_CODE_SERVICE_CONFIG']) == [str(code / 'config.json')]
+    assert shlex.split(values['HIVE_CREATE_SCAFFOLD_REPO']) == ['small-app']   # Make starts each plan from it
     for path in (home / 'hive.env', code / 'config.json', code / 'omegacode.sb'):
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
     with pytest.raises(RuntimeError, match='finish enrolment'):
@@ -129,6 +130,7 @@ def test_non_macos_install_does_not_enable_an_unsupported_native_profile(install
     monkeypatch.setattr(module.sys, 'platform', 'linux')
     config = configure(installer)
     assert config['repositories'] == {'small-app': {'path': str(repo)}}
+    assert 'HIVE_CREATE_SCAFFOLD_REPO=small-app' in (home / 'hive.env').read_text()   # Make's scaffold on Windows too
     assert config['proposal_tests_enabled'] is False
     assert module.enable(code / 'config.json') is False
     assert 'HIVE_PROPOSAL_TEST_CLAIMS=off' in (home / 'hive.env').read_text()

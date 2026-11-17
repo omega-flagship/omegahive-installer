@@ -1,9 +1,10 @@
 # Purpose: tests of an Ask turn's intents and links: recording, submitting and refusing a Code request from the Ask,
-# the route hygiene and the steer route.
+# a Continue's refusal of a hand-over its stopped request already made, the route hygiene and the steer route.
 """Linkage r3.6 §(a) (slice 2): an Ask turn's host-owned intents and links, the §G hygiene of their routes, and the
 Ask steer route with `via`. Synthetic only: temporary data directories, fake supervisor, mock models, no provider call,
 no live hive. A-numbers and G-numbers are the spec's §E rows."""
 import asyncio
+import datetime
 import json
 import logging
 import os
@@ -92,6 +93,188 @@ def drain(ws):
 
 def token_of(headers):
     return headers["Authorization"].split(" ", 1)[1]
+
+
+# Jon asked on #394 for Continue to guard against handing the same work over twice.
+def continue_turn(a, source, op="op-continued-01", **over):
+    body = {"operation_id": op, "text": "Continue", "context": {"swarm_id": a.origin["id"]},
+            "continues": source["turn_id"], **over}
+    return a.client.post("/api/ask", headers=a.jon, json=body)
+
+
+@pytest.mark.parametrize("state", ["pending", "dispatching", "linked"])
+def test_continue_refuses_the_same_handover_in_plain_words_and_allows_another_destination(a, monkeypatch, state):
+    from hive.core import conductor as cmod
+    from hive.tests.test_ask_conductor import Script, call, closed, script, tool_results, wait
+    original = turn(a)
+    intent = record(a).json()
+    if state == "linked":
+        assert submit(a, intent["intent_id"]).status_code == 201
+    elif state == "dispatching":
+        a.hive.db.execute("UPDATE ask_intents SET state = 'dispatching' WHERE id = ?", (intent["intent_id"],))
+    assert a.client.post("/api/ask/op-turn-0001/stop", headers=a.jon).status_code == 200
+    monkeypatch.setenv("HIVE_ASK_CONDUCTOR", "1")
+    monkeypatch.setenv("HIVE_ASK_CONDUCTOR_MODEL", "mock/conductor")
+    request = request_body(a, instruction="Carry on with the calculator.")
+    other = {**request, "origin": {**request["origin"], "workspace_id": "ws_other"}}
+    s = script(a.client, Script([call("dispatch", kind="code.request", request=request)],
+                               [call("dispatch", kind="code.request", request=other)], "Kept working."))
+    before = counts(a.hive)
+    resumed = continue_turn(a, original)
+    assert resumed.status_code == 202, resumed.text
+    fs = wait(a.hive, "op-continued-01", closed, principal=JON)
+    reason = "continued_pending" if state == "pending" else "continued_handed_over"
+    refused = tool_results(s.bodies[1])[0]
+    assert refused["ok"] is False and refused["detail"] == reason
+    assert refused["said_to_person"] == cmod.DISPATCH_REFUSED_SAY[reason]
+    assert "already handed over" in refused["said_to_person"]
+    assert "Do not retry this hand-over." in refused["next"]
+    assert any(f["phase"] == "answer" and refused["said_to_person"] in f["text"] for f in fs)
+    assert tool_results(s.bodies[2])[-1]["ok"] is True
+    # Only the other destination is recorded; the refused duplicate has no intent or dispatched frame.
+    intents = a.hive.db.all("SELECT * FROM ask_intents WHERE turn_id = ?", (resumed.json()["turn_id"],))
+    assert len(intents) == 1 and json.loads(intents[0]["destination"])["workspace_id"] == "ws_other"
+    assert len([f for f in fs if f["phase"] == "dispatched"]) == 1
+    assert counts(a.hive) == {**before, "ask_intents": before["ask_intents"] + 1}
+
+
+@pytest.mark.parametrize("change", ["refused", "abandoned", "expired", "typed"])
+def test_continue_guard_leaves_closed_intents_expired_ancestors_and_typed_requests_alone(a, change):
+    original = turn(a)
+    intent = record(a).json()
+    a.client.post("/api/ask/op-turn-0001/stop", headers=a.jon)
+    resumed = continue_turn(a, original)
+    assert resumed.status_code == 202, resumed.text
+    assert record(a, "op-continued-01").status_code == 409
+    if change in ("refused", "abandoned"):
+        a.hive.db.execute("UPDATE ask_intents SET state = ? WHERE id = ?", (change, intent["intent_id"]))
+    elif change == "expired":
+        old = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=25)).isoformat()
+        a.hive.db.execute("UPDATE ask_turns SET created_at = ? WHERE id = ?", (old, original["turn_id"]))
+    else:
+        a.client.post("/api/ask/op-continued-01/stop", headers=a.jon)
+        turn(a, "op-typed-0001")
+    op = "op-typed-0001" if change == "typed" else "op-continued-01"
+    allowed = record(a, op, instruction="Reworded request")
+    assert allowed.status_code == 201, allowed.text
+
+
+def test_continue_guard_keeps_a_sent_ancestor_after_its_thread_is_deleted(a):
+    original = turn(a)
+    intent = record(a).json()
+    assert submit(a, intent["intent_id"]).status_code == 201
+    a.client.post("/api/ask/op-turn-0001/stop", headers=a.jon)
+    a.hive.sessions.end(Viewer(JON, True), original["thread"]["id"])
+    resumed = continue_turn(a, original)
+    assert resumed.status_code == 202
+    assert resumed.json()["thread"]["id"] != original["thread"]["id"]
+    assert record(a, "op-continued-01").status_code == 409
+    a.hive.ask.delete_thread(Viewer(JON, True), original["thread"]["id"])
+    refused = record(a, "op-continued-01")
+    assert refused.status_code == 409 and refused.json()["error"]["code"] == "intent_already_handed_over"
+
+
+def test_continue_guard_follows_the_chain_and_compares_kind_as_well_as_destination(a):
+    original = turn(a)
+    intent = record(a).json()
+    a.client.post("/api/ask/op-turn-0001/stop", headers=a.jon)
+    first = continue_turn(a, original)
+    assert first.status_code == 202
+    a.client.post("/api/ask/op-continued-01/stop", headers=a.jon)
+    second = continue_turn(a, first.json(), "op-continued-02")
+    assert second.status_code == 202
+    refused = record(a, "op-continued-02")
+    assert refused.status_code == 409 and refused.json()["error"]["code"] == "intent_already_handed_over"
+    # An intent of a different kind with the exact same destination does not block.
+    a.hive.db.execute("UPDATE ask_intents SET kind = 'code.test' WHERE id = ?", (intent["intent_id"],))
+    assert record(a, "op-continued-02").status_code == 201
+
+
+@pytest.mark.parametrize("problem", ["unknown", "foreign", "live", "old", "other_mind", "deleted"])
+def test_continues_admission_refuses_an_unavailable_or_ineligible_source(a, problem):
+    original = turn(a)
+    if problem != "live":
+        a.client.post("/api/ask/op-turn-0001/stop", headers=a.jon)
+    if problem == "unknown":
+        original = {**original, "turn_id": "at_unknown"}
+    elif problem == "foreign":
+        a.hive.db.execute("UPDATE ask_turns SET principal = 'user:u_ann' WHERE id = ?", (original["turn_id"],))
+    elif problem == "old":
+        old = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=25)).isoformat()
+        a.hive.db.execute("UPDATE ask_turns SET created_at = ? WHERE id = ?", (old, original["turn_id"]))
+    elif problem == "other_mind":
+        a.hive.db.execute("UPDATE ask_turns SET mind_id = 'a_other' WHERE id = ?", (original["turn_id"],))
+    elif problem == "deleted":
+        a.hive.db.execute("UPDATE ask_turns SET deleted_at = ? WHERE id = ?", (now(), original["turn_id"]))
+    before = counts(a.hive)
+    response = continue_turn(a, original)
+    assert response.status_code == 400 and response.json()["error"]["code"] == "invalid", response.text
+    assert a.hive.db.one("SELECT 1 FROM ask_turns WHERE operation_id = 'op-continued-01'") is None
+    assert counts(a.hive) == before
+
+
+@pytest.mark.parametrize("value", [None, "", 4, [], "x" * 121])
+def test_continues_admission_checks_the_field_shape(a, value):
+    response = continue_turn(a, {"turn_id": value})
+    assert response.status_code == 400 and response.json()["error"]["code"] == "invalid"
+
+
+@pytest.mark.parametrize("kind", ["code.request", "code.test", "studio.session", "research.request"])
+def test_continue_guard_covers_each_recorder_using_its_own_destination(a, monkeypatch, kind):
+    from hive.core import code_test_intents
+    from hive.core.minds import canonical
+    original = turn(a)
+    intent = record(a).json()
+    destination = json.loads(row(a, intent["intent_id"])["destination"])
+    request = request_body(a)
+    if kind == "studio.session":
+        request = {"swarm_id": a.team["id"], "maker_id": a.asker["id"], "program_id": "game",
+                   "title": "Build game", "detail": "Make a board."}
+        destination = {"to_swarm": a.team["id"], "maker_id": a.asker["id"], "program_id": "game"}
+        monkeypatch.setattr(a.hive.studio, "require_enabled", lambda: None)
+        monkeypatch.setattr(a.hive.studio, "clean_request", lambda value: value)
+        monkeypatch.setattr(a.hive.studio, "refuse_others_maker", lambda *args: None)
+    elif kind == "research.request":
+        request = {"swarm_id": a.team["id"], "title": "Look it up", "instruction": "Check the rules."}
+        destination = {"to_swarm": a.team["id"]}
+        monkeypatch.setattr(a.hive.research, "clean_request", lambda viewer, value: value)
+        monkeypatch.setattr(a.hive.research, "turn_used", lambda tid: False)
+    elif kind == "code.test":
+        request = {"request_id": "rq_original", "proposal_id": "suggestion_" + "a" * 32}
+        context = ({"to_swarm": a.team["id"]}, {"until": a.until}, destination,
+                   {"expires_at": datetime.datetime.now(datetime.timezone.utc).timestamp() + 3600}, {})
+        async def verified(*args):
+            return context, {}
+        monkeypatch.setattr(code_test_intents, "verify", verified)
+        monkeypatch.setattr(code_test_intents, "current", lambda *args: context)
+    a.hive.db.execute("UPDATE ask_intents SET kind = ?, destination = ? WHERE id = ?",
+                      (kind, canonical(destination), intent["intent_id"]))
+    a.client.post("/api/ask/op-turn-0001/stop", headers=a.jon)
+    resumed = continue_turn(a, original)
+    assert resumed.status_code == 202
+    async def attempt():
+        return await a.hive.ask.intents.record_async(Viewer(JON, True), "op-continued-01",
+                                                    {"kind": kind, "request": request})
+    with pytest.raises(HiveError) as exc:
+        asyncio.run(attempt())
+    assert exc.value.code == "intent_already_handed_over"
+    assert a.hive.db.one("SELECT 1 FROM ask_intents WHERE turn_id = ?", (resumed.json()["turn_id"],)) is None
+    a.hive.db.execute("UPDATE ask_intents SET destination = ? WHERE id = ?",
+                      (canonical({**destination, "to_swarm": "s_elsewhere"}), intent["intent_id"]))
+    status, view = asyncio.run(attempt())
+    assert status == 201 and view["destination"] == destination
+
+
+def test_continues_is_stored_and_changes_the_idempotency_digest(a):
+    original = turn(a)
+    a.client.post("/api/ask/op-turn-0001/stop", headers=a.jon)
+    admitted = continue_turn(a, original)
+    assert admitted.status_code == 202
+    assert a.hive.ask._row(admitted.json()["turn_id"])["continues"] == original["turn_id"]
+    assert continue_turn(a, original).json()["turn_id"] == admitted.json()["turn_id"]
+    changed = {"operation_id": "op-continued-01", "text": "Continue", "context": {"swarm_id": a.origin["id"]}}
+    response = a.client.post("/api/ask", headers=a.jon, json=changed)
+    assert response.status_code == 409 and response.json()["error"]["code"] == "operation_conflict"
 
 
 def held_instruct(w, monkeypatch, before=None, after=None):

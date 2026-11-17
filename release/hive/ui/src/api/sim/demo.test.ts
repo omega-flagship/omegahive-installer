@@ -113,13 +113,12 @@ describe('demo mode: the Ask conductor', () => {
     expect(order.at(-1)).toBe('done')
   })
 
-  it('taking over part way ends the turn: done {taken_over}, and no act after it', () => {
-    const { h, events } = host()
-    const b = body('drive the page for me')
-    h.ask(b)
-    expect(h.takeover(b.operation_id)).toMatchObject({ state: 'taken_over' })
-    expect(events.at(-1)).toMatchObject({ phase: 'done', outcome: 'cancelled', taken_over: true })
-    expect(h.turn(b.operation_id).reason).toBe('takeover')
+  it('the sim host has no takeover: the person\'s use of the page never ends its turn, which runs on to done', () => {
+    const { h, events, flush } = host()
+    expect('takeover' in h).toBe(false)
+    h.ask(body('drive the page for me'))
+    flush()
+    expect(events.at(-1)).toMatchObject({ phase: 'done', outcome: 'complete' })
   })
 
   it('"open tools in Kelp" moves into the named swarm’s Omega Tools (refused there in demo mode)', () => {

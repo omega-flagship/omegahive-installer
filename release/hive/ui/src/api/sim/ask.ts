@@ -48,10 +48,6 @@ interface Turn {
   uiProposal?: string
   /** proposals by id, with the digest the page must echo */
   proposals: Map<string, string>
-  /** the person took over the page: the mind's navigation is paused for the rest of the turn */
-  tookOver?: boolean
-  /** ended by the host takeover route: the recovery view reads refused/takeover; later act results 409 turn_closed */
-  takenOver?: boolean
   /** what the person said mid-turn (steers), so the answer can take them in */
   heard: string[]
   /** a steer asked the mind to stop moving the page */
@@ -85,7 +81,7 @@ function simTour(base: GuideScript): GuideScript | null {
 }
 
 // the built host's exact keys (platform/ask-p1 at 6100794, hive/API.md "Universal Ask, phase 1")
-const ALLOWED = ['operation_id', 'text', 'context', 'thread', 'via', 'memory_notes', 'conversation']
+const ALLOWED = ['operation_id', 'text', 'context', 'thread', 'via', 'memory_notes', 'conversation', 'continues']
 /**
  * The host's check of a turn's conversation (conductor.check_conversation): ≤ 8 exchanges, each exactly {said, answer,
  * by, at} with words and an answer, a mind id and a time ≥ 0, ≤ 8 KB in all (words, answers and ids, UTF-8).
@@ -266,8 +262,8 @@ export class SimAsk {
 
   /** ask.py view: the turn as the hive keeps it (a deleted thread's turn has text "" and context {}). */
   private record(t: Turn): import('../missingUi').AskTurnRecord {
-    const state = t.takenOver ? 'refused' : t.state === 'open' ? (t.events.some((e) => e.phase === 'thinking') ? 'thinking' : 'accepted') : t.state
-    const refused = t.takenOver ? { reason: 'takeover' } : (t.events.find((e) => e.phase === 'refused') as { reason?: string } | undefined)
+    const state = t.state === 'open' ? (t.events.some((e) => e.phase === 'thinking') ? 'thinking' : 'accepted') : t.state
+    const refused = t.events.find((e) => e.phase === 'refused') as { reason?: string } | undefined
     const done = [...t.events].reverse().find((e) => e.phase === 'done' || e.phase === 'refused') as { turn_spent_usd?: number } | undefined
     return {
       operation_id: t.op, turn_id: t.turnId, state, reason: refused?.reason ?? null,
@@ -433,6 +429,7 @@ export class SimAsk {
     if (!/^[A-Za-z0-9_.:-]{8,120}$/.test(body.operation_id)) throw refuse(400, 'invalid', 'operation_id')
     if (body.memory_notes !== undefined && !notesOk(body.memory_notes)) throw refuse(400, 'invalid', 'memory_notes')
     if (body.conversation !== undefined && !conversationOk(body.conversation)) throw refuse(400, 'invalid', 'conversation')
+    if ('continues' in body && (typeof body.continues !== 'string' || !body.continues.length || body.continues.length > 120)) throw refuse(400, 'invalid', 'continues')
     const canon = JSON.stringify(body)
     const principal = this.d.principal()
     const prior = this.turns.get(`${principal}|${body.operation_id}`)
@@ -446,6 +443,11 @@ export class SimAsk {
       throw refuse(409, reason, reason)
     }
     const { mind, swarm, about, actingAs } = this.orchestrator(body)
+    if (body.continues !== undefined) {
+      const prior = [...this.turns.values()].find((t) => t.turnId === body.continues)
+      const age = Date.now() - Date.parse(prior?.createdAt ?? '')
+      if (!prior || prior.deleted || prior.principal !== principal || prior.thread.mind.id !== mind.id || prior.state === 'open' || !Number.isFinite(age) || age < 0 || age > 24 * 60 * 60 * 1000) throw refuse(400, 'invalid', 'continues')
+    }
     if (mind.status !== 'awake' && mind.status !== 'starting') throw refuse(409, 'mind_asleep', 'asleep', { mind: { id: mind.id, name: mind.name } })
     // one person's open turn at a time per coordinator (c63a53f); another person's open turn makes it busy
     const othersOpen = [...this.turns.values()].some((x) => x.state === 'open' && x.principal !== principal && x.thread.mind.id === mind.id)
@@ -478,9 +480,8 @@ export class SimAsk {
     if (t.unreadable) throw refuse(503, 'not_available', 'recovery unavailable (sim)')
     const rest = t.events.filter((e) => e.seq > after)
     const page = rest.slice(0, limit)
-    // a taken-over turn reads as the host's recovery view does: refused, reason takeover
-    const state = t.takenOver ? 'refused' : t.state === 'open' ? (t.events.some((e) => e.phase === 'thinking') ? 'thinking' : 'accepted') : t.state
-    return { operation_id: t.op, turn_id: t.turnId, state, ...(t.takenOver ? { reason: 'takeover' as const } : {}), thread: { ...t.thread }, text: t.body.text, via: t.body.via, events: page.map(({ type: _bus, ...e }) => e as unknown as AskEvent), next_after: page.length ? page[page.length - 1].seq : after, more: rest.length > page.length }
+    const state = t.state === 'open' ? (t.events.some((e) => e.phase === 'thinking') ? 'thinking' : 'accepted') : t.state
+    return { operation_id: t.op, turn_id: t.turnId, state, thread: { ...t.thread }, text: t.body.text, via: t.body.via, events: page.map(({ type: _bus, ...e }) => e as unknown as AskEvent), next_after: page.length ? page[page.length - 1].seq : after, more: rest.length > page.length }
   }
 
   /** GET /api/research/{request_id}: a report one of the sim's research hand-overs made. */
@@ -508,12 +509,13 @@ export class SimAsk {
     if (!/^[A-Za-z0-9_.:-]{4,120}$/.test(b.steer_id) || typeof b.text !== 'string' || !b.text.trim() || b.text.length > 4000 || (b.via !== undefined && b.via !== 'typed' && b.via !== 'voice')) throw refuse(400, 'invalid', 'steer')
     if (t.state !== 'open') {
       // the fresh request is recorded as the steer's words were made (Kimi r3 #1)
-      const fresh = this.ask({ ...t.body, operation_id: `${op.slice(0, 80)}:s${b.steer_id.slice(-6)}`, text: b.text, via: b.via ?? 'typed' })
+      const { continues: _c, ...body } = t.body
+      void _c
+      const fresh = this.ask({ ...body, operation_id: `${op.slice(0, 80)}:s${b.steer_id.slice(-6)}`, text: b.text, via: b.via ?? 'typed' })
       return { steer_id: b.steer_id, operation_id: fresh.operation_id, turn_id: fresh.turn_id, new_turn: true, thread: fresh.thread }
     }
     if (t.heard.length >= 20) throw refuse(429, 'rate_limited', 'steers')
     t.heard.push(b.text)
-    t.tookOver = false // a steer gives the page back to the mind
     this.push(t, { phase: 'steer', steer_id: b.steer_id, text: b.text, at_seq: b.at_seq, via: b.via ?? 'typed' })
     const said = b.text.toLowerCase()
     this.d.later(350, () => this.push(t, { phase: 'thinking', step: `taking in “${b.text.slice(0, 60)}”` }))
@@ -536,7 +538,6 @@ export class SimAsk {
     const t = this.turns.get(`${this.d.principal()}|${op}`)
     if (!t || !t.acts.has(actId)) throw refuse(404, 'not_available', 'no such act')
     if (t.results.has(actId)) throw refuse(409, 'act_result_recorded', 'act_result_recorded')
-    if (t.takenOver) throw refuse(409, 'turn_closed', 'turn_closed')
     if (new TextEncoder().encode(JSON.stringify(b ?? {})).length > 8192) throw refuse(413, 'too_large', 'result')
     const keys = Object.keys(b ?? {})
     if (keys.some((k) => !['ok', 'reason', 'view', 'route', 'experience', 'loading'].includes(k)) || typeof b.ok !== 'boolean' || (b.reason !== undefined && !ACT_REASONS.includes(b.reason)) || !b.view || typeof b.view !== 'object' || Object.keys(b.view).some((k) => !VIEW_KEYS.includes(k)) || typeof b.route !== 'string' || typeof b.experience !== 'string'
@@ -550,23 +551,6 @@ export class SimAsk {
   /** SIM ONLY (tests): the results the page posted for a turn's acts. */
   actResults(op: string): Map<string, ActResult> {
     return this.turns.get(`${this.d.principal()}|${op}`)?.results ?? new Map()
-  }
-
-  /**
-   * As the host's takeover route (Platform 07bf554): the owner's conductor turn only (404 not_available otherwise,
-   * and for every turn while the conductor is off). An open turn ends: one done frame {outcome: cancelled,
-   * taken_over: true}, and later act results are 409 turn_closed. A turn already ended answers its own state.
-   */
-  takeover(op: string): import('../ask').AskTakeover {
-    const t = this.turns.get(`${this.d.principal()}|${op}`)
-    if (!t || !this.flags.conductor) throw refuse(404, 'not_available', 'no such turn')
-    t.tookOver = true
-    if (t.state === 'open') {
-      t.takenOver = true
-      t.closedAt = new Date().toISOString()
-      this.push(t, { phase: 'done', outcome: 'cancelled', taken_over: true, spent_usd: t.thread.spent_usd, turn_spent_usd: 0 })
-    }
-    return { operation_id: t.op, turn_id: t.turnId, state: (t.takenOver ? 'taken_over' : t.state) as import('../ask').AskTakeover['state'], ended_at: t.closedAt ?? t.events.at(-1)?.at ?? '' }
   }
 
   confirm(op: string, pid: string, digest: string): { ok: boolean; outcome?: string } {
@@ -591,8 +575,8 @@ export class SimAsk {
 
   private push(t: Turn, f: Record<string, unknown>, afterClose = false, drop = false) {
     if (t.state !== 'open' && !afterClose) return
-    // after the person took over, the host sends no more moves of the page
-    if ((t.tookOver || t.stay) && ((f.phase === 'proposal' && (f.proposal as { kind?: string }).kind === 'navigate') || (f.phase === 'presence' && f.verb === 'go'))) return
+    // a turn told to stay sends no more moves of the page (the person's own hold is the page's: it never reaches here)
+    if (t.stay && ((f.phase === 'proposal' && (f.proposal as { kind?: string }).kind === 'navigate') || (f.phase === 'presence' && f.verb === 'go'))) return
     if (f.phase === 'act') t.acts.add((f.act as { act_id: string }).act_id)
     const e = { type: 'ask', operation_id: t.op, turn_id: t.turnId, principal: t.principal, seq: t.events.length + 1, at: new Date().toISOString(), ...f } as unknown as AskEvent
     // a memory frame's stored copy carries only its op and digest (the host's live-only rule): the item is never read back
@@ -617,7 +601,6 @@ export class SimAsk {
     }
     this.d.later(Math.min(7000, tour.dwell[tour.step]), () => {
       if (t.tour !== tour || t.state !== 'open') return
-      if (t.tookOver) return stop('you took over')
       tour.step += 1
       tour.act = `act_${t.turnId.slice(-5)}_tour${tour.step}`
       this.push(t, { phase: 'act', act: { act_id: tour.act, kind: 'tour.step', script: tour.script, step: tour.step } })

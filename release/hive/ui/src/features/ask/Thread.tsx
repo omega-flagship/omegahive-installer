@@ -6,7 +6,7 @@
  */
 import { AnswerParagraph } from './answerText'
 import { m } from 'framer-motion'
-import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { useStickToBottom } from '../../lib/stickToBottom'
 import { plural } from '../../lib/plural'
 import { NewBelow } from '../../ui/NewBelow'
@@ -31,6 +31,10 @@ import { AsWritten } from '../../ui/Belief'
 import { Words } from '../views/Words'
 import { PICKER_REASONS, threadInfo } from './answerer'
 import { AutoWakeStatus } from './AutoWakeStatus'
+import { useCompose } from '../../screens/useCompose'
+import { Screen } from '../../screens/Screen'
+import type { ScreenPlan } from '../../screens/screenSpace'
+import { experienceById } from '../../experiences/registry'
 import { DirectingStudio } from '../studioLive/DirectingStudio'
 import { changeAskSize, halfSwitch, useAskSize } from './askSize'
 import type { AskMode } from './placement'
@@ -188,7 +192,7 @@ function OfferButtons({ offers, retry, mind, op, keySetup }: { offers: Offer[]; 
 /** A note row; a stop that has a way on (spend_cap: New thread, the raise for new threads) offers it right there. */
 export function NoteRow({ r, lastYou }: { r: AskRow; lastYou?: string }) {
   if (r.fixCoordinator && r.swarm) return <CoordinatorNote r={r} swarmId={r.swarm} />
-  if (!r.offer?.length)
+  if (!r.offer?.length && !r.ending)
     return (
       <p className="ask-row ask-muted" data-kind="note" title={r.detail}>
         {r.text}
@@ -198,7 +202,63 @@ export function NoteRow({ r, lastYou }: { r: AskRow; lastYou?: string }) {
   return (
     <div className="ask-row" data-kind="note" role="note">
       <span className="ask-row-text ask-muted">{r.text}</span>
-      <OfferButtons offers={r.offer} retry={lastYou} op={r.op} />
+      {!!r.offer?.length && <OfferButtons offers={r.offer} retry={lastYou} op={r.op} />}
+      {r.ending && <EndingWayOn r={r} />}
+    </div>
+  )
+}
+
+/** The words an action of a composed plan says, by its intent: what its button shows, as MeTTa words it. */
+function actionWords(plan: ScreenPlan, intent: string): string {
+  for (const part of plan.parts) {
+    if (part.block !== 'actions' || !Array.isArray(part.props.items)) continue
+    for (const a of part.props.items) if (Array.isArray(a) && a[0] === 'action' && a[2] === intent && typeof a[1] === 'string') return a[1]
+  }
+  return ''
+}
+
+/**
+ * Whether `until` (epoch ms) is still ahead: true until then, false from the moment it passes. The clock is a store React
+ * reads as it renders, so a row re-rendered with another time is judged at that render, and one timer at `until`
+ * re-renders it the moment the time passes.
+ */
+function useBefore(until: number): boolean {
+  const subscribe = useCallback((wake: () => void) => {
+    let id: ReturnType<typeof setTimeout> | undefined
+    // a browser's timer holds at most 2^31-1 ms (about 24.8 days), so a later time sets the next timer when it fires
+    const arm = () => {
+      const left = until - Date.now()
+      if (left > 0) id = setTimeout(arm, Math.min(left, 2_147_483_647))
+      else wake()
+    }
+    arm()
+    return () => clearTimeout(id)
+  }, [until])
+  const ahead = useCallback(() => until > Date.now(), [until])
+  return useSyncExternalStore(subscribe, ahead, ahead)
+}
+
+/**
+ * The way on from a request's end, composed by MeTTa (thread.metta ask-stopped) from the facts the store states on its
+ * closing row: Continue once it ended before its answer, is the thread's latest and is still kept. Continue sends its
+ * own words as the person's next request (store/ask continueStopped), under the same guards as Ask again.
+ */
+export function EndingWayOn({ r }: { r: AskRow }) {
+  const s = useAskStore()
+  const look = useLook()
+  const compose = useCompose(experienceById(look.current?.experience).id)
+  const epoch = currentEpoch()
+  const context = r.op ? askRetryContext(r.op, epoch) : null
+  const early = !!r.ending?.early
+  const latest = !!r.ending?.latest
+  const kept = useBefore(r.ending?.until ?? 0)
+  const plan = useMemo(() => compose('ask-stopped', { flags: { 'ask.ended-early': early, 'ask.latest': latest, 'ask.kept': kept } }), [compose, early, latest, kept])
+  if (!plan.parts.length) return null
+  return (
+    <div className="ask-offers" data-ask-ending="">
+      <Screen plan={plan} host={{ data: {}, onAction: (action) => {
+        if (action === 'continue' && r.op) void s.continueStopped(r.op, epoch, context, actionWords(plan, 'continue'))
+      } }} />
     </div>
   )
 }
@@ -523,6 +583,7 @@ function Row({ r, variant, words, lastYou, trail }: { r: AskRow; variant: Thread
         <div className="ask-row" data-kind="refused" role="note">
           <span className="ask-row-text">{refusedSay(r.reason, r.spentUsd)}</span>
           {offers && <OfferButtons offers={offers} retry={lastYou} mind={r.mind} op={r.op} keySetup={r.keySetup} />}
+          {r.ending && <EndingWayOn r={r} />}
         </div>
       )
     }

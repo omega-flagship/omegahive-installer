@@ -1,5 +1,5 @@
-// Purpose: tests that the simulated Ask host plays the built host's shapes: routing, keys, phase order and recovery, steers, and its stops (the spend-rate guard's pause included).
-import { describe, expect, it } from 'vitest'
+// Purpose: tests that the simulated Ask host plays the built host's shapes: routing, keys, phase order and recovery, steers, a Continue's admission, and its stops (the spend-rate guard's pause included).
+import { describe, expect, it, vi } from 'vitest'
 import { SimAsk } from './ask'
 import type { AskEvent } from '../ask'
 import type { Agent, Goal, HiveEvent, Swarm } from '../types'
@@ -34,6 +34,41 @@ function host() {
 const body = (text: string, ctx: Record<string, unknown> = {}, op = `ask:t:${Math.random().toString(36).slice(2, 10)}`) => ({ operation_id: op, text, via: 'typed' as const, context: { route: 'hive', experience: 'classic', ...ctx } })
 
 describe('SimAsk', () => {
+  it('Continue names a recent ended turn of the same person and mind, and changes the idempotency body', () => {
+    const { h } = host()
+    const source = body('hello')
+    const original = h.ask(source)
+    h.stop(source.operation_id)
+    const request = { ...body('Continue'), continues: original.turn_id }
+    const resumed = h.ask(request)
+    expect(h.ask(request).turn_id).toBe(resumed.turn_id)
+    const { continues: _c, ...typed } = request
+    void _c
+    expect(() => h.ask(typed)).toThrow(expect.objectContaining({ code: 'operation_conflict' }))
+    h.stop(request.operation_id)
+    const fresh = h.steer(request.operation_id, { steer_id: 'st_continue1', text: 'another task', at_seq: 1 })
+    const typedRequest = { ...body('another task', {}, fresh.operation_id), via: 'typed' as const }
+    expect(h.ask(typedRequest).turn_id).toBe(fresh.turn_id)
+  })
+  it.each(['unknown', 'foreign', 'live', 'old', 'other mind', 'deleted'])('Continue refuses a source that is %s', (problem) => {
+    let principal = 'user:p_ada'
+    const h = new SimAsk({ emit: () => undefined, later: () => undefined, agents: () => agents, swarms: () => swarms, goals: () => [] as Goal[], principal: () => principal })
+    const source = body('hello')
+    const original = h.ask(source)
+    if (problem !== 'live') h.stop(source.operation_id)
+    if (problem === 'foreign') principal = 'user:p_bo'
+    if (problem === 'deleted') h.deleteThread(original.thread.id)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    if (problem === 'old') vi.setSystemTime(Date.now() + 25 * 60 * 60 * 1000)
+    try {
+      expect(() => h.ask({ ...body('Continue', problem === 'other mind' ? { swarm_id: 's_kelp' } : {}), continues: problem === 'unknown' ? 'turn_unknown' : original.turn_id })).toThrow(expect.objectContaining({ code: 'invalid' }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+  it.each([null, '', 4, [], 'x'.repeat(121)].map((continues) => ({ continues })))('Continue checks the shape of $continues', ({ continues }) => {
+    expect(() => host().h.ask({ ...body('Continue'), continues } as never)).toThrow(expect.objectContaining({ code: 'invalid' }))
+  })
   it('the coordinator answers: of the addressed mind’s swarm, else the page’s swarm, else the default', () => {
     const { h } = host()
     expect(h.ask(body('hi', { mind: 'a_altr03' })).thread.mind.name).toBe('Vega')

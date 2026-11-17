@@ -978,7 +978,7 @@ def test_deep_fullwidth_and_over_limit_page_programs_are_private(client, on, pro
     assert "goal-search" not in json.dumps(s.bodies[0]["messages"][1:])
 
 
-# ---- takeover: the person took the page back mid-turn (POST /api/ask/{op}/takeover) ----------------------------------------
+# ---- the person's own use of the page never ends a turn; a stop ends it at once ------------------------------------------
 
 def gone(conductor, timeout=5.0):
     end = time.time() + timeout
@@ -987,94 +987,54 @@ def gone(conductor, timeout=5.0):
     return not conductor.tasks and not conductor.late
 
 
-def test_takeover_ends_the_turn_at_once_no_further_step_or_act_and_tells_every_view(client, on, monkeypatch):
+def test_the_persons_use_of_the_page_never_ends_a_turn_it_runs_on_to_its_answer(client, on):
+    """Jon, 17 Nov: "Ask should exist above UI - stop shouldn't happen". A page from before posts takeover when the
+    person clicks, scrolls or goes Back mid-turn: every caller gets 404 not_available (what that page reads as nothing
+    for the host to do), nothing closes, and the page's own hold reaches the model as the act's stale_origin."""
     hive = on["hive"]
-    published = []
-    real = hive.events.publish
-    monkeypatch.setattr(hive.events, "publish", lambda kind, **f: (published.append((kind, f)), real(kind, **f))[1])
-    s = script(client, Script([call("navigate", route="#/rooms")], [call("scroll", to="bottom")], "never"))
+    s = script(client, Script([call("navigate", route="#/rooms")], "Here are your rooms."))
     r = ask(client, on["ann"], "op-cond-take", context=on["ctx"])
     turn_id = r.json()["turn_id"]
     act = acts(wait(hive, "op-cond-take", acts))[0]
-    # another person, and an admin who is not the owner: as for an unknown op, and the turn goes on
-    for who in (on["bob"], on["jon"]):
-        x = client.post("/api/ask/op-cond-take/takeover", headers=who, json={"reason": "user_took_over"})
-        assert x.status_code == 404 and x.json()["error"]["code"] == "not_available"
+    for who in (on["ann"], on["bob"], on["jon"]):
+        for body in ({"reason": "user_took_over"}, None):
+            x = client.post("/api/ask/op-cond-take/takeover", headers=who, json=body)
+            assert x.status_code == 404 and x.json()["error"]["code"] == "not_available"
     assert hive.ask._row(turn_id)["state"] == "conducting"
-    t = client.post("/api/ask/op-cond-take/takeover", headers=on["ann"], json={"reason": "user_took_over"})
-    assert t.status_code == 200
-    view = t.json()
-    assert set(view) == {"operation_id", "turn_id", "state", "ended_at"}
-    assert view["turn_id"] == turn_id and view["operation_id"] == "op-cond-take" and view["state"] == "taken_over" and view["ended_at"]
-    assert gone(on["conductor"])
-    # the waiting act is refused, the model was never called again, and no act frame followed
-    r = client.post(f"/api/ask/op-cond-take/acts/{act['act_id']}/result", headers=on["ann"], json={"ok": True})
-    assert r.status_code == 409 and r.json()["error"]["code"] == "turn_closed"
-    time.sleep(0.2)
-    assert len(s.bodies) == 1
-    fs = frames(hive, "op-cond-take")
-    assert [f["phase"] for f in fs] == ["accepted", "act", "done"]
-    assert fs[-1]["outcome"] == "cancelled" and fs[-1]["taken_over"] is True and not set(fs[-1]) & {"text", "say", "reason"}
-    # published once, as an `ask` frame for Ann (the event fan-out sends those to the asker's every open view only)
-    dones = [f for k, f in published if k == "ask" and f.get("phase") == "done" and f.get("turn_id") == turn_id]
-    assert len(dones) == 1 and dones[0]["principal"] == "user:u_ann" and dones[0]["taken_over"] is True
-    # idempotent: a repeat (with no body at all) answers the same and publishes nothing new
-    again = client.post("/api/ask/op-cond-take/takeover", headers=on["ann"])
-    assert again.status_code == 200 and again.json() == view
-    assert len([1 for k, f in published if k == "ask" and f.get("turn_id") == turn_id and f.get("phase") == "done"]) == 1
-    row = client.get("/api/ask/op-cond-take", headers=on["ann"]).json()
-    assert row["state"] == "refused" and row["reason"] == "takeover" and row["closed_at"] == view["ended_at"]
+    # the page held the move (the person is using it): the act is answered stale_origin, and the turn goes on
+    r = client.post(f"/api/ask/op-cond-take/acts/{act['act_id']}/result", headers=on["ann"], json={"ok": False, "reason": "stale_origin"})
+    assert r.status_code == 200
+    fs = wait(hive, "op-cond-take", closed)
+    assert [f["phase"] for f in fs] == ["accepted", "act", "answer", "done"]
+    assert fs[-2]["text"] == "Here are your rooms." and fs[-1]["outcome"] == "complete"
+    assert not any("taken_over" in f for f in fs)
+    assert len(s.bodies) == 2 and tool_results(s.bodies[1])[0]["reason"] == "stale_origin"
+    assert hive.ask._row(turn_id)["state"] == "done"
 
 
-def test_takeover_mid_model_call_settles_that_call_at_its_real_cost_and_spends_no_more(client, on, monkeypatch):
+def test_a_stop_mid_model_call_settles_that_call_at_its_real_cost_and_spends_no_more(client, on, monkeypatch):
     hive = on["hive"]
     hive.settings.providers["fakepaid"] = Provider("fakepaid", "http://127.0.0.1:9", prices={"*": {"in": 1, "out": 1}})
     monkeypatch.setenv("HIVE_ASK_CONDUCTOR_MODEL", "fakepaid/x")
     hive.db.execute("UPDATE agents SET budget_usd = 10 WHERE id = ?", (on["coord"]["id"],))
     s = script(client, Script([call("navigate", route="#/rooms")], [call("say", text="two")], "never", delay=0.6, cost=0.004))
-    ask(client, on["ann"], "op-cond-take-paid", context=on["ctx"])
+    ask(client, on["ann"], "op-cond-stop-paid", context=on["ctx"])
     end = time.time() + 5
     while not s.bodies and time.time() < end:   # the first call is on the wire
         time.sleep(0.01)
     assert len(s.bodies) == 1
-    t = client.post("/api/ask/op-cond-take-paid/takeover", headers=on["ann"], json={})
-    assert t.status_code == 200 and t.json()["state"] == "taken_over"
+    t = client.post("/api/ask/op-cond-stop-paid/stop", headers=on["ann"])
+    assert t.status_code == 200 and t.json()["state"] == "refused" and t.json()["reason"] == "stopped"
     assert gone(on["conductor"])
     time.sleep(0.3)
-    fs = frames(hive, "op-cond-take-paid")
-    assert [f["phase"] for f in fs] == ["accepted", "done"] and fs[-1]["taken_over"] is True   # no act ever reached the page
+    fs = frames(hive, "op-cond-stop-paid")
+    assert [f["phase"] for f in fs] == ["accepted", "done"] and fs[-1]["outcome"] == "cancelled"   # no act ever reached the page
     assert len(s.bodies) == 1   # no second model call
     # the cut-off call is settled at what it really cost, once; nothing is left held against Ann's limits
     held = hive.db.all("SELECT state FROM cost_reservations")
     assert [h["state"] for h in held] == ["settled"]
     usage = hive.db.all("SELECT * FROM usage WHERE agent_id = ?", (on["coord"]["id"],))
     assert [(u["model"], u["payer"], u["cost_usd"]) for u in usage] == [("fakepaid/x", "user:u_ann", 0.004)]
-
-
-def test_takeover_of_a_turn_that_already_ended_answers_its_own_state_unchanged(client, on):
-    hive = on["hive"]
-    script(client, Script("All done."))
-    r = ask(client, on["ann"], "op-cond-take-done", context=on["ctx"])
-    wait(hive, "op-cond-take-done", closed)
-    before = frames(hive, "op-cond-take-done")
-    t = client.post("/api/ask/op-cond-take-done/takeover", headers=on["ann"])
-    assert t.status_code == 200 and t.json()["state"] == "done" and t.json()["turn_id"] == r.json()["turn_id"]
-    assert frames(hive, "op-cond-take-done") == before and hive.ask._row(r.json()["turn_id"])["reason"] is None
-
-
-def test_takeover_body_is_none_empty_or_the_one_reason(client, on):
-    script(client, Script([call("navigate", route="#/rooms")], "never"))
-    ask(client, on["ann"], "op-cond-take-body", context=on["ctx"])
-    acts(wait(on["hive"], "op-cond-take-body", acts))
-    for bad in ({"reason": "bored"}, {"reason": "user_took_over", "x": 1}, [1]):
-        r = client.post("/api/ask/op-cond-take-body/takeover", headers=on["ann"], json=bad)
-        assert r.status_code == 400 and r.json()["error"]["code"] == "invalid"
-    r = client.post("/api/ask/op-cond-take-body/takeover", headers=on["ann"], content=b"{" * 2000)
-    assert r.status_code == 413 and r.json()["error"]["code"] == "too_large"
-    r = client.post("/api/ask/op-cond-take-unknown/takeover", headers=on["ann"])
-    assert r.status_code == 404 and r.json()["error"]["code"] == "not_available"
-    assert client.post("/api/ask/op-cond-take-body/takeover", headers=on["ann"]).json()["state"] == "taken_over"
-    assert gone(on["conductor"])
 
 
 def test_takeover_with_the_conductor_off_is_not_available_and_changes_nothing(client, monkeypatch):
@@ -1089,7 +1049,7 @@ def test_takeover_with_the_conductor_off_is_not_available_and_changes_nothing(cl
     client.post("/api/ask/op-off-take/stop", headers=w["ann"])
 
 
-# ---- takeover r2 (stand-in P1; Kimi 1, 2, 3, 5, 6) ----------------------------------------------------------------------------
+# ---- a close mid-call, r2 (stand-in P1; Kimi 1, 2, 3, 5, 6) ----------------------------------------------------------------
 
 def paid(hive, monkeypatch, on):
     hive.settings.providers["fakepaid"] = Provider("fakepaid", "http://127.0.0.1:9", prices={"*": {"in": 1, "out": 1}})
@@ -1102,25 +1062,25 @@ def reservation_states(hive):
 
 
 @pytest.mark.parametrize("cancel_lands", [True, False])
-def test_r2_a_takeover_in_the_gap_before_the_call_starts_never_reaches_the_provider_and_releases_the_hold(
+def test_r2_a_stop_in_the_gap_before_the_call_starts_never_reaches_the_provider_and_releases_the_hold(
         client, on, monkeypatch, cancel_lands):
-    """Stand-in P1: the takeover commits after the reservation but before the provider call starts. Whether or not the
+    """Stand-in P1: the stop commits after the reservation but before the provider call starts. Whether or not the
     loop's cancellation has landed by then, the call never goes out and its hold is released (not held, not settled)."""
     hive, conductor = on["hive"], on["conductor"]
     paid(hive, monkeypatch, on)
     s = script(client, Script([call("navigate", route="#/rooms")], "never", cost=0.004))
     real = conductor.reservations.reserve
 
-    def reserve_then_takeover(key, *a, **k):
+    def reserve_then_stop(key, *a, **k):
         out = real(key, *a, **k)
         t = hive.db.one("SELECT id FROM ask_turns WHERE operation_id = 'op-cond-gap'")
         if cancel_lands:   # the route's own close: the row commits, then the loop's cancel is scheduled
-            hive.ask._close(t["id"], "refused", "takeover")
+            hive.ask._close(t["id"], "refused", "stopped")
         else:              # the row committed, the cancel not yet delivered
-            hive.db.execute("UPDATE ask_turns SET state = 'refused', reason = 'takeover', closed_at = ? WHERE id = ?",
+            hive.db.execute("UPDATE ask_turns SET state = 'refused', reason = 'stopped', closed_at = ? WHERE id = ?",
                             ("2026-10-08T20:00:00Z", t["id"]))
         return out
-    monkeypatch.setattr(conductor.reservations, "reserve", reserve_then_takeover)
+    monkeypatch.setattr(conductor.reservations, "reserve", reserve_then_stop)
     ask(client, on["ann"], "op-cond-gap", context=on["ctx"])
     end = time.time() + 5
     while not reservation_states(hive) and time.time() < end:
@@ -1143,7 +1103,7 @@ def test_r2_a_cut_off_call_settles_in_its_own_window_even_past_the_turns_remaini
     end = time.time() + 5
     while not s.bodies and time.time() < end:
         time.sleep(0.01)
-    assert client.post("/api/ask/op-cond-slow/takeover", headers=on["ann"]).json()["state"] == "taken_over"
+    assert client.post("/api/ask/op-cond-slow/stop", headers=on["ann"]).json()["state"] == "refused"
     assert gone(conductor, timeout=6)
     assert reservation_states(hive) == ["settled"]
     usage = hive.db.all("SELECT * FROM usage WHERE agent_id = ?", (on["coord"]["id"],))
@@ -1152,7 +1112,7 @@ def test_r2_a_cut_off_call_settles_in_its_own_window_even_past_the_turns_remaini
 
 def test_r2_shutdown_lets_cut_off_calls_settle_within_the_grace(monkeypatch):
     """Kimi 2: the app's shutdown drains cut-off calls (Conductor.aclose) before the gateway client closes, so a
-    restart mid-takeover does not turn a call that answers within the grace into a held worst case."""
+    restart mid-stop does not turn a call that answers within the grace into a held worst case."""
     from hive.tests.test_core_api import PETTA, FakeSupervisor
     from fastapi.testclient import TestClient
     from hive.core.app import create_app
@@ -1175,7 +1135,7 @@ def test_r2_shutdown_lets_cut_off_calls_settle_within_the_grace(monkeypatch):
         end = time.time() + 5
         while not s.bodies and time.time() < end:
             time.sleep(0.01)
-        assert tc.post("/api/ask/op-cond-down/takeover", headers=w["ann"]).json()["state"] == "taken_over"
+        assert tc.post("/api/ask/op-cond-down/stop", headers=w["ann"]).json()["state"] == "refused"
         time.sleep(0.1)
         assert hive.ask.conductor.late   # the cut-off call is still out when shutdown begins
     finally:
@@ -1194,7 +1154,7 @@ def test_r2_shutdown_past_the_grace_holds_unknown_and_says_so(client, on, monkey
     end = time.time() + 5
     while not s.bodies and time.time() < end:
         time.sleep(0.01)
-    client.post("/api/ask/op-cond-grace/takeover", headers=on["ann"])
+    client.post("/api/ask/op-cond-grace/stop", headers=on["ann"])
     end = time.time() + 5
     while not conductor.late and time.time() < end:
         time.sleep(0.01)
@@ -1222,18 +1182,7 @@ def test_r2_a_failed_settle_is_logged_by_type(client, on, monkeypatch, caplog):
     assert f"turn {tid} call not settled (RuntimeError)" in caplog.text
 
 
-def test_r2_a_json_null_takeover_body_reads_as_none(client, on):
-    """Kimi 5: one rule for "no body": none, whitespace, {} and JSON null all read as no body."""
-    script(client, Script([call("navigate", route="#/rooms")], "never"))
-    ask(client, on["ann"], "op-cond-null", context=on["ctx"])
-    acts(wait(on["hive"], "op-cond-null", acts))
-    r = client.post("/api/ask/op-cond-null/takeover", headers=on["ann"], content=b"null")
-    assert r.status_code == 200 and r.json()["state"] == "taken_over"
-    assert client.post("/api/ask/op-cond-null/takeover", headers=on["ann"], content=b"  ").json()["state"] == "taken_over"
-    assert gone(on["conductor"])
-
-
-# ---- takeover r3 (stand-in r2 P1, P2; Kimi r2 1, 2, 5, 6) ---------------------------------------------------------------------
+# ---- a close mid-call, r3 (stand-in r2 P1, P2; Kimi r2 1, 2, 5, 6) -----------------------------------------------------------
 
 class SlowProvider:
     """A real HTTP provider on 127.0.0.1 (no network beyond loopback): each request is held until released, and every
@@ -1297,9 +1246,9 @@ class SlowProvider:
         self.loop.close()
 
 
-def test_r3_a_takeover_while_the_call_waits_for_a_connection_never_reaches_the_provider(client, on, monkeypatch):
+def test_r3_a_stop_while_the_call_waits_for_a_connection_never_reaches_the_provider(client, on, monkeypatch):
     """Stand-in r2 P1: the real gateway and transport. The call is waiting for a pooled connection (the pool's one
-    connection is busy) when the takeover commits; it is released, never sent: the provider never sees it."""
+    connection is busy) when the stop commits; it is released, never sent: the provider never sees it."""
     import httpx
     hive = on["hive"]
     srv = SlowProvider(hive)
@@ -1320,7 +1269,7 @@ def test_r3_a_takeover_while_the_call_waits_for_a_connection_never_reaches_the_p
             time.sleep(0.01)
         time.sleep(0.2)
         assert reservation_states(hive) == ["reserved"]
-        assert client.post("/api/ask/op-cond-pool/takeover", headers=on["ann"]).json()["state"] == "taken_over"
+        assert client.post("/api/ask/op-cond-pool/stop", headers=on["ann"]).json()["state"] == "refused"
         srv.release.set()   # the connection comes free
         blocker.result(10)
         assert gone(on["conductor"])
@@ -1355,7 +1304,7 @@ def test_r3_the_send_boundary_marks_dispatch_only_as_the_request_leaves(client, 
 
 
 def test_r3_shutdown_stops_running_loops_and_drains_the_calls_they_cut_off(client, on, monkeypatch):
-    """Stand-in r2 P2 and Kimi r2 6: at shutdown a turn's loop is still waiting on a sent call (no takeover, so no
+    """Stand-in r2 P2 and Kimi r2 6: at shutdown a turn's loop is still waiting on a sent call (no stop, so no
     cut-off call exists yet when the drain begins). aclose cancels and joins the loop, then waits for the call that
     the cancel cut off, and it settles; afterwards no new turn loop starts (an admitted turn closes, spending nothing)."""
     hive, conductor = on["hive"], on["conductor"]
@@ -1411,9 +1360,9 @@ def test_r3_a_failed_shutdown_drain_is_logged_not_silent(monkeypatch, caplog):
 
 def test_r5_the_commitment_boundary_at_most_the_one_committed_call_leaves_and_it_settles_then_nothing_follows(client, on, monkeypatch):
     """The boundary as it is (owner decision r5): dispatch is commitment to the in-flight call, not its first byte. The
-    takeover is queued for the very next scheduling point after dispatch is marked, which is gate()'s own yield before
+    stop is queued for the very next scheduling point after dispatch is marked, which is gate()'s own yield before
     the socket write (AnyIO 4.16 has none there, omegahive#9). Then: that one already-authorised request is still handed
-    to the OS after the takeover committed (pinned here, honestly), it is settled at its real cost, and no further model
+    to the OS after the stop committed (pinned here, honestly), it is settled at its real cost, and no further model
     call or act follows, although the provider's answer asks for another act."""
     from asyncio import selector_events
     hive, conductor = on["hive"], on["conductor"]
@@ -1434,17 +1383,17 @@ def test_r5_the_commitment_boundary_at_most_the_one_committed_call_leaves_and_it
         monkeypatch.setattr(selector_events._SelectorSocketTransport, "write", recording_write)
         real_dispatch = conductor.reservations.dispatch
 
-        def dispatch_then_takeover(key):
+        def dispatch_then_stop(key):
             real_dispatch(key)
             t = hive.db.one("SELECT id FROM ask_turns WHERE operation_id = 'op-cond-edge'")
-            asyncio.get_running_loop().call_soon(lambda: hive.ask._close(t["id"], "refused", "takeover"))
-        monkeypatch.setattr(conductor.reservations, "dispatch", dispatch_then_takeover)
+            asyncio.get_running_loop().call_soon(lambda: hive.ask._close(t["id"], "refused", "stopped"))
+        monkeypatch.setattr(conductor.reservations, "dispatch", dispatch_then_stop)
         ask(client, on["ann"], "op-cond-edge", context=on["ctx"])
         fs = wait(hive, "op-cond-edge", closed)
-        assert fs[-1].get("taken_over") is True
+        assert fs[-1]["outcome"] == "cancelled"
         assert gone(conductor)
         time.sleep(0.3)
-        assert handed == ["refused"]                       # the one committed call left after the takeover: at most one
+        assert handed == ["refused"]                       # the one committed call left after the stop: at most one
         assert [line for line, _ in srv.seen] == ["POST /chat/completions HTTP/1.1"]   # no second call, no retry
         assert reservation_states(hive) == ["settled"]     # settled at its real cost
         usage = hive.db.all("SELECT * FROM usage WHERE agent_id = ?", (on["coord"]["id"],))
@@ -1473,7 +1422,7 @@ def test_r4_a_cut_off_calls_settle_cancelled_by_shutdown_is_logged_once_by_the_p
     end = time.time() + 5
     while not reservation_states(hive) and time.time() < end:
         time.sleep(0.01)
-    client.post("/api/ask/op-cond-once/takeover", headers=on["ann"])
+    client.post("/api/ask/op-cond-once/stop", headers=on["ann"])
     assert entered.wait(5)            # the call answered; its settle is under way
     client.portal.call(conductor.aclose, 0.05)
     leave.set()

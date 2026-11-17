@@ -148,7 +148,8 @@ class PerChangeBuilds:
                 return None                              # ended while the plan rests; read back when it resumes
             return {"unknown": "the piece's member was ended before it delivered"}
         if mrun["status"] == "needs_you" or mrun["phase"] == "blocked":
-            return {"blocked": f"the piece's member is blocked ({mrun['last_error'] or 'needs the plan'})"}
+            why = mrun["last_error"] or self.code.last_refusal(task_id) or "it needs the plan"
+            return {"blocked": f"the piece's builder stopped: {why}"[:500]}
         nxt = mrun["next_action"] or ""
         if not nxt.startswith("(tell member-ready"):
             return None                                  # still working

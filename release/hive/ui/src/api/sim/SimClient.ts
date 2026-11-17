@@ -128,7 +128,7 @@ export interface SimOptions {
    * client (relayed routes, no route to a mind); 'unrelayed' plays a hive that does not relay the Workbench routes.
    */
   codeMode?: 'mind' | 'person' | 'unrelayed'
-  /** SIM: the hive's Ask switches (?askflags=conductor,memory,takeover; 'none' for all off). Default: conductor+memory. */
+  /** SIM: the hive's Ask switches (?askflags=conductor,memory; 'none' for all off). Default: conductor+memory. */
   askFlags?: import('../ask').AskCapabilities
   /** SIM: apps a swarm refuses, as "app@swarm" (?refuse=omega-tools@s_lyra). */
   refuse?: string[]
@@ -3379,9 +3379,6 @@ export class SimClient implements HiveClient {
   /** SIM ONLY fixture: the hive's Ask switches from now on. */
   askSimFlags(flags: import('../ask').AskCapabilities) {
     this.askHost.setFlags(flags)
-  }
-  askTakeover(op: string) {
-    return this.delay(() => this.askHost.takeover(op))
   }
   askSteer(op: string, body: import('../ask').AskSteerBody) {
     // J3 r4.3 O1 (sim): a live Studio session's turn takes the words as a direction for its maker, never a new turn

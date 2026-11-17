@@ -17,6 +17,7 @@
 #   omegahive.sh uninstall  stop the hive, remove the app and the login item, and delete the hive's folder once its
 #                           path is typed
 #   omegahive.sh create     enrol Create's Code service with the hive and raise its controller's cap (installer, once)
+#   omegahive.sh studio     turn Studio, the app the hive shows as Create, on in Create · Code the first time (installer)
 #   omegahive.sh run        the hive itself, in the foreground (the launchd job runs this)
 #
 # On Linux (the Windows installer's WSL distro) there is no launchd:
@@ -106,6 +107,9 @@ running() { [ -n "$(control hello port)" ]; }
 # live sessions unless the owner's hive.env says otherwise. A Mac hive keeps them off by itself until its restart path
 # is reviewed (hive/core/studio_sessions.py names what is missing in the hive's log); Create's Make, Code and Flow work
 # either way.
+# Make, on in every hive (config.py: Jon on #395), needs three things here whatever else is installed: the python runtime
+# its acceptance check runs on, that check in the sandbox list (a built-in app, so it needs no pin), and Create's apps
+# folder, <data>/create/apps, on the plugin path, where a plan's deploy puts what the person made.
 app_settings() {
   . "$OH/app/install/macos/pins.sh"
   "$OH/venv/bin/python" -I - "$OH" "$TOOLCHAIN" "$OMEGA_TOOLS_DIGEST" "$OMEGA_TOOLS_LOCK_SHA256" \
@@ -113,8 +117,9 @@ app_settings() {
 import json, os, re, shlex, subprocess, sys
 oh, toolchain, digest, lock, studio_digest, studio_lock = sys.argv[1:7]
 runtimes = {"node": {"exe": f"{toolchain}/bin/node", "reads": [f"{oh}/package.json"]}}
-if os.environ.get('HIVE_CODE_SANDBOX_PROJECT_TESTS') == 'on':
-    runtimes['python'] = {'exe': os.path.realpath(f'{oh}/venv/bin/python'), 'reads': [toolchain]}
+# Create's acceptance check (hive/plugins/create_acceptance_check) runs a plan's checks on this folder's Python, and so do
+# Code's project tests where the Mac's setup turned them on (HIVE_CODE_SANDBOX_PROJECT_TESTS)
+runtimes['python'] = {'exe': os.path.realpath(f'{oh}/venv/bin/python'), 'reads': [toolchain]}
 out = {}
 tools = os.path.normpath(os.path.join(oh, "apps", "omega-tools"))
 studio = os.path.normpath(os.path.join(oh, "apps", "omegadesign"))
@@ -134,10 +139,18 @@ if "omega-tools" in pinned:
         runtimes["metta"]["env"] = {"SWI_HOME_DIR": home.group(1)}
     else:   # the hive still starts; only Tools skill runs on a relocated SWI-Prolog fail, and its log says why
         print(f"OmegaHive: {oh}/swipl/bin/swipl named no home (PLBASE); Tools skills may not find SWI-Prolog", file=sys.stderr)
+# Create's apps: a plan's deploy installs what the person made into <data>/create/apps (create_plan_ports.py), which the
+# hive loads from its plugin path; unpinned, since the person made it
+created = os.path.normpath(os.path.join(oh, "data", "create", "apps"))
+folders = [folder for folder, _, _ in pinned.values()] + [created]
+dirs = [d for d in os.environ.get("HIVE_PLUGIN_DIRS", "").split(os.pathsep) if d and os.path.normpath(d) not in folders]
+out["HIVE_PLUGIN_DIRS"] = os.pathsep.join(folders + dirs)
+# the apps the hive itself ships that run in the sandbox: Create's acceptance check (built in, so no pin)
+host = ["create-acceptance-check"]
+apps = [a.strip() for a in os.environ.get("HIVE_SANDBOX_RUN_APPS", "").split(",")
+        if a.strip() and a.strip() not in pinned and a.strip() not in host]
+out["HIVE_SANDBOX_RUN_APPS"] = ",".join(list(pinned) + host + apps)
 if pinned:
-    folders = [folder for folder, _, _ in pinned.values()]
-    dirs = [d for d in os.environ.get("HIVE_PLUGIN_DIRS", "").split(os.pathsep) if d and os.path.normpath(d) not in folders]
-    out["HIVE_PLUGIN_DIRS"] = os.pathsep.join(folders + dirs)
     try:
         pins = json.loads(os.environ.get("HIVE_APP_PINS") or "{}")
     except ValueError:
@@ -146,8 +159,6 @@ if pinned:
         for app, (folder, d, files) in pinned.items():
             pins[app] = {"release": folder, "digest": d, "files": files}
         out["HIVE_APP_PINS"] = json.dumps(pins)
-    apps = [a.strip() for a in os.environ.get("HIVE_SANDBOX_RUN_APPS", "").split(",") if a.strip() and a.strip() not in pinned]
-    out["HIVE_SANDBOX_RUN_APPS"] = ",".join(list(pinned) + apps)
 if "omegadesign" in pinned and not os.environ.get("HIVE_STUDIO_SESSIONS", "").strip():
     out["HIVE_STUDIO_SESSIONS"] = "on"
 out["HIVE_SANDBOX_RUNTIMES"] = json.dumps(runtimes)
@@ -251,9 +262,13 @@ serve() {
   mkdir -p "$OH/run" "$OH/logs"
   echo "$$" > "$SERVE_PID"
   # Create's Code service, when setup gave the hive one, starts once the hive answers and is enrolled with it then
-  # (create is a no-op once enrolled); systemd keeps it running beside the hive.
-  if [ -f "$CODE/config.json" ]; then
-    { wait_running >/dev/null && start_code && create; } >> "$OH/logs/hive.log" 2>&1 &
+  # (create is a no-op once enrolled); systemd keeps it running beside the hive. Studio, when setup laid it out, is
+  # turned on then too, with or without the Code service (studio is a no-op once its owner has it, on or off).
+  if [ -f "$CODE/config.json" ] || [ -f "$OH/apps/omegadesign/plugin.json" ]; then
+    { wait_running >/dev/null || exit 0
+      # errexit would end this block at a failed create, so a Code failure is said here and Studio still goes on
+      if [ -f "$CODE/config.json" ]; then start_code && create || say "Create's Code service did not start or enrol; see above"; fi
+      studio; } >> "$OH/logs/hive.log" 2>&1 &
   fi
   child=""
   trap '[ -z "$child" ] || kill -TERM "$child" 2>/dev/null; [ -z "$child" ] || wait "$child" 2>/dev/null; rm -f "$SERVE_PID"; exit 0' TERM INT HUP
@@ -469,6 +484,23 @@ stop() {
   say "Your hive is stopped, and stays stopped when you log in. Open Omega Hive to start it again."
 }
 
+# One enrolment at a time, held by the process that runs it: mkdir is atomic, and a lock whose holder has died is taken
+# over. The enrolment's own calls each give up after 30 seconds and it makes at most five, so a lock held for three
+# minutes is stuck rather than busy.
+enrol_lock() {
+  mkdir -p "$OH/run"
+  i=0
+  until mkdir "$OH/run/create.lock" 2>/dev/null; do
+    holder=$(cat "$OH/run/create.lock/pid" 2>/dev/null || true)
+    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then rm -rf "$OH/run/create.lock"; continue; fi
+    [ "$i" -lt 180 ] || fail "another enrolment has held $OH/run/create.lock for three minutes"
+    sleep 1; i=$((i + 1))
+  done
+  # the holder is this (sub)shell, whose pid sh reads as its parent: $$ names the script even in serve's background
+  # block, and BASHPID is bash 4's, unset in a Mac's /bin/bash 3.2
+  echo "$(exec sh -c 'echo "$PPID"')" > "$OH/run/create.lock/pid"
+}
+
 # Create's Code service is enrolled once, as the hive's owner in a session from a one-time sign-in code that ends with
 # the step (POST /api/services/enrol; the service's operator route takes the one-time token and registers itself with
 # the hive), and the Create · Code controller, which the hive makes with 0.50 USD for its whole life, may spend up to 5,
@@ -476,23 +508,25 @@ stop() {
 # brings the hive's starting limit, 50 USD a month (hive/core/budgets.py seed_start_total, PhysixSNET/omegahive#35).
 # The cap is set without a line in the installer's window: a money line there, before any key or choice, reads as a
 # charge, and the mind's page shows the cap where it can be changed.
-# Studio, when setup-studio.sh put it in apps/, is installed in the same owner session: the owner's review of the release
-# the hive pinned (POST /api/programs/omegadesign/install, which an owner, never the local operator, may make), turned
-# on in the Create · Code controller's swarm, where Create then opens with its Studio, Make, Code and Flow. Reviewed but
-# on in no swarm a person sees, the hive lists no Create; on only in a person's personal swarm, Create asks where to
-# open (both seen on a v0.33 hive, 17 November). A review of an older release is renewed when an update brings a new one.
+#
+# On Linux start returns once the hive answers, while serve starts Code and enrols it in the background, so a create run
+# right after start found Code not listening and its register refused (a fresh Linux install, 17 November): create
+# waits for Code as start_code does, starting it only where it never came up, and enrols one at a time, since serve's
+# own create and that one would otherwise both find Code unenrolled and enrol it twice.
 create() {
   [ -f "$CODE/config.json" ] || return 0
   start
-  (cd "$OH/app" && "$OH/venv/bin/python" - "$SOCKET" "$(port)" "$CODE" "$OH" <<'PY'
+  code_answers || start_code
+  code_answers || fail "Create's Code service did not answer, so it can't be enrolled; its log: $CODE/logs/service.log"
+  (enrol_lock; trap 'rm -rf "$OH/run/create.lock"' EXIT
+   cd "$OH/app" && "$OH/venv/bin/python" - "$SOCKET" "$(port)" "$CODE" <<'PY'
 import json
-import os
 import sys
 import urllib.request
 
 from hive.core.newhive_helper import control
 
-sock, port, code, oh = sys.argv[1:5]
+sock, port, code = sys.argv[1:4]
 base = f"http://127.0.0.1:{port}"
 
 
@@ -517,31 +551,9 @@ try:
         service = f"http://127.0.0.1:{json.load(open(f'{code}/config.json'))['port']}"
         call("POST", "/v1/operator/register", {"enrol_token": enrol_token}, operator, url=service)
         print("Create's Code service is enrolled with your hive.")
-    controller = None
     for mind in call("GET", "/api/agents", token=token):
-        if mind.get("name") == "Create · Code controller":
-            controller = mind
-            if float(mind.get("budget_usd") or 0) < 5:
-                call("PATCH", f"/api/agents/{mind['id']}", {"budget_usd": 5}, token)
-    if os.path.isfile(os.path.join(oh, "apps", "omegadesign", "plugin.json")):
-        entry = call("GET", "/api/programs/omegadesign", token=token)
-        status = call("GET", "/api/programs/omegadesign/install", token=token)
-        swarm = (controller or {}).get("swarm_id")
-        if entry.get("error") or not entry.get("digest"):
-            print(f"Studio did not load in your hive, so it shows no Create: {entry.get('error') or 'no pinned release'}")
-        elif not swarm:
-            print("Your hive has no Create · Code controller yet, so Studio is not turned on; it is at the next start.")
-        else:
-            # a person app opens in each person's own space, so only a swarm app is turned on in a chosen swarm
-            in_swarm = status.get("placement") == "swarm"
-            active = {a.get("swarm_id") for a in call("GET", "/api/programs/omegadesign/activations", token=token)
-                      if a.get("active")}
-            if not status.get("installed") or status.get("release_digest") != entry["digest"]:
-                call("POST", "/api/programs/omegadesign/install", {"release_digest": entry["digest"],
-                     "placement": status["placement"], "use_in": [swarm] if in_swarm else []}, token)
-            elif in_swarm and swarm not in active:
-                call("POST", "/api/programs/omegadesign/activations", {"swarm_id": swarm}, token)
-            print("Create is in your hive: Studio, with its Make, Code and Flow.")
+        if mind.get("name") == "Create · Code controller" and float(mind.get("budget_usd") or 0) < 5:
+            call("PATCH", f"/api/agents/{mind['id']}", {"budget_usd": 5}, token)
 finally:
     call("POST", "/api/auth/logout", {}, token)   # this session was for the step alone
 PY
@@ -553,6 +565,17 @@ PY
     start_code
     code_answers || fail "Code did not answer after proposal tests were enabled; see $CODE/logs/service.log"
   fi
+}
+
+# Studio, when setup-studio.sh put it in apps/, is the app the hive shows as Create. The owner's review of the release
+# the hive pinned turns it on in the Create · Code controller's swarm the first time; a later release keeps the swarms
+# its owner has it on in, and a Studio its owner turned off stays off (install/macos/studio-on.py). Reviewed but on in no
+# swarm a person sees, the hive lists no Create; on only in a person's personal swarm, Create asks where to open (both
+# seen on a v0.33 hive, 17 November). The swarm and its controller are the hive's own, so no Code service is needed.
+studio() {
+  [ -f "$OH/apps/omegadesign/plugin.json" ] || return 0
+  start
+  (cd "$OH/app" && "$OH/venv/bin/python" -I install/macos/studio-on.py "$SOCKET" "$(port)")
 }
 
 status() {
@@ -754,11 +777,12 @@ case "${1:-open}" in
   open) open_hive ;;
   link) app_link ;;
   create) create ;;
+  studio) studio ;;
   stop) stop ;;
   status) status ;;
   login) login_start ;;
   autostart) autostart "${2:-}" ;;
   register) register ;;
   uninstall) uninstall ;;
-  *) fail "usage: omegahive.sh [open|start|stop|status|login|autostart|register|uninstall|create|run|serve|signin-url]" ;;
+  *) fail "usage: omegahive.sh [open|start|stop|status|login|autostart|register|uninstall|create|studio|run|serve|signin-url]" ;;
 esac

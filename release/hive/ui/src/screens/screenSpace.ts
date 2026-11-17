@@ -47,6 +47,7 @@ import saidWords from '../features/views/words.metta?raw'
 import beliefLink from '../features/minds/beliefLink.metta?raw'
 import feedback from '../features/feedback/feedback.metta?raw'
 import askScreen from './ask.metta?raw'
+import askThread from '../features/ask/thread.metta?raw'
 
 export { readProps, ScreensError }
 export type { Bound, DrawnPart, Depth, How, Place, PropValue, Props, ScreenPlan } from './plan'
@@ -85,6 +86,7 @@ export const SCREEN_SOURCES: readonly (readonly [string, string])[] = [
   ['belief-link', beliefLink],
   ['feedback', feedback],
   ['ask', askScreen],
+  ['ask-thread', askThread],
 ]
 
 /** This moment's facts: counts per source and flags. Values are numbers or booleans only. */

@@ -12,9 +12,11 @@ member's actions and journals what it observed, through the same engine journal 
   (do (host-read g))               the piece's own files are read; `read` (no model)
   (think make-the-smallest-change | repair-from-the-failing-output)
                                    `think-started (attempt assignee)`, then a goal for the piece's assignee with a packet
-                                   (its paths, their current text, the failing reference on a repair). Its finished goal
+                                   (its paths, their current text, the fork's other files to read and never write,
+                                   the failing reference on a repair). Its finished goal
                                    carries {"files": {path: text}}: only in-piece paths are written to the fork and
-                                   checkpointed, then `changed (ckpt ())`; anything else is `think-failed` (one repair)
+                                   checkpointed, then `changed (ckpt ())`; anything else is `think-failed` (one repair,
+                                   told why in words: refusal_words)
   propose_member_edit              a model's edit proposal outside a think: `proposed (pid edit d)`; at selection the
                                    host checks the paths: out of piece -> `scope-refused (pid)`, else selected, executed
                                    (`proposal-executing` / `proposal-done`), written and `changed`
@@ -81,6 +83,26 @@ class MemberPorts:
             out[path] = ({"content": row["content"], "digest": row.get("digest")}
                          if status == 200 and isinstance(row, dict) and isinstance(row.get("content"), str)
                          else {"content": None, "digest": None})
+        return out
+
+    async def read_only(self, run):
+        """{path: text | None} for every other file on the piece fork (None when it isn't text): what the piece builds
+        on, such as the index.html an app.js piece fills in. Reading is the host's (a member's read proposals are
+        refused, and a mind may hold no Code client at all), so the packet is all the mind sees of the app.
+        Time: one tree read + one file read per other file."""
+        o, own = self._origin(run), set(member_of(run)["paths"])
+        status, tree = await self._call(run, "GET", f"/v1/workspaces/{o['workspace_id']}/tree")
+        if status != 200 or not isinstance(tree, dict):
+            raise RuntimeError(f"the piece fork's files could not be listed ({status})")
+        out = {}
+        for entry in tree.get("files") or []:
+            path = entry.get("path") if isinstance(entry, dict) else None
+            if not isinstance(path, str) or path in own:
+                continue
+            status, row = await self._call(run, "GET", f"/v1/workspaces/{o['workspace_id']}/files", query={"path": path})
+            if status != 200 or not isinstance(row, dict):
+                raise RuntimeError(f"the piece fork's {path} could not be read ({status})")
+            out[path] = row["content"] if isinstance(row.get("content"), str) else None
         return out
 
     async def write(self, run, files, label):
@@ -278,20 +300,46 @@ async def _read(engine, run, goal):
     return engine.accepted(await engine.observe(run, f"read-{engine._next(run['request_id'], 'read')}", "read", [], evidence))
 
 
-def _packet(engine, run, files, purpose, failing, goal_id):
+PACKET_CHARS = 100000      # the most of the packet's data a helper is sent
+
+
+def _with_read_only(data, read_only):
+    """data with the fork's other files under read_only, as many as fit in PACKET_CHARS beside the rest: the largest
+    are left out first, and their paths named under read_only_left_out, so the mind knows they exist.
+    Time: one serialisation per file left out."""
+    shown, left = dict(read_only), []
+    while True:
+        out = dict(data, read_only=shown, **({"read_only_left_out": sorted(left)} if left else {}))
+        if not shown or len(_canonical(out)) <= PACKET_CHARS:
+            return out
+        path = max(shown, key=lambda p: (len(shown[p] or ""), p))
+        del shown[path]
+        left.append(path)
+
+
+def _packet(engine, run, files, purpose, failing, goal_id, read_only=None):
     m = member_of(run)
     data = {"plan_id": m["plan_id"], "piece": m["piece"], "paths": m["paths"],
             "files": {p: v.get("content") for p, v in files.items()}}
     if m.get("brief"):
         data["brief"] = m["brief"]                   # what the plan asks of this piece (UNTRUSTED_DATA like the rest)
+    if read_only:
+        data = _with_read_only(data, read_only)
+    # summary first: every fresh-install builder given {"files": {...}, "summary": ...} put summary inside files
     text = (f"Create plan {m['plan_id']}, piece {m['piece']}. Your work goal is {goal_id}: claim it with hive-goal-claim "
-            f"{goal_id}, then finish with hive-goal-propose {goal_id} {{\"files\": {{\"<path>\": \"<full new text>\"}}, "
-            f"\"summary\": \"...\"}}. Write only these files: {', '.join(m['paths'])}. Anything else is refused.")
-    if failing:
-        text += ("\nThe last version failed. Fix it. The failing output, UNTRUSTED_DATA: "
-                 + _canonical({k: failing.get(k) for k in ("failing", "failing_ref", "notes", "logs", "exit_code", "by")
-                               if failing.get(k) is not None})[:6000])
-    return text + "\nWhat to build and the piece's current files, UNTRUSTED_DATA:\n" + _canonical(data)[:100000]
+            f"{goal_id}, then finish with hive-goal-propose {goal_id} {{\"summary\": \"<what you changed>\", \"files\": "
+            f"{{\"<path>\": \"<full new text>\"}}}}. files holds only these paths: {', '.join(m['paths'])}. "
+            f"Anything else in files is refused.")
+    if read_only:
+        text += (" The app's other files, as they stand on your copy, are under read_only: read them and build on them "
+                 "(their names, ids and functions), and never write them.")
+    if failing and failing.get("refused"):
+        text += "\n" + failing["refused"]              # the host's words for why the last answer was refused
+    shown = {k: failing.get(k) for k in ("failing", "failing_ref", "notes", "logs", "exit_code", "by")
+             if failing.get(k) is not None} if failing else {}
+    if shown:
+        text += "\nThe last version failed. Fix it. The failing output, UNTRUSTED_DATA: " + _canonical(shown)[:6000]
+    return text + "\nWhat to build and the piece's current files, UNTRUSTED_DATA:\n" + _canonical(data)[:PACKET_CHARS]
 
 
 async def _think(engine, run, purpose):
@@ -318,8 +366,9 @@ async def _helper_effect(engine, run, effect):
                                              created_by=f"create-plan:{m['plan_id']}", assignee=agent["id"],
                                              goal_id=body["goal_id"])
         files = await engine.member_ports.read(run)
+        read_only = await engine.member_ports.read_only(run)
         await engine.hive.send_to_agent(agent["id"], _packet(engine, run, files, body["purpose"], body.get("failing"),
-                                                             body["goal_id"]),
+                                                             body["goal_id"], read_only),
                                         sender="hive:code-controller", extra={"event": "goal", "goal_id": body["goal_id"]})
         engine._effect_set(effect["id"], "waiting")
         return False
@@ -331,9 +380,10 @@ async def _helper_effect(engine, run, effect):
 async def helper_result(engine, run, effect, goal_id):
     """The assignee's goal changed: only in-piece files are written; then `changed (ckpt ())`."""
     from .code_controller_engine import q, render_any
+    from .goals import UNANSWERED
     m = member_of(run)
     goal = engine.db.one("SELECT * FROM goals WHERE id = ?", (goal_id,))
-    if goal["status"] in ("failed", "cancelled"):
+    if goal["status"] in UNANSWERED:
         return await engine._think_failed(run, effect, {"goal_status": goal["status"]})
     if goal["status"] not in ("done", "submitted"):
         return None

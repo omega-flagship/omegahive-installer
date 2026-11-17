@@ -151,6 +151,38 @@ class FailureProvenanceTests(LlmProviderTests):
                 self.assertNotIn('valid prefix', commands)
                 self.assertEqual(h.chosen_wait_seconds(commands, retry, 1), 2)
 
+    @mock.patch.dict(os.environ, {'OPENROUTER_API_KEY': 'synthetic-key'})
+    def test_a_reply_cut_off_at_its_room_is_retried_with_twice_the_room_and_less_reasoning_only_second(self):
+        # rc3's Windows Make run, 18 Nov: Claude Sonnet 5.5 at medium effort spent all 6000 tokens reasoning, six
+        # times, each retry in the same room; the next run, which dropped to low at once, wrote checks that exited
+        # before their verdict. Now a cut-off doubles the room at the same level; only a doubled-room reply that is
+        # still all reasoning lowers the level; a complete reply puts both back; every retry logs what it asked with
+        import openrouter
+        from hive.runtime.provider_features import extend
+        engine = extend(openrouter.OpenRouterProviderImpl('OpenRouter', 'OPENROUTER_API_KEY', 'anthropic/claude-sonnet-5.5',
+                                                          'https://openrouter.ai/api/v1'))
+        replies = [('', 'length'), ('', 'length'), ('send "half wri', 'length'), ('send "done"', 'stop'),
+                   ('send "next"', 'stop')]
+        asked = []
+
+        def create(_self, **kwargs):
+            asked.append((kwargs['max_tokens'], kwargs['extra_body']['reasoning']['effort']))
+            content, finish = replies[len(asked) - 1]
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content, tool_calls=None),
+                                                            finish_reason=finish)], model=kwargs['model'], usage=None)
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {'OMEGACLAW_MEMORY_DIR': tmp}), \
+             mock.patch.object(FakeOpenAI, 'create', create), mock.patch.object(self.native, 'CHAT_MAX_RETRIES', 0), \
+             self.assertLogs('hive_provider', 'INFO') as logged:
+            results = [engine.chat(self.request()) for _ in replies]
+        self.assertEqual(asked, [(123, 'medium'), (246, 'medium'), (492, 'low'), (984, 'low'), (123, 'medium')])
+        self.assertEqual([getattr(r, 'error', None) for r in results[:3]],
+                         ['Incomplete provider response; no commands executed'] * 3)
+        self.assertEqual(results[3].calls[0].arguments['text'], 'send "done"')
+        said = [r.getMessage() for r in logged.records if 'retry after a cut-off' in r.getMessage()]
+        self.assertEqual(said, ['a retry after a cut-off asks with 246 tokens of room at reasoning medium',
+                                'a retry after a cut-off asks with 492 tokens of room at reasoning low',
+                                'a retry after a cut-off asks with 984 tokens of room at reasoning low'])
+
     def chat_with_call(self, name, arguments):
         """One reply holding a single tool call `name` with the raw JSON `arguments`, as the SDK hands it over."""
         from hive.runtime import hive_services as services

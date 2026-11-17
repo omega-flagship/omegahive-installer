@@ -421,10 +421,15 @@ describe('drag to rearrange (UI-only)', () => {
     const b = s.inner.galaxies.find((x: { id: string }) => x.id === `hive:${C}`)
     s.e.beginGalaxyDrag(b.id, b.sx, b.sy - b.sr - 20)
     expect(s.e.endGalaxyDrag()).toMatchObject({ id: b.id, moved: false })
-    // (followups-r5: it flies to the galaxy with screen room above it kept for its name, GALAXY_LABEL_ROOM)
-    const { GALAXY_LABEL_ROOM } = await import('./engine')
-    expect(s.inner.camT.x).toBe(b.x)
-    expect(s.inner.camT.y).toBeCloseTo(b.y - GALAXY_LABEL_ROOM / 2 / s.inner.camT.z, 6)
+    // (followups-r5: it flies into the galaxy, its name kept on screen above it)
+    s.inner.cam = { ...s.inner.camT }
+    s.inner.center = { ...s.inner.centerT }
+    s.inner.update(0.016)
+    s.inner.render()
+    const flown = s.inner.galaxies.find((x: { id: string }) => x.id === b.id)
+    expect(Math.hypot(flown.sx - s.inner.centerT.x, flown.sy - s.inner.centerT.y)).toBeLessThan(flown.sr)
+    expect(flown.open).toBe(true)
+    expect(s.e.galaxyLabelBoxes().find((x: { id: string }) => x.id === b.id)!.top).toBeGreaterThanOrEqual(0)
   })
   it('a single-galaxy map (a small hive) has nothing to drag', async () => {
     const one = { swarms: [sw('s_1', null), sw('s_2', null)], agents: [ag('a_1', 's_1')] }

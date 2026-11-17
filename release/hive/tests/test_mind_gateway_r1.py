@@ -1299,7 +1299,7 @@ def test_T_EXP_idle_and_absolute_deadlines_close_time_cap(bw, monkeypatch):
 
 # ---- T-OUT (r1.1 §I): one outcome map for the conductor and the browser -------------------------------------------
 
-@pytest.mark.parametrize("reason", ["stopped", "takeover", "timed_out", "spend_limit", "answered", "incomplete", "failed",
+@pytest.mark.parametrize("reason", ["stopped", "timed_out", "spend_limit", "answered", "incomplete", "failed",
                                     "not_available"])
 @pytest.mark.parametrize("spent", [False, True])
 def test_T_OUT_conductor_and_browser_closes_store_the_same_outcome_and_limit(bw, reason, spent):
@@ -1315,7 +1315,7 @@ def test_T_OUT_conductor_and_browser_closes_store_the_same_outcome_and_limit(bw,
         hive.db.execute("UPDATE work_sessions SET carried_usd = ? WHERE id = ?", (0.25 if spent else 0.0, t["thread_id"]))
         assert hive.ask._close(t["id"], "refused", reason)
         last = stored_frames(hive, op)[-1]
-        seen[kind] = (last["phase"], last["outcome"], last.get("limit"), last.get("taken_over"))
+        seen[kind] = (last["phase"], last["outcome"], last.get("limit"))
     assert seen["browser"] == seen["conducting"]
     assert seen["browser"][1] == amod.CLOSE_OUTCOME.get(reason, "error")
     assert set(amod.CLOSE_OUTCOME.values()) <= set(cmod.OUTCOMES) and "incomplete" in cmod.OUTCOMES

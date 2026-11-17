@@ -172,6 +172,51 @@ def state_view(s):
 
 # ---- the typed plan (OmegaPlanner shapes) -----------------------------------------------------------------------
 
+#: the evidence a review can be given: none, or the host's render of the candidate (_review_prepare makes no other)
+REVIEW_EVIDENCE = ("none", "render")
+#: every rule a plan is refused for, by validate_plan or by the reducer's on-planned (create_plan_controller_r4_4.metta),
+#: each keyed by its refusal code with the words a planner follows to pass it. The planner's answer shape states every
+#: rule (create_plan_ports.ANSWER_SHAPES), and a refused plan's next packet names the rule it broke: on a fresh install's
+#: first real plans the planner, told only the fields' names, broke one rule after another and repeated itself, and
+#: told the reducer's bare code design-pieces-carry-the-design it sent the same plan four times
+PLAN_RULES = {
+    "plan_not_an_object": "the plan is one JSON object",
+    "step_count_limit": f"a plan has 1 to {MAX_PIECES} pieces",
+    "invalid_step": "each piece has an id (a word) and kinds, a list of words (code, or design for a designed look)",
+    "invalid_assignee": "an assignee, when given, is a selector list",
+    "invalid_dependencies": "deps lists the ids of other pieces, each once",
+    "duplicate_step": "no two pieces have the same id",
+    "unknown_dependency": "deps names only pieces of this plan",
+    "dependency_cycle": "deps never loop back: no piece depends on itself through other pieces",
+    "invalid_files": f"each piece names the 1 to {MAX_FILES_PER_PIECE} files it writes, as plain relative paths: the "
+                     "scaffold's index.html, style.css and app.js, or new files beside them",
+    "file_owned_twice": "no two pieces write the same file",
+    "piece_owns_the_acceptance_check": f"no piece writes {CHECK_PATH} or anything else under {CHECK_DIR}",
+    "piece_file_shadows_a_stdlib_module": "no piece's .py file is named like a Python standard library module",
+    "no_acceptance_criteria": "acceptance lists, as sentences, what the finished thing must do",
+    "invalid_unknowns": "each question has its own q (a word) and about: plan, deploy or {\"piece\": id} naming a piece "
+                        "of this plan",
+    "invalid_needs": "needs.design is design or no-design and needs.tests author or detect; a review names its kinds as "
+                     "words and its evidence as " + " or ".join(REVIEW_EVIDENCE) + "; a cap's selector is a list and its "
+                     "n a whole number above 0",
+    "piece_owns_a_reserved_path": "no piece writes a path the hive reserves",
+    "detect_without_a_check": f"needs.tests is detect only when the scaffold already has {CHECK_PATH} "
+                              "(scaffold_has_acceptance_check in the packet); otherwise author",
+    "design-pieces-carry-the-design": "needs.design is design only when no piece has the kind design: a piece of kind "
+                                      "design carries the look itself, so a plan with one says no-design",
+    "no-review-for-artifact-kind": "every kind a piece has is reviewed, by one of the hive's own reviews (hive_reviews) "
+                                   "or by one the plan adds",
+}
+#: the reducer's codes for rules the host checks first under its own code: either refusal finds the same words
+PLAN_RULE_ALIASES = {"invalid_plan_object": "plan_not_an_object", "piece-owns-reserved-path": "piece_owns_a_reserved_path",
+                     "reducer-symbol-kind": "invalid_step"}
+
+
+def plan_rule(code):
+    """The words of the rule a refusal code names, or the code itself when no rule has words for it."""
+    return PLAN_RULES.get(PLAN_RULE_ALIASES.get(code, code), code)
+
+
 def validate_plan(plan):
     """A planner result -> (normalised plan, None) or (None, why). The reducer validates the graph again (its
     validate_plan codes); this only checks the types the host must translate."""
@@ -222,7 +267,7 @@ def validate_plan(plan):
     reviews = []
     for r in needs.get("reviews") or []:
         if not (isinstance(r, dict) and all(symbol_ok(r.get(k)) for k in ("artifact_kind", "review_kind"))
-                and (r.get("evidence") == "none" or symbol_ok(r.get("evidence")))):
+                and r.get("evidence") in REVIEW_EVIDENCE):   # evidence nothing produces would hold the review forever
             return None, "invalid_needs"
         reviews.append({k: r[k] for k in ("artifact_kind", "review_kind", "evidence")})
     caps = []
@@ -381,6 +426,10 @@ class CreatePlanEngine:
     async def on_event(self, frame):
         if frame.get("type") == "code.controller.member_ready" and frame.get("task_id"):
             return await self.goal_changed(f"member:{frame['task_id']}")    # a piece's per-change member is ready
+        if frame.get("type") == "code.controller.status" and frame.get("request_id"):
+            # any member's change of status or phase, a block included: a member that blocked after its retries left
+            # its plan building with no error, since only member_ready woke it
+            return await self.goal_changed(f"member:{frame['request_id']}")
         if frame.get("type") != "goal.updated":
             return None
         gid = (frame.get("goal") or {}).get("id")
@@ -422,6 +471,23 @@ class CreatePlanEngine:
         if not last:
             return None
         return {k: last.get(k) for k in ("reason", "why", "exit_code", "output", "stderr") if last.get(k) is not None}
+
+    def previous_plan_refusal(self, pid):
+        """Why the last plan was refused, when none was accepted since: {code, rule}, the refusal's code and the words of
+        the rule it names (plan_rule), whether the host's check or the reducer refused it; {refused} with the reducer's
+        rendered answer when it named no code. The planner's next packet carries it, so it fixes that and doesn't
+        answer the same plan again."""
+        last = None
+        for r in self.db.all("SELECT kind, evidence FROM create_plan_journal WHERE plan_id = ? AND kind IN ('plan-failed', "
+                             "'planned') AND verdict = 'accepted' ORDER BY seq", (pid,)):
+            last = json.loads(r["evidence"] or "{}") if r["kind"] == "plan-failed" else None
+        if not last:
+            return None
+        code = last.get("invalid") or last.get("code")
+        if code:
+            out = {"code": code, "rule": plan_rule(code)}
+            return {**out, "paths": last["paths"]} if last.get("paths") else out
+        return {"refused": last["refused"]} if last.get("refused") else None
 
     def _evidence(self, pid, obs_id):
         row = self.db.one("SELECT evidence FROM create_plan_journal WHERE plan_id = ? AND obs_id = ?", (pid, obs_id))
@@ -1013,7 +1079,8 @@ class CreatePlanEngine:
         pid, body, kind = run["plan_id"], self._body(effect), effect["kind"]
         try:
             if kind == "plan":
-                out = await self.ports.plan(run, body)
+                await self._ensure_space(run)            # the planner is told what the scaffold holds (its check)
+                out = await self.ports.plan(self._run(pid), body)
             elif kind == "design":
                 out = await self.ports.design(run, body, self._plan(pid))
             elif kind == "author-tests":
@@ -1130,6 +1197,10 @@ class CreatePlanEngine:
             for x in plan["pieces"]:
                 x["assignee"] = self._selector(x)        # the default selector is fixed into the journalled plan
             plan["reserved"] = sorted(set(json.loads(self.setting("reserved_paths", "[]"))))
+            if plan["needs"]["tests"] == "detect" and not await self.ports.scaffold_has_check(run):
+                # detect finds the scaffold's own check: with none there, the plan's tests step could never answer
+                return await R("failed", f"plan-failed:{op}", "plan-failed", [q(op)],
+                               {"invalid": "detect_without_a_check", "by": out.get("by")})
             owned = {f for x in plan["pieces"] for f in x["files"]}
             if owned & set(plan["reserved"]):            # the host refuses it too, before the reducer does
                 return await R("failed", f"plan-failed:{op}", "plan-failed", [q(op)],
@@ -1148,8 +1219,9 @@ class CreatePlanEngine:
                 self._effect_set(effect["id"], "done", {"ref": ref, "digest": digest})
                 return True
             # an invalid graph is refused and op stays open: report the attempt failed (one retry)
+            code = str(verdict[1]) if isinstance(verdict, list) and len(verdict) == 2 and verdict[0] == "rejected" else None
             return await R("failed", f"plan-failed:{op}", "plan-failed", [q(op)],
-                           {"refused": render_any(verdict), "by": out.get("by")})
+                           {"refused": render_any(verdict), **({"code": code} if code else {}), "by": out.get("by")})
         if kind in ("author-tests", "detect-tests"):
             if not out.get("suite") or not out.get("base"):
                 return await self._unknown(run, effect, {"unknown": "no suite"})
@@ -1373,7 +1445,8 @@ class CreatePlanEngine:
                 "acceptance": plan.get("acceptance", []),
                 "phase": run["phase"], "status": run["status"], "review_policy": run["review_policy"],
                 "unreviewed": bool(nxt and nxt.startswith("(tell confirm-unreviewed-deploy")),
-                "next_action": nxt, "last_error": run["last_error"], "pieces": pieces, "questions": questions,
+                "next_action": nxt, "last_error": run["last_error"], "waiting": self._waiting(effects),
+                "pieces": pieces, "questions": questions,
                 "checks": checks, "checkpoint": {"ckpt": self._latest_ckpt(run), "workspace": space.get("integration")},
                 "preview": previews[-1] if previews else None,
                 "installed": json.loads(run["installed"]) if run["installed"] else None,
@@ -1383,6 +1456,26 @@ class CreatePlanEngine:
                              "evidence": json.loads(r["evidence"]) if r["evidence"] else None} for r in journal],
                 "effects": [{"kind": e["kind"], "op": e["op"], "state": e["state"], "goal_id": e["goal_id"]} for e in effects],
                 "updated_at": run["updated_at"]}
+
+    def _waiting(self, effects):
+        """A mind this plan waits on whose model calls are refused for spending (Hive.refusals, kept until a call of its
+        is admitted again), as {mind, name, code, message}: the plan says why it isn't moving instead of sitting at its
+        phase with nothing said. A test hive with a 1 USD month limit held its planner 30 minutes that way, the plan at
+        "planning" with no line, no error and no question. The minds are the claimers (else assignees) of the goals
+        of the effects waiting on one; the message is the hive's own, which names no limit a viewer may not see.
+        Time: one goal and one mind row read per waiting effect, n effects."""
+        refusals = getattr(self.hive, "refusals", None) or {}
+        for e in effects:
+            if e["state"] != "waiting" or not e["goal_id"]:   # an effect waits on its goal's mind only while "waiting"
+                continue
+            goal = self.db.one("SELECT claimed_by, assignee FROM goals WHERE id = ?", (e["goal_id"],)) or {}
+            mind = goal.get("claimed_by") or goal.get("assignee")
+            refused = refusals.get(mind) if mind else None
+            if refused:
+                row = self.db.one("SELECT name FROM agents WHERE id = ?", (mind,)) or {}
+                return {"mind": mind, "name": row.get("name") or "A mind", "code": refused.get("code"),
+                        "message": refused.get("message") or "A spending limit has no room for this call."}
+        return None
 
     @staticmethod
     def _last_state(run):

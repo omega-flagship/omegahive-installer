@@ -39,6 +39,7 @@ const MEASURED: Record<string, { worst: number; hookWorst?: number }> = {
 const SCREEN_CAP = 20000
 const SCREEN_CAPPED: Record<string, number> = {
   'features/artifacts/artifacts.test.ts': 531,
+  'features/ask/askStopped.screen.test.ts': 146, // the Ask's Continue (thread.metta), measured two passes at load 36-41
   'features/createPlan/plan.screen.test.ts': 619, // r1.6: the Create plan view, measured two passes at load 4-7
   'features/dot/conversations.screen.test.ts': 1011,
   'features/explore/explore.screen.test.ts': 2333,

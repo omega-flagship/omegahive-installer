@@ -55,16 +55,7 @@ describe('steer reaches the host', () => {
   })
 })
 
-describe('takeover: the host’s done frame (Platform ask-takeover; the live route is Platform’s own patch)', () => {
-  it('the done frame keeps taken_over only as true with outcome cancelled', () => {
-    const base = { type: 'ask', operation_id: 'ask:op-1', turn_id: 't1', seq: 5, at: 'x', phase: 'done', outcome: 'cancelled', spent_usd: 0.01, turn_spent_usd: 0.01 }
-    expect(checkAskEvent({ ...base, taken_over: true })).toMatchObject({ taken_over: true, outcome: 'cancelled' })
-    expect(checkAskEvent({ ...base, taken_over: 'yes' })).not.toHaveProperty('taken_over')
-    expect(checkAskEvent({ ...base, outcome: 'complete', taken_over: true })).not.toHaveProperty('taken_over')
-  })
-})
-
-describe('takeover: the recovery view (state refused, reason takeover)', () => {
+describe('a turn a hive closed by takeover before: its record (state refused, reason takeover)', () => {
   it('reads as the person’s own act, never as a refusal', () => {
     expect(turnOutcome({ state: 'refused', reason: 'takeover' })).toBe('You took over — the Ask stopped.')
     expect(turnOutcome({ state: 'refused', reason: 'stopped' })).toMatch(/^not answered: /)

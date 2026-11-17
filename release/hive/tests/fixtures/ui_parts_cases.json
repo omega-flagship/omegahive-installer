@@ -336,5 +336,121 @@
   "a.js ": false,
   "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.js": false,
   "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.js": true
- }
+ },
+ "frame": [
+  {
+   "name": "canonical",
+   "html": "<html><head><link rel=\"stylesheet\" href=\"./style.css\"></head><body><script type=\"module\" src=\"./app.js\"></script></body></html>",
+   "link": [
+    12,
+    54
+   ],
+   "script": [
+    67,
+    113
+   ]
+  },
+  {
+   "name": "single quotes",
+   "html": "<head><link rel='stylesheet' href='./style.css'></head><body><script type='module' src='./app.js'></script></body>",
+   "link": [
+    6,
+    48
+   ],
+   "script": [
+    61,
+    107
+   ]
+  },
+  {
+   "name": "any order, case, bare values and other attributes",
+   "html": "<LINK HREF=\"./style.css\" REL=\"Stylesheet icon\" media=all><Script src=./app.js TYPE=Module defer></SCRIPT>",
+   "link": [
+    0,
+    57
+   ],
+   "script": [
+    57,
+    105
+   ]
+  },
+  {
+   "name": "a link in a comment is not loaded",
+   "html": "<!-- <link rel=\"stylesheet\" href=\"./style.css\"> --><script type=\"module\" src=\"./app.js\"></script>",
+   "link": null,
+   "script": [
+    51,
+    97
+   ]
+  },
+  {
+   "name": "an empty comment closes at once",
+   "html": "<!--><link rel=\"stylesheet\" href=\"./style.css\"><script type=\"module\" src=\"./app.js\"></script>",
+   "link": [
+    5,
+    47
+   ],
+   "script": [
+    47,
+    93
+   ]
+  },
+  {
+   "name": "a classic script is not taken",
+   "html": "<link rel=\"stylesheet\" href=\"./style.css\"><script src=\"./app.js\"></script>",
+   "link": [
+    0,
+    42
+   ],
+   "script": null
+  },
+  {
+   "name": "a link in noscript is not loaded",
+   "html": "<noscript><link rel=\"stylesheet\" href=\"./style.css\"></noscript><script type=\"module\" src=\"./app.js\"></script>",
+   "link": null,
+   "script": [
+    63,
+    109
+   ]
+  },
+  {
+   "name": "a script that never closes",
+   "html": "<link rel=\"stylesheet\" href=\"./style.css\"><script type=\"module\" src=\"./app.js\">",
+   "link": [
+    0,
+    42
+   ],
+   "script": null
+  },
+  {
+   "name": "another stylesheet first, then style.css",
+   "html": "<link rel=\"stylesheet\" href=\"./other.css\"><link rel=\"stylesheet\" href=\" ./style.css \"><script type=\"module\" src=\"./app.js\"></script>",
+   "link": [
+    42,
+    86
+   ],
+   "script": [
+    86,
+    132
+   ]
+  },
+  {
+   "name": "a bare relative name is not the frame's file",
+   "html": "<link rel=\"stylesheet\" href=\"style.css\"><script type=\"module\" src=\"app.js\"></script>",
+   "link": null,
+   "script": null
+  },
+  {
+   "name": "a tag inside a quoted attribute is text",
+   "html": "<div title=\"<link rel=stylesheet href=./style.css>\"></div><link rel=\"stylesheet\" href=\"./style.css\"><script type=\"module\" src=\"./app.js\"></script>",
+   "link": [
+    58,
+    100
+   ],
+   "script": [
+    100,
+    146
+   ]
+  }
+ ]
 }

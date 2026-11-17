@@ -47,8 +47,10 @@ import pathlib
 import re
 import shutil
 
+from .create_plan_engine import PLAN_RULES
 from .db import new_id, now
-from .goals import stored_proposal
+from .goals import UNANSWERED, stored_proposal
+from .ui_parts import frame_tags
 
 log = logging.getLogger(__name__)
 
@@ -134,26 +136,28 @@ def _inline_assets(text, files, in_css):
 
 
 def frame_document(files):
-    """The same rules as hive/ui/src/lib/appFrame.ts appDocument (single-file mode): index.html must load ./app.js and
-    ./style.css; the style and the module script are inlined; the CSP is the document's first element. Raises
-    ValueError like appDocument throws. Used for the design review's render evidence and the preview's own check.
-    The bundle's other files (an icon.svg, a font) are inlined as data: URIs where index.html or style.css reference
-    them as ./<path>, the only way the frame's CSP lets them load (img-src data:, font-src data:)."""
+    """The same rules as hive/ui/src/lib/appFrame.ts appDocument (single-file mode): index.html must load ./style.css
+    with a stylesheet link and ./app.js with a module script, written any way the browser reads them (ui_parts.
+    frame_tags); the style and the module script are inlined in their place; the CSP is the document's first element.
+    Raises ValueError like appDocument throws. Used for the design review's render evidence and the preview's own
+    check. The bundle's other files (an icon.svg, a font) are inlined as data: URIs where index.html or style.css
+    reference them as ./<path>, the only way the frame's CSP lets them load (img-src data:, font-src data:)."""
     html0 = files.get("index.html")
-    if not isinstance(html0, str) or 'src="./app.js"' not in html0 or 'href="./style.css"' not in html0:
-        raise ValueError("Unexpected app interface format")
-    if not isinstance(files.get("style.css"), str) or not isinstance(files.get("app.js"), str):
+    if not isinstance(html0, str) or not isinstance(files.get("style.css"), str) or not isinstance(files.get("app.js"), str):
         raise ValueError("Unexpected app interface format")
     nonce = "00000000-0000-0000-0000-000000000000"
     csp = (f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; style-src-attr 'unsafe-inline'; "
            "connect-src 'none'; img-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'")
     css = _inline_assets(files["style.css"], files, True)
-    html = _inline_assets(html0, files, False)
-    html = html.replace('<link rel="stylesheet" href="./style.css">',
-                        f'<style nonce="{nonce}">' + re.sub(r"</style", r"<\\/style", css, flags=re.I) + "</style>", 1)
-    html = re.sub(r'<script type="module" src="\./app\.js"></script>',
-                  lambda m: f'<script type="module" nonce="{nonce}">' + re.sub(r"</script", r"<\\/script", files["app.js"], flags=re.I)
-                  + "</script>", html, count=1)
+    html = _inline_assets(html0, files, False)          # other files' data: URIs change no tag boundary
+    link, script = frame_tags(html)
+    if link is None or script is None:
+        raise ValueError("Unexpected app interface format")
+    style = f'<style nonce="{nonce}">' + re.sub(r"</style", r"<\\/style", css, flags=re.I) + "</style>"
+    module = (f'<script type="module" nonce="{nonce}">' + re.sub(r"</script", r"<\\/script", files["app.js"], flags=re.I)
+              + "</script>")
+    for (start, end), text in sorted([(link, style), (script, module)], reverse=True):   # the later one first
+        html = html[:start] + text + html[end:]
     return ('<!doctype html><html data-app-host-origin="https://hive.invalid" data-app-channel="render"><head>'
             f'<meta http-equiv="Content-Security-Policy" content="{csp}">' + html)
 
@@ -250,7 +254,20 @@ class Ports:
 
     # model calls: ask, then post-process the typed answer (now, or when the goal's event arrives)
     async def plan(self, run, body):
-        return await self._call(run, "plan", body, {"sentence": run["sentence"]})
+        # the hive's own reviews, which every piece of those kinds gets anyway: on a fresh install's first real plan the
+        # planner, knowing none of them, added a "code" review of code, which resolved to the piece's own builders
+        reviews = [{k: r[k] for k in ("artifact_kind", "review_kind", "evidence")} for r in self.engine.assignees.review_for()]
+        packet = {"sentence": run["sentence"], "hive_reviews": reviews,
+                  "scaffold_has_acceptance_check": await self.scaffold_has_check(run)}
+        refused = self.engine.previous_plan_refusal(run["plan_id"])
+        if refused:   # the last plan was refused: what it broke, so the planner fixes that instead of answering it again
+            packet["last_plan_refused"] = refused
+        return await self._call(run, "plan", body, packet)
+
+    async def scaffold_has_check(self, run):
+        """Whether the scaffold the plan builds on already has the acceptance check, which tests "detect" would use;
+        on a fresh install's small-app scaffold it doesn't, and a plan that chose detect asked for it four times."""
+        return CHECK_PATH in await self.space.files(run, self.engine._space(run)["scaffold"])
 
     async def design(self, run, body, plan):
         return await self._call(run, "design", body, {"sentence": run["sentence"], "plan": plan})
@@ -262,12 +279,16 @@ class Ports:
             "sentence": run["sentence"], "plan": plan, "check_path": CHECK_PATH, "scaffold": scaffold,
             "contract": "Python stdlib only. Run with the build's files as the working directory. Verify every "
                         "acceptance criterion and the appFrame contract (index.html loads ./style.css and ./app.js). "
+                        "Compute each number the check expects from the example's inputs, in the check's own code, "
+                        "never by copying a result written in a sentence, which can be wrong. "
                         "The LAST line it prints to stdout must be exactly: CREATE-CHECK {\"passed\": bool, "
                         "\"failing\": [owned files], \"notes\": [..]}; when passed is false, failing names at least one "
                         "file a piece owns. Without that line the check has no verdict. "
                         "A unittest file does not print it by itself: run the tests programmatically (for example "
                         "unittest.TextTestRunner(stream=sys.stderr).run(suite)), then print the CREATE-CHECK line "
-                        "from the result. Never let an exception escape before that line. "
+                        "from the result. Never let an exception escape before that line, and never stop early: "
+                        "a missing file or a failed step is a finding to put in failing, so keep checking and print "
+                        "the CREATE-CHECK line last, before any exit. "
                         "It must FAIL on the scaffold."}
         previous = self.engine.previous_check_error(run["plan_id"])
         if previous:
@@ -281,6 +302,13 @@ class Ports:
             packet["contract"] += (" Your previous check did not give a verdict (" + str(previous.get("reason")) +
                                    "); previous_attempt holds its error output. Fix that check so its last stdout "
                                    "line is the CREATE-CHECK line.")
+            if previous.get("reason") == "crashed" and previous.get("why") == "no CREATE-CHECK line" \
+                    and previous.get("output"):
+                # it printed findings, then exited before its verdict: on 18 Nov four checks in a row printed
+                # "FAIL: missing file index.html" and exited 1 on the scaffold, which is exactly where files are missing
+                packet["contract"] += (" It printed its findings and stopped (exit " + str(previous.get("exit_code")) +
+                                       ") before its CREATE-CHECK line: record each finding in failing and keep "
+                                       "going, then print the CREATE-CHECK line last.")
         return await self._call(run, "author-tests", body, packet)
 
     async def detect_tests(self, run, body):
@@ -359,7 +387,11 @@ class Ports:
         return self.apps.preview(run, files, plan)
 
     async def deploy(self, run, body, plan):
-        return self.apps.deploy(run, body, plan)
+        out = self.apps.deploy(run, body, plan)
+        if isinstance(out, dict) and out.get("program_id"):
+            swarms = self.apps.turn_on(run["person"], out["program_id"])
+            log.info("create plan %s: %s turned on in %s", run["plan_id"], out["program_id"], swarms or "no swarm")
+        return out
 
     async def deploy_readback(self, run, body, plan):
         return self.apps.readback(run, body, plan)
@@ -384,12 +416,24 @@ class Ports:
 
 # ---- minds: model calls as hive goals for the resolved mind ------------------------------------------------------
 
+# what the planner answers: the fields with their types, then every rule the plan check refuses a plan for, read from
+# every rule a plan must pass, the host's check's and the reducer's, from their one table (create_plan_engine.PLAN_RULES,
+# which a test reads back from both), so the prompt can't drift from the checks; on a fresh install's first real plans
+# the model, told only the fields' names, wrote evidence as a sentence, a selector as "code", a piece with no files, a
+# review of code by its own builders and a design step beside design pieces, one refused plan after another
+PLAN_SHAPE = ('{"plan": {"title": str, "pieces": [{"id": word, "kinds": [code or design], "assignee": optional ["team", '
+              'swarm] | ["mind", agent] | ["capability", cap] | ["hive", hive, cap] | ["open", cap], "title", "brief", '
+              '"deps": [piece ids], "files": [paths it writes]}], "acceptance": [what the finished thing must do, each a sentence; an '
+              'example with numbers writes its working out, such as \"two 3.50 items with 10% tax: 7.00 + 0.70 = '
+              '7.70\"], "questions": [{"q": word, '
+              '"about": "plan"|"deploy"|{"piece": id}, "text", "choices": [str]}], "needs": {"design": '
+              '"design"|"no-design", "tests": "author"|"detect", "reviews": optional [{"artifact_kind": word, '
+              '"review_kind": word, "evidence": word}], "caps": optional [{"selector": a list as for assignee, "n": '
+              'whole number}]}}}. A word is a letter, then letters, digits, _ or -, 48 at most. Add a review only when '
+              'the hive\'s own (hive_reviews in the packet, which every piece of their kind gets anyway) lack it, its '
+              'review_kind a capability some team or mind offers, such as security, never the piece\'s own kind.')
 ANSWER_SHAPES = {
-    "plan": '{"plan": {"title": str, "pieces": [{"id", "kinds": [artifact kinds, e.g. design or code], "assignee": '
-            'optional ["team", swarm] | ["mind", agent] | ["capability", cap] | ["hive", hive, cap] | ["open", cap], '
-            '"title", "brief", "deps": [piece ids], "files": [paths]}], "acceptance": [str], "questions": [{"q", "about": '
-            '"plan"|"deploy"|{"piece": id}, "text", "choices": [str]}], "needs": {"design": "no-design", "tests": "author", '
-            '"reviews": [{"artifact_kind", "review_kind", "evidence"}], "caps": [{"selector", "n"}]}}}',
+    "plan": PLAN_SHAPE + " The plan check refuses a plan unless " + "; ".join(PLAN_RULES.values()) + ".",
     "design": '{"ref": "a design reference"}',
     "author-tests": '{"files": {"checks/acceptance_check.py": "<python source>"}}',
     "review": '{"decision": "pass"|"fail", "notes": str}',
@@ -431,7 +475,7 @@ class GoalMinds:
 
     async def collect(self, run, kind, body, goal_id):
         goal = self.hive.db.one("SELECT * FROM goals WHERE id = ?", (goal_id,))
-        if goal is None or goal["status"] in ("failed", "cancelled"):
+        if goal is None or goal["status"] in UNANSWERED:
             return {"unknown": f"goal {goal['status'] if goal else 'missing'}"} if kind != "plan" else {"failed": "goal ended"}
         if goal["status"] not in ("done", "submitted"):
             return None
@@ -756,7 +800,8 @@ class AppReleases:
     """Preview: a content-addressed release folder (plugin.json, program.py, ui/ + bundle.lock.json) under
     <data>/create/previews/<digest>; its files are served to the canvas only after the lock verifies (sandbox_run
     verify_bundle, as programs.ui_bundle does). Deploy: the same release copied to <data>/create/apps/<id> and loaded
-    with programs.reload_one; refused (definite) if that folder is not on HIVE_PLUGIN_DIRS."""
+    with programs.reload_one, then turned on where Create is for the person who made it (turn_on); refused (definite)
+    if that folder is not on HIVE_PLUGIN_DIRS."""
 
     def __init__(self, engine, root=None):
         self.engine, self.hive = engine, engine.hive
@@ -899,6 +944,37 @@ class AppReleases:
         if entry.get("error"):
             return {"refused": f"the hive did not load it: {entry['error']}"}
         return {"program_id": app_id, "digest": entry.get("digest"), "installed_at": now()}
+
+    def turn_on(self, person, app_id):
+        """A deployed app goes where Create is for the person who made it, so Open and their Apps list find it: each
+        swarm Create is on in that they see (my_apps' own rule for a swarm app). Installed and loaded alone, an app is
+        on in no swarm, so its Open said "This app isn't available to you here" under "It's in your Apps now" (v0.35
+        rc1, a fresh Mac install). The write is the install-and-review act's own Use in (person_apps.review), an admin's,
+        since the Apps page's turn-on (app_attachments.activate) takes only apps with attachment hooks and a Create app
+        has no actions to attach. A member's app waits for an admin to turn it on, as any app does. Returns the swarms
+        it was turned on in. Time: one read of Create's activations, one swarm read each, one write per swarm."""
+        from .my_apps import CREATE
+        from .visibility import Viewer
+        row = self.hive.db.one("SELECT role, disabled FROM people WHERE id = ?", (person[5:],)) \
+            if str(person).startswith("user:u_") else None
+        if row is None or row["disabled"] or row["role"] != "admin":
+            return []
+        viewer = Viewer(person, True, audit=False)
+        hidden = self.hive.visibility.hidden_ids(viewer)
+        swarms = []
+        for act in self.hive.db.all("SELECT swarm FROM app_activations WHERE program = ? AND active = 1 ORDER BY rowid",
+                                    (CREATE,)):
+            swarm = self.hive.db.one("SELECT * FROM swarms WHERE id = ?", (act["swarm"],))
+            if swarm is None or swarm.get("archived_at") or not viewer.sees(swarm) or act["swarm"] in hidden:
+                continue
+            swarms.append(act["swarm"])
+        with self.hive.db.transaction():
+            for sid in swarms:
+                self.hive.db.execute("INSERT INTO app_activations VALUES (?,?,1,?) ON CONFLICT(program,swarm) DO UPDATE "
+                                     "SET active=1,by_person=excluded.by_person", (app_id, sid, person))
+        for sid in swarms:
+            self.hive.events.publish("program.activation", program=app_id, swarm_id=sid, active=True)
+        return swarms
 
 
 def HivePorts(engine):

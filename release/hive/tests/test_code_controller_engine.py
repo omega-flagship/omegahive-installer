@@ -1041,6 +1041,26 @@ def test_a_helpers_role_rules_are_written_with_its_row_before_finish_agent(x, mo
     assert seen and "code-open" in seen[0] and "code-helper-instruction" in seen[0]   # present at commit, not after
 
 
+def test_a_reviewer_goal_that_stalls_is_a_definite_review_fail(x, monkeypatch):
+    """A reviewer that claims its goal and goes quiet: once the hive stalls the goal no verdict is coming, so the
+    review ends as review-fail with what happened, never a wait on an update that won't come."""
+    from hive.core.goals import MAX_ATTEMPTS
+    fake(x, monkeypatch, [(True, "ok\n")])
+    add_reviewer(x)
+    run(x.engine.step(x.rid))
+    helper_finishes(x, 1, SUGGESTION)
+    eff = x.hive.db.one("SELECT body FROM code_controller_effects WHERE request_id = ? AND kind = 'review'", (x.rid,))
+    body = json.loads(eff["body"])
+    x.hive.goals.claim(x.hive.agent(body["reviewer_id"]), body["goal_id"])
+    x.hive.db.execute("UPDATE goals SET lease_until = ?, attempts = ? WHERE id = ?",
+                      ("2000-01-01T00:00:00.000Z", MAX_ATTEMPTS, body["goal_id"]))
+    run(x.hive.goals.expire())
+    run(x.engine.on_event({"type": "goal.updated", "goal": {"id": body["goal_id"]}}))
+    fail = next(r for r in x.engine.view(x.rid)["journal"] if r["kind"] == "review-fail")
+    assert "unknown" not in kinds(x) and fail["evidence"]["goal_status"] == "stalled"
+    assert "its goal was stalled" in fail["evidence"]["notes"]
+
+
 def test_a_reviewer_goal_that_fails_is_a_definite_review_fail_never_unknown(x, monkeypatch):
     fake(x, monkeypatch, [(True, "ok\n")])
     add_reviewer(x)

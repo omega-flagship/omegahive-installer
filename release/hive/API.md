@@ -1011,7 +1011,11 @@ rate_limited | too_large | timed_out | operation_conflict | invalid | stopped`, 
 
 - `POST /api/ask` creates one turn and returns **202** with the turn view (below).
   - Body (exact keys, 32 KB at most):
-    `{operation_id: [A-Za-z0-9_.:-]{8,120}, text: 1–4000 chars, context?, thread?: <Ask thread id>, via?: "typed"|"voice"}`.
+    `{operation_id: [A-Za-z0-9_.:-]{8,120}, text: 1–4000 chars, context?, thread?: <Ask thread id>, via?: "typed"|"voice", continues?: <ended turn id>}`.
+  - Continue names its stopped turn with `continues` (the accepted frame's `turn_id`). Typed requests omit it.
+    It must name an undeleted, ended turn of the same person and answering mind, created within the last 24 hours
+    (`ask_intents.TURN_MAX_AGE`); otherwise admission returns 400 `invalid`. The field is stored on the turn and
+    included in the idempotency body digest.
   - `context` (exact keys): `{route?: ≤120, experience?: slug, program?: app id, swarm_id?, mind?: <mind id>,
     with?: <mind id>, selection?: [≤20 {kind, ref}], view?: ≤2 KB {refs?: [≤50 {kind, ref}], acts?: [≤50 act ids],
     summary?: ≤500}}`. The `kind` of a ref is one of `mind|swarm|goal|room|artifact|item|feature`.
@@ -1028,29 +1032,24 @@ rate_limited | too_large | timed_out | operation_conflict | invalid | stopped`, 
   order, after `after`, at most 100), `next_after` and `more`. Only the asker can read it; anyone else gets 404
   `not_available`. Limited to 60 per minute.
 - `POST /api/ask/{operation_id}/stop` closes an open turn as `refused/stopped`. A later reply from the mind still
-  lands in the room.
-- `POST /api/ask/{operation_id}/takeover` (body: none, whitespace, `{}`, JSON `null` or `{"reason": "user_took_over"}`;
-  anything else 400 `invalid`, over 1 KB 413 `too_large`): the person took the page back during a conductor turn (their
-  own click, scroll or Back). The asker only; anyone else, an admin included, gets 404 `not_available`, as does a turn
-  that is not a conductor turn (the conductor off: nothing changes). An open turn closes at once (row `refused`, reason
-  `takeover`; its `done` frame is `outcome: "cancelled"` with `taken_over: true`, sent to every view the person has
-  open); the loop is cancelled, so no further model call or act follows, and a result posted for one of its acts gets
-  409 `turn_closed`. Money (this holds for stop, thread end, the turn's time limit and shutdown as well): a model call is
-  reserved first, then committed at httpcore's send_request_headers trace (after any wait for a pooled connection and
-  after connecting), where the turn is read again: a call the close caught before then never reaches the provider and
-  its hold is released. Dispatch = commitment to the in-flight call; at most this one already-authorised
-  request may still be handed off after a takeover commits, and it is settled at its real cost. No further model call
-  or act follows it, and nothing retries or redirects it (the provider client has retries and redirects off). A committed paid call finishes apart
-  from the loop, in its own window of up to 300 s (not the turn's remaining time), and is settled at its real cost. At
-  shutdown no new conductor turn starts (an admitted one closes at once, spending nothing), running turns' loops are
-  cancelled and joined, and every call they had committed gets up to 10 s in all to settle before the provider client closes;
-  the turns' rows then close by expiry, as on any restart. Best effort: a call that fails, outlasts its window or is
-  still out at the end of that grace keeps its worst case held unknown, as any unknown outcome, logged once by turn and
-  exception type; a failed shutdown drain is logged too.
-  The answer is a deliberately small receipt, not the turn view `stop` returns: 200 `{operation_id, turn_id, state,
-  ended_at}`, where `state` is the takeover's own outcome, not the row state: `taken_over` on the first call and every
-  repeat; a turn that had already ended another way answers its own closed state (`done` or `refused`), unchanged. The
-  turn view (`GET /api/ask/{operation_id}`) of a taken-over turn reads `state: "refused", reason: "takeover"`.
+  lands in the room. A conductor turn's loop is cancelled, so no further model call or act follows, and a result posted
+  for one of its acts gets 409 `turn_closed`. Money (this holds for stop, thread end, the turn's time limit and shutdown
+  alike): a model call is reserved first, then committed at httpcore's send_request_headers trace (after any wait for a
+  pooled connection and after connecting), where the turn is read again: a call the close caught before then never
+  reaches the provider and its hold is released. Dispatch = commitment to the in-flight call; at most this one
+  already-authorised request may still be handed off after a stop commits, and it is settled at its real cost. No
+  further model call or act follows it, and nothing retries or redirects it (the provider client has retries and
+  redirects off). A committed paid call finishes apart from the loop, in its own window of up to 300 s (not the turn's
+  remaining time), and is settled at its real cost. At shutdown no new conductor turn starts (an admitted one closes at
+  once, spending nothing), running turns' loops are cancelled and joined, and every call they had committed gets up to
+  10 s in all to settle before the provider client closes; the turns' rows then close by expiry, as on any restart.
+  Best effort: a call that fails, outlasts its window or is still out at the end of that grace keeps its worst case
+  held unknown, as any unknown outcome, logged once by turn and exception type; a failed shutdown drain is logged too.
+- The person's own use of the page (a click, a scroll, a key that moves the page, Back) never ends a turn. The page
+  holds the mind's moves of the page itself for the rest of that turn, until the person steers it: an `act` it is sent
+  then is answered `stale_origin` and not applied, and a move the mind proposes becomes a Go card. The turn runs on to
+  its answer. `POST /api/ask/{operation_id}/takeover` is posted only by a page loaded before this rule; it always
+  answers 404 `not_available` and changes nothing, which such a page reads as nothing for the host to do.
 - `GET /api/ask?limit=50` lists the caller's own turns, admins included.
 - `DELETE /api/ask/threads/{thread_id}` is for the thread's owner only. It returns `{deleted, turns}`, and it:
   - ends the thread, which restores the cap and stops any open turn;
@@ -1323,6 +1322,13 @@ Ask person gate. Anything not the caller's own is 404 `not_available`.
   failure, a turn more than 24 h old with `reason: "turn_too_old"`); 409 `intent_pending` (another body is pending, with
   its `intent_id`); 409 `intent_in_flight` (the turn's intent is dispatching). A `refused` predecessor becomes `abandoned`
   in the same transaction; a `linked` one stays and the new intent gets a new key.
+- **Continue:** recording on a turn with `continues` follows its ancestors while each is within its 24-hour window.
+  A `pending`, `dispatching` or `linked` ancestor intent with the same kind and destination returns 409
+  `intent_already_handed_over`, without creating another intent. Refused and abandoned intents do not block.
+  The destination is `{to_swarm, task_id, workspace_id, repository_id}` for `code.request` and `code.test`,
+  `{to_swarm, maker_id, program_id}` for `studio.session`, and `{to_swarm}` for `research.request`.
+  The conductor tells the person it is already handed over (or waiting for their go when pending), and tells the mind
+  not to retry that hand-over. A typed request without `continues` is unaffected.
 - **Submit:** claims `pending`/`refused` → `dispatching`, then calls the r2.13 admission with a link inside its
   transaction. Settling reads the row, then this key's operation record: if a matching record exists (a raced winner)
   the intent links from it and answers it. Otherwise a refusal from the admission is returned unchanged (r2.13.1 codes)

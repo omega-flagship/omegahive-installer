@@ -559,6 +559,19 @@ class ProviderStore:
 
     # ---- the OpenRouter catalogue ----------------------------------------------------------------
 
+    def output_limit(self, model):
+        """The most output tokens an OpenRouter model can give (its catalogue entry's top provider's
+        max_completion_tokens), or None when the model isn't on OpenRouter or the catalogue doesn't say. Example:
+        "openrouter/anthropic/claude-sonnet-5.5" reads the entry "anthropic/claude-sonnet-5.5". Time: one dict read,
+        the index built once per catalogue (n entries)."""
+        provider_name, _, model_id = str(model or "").partition("/")
+        if provider_name != OPENROUTER:
+            return None
+        models = self.catalog["models"]
+        if getattr(self, "_limits_of", None) is not models:
+            self._limits_of, self._limits = models, {m["id"]: m.get("max_completion_tokens") for m in models}
+        return self._limits.get(model_id) or None
+
     async def models(self, refresh=False):
         provider = self.provider(OPENROUTER)
         fresh = time.time() - self.catalog["fetched_at"] < CATALOG_TTL

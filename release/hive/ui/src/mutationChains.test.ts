@@ -83,12 +83,6 @@ const ALLOW: Allow[] = [
   { at: 'store/ask.ts:release>queueMicrotask>iife', writes: ['steerTo*'], path: 2,
     guard: { re: /if \(!holds\(\)\) return/, before: ['steerTo'] },
     why: 'store/ask.ts thread binding: held words are steered one at a time, each only while `holds()` (snap.ok() and the turn still there)' },
-  { at: 'store/ask.ts:apply', writes: ['revertSeq*'], path: 2,
-    guard: { re: /if \(!t \|\| !t\.tookOver \|\| t\.takeover \|\| t\.state !== 'open' \|\| !client\?\.askTakeover\) return/, before: ['askTakeover'], in: 'store/ask.ts:sendTakeover' },
-    why: 'revertSeq writes only through patchTurn → sendTakeover, which sends the takeover at most once per turn (marked sending before it is sent) and only for an open turn of the current thread' },
-  { at: 'store/ask.ts:sendTakeover', writes: [], path: 0,
-    guard: { re: /if \(!snap\.ok\(\)\) return/, before: ['askStop'] },
-    why: 'found by the helper-effect scan: a takeover the host did not take is stopped instead, only after `snap.ok()` (added in this round: before it, a stop could follow a sign-in change)' },
   // the Ask's act runner: an act's result is posted only once the page the act left has settled (features/ask/conductor)
   { at: 'features/ask/conductor.ts:step', writes: ['answer', 'answer', 'answer', 'perform', 'answer'], path: 2,
     guard: { re: /if \(!origin\.ok\(\)\) return/, before: ['post'], in: 'features/ask/conductor.ts:answer' },
@@ -156,7 +150,10 @@ describe('the mutation sets are derived, and pinned', () => {
     // press); feedback, its GET, is a read
     // feedback drafts: 213 = 212 plus dismissFeedbackDraft (DELETE /api/feedback/drafts/{id}: the person dismisses a
     // mind's draft, or its report left); feedbackDrafts, its GET, is a read
-    expect(client.writes.size).toBe(213)
+    // the Ask above the UI (Jon, 17 Nov: "stop shouldn't happen"): 212 = 213 less askTakeover (POST
+    // /api/ask/{op}/takeover), since the person's use of the page no longer asks the host to end the turn
+    expect(client.writes.size).toBe(212)
+    expect(client.writes.has('askTakeover')).toBe(false)
     expect(client.writes.has('consentView')).toBe(true)
     expect(client.writes.has('checkUpdates')).toBe(true)
     expect(client.writes.has('dismissFeedbackDraft')).toBe(true)

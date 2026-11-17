@@ -46,17 +46,16 @@ export const REFUSAL_WORDS: Record<RefusalReason, { say: string; offer?: Offer[]
   // operation_conflict and invalid are only ever HTTP refusals raised before anything is admitted (hive/core/ask.py
   // _decide and the admission transaction: `raise refusal(hive, "operation_conflict")` before the turn row is inserted;
   // _validate/_steer_body: "invalid"; steer: raised before any write), never a turn's frame (_close's reasons are
-  // answer, stopped, takeover, timed_out, spend_limit). So for THIS request nothing was done: the claim holds.
+  // answer, stopped, timed_out, spend_limit). So for THIS request nothing was done: the claim holds.
   operation_conflict: { say: 'That request clashed with an earlier one. Nothing was done; ask again.', offer: [{ kind: 'retry', label: 'Ask again' }] },
   invalid: { say: 'The hive couldn’t take that request as it was. Nothing was done.' },
   stopped: { say: 'Stopped. Any later reply stays in the conversation.' },
+  // a turn a hive closed when the person touched the page, before the person's use of the page stopped ending turns:
+  // kept for those turns' records (Earlier, a recovery read); no hive closes a turn so now
   takeover: { say: 'You took over — the Ask stopped.' },
   // OI-13: never retried on its own; the request stays in the conversation to ask again once the key is added
   own_key_needed: { say: 'This mind would run on someone else’s key, so nothing was sent and nothing was spent. Add your own key in Keys, then ask again.', offer: [{ kind: 'keys', label: 'Add your own key' }] },
 }
-
-/** The person took over the page and the host ended the turn (done {outcome: cancelled, taken_over: true}). */
-export const TAKEOVER_WORDS = 'You took over — the Ask stopped.'
 
 /**
  * A research report back at its turn (research.deliver), by how its task ended; a report that is back is drawn below

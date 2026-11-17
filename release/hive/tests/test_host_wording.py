@@ -192,11 +192,11 @@ def test_identifiers_pass():
 # ---- data identifiers that only look like wording (Jon 11-09 wording sweep): the Create plan's assignee selector kind
 # ['team', swarm] is stored in journalled plans and named in the planner's answer shape, and "Team sessions" is the
 # existing bridged-session swarm's stored name. Renaming any of them is a data migration, not a wording change.
-from hive.core.create_plan_ports import ANSWER_SHAPES as _CREATE_SHAPES  # noqa: E402
+from hive.core.create_plan_ports import PLAN_SHAPE as _CREATE_SHAPE  # noqa: E402
 ALLOWED.update({
     ("core/create_assignees.py", "team"): f"{KEY}: the assignee selector kind stored in journalled plans",
     ("core/create_plan_engine.py", "team"): f"{KEY}: the assignee selector kind read back from journalled plans",
-    ("core/create_plan_ports.py", _CREATE_SHAPES["plan"]): f"{KEY}: the planner's answer shape names the selector kind",
+    ("core/create_plan_ports.py", _CREATE_SHAPE): f"{KEY}: the planner's answer shape names the selector kind",
     ("core/credentials.py", "Team sessions"): f"{KEY}: the existing bridged-session swarm's stored name",
 })
 ALLOWED_USES.update({("core/create_assignees.py", "team"): 4, ("core/create_plan_engine.py", "team"): 4})

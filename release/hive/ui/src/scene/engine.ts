@@ -100,13 +100,26 @@ const GALAXY_POINT_PX = 34
 const SWARM_POINT_PX = 22
 /** A swarm's name shows once its slot is at least this big on screen (px). */
 const SWARM_LABEL_PX = 48
-/**
- * A galaxy's name is drawn in screen px above its outline (drawLabels: its top 26 px above, 11–13 px type), so the fit
- * keeps this much screen room above the universe (and above a galaxy flown into), whatever the zoom: world-unit room
- * alone shrinks to a few px at universe zoom and the top name ran under the HUD's stats (followups-r5).
- */
-export const GALAXY_LABEL_ROOM = 30
+/** A galaxy's name is drawn in screen px with its top this far above the outline (drawLabels), in 11–13 px caps. */
 const GALAXY_LABEL_LIFT = 26
+
+/**
+ * What a fit keeps on screen: a world point and the room around it, in screen px at a zoom. Words are drawn in screen
+ * px whatever the zoom, so their room is screen px too: room in world units shrinks to a few px at universe zoom, where
+ * the top galaxy's name ran under the HUD's stats (followups-r5), and below the lowest swarm its name and counts ran
+ * into the docked Ask's room (Nov 17, 1440x900).
+ */
+interface FitItem {
+  x: number
+  y: number
+  room(z: number): { up: number; down: number; left: number; right: number }
+}
+
+/** The scene's two faces for words (drawLabels): caps for galaxy, cluster and swarm names, Inter for a mind's name. */
+const CAPS_FONT = (px: number) => `600 ${px}px "Space Grotesk Variable", "Space Grotesk", system-ui, sans-serif`
+const NAME_FONT = (px: number) => `500 ${px}px "Inter Variable", Inter, system-ui, sans-serif`
+/** A mind's name size at a zoom (drawLabels). */
+const namePxAt = (z: number) => (z < 0.7 ? 10 : 11)
 
 export interface Insets {
   top: number
@@ -355,7 +368,10 @@ export class HiveEngine {
   private camT = { x: 0, y: 0, z: 0.8 }
   private camK = 3.2
   private follow: string | null = null
-  /** The fit the camera is in, until the person moves it or it flies to a dot or swarm: refitted when insets change. */
+  /**
+   * The fit the camera is in, until the person moves it or it flies to a dot or swarm: refitted when the insets, the size
+   * or what it fits change (a swarm or mind added after the first fit re-packs the map, so the old fit no longer holds it).
+   */
   private fit: { galaxy: string | null } | null = null
   /**
    * A dot flight whose zoom is still the engine's own (followups-r6): its zoom is clamped again when the insets or the
@@ -539,8 +555,8 @@ export class HiveEngine {
   /** The camera the engine chose itself, fitted again: the fit nobody moved, or a dot flight's zoom. Never a moved camera. */
   private refit(): void {
     if (this.fit) {
-      if (this.fit.galaxy) this.flyToGalaxy(this.fit.galaxy)
-      else this.overview()
+      // a galaxy that is gone from the map (or the only one left) falls back to the whole map, as land() does
+      if (!(this.fit.galaxy && this.galaxies.length > 1 && this.flyToGalaxy(this.fit.galaxy))) this.overview()
     } else if (this.dotFly && this.follow === this.dotFly.id) {
       this.camT.z = this.dotZoom(this.dotFly.from)
     }
@@ -685,6 +701,10 @@ export class HiveEngine {
     for (const [id, dot] of this.dots) if (!seen.has(id) && dot.dying === 0) dot.dying = 0.0001
     this.wanderCore.members = bySwarm.get('__wander')?.length ?? 0
     this.synced = d.agents.length > 0 || this.synced
+    // the arrangement may have changed (a swarm or mind added or gone re-packs the map): a fit nobody has moved away from
+    // fits it again, as for a change of room or size. On a fresh hive the research team arrives after the first fit, and
+    // the re-packed map kept the earlier camera, so a team sat under the HUD's stats bar with its mind's name across it.
+    if (this.fit) this.refit()
     // A held view has no animation step to settle new data or retire removed minds. Paint the
     // current shown set on a data change, never keep an earlier viewer's map until Pro resumes.
     if (this.drawingHolds.size) {
@@ -778,33 +798,133 @@ export class HiveEngine {
     }
   }
 
-  private bounds() {
-    let minX = Infinity
-    let minY = Infinity
-    let maxX = -Infinity
-    let maxY = -Infinity
-    const add = (x: number, y: number, r: number) => {
-      minX = Math.min(minX, x - r)
-      minY = Math.min(minY, y - r)
-      maxX = Math.max(maxX, x + r)
-      maxY = Math.max(maxY, y + r)
-    }
-    if (this.galaxies.length > 1) {
-      // the universe: every galaxy's outline, with room for its label above it
-      for (const g of this.galaxies) add(g.x, g.y - 12, g.r + 24)
-    } else {
-      // one galaxy (a small hive): fit its swarms' orbits, as before
-      for (const c of this.cores.values()) {
-        let r = 80
-        for (const d of this.dots.values()) if (d.swarmId === c.id) r = Math.max(r, d.orbitR + 18)
-        add(c.tx, c.ty, r)
+  /**
+   * What a fit keeps on screen, with the words drawn around each (drawLabels) at the fit's zoom: on the universe map each
+   * galaxy's outline and its name above it; in one galaxy, or in the galaxy `galaxy` flown into, each swarm's minds on
+   * their orbits with each mind's name below it and the swarm's name and counts below its core, and the minds of no
+   * swarm; and the private cluster with its tag above. Time: g + c + d, g galaxies, c swarms, d minds.
+   */
+  private fitItems(galaxy: string | null = null): FitItem[] {
+    const items: FitItem[] = []
+    // each world box as the fit always kept it: an outline 36 above, 12 below and 24 aside, a swarm at least 80 around
+    const outline = (x: number, y: number, r: number, name: string, px: number, lift: number): FitItem => {
+      const half = this.wordWidth(name, CAPS_FONT(px), '0.14em', name.length * px * 0.75) / 2
+      return {
+        x, y, room: (z) => {
+          // a name shows once its outline is 14 px across (drawLabels), its top `lift` px above the outline
+          const named = r * z >= 14
+          const side = Math.max((r + 24) * z, named ? half : 0)
+          return { up: Math.max((r + 36) * z, named ? r * z + lift : 0), down: (r + 12) * z, left: side, right: side }
+        },
       }
-      for (const d of this.dots.values()) if (!d.swarmId) add(this.wanderCore.tx, this.wanderCore.ty, d.orbitR + 18)
+    }
+    if (this.galaxies.length > 1 && galaxy === null) {
+      for (const g of this.galaxies) items.push(outline(g.x, g.y, g.r, g.label.toUpperCase(), g.cloud ? 13 : 11, GALAXY_LABEL_LIFT))
+    } else {
+      const minds = new Map<string | null, Dot[]>()
+      // each mind's name, half its width at both sizes it is drawn at, measured once for the whole fit
+      const halves = new Map<Dot, [number, number]>()
+      for (const d of this.dots.values()) {
+        if (d.dying) continue
+        const list = minds.get(d.swarmId)
+        if (list) list.push(d)
+        else minds.set(d.swarmId, [d])
+        halves.set(d, [10, 11].map((px) => this.wordWidth(d.name, NAME_FONT(px), '0px', d.name.length * px * 0.58) / 2) as [number, number])
+      }
+      const half = (d: Dot, z: number) => halves.get(d)![namePxAt(z) - 10]
+      for (const c of this.cores.values()) {
+        if (galaxy === null || c.hive === galaxy) items.push({ x: c.tx, y: c.ty, room: (z) => this.coreRoom(c, minds.get(c.id) ?? [], half, z) })
+      }
+      const wander = minds.get(null)
+      if (wander && (galaxy === null || this.wanderCore.hive === galaxy)) {
+        items.push({ x: this.wanderCore.tx, y: this.wanderCore.ty, room: (z) => this.coreRoom(null, wander, half, z) })
+      }
     }
     const pc = this.privateCluster
-    if (pc) add(pc.x, pc.y - 12, pc.r + 24)
-    if (minX === Infinity) add(0, 0, 200)
-    return { minX, minY, maxX, maxY }
+    if (pc && galaxy === null) items.push(outline(pc.x, pc.y, pc.r, 'PRIVATE', 11, 26))
+    if (!items.length) items.push({ x: 0, y: 0, room: (z) => ({ up: 200 * z, down: 200 * z, left: 200 * z, right: 200 * z }) })
+    return items
+  }
+
+  /**
+   * The screen room around a swarm's core at zoom z (`c` null: the minds of no swarm, around the wander core): every
+   * mind's orbit as the fit always kept it (orbitR + 18, and 80 for a swarm), each mind's name below it at the farthest
+   * it drifts once names show at that zoom (an asleep orbit loosens 12%, plus 4 of wobble), `half` its name's half width,
+   * and the swarm's name and counts below the core once they show. Time: m, m = its minds.
+   */
+  private coreRoom(c: Core | null, minds: Dot[], half: (d: Dot, z: number) => number, z: number): { up: number; down: number; left: number; right: number } {
+    let up = c ? 80 * z : 0
+    let down = up
+    let side = up
+    for (const d of minds) {
+      const r = (d.orbitR + 18) * z
+      up = Math.max(up, r)
+      down = Math.max(down, r)
+      side = Math.max(side, r)
+      const lit = d.status === 'awake' || d.status === 'error' || d.status === 'starting'
+      if (z <= (lit ? 0.42 : 0.75)) continue
+      // drawLabels: the name's top is sr * 2.2 + 6 below the dot, a line of 1.3 times its size
+      const reach = (d.orbitR * 1.12 + 4) * z
+      const sr = Math.max(0.8, 4.6 * Math.min(z, Math.pow(z, 0.6)) * 1.22 * d.size)
+      down = Math.max(down, reach + sr * 2.2 + 6 + namePxAt(z) * 1.3)
+      side = Math.max(side, reach + half(d, z))
+    }
+    if (c && c.slot * z >= SWARM_LABEL_PX) {
+      const b = swarmLabelBox(0, 0, z, c.name.toUpperCase(), `${plural(c.motes.length, 'belief')} · ${plural(c.members, 'mind')}`)
+      down = Math.max(down, b.top + b.height)
+      side = Math.max(side, b.width / 2)
+    }
+    return { up, down, left: side, right: side }
+  }
+
+  /** The width of `text` in `font` tracked `spacing`, as drawLabels measures it; `estimate` where nothing measures fonts. */
+  private wordWidth(text: string, font: string, spacing: string, estimate: number): number {
+    const ctx = this.ctx
+    ctx.save()
+    ctx.font = font
+    setSpacing(ctx, spacing)
+    const width = ctx.measureText(text).width || estimate
+    ctx.restore()
+    return width
+  }
+
+  /**
+   * The camera fitting `items` into vw x vh px: the largest zoom in [lo, hi] at which they all fit, by bisection since
+   * each item's room grows with the zoom, and the world point that centres them at it. Below lo they are centred and
+   * may overflow. Time: 32 (n + m) room steps, n = items, m = the minds they hold.
+   */
+  private fitTo(items: FitItem[], vw: number, vh: number, lo: number, hi: number): { x: number; y: number; z: number } {
+    const extent = (z: number) => {
+      let top = Infinity
+      let bottom = -Infinity
+      let left = Infinity
+      let right = -Infinity
+      for (const it of items) {
+        const m = it.room(z)
+        top = Math.min(top, it.y * z - m.up)
+        bottom = Math.max(bottom, it.y * z + m.down)
+        left = Math.min(left, it.x * z - m.left)
+        right = Math.max(right, it.x * z + m.right)
+      }
+      return { top, bottom, left, right }
+    }
+    const fits = (z: number) => {
+      const e = extent(z)
+      return e.bottom - e.top <= vh && e.right - e.left <= vw
+    }
+    let z = hi
+    if (!fits(hi)) {
+      let a = lo
+      let b = hi
+      for (let k = 0; k < 30; k++) {
+        const m = (a + b) / 2
+        if (fits(m)) a = m
+        else b = m
+      }
+      z = a
+    }
+    const e = extent(z)
+    return { z, x: (e.left + e.right) / 2 / z, y: (e.top + e.bottom) / 2 / z }
   }
 
   /** The farthest the camera zooms out: the whole universe fits, with some room (never closer than 0.22). */
@@ -821,21 +941,13 @@ export class HiveEngine {
   }
 
   private fitZoom() {
-    const b = this.bounds()
     const i = this.insets
     // the docked Ask reports its own room as the inset `ask` (followups-r5), so the bottom inset already keeps clear of
     // it: no guessed extra room below (followups-r6 removed the old 72 px "dock" guess, which came back whenever the
     // bottom inset was under 60 px and pushed the universe up and smaller)
-    // the universe keeps screen room above it for the top galaxy's name (GALAXY_LABEL_ROOM)
-    const label = this.galaxies.length > 1 ? GALAXY_LABEL_ROOM : 0
     const vw = Math.max(120, this.w - i.left - i.right - 24)
-    const vh = Math.max(120, this.h - i.top - i.bottom - 24 - label)
-    const z = clamp(Math.min(vw / (b.maxX - b.minX), vh / (b.maxY - b.minY)), this.galaxies.length > 1 ? 0.03 : 0.25, 1.6)
-    return {
-      z,
-      x: (b.minX + b.maxX) / 2,
-      y: (b.minY + b.maxY) / 2 - label / 2 / z,
-    }
+    const vh = Math.max(120, this.h - i.top - i.bottom - 24)
+    return this.fitTo(this.fitItems(), vw, vh, this.galaxies.length > 1 ? 0.03 : 0.25, 1.6)
   }
 
   overview(instant = false): void {
@@ -881,11 +993,19 @@ export class HiveEngine {
     this.fit = { galaxy: id }
     this.dotFly = null
     const i = this.insets
-    // its name above it keeps its screen room too (GALAXY_LABEL_ROOM): the galaxy sits that much lower and smaller
     const vw = Math.max(120, this.w - i.left - i.right - 24)
-    const vh = Math.max(120, this.h - i.top - i.bottom - 24 - GALAXY_LABEL_ROOM)
-    const z = clamp(Math.min(vw, vh) / (g.r * 2.15), this.minZoom(), 1.6)
-    this.camT = { x: g.x, y: g.y - GALAXY_LABEL_ROOM / 2 / z, z }
+    const vh = Math.max(120, this.h - i.top - i.bottom - 24)
+    // the galaxy fills the view with 7.5% to spare all round, its name above it, and its swarms' words inside the view
+    const px = g.cloud ? 13 : 11
+    const name = g.label.toUpperCase()
+    const half = this.wordWidth(name, CAPS_FONT(px), '0.14em', name.length * px * 0.75) / 2
+    const frame: FitItem = {
+      x: g.x, y: g.y, room: (z) => {
+        const r = g.r * 1.075 * z
+        return { up: Math.max(r, g.r * z + GALAXY_LABEL_LIFT), down: r, left: Math.max(r, half), right: Math.max(r, half) }
+      },
+    }
+    this.camT = this.fitTo([frame, ...this.fitItems(id)], vw, vh, this.minZoom(), 1.6)
     this.camK = 2.6
     return true
   }
@@ -1057,7 +1177,22 @@ export class HiveEngine {
   /** The swarm labels' screen boxes (CSS px), as drawLabels draws them: DOM hints stay off them (scene/mapLabels). */
   labelBoxes(): LabelBox[] {
     if (this.drawingHolds.size || this.dimmed) return []
-    return [...this.cores.values()].filter((c) => this.swarmLabelled(c)).map((c) => swarmLabelBox(c.sx, c.sy, this.cam.z, c.name.toUpperCase(), `${plural(c.motes.length, 'belief')} · ${plural(c.members, 'mind')}`))
+    return [...this.cores.values()]
+      .filter((c) => this.swarmLabelled(c))
+      .map((c) => swarmLabelBox(c.sx, c.sy, this.cam.z, c.name.toUpperCase(), `${plural(c.motes.length, 'belief')} · ${plural(c.members, 'mind')}`))
+      .filter((b) => this.wordShows(b.left, b.top, b.left + b.width, b.top + b.height) > 0)
+  }
+
+  /**
+   * How much of a word drawn in this screen box shows: none of it in the room the HUD, the rail, a sheet or the docked Ask
+   * keeps (the insets), where it would run across that chrome (Nov 17, 1440x900: a mind's name across the stats bar made
+   * AWAKE unreadable). A word crossing into that room fades out over its own height, so a name panned under the bar goes
+   * as it slides, never all at once. 1 inside the free region, 0 once a line's height into the room.
+   */
+  private wordShows(left: number, top: number, right: number, bottom: number): number {
+    const i = this.insets
+    const inside = Math.min(top - i.top, left - i.left, this.w - i.right - right, this.h - i.bottom - bottom)
+    return inside >= 0 ? 1 : clamp(1 + inside / Math.max(1, bottom - top), 0, 1)
   }
 
   /** Whether a swarm's name is drawn: its galaxy is open and its slot is big enough on screen. */
@@ -2379,21 +2514,27 @@ export class HiveEngine {
     ctx.textBaseline = 'top'
     // Words in the scene are drawn solid, in the look's text tokens: the theme's rules guarantee those read against the
     // ground only at full opacity, so hierarchy comes from ink vs ink-2, never from stacking alphas (light-token R1.1).
+    // A word crossing into the HUD's room fades as it goes under it (wordShows): a transition at that edge, not a resting
+    // tone, since a word under the chrome is no longer read.
     // galaxy names, above each outline (hidden while a galaxy is under 14 px across)
     const rects: typeof this.galaxyLabelRects = []
     if (this.galaxies.length > 1) {
       for (const g of this.galaxies) {
         if (!g.visible || g.sr < 14) continue
-        ctx.globalAlpha = 1
         const px = g.cloud ? 13 : 11
-        ctx.font = `600 ${px}px "Space Grotesk Variable", "Space Grotesk", system-ui, sans-serif`
-        ctx.fillStyle = g.cloud ? ink('ink', 1) : ink('ink2', 1)
+        ctx.font = CAPS_FONT(px)
         setSpacing(ctx, '0.14em')
         const text = g.label.toUpperCase()
         const top = g.sy - g.sr - GALAXY_LABEL_LIFT
-        ctx.fillText(text, g.sx, top)
         const half = (ctx.measureText(text).width || text.length * px * 0.75) / 2
-        rects.push({ id: g.id, left: g.sx - half, top, right: g.sx + half, bottom: top + px * 1.25 })
+        const rect = { id: g.id, left: g.sx - half, top, right: g.sx + half, bottom: top + px * 1.25 }
+        const shows = this.wordShows(rect.left, rect.top, rect.right, rect.bottom)
+        if (shows > 0) {
+          ctx.globalAlpha = shows
+          ctx.fillStyle = g.cloud ? ink('ink', 1) : ink('ink2', 1)
+          ctx.fillText(text, g.sx, top)
+          rects.push(rect)
+        }
         setSpacing(ctx, '0px')
       }
     }
@@ -2403,11 +2544,15 @@ export class HiveEngine {
     const pcr = pc ? pc.r * z + 60 : 0
     if (pc && pcc && pc.r * z >= 14 && pcc.x > -pcr && pcc.y > -pcr && pcc.x < this.w + pcr && pcc.y < this.h + pcr) {
       const s = this.toScreen(pc.x, pc.y - pc.r)
-      ctx.globalAlpha = 1
-      ctx.font = `600 11px "Space Grotesk Variable", "Space Grotesk", system-ui, sans-serif`
-      ctx.fillStyle = ink('ink2', 1)
+      ctx.font = CAPS_FONT(11)
       setSpacing(ctx, '0.14em')
-      ctx.fillText('PRIVATE', s.x, s.y - 26)
+      const half = (ctx.measureText('PRIVATE').width || 7 * 11 * 0.75) / 2
+      const shows = this.wordShows(s.x - half, s.y - 26, s.x + half, s.y - 26 + 11 * 1.25)
+      if (shows > 0) {
+        ctx.globalAlpha = shows
+        ctx.fillStyle = ink('ink2', 1)
+        ctx.fillText('PRIVATE', s.x, s.y - 26)
+      }
       setSpacing(ctx, '0px')
     }
     // swarm names, once a swarm is big enough on screen (inside a zoomed galaxy)
@@ -2415,18 +2560,32 @@ export class HiveEngine {
       if (!this.swarmLabelled(c)) continue
       const zs = Math.pow(z, 0.8)
       const y = c.sy + 70 * zs + 8
-      ctx.globalAlpha = 1
-      ctx.font = `600 ${z < 0.6 ? 11 : 12}px "Space Grotesk Variable", "Space Grotesk", system-ui, sans-serif`
-      ctx.fillStyle = ink('ink', 1)
+      // each line shows on its own: a name under the bar goes while its counts below it still show
+      const namePxNow = z < 0.6 ? 11 : 12
+      ctx.font = CAPS_FONT(namePxNow)
       setSpacing(ctx, '0.18em')
-      ctx.fillText(c.name.toUpperCase(), c.sx, y)
+      const name = c.name.toUpperCase()
+      const nameHalf = (ctx.measureText(name).width || name.length * namePxNow * 0.88) / 2
+      const nameShows = this.wordShows(c.sx - nameHalf, y, c.sx + nameHalf, y + namePxNow * 1.3)
+      if (nameShows > 0) {
+        ctx.globalAlpha = nameShows
+        ctx.fillStyle = ink('ink', 1)
+        ctx.fillText(name, c.sx, y)
+      }
       setSpacing(ctx, '0px')
-      ctx.font = `500 10px "Inter Variable", Inter, system-ui, sans-serif`
-      ctx.fillStyle = ink('ink2', 1)
-      ctx.fillText(`${plural(c.motes.length, 'belief')} · ${plural(c.members, 'mind')}`, c.sx, y + 16)
+      const stats = `${plural(c.motes.length, 'belief')} · ${plural(c.members, 'mind')}`
+      ctx.font = NAME_FONT(10)
+      const statsHalf = (ctx.measureText(stats).width || stats.length * 5.6) / 2
+      const statsShows = this.wordShows(c.sx - statsHalf, y + 16, c.sx + statsHalf, y + 16 + 10 * 1.3)
+      if (statsShows > 0) {
+        ctx.globalAlpha = statsShows
+        ctx.fillStyle = ink('ink2', 1)
+        ctx.fillText(stats, c.sx, y + 16)
+      }
     }
     // dot names
-    ctx.font = `500 ${z < 0.7 ? 10 : 11}px "Inter Variable", Inter, system-ui, sans-serif`
+    const namePx = namePxAt(z)
+    ctx.font = NAME_FONT(namePx)
     for (const d of sorted) {
       const lit = d.status === 'awake' || d.status === 'error' || d.status === 'starting'
       const zMin = lit ? 0.42 : 0.75
@@ -2441,9 +2600,12 @@ export class HiveEngine {
         const ty = core.sy + 70 * Math.pow(z, 0.8) + 8
         if (Math.abs(d.sx - core.sx) < 70 && ly > ty - 14 && ly < ty + 30) continue
       }
+      const half = (ctx.measureText(d.name).width || d.name.length * namePx * 0.58) / 2
+      const shows = this.wordShows(d.sx - half, ly, d.sx + half, ly + namePx * 1.3)
+      if (shows <= 0) continue
       // a settled name is solid; a quieter (far, dim) dot uses ink-2. The zoom fade-in and a new dot's birth are motion
       // (brief transitions to that solid state), so the floor applies to where they land, not to each frame on the way
-      ctx.globalAlpha = (base < 1 && d.hover < 1 ? a : 1) * (d.birth < 1 ? d.birth : 1)
+      ctx.globalAlpha = (base < 1 && d.hover < 1 ? a : 1) * (d.birth < 1 ? d.birth : 1) * shows
       ctx.fillStyle = d.status === 'error' ? ink('bad', 1) : ink(a >= 0.6 ? 'ink' : 'ink2', 1)
       ctx.fillText(d.name, d.sx, ly)
     }

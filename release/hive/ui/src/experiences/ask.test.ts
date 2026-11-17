@@ -144,9 +144,12 @@ describe('ASK-1.6: no path from the Ask to an app act except action-needs-confir
     expect('askConfirm' in c).toBe(false)
     expect('askConfirm' in Object.getPrototypeOf(c)).toBe(false)
   })
-  it('live sends the takeover to the host, so the turn stops there and not only on the page', () => {
-    const live = read('api/live.ts')
-    expect(live).toMatch(/askTakeover = \(op: string\) => this\.askRequest<[^>]*>\('POST', `\/api\/ask\/\$\{enc\(op\)\}\/takeover`, \{ reason: 'user_took_over' \}\)/)
+  it('once the person touches the page no act of the mind is applied there, and nothing ends the turn on the host', () => {
+    // Jon, 17 Nov: "Ask should exist above UI - stop shouldn't happen". The hold is the page's own: the executor runs an
+    // act only while the turn holds and the person has not taken over; the client has no takeover call to end the turn
+    expect(read('features/ask/conductor.ts')).toMatch(/\(t\.state === 'open' \|\| t\.state === 'sending'\) && !t\.tookOver/)
+    expect(read('api/live.ts')).not.toMatch(/\/takeover/)
+    expect(read('store/ask.ts')).not.toMatch(/askTakeover|\/takeover/)
   })
 })
 

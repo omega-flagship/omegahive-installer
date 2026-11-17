@@ -24,7 +24,7 @@ const memory = (op: string, seq: number) => event(op, seq, { phase: 'memory', op
 const defer = <T,>() => { let resolve!: (v: T) => void; const promise = new Promise<T>((r) => { resolve = r }); return { promise, resolve } }
 let session = 0
 function start(history: ReturnType<typeof stub>[] = [], over: Partial<HiveClient> = {}) {
-  const client = { mode: 'sim', ask: vi.fn(), askTakeover: vi.fn(), askStop: vi.fn(),
+  const client = { mode: 'sim', ask: vi.fn(), askStop: vi.fn(),
     askTurn: vi.fn(async (op: string, after = 0) => ({ operation_id: op, turn_id: 'turn-1', app_ask: true, state: 'open', events: history.filter((e) => e.seq > after), more: false })),
     ...over,
   } as unknown as HiveClient
@@ -59,7 +59,7 @@ describe('P1 canonical live Ask adoption', () => {
     expect(offered.offeredLocally).toBe(true)
     expect(await claimAppAsk(offered)).toMatchObject({ operation_id: op, turn_id: 'turn-1', owner: 'host', epoch: 2 })
     await useAskStore.getState().showAppTurn(op)
-    expect(client.askTurn).not.toHaveBeenCalled(); expect(client.ask).not.toHaveBeenCalled(); expect(client.askTakeover).not.toHaveBeenCalled()
+    expect(client.askTurn).not.toHaveBeenCalled(); expect(client.ask).not.toHaveBeenCalled()
     expect(useAskStore.getState().open).toBe(op); expect(useAskStore.getState().log).toHaveLength(1)
     await useAskStore.getState().rebuild() // content-free stored copies cannot overwrite already-held live projections
     expect(threadRows(useAskStore.getState()).filter((r) => r.kind === 'answer').map((r) => r.text)).toEqual(['Words already held in this browser.'])

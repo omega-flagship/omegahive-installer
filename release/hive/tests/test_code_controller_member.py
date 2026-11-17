@@ -42,6 +42,8 @@ class FakeFork:
         ok = lambda v, s=200: (s, json.dumps(v).encode(), "application/json")
         if path == f"/v1/workspaces/{FORK}" and method == "GET":
             return ok({"id": FORK, "generation": self.generation, "tree_digest": self.tree()})
+        if path == f"/v1/workspaces/{FORK}/tree":
+            return ok({"generation": self.generation, "files": [{"path": p} for p in sorted(self.files)]})
         if path == f"/v1/workspaces/{FORK}/files":
             name = query["path"]
             if name not in self.files:
@@ -142,7 +144,8 @@ def test_a_plan_reviewed_member_reaches_member_ready_and_only_integrated_deliver
     assert run_row["lease_id"] == "budget.pl_one.p1"                      # the Ctx epoch slot is the plan budget ref
     goal_msg = m.hive.db.one("SELECT text FROM messages WHERE agent_id = ? AND sender = 'hive:code-controller'",
                              (m.helper["id"],))["text"]
-    assert "calculator.py" in goal_msg and "Write only these files" in goal_msg
+    assert "files holds only these paths: calculator.py" in goal_msg
+    assert goal_msg.index('"summary"') < goal_msg.index('"files"')   # summary first, so it is never nested in files
     assignee_finishes(m, {"calculator.py": FIXED})
     view = m.engine.view(m.tid)
     assert kinds(m) == ["opened", "read", "think-started", "changed", "dispatched", "tests-pass"]
@@ -211,6 +214,78 @@ def test_member_refix_is_one_repair_with_the_plans_failing_output_then_a_new_can
     assert stale["verdict"] == "(rejected not-the-member-ready-candidate)"
 
 
+def packets(m):
+    """The data of every packet the assignee was sent, oldest first."""
+    rows = m.hive.db.all("SELECT text FROM messages WHERE agent_id = ? AND sender = 'hive:code-controller' ORDER BY "
+                         "created_at", (m.helper["id"],))
+    return [json.loads(r["text"].rsplit("UNTRUSTED_DATA:\n", 1)[1]) for r in rows]
+
+
+def test_the_assignee_reads_the_forks_other_files_and_writes_only_its_own(m):
+    """On a fresh install a builder of app.js was sent only app.js, asked for the index.html another piece had built,
+    and stalled: its mind has no Code client, and reading is the host's. The packet carries the rest of the fork."""
+    m.fork.files["index.html"] = '<input id="bill">\n'
+    adopt(m)
+    run(m.engine.step(m.tid))
+    data = packets(m)[0]
+    assert data["files"] == {"calculator.py": CALCULATOR}
+    assert data["read_only"] == {"index.html": m.fork.files["index.html"], "test_calculator.py": "assert add(2, 3) == 5\n"}
+    assert "read_only_left_out" not in data
+    # read only: writing one of them is still out of the piece, and the repair is sent them again
+    assignee_finishes(m, {"calculator.py": FIXED, "index.html": "<p>mine now</p>\n"})
+    assert "changed" not in kinds(m) and m.fork.patches == []
+    assert packets(m)[-1]["read_only"]["index.html"] == '<input id="bill">\n'
+
+
+def test_other_files_too_big_for_the_packet_leave_the_largest_out_by_name(m):
+    from hive.core.code_controller_member import PACKET_CHARS
+    m.fork.files["vendor.js"] = "x" * PACKET_CHARS
+    m.fork.files["index.html"] = "<main></main>\n"
+    adopt(m)
+    run(m.engine.step(m.tid))
+    data = packets(m)[0]
+    assert sorted(data["read_only"]) == ["index.html", "test_calculator.py"] and data["read_only_left_out"] == ["vendor.js"]
+    assert data["files"] == {"calculator.py": CALCULATOR}
+
+
+def test_a_fork_whose_files_cannot_be_listed_fails_the_attempt_and_sends_nothing(m, monkeypatch):
+    real = m.fork.proxy
+
+    async def tree_down(principal, method, path, query, body, *rest):
+        if path.endswith("/tree"):
+            return 503, b'{"error": "unavailable"}', "application/json"
+        return await real(principal, method, path, query, body, *rest)
+    monkeypatch.setattr(m.hive.code, "proxy", tree_down)
+    adopt(m)
+    run(m.engine.step(m.tid))
+    failed = [r for r in m.engine.view(m.tid)["journal"] if r["kind"] == "think-failed"]
+    assert failed and failed[0]["evidence"] == {"reason": "RuntimeError", "stage": "assign"}
+    assert packets(m) == []
+
+
+def stall(m, goal_id):
+    """The goal's claims lapse until the hive stalls it, as goals.expire does after MAX_ATTEMPTS lapsed leases."""
+    from hive.core.goals import MAX_ATTEMPTS
+    m.hive.db.execute("UPDATE goals SET lease_until = ?, attempts = ? WHERE id = ?",
+                      ("2000-01-01T00:00:00.000Z", MAX_ATTEMPTS, goal_id))
+    run(m.hive.goals.expire())
+    assert m.hive.goals.get(goal_id)["status"] == "stalled"
+    run(m.engine.on_event({"type": "goal.updated", "goal": {"id": goal_id}}))
+
+
+def test_an_assignee_that_claims_and_goes_quiet_ends_its_attempt_when_the_goal_stalls(m):
+    """No answer comes from a stalled goal: the attempt ends there (one repair, a fresh goal and packet), where before
+    the member waited on it, and its plan read 'writing' with no error."""
+    adopt(m)
+    run(m.engine.step(m.tid))
+    body = json.loads(m.engine._effects(m.tid, "helper")[-1]["body"])
+    m.hive.goals.claim(m.hive.agent(m.helper["id"]), body["goal_id"])
+    stall(m, body["goal_id"])
+    failed = next(r for r in m.engine.view(m.tid)["journal"] if r["kind"] == "think-failed")
+    assert failed["evidence"] == {"goal_status": "stalled"} and kinds(m)[-2:] == ["think-failed", "think-started"]
+    assert len(packets(m)) == 2
+
+
 def test_an_out_of_piece_edit_from_the_helper_is_never_written(m):
     adopt(m)
     run(m.engine.step(m.tid))
@@ -219,6 +294,21 @@ def test_an_out_of_piece_edit_from_the_helper_is_never_written(m):
     assert "changed" not in ks and ks[-2:] == ["think-failed", "think-started"]
     failed = next(r for r in m.engine.view(m.tid)["journal"] if r["kind"] == "think-failed")
     assert failed["evidence"]["paths"] == ["test_calculator.py"] and m.fork.patches == []
+
+
+def test_a_refused_answer_is_said_to_the_next_attempt(m):
+    """On a fresh install a builder put summary inside files; each retry was told only that it had failed, and it made
+    the same answer three times. The next packet says why the last one was refused."""
+    adopt(m)
+    run(m.engine.step(m.tid))
+    assignee_finishes(m, {"calculator.py": FIXED, "summary": "fixed add"})
+    rows = m.hive.db.all("SELECT text FROM messages WHERE agent_id = ? AND sender = 'hive:code-controller' ORDER BY "
+                         "created_at", (m.helper["id"],))
+    assert len(rows) == 2 and "The last attempt was refused" not in rows[0]["text"]
+    retry = rows[-1]["text"]
+    assert "The last attempt was refused: it wrote summary outside this piece's files" in retry
+    assert "the summary goes beside files, never inside it" in retry and "The last version failed" not in retry
+    assert m.engine.last_refusal(m.tid).startswith("The last attempt was refused: it wrote summary")
 
 
 def test_an_out_of_piece_proposal_is_scope_refused_at_selection_and_an_in_piece_one_is_executed(m):

@@ -119,7 +119,8 @@ function readTalk(r: Record<string, unknown>): Talk | null {
   if ((r.uses !== undefined && (!num(r.uses) || r.uses < 0)) || (r.last_used_at !== undefined && r.last_used_at !== null && !num(r.last_used_at))) return null
   if (r.mind_id !== undefined && (typeof r.mind_id !== 'string' || !NOTE_ID.test(r.mind_id))) return null
   if (r.mind_name !== undefined && !text(r.mind_name, MIND_NAME_MAX, true)) return null
-  return { ...(typeof r.mind_id === 'string' ? { mind_id: r.mind_id } : {}), ...(typeof r.mind_name === 'string' ? { mind_name: r.mind_name } : {}), id: r.id, turn_id: r.turn_id, at: r.at, words: r.words, answer: r.answer, truncated: r.truncated, kept_at: r.kept_at, ...(r.uses !== undefined ? { uses: Math.floor(r.uses as number), last_used_at: (r.last_used_at as number | null | undefined) ?? null } : {}) }
+  if (r.until !== undefined && !num(r.until)) return null
+  return { ...(typeof r.mind_id === 'string' ? { mind_id: r.mind_id } : {}), ...(typeof r.mind_name === 'string' ? { mind_name: r.mind_name } : {}), id: r.id, turn_id: r.turn_id, at: r.at, words: r.words, answer: r.answer, truncated: r.truncated, kept_at: r.kept_at, ...(r.uses !== undefined ? { uses: Math.floor(r.uses as number), last_used_at: (r.last_used_at as number | null | undefined) ?? null } : {}), ...(r.until !== undefined ? { until: r.until as number } : {}) }
 }
 
 function readTomb(r: unknown): Tombstone | null {

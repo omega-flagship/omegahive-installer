@@ -45,6 +45,7 @@ export function planFacts(view: PlanView | null, ui: PlanUi): PlanComposed {
     'start.busy': ui.starting,
     'plan.stopped': view?.status === 'stopped',
     'plan.blocked': !!view && HELD.has(view.status),
+    'plan.waiting': !!view?.waiting && !ended,
     'plan.installed': !!view?.installed,
     'plan.live': live,
     'plan.unreviewed': !!view?.unreviewed,
@@ -64,6 +65,8 @@ export function planFacts(view: PlanView | null, ui: PlanUi): PlanComposed {
       'plan.status': view?.status_line ?? '',
       'start.error': ui.startError ?? '',
       'installed.name': view?.installed?.name ?? '',
+      'waiting.name': view?.waiting?.name ?? '',
+      'waiting.message': view?.waiting?.message ?? '',
     },
   }
 }

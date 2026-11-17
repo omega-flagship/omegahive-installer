@@ -100,6 +100,8 @@ export interface AskBody {
   context: AskContext
   /** an existing thread to continue; omitted = the person's current thread with that orchestrator */
   thread?: string
+  /** Continue alone names the accepted, ended turn whose hand-overs must not be repeated (Jon on #394). */
+  continues?: string
   via: AskVia
   /**
    * The person's own memory, recalled by this browser for this turn only (lib/askMemory; Jon 2026-10-07: memory is kept
@@ -183,7 +185,8 @@ export type RefusalReason =
   | 'operation_conflict'
   | 'invalid'
   | 'stopped'
-  /** the recovery view of a turn the person took over (POST /api/ask/{op}/takeover, Platform 07bf554): never a frame */
+  /** a turn a hive closed when the person touched the page, before the person's use of the page stopped ending turns:
+   *  its record and recovery view only, never a frame */
   | 'takeover'
   /** ordinary Sessions (not an Ask reason): two people on one mind; mapped in case a Sessions call surfaces here */
   | 'payer_conflict'
@@ -271,14 +274,6 @@ export const ACT_FILL_MAX = 4000
  */
 export type ActReason = 'invalid' | 'not_declared' | 'act_cap' | 'private' | 'blocked' | 'stale_origin' | 'reduced_motion_skipped'
 export const ACT_REASONS: readonly ActReason[] = ['invalid', 'not_declared', 'act_cap', 'private', 'blocked', 'stale_origin', 'reduced_motion_skipped']
-/** POST /api/ask/{op}/takeover's receipt: `taken_over` on the first call and every repeat; a turn that had already ended
- *  another way answers its own closed state. The turn's done frame carries outcome 'cancelled' with taken_over: true. */
-export interface AskTakeover {
-  operation_id: string
-  turn_id: string
-  state: 'taken_over' | 'done' | 'refused'
-  ended_at: string
-}
 /** How the host ended a turn (Platform r2 Q5): a closed set, said in the page's own words (features/ask/words). */
 export type DoneOutcome = 'complete' | 'act_cap' | 'call_cap' | 'time_cap' | 'spend_cap' | 'cancelled' | 'error'
 export const DONE_OUTCOMES: readonly DoneOutcome[] = ['complete', 'act_cap', 'call_cap', 'time_cap', 'spend_cap', 'cancelled', 'error']
@@ -363,7 +358,7 @@ export type AskEvent =
   | (Frame<'presence'> & { actor: AskWho; verb: PresenceVerb; target: PresenceTarget; caption?: string; ink?: Ink; animate?: boolean })
   | (Frame<'steer'> & { steer_id: string; text: string; at_seq?: number; via?: AskVia })
   | (Frame<'revert'> & { target_id?: string; to_seq?: number })
-  | (Frame<'done'> & { spent_usd?: number; turn_spent_usd?: number; outcome?: DoneOutcome; /** the person took over (host takeover route): outcome cancelled */ taken_over?: true; /** ask-limits r1 (forward-compatible): which limit stopped a spend_cap turn; read with words.readDoneLimit */ limit?: unknown; /** ask-limits r1: outcome error's code (unpriced_model | key_unavailable | not_available | mind_not_connected); read with words.doneErrorWords */ error?: unknown })
+  | (Frame<'done'> & { spent_usd?: number; turn_spent_usd?: number; outcome?: DoneOutcome; /** ask-limits r1 (forward-compatible): which limit stopped a spend_cap turn; read with words.readDoneLimit */ limit?: unknown; /** ask-limits r1: outcome error's code (unpriced_model | key_unavailable | not_available | mind_not_connected); read with words.doneErrorWords */ error?: unknown })
   | (Frame<'refused'> & { reason: RefusalReason; say?: string; offer?: { kind: string; label?: string }; /** the thread's spend (hive/core/ask.py _close) */ spent_usd?: number | null; /** what the host counted for this turn when it closed */ turn_spent_usd?: number | null })
   | (Frame<'act'> & { act: ConductorAct | UnreadableAct; recipient?: AppAskRecipient })
   | (Frame<'dispatched'> & { intent_id: string; intent_kind: string; to: DispatchedTo; label?: string })
@@ -629,12 +624,9 @@ export function checkAskEvent(e: unknown): AskEvent | null {
         ? (f as unknown as AskEvent)
         : null
     case 'done': {
-      // the turn closes whatever it says; an outcome outside the closed set is not echoed (no free text on done);
-      // taken_over is kept only as true with the cancelled outcome (the host's takeover frame)
-      const { taken_over: took, ...g } = f
-      const out = took === true && g.outcome === 'cancelled' ? { ...g, taken_over: true } : g
-      if (out.outcome === undefined || DONE_OUTCOMES.includes(out.outcome as DoneOutcome)) return out as unknown as AskEvent
-      const { outcome: _drop, ...rest } = out
+      // the turn closes whatever it says; an outcome outside the closed set is not echoed (no free text on done)
+      if (f.outcome === undefined || DONE_OUTCOMES.includes(f.outcome as DoneOutcome)) return f as unknown as AskEvent
+      const { outcome: _drop, ...rest } = f
       void _drop
       return rest as unknown as AskEvent
     }

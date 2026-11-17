@@ -136,7 +136,7 @@ def states_sql(states):
     return "(" + ", ".join(f"'{s}'" for s in states) + ")"
 
 
-BODY_KEYS = {"operation_id", "text", "context", "thread", "via"}
+BODY_KEYS = {"operation_id", "text", "context", "thread", "via", "continues"}
 # ---- gateway r1b (PLATFORM_PERSONAL_MIND_GATEWAY_R1_PLAN §2.3, r1.1 §E/§H/§I): the browser_mind route -------------------
 # Off unless HIVE_MIND_GATEWAY=1; off, an Ask is exactly as before (answer_in is not a key it accepts). On, a turn is a
 # browser turn when the request says "answer_in": "browser" (the page sends it only once its broker has booted), the
@@ -205,14 +205,11 @@ NOTES_KEY = "memory_notes"
 # continuity are consistently persistent regardless of which model you interact"), never stored or logged
 CONVERSATION_KEY = "conversation"
 # how a conductor turn closed elsewhere reads in its done frame (conductor.OUTCOMES is the whole enum)
-CONDUCTOR_OUTCOME = {"stopped": "cancelled", "takeover": "cancelled", "timed_out": "time_cap", "spend_limit": "spend_cap"}
+CONDUCTOR_OUTCOME = {"stopped": "cancelled", "timed_out": "time_cap", "spend_limit": "spend_cap"}
 # gateway r1b (r1.1 §I, Kimi item 5): the ONE map from a close reason to done.outcome, for a conductor turn and a browser
 # turn alike (_close); it extends CONDUCTOR_OUTCOME with the browser's close words. Anything else reads "error".
 CLOSE_OUTCOME = {**CONDUCTOR_OUTCOME, "answered": "complete", "incomplete": "incomplete", "failed": "error",
                  "spend_cap": "spend_cap", "call_cap": "call_cap"}
-# the person took the page back mid-turn (POST /api/ask/{op}/takeover): a conductor turn's own close reason (never a refusal
-# the page is told; its done frame says outcome "cancelled" with taken_over: true)
-TAKEOVER = "takeover"
 # with: the mind whose chat or card the person is using (Jon, 16 Nov: "the ask will auto route to whichever mind you're
 # interacting with"); a mind named in the words or selected (mind, selection) and the person's explicit choice still win
 CONTEXT_KEYS = {"route", "experience", "program", "swarm_id", "mind", "with", "selection", "view"}
@@ -235,7 +232,7 @@ ID_SEGMENT = re.compile(r"[a-z]{1,4}_[0-9a-f]{6,}")
 CONVERSATION = "ask:"
 # what a personal turn's stored frame may keep (Ask.content_free): ids, phase, seq, time, host enums, money, flags, digests
 CONTENT_FREE_KEYS = frozenset({"operation_id", "turn_id", "principal", "seq", "phase", "at", "outcome", "reason", "state",
-                               "op", "spent_usd", "turn_spent_usd", "delta", "truncated", "taken_over", "message_id",
+                               "op", "spent_usd", "turn_spent_usd", "delta", "truncated", "message_id",
                                "intent_id", "request_id", "dispatch_id", "links_rev", "digest", "error", "app_ask"})
 # done.limit (ask-limits r1): an enum and money; reason (gateway r1a): the host enum monthly_total_required
 LIMIT_FRAME_KEYS = ("kind", "current_usd", "limit_usd", "estimate_usd", "reason")
@@ -323,6 +320,8 @@ class Ask:
             hive.db.execute("ALTER TABLE ask_turns ADD COLUMN cleared_seq INTEGER")
         if "conductor_model" not in turn_columns:   # set only for a conductor turn (conductor.py); NULL is phase 1
             hive.db.execute("ALTER TABLE ask_turns ADD COLUMN conductor_model TEXT")
+        if "continues" not in turn_columns:
+            hive.db.execute("ALTER TABLE ask_turns ADD COLUMN continues TEXT")
         if "seq" not in {r["name"] for r in hive.db.all("PRAGMA table_info(ask_boundaries)")}:
             hive.db.execute("ALTER TABLE ask_boundaries ADD COLUMN seq INTEGER NOT NULL DEFAULT 0")
         if "message_mark" not in {r["name"] for r in hive.db.all("PRAGMA table_info(ask_boundaries)")}:
@@ -662,6 +661,8 @@ class Ask:
             from .conductor import check_conversation
             if not check_conversation(data[CONVERSATION_KEY]):
                 raise refusal(hive, "invalid")
+        if "continues" in data and (not isinstance(data["continues"], str) or not 0 < len(data["continues"]) <= 120):
+            raise refusal(hive, "invalid")
         if not isinstance(data.get("operation_id"), str) or not OPERATION_ID.fullmatch(data["operation_id"]):
             raise refusal(hive, "invalid")
         text = data.get("text")
@@ -674,6 +675,19 @@ class Ask:
         if data.get("thread") is not None and (not isinstance(data["thread"], str) or len(data["thread"]) > 120):
             raise refusal(hive, "invalid")
         self._check_context(data.get("context"))
+
+    def _check_continues(self, viewer, data, mind):
+        """Jon asked on #394 for Continue to keep a hand-over from happening twice. Only a recent ended turn of
+        this person and answering mind can be continued; check again inside admission's transaction."""
+        if "continues" not in data:
+            return
+        from .ask_intents import TURN_MAX_AGE, _iso_time
+        t = self._row(data["continues"])
+        created = _iso_time(t["created_at"]) if t else None
+        if t is None or t["deleted_at"] or t["principal"] != viewer.principal or t["mind_id"] != mind["id"] \
+                or t["state"] in OPEN or created is None \
+                or not datetime.timedelta() <= datetime.datetime.now(datetime.timezone.utc) - created <= TURN_MAX_AGE:
+            raise refusal(self.hive, "invalid")
 
     def _conducting(self):
         return self.conductor is not None and self.conductor.enabled()
@@ -773,6 +787,7 @@ class Ask:
         if not self._quota_ok(viewer.principal):
             raise refusal(hive, "rate_limited")
         swarm, mind, addressed = self._route(viewer, data, conducted)
+        self._check_continues(viewer, data, mind)
         if browser and not self.browser_turn(viewer, mind):
             raise refusal(hive, "not_available", 409)
         # a conductor turn never wakes or uses the mind; nor does a browser turn, and only for the asker's own personal
@@ -929,6 +944,7 @@ class Ask:
                 if existing["body_digest"] != body_digest:
                     raise refusal(hive, "operation_conflict")
                 return None, existing["id"]
+            self._check_continues(viewer, data, mind)
             if app_binding is not None:
                 # P1 preflight was write-free. Re-scope and re-read the actual
                 # held/spent measure only after final authority, atomically
@@ -963,6 +979,7 @@ class Ask:
             hive.db.insert("ask_turns", {
                 "id": turn_id, "operation_id": data["operation_id"], "principal": viewer.principal, "body_digest": body_digest,
                 "thread_id": thread["id"], "mind_id": mind["id"], "swarm_id": swarm["id"],
+                "continues": data.get("continues"),
                 "text": "" if personal else data["text"], "personal": 1 if personal else 0,
                 "via": data.get("via", "typed"), "context_resolved": "{}" if personal else json.dumps(context),
                 "state": "browser" if browser else "accepted" if model is None else "conducting", "reason": None,
@@ -1161,7 +1178,7 @@ class Ask:
             if t["state"] in OPEN and t["state"] not in OPEN_HOST_MIND:
                 # a conductor or browser turn ends in done with the fixed outcome enum (CLOSE_OUTCOME, one map for both,
                 # r1.1 §I), never free text
-                extra = {"taken_over": True} if reason == TAKEOVER else {}
+                extra = {}
                 if reason == "spend_limit" and limit is not None:   # gateway r1c: the limit that refused the call
                     extra["limit"] = limit
                 elif reason == "spend_limit" and thread:   # the host's own limit, never the page's (conductor.limit_frame)
@@ -1430,23 +1447,6 @@ class Ask:
         t = self._own(viewer, operation_id)
         self._close(t["id"], "refused", "stopped")
         return self.view(self._row(t["id"]))
-
-    def takeover(self, viewer, operation_id):
-        """POST /api/ask/{op}/takeover: the person took the page back while a conductor turn was steering it. The turn's
-        owner only (anyone else, an admin included: 404 not_available, as for an unknown op); a conductor turn only (the
-        conductor off, or a coordinator turn: 404 not_available, nothing changes). An open turn closes at once through
-        the one terminal transition (_close: reason 'takeover', a done frame published to every view the person has
-        open, the loop cancelled so no further model call or act follows). Idempotent: a repeat, or a turn already
-        closed by an earlier takeover, answers the same; a turn that had already ended another way answers its own
-        state, unchanged."""
-        t = self._own(viewer, operation_id)
-        if t["reason"] != TAKEOVER:
-            if self.conductor is None or not t.get("conductor_model") or (t["state"] in OPEN and t["state"] != "conducting"):
-                raise refusal(self.hive, "not_available")
-            self._close(t["id"], "refused", TAKEOVER)
-            t = self._row(t["id"])
-        return {"operation_id": t["operation_id"], "turn_id": t["id"],
-                "state": "taken_over" if t["reason"] == TAKEOVER else t["state"], "ended_at": t["closed_at"]}
 
     def delete_thread(self, viewer, thread_id):
         """The person's own "delete this thread" (Jon 2026-10-05, retention like room history): the thread ends (its cap is

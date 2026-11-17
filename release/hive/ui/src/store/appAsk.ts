@@ -42,7 +42,7 @@ export function appAskTracked(operation: string): boolean {
   const s = useAppAskStore.getState()
   return s.turns.some((t) => t.presentation.operation_id === operation && t.current()) || s.provisional.some((t) => t.operation === operation && t.current())
 }
-/** Fresh server epoch and an explicit host gesture; this never calls terminal Ask.takeover. */
+/** Fresh server epoch and an explicit host gesture; this never ends the turn. */
 export async function claimAppAsk(entry: PresentedAsk): Promise<AppAskPresentation | null> {
   if (!entry.current()) return null
   const op = entry.presentation.operation_id

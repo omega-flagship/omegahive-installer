@@ -647,9 +647,6 @@ export interface HiveClient {
   /** "Delete this thread" (Jon, 2026-10-05: kept like rooms, with a person-visible delete): DELETE /api/ask/threads/{id},
    *  owner only (built in platform/ask-p1 6100794; the text is stripped, the turn rows stay for the audit). */
   askDeleteThread?(threadId: string): Promise<unknown>
-  /** The person took over the page mid-turn (Jon, 2026-10-05): POST /api/ask/{operation_id}/takeover
-   *  {reason: "user_took_over"}; the host ends the conductor turn at once, so no further act or spend follows. */
-  askTakeover?(operationId: string): Promise<import('./ask').AskTakeover>
   /** POST /api/ask/{operation_id}/steer {steer_id, text, at_seq} (Platform phase 1.1): words mid-turn. A closed turn
    *  answers with a NEW operation_id: the words became a fresh request. */
   askSteer?(operationId: string, body: import('./ask').AskSteerBody): Promise<import('./ask').AskSteerResult>

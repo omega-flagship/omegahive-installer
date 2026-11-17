@@ -1,11 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import { appDocument, frameCsp, inlineAssets, framePrefix, isFrameSender, revisionFrame, subscriptionTarget } from './appFrame'
-import { htmlReason, partsReason } from './appFrameParts'
+import { frameTags, htmlReason, partsReason } from './appFrameParts'
 
 const ch = '12345678-1234-1234-1234-123456789abc'
 const files = { 'index.html': '<html lang="en"><head><link rel="stylesheet" href="./style.css"></head><body><script type="module" src="./app.js"></script></body></html>', 'app.js': 'x("</script><script>bad</script>")', 'style.css': '/* </style> */' }
 
 describe('app frame document', () => {
+  it('frames an app whose tags are quoted, ordered or cased another way, as the browser reads them', () => {
+    // a fresh install's Create builder wrote single-quoted tags, and the frame matched them as exact strings
+    const quoted = { ...files, 'index.html': "<head><link rel='stylesheet' href='./style.css'></head><body><script type='module' src='./app.js'></script></body>" }
+    const d = appDocument(quoted, 'https://hive.example.test', ch, ch).html
+    expect(d).toContain(`<style nonce="${ch}">`)
+    expect(d).toContain(`<script type="module" nonce="${ch}">`)
+    expect(d).not.toContain('./style.css')
+    expect(d).not.toContain('./app.js')
+    const classic = { ...files, 'index.html': quoted['index.html'].replace("type='module' ", '') }
+    expect(() => appDocument(classic, 'https://hive.example.test', ch, ch)).toThrow('Unexpected app interface format')
+  })
   it('inlines pinned files with no network, forms or base changes', () => {
     const d = appDocument(files, 'https://hive.example.test', ch, ch)
     expect(d.html).toContain('connect-src &#39;none&#39;')
@@ -163,8 +174,11 @@ describe('app frame script parts (r17)', () => {
     const fsName = 'node:fs'
     const fs = (await import(/* @vite-ignore */ fsName)) as { readFileSync: (p: URL, e: string) => string }
     const cases = JSON.parse(fs.readFileSync(new URL('../../../tests/fixtures/ui_parts_cases.json', import.meta.url), 'utf8')) as
-      { html: { name: string; scripts: string[]; html: string; reason: string | null }[]; names: Record<string, boolean> }
+      { html: { name: string; scripts: string[]; html: string; reason: string | null }[]; names: Record<string, boolean>;
+        frame: { name: string; html: string; link: [number, number] | null; script: [number, number] | null }[] }
     for (const c of cases.html) expect([c.name, htmlReason(c.html, c.scripts)]).toEqual([c.name, c.reason])
+    for (const c of cases.frame) expect([c.name, frameTags(c.html)]).toEqual([c.name, [c.link, c.script]])
+    expect(cases.frame.length).toBeGreaterThan(8)
     for (const [name, ok] of Object.entries(cases.names)) {
       const scripts = name === 'app.js' ? ['app.js'] : [name, 'app.js']
       const files = Object.fromEntries(['index.html', 'style.css', ...scripts].map((n) => [n, '']))

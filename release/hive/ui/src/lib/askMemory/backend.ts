@@ -96,6 +96,8 @@ export type Commit =
   | { op: 'conversation'; since: number }
   /** this mind's own chat was told the Ask exchanges up to `at` (a later time wins) */
   | { op: 'heard'; mind_id: string; at: number }
+  /** every exchange kept only until a time at or before `at` goes: deleted with no tombstone, since nobody forgot it */
+  | { op: 'expire_talks'; at: number }
 
 /**
  * Why a commit was refused: `gen` everything was forgotten since; `tomb` it (or its words) was forgotten; `gone` the
@@ -209,7 +211,7 @@ export function forgotten(tombs: readonly Tombstone[], salt: string, statement: 
 
 /** A held copy as this browser keeps it, if it is one (the hive's shape, re-checked; nothing past its caps). */
 export function talkOk(t: Talk): boolean {
-  return /^[A-Za-z0-9_-]{1,64}$/.test(t.id) && typeof t.turn_id === 'string' && t.turn_id.length <= 128 && Number.isFinite(t.at) && typeof t.words === 'string' && typeof t.answer === 'string' && t.words.length <= TALK_TEXT_MAX && t.answer.length <= TALK_TEXT_MAX && (t.mind_id === undefined || (typeof t.mind_id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(t.mind_id))) && (t.mind_name === undefined || (typeof t.mind_name === 'string' && t.mind_name.length <= MIND_NAME_MAX))
+  return /^[A-Za-z0-9_-]{1,64}$/.test(t.id) && typeof t.turn_id === 'string' && t.turn_id.length <= 128 && Number.isFinite(t.at) && typeof t.words === 'string' && typeof t.answer === 'string' && t.words.length <= TALK_TEXT_MAX && t.answer.length <= TALK_TEXT_MAX && (t.mind_id === undefined || (typeof t.mind_id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(t.mind_id))) && (t.mind_name === undefined || (typeof t.mind_name === 'string' && t.mind_name.length <= MIND_NAME_MAX)) && (t.until === undefined || Number.isFinite(t.until))
 }
 
 /** Forget one belief inside a transaction: delete it, tombstone it with its words' fingerprints, blank its journal words. */
@@ -279,6 +281,11 @@ async function apply(tx: Tx, c: Commit): Promise<Applied> {
   }
   if (c.op === 'forget_talk') {
     await forgetTalkIn(tx, c.id, c.at, c.said ?? [])
+    return { ok: true, gen }
+  }
+  if (c.op === 'expire_talks') {
+    // read again inside the transaction: only what storage itself holds as past its time goes
+    for (const t of await tx.talks()) if (t.until !== undefined && t.until <= c.at) tx.delTalk(t.id)
     return { ok: true, gen }
   }
   if (c.op === 'talks') {

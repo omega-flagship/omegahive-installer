@@ -77,7 +77,7 @@ CODE_TARBALL=$SCRIPT_DIR/omegacode-309df.tgz
 # hive's Tools page lists its tools (setup-tools.sh lays it out, omegahive.sh mounts and pins it).
 TOOLS_TARBALL=$SCRIPT_DIR/omega-tools-$(printf '%s' "$OMEGA_TOOLS_COMMIT" | cut -c1-7).tgz
 # Studio, the app the hive shows as Create, rides the same way, named by the version pins.sh pins; with it there, the
-# hive lists Create (setup-studio.sh lays it out, omegahive.sh mounts and pins it, and create installs it as the owner).
+# hive lists Create (setup-studio.sh lays it out, omegahive.sh mounts and pins it, and its studio step turns it on).
 STUDIO_ZIP=$SCRIPT_DIR/omegadesign-$OMEGADESIGN_VERSION.zip
 PREBUILT=0
 OS=$(uname -s)
@@ -563,6 +563,11 @@ if [ -f "$OH/code/config.json" ]; then
   /bin/bash "$OH/app/install/macos/omegahive.sh" create \
     || say "Create's Code service could not be enrolled; the hive works without Create. Its log: $OH/code/logs/service.log"
 fi
+# Studio, the app the hive shows as Create, is turned on the first time, with or without the Code service.
+if [ -f "$OH/apps/omegadesign/plugin.json" ]; then
+  /bin/bash "$OH/app/install/macos/omegahive.sh" studio \
+    || say "Studio could not be turned on, so your hive shows no Create yet; double-click Install OmegaHive.command again."
+fi
 open_hive
 say ""
 say "Done. Your hive keeps running after you close this window."
@@ -572,10 +577,10 @@ else
   say "To open it again, double-click \"Start OmegaHive\" in your OmegaHive folder ($OH)."
 fi
 say "To use real minds, add your AI key in the hive: You & your keys."
-if [ -f "$OH/code/config.json" ]; then
-  if [ -f "$OH/apps/omegadesign/plugin.json" ]; then
-    say "To make something, open Create in your hive's apps; small apps it builds are in $OH/repos/small-app."
-  else
-    say "To have minds build a small app, open Code in the hive and ask Create; they build it in $OH/repos/small-app."
-  fi
+if [ -f "$OH/apps/omegadesign/plugin.json" ] && [ -f "$OH/code/config.json" ]; then
+  say "To make something, open Create in your hive's apps; small apps it builds are in $OH/repos/small-app."
+elif [ -f "$OH/apps/omegadesign/plugin.json" ]; then
+  say "To make something, open Create in your hive's apps."
+elif [ -f "$OH/code/config.json" ]; then
+  say "To have minds build a small app, open Code in the hive and ask Create; they build it in $OH/repos/small-app."
 fi

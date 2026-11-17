@@ -261,6 +261,19 @@ describe('the deploy go', () => {
     expect(button('Deploy').getAttribute('disabled')).not.toBeNull()
     expect(host.textContent).toContain('A check is still failing.')
   })
+  it('pressed, or deploying in the plan: it says it is installing, never "not ready" beside its own Deploying', async () => {
+    // a Make demo caught "Not ready to deploy yet" beside "Deploying…" for a second: the engine turns the action off
+    // once the deploy starts, with "nothing is ready to deploy yet"
+    const off: Partial<PlanView> = { actions: [{ name: 'deploy', available: false, why_not: 'nothing is ready to deploy yet' }] }
+    for (const [view, busy] of [[ready(off), true], [ready({ ...off, status: 'deploying' }), false]] as const) {
+      await render(<DeployGo view={view} busy={busy} alert={null} onDeploy={vi.fn()} />)
+      expect(host.textContent).toContain('Installing it')
+      expect(host.textContent).toContain('Putting it in your Apps now.')
+      expect(host.textContent).not.toContain('Not ready to deploy yet')
+      expect(host.textContent).not.toContain('nothing is ready to deploy yet')
+      expect(button('Deploying…').getAttribute('disabled')).not.toBeNull()
+    }
+  })
   it('unreviewed: it says so plainly before the go', async () => {
     await render(<DeployGo view={ready({ unreviewed: true, actions: [{ name: 'deploy', available: true, why_not: null }] })} busy={false} alert={null} onDeploy={vi.fn()} />)
     expect(host.textContent).toContain('Not reviewed: your setting allowed it to skip review.')

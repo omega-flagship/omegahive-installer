@@ -30,7 +30,7 @@ right, in a new `plan-member` profile, instead of building pieces through a mode
 |---|---|
 | `(do (piece-open t))` | Open the piece's own fork, path-scoped to the piece, then journal `opened`. |
 | `(do (host-read find-the-relevant-code \| read-again-before-editing))` | Read the piece scope (no model), then journal `read`. |
-| `(think make-the-smallest-change \| repair-from-the-failing-output)` | As in R3.12: `think-started` first, then the helper. On a repair the prompt carries the `member-refix` failing reference. |
+| `(think make-the-smallest-change \| repair-from-the-failing-output)` | As in R3.12: `think-started` first, then the helper. The packet carries the piece's files to write and the fork's other files to read only. On a repair the prompt carries the `member-refix` failing reference. |
 | `(do (code-exec t))`, `(do (run-check m))`, `(do (review-request c))` | On the piece fork. `dispatched` first, as ever. A review is requested only under `review-required`. |
 | `(tell member-ready c)` | Tell the plan that candidate c is tested, its required checks are done, and it is reviewed as ReviewFor says. Nobody is asked to apply. |
 | `(rest awaiting-helper \| awaiting-results \| needs-person \| done \| stopped)`, `(do (reconcile op))` | As in R3.12 and R3.13. |

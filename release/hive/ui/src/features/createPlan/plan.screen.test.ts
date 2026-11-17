@@ -76,6 +76,20 @@ describe('the plan at work', () => {
     }
     expect(shown('plan', planFacts({ ...v, pieces: [], phase: 'stopped', status: 'stopped' }, UI).facts)).not.toContain('plan-forming')
   })
+  it('a mind it waits on is refused for spending: it says which, in the hive\'s words, and offers the limits', () => {
+    // a test hive with a 1 USD month limit held the planner 30 minutes with nothing said
+    const { v } = simAt(4000)
+    const waiting = { name: 'Planner', message: 'A spending limit has no room for this call.' }
+    const page = planFacts({ ...v, waiting }, UI)
+    expect(shown('plan', page.facts)).toEqual(expect.arrayContaining(['notice:23', 'buttons:24']))
+    expect(page.data['waiting.name']).toBe('Planner')
+    expect(page.data['waiting.message']).toBe('A spending limit has no room for this call.')
+    const press = JSON.stringify(compose('plan', page.facts).parts.find((x) => x.order === 24)?.props)
+    expect(press).toContain('See limits')
+    expect(press).toContain('open-limits')
+    expect(shown('plan', planFacts({ ...v, waiting: null }, UI).facts)).not.toContain('notice:23')
+    expect(shown('plan', planFacts({ ...v, waiting, phase: 'stopped', status: 'stopped' }, UI).facts)).not.toContain('notice:23')
+  })
   it('a plan this browser follows, while its view is on its way: the plan, not the empty canvas', () => {
     expect(planFacts(null, { ...UI, opening: true }).screen).toBe('plan')
   })

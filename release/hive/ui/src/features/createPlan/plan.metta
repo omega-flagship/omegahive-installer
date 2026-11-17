@@ -38,6 +38,11 @@
 (Part plan 21 notice ((tone warn) (text (words "Waiting on something: " (bind plan.status)))))
 (When plan 21 (on plan.blocked))
 (Part plan 22 buttons ((items ((button "Make something else" fresh ((variant primary)))))))
+; a mind the plan waits on is refused for spending: say so in the hive's words, and where its limits are
+(Part plan 23 notice ((tone warn) (text (words (bind waiting.name) " is waiting on a spending limit: " (bind waiting.message)))))
+(When plan 23 (on plan.waiting))
+(Part plan 24 buttons ((items ((button "See limits" open-limits ((variant ghost) (icon gauge) (aria "See the spending limits")))))))
+(When plan 24 (on plan.waiting))
 (When plan 22 (on plan.stopped))
 ; questions never hold the rest: they sit above the board and settle once answered
 (Part plan 30 island ((name plan-questions)))

@@ -3,7 +3,7 @@
 # names, unpacked from the release's zip (its omegadesign-release/<version>/ folder) into apps/omegadesign and checked
 # against the source digest and page lock sha256 in pins.sh, the same two values omegahive.sh pins it to in HIVE_APP_PINS
 # at every start, its files left read-only. The hive's owner then installs it and turns it on in Create · Code
-# (omegahive.sh create); without it the hive lists no Create.
+# (omegahive.sh studio); without it the hive lists no Create.
 #
 #   OMEGAHIVE_HOME=<hive folder> setup-studio.sh <omegadesign release zip>
 #

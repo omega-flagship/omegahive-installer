@@ -3713,23 +3713,12 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
 
     @app.post("/api/ask/{operation_id}/takeover")
     async def ask_takeover(operation_id: str, request: Request):
-        """The person took the page back mid-turn (their own click, scroll or Back): the conductor turn ends now and
-        spends no more. Body: none, {} or {"reason": "user_took_over"}. Owner only; idempotent (Ask.takeover)."""
-        v = ask_person(request)
-        raw = b""
-        async for chunk in request.stream():
-            raw += chunk
-            if len(raw) > 1024:
-                raise ask_refusal(hive, "too_large")
-        try:
-            data = json.loads(raw) if raw.strip() else {}
-        except ValueError:
-            data = False
-        if data is None:   # JSON null reads as no body, like an empty or whitespace-only one
-            data = {}
-        if data not in ({}, {"reason": "user_took_over"}):
-            raise ask_refusal(hive, "invalid")
-        return hive.ask.takeover(v, operation_id)
+        """Posted by a page loaded before a turn ran on through the person's own clicks, scrolls and Back (Jon, 17 Nov:
+        "Ask should exist above UI - stop shouldn't happen"). Nothing ends: such a page holds the mind's moves of the
+        page itself and the turn runs on to its answer. 404 not_available is what that page reads as nothing for the
+        host to do, so it never falls back to a stop."""
+        ask_person(request)
+        raise ask_refusal(hive, "not_available")
 
     @app.post("/api/ask/{operation_id}/acts/{act_id}/result")
     async def ask_act_result(operation_id: str, act_id: str, request: Request):
@@ -4410,6 +4399,12 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         data = await body(request)
         if not (data.get("max_tokens") or data.get("max_completion_tokens")):
             data["max_tokens"] = 4096          # the cap the estimate assumes, so a reservation is a true worst case
+        # never more room than the model can give: a mind's retry after a cut-off asks for twice its room
+        # (runtime/provider_features.py), and a request over the model's own output limit would be refused outright
+        limit = providers.output_limit(agent.get("model"))
+        for key in ("max_tokens", "max_completion_tokens"):
+            if limit and isinstance(data.get(key), int) and data[key] > limit:
+                data[key] = limit
         paid, estimate = gateway.estimate(agent, data, settings.allow_unpriced)
         provider_name = str(agent["model"]).partition("/")[0]
         key_id = gateway.paying_key(agent, provider_name)[0] if paid else None

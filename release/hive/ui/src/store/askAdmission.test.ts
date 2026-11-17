@@ -154,7 +154,6 @@ describe('Review witness (45392df admission probe)', () => {
       mode: 'sim',
       ask: vi.fn(async (b: { operation_id: string }) => ({ operation_id: b.operation_id, turn_id: 't1', thread, state: 'accepted' as const })),
       askTurn: vi.fn(async (op: string, after = 0) => ({ operation_id: op, turn_id: 't1', events: (frames[op] ?? []).filter((e) => e.seq > after), more: false })),
-      askTakeover: vi.fn(async () => ({})),
       ...over,
     } as unknown as HiveClient
   }
@@ -595,10 +594,8 @@ describe('B1 (45392df): an Ask of unknown admission is recovered as the original
     expect(rows().some((r) => r.kind === 'refused')).toBe(false)
   })
 
-  it('ask-takeover r4: a takeover while admission is being checked is kept and sent once the check finds the turn', async () => {
+  it('a touch while admission is being checked holds the moves, and the found turn runs on with no stop', async () => {
     const h = fakeHost((i) => (i === 1 ? 'lost-after' : 'ok'))
-    const askTakeover = vi.fn(async (op: string) => ({ operation_id: op, turn_id: `t_${op}`, state: 'taken_over', ended_at: '2026-10-08T21:00:00Z' }))
-    ;(h.client as unknown as { askTakeover: typeof askTakeover }).askTakeover = askTakeover
     const reads = h.holdReads()
     await start(h.client)
     const sent = useAskStore.getState().send('lost question', ctx)
@@ -607,14 +604,12 @@ describe('B1 (45392df): an Ask of unknown admission is recovered as the original
     expect(turn(op).state).toBe('checking')
     useAskStore.getState().personTookOver()
     expect(turn(op).tookOver).toBe(true)
-    expect(askTakeover).not.toHaveBeenCalled()   // admission not known: the host may have no turn to end yet
     reads.release()
     await sent
     await vi.waitFor(() => expect(turn(op).state).toBe('open'))
     await flush()
-    expect(askTakeover).toHaveBeenCalledTimes(1)
-    expect(askTakeover).toHaveBeenCalledWith(op)
-    expect(turn(op).takeover).toBe('sent')
+    expect(turn(op).tookOver).toBe(true)   // the hold is the page's own, kept through the check
+    expect(turn(op).state).toBe('open')     // and the turn runs on
   })
 
   it('200 with an unreadable body (LiveClient): answer_unreadable, never refused; recovered by its id, one admission', async () => {

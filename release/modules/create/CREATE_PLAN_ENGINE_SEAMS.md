@@ -33,7 +33,11 @@ for that test only.
   `deploy-refused` with that reason.
   - Under `HIVE_APP_PINS_REQUIRED=1`, an app the person made has no pin and will not load. We need a pin policy for
     apps the person made, for example the host writing the pin at deploy. This is Jon's or Kabir's call.
-- **Switch.** `HIVE_CREATE_PLAN_ENGINE=on`. It is off by default.
+- **Switch.** On in every install (config.py, Jon on #395); `HIVE_CREATE_PLAN_ENGINE=off` turns it off.
+- **What an install sets for it.** The installer's start script (install/macos/omegahive.sh `app_settings`, shared by
+  Windows through WSL) gives every hive the python runtime, `create-acceptance-check` in `HIVE_SANDBOX_RUN_APPS` and
+  `<data>/create/apps` on `HIVE_PLUGIN_DIRS`; its Code setup (code-runtime.py) names the installer's `small-app`
+  repository as `HIVE_CREATE_SCAFFOLD_REPO`.
 
 ## 3. OmegaCode has no read-at-checkpoint route
 
@@ -83,6 +87,32 @@ reducer change. Member suites stay green.
 
 **Third per-change engine delta.** `_test_effect` journals `refused` when `run_test` answers `{refused}`, for the scope
 check.
+
+**The planner's rules.** `create_plan_engine.PLAN_RULES` holds every rule a plan is refused for, the host's
+`validate_plan` and the reducer's `on-planned`, `graph-fault` and `unknowns-fault`, each keyed by its refusal code
+with the words a planner follows (`plan_rule` maps the reducer's codes for rules the host checks first). The planner's
+answer shape states them all, and a refused plan's next packet carries `last_plan_refused` {code, rule}, whichever
+check refused it. A test reads the codes back from both checks' source, so a new rule can't go unsaid. On fresh
+installs the reducer refused four plans as `design-pieces-carry-the-design`, and the planner, given only that code,
+sent the same plan each time. Acceptance examples write their arithmetic out, and the authored check computes the
+numbers it expects from an example's inputs: four plans said a 100 bill with a 20% tip split four ways is 25.00.
+The space opens before planning, so the planner's packet says whether the scaffold already has the acceptance check
+(`scaffold_has_acceptance_check`), and a plan whose tests are `detect` on a scaffold without one is refused as
+`detect_without_a_check`: on a fresh install's small-app scaffold such a plan asked for the missing check four times.
+
+**Fourth per-change engine delta.** The helper's packet carries the fork's other files under `read_only`, beside the
+piece's own files under `files`. On a fresh install a builder of `app.js` got only `app.js`, asked for the `index.html`
+an earlier piece had built, and stalled: its mind has no Code client, and a member's read proposals are refused,
+because reading is the host's. The packet keeps its 100000-character size: the largest other files are left out
+first and named under `read_only_left_out`. A fork whose files can't be listed or read fails the attempt
+(`think-failed`, stage `assign`), and no packet goes out.
+
+**Fifth per-change engine delta.** A refused attempt's reason goes to the next attempt in words (`refusal_words`,
+`REFUSED_SAYS` in `code_controller_engine.py`), for a member's helper and a request's helper alike: on a fresh install
+a builder put `summary` inside `files`, each retry was told only that it had failed, and it gave the same answer
+until the member blocked. Every `code.controller.status` event wakes the plan waiting on that member, so a member
+that blocks blocks its piece at once, saying the builder's last refusal; before, only `member_ready` woke it and
+the plan stayed building with no error.
 
 **Second per-change engine delta.** The scratch folder of `Reducer` (`code_controller_engine.py`) is now rebuilt from
 the pinned bytes it already verified when a temp sweep removes it. `PlanReducer` already did this.
@@ -137,6 +167,12 @@ render service could later supply `(render <screenshot ref>)` through the same R
 - **`frame_document`.** It inlines `./<asset>` references in index.html (`src`/`href`) and in style.css (`url()`) as
   `data:` URIs. That is the only way the frame's CSP lets them load.
 - **Surface.** `appDocument` got the same inlining in e8fadb31.
+- **The frame's own tags.** `frame_document` and `appDocument` (single-file mode) find index.html's stylesheet link
+  to `./style.css` and its module script for `./app.js` the way the browser tokenizes them, with any quoting,
+  attribute order, case or other attributes, never inside a comment or a raw-text element (`ui_parts.frame_tags`,
+  `appFrameParts.frameTags`, held to the same cases in `hive/tests/fixtures/ui_parts_cases.json`). A classic
+  script isn't taken. On a fresh install a builder wrote single-quoted tags, the exact-string match refused
+  the render, and the design review read as having no independent reviewer.
 - **Deployed apps.** The release lock lists `"assets"`, and `programs.ui_bundle` serves them beside the frame's three
   files.
   - The opt-in is a lock key, so a lock without it keeps the old answer (r17 ruling 3).

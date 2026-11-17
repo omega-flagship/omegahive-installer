@@ -26,21 +26,26 @@ export function ReadyPreview({ view, frame, reduced }: { view: PlanView; frame: 
 
 export function DeployGo({ view, busy, alert, onDeploy }: { view: PlanView; busy: boolean; alert: string | null; onDeploy: () => void }) {
   const go = deployGo(view)
-  const held = !go.available || busy
+  // pressed, or under way in the plan: the engine turns the deploy action off once it starts, so its "nothing is
+  // ready to deploy yet" would stand beside the button's own "Deploying…"; it says it's installing instead
+  const installing = busy || view.status === 'deploying'
+  const held = installing || !go.available
   return (
     <div className="pr-go" role="group" aria-label="Your go">
       <div className="pr-go-words">
-        <p className="pr-go-title">{go.available ? 'Ready when you are' : 'Not ready to deploy yet'}</p>
+        <p className="pr-go-title">{installing ? 'Installing it' : go.available ? 'Ready when you are' : 'Not ready to deploy yet'}</p>
         <p className="pr-go-line">
-          {go.available
+          {installing
+            ? 'Putting it in your Apps now.'
+            : go.available
             ? go.unreviewed
               ? 'Not reviewed: your setting allowed it to skip review. Deploying puts it in your Apps as it is.'
               : 'Checked and reviewed. Deploying puts it in your Apps.'
             : go.why_not}
         </p>
       </div>
-      <button type="button" className="pr-deploy" disabled={held} aria-disabled={held || undefined} onClick={go.available && !busy ? onDeploy : undefined}>
-        {busy ? 'Deploying…' : 'Deploy'}
+      <button type="button" className="pr-deploy" disabled={held} aria-disabled={held || undefined} onClick={go.available && !installing ? onDeploy : undefined}>
+        {installing ? 'Deploying…' : 'Deploy'}
       </button>
       {alert && <p className="pr-alert" role="alert">{alert}</p>}
     </div>

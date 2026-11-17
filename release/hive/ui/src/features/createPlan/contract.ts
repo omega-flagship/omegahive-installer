@@ -165,6 +165,8 @@ export interface PlanView {
   next_action: string | null
   /** the engine's last error (kept for diagnostics; never drawn raw) */
   last_error: string | null
+  /** a mind this plan waits on whose model calls are refused for spending, in the hive's words; absent or null: none */
+  waiting?: { name: string; message: string } | null
   review_policy: string | null
   pieces: PlanPiece[]
   questions: PlanQuestion[]

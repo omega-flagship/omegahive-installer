@@ -105,6 +105,11 @@ export interface Talk {
   mind_id?: string
   /** that mind's name as the person saw it then (at most MIND_NAME_MAX characters), so a restored thread can name it */
   mind_name?: string
+  /**
+   * Kept only until then (epoch ms): a request that stopped before its answer (store/ask keepStopped; Jon on #394:
+   * "time limit on what's kept"). Past it the exchange is carried no more and goes from this browser; absent: kept.
+   */
+  until?: number
 }
 /** The longest mind name a kept exchange keeps. */
 export const MIND_NAME_MAX = 80

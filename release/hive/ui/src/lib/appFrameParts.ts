@@ -1,7 +1,8 @@
 /**
  * r17 "app frame parts": the client's copy of the host's rules (hive/core/ui_parts.py, PROGRAMS.md §9), applied to
  * the server's answer before anything is inlined. Each check returns a refusal reason or null; the reasons match
- * the host's word for word, and tests/fixtures/ui_parts_cases.json is checked by both suites.
+ * the host's word for word, and tests/fixtures/ui_parts_cases.json is checked by both suites. A single-file frame finds
+ * its stylesheet link and module script with frameTags, on the same tokenizing (the host's ui_parts.frame_tags).
  */
 export const PART_MAX = 600_000
 export const TOTAL_MAX = 1_800_000
@@ -69,28 +70,99 @@ export function htmlReason(html: string, scripts: readonly string[]): string | n
   return null
 }
 
-/** From just after a tag name to just after its '>', following the HTML tokenizer's attribute states; -1 if open. */
-function skipTag(s: string, k: number): number {
+/**
+ * From just after a tag name to just after its '>', following the HTML tokenizer's attribute states: [its attributes,
+ * names ASCII-lowercased and the first of a repeated name kept, values quoted either way or bare; where the tag ends,
+ * -1 if it never closes]. The host's ui_parts._tag_attrs is the same rule.
+ */
+function tagAttrs(s: string, k: number): [Map<string, string>, number] {
   const n = s.length
+  const attrs = new Map<string, string>()
   for (;;) {
     while (k < n && (WS.includes(s[k]) || s[k] === '/')) k++
-    if (k >= n) return -1
-    if (s[k] === '>') return k + 1
-    k++
+    if (k >= n) return [attrs, -1]
+    if (s[k] === '>') return [attrs, k + 1]
+    const first = k
+    k++                                                    // first name character, '=' included
     while (k < n && !WS.includes(s[k]) && !'/>='.includes(s[k])) k++
+    const name = asciiLower(s.slice(first, k))
+    let value = ''
     while (k < n && WS.includes(s[k])) k++
     if (k < n && s[k] === '=') {
       k++
       while (k < n && WS.includes(s[k])) k++
       if (k < n && (s[k] === '"' || s[k] === "'")) {
         const close = s.indexOf(s[k], k + 1)
-        if (close < 0) return -1
+        if (close < 0) return [attrs, -1]
+        value = s.slice(k + 1, close)
         k = close + 1
       } else {
+        const bare = k
         while (k < n && !WS.includes(s[k]) && s[k] !== '>') k++
+        value = s.slice(bare, k)
       }
     }
+    if (!attrs.has(name)) attrs.set(name, value)
   }
+}
+
+/** From just after a tag name to just after its '>'; -1 if the tag never closes. */
+const skipTag = (s: string, k: number): number => tagAttrs(s, k)[1]
+
+const trimWs = (v: string) => v.replace(/^[ \t\n\f\r]+|[ \t\n\f\r]+$/g, '')
+
+/**
+ * A single-file frame (no scripts list): where index.html loads style.css and app.js, as [[start, end] of its first
+ * stylesheet link to ./style.css, [start, end] of its first module script element for ./app.js, end tag included],
+ * read the way the browser tokenizes: any quoting, attribute order, case or other attributes, never a tag inside a
+ * comment or a raw-text element. null for a file it doesn't load that way; a classic script is never taken, since
+ * inlined as a module it would run differently. The host's ui_parts.frame_tags is the same rule, checked on the same
+ * cases (tests/fixtures/ui_parts_cases.json, "frame"). Time: one pass over html.
+ */
+export function frameTags(html: string): [[number, number] | null, [number, number] | null] {
+  const s = html
+  const low = asciiLower(html)
+  let link: [number, number] | null = null
+  let script: [number, number] | null = null
+  let i = 0
+  while (link === null || script === null) {
+    const j = s.indexOf('<', i)
+    if (j < 0) break
+    if (low.startsWith('<!--', j)) {
+      if (low.startsWith('<!-->', j) || low.startsWith('<!--->', j)) { i = s.indexOf('>', j) + 1; continue }   // an empty comment closes at once
+      const close = s.indexOf('-->', j + 4)
+      if (close < 0) break
+      i = close + 3
+      continue
+    }
+    const next = s.slice(j + 1, j + 2)
+    if (next === '!' || next === '?' || (next === '/' && !ALPHA.test(s.slice(j + 2, j + 3)))) {
+      const close = s.indexOf('>', j)                       // doctype or bogus comment: ends at the first '>'
+      if (close < 0) break
+      i = close + 1
+      continue
+    }
+    const endTag = next === '/'
+    const m = TAG_NAME.exec(s.slice(j + (endTag ? 2 : 1)))
+    if (!m) { i = j + 1; continue }                         // a bare '<' is text
+    const name = asciiLower(m[0])
+    const [attrs, k] = tagAttrs(s, j + (endTag ? 2 : 1) + m[0].length)
+    if (k < 0) break
+    if (endTag) { i = k; continue }
+    if (name === 'link' && link === null && asciiLower(attrs.get('rel') ?? '').split(/[ \t\n\f\r]+/).includes('stylesheet') &&
+        trimWs(attrs.get('href') ?? '') === './style.css') link = [j, k]
+    if (RAW_TEXT.has(name)) {
+      const end = rawEnd(low, name, k)
+      const close = end >= 0 ? s.indexOf('>', end) : -1
+      if (close < 0) break
+      if (name === 'script' && script === null && trimWs(asciiLower(attrs.get('type') ?? '')) === 'module' &&
+          trimWs(attrs.get('src') ?? '') === './app.js') script = [j, close + 1]
+      i = close + 1
+      continue
+    }
+    i = k
+  }
+  return [link, script]
 }
 
 function rawEnd(low: string, name: string, k: number): number {

@@ -15,7 +15,7 @@ const { AskRefusal } = await import('../api/ask')
 const { useHive, hiveBus } = await import('./store')
 const { NAV_FLOOD_CAP, PRESENCE_PER_TURN, setMover, threadRows, useAskStore } = await import('./ask')
 const { markUnsaved } = await import('../features/ask/dirty')
-const { DONE_WORDS, REFUSAL_WORDS, RESEARCH_WORDS } = await import('../features/ask/words')
+const { REFUSAL_WORDS, RESEARCH_WORDS } = await import('../features/ask/words')
 const { href, parse } = await import('../lib/router')
 const { previewLook } = await import('../shell/uiVariant')
 type AskEvent = import('../api/ask').AskEvent
@@ -40,7 +40,6 @@ function fakeClient(over: Partial<HiveClient> = {}): HiveClient {
     }),
     askTurn: vi.fn(async (op: string, after = 0) => ({ operation_id: op, turn_id: 't1', events: (frames[op] ?? []).filter((e) => e.seq > after), more: false })),
     askSteer: vi.fn(async (op: string, b: { steer_id: string }) => ({ steer_id: b.steer_id, operation_id: op })),
-    askTakeover: vi.fn(async () => ({})),
     askConfirm: vi.fn(async () => ({ ok: true })),
     askStop: vi.fn(async () => ({})),
     ...over,
@@ -316,56 +315,32 @@ describe('the mind moves the page (Jon: as often as it chooses; animated only wh
     expect(rows().filter((r) => r.kind === 'go').map((r) => r.route)).toEqual(['#/usage'])
   })
 
-  it('the person always wins: after they take over, moves become Go cards (and the host is told); a steer resumes', async () => {
+  it('the person always wins without stopping the Ask: their touch holds the mind\'s moves as Go cards, the turn answers, a steer resumes', async () => {
+    // Jon, 17 Nov: "Ask should exist above UI - stop shouldn't happen"
     const client = fakeClient()
     const op = await ask('show me around', client)
     deliver(nav(op, 2, '#/tasks'))
     useAskStore.getState().personTookOver()
-    expect(client.askTakeover).toHaveBeenCalledWith(op)
     deliver(nav(op, 3, '#/usage'))
     expect(loc.hash).toBe('#/tasks')
-    expect(rows().map((r) => r.kind)).toContain('go')
+    expect(rows().filter((r) => r.kind === 'go').map((r) => r.route)).toEqual(['#/usage'])
     expect(rows().some((r) => r.kind === 'note' && /You took over/.test(r.text))).toBe(true)
+    await new Promise((r) => setTimeout(r, 0))
+    // nothing asked the host to end or stop the turn: it is still open, and nothing reads as a stop
+    expect(client.askStop).not.toHaveBeenCalled()
+    expect(useAskStore.getState().turns[op].state).toBe('open')
+    expect(rows().some((r) => r.kind === 'refused' || r.state === 'failed')).toBe(false)
     await useAskStore.getState().steer('carry on', { route: 'goals', experience: 'classic' })
     deliver(nav(op, 4, '#/swarms'))
     expect(loc.hash).toBe('#/swarms')
-  })
-
-  it('conductor-live takeover: a 404 not_available (conductor off) is inert; the page keeps its own pause, no error said', async () => {
-    const client = fakeClient({ askTakeover: vi.fn(async () => { throw new AskRefusal(404, 'not_available', 'not available') }) as never })
-    const op = await ask('show me around', client)
-    useAskStore.getState().personTookOver()
-    await Promise.resolve()
-    await Promise.resolve()
-    expect(client.askTakeover).toHaveBeenCalledWith(op)
-    expect(useAskStore.getState().turns[op].tookOver).toBe(true)
-    expect(useAskStore.getState().turns[op].state).toBe('open')
-    expect(rows().some((r) => r.kind === 'refused')).toBe(false)
-    await vi.waitFor(() => expect(useAskStore.getState().turns[op].takeover).toBe('inert'))
-    expect(client.askStop).not.toHaveBeenCalled()   // never a stop of the coordinator's answer (ask-takeover r5b)
-  })
-
-  it('conductor-live takeover: the host’s done {cancelled, taken_over} closes the turn and says it plainly, not as an error', async () => {
-    const client = fakeClient()
-    const op = await ask('show me around', client)
-    useAskStore.getState().personTookOver()
-    deliver(frame(op, 2, { phase: 'done', outcome: 'cancelled', taken_over: true, spent_usd: 0.01, turn_spent_usd: 0.01 }))
+    deliver(frame(op, 5, { phase: 'answer', text: 'Here is everything.' }))
+    deliver(frame(op, 6, { phase: 'done', outcome: 'complete', spent_usd: 0.01, turn_spent_usd: 0.01 }))
     expect(useAskStore.getState().turns[op].state).toBe('done')
-    const notes = rows().filter((r) => r.kind === 'note').map((r) => r.text)
-    expect(notes).toContain('You took over — the Ask stopped.')
-    expect(notes).not.toContain(DONE_WORDS.cancelled)
-    expect(rows().some((r) => r.kind === 'refused' || r.state === 'failed')).toBe(false)
-    // a plain cancelled (not a takeover) still reads as a stop
-    const op2 = await ask('again', client)
-    deliver(frame(op2, 2, { phase: 'done', outcome: 'cancelled' }))
-    expect(rows().filter((r) => r.op === op2 && r.kind === 'note').map((r) => r.text)).toEqual([DONE_WORDS.cancelled])
+    expect(rows().some((r) => r.kind === 'answer' && r.text === 'Here is everything.')).toBe(true)
+    expect(client.askStop).not.toHaveBeenCalled()
   })
 
-  it('conductor-live: the recovery view’s takeover reason is in the closed set, said plainly', () => {
-    expect(REFUSAL_WORDS.takeover.say).toBe('You took over — the Ask stopped.')
-  })
-
-  it('ask-takeover r3: a takeover while the request is still being sent reaches the host once the turn is admitted', async () => {
+  it('a touch while the request is still being sent holds the moves from the start, and the admitted turn runs on', async () => {
     let admit!: () => void
     const client = fakeClient({
       ask: vi.fn((b: { operation_id: string }) => new Promise((res) => {
@@ -377,47 +352,18 @@ describe('the mind moves the page (Jon: as often as it chooses; animated only wh
     const op = openOp()
     expect(useAskStore.getState().turns[op].state).toBe('sending')
     useAskStore.getState().personTookOver()
-    expect(useAskStore.getState().turns[op].tookOver).toBe(true)
-    expect(client.askTakeover).not.toHaveBeenCalled()   // the host has no turn yet: a 404 would lose it
     admit()
     await pending
-    expect(client.askTakeover).toHaveBeenCalledTimes(1)
-    expect(client.askTakeover).toHaveBeenCalledWith(op)
-    deliver(frame(op, 1, { phase: 'accepted', thread }))   // the accepted frame afterwards sends nothing more
-    await Promise.resolve()
-    expect(client.askTakeover).toHaveBeenCalledTimes(1)
-    expect(useAskStore.getState().turns[op].takeover).toBe('sent')
-  })
-
-  it('ask-takeover r3: a takeover the host does not take stops the turn instead, and says so if that fails too', async () => {
-    const client = fakeClient({
-      askTakeover: vi.fn(async () => { throw new Error('offline') }) as never,
-      askStop: vi.fn(async () => { throw new Error('offline') }) as never,
-    })
-    const op = await ask('show me around', client)
-    useAskStore.getState().personTookOver()
-    await vi.waitFor(() => expect(useAskStore.getState().turns[op].takeover).toBe('failed'))
-    expect(client.askStop).toHaveBeenCalledWith(op)
-    expect(useAskStore.getState().turns[op].tookOver).toBe(true)   // the page still refuses the mind's moves
-    expect(rows().some((r) => r.kind === 'note' && /didn’t confirm that the orchestrator stopped/.test(r.text))).toBe(true)
-    const ok = fakeClient({ askTakeover: vi.fn(async () => { throw new Error('offline') }) as never })
-    const op2 = await ask('again', ok)
-    useAskStore.getState().personTookOver()
-    await vi.waitFor(() => expect(useAskStore.getState().turns[op2].takeover).toBe('sent'))
-    expect(ok.askStop).toHaveBeenCalledWith(op2)
-  })
-
-  it('followups-r8: a takeover answered after a sign-in change sends no stop (the second write is bound to the thread)', async () => {
-    let fail: (e: Error) => void = () => undefined
-    const client = fakeClient({ askTakeover: vi.fn(() => new Promise((_, rej) => { fail = rej })) as never })
-    const op = await ask('show me around', client)
-    useAskStore.getState().personTookOver()
-    await vi.waitFor(() => expect(client.askTakeover).toHaveBeenCalledWith(op))
-    useHive.setState({ session: `session-${++n}`, inits: n }) // signed in again on this page
-    fail(new Error('offline'))
-    await new Promise((r) => setTimeout(r, 0))
-    await new Promise((r) => setTimeout(r, 0))
+    deliver(frame(op, 1, { phase: 'accepted', thread }))
+    deliver(nav(op, 2, '#/usage'))
+    expect(loc.hash).toBe('#/')
+    expect(rows().filter((r) => r.kind === 'go').map((r) => r.route)).toEqual(['#/usage'])
+    expect(useAskStore.getState().turns[op].state).toBe('open')
     expect(client.askStop).not.toHaveBeenCalled()
+  })
+
+  it('a turn a hive closed by takeover before reads plainly in its record, never as a refusal', () => {
+    expect(REFUSAL_WORDS.takeover.say).toBe('You took over — the Ask stopped.')
   })
 
   it('a presence `go` moves the page like a navigate, with the same guards; presence is capped per turn', async () => {

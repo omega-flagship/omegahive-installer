@@ -235,8 +235,9 @@ class Settings:
     # NEW requests. A request adopted while the switch was on keeps the engine's brief and its run: switching off later
     # neither wakes a controller mind for it nor re-briefs its goal (a person discards it, or it ends with its lease).
     code_controller_engine: bool = True
-    # Create plans: the MeTTa plan controller R4.0 host engine (create_plan_engine.py). Off until reviewed and deployed.
-    create_plan_engine: bool = False
+    # Create plans: the MeTTa plan controller R4.0 host engine (create_plan_engine.py). On in every install (Jon on #395:
+    # "Create should be fully deployed and working from setup"); HIVE_CREATE_PLAN_ENGINE=off turns it off.
+    create_plan_engine: bool = True
     # The spending settings this process found in its environment ({name: raw text}). They only seed a hive with no total
     # on the Limits page (Jon 2026-10-07, "they should match the number I set in the admin panel"); the limits API
     # reports each one (hive/core/budgets.py Budgets.server_settings).
@@ -478,7 +479,7 @@ def load_settings(**overrides) -> Settings:
         copy_apply_claims=os.environ.get("HIVE_COPY_APPLY_CLAIMS", "") == "on",
         proposal_test_claims=os.environ.get("HIVE_PROPOSAL_TEST_CLAIMS", "") == "on",
         code_controller_engine=os.environ.get("HIVE_CODE_CONTROLLER_ENGINE", "on").strip().lower() in ("1", "on", "true", "yes"),
-        create_plan_engine=os.environ.get("HIVE_CREATE_PLAN_ENGINE", "off").strip().lower() in ("1", "on", "true", "yes"),
+        create_plan_engine=os.environ.get("HIVE_CREATE_PLAN_ENGINE", "on").strip().lower() in ("1", "on", "true", "yes"),
         proposal_test_argv_prefixes=_argv_prefixes(),
         media_route=os.environ.get("HIVE_MEDIA_ROUTE", "") == "on",
         mind_gateway=os.environ.get("HIVE_MIND_GATEWAY", "") == "1",

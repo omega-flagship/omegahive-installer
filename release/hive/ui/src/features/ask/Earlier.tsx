@@ -37,7 +37,8 @@ export const keptMindTalk = (talks: readonly Talk[], turnId: string): Talk | nul
 /** One line for a turn's outcome, in the hive's own terms. */
 export function turnOutcome(t: Pick<AskTurnRecord, 'state' | 'reason'>): string {
   if (t.state === 'done') return 'answered'
-  // the person took over (host takeover route): their own act, said plainly, never as a refusal
+  // a turn a hive closed when the person touched the page, before that stopped ending turns: their own act, said
+  // plainly, never as a refusal
   if (t.state === 'refused' && t.reason === 'takeover') return REFUSAL_WORDS.takeover.say
   if (t.state === 'refused') return t.reason && t.reason in REFUSAL_WORDS ? `not answered: ${REFUSAL_WORDS[t.reason as keyof typeof REFUSAL_WORDS].say}` : `not answered${t.reason ? ` (${t.reason})` : ''}`
   return t.state === 'thinking' ? 'still thinking' : 'waiting to start'

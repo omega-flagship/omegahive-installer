@@ -232,6 +232,14 @@ def test_part_names_shared_with_the_client(name, ok):
                                   "files": {"index.html": "", "style.css": "", name: "", "app.js": ""}}) is None) is ok
 
 
+@pytest.mark.parametrize("case", CASES["frame"], ids=lambda c: c["name"])
+def test_a_single_file_frame_finds_its_two_tags_as_the_browser_reads_them(case):
+    """A Create builder wrote <link rel='stylesheet' href='./style.css'>, which the frame matched as an exact string
+    and refused. The tags are read the way the browser tokenizes them; the client checks the same cases."""
+    link, script = ui_parts.frame_tags(case["html"])
+    assert [list(link) if link else None, list(script) if script else None] == [case["link"], case["script"]]
+
+
 @pytest.mark.parametrize("name", ["a.b.js", "app.min.js", "app.js\n"])
 def test_dotted_or_newline_names_are_422(client, tmp_path, name):
     install(client, tmp_path, bundle(["app.js"]), scripts=[name, "app.js"])

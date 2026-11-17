@@ -1,6 +1,6 @@
 /** The pinned files `GET /api/programs/{id}/ui` returns: index.html, style.css and app.js, plus (r17) any declared script
  *  parts, which then come with their ordered `scripts` list. */
-import { partTag, partsReason } from './appFrameParts'
+import { frameTags, partTag, partsReason } from './appFrameParts'
 
 export interface FrameFiles { 'index.html': string; 'app.js': string; 'style.css': string; [part: string]: string }
 export interface FrameDocument { html: string; channel: string }
@@ -97,13 +97,23 @@ export function appDocument(files: FrameFiles, hostOrigin: string, channel: stri
     const reason = partsReason(files, scripts)
     if (reason) throw new Error(`Unexpected app interface: ${reason}`)
   }
-  if (typeof html0 !== 'string' || !html0.includes('src="./app.js"') || !html0.includes('href="./style.css"')) throw new Error('Unexpected app interface format')
+  if (typeof html0 !== 'string' || typeof files['style.css'] !== 'string' || typeof files['app.js'] !== 'string') throw new Error('Unexpected app interface format')
   const own = new Set(['index.html', 'style.css', ...(scripts ?? ['app.js'])])
   const css = inlineAssets(files['style.css'], files, true, own)
-  let html = inlineAssets(html0, files, false, own)
-    .replace('<link rel="stylesheet" href="./style.css">', () => `<style nonce="${nonce}">${css.replace(/<\/style/gi, '<\\/style')}</style>`)
-  for (const name of scripts ?? ['app.js']) {
-    html = html.replace(partTag(name), () => `<script type="module" nonce="${nonce}">${files[name].replace(/<\/script/gi, '<\\/script')}</script>`)
+  const style = `<style nonce="${nonce}">${css.replace(/<\/style/gi, '<\\/style')}</style>`
+  const moduleTag = (name: string) => `<script type="module" nonce="${nonce}">${files[name].replace(/<\/script/gi, '<\\/script')}</script>`
+  let html = inlineAssets(html0, files, false, own)        // other files' data: URIs change no tag boundary
+  if (scripts === undefined) {
+    // single-file: the stylesheet link and the module script however the browser reads them (frameTags, the host's
+    // frame_tags), each replaced in place, the later one first
+    const [link, script] = frameTags(html)
+    if (!link || !script) throw new Error('Unexpected app interface format')
+    for (const [[start, end], text] of ([[link, style], [script, moduleTag('app.js')]] as [[number, number], string][]).sort((a, b) => b[0][0] - a[0][0]))
+      html = html.slice(0, start) + text + html.slice(end)
+  } else {
+    // parts: the canonical tags partsReason has already checked
+    html = html.replace('<link rel="stylesheet" href="./style.css">', () => style)
+    for (const name of scripts) html = html.replace(partTag(name), () => moduleTag(name))
   }
   return { html: framePrefix(hostOrigin, channel, nonce) + html, channel }
 }

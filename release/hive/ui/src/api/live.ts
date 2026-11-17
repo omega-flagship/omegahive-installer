@@ -816,9 +816,8 @@ export class LiveClient implements HiveClient {
   endSession = (id: string) => this.request<import('./types').WorkSession>('POST', `/api/sessions/${enc(id)}/end`)
   budgetLimitsView = () => this.request<unknown>('GET', '/api/budgets/limits')
   agentLimits = (id: string) => this.request<import('./types').CallLimits>('GET', `/api/agents/${enc(id)}/limits`)
-  // ---- Surface universal Ask: the routes Platform built in phase 1 (platform/ask-p1 at 6100794, hive/API.md), and
-  // takeover (POST /api/ask/{op}/takeover: the conductor turn ends and spends no more). Confirm is NOT wired here yet:
-  // this client leaves it undefined, so the page never sends it to a live hive; the sim plays it.
+  // ---- Surface universal Ask: the routes Platform built in phase 1 (platform/ask-p1 at 6100794, hive/API.md). Confirm
+  // is NOT wired here yet: this client leaves it undefined, so the page never sends it to a live hive; the sim plays it.
   ask = async (body: import('./ask').AskBody): Promise<import('./ask').AskAccepted> => {
     const r = await this.askRequest<import('./ask').AskAccepted>('POST', '/api/ask', body)
     // Kimi K3 (2): a 2xx that parses but is not this request's acceptance is a protocol violation. The hive answered,
@@ -837,7 +836,6 @@ export class LiveClient implements HiveClient {
     }
     return r
   }
-  askTakeover = (op: string) => this.askRequest<import('./ask').AskTakeover>('POST', `/api/ask/${enc(op)}/takeover`, { reason: 'user_took_over' })
   askSettings = () => this.askRequest<import('./ask').AskSettings>('GET', '/api/me/ask')
   setAskSettings = (body: import('./ask').AskSettingsPut) => this.askRequest<import('./ask').AskSettings>('PUT', '/api/me/ask', body)
   myMind = () => this.request<unknown>('GET', '/api/me/mind')
