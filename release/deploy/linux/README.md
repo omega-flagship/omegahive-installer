@@ -140,7 +140,14 @@ then calls the secret-safe local control client. Installation enables the unit
 for future user logins. `stop` stops only that unit. `uninstall` stops and disables
 it, removes the shim before the selected
 runtime and state so a partial failure cannot leave a dangling entry point, and asks before deleting conversations/data. It preserves data unless
-the user explicitly types `DELETE`; caches/logs and unrelated releases remain.
+the user explicitly types `DELETE`; the download cache, logs and unrelated releases remain.
+
+uv's cache lives inside each release (`runtime/uv-cache`), so it goes with the release.
+A wheel uv builds can link that release's own SWI-Prolog by absolute path, and uv
+keys a built wheel by its source, so a cache shared across releases gave a v0.34
+install the janus-swi build of a removed v0.33 release. Installing removes the
+shared `cache/uv` that earlier releases left. Downloads stay in the shared,
+checksum-addressed `cache`.
 
 Own tests are in `test_install.py` and are Source only. They use synthetic
 archives, temporary home paths and fake command dispatch; they install nothing.

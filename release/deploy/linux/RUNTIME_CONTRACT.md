@@ -40,7 +40,8 @@ All18 keys are mandatory; no extra keys or secrets:
 
 Files/directories and ancestry must not be writable by another account; selected
 runtime folders must belong to the account. Named venv Python may be a leaf link
-to the managed Python inside the same bundle. No ambient uv cache is accepted.
+to the managed Python inside the same bundle. No ambient uv cache is accepted:
+uv's cache is the release's own `runtime/uv-cache`, never shared across releases.
 App pin `digest` is `sha256:<64hex>`; optional `files` has at most512 safe relative
 names and SHA256 values. Pin releases must lie within declared plugin dirs. Hive
 performs its existing digest/review checks; this launcher does not grant consent.

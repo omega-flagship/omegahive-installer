@@ -1353,6 +1353,9 @@ class NativePackageCompilerTests(unittest.TestCase):
             def ui(_archive, _manifest, destination, _provenance):
                 destination.mkdir(parents=True); return b"{}"
             runtime = home / "run"; runtime.mkdir(mode=0o700)
+            # A shared uv cache an earlier release left, holding a build against that release's paths.
+            legacy = root / "cache/uv"; legacy.mkdir(parents=True, mode=0o700)
+            (legacy / "janus_swi-built-for-test-0.whl").write_bytes(b"stale")
             with ExitStack() as stack:
                 stack.enter_context(patch.dict(install.os.environ, {"CC": "clang-from-ambient", "CXX": "clang++-from-ambient", "PATH": "/untrusted"}))
                 stack.enter_context(patch.object(install, "preflight", return_value="aarch64"))
@@ -1381,6 +1384,10 @@ class NativePackageCompilerTests(unittest.TestCase):
             self.assertEqual(env["LD_LIBRARY_PATH"], str(root / "releases/test-1/runtime/python/lib"))
             self.assertEqual(env["UV_PYTHON_DOWNLOADS"], "never")
             self.assertEqual(env["UV_NO_CONFIG"], "1")
+            # uv builds and caches inside this release only, and the earlier shared cache is gone.
+            self.assertEqual(env["UV_CACHE_DIR"], str(root / "releases/test-1/runtime/uv-cache"))
+            self.assertFalse(legacy.exists())
+            self.assertTrue((root / "cache").is_dir())
             for flag in ("--python", "--require-hashes", "--require-build-hashes", "--build-constraint"):
                 self.assertIn(flag, argv)
             self.assertIn("build-essential", install.APT)

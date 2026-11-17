@@ -1293,7 +1293,16 @@ class Installer:
             extract_tool(self.fetch(selected["uv"]), uvroot)
             uv = uvroot / "uv"
             self.env = clean_env(self.home, "/usr/bin:/bin")
-            self.env.update(UV_PYTHON_DOWNLOADS="never", UV_CACHE_DIR=str(self.root / "cache/uv"))
+            # uv's cache lives inside the release. A wheel uv builds here can link this release's own SWI-Prolog by
+            # absolute path (janus-swi's _swipl), and uv keys a built wheel by its source, not by what it linked, so
+            # a cache shared across releases handed a v0.33 build to a v0.34 install after uninstall had removed
+            # v0.33, and the install stopped on "libswipl.so.10: cannot open shared object file".
+            self.env.update(UV_PYTHON_DOWNLOADS="never", UV_CACHE_DIR=str(runtime / "runtime/uv-cache"))
+            # Earlier releases kept that shared cache beside the releases; only builds against their paths can be in
+            # it, so it goes instead of growing in the person's home.
+            legacy = self.root / "cache/uv"
+            if legacy.exists() or legacy.is_symlink():
+                plain(legacy, directory=True); shutil.rmtree(legacy)
             # Exact python-build-standalone publisher archive, checksum-pinned independently of uv.
             pyroot = runtime / "runtime/python"
             extract_tool(self.fetch(selected["python"]), pyroot)

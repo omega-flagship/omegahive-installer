@@ -208,6 +208,91 @@ jobs:
           name: linux-v034-${{ matrix.os }}-${{ matrix.entry }}-receipts
           path: ${{ runner.temp }}/receipts/
 
+  # A v0.33 tester's way to this build: the published v0.33 kit, `omegahive uninstall` keeping conversations, then this
+  # kit over the kept data folder. A fresh install can't catch what the older release leaves behind.
+  upgrade:
+    needs: build
+    runs-on: ubuntu-26.04
+    env:
+      HIVE_USER: hiveuser
+      OLD_KIT_URL: https://github.com/omega-flagship/omegahive-installer/releases/download/linux-hive-v0.33/omegahive-linux.sh
+      OLD_KIT_SHA256: 0ccb11c1ad71aa2bee62a3da817be4caf807e00c2c631f146d61e77d41c12632
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use runner scratch outside the tested tree
+        run: printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          name: omegahive-linux-v034-kit
+          path: ${{ runner.temp }}/kit
+      - name: Fresh user allowed both releases' fixed system setup commands, with the published v0.33 kit
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+          sudo sh ci/linux-x86/test_account.sh "$HIVE_USER" "$RELEASE_ID"
+          uid=$(id -u "$HIVE_USER")
+          # v0.33's own AppArmor commands, as its test_account.sh wrote them (a4cecc4); apt and linger are allowed above.
+          printf '%s ALL=(root) NOPASSWD: /usr/bin/install -o root -g root -m 0644 %s %s, /usr/sbin/apparmor_parser -r %s\n' \
+            "$HIVE_USER" "/home/$HIVE_USER/.local/share/omegahive/releases/linux-hive-v0.33/launcher.apparmor" \
+            "/etc/apparmor.d/omegahive-mind-launcher-$uid" "/etc/apparmor.d/omegahive-mind-launcher-$uid" \
+            | sudo tee /etc/sudoers.d/91-hive-ci-v033 > /dev/null
+          sudo chmod 0440 /etc/sudoers.d/91-hive-ci-v033
+          sudo visudo -cf /etc/sudoers.d/91-hive-ci-v033
+          curl -fLsS "$OLD_KIT_URL" -o "$RUNNER_TEMP/omegahive-linux-v033.sh"
+          printf '%s  %s\n' "$OLD_KIT_SHA256" "$RUNNER_TEMP/omegahive-linux-v033.sh" | sha256sum -c -
+          (cd "$RUNNER_TEMP/kit" && sha256sum -c omegahive-linux.sh.sha256)
+          sudo install -o "$HIVE_USER" -m 0600 "$RUNNER_TEMP/omegahive-linux-v033.sh" "/home/$HIVE_USER/omegahive-linux-v033.sh"
+          sudo install -o "$HIVE_USER" -m 0600 "$RUNNER_TEMP/kit/omegahive-linux.sh" "/home/$HIVE_USER/omegahive-linux.sh"
+      - name: Install v0.33, uninstall it keeping conversations, then install this build over the kept data
+        run: |
+          uid=$(id -u "$HIVE_USER")
+          as_user() { sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR="/run/user/$uid" "$@"; }
+          step() {
+            set +e
+            # The runner owns these logs; sudo changes only the installer's identity.
+            # shellcheck disable=SC2024
+            sudo -iu "$HIVE_USER" bash -c "umask 077; script -qec 'sh ~/$1' /dev/null" > "$RUNNER_TEMP/$2.out" 2>&1
+            code=$?
+            set -e
+            python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/$2.out"
+            if [ "$code" != 0 ]; then
+              # shellcheck disable=SC2016,SC2024
+              sudo bash -c 'tail -n 150 -- "$(ls -t "$1"/.local/share/omegahive/logs/install-*.log | head -n 1)"' bash "/home/$HIVE_USER" > "$RUNNER_TEMP/$2-log.out" 2>&1 || true
+              python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/$2-log.out"
+              exit "$code"
+            fi
+          }
+          step omegahive-linux-v033.sh install-v033
+          data="/home/$HIVE_USER/.local/share/omegahive/data"
+          before=$(sudo stat -c %i "$data")
+          printf '\n' | as_user "/home/$HIVE_USER/.local/bin/omegahive" uninstall > "$RUNNER_TEMP/uninstall-v033.out" 2>&1
+          python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/uninstall-v033.out"
+          grep -q "Your conversations were kept" "$RUNNER_TEMP/uninstall-v033.out"
+          step omegahive-linux.sh install-upgrade
+          after=$(sudo stat -c %i "$data")
+          printf 'data folder inode before %s, after %s\n' "$before" "$after"
+          test "$before" = "$after"
+      - name: Open, sign in, restart, log out, and restart the user manager on the upgraded hive
+        run: |
+          sudo python3 ci/linux-x86/smoke_release.py verify "$HIVE_USER" "$RUNNER_TEMP/verification.json"
+      - name: Retain secret-free verification receipts
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/receipts"
+          for name in install-v033 uninstall-v033 install-upgrade; do
+            test ! -f "$RUNNER_TEMP/$name.out" || python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/$name.out" > "$RUNNER_TEMP/receipts/$name.out"
+          done
+          # shellcheck disable=SC2016,SC2024
+          sudo bash -c 'cat -- "$1"/.local/share/omegahive/logs/install-*.log' bash "/home/$HIVE_USER" > "$RUNNER_TEMP/install-log.raw" 2>&1 || true
+          python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/install-log.raw" > "$RUNNER_TEMP/receipts/install-log.txt"
+          test ! -f "$RUNNER_TEMP/verification.json" || cp "$RUNNER_TEMP/verification.json" "$RUNNER_TEMP/receipts/"
+          git rev-parse HEAD > "$RUNNER_TEMP/receipts/installer-commit.txt"
+          lsb_release -ds > "$RUNNER_TEMP/receipts/os.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-v034-upgrade-from-v033-receipts
+          path: ${{ runner.temp }}/receipts/
+
   fresh:
     # A hosted runner already has the compilers and tools the installer needs, which a fresh Ubuntu lacks. This job
     # boots the official Ubuntu image with only what a standard install has (fresh-ubuntu.Dockerfile) and installs the
