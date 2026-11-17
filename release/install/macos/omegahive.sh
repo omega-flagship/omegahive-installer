@@ -101,17 +101,29 @@ running() { [ -n "$(control hello port)" ]; }
 # (tools/runtime-env), and an older hive ignores it. Plugin folders, pins and apps the owner names in hive.env are
 # kept beside the Tools app; the runtimes are the installer's alone. A function, not a here-document inside $(...),
 # which macOS's bash 3.2 can misparse.
+# Studio, the app the hive shows as Create, is mounted and pinned the same way when setup-studio.sh put it in apps/
+# (its pin binds the page lock its page is checked against), may run its actions in the sandbox, and turns on Studio's
+# live sessions unless the owner's hive.env says otherwise. A Mac hive keeps them off by itself until its restart path
+# is reviewed (hive/core/studio_sessions.py names what is missing in the hive's log); Create's Make, Code and Flow work
+# either way.
 app_settings() {
   . "$OH/app/install/macos/pins.sh"
-  "$OH/venv/bin/python" -I - "$OH" "$TOOLCHAIN" "$OMEGA_TOOLS_DIGEST" "$OMEGA_TOOLS_LOCK_SHA256" <<'PY'
+  "$OH/venv/bin/python" -I - "$OH" "$TOOLCHAIN" "$OMEGA_TOOLS_DIGEST" "$OMEGA_TOOLS_LOCK_SHA256" \
+    "$OMEGADESIGN_DIGEST" "$OMEGADESIGN_LOCK_SHA256" <<'PY'
 import json, os, re, shlex, subprocess, sys
-oh, toolchain, digest, lock = sys.argv[1:5]
+oh, toolchain, digest, lock, studio_digest, studio_lock = sys.argv[1:7]
 runtimes = {"node": {"exe": f"{toolchain}/bin/node", "reads": [f"{oh}/package.json"]}}
 if os.environ.get('HIVE_CODE_SANDBOX_PROJECT_TESTS') == 'on':
     runtimes['python'] = {'exe': os.path.realpath(f'{oh}/venv/bin/python'), 'reads': [toolchain]}
 out = {}
 tools = os.path.normpath(os.path.join(oh, "apps", "omega-tools"))
-if os.path.isfile(os.path.join(tools, "plugin.json")):
+studio = os.path.normpath(os.path.join(oh, "apps", "omegadesign"))
+# The installer's pinned apps that setup put in apps/: each app's folder, its source digest and the one file its pin binds.
+pinned = {app: (folder, d, files) for app, folder, d, files in (
+    ("omega-tools", tools, digest, {"release-data.lock.json": lock}),
+    ("omegadesign", studio, studio_digest, {"ui/bundle.lock.json": studio_lock}))
+    if os.path.isfile(os.path.join(folder, "plugin.json"))}
+if "omega-tools" in pinned:
     runtimes["metta"] = {"exe": f"{oh}/venv/bin/python", "reads": [f"{oh}/PeTTa", f"{oh}/swipl"]}
     try:
         dump = subprocess.run([f"{oh}/swipl/bin/swipl", "--dump-runtime-variables=sh"], capture_output=True, text=True).stdout
@@ -122,17 +134,22 @@ if os.path.isfile(os.path.join(tools, "plugin.json")):
         runtimes["metta"]["env"] = {"SWI_HOME_DIR": home.group(1)}
     else:   # the hive still starts; only Tools skill runs on a relocated SWI-Prolog fail, and its log says why
         print(f"OmegaHive: {oh}/swipl/bin/swipl named no home (PLBASE); Tools skills may not find SWI-Prolog", file=sys.stderr)
-    dirs = [d for d in os.environ.get("HIVE_PLUGIN_DIRS", "").split(os.pathsep) if d and os.path.normpath(d) != tools]
-    out["HIVE_PLUGIN_DIRS"] = os.pathsep.join([tools] + dirs)
+if pinned:
+    folders = [folder for folder, _, _ in pinned.values()]
+    dirs = [d for d in os.environ.get("HIVE_PLUGIN_DIRS", "").split(os.pathsep) if d and os.path.normpath(d) not in folders]
+    out["HIVE_PLUGIN_DIRS"] = os.pathsep.join(folders + dirs)
     try:
         pins = json.loads(os.environ.get("HIVE_APP_PINS") or "{}")
     except ValueError:
         pins = None
     if isinstance(pins, dict):   # an owner value that is no JSON object stays as written, and the hive refuses it
-        pins["omega-tools"] = {"release": tools, "digest": digest, "files": {"release-data.lock.json": lock}}
+        for app, (folder, d, files) in pinned.items():
+            pins[app] = {"release": folder, "digest": d, "files": files}
         out["HIVE_APP_PINS"] = json.dumps(pins)
-    apps = [a.strip() for a in os.environ.get("HIVE_SANDBOX_RUN_APPS", "").split(",") if a.strip() not in ("", "omega-tools")]
-    out["HIVE_SANDBOX_RUN_APPS"] = ",".join(["omega-tools"] + apps)
+    apps = [a.strip() for a in os.environ.get("HIVE_SANDBOX_RUN_APPS", "").split(",") if a.strip() and a.strip() not in pinned]
+    out["HIVE_SANDBOX_RUN_APPS"] = ",".join(list(pinned) + apps)
+if "omegadesign" in pinned and not os.environ.get("HIVE_STUDIO_SESSIONS", "").strip():
+    out["HIVE_STUDIO_SESSIONS"] = "on"
 out["HIVE_SANDBOX_RUNTIMES"] = json.dumps(runtimes)
 for key, value in out.items():
     print(f"export {key}={shlex.quote(value)}")
@@ -459,17 +476,23 @@ stop() {
 # brings the hive's starting limit, 50 USD a month (hive/core/budgets.py seed_start_total, PhysixSNET/omegahive#35).
 # The cap is set without a line in the installer's window: a money line there, before any key or choice, reads as a
 # charge, and the mind's page shows the cap where it can be changed.
+# Studio, when setup-studio.sh put it in apps/, is installed in the same owner session: the owner's review of the release
+# the hive pinned (POST /api/programs/omegadesign/install, which an owner, never the local operator, may make), turned
+# on in the Create · Code controller's swarm, where Create then opens with its Studio, Make, Code and Flow. Reviewed but
+# on in no swarm a person sees, the hive lists no Create; on only in a person's personal swarm, Create asks where to
+# open (both seen on a v0.33 hive, 17 November). A review of an older release is renewed when an update brings a new one.
 create() {
   [ -f "$CODE/config.json" ] || return 0
   start
-  (cd "$OH/app" && "$OH/venv/bin/python" - "$SOCKET" "$(port)" "$CODE" <<'PY'
+  (cd "$OH/app" && "$OH/venv/bin/python" - "$SOCKET" "$(port)" "$CODE" "$OH" <<'PY'
 import json
+import os
 import sys
 import urllib.request
 
 from hive.core.newhive_helper import control
 
-sock, port, code = sys.argv[1:4]
+sock, port, code, oh = sys.argv[1:5]
 base = f"http://127.0.0.1:{port}"
 
 
@@ -494,9 +517,31 @@ try:
         service = f"http://127.0.0.1:{json.load(open(f'{code}/config.json'))['port']}"
         call("POST", "/v1/operator/register", {"enrol_token": enrol_token}, operator, url=service)
         print("Create's Code service is enrolled with your hive.")
+    controller = None
     for mind in call("GET", "/api/agents", token=token):
-        if mind.get("name") == "Create · Code controller" and float(mind.get("budget_usd") or 0) < 5:
-            call("PATCH", f"/api/agents/{mind['id']}", {"budget_usd": 5}, token)
+        if mind.get("name") == "Create · Code controller":
+            controller = mind
+            if float(mind.get("budget_usd") or 0) < 5:
+                call("PATCH", f"/api/agents/{mind['id']}", {"budget_usd": 5}, token)
+    if os.path.isfile(os.path.join(oh, "apps", "omegadesign", "plugin.json")):
+        entry = call("GET", "/api/programs/omegadesign", token=token)
+        status = call("GET", "/api/programs/omegadesign/install", token=token)
+        swarm = (controller or {}).get("swarm_id")
+        if entry.get("error") or not entry.get("digest"):
+            print(f"Studio did not load in your hive, so it shows no Create: {entry.get('error') or 'no pinned release'}")
+        elif not swarm:
+            print("Your hive has no Create · Code controller yet, so Studio is not turned on; it is at the next start.")
+        else:
+            # a person app opens in each person's own space, so only a swarm app is turned on in a chosen swarm
+            in_swarm = status.get("placement") == "swarm"
+            active = {a.get("swarm_id") for a in call("GET", "/api/programs/omegadesign/activations", token=token)
+                      if a.get("active")}
+            if not status.get("installed") or status.get("release_digest") != entry["digest"]:
+                call("POST", "/api/programs/omegadesign/install", {"release_digest": entry["digest"],
+                     "placement": status["placement"], "use_in": [swarm] if in_swarm else []}, token)
+            elif in_swarm and swarm not in active:
+                call("POST", "/api/programs/omegadesign/activations", {"swarm_id": swarm}, token)
+            print("Create is in your hive: Studio, with its Make, Code and Flow.")
 finally:
     call("POST", "/api/auth/logout", {}, token)   # this session was for the step alone
 PY

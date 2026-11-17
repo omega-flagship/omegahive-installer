@@ -76,6 +76,9 @@ CODE_TARBALL=$SCRIPT_DIR/omegacode-309df.tgz
 # The Tools app rides in the release the same way, named by the omega-tools commit pins.sh pins; with it there, the
 # hive's Tools page lists its tools (setup-tools.sh lays it out, omegahive.sh mounts and pins it).
 TOOLS_TARBALL=$SCRIPT_DIR/omega-tools-$(printf '%s' "$OMEGA_TOOLS_COMMIT" | cut -c1-7).tgz
+# Studio, the app the hive shows as Create, rides the same way, named by the version pins.sh pins; with it there, the
+# hive lists Create (setup-studio.sh lays it out, omegahive.sh mounts and pins it, and create installs it as the owner).
+STUDIO_ZIP=$SCRIPT_DIR/omegadesign-$OMEGADESIGN_VERSION.zip
 PREBUILT=0
 OS=$(uname -s)
 if [ "$OS" = Darwin ] && [ "$(uname -m)" = arm64 ] && [ -f "$SWI_BUNDLE" ] && [ -f "$JANUS_WHEEL" ]; then PREBUILT=1; fi
@@ -532,10 +535,17 @@ if [ -f "$TOOLS_TARBALL" ]; then
     || { say "The Tools app does not match its checksum; download the release again"; false; }
   OMEGAHIVE_HOME=$OH /bin/bash "$SCRIPT_DIR/setup-tools.sh" "$TOOLS_TARBALL"
 fi
+if [ -f "$STUDIO_ZIP" ]; then
+  step "installing Studio: the app your hive shows as Create, where you make things"
+  (cd "$SCRIPT_DIR" && sha256 -c "$(basename "$STUDIO_ZIP").sha256" >/dev/null) \
+    || { say "Studio does not match its checksum; download the release again"; false; }
+  OMEGAHIVE_HOME=$OH /bin/bash "$SCRIPT_DIR/setup-studio.sh" "$STUDIO_ZIP"
+fi
 { say "installed=$(date '+%Y-%m-%dT%H:%M:%S%z')"; say "source=$SRC"; say "release=$RELEASE"; say "requirements=$REQUIREMENTS"
   say "swipl=10.1.14 swipl_commit=$SWIPL_COMMIT petta=$PETTA_COMMIT janus_swi=$JANUS_VERSION micromamba=$MICROMAMBA_VERSION"
   if [ -f "$OH/code/config.json" ]; then say "create=$(sed -n 's/^HIVE_CODE_SERVICE_RELEASE=//p' "$OH/hive.env" | tail -n 1)"; fi
   if [ -f "$OH/apps/omega-tools/plugin.json" ]; then say "tools=omega-tools $OMEGA_TOOLS_VERSION $OMEGA_TOOLS_COMMIT"; fi
+  if [ -f "$OH/apps/omegadesign/plugin.json" ]; then say "studio=omegadesign $OMEGADESIGN_VERSION"; fi
   say "python=$("$OH/venv/bin/python" -c 'import platform; print(platform.python_version())') node=$("$TOOLCHAIN/bin/node" --version)"; } > "$OH/installed"
 rm -rf "$BUILD/swipl" "$BUILD/check"
 say "This setup downloaded about $(( ($(rx_bytes) - RX_START) / 1048576 )) MB in all."
@@ -563,5 +573,9 @@ else
 fi
 say "To use real minds, add your AI key in the hive: You & your keys."
 if [ -f "$OH/code/config.json" ]; then
-  say "To have minds build a small app, open Code in the hive and ask Create; they build it in $OH/repos/small-app."
+  if [ -f "$OH/apps/omegadesign/plugin.json" ]; then
+    say "To make something, open Create in your hive's apps; small apps it builds are in $OH/repos/small-app."
+  else
+    say "To have minds build a small app, open Code in the hive and ask Create; they build it in $OH/repos/small-app."
+  fi
 fi

@@ -38,6 +38,16 @@ OMEGA_TOOLS_COMMIT=4e57d67e0d4b133b4f25deb029d60e6219145889
 OMEGA_TOOLS_DIGEST=sha256:91a59354e52b83b76f6e1213a194c79e6c7236a6c7b2b3ab6269a5df381e5afc
 OMEGA_TOOLS_LOCK_SHA256=694d207c1cd51baa7751de875ca4599e7ad41d43725fdb7b779ee0ee45505f26
 
+# Studio, the app the hive shows as Create (hive/core/my_apps.py), 0.4.22: the release PhysixSNET/omegadesign's dev/latest
+# mirrors (8cb0409d, 5 November) and the 9 November Linux kit carried as omegadesign.zip; Code and Create, Studio
+# included, are open source since omega-flagship/omegahive#106. It rides in the release as omegadesign-0.4.22.zip,
+# unpacked by setup-studio.sh into apps/omegadesign. The digest is the hive's Programs.source_digest of the unpacked folder
+# and the lock sha256 that of its ui/bundle.lock.json, against which the hive checks every byte of Studio's page:
+# omegahive.sh pins the folder to both.
+OMEGADESIGN_VERSION=0.4.22
+OMEGADESIGN_DIGEST=sha256:64abf47808a469d37154be509266977b1a3887f0d39f0b974d7d5c3bce7f6f6e
+OMEGADESIGN_LOCK_SHA256=71402503b1c0d07885cfc39af26a64c74c80920d1ff2c694311f034f0f911089
+
 micromamba_url() { printf 'https://github.com/mamba-org/micromamba-releases/releases/download/%s/micromamba-%s\n' "$MICROMAMBA_VERSION" "$1"; }
 micromamba_sha256() {
   case "$1" in
