@@ -28,8 +28,9 @@ OUTPUT = HERE / 'kit-output'
 MARKER = b'\n__OMEGAHIVE_BUNDLE_BASE64__\n'
 SOURCE_CAP = 256 * 1024**2
 SOURCE_TAR_CAP = SOURCE_CAP + 32 * 1024**2
-OUTER_CAP = 128 * 1024**2
-SCRIPT_CAP = 96 * 1024**2
+# installer.sh's SCRIPT_LIMIT and UNPACKED_LIMIT, which test_build_kit.py holds these to
+SCRIPT_CAP = 128 * 1024**2
+OUTER_CAP = 2 * (3 * (SCRIPT_CAP // 4))
 COMPRESSED_CAP = 3 * (SCRIPT_CAP // 4)
 UI_CAP = 32 * 1024**2
 UI_TAR_CAP = UI_CAP + 8 * 1024**2

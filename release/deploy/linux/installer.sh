@@ -28,6 +28,13 @@ import sys
 import tarfile
 import tempfile
 
+# The download's size bounds, one place for all of them: the whole script, the bundle its base64 body carries (three
+# quarters of the script) and what that bundle may unpack to. ci/linux-x86/pack_kit.py reads SCRIPT_LIMIT from here,
+# and deploy/linux/build_kit.py's caps are tested against it.
+SCRIPT_LIMIT = 128 * 1024**2
+BUNDLE_LIMIT = 3 * (SCRIPT_LIMIT // 4)
+UNPACKED_LIMIT = 2 * BUNDLE_LIMIT
+
 def refuse():
     print('This download is damaged or incomplete. Please download the installer again.', file=sys.stderr)
     raise SystemExit(64)
@@ -40,15 +47,15 @@ def installer_environment(ambient):
     return value
 
 script, size, digest = sys.argv[1:]
-if not size.isdecimal() or not 0 < int(size) <= 3 * ((96 * 1024**2) // 4) or not re.fullmatch('[a-f0-9]{64}', digest):
+if not size.isdecimal() or not 0 < int(size) <= BUNDLE_LIMIT or not re.fullmatch('[a-f0-9]{64}', digest):
     refuse()
 fd = os.open(script, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
 try:
     info = os.fstat(fd)
-    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > 96 * 1024**2:
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > SCRIPT_LIMIT:
         refuse()
     with os.fdopen(fd, 'rb', closefd=False) as source:
-        body = source.read(96 * 1024**2 + 1)
+        body = source.read(SCRIPT_LIMIT + 1)
 finally:
     os.close(fd)
 marker = b'\n__OMEGAHIVE_BUNDLE_BASE64__\n'
@@ -74,11 +81,11 @@ try:
             rel = PurePosixPath(name)
             if (not member.isfile() or rel.is_absolute() or str(rel) != name or '..' in rel.parts
                     or '\\' in name or '\x00' in name or name in seen
-                    or not 0 <= member.size <= 64 * 1024**2):
+                    or not 0 <= member.size <= BUNDLE_LIMIT):
                 refuse()
             seen.add(name)
             total += member.size
-            if total > 128 * 1024**2:
+            if total > UNPACKED_LIMIT:
                 refuse()
             destination = root / name
             destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)

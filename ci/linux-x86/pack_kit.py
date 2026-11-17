@@ -46,10 +46,13 @@ def main():
     with gzip.GzipFile(fileobj=out_gz, mode="wb", mtime=0, filename="") as g:
         g.write(buf.getvalue())
     raw = out_gz.getvalue()
-    # Base64 uses four bytes per three bundle bytes; the complete script is checked after its header is bound.
-    assert 0 < len(raw) <= 3 * ((96 * 1024**2) // 4), "bundle exceeds the script's base64 capacity"
-
     template = P(a.template).read_text()
+    # The script's own bound, read from the template's one statement of it; base64 uses four bytes per three bundle
+    # bytes, so the bundle may take three quarters of it. The complete script is checked after its header is bound.
+    found = re.search(r"(?m)^SCRIPT_LIMIT = (\d+) \* 1024\*\*2$", template)
+    assert found, "the installer template states no SCRIPT_LIMIT"
+    limit = int(found.group(1)) * 1024**2
+    assert 0 < len(raw) <= 3 * (limit // 4), "bundle exceeds the script's base64 capacity"
     # The marker line (real newlines) occurs once, at the very end; the Python body names it only as an escaped literal.
     assert template.count(MARKER) == 1 and template.endswith(MARKER), "unexpected installer template"
     filled, n = re.subn(r"(?m)^ROOT_BOUND_RELEASE=0$", "ROOT_BOUND_RELEASE=1", template)
@@ -59,7 +62,7 @@ def main():
     filled, n = re.subn(r"(?m)^BUNDLE_SHA256=UNBOUND$", "BUNDLE_SHA256=" + hashlib.sha256(raw).hexdigest(), filled)
     assert n == 1
     script = filled.rstrip("\n") + "\n" + base64.b64encode(raw).decode() + "\n"
-    assert len(script.encode()) <= 96 * 1024**2
+    assert len(script.encode()) <= limit
     out = P(a.out)
     out.write_text(script)
     digest = hashlib.sha256(script.encode()).hexdigest()

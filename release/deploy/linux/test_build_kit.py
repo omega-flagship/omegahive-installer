@@ -2,6 +2,7 @@
 import base64
 import copy
 import json
+import re
 import gzip
 import hashlib
 import importlib.util
@@ -468,6 +469,20 @@ class KitContract(unittest.TestCase):
         with self.assertRaisesRegex(kit.Refused, 'private_term_in_public_text'):
             kit.inspect_ui_manifest(raw, ui_spec(raw), ['sampleowner'])
 
+
+
+class InstallerBoundsTests(unittest.TestCase):
+    """build_kit.py's script and unpacked caps are the installer template's own bounds, stated once there."""
+
+    def test_caps_match_the_installer_template(self):
+        template = (Path(__file__).resolve().parent / 'installer.sh').read_text()
+        scope = {}
+        for line in template.splitlines():
+            if re.match(r'^(SCRIPT|BUNDLE|UNPACKED)_LIMIT = ', line):
+                exec(line, scope)
+        self.assertEqual(kit.SCRIPT_CAP, scope['SCRIPT_LIMIT'])
+        self.assertEqual(kit.COMPRESSED_CAP, scope['BUNDLE_LIMIT'])
+        self.assertEqual(kit.OUTER_CAP, scope['UNPACKED_LIMIT'])
 
 
 if __name__ == '__main__':
