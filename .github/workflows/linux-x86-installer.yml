@@ -47,7 +47,9 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/inputs"
           cp ci/linux-x86/inputs/* "$RUNNER_TEMP/inputs/"
-          git archive --format=tar --prefix="$PREFIX/" HEAD:release | gzip -n > "$RUNNER_TEMP/inputs/source.tar.gz"
+          # Entries dated at the release commit's time (ci/RELEASE_COMMIT_TIME), since a tree archive is otherwise
+          # dated now and every run would make a different download from the same source.
+          git archive --format=tar --mtime="$(cat ci/RELEASE_COMMIT_TIME)" --prefix="$PREFIX/" HEAD:release | gzip -n > "$RUNNER_TEMP/inputs/source.tar.gz"
       - name: Use the fresh UI and the Omega core from the exact rc3 Mac build
         run: |
           cd ci/linux-x86/inputs
@@ -263,6 +265,14 @@ jobs:
             # Whether this account's user manager runs, and what logind and systemd said about it.
             docker exec fresh sh -c "loginctl list-users; loginctl list-sessions; loginctl show-user $HIVE_USER; ls -la /run/user /run/user/*; systemctl status 'user@*' 'user-runtime-dir@*' --no-pager -l; journalctl -b -u 'user@*' -u 'user-runtime-dir@*' -u systemd-logind --no-pager -n 150 -o short-precise" > "$RUNNER_TEMP/manager.out" 2>&1 || true
             python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/manager.out"
+            # How systemctl --user fails to reach that manager: its sockets, its environment, and the traced connect.
+            # shellcheck disable=SC2016
+            docker exec fresh bash -c 'u=$1; uid=$(id -u "$u"); r=/run/user/$uid; ls -la "$r/systemd" /etc/pam.d/systemd-user
+              pid=$(pgrep -u "$u" -x systemd | head -1); echo "manager pid $pid"; tr "\0" "\n" < "/proc/$pid/environ" | grep -E "^(XDG|DBUS|HOME|USER)"
+              sudo -iu "$u" env XDG_RUNTIME_DIR="$r" systemctl --user is-system-running; echo "is-system-running exit $?"
+              DEBIAN_FRONTEND=noninteractive apt-get install -y -qq strace > /dev/null 2>&1
+              sudo -iu "$u" env -i HOME="/home/$u" PATH=/usr/bin:/bin XDG_RUNTIME_DIR="$r" DBUS_SESSION_BUS_ADDRESS="unix:path=$r/bus" strace -f -e trace=connect,socket systemctl --user daemon-reload 2>&1 | tail -n 15' bash "$HIVE_USER" > "$RUNNER_TEMP/bus.out" 2>&1 || true
+            python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/bus.out"
           fi
           exit "$code"
       - name: The installer added every build prerequisite itself
