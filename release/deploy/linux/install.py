@@ -25,6 +25,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import tempfile
 import shlex
 import termios
 import time
@@ -1330,7 +1331,13 @@ class Installer:
         owned_file(self.home, "unit", body.encode())
         manager_env = control_env(self.home)
         try:
-            self.run(["/usr/bin/systemd-analyze", "--user", "verify", str(unit)], timeout=30, env=manager_env)
+            # systemd before 258 binds a verify run's private bus socket at $XDG_RUNTIME_DIR/systemd/private, replacing
+            # the running user manager's (systemd issue 36540, fixed by pull request 36719): Ubuntu 22.04 ships 249 and
+            # 24.04 ships 255, where every later `systemctl --user` then fails unless a user D-Bus socket exists. So the
+            # check gets a runtime directory of its own, which goes when it ends.
+            with tempfile.TemporaryDirectory(prefix="verify-", dir=manager_env["XDG_RUNTIME_DIR"]) as scratch:
+                self.run(["/usr/bin/systemd-analyze", "--user", "verify", str(unit)], timeout=30,
+                         env=dict(manager_env, XDG_RUNTIME_DIR=scratch))
         except (Refused, OSError, subprocess.SubprocessError):
             raise Refused("Your Ubuntu user service could not be validated. Setup stopped before starting it; keep the private log for review.") from None
         private_dir(self.root / "bin"); manager = self.root / "bin/install.py"

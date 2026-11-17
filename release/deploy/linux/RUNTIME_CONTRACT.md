@@ -227,6 +227,13 @@ paths, and removes its shim before runtime/state deletion. A failed validator
 never starts the service. No runtime/FirstLight/paid-model qualification follows
 from Source-only integrity checks or mocked unit declarations.
 
+The validator runs with `XDG_RUNTIME_DIR` set to a new private directory under
+the user's runtime directory, removed when it ends. systemd before 258 (Ubuntu
+22.04 ships 249, 24.04 ships 255) binds the validator's private bus socket at
+`$XDG_RUNTIME_DIR/systemd/private`, replacing the running user manager's
+(systemd issue 36540), and every later `systemctl --user` call then fails where
+no user D-Bus socket exists.
+
 The companion R7 control change uses an explicit local SSH bind:
 `ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:<port>:127.0.0.1:<port> <user@host>`.
 The actual code change belongs to the separately reviewed control successor.

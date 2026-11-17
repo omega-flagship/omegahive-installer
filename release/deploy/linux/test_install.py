@@ -548,11 +548,15 @@ class InstallerTests(unittest.TestCase):
             home = Path(name); root = home / '.local/share/omegahive'; root.mkdir(parents=True)
             app = root / 'releases/test/app'; module = app / 'deploy/linux'; module.mkdir(parents=True)
             (module / 'omegahive.service.in').write_text('[Service]\nExecStart=@PYTHON@ -I -B @SERVE@ --runtime @RUNTIME@\nWorkingDirectory=@WORKDIR@\nEnvironment=@SANDBOX_ENV@\nEnvironment=@LIBPYTHON_ENV@\n')
-            instance = install.Installer(Path('/unused'), {}, home); calls = []
-            instance.run = lambda argv, **kwargs: calls.append(argv)
+            instance = install.Installer(Path('/unused'), {}, home); calls = []; runtimes = []
+            runtime = home / 'run'; runtime.mkdir(mode=0o700)
+            def run(argv, **kwargs):
+                calls.append(argv); scratch = Path(kwargs['env']['XDG_RUNTIME_DIR'])
+                runtimes.append((scratch, scratch.is_dir())); self.assertEqual(kwargs['env']['TEST'], 'owned-session')
+            instance.run = run
             python = root / 'releases/test/venv/bin/python'
             descriptor = {'runtime_root': str(app.parent), 'sandbox_python': str(python), 'data_dir': str(root / 'data'), 'libpython_dir': str(app.parent / 'runtime/python/lib')}
-            with patch.object(install, 'control_env', return_value={'TEST': 'owned-session'}):
+            with patch.object(install, 'control_env', return_value={'TEST': 'owned-session', 'XDG_RUNTIME_DIR': str(runtime)}):
                 instance.activate(app, python, descriptor)
             lines = (home / '.local/bin/omegahive').read_text().splitlines()
             self.assertEqual(lines[1], 'unset LD_PRELOAD LD_AUDIT PYTHONPATH PYTHONHOME')
@@ -560,24 +564,31 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(shlex.split(shim), ['LD_LIBRARY_PATH=' + descriptor['libpython_dir'], 'exec', str(python), '-I', '-B', str(root / 'bin/install.py'), '$@'])
             self.assertIn('Environment="LD_LIBRARY_PATH=' + descriptor['libpython_dir'] + '"', (home / '.config/systemd/user/omegahive.service').read_text())
             self.assertEqual(calls, [['/usr/bin/systemd-analyze', '--user', 'verify', str(home / '.config/systemd/user/omegahive.service')], ['/usr/bin/systemctl', '--user', 'daemon-reload'], ['/usr/bin/systemctl', '--user', 'enable', 'omegahive.service'], ['/usr/bin/systemctl', '--user', 'start', 'omegahive.service']])
+            # verify ran in a runtime directory of its own, gone now, so it never replaced the manager's private socket.
+            (scratch, existed), *managed = runtimes
+            self.assertEqual(scratch.parent, runtime); self.assertTrue(scratch.name.startswith('verify-'))
+            self.assertTrue(existed); self.assertFalse(scratch.exists())
+            self.assertEqual(managed, [(runtime, True)] * 3)
 
     def test_rendered_service_verification_failure_refuses_before_start_or_shim(self):
         with tempfile.TemporaryDirectory() as name:
             home = Path(name); root = home / '.local/share/omegahive'; root.mkdir(parents=True)
             app = root / 'releases/test-1/app'; module = app / 'deploy/linux'; module.mkdir(parents=True)
             (module / 'omegahive.service.in').write_text('[Service]\nExecStart=@PYTHON@ -I -B @SERVE@ --runtime @RUNTIME@\nWorkingDirectory=@WORKDIR@\nEnvironment=@SANDBOX_ENV@\nEnvironment=@LIBPYTHON_ENV@\n')
-            instance = install.Installer(Path('/unused'), {}, home); calls = []
+            instance = install.Installer(Path('/unused'), {}, home); calls = []; scratches = []
+            runtime = home / 'run'; runtime.mkdir(mode=0o700)
             def refuse(argv, **kwargs):
-                calls.append(argv)
+                calls.append(argv); scratches.append(Path(kwargs['env']['XDG_RUNTIME_DIR']))
                 raise install.Refused('synthetic invalid unit')
             instance.run = refuse
             python = root / 'releases/test-1/venv/bin/python'
             descriptor = {'runtime_root': str(app.parent), 'sandbox_python': str(python),
                           'data_dir': str(root / 'data'), 'libpython_dir': None}
-            with patch.object(install, 'control_env', return_value={'TEST': 'owned-session'}):
+            with patch.object(install, 'control_env', return_value={'TEST': 'owned-session', 'XDG_RUNTIME_DIR': str(runtime)}):
                 with self.assertRaisesRegex(install.Refused, 'user service could not be validated'):
                     instance.activate(app, python, descriptor)
             self.assertEqual(calls, [['/usr/bin/systemd-analyze', '--user', 'verify', str(home / '.config/systemd/user/omegahive.service')]])
+            self.assertEqual(scratches[0].parent, runtime); self.assertFalse(scratches[0].exists())
             self.assertFalse((home / '.local/bin/omegahive').exists())
             self.assertFalse((root / 'installation-state.json').exists())
 
@@ -837,6 +848,9 @@ class InstallerTests(unittest.TestCase):
                 path.parent.mkdir(parents=True); path.write_bytes(b'never executed'); return path
             def run(instance, argv, **kwargs):
                 commands.append(argv)
+                if argv[0] == '/usr/bin/systemd-analyze':
+                    scratch = Path(kwargs['env']['XDG_RUNTIME_DIR'])
+                    self.assertEqual(scratch.parent, runtime); self.assertTrue(scratch.is_dir())
                 if argv[:2] == ['/usr/bin/cmake', '--install']:
                     prefix = root / 'releases/test-1/runtime/swipl'
                     target = prefix / 'lib/swipl/bin/aarch64-linux/swipl'
@@ -845,6 +859,7 @@ class InstallerTests(unittest.TestCase):
                     launcher.symlink_to('../lib/swipl/bin/aarch64-linux/swipl')
             def ui(_archive, _manifest, destination, _provenance):
                 destination.mkdir(parents=True); return b'{}'
+            runtime = home / 'run'; runtime.mkdir(mode=0o700)
             with ExitStack() as stack:
                 stack.enter_context(patch.object(install, 'preflight', return_value='aarch64'))
                 stack.enter_context(patch.object(install, 'userns_restricted', return_value=restricted))
@@ -860,7 +875,7 @@ class InstallerTests(unittest.TestCase):
                 stack.enter_context(patch.object(install, 'extract_app', side_effect=lambda _a, d, _s: d.mkdir()))
                 stack.enter_context(patch.object(install, 'program_digest', return_value='sha256:' + 'd' * 64))
                 stack.enter_context(patch.object(install, 'materialize_venv_python', side_effect=venv))
-                stack.enter_context(patch.object(install, 'control_env', return_value={}))
+                stack.enter_context(patch.object(install, 'control_env', return_value={'XDG_RUNTIME_DIR': str(runtime)}))
                 with self.assertRaisesRegex(install.Refused, 'synthetic extraction failure'):
                     install.Installer(bundle, value, home).install()
                 self.assertTrue((root / 'install-progress.json').exists())
@@ -1275,6 +1290,7 @@ class NativePackageCompilerTests(unittest.TestCase):
                     launcher.symlink_to("../lib/swipl/bin/aarch64-linux/swipl")
             def ui(_archive, _manifest, destination, _provenance):
                 destination.mkdir(parents=True); return b"{}"
+            runtime = home / "run"; runtime.mkdir(mode=0o700)
             with ExitStack() as stack:
                 stack.enter_context(patch.dict(install.os.environ, {"CC": "clang-from-ambient", "CXX": "clang++-from-ambient", "PATH": "/untrusted"}))
                 stack.enter_context(patch.object(install, "preflight", return_value="aarch64"))
@@ -1290,7 +1306,7 @@ class NativePackageCompilerTests(unittest.TestCase):
                 stack.enter_context(patch.object(install, "extract_app", side_effect=lambda _a, d, _s: d.mkdir()))
                 stack.enter_context(patch.object(install, "program_digest", return_value="sha256:" + "d" * 64))
                 stack.enter_context(patch.object(install, "materialize_venv_python", side_effect=venv))
-                stack.enter_context(patch.object(install, "control_env", return_value={}))
+                stack.enter_context(patch.object(install, "control_env", return_value={"XDG_RUNTIME_DIR": str(runtime)}))
                 install.Installer(bundle, catalogue(), home).install()
             pip_calls = [(argv, env, base) for argv, env, base in calls if argv[1:4] == ["--no-config", "pip", "sync"]]
             self.assertEqual(len(pip_calls), 1)
@@ -1321,7 +1337,8 @@ class WorkingDirectoryR13Tests(unittest.TestCase):
                 python = root / 'releases/test/venv/bin/python'
                 descriptor = {'runtime_root': str(app.parent), 'sandbox_python': str(python),
                               'data_dir': str(root / 'data'), 'libpython_dir': None}
-                with patch.object(install, 'control_env', return_value={'TEST': 'owned-session'}):
+                runtime = home / 'run'; runtime.mkdir(mode=0o700)
+                with patch.object(install, 'control_env', return_value={'TEST': 'owned-session', 'XDG_RUNTIME_DIR': str(runtime)}):
                     instance.activate(app, python, descriptor)
                 lines = (home / '.config/systemd/user/omegahive.service').read_text().splitlines()
                 self.assertEqual([line for line in lines if line.startswith('WorkingDirectory=')],

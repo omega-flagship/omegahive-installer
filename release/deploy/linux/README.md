@@ -151,6 +151,9 @@ manager/shim/state creation and before `daemon-reload` or `start`. Failure stops
 setup with a plain message and retains the private log. Generated home/service
 paths containing percent signs are refused. The closed catalogue/two-architecture
 release expectations are not a shortcut for the separate internal ARM demo.
+The check runs in a runtime directory of its own, so systemd before 258 can't
+replace the user manager's private socket with the checker's (systemd issue
+36540); RUNTIME_CONTRACT.md says why that matters.
 
 The current installer file contains44 authored tests, including all34 prior
 identities and focused prebuilt-integrity/no-Node/service/DELETE regressions.

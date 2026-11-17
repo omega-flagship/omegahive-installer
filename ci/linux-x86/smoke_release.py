@@ -66,6 +66,13 @@ def verify(user, output):
             diagnose("login state", "loginctl", "user-status", user, "--no-pager")
             raise RuntimeError(f"Linux smoke step failed: {' '.join(argv)} exited {done.returncode}")
 
+    def private_socket():
+        """systemctl --user tries this socket first, and where no user D-Bus socket exists it is the only way in."""
+        probe = "import socket, sys; socket.socket(socket.AF_UNIX).connect(sys.argv[1])"
+        done = subprocess.run(["sudo", "-iu", user, "python3", "-c", probe, f"/run/user/{account.pw_uid}/systemd/private"],
+                              capture_output=True, text=True)
+        return done.returncode == 0, (done.stderr.strip().splitlines() or [""])[-1]
+
     def sessions():
         return subprocess.check_output(["loginctl", "show-user", user, "-p", "Sessions", "--value"], text=True).split()
 
@@ -159,6 +166,7 @@ def verify(user, output):
     try:
         check("linger is enabled", subprocess.check_output(
             ["loginctl", "show-user", user, "-p", "Linger", "--value"], text=True).strip() == "yes")
+        check("the user manager answers on its private socket", *private_socket())
         check("service is enabled", command("systemctl", "--user", "is-enabled", "omegahive.service").strip() == "enabled")
         first, call = signin()
         first_light(call)
