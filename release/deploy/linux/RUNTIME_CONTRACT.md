@@ -15,11 +15,11 @@ The sole descriptor is the OS account's
 `$HOME/.local/share/omegahive/runtime.json`, where HOME comes from pwd, not the
 caller's environment. It is a plain single-link current-UID0600 file, at most
 64KiB, inside a current-UID0700 directory. JSON rejects duplicate/nonfinite data.
-All18 keys are mandatory; no extra keys or secrets:
+All 19 keys are mandatory; no extra keys or secrets:
 
 | Key | Value |
 | --- | --- |
-| schema | `studio-linux-user-runtime/2` |
+| schema | `studio-linux-user-runtime/3` |
 | runtime_root | Exact canonical versioned folder under the installation's `releases/` |
 | release_root | Exactly `runtime_root/app`, containing the reviewed Hive source |
 | python | Named venv executable; canonical target remains inside runtime_root |
@@ -37,6 +37,7 @@ All18 keys are mandatory; no extra keys or secrets:
 | default_model | Explicit non-mock openrouter/openai/anthropic model id; no credential |
 | embedding_model | Explicit model id, or mock/hash with that scope stated |
 | ssh_target | Nonsecret validated user@reachable-linux-host for exact SSH guidance, or explicit null (unconfigured) |
+| code_service | Create's Code service: `release` (64 hex), `root` exactly `<installation>/code`, `config` exactly `<installation>/code/config.json`, `repository` exactly `<installation>/repos/small-app`, `port` exactly 8724 |
 
 Files/directories and ancestry must not be writable by another account; selected
 runtime folders must belong to the account. Named venv Python may be a leaf link
@@ -182,6 +183,23 @@ bootstrap are the available readback seam; do not fabricate _load qualification.
 No bootstrap credential-exchange/API helper is implemented in this four-file
 frontdoor module. That narrow additional task requires Root assignment.
 
+## Create's Make
+
+Make is on in every hive (hive/core/config.py). serve.py gives the hive what the
+Mac and WSL setup gives it (install/macos/omegahive.sh, app_settings). It adds
+create-acceptance-check, a built-in app that needs no pin, to the end of
+HIVE_SANDBOX_RUN_APPS. It puts Create's apps folder, `<data_dir>/create/apps`,
+last on HIVE_PLUGIN_DIRS, since a plan's deploy installs what the person made
+there. It names the Code service's repository, small-app, as
+HIVE_CREATE_SCAFFOLD_REPO. HIVE_SANDBOX_RUNTIMES holds one runtime, python, for
+the acceptance check. That runtime is the environment's base interpreter,
+`runtime_root/runtime/python/bin/python3.12` as `sys.base_prefix` names it,
+with only `runtime_root/runtime/python` readable. The check's sandboxed tool
+needs only the standard library, and the environment's own executable, a plain
+copy, finds its standard library only there. serve.py refuses with
+selected_base_python_required when its own interpreter is not an environment
+of that Python.
+
 ## Product R2: real personal model and exact private data
 
 The data path is fixed under the real OS account home, not any UID-owned0700
@@ -227,7 +245,8 @@ LD_LIBRARY_PATH; missing actual runtime pins never become that qualification.
 
 R7 retained the seventeen-key schema/1 descriptor. R11.1 uses the closed eighteen-key
 schema/2 descriptor with fixed service8700 and browser8701; the control/serve loader
-and identity checks remain in force. The installer ships verified prebuilt `hive/ui/dist`
+and identity checks remain in force. v0.34's schema/3 adds the nineteenth key,
+code_service, for Create's Code service. The installer ships verified prebuilt `hive/ui/dist`
 from its separately pinned UI source commit/tree; host deploy-only changes may
 have another source identity. No Node/npm install, prerequisite or build runs
 on the user's machine. UI artifact/build-source metadata is retained separately

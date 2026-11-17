@@ -63,7 +63,9 @@ a symlink for the environment's Python,
 the installer replaces that one symlink with the reviewed executable bytes as a
 regular file. Its path remains inside the environment next to `pyvenv.cfg`;
 resolving a symlink to the base interpreter would lose the installed environment.
-The live service and sandbox both select this canonical environment executable.
+The live service and the minds' sandbox both select this canonical environment executable.
+Create's acceptance check, a sandboxed tool that needs only the standard library, runs on the
+base interpreter instead (RUNTIME_CONTRACT.md, Create's Make).
 SWI is built
 into the same versioned home release, then the existing bridge directions are
 checked before the service starts. The installer then moves the SWI executable to
