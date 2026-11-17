@@ -31,6 +31,13 @@ export interface MemoryOwner {
   hive: string
 }
 
+/** A mind a message carries Ask exchanges to, as the page knows it (the hive's agent row and its is_mine hint). */
+export interface CarriedTo {
+  id: string
+  personal_of?: string | null
+  is_mine?: boolean
+}
+
 export interface MemoryView {
   /** null: nobody is signed in (or who it is is not known), so nothing is kept */
   owner: MemoryOwner | null
@@ -259,6 +266,8 @@ export class AskMemoryStore {
   private vectors = new Map<string, { text: string; vec: Float32Array }>()
   private seq = 0
   private reviewTokens = new WeakSet<MemoryReviewToken>()
+  /** minds a message carrying Ask exchanges is now on its way to (`carry`): another sent meanwhile carries none */
+  private carrying = new Set<string>()
 
   constructor(deps: Partial<StoreDeps> = {}) {
     this.deps = { ...defaultDeps(), ...deps }
@@ -324,6 +333,7 @@ export class AskMemoryStore {
     this.backend = null
     this.key = key
     const at = ++this.owner
+    this.carrying.clear()
     this.binding = this.deps.bind()
     this.mut++
     this.gen = 0
@@ -845,7 +855,7 @@ export class AskMemoryStore {
     const now = this.deps.now()
     if (x.until !== undefined && !(x.until > now)) return false   // already past its time: never kept
     const name = (x.mind_name ?? '').trim().slice(0, MIND_NAME_MAX)
-    const talk: Talk = { id, turn_id: x.turn_id.slice(0, 128), at: now, words: x.words.slice(0, TALK_TEXT_MAX), answer: x.answer.slice(0, TALK_TEXT_MAX), truncated: x.words.length > TALK_TEXT_MAX || x.answer.length > TALK_TEXT_MAX, kept_at: now, mind_id: x.mind_id, ...(name ? { mind_name: name } : {}), ...(x.until !== undefined ? { until: x.until } : {}) }
+    const talk: Talk = { id, turn_id: x.turn_id.slice(0, 128), at: this.conversationStamp(), words: x.words.slice(0, TALK_TEXT_MAX), answer: x.answer.slice(0, TALK_TEXT_MAX), truncated: x.words.length > TALK_TEXT_MAX || x.answer.length > TALK_TEXT_MAX, kept_at: now, mind_id: x.mind_id, ...(name ? { mind_name: name } : {}), ...(x.until !== undefined ? { until: x.until } : {}) }
     if (!talkOk(talk) || namesPrivate(talk.words) || namesPrivate(talk.answer)) return false
     const r = await this.commitNow({ op: 'talks', talks: [talk] })
     if (!r?.ok || !this.still(at)) return false
@@ -878,12 +888,39 @@ export class AskMemoryStore {
 
   /**
    * The exchanges of the conversation this mind's own chat has not been told, as the person's next message there
-   * carries them (the same window and caps as `conversation`): for the person's own mind (`own`) every exchange, for
-   * any other mind those it answered. Its own chat answers them in the same model call as the message.
+   * carries them (the same window and caps as `conversation`): for the person's own mind every exchange, for any
+   * other mind those it answered, so what she said with her own mind never reaches a mind someone else owns. Her own
+   * mind is one the hive marks as hers or whose person is this memory's; a personal mind of anyone else is another
+   * mind. Only a named person's memory is carried (the hive takes from_ask from no one else, the loopback operator
+   * included). Its own chat answers them in the same model call as the message.
    */
-  unheardBy(mindId: string, own: boolean): Exchange[] {
-    const mark = this.view.heard[mindId] ?? 0
-    return carried(this.conversationTalks().filter((t) => t.at > mark && (own || t.mind_id === mindId)))
+  unheardBy(mind: CarriedTo): Exchange[] {
+    const person = this.view.owner?.principal ?? ''
+    if (!person.startsWith('user:u_')) return []
+    const own = mind.is_mine === true || (!!mind.personal_of && mind.personal_of === person)
+    const mark = this.view.heard[mind.id] ?? 0
+    return carried(this.conversationTalks().filter((t) => t.at > mark && (own || t.mind_id === mind.id)))
+  }
+
+  /**
+   * What one message to this mind carries (`unheardBy`), held for it while it is on its way: a message sent meanwhile
+   * carries none, so two quick sends never tell the chat the same exchanges. `settle(true)` once the hive took the
+   * message marks them heard; `settle(false)` leaves them for the next message, or the failed one's Retry.
+   */
+  carry(mind: CarriedTo): { exchanges: Exchange[]; settle: (taken: boolean) => void } {
+    if (this.carrying.has(mind.id)) return { exchanges: [], settle: () => undefined }
+    const exchanges = this.unheardBy(mind)
+    if (!exchanges.length) return { exchanges, settle: () => undefined }
+    const owner = this.owner
+    this.carrying.add(mind.id)
+    return {
+      exchanges,
+      settle: (taken) => {
+        if (this.owner !== owner) return   // another person's memory now: `use` dropped the hold
+        this.carrying.delete(mind.id)
+        if (taken) this.markHeard(mind.id, Math.max(...exchanges.map((e) => e.at)))
+      },
+    }
   }
 
   /** This mind's own chat was told the exchanges up to `at` (its message carrying them was taken by the hive). */
@@ -896,9 +933,20 @@ export class AskMemoryStore {
   /** The person started a new conversation (New thread, Delete thread): what the Ask carries begins now. */
   startConversation(): void {
     if (!this.key || !this.binding?.current()) return
-    const now = this.deps.now()
-    this.set({ conversationSince: Math.max(now, this.view.conversationSince) })
-    this.commit({ op: 'conversation', since: now })
+    const since = this.conversationStamp()
+    this.set({ conversationSince: since })
+    this.commit({ op: 'conversation', since })
+  }
+
+  /**
+   * A stamp for the conversation's order: the clock, or just after the newest stamp this memory holds (an exchange's
+   * at, the new-conversation mark), so every exchange and mark is strictly after the ones before it. Whatever orders
+   * them compares strictly (an exchange is in the conversation when its at is after the mark), and on a fast machine
+   * two stamps fell in one millisecond and tied, so an exchange kept right after a mark counted as before it.
+   */
+  private conversationStamp(): number {
+    const latest = this.view.talks.reduce((m, t) => (t.mind_id !== undefined && t.at > m ? t.at : m), this.view.conversationSince)
+    return Math.max(this.deps.now(), latest + 1)
   }
 
   /**

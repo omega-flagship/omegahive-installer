@@ -1,3 +1,5 @@
+# Purpose: the host-metered media route (POST /llm/v1/media): one image a mind asks for, priced, held against its
+# limits, sent and settled by the host.
 """P1: one host-metered media route, ``POST /llm/v1/media`` (off unless HIVE_MEDIA_ROUTE=on).
 
 A mind asks for one image with its own hive token. Everything that decides cost or authority is the host's:
@@ -685,7 +687,8 @@ class MediaRoute:
         metadata = {"agent": agent["id"], "model": model_label, "payer": payer, "key": key_id, "kind": "media:" + op}
         try:
             if studio_call is None:
-                row = self.reservations.reserve(reservation, payload, usd, budgets, metadata=metadata, dispatched=True)
+                row = self.reservations.reserve(reservation, payload, usd, budgets, metadata=metadata, dispatched=True,
+                                                paced=self.hive.present_for(agent) is None)   # as the chat route
             else:
                 # J3 R4: bound to the maker's step and captured epoch, reserved undispatched (the send gate dispatches)
                 row = studio.reserve_call(studio_call, self.reservations, reservation, payload, usd, budgets, metadata)

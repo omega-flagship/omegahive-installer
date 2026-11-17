@@ -1,3 +1,5 @@
+# Purpose: the personal-mind gateway: a person's own mind's model calls in their turn, admitted, held against their
+# limits and settled by the host.
 """The personal-mind gateway, round r1c (PLATFORM_PERSONAL_MIND_GATEWAY_R1_PLAN §2.1, §2.2, r1.1 §A, §J, §K).
 
 Off unless HIVE_MIND_GATEWAY=1: with it unset both routes answer exactly as an unknown path does.
@@ -46,7 +48,7 @@ import uuid
 import httpx
 
 from .ask import BROWSER_LIVE_SQL, BROWSER_ROUTE, browser_live_params, browser_past_deadline
-from .cost_reservations import BudgetExhausted, SpendRateLimited, host_budget_snapshot, host_subjects, host_use_check
+from .cost_reservations import BudgetExhausted, host_budget_snapshot, host_subjects, host_use_check
 from .gated_call import GateClosed, gated_chat
 from .config import is_subscription
 from .gateway import GatewayError, billable, split_model
@@ -501,11 +503,10 @@ class MindGateway:
                                           "key": key_id, "turn": t["id"]},
                             estimate, budgets, metadata={"agent": row["mind_id"], "model": agent["model"], "payer": payer,
                                                          "key": key_id, "kind": "browser-mind", "turn": t["id"]},
-                            dispatched=False, subjects=host_subjects(hive, row["mind_id"], key_id, payer, own_key, turn_bound=True))
+                            dispatched=False, subjects=host_subjects(hive, row["mind_id"], key_id, payer, own_key, turn_bound=True),
+                            paced=False)   # the person's own turn: its limits alone hold it (Hive.present_for)
             except KeyTaken:
                 raise in_progress() from None
-            except SpendRateLimited as exc:   # within its limits but faster than this month allows: nothing held
-                raise hive.spend_rate_refusal(agent, exc) from None
             except BudgetExhausted as exc:
                 raise self._refuse_spend(t, reserve_detail(hive, exc), call_id) from None
             except HiveError as exc:

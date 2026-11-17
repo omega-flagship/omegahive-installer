@@ -1887,17 +1887,19 @@ async function deliver(agentId: string, p: PendingMessage) {
   // never leave it on "Sending…": with no hive it failed, and Retry is offered
   if (!client) return patchPending(agentId, p.tempId, { status: 'failed', error: 'Not connected to the hive.' })
   // the Ask exchanges this mind's own chat has not heard ride on this message, which the mind answers with them: one
-  // conversation whichever way the person talks to it (Jon, 16 Nov), and no model call only to pass it along
-  const fromAsk = askMemory.unheardBy(agentId, !!useHive.getState().agents[agentId]?.personal_of)
+  // conversation whichever way the person talks to it (Jon, 16 Nov), and no model call only to pass it along. They're
+  // held while it's on its way and marked heard only once the hive took it.
+  const fromAsk = askMemory.carry(useHive.getState().agents[agentId] ?? { id: agentId })
   try {
-    const m: Message = await client.sendMessage(agentId, { text: p.text, ...(fromAsk.length ? { from_ask: fromAsk } : {}) })
+    const m: Message = await client.sendMessage(agentId, { text: p.text, ...(fromAsk.exchanges.length ? { from_ask: fromAsk.exchanges } : {}) })
+    fromAsk.settle(true)
     if (!live.ok()) return
-    if (fromAsk.length) askMemory.markHeard(agentId, Math.max(...fromAsk.map((e) => e.at)))
     useHive.setState((s) => ({
       messages: { ...s.messages, [agentId]: upsertMessage(s.messages[agentId], m) },
       pending: { ...s.pending, [agentId]: (s.pending[agentId] ?? []).filter((x) => x.tempId !== p.tempId) },
     }))
   } catch (err) {
+    fromAsk.settle(false)
     if (!live.ok()) return
     patchPending(agentId, p.tempId, { status: 'failed', error: errText(err) })
   }

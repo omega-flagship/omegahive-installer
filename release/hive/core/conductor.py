@@ -73,7 +73,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import datetime
 import functools
 import hashlib
 import json
@@ -88,8 +87,8 @@ import uuid
 
 from starlette.concurrency import run_in_threadpool
 
-from .cost_reservations import BudgetExhausted, SpendRateLimited, host_subjects, host_use_check
-from .db import now
+from .cost_reservations import BudgetExhausted, host_subjects, host_use_check
+from .db import now, parse_stamp
 from .collab import artifact_command
 from .config import CORE_ROOT, is_subscription
 from .gateway import SEND_GATE, GatewayError, billable, split_model
@@ -190,11 +189,7 @@ MONTHLY_TOTAL_REQUIRED = "monthly_total_required"
 LIMIT_SAY[MONTHLY_TOTAL_REQUIRED] = "I stopped here: set your monthly limit so your mind can spend."
 # done.limit.kind (ask-limits r1): which limit stopped a spend_cap turn; Surface maps these in words.ts
 LIMIT_KINDS = ("per_turn", "thread", "mind_total", "session", "swarm", "hive", "member_allowance", "key", "own_key_limit",
-               "own_key_required", "no_key_grant", "own_key_needed", "spend_rate", "unknown")
-# spend_rate: the spend-rate guard paced the turn (cost_reservations.guard_charges); done.limit carries retry_after (whole
-# seconds) and until, so the person's own screen says when they can carry on (words.ts), not only a mind's notice
-SPEND_RATE_SAY = ("I stopped here: this is spending faster than this month allows, so it's pausing for a moment. You can "
-                  "carry on in about {minutes} minute{s}.")
+               "own_key_required", "no_key_grant", "own_key_needed", "unknown")
 # outcome "error" (not a limit): done.error is one of these codes, and the answer says this
 ERROR_SAY = {
     "unpriced_model": "I couldn't answer: the model Ask uses has no price set, so the hive won't spend money on it. An "
@@ -627,8 +622,6 @@ def limit_frame(detail):
            "estimate_usd": r(detail.get("estimate_usd"))}
     if detail.get("reason") == MONTHLY_TOTAL_REQUIRED:
         out["reason"] = MONTHLY_TOTAL_REQUIRED
-    if detail.get("kind") == "spend_rate":
-        out.update(retry_after=detail.get("retry_after"), until=detail.get("until"))
     return out
 
 
@@ -681,9 +674,6 @@ def stop_say(stop):
     d = stop.detail
     if d.get("reason") == MONTHLY_TOTAL_REQUIRED:
         return LIMIT_SAY[MONTHLY_TOTAL_REQUIRED]
-    if d.get("kind") == "spend_rate":
-        minutes = -(-int(d.get("retry_after") or 60) // 60)
-        return SPEND_RATE_SAY.format(minutes=minutes, s="" if minutes == 1 else "s")
     amounts = ""
     if d.get("limit_usd") is not None and d.get("spent_usd") is not None:
         period = PERIOD_SAY.get(d.get("period"))
@@ -1071,6 +1061,14 @@ def mind_names(hive, principal, speaker_id):
     return name_of
 
 
+def heard_by(conversation, mind_id, own):
+    """The exchanges a mind's own chat may be told: the person's own mind every one, whoever answered it; any other
+    mind only those it answered itself, so what a person said with their own mind never reaches a mind someone else
+    owns. The page's askMemory.unheardBy keeps the same rule; this is the host's own. Example: Ann's exchanges with
+    Taiga (her own mind) and with Worker, sent with her message to Bob's own mind, carry none of them."""
+    return list(conversation) if own else [e for e in conversation if e["by"] == mind_id]
+
+
 def ask_earlier_lines(conversation, name_of):
     """What a mind's own chat is told the person said in the Ask, oldest first, one line per exchange and no ages (the
     mind may read it hours later): "they said “...”; you answered “...”"."""
@@ -1098,8 +1096,11 @@ def own_chat_text(hive, principal, mind_id, now_ms):
             continue
         who = "they" if m["direction"] == "in" and m["sender"] == principal else "you" if m["direction"] == "out" else None
         if who:
-            at = datetime.datetime.fromisoformat(str(m["created_at"]).replace("Z", "+00:00")).timestamp() * 1000
-            lines.append(f"- {_ago(now_ms - at)}, {who} said: “{_plain(m['text'], OWN_CHAT_WORDS)}”")
+            # the db's own reading of its stamps (a zone-less one is UTC); a stamp that doesn't read costs that line
+            # its age only, never the turn
+            moment = parse_stamp(m.get("created_at"))
+            age = f"{_ago(now_ms - moment.timestamp() * 1000)}, " if moment else ""
+            lines.append(f"- {age}{who} said: “{_plain(m['text'], OWN_CHAT_WORDS)}”")
     lines = lines[-OWN_CHAT_MAX:]
     while lines and len("\n".join(lines).encode("utf-8")) > OWN_CHAT_BYTES:
         lines.pop(0)
@@ -1471,11 +1472,8 @@ class Conductor:
                 self.reservations.reserve(reservation, {"agent": agent["id"], "model": st.model, "body": body, "payer": st.principal, "key": key_id},
                                           estimate, budgets, metadata={"agent": agent["id"], "model": st.model, "payer": st.principal,
                                                                        "key": key_id, "kind": "ask-conductor"},
-                                          subjects=host_subjects(hive, agent["id"], key_id, st.principal, False))
-            except SpendRateLimited as exc:   # the person's own turn waits for the month's pace and is told until when
-                refused = hive.spend_rate_refusal(agent, exc)
-                raise _Stop("spend_cap", {"code": "spend_rate", "kind": "spend_rate", **refused.details,
-                                          "estimate_usd": estimate}) from None
+                                          subjects=host_subjects(hive, agent["id"], key_id, st.principal, False),
+                                          paced=False)   # the asker's own turn: its limits alone hold it (Hive.present_for)
             except BudgetExhausted as exc:
                 raise _Stop("spend_cap", self._reserve_detail(agent, exc)) from None
             except HiveError as exc:

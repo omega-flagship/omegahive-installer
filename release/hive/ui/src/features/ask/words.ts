@@ -4,7 +4,6 @@
  * mind keeps the name they chose.
  */
 import type { DoneOutcome, RefusalReason } from '../../api/ask'
-import { clockTime } from '../../lib/format'
 import type { HiveCapabilities, HiveMemory } from '../../lib/askMemory'
 import { CHOOSE_WHO, HOST_SAY } from './answerer'
 
@@ -119,8 +118,6 @@ export interface DoneLimit {
   /** gateway r1a: present when no limit was reached because the person's one monthly total is not set yet
    *  (conductor.limit_frame), the only reason the host names */
   reason?: 'monthly_total_required'
-  /** kind spend_rate (the spend-rate guard paced the turn): when a call fits again, ISO (conductor.limit_frame) */
-  until?: string
 }
 export function readDoneLimit(v: unknown): DoneLimit | null {
   if (!v || typeof v !== 'object') return null
@@ -129,7 +126,6 @@ export function readDoneLimit(v: unknown): DoneLimit | null {
   const n = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) && x >= 0 ? x : null)
   const limit: DoneLimit = { kind: o.kind, current_usd: n(o.current_usd), limit_usd: n(o.limit_usd), estimate_usd: n(o.estimate_usd) }
   if (o.reason === 'monthly_total_required') limit.reason = 'monthly_total_required'
-  if (typeof o.until === 'string' && o.until.length <= 40 && Number.isFinite(Date.parse(o.until))) limit.until = o.until
   return limit
 }
 
@@ -203,9 +199,6 @@ export function spendStop(limit: DoneLimit | null, thread?: { spent_usd: number;
   // nothing was reached: the person's monthly total is missing. Their own keys' total is set under Your keys; the
   // hive's money is held by a month rule an admin sets in Usage & limits (an admin's own mind waits on that)
   if (limit?.reason === 'monthly_total_required') return { text: MONTHLY_TOTAL_STOP, offer: [limit.kind === 'member_allowance' ? USAGE_AND_LIMITS : YOUR_KEYS] }
-  // the spend-rate guard: nothing ran out, this turn waits for the month's pace; the person's screen says until when
-  if (limit?.kind === 'spend_rate')
-    return { text: `Paused here: this is spending faster than this month allows.${limit.until ? ` You can carry on at about ${clockTime(limit.until)}.` : ' Ask again in a little while.'}`, offer: [{ kind: 'retry', label: 'Ask again' }] }
   const known = limit ? LIMIT_STOP[limit.kind] : undefined
   if (limit && known) return { text: known.say.replace('{amounts}', amounts(limit)), offer: known.offer }
   const used = thread && Number.isFinite(thread.spent_usd) && Number.isFinite(thread.budget_usd) ? ` This thread has used ${money(thread.spent_usd)} of its ${money(thread.budget_usd)}.` : ''

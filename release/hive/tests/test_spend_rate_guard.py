@@ -3,18 +3,19 @@
 # total rule and a key's cap left to their limit alone; a call paced by the tightest of its paced figures, holding
 # nothing on any; the difference given back when a call settles below its worst case or is released; a refused call
 # holding nothing and saying when to retry (429 spend_rate with Retry-After), on the hive's cap and on a mind's own
-# month cap; the guard surviving a restart; a call bigger than the burst; an Ask turn's stop saying when the person can
-# carry on; a mind looping on calls bigger than the burst that settle by themselves held to the month's pace; and the
+# month cap; the guard surviving a restart; a call bigger than the burst; a mind looping on calls bigger than the burst
+# that settle by themselves held to the month's pace; a person's own live work held by its limits alone, never paced
+# or charged (whose own work a mind is doing, and a tester's $1 month running Make through the chat route); and the
 # month-apart clock other admission tests give Reservations so the guard is full at each of their calls.
-"""The spend-rate guard (cost_reservations.guard_charges, its refund trigger, Hive.spend_rate_refusal)."""
+"""The spend-rate guard (cost_reservations.guard_charges, its refund trigger, Hive.spend_rate_refusal, Hive.present_for)."""
 import math
 import random
 
 import pytest
 
-from hive.core.conductor import _Stop, limit_frame, stop_say
-from hive.core.cost_reservations import GUARD_BURST_SECONDS, GUARD_MONTH_SECONDS, Reservations, SpendRateLimited
-from hive.core.db import Database
+from hive.core.cost_reservations import BudgetExhausted, GUARD_BURST_SECONDS, GUARD_MONTH_SECONDS, Reservations, SpendRateLimited
+from hive.core.create_plan_engine import goal_creator
+from hive.core.db import Database, now
 from hive.tests.test_core_api import agent_headers, client, make_swarm_and_agents  # noqa: F401  (fixture)
 from hive.tests.test_cost_reservations import MODEL as PAID, _fake_chat, _gateway
 
@@ -244,10 +245,99 @@ def test_a_minds_own_month_cap_is_paced_and_the_refusal_names_it(client):
     assert error["limit_usd"] == 5.0 and error["retry_after"] >= 1
 
 
-def test_an_ask_turn_the_guard_pauses_says_when_the_person_can_carry_on():
-    detail = {"code": "spend_rate", "kind": "spend_rate", "scope": "person:u_0a0b0c0d", "period": "month",
-              "limit_usd": LIMIT, "retry_after": 90, "until": "2026-11-12T03:40:00Z", "estimate_usd": 0.05}
-    assert stop_say(_Stop("spend_cap", detail)) == ("I stopped here: this is spending faster than this month allows, so "
-                                                    "it's pausing for a moment. You can carry on in about 2 minutes.")
-    frame = limit_frame(detail)
-    assert frame["kind"] == "spend_rate" and frame["retry_after"] == 90 and frame["until"] == "2026-11-12T03:40:00Z"
+def test_a_persons_own_work_is_held_by_its_limits_alone_and_leaves_the_guard_full(tmp_path):
+    """A tester's v0.35 gate: on a $1 month a planner call reserves $0.0996 (its prompt plus the 4,096 tokens the hive
+    assumes), nearly the whole $0.10 burst, so after one settled at $0.0235 the next waited about 17 hours. A call a
+    person's own live work holds (paced=False, Hive.present_for) goes on until the month itself runs out, charging the
+    guard nothing; a mind on its own is paced as before."""
+    clock = Clock()
+    res = guard(tmp_path, clock)
+    month = lambda spent: (lambda: [("hive:month", 1.0, spent)])
+    res.reserve("alone1", {"k": "alone1"}, 0.0996, month(0.0), dispatched=True)
+    res.settle("alone1", 0.0235, lambda: None)
+    with pytest.raises(SpendRateLimited) as refused:                     # a mind on its own: the month's pace
+        res.reserve("alone2", {"k": "alone2"}, 0.0996, month(0.0235), dispatched=True)
+    # 0.0235 x 30 days of tat, plus this call's 0.0996 x 30 days, past the burst's 3 days: about 998 minutes
+    assert refused.value.retry_after == math.ceil((0.0235 + 0.0996 - 0.1) * GUARD_MONTH_SECONDS / 1.0)
+    charged = tat(res, "hive:month")
+    spent, made = 0.0235, 0
+    for i in range(60):                                                  # the person's own work: Make's calls, one by one
+        try:
+            res.reserve(f"own{i}", {"k": f"own{i}"}, 0.0996, month(spent), dispatched=True, paced=False)
+        except BudgetExhausted as exc:
+            assert exc.scope == "hive:month" and spent + 0.0996 > 1.0     # the month itself, not its pace, stops it
+            break
+        res.settle(f"own{i}", 0.0235, lambda: None)
+        spent, made = round(spent + 0.0235, 6), made + 1
+    assert made == 38 and tat(res, "hive:month") == charged             # $0.89 more in one sitting, the guard untouched
+    assert res.db.one("SELECT COUNT(*) AS n FROM limit_rate_charges")["n"] == 0
+
+
+def plan_run(h, person, phase="building"):
+    """A Create plan's run as CreatePlanEngine.start records it (the reducer isn't run: only its row is read here)."""
+    pid = "plan_" + "0a" * 16
+    h.db.insert("create_plan_runs", {"plan_id": pid, "person": person, "sentence": "a tip calculator", "epoch": "ep-test",
+                                     "reducer_sha256": "0" * 64, "review_policy": "review-required", "lease": 1,
+                                     "piece_cap": 1, "fix_cap": 1, "phase": phase, "status": "building",
+                                     "created_at": now(), "updated_at": now()})
+    return pid
+
+
+def test_a_mind_is_a_persons_own_work_while_their_session_or_live_plan_holds_it(client):
+    h = client.app.state.hive
+    swarm, (a, b) = make_swarm_and_agents(client, n=2, model=PAID)
+    mind, person = h.agent(a["id"]), "user:u_0a0b0c0d"
+    assert h.present_for(mind) is None                                   # on its own
+    pid = plan_run(h, person)
+    goal = h.goals._create_record(swarm["id"], f"Create plan {pid}: plan", created_by=goal_creator(pid), assignee=a["id"],
+                                emit=False)
+    h.settings.create_plan_engine = False                                # every install turns it on (Jon on #395)
+    assert h.present_for(mind) is None                                   # the plan engine is off: no plan is live
+    h.settings.create_plan_engine = True
+    assert h.present_for(mind) == person and h.present_for(h.agent(b["id"])) is None
+    assert h.user_for(mind) == h.user_for(h.agent(b["id"]))              # who it's for and pays is unchanged
+    for status, waited in (("claimed", True), ("waiting", True), ("stalled", True), ("submitted", False),
+                           ("done", False), ("failed", False), ("cancelled", False), ("open", True)):
+        h.db.execute("UPDATE goals SET status = ? WHERE id = ?", (status, goal["id"]))
+        assert (h.present_for(mind) == person) is waited, status          # answered or ended: the plan no longer waits
+    for phase, live in (("ready-to-deploy", True), ("deployed", False), ("stopped", False)):
+        h.db.execute("UPDATE create_plan_runs SET phase = ? WHERE plan_id = ?", (phase, pid))
+        assert (h.present_for(mind) == person) is live, phase
+    h.goals._create_record(swarm["id"], "my own idea", created_by=f"agent:{b['id']}", assignee=b["id"], emit=False)
+    h.db.execute("UPDATE create_plan_runs SET phase = 'building' WHERE plan_id = ?", (pid,))
+    assert h.present_for(h.agent(b["id"])) is None                       # a goal no plan gave it is the mind's own
+    h.db.insert("work_sessions", {"id": "ws_0a0b0c0d", "room_id": "r", "agent_id": b["id"], "owner": "user:u_0e0f0a0b",
+                                  "title": "pairing", "budget_usd": 1.0, "spent_at_start": 0.0, "created_at": now()})
+    assert h.present_for(h.agent(b["id"])) == "user:u_0e0f0a0b" == h.user_for(h.agent(b["id"]))   # a Session holds it
+
+
+def test_a_mind_on_a_persons_live_plan_spends_to_the_month_limit_unpaced_and_on_its_own_is_paced(client):
+    """The tester's $1 hive month through the chat route: a mind on its own gets one call from the full guard and the
+    next is paced (429); working a goal of the person's live plan its calls go on until the month refuses one (402),
+    charging the guard nothing; with that goal answered it is on its own and paced again."""
+    h = client.app.state.hive
+    h.settings.create_plan_engine = True
+    swarm, (a,) = make_swarm_and_agents(client, n=1, model=PAID)
+    assert client.post("/api/budgets", json={"scope": "hive", "period": "month", "limit_usd": 1.0}).status_code == 200
+    _fake_chat(_gateway(client), delay=0)
+    body = {"messages": [{"role": "user", "content": "plan a tip calculator"}], "max_tokens": 800}   # about $0.06 a call
+    post = lambda: client.post("/llm/v1/chat/completions", headers=agent_headers(a), json=body)
+    assert post().status_code == 200
+    r = post()
+    assert r.status_code == 429 and r.json()["error"]["code"] == "spend_rate"
+    charged = h.db.one("SELECT tat FROM limit_rates WHERE label = 'hive:month'")["tat"]
+    pid = plan_run(h, "user:u_0a0b0c0d")
+    goal = h.goals._create_record(swarm["id"], f"Create plan {pid}: plan", created_by=goal_creator(pid), assignee=a["id"],
+                                emit=False)
+    assert [post().status_code for _ in range(3)] == [200, 200, 200]
+    h.db.execute("UPDATE goals SET status = 'submitted' WHERE id = ?", (goal["id"],))
+    assert post().status_code == 429                                     # answered: the mind is on its own again
+    h.db.execute("UPDATE goals SET status = 'claimed' WHERE id = ?", (goal["id"],))
+    codes = []
+    while not codes or codes[-1] == 200:
+        codes.append(post().status_code)
+        assert len(codes) <= 20
+    assert codes[-1] == 402 and len(codes) > 5                           # the month itself stops it, never its pace
+    spent = h.db.one("SELECT COALESCE(SUM(actual), 0) AS n FROM cost_reservations WHERE state = 'settled'")["n"] / 1e6
+    assert spent > 0.9                                                   # most of the $1 month, in one sitting
+    assert h.db.one("SELECT tat FROM limit_rates WHERE label = 'hive:month'")["tat"] == charged   # nothing charged

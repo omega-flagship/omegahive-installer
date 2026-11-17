@@ -35,6 +35,7 @@ from __future__ import annotations
 import hashlib
 import json
 
+from .create_plan_engine import goal_creator
 from .db import new_id, now
 
 PROFILE = "plan-member"
@@ -363,7 +364,7 @@ async def _helper_effect(engine, run, effect):
         if engine.db.one("SELECT 1 FROM goals WHERE id = ?", (body["goal_id"],)) is None:
             engine.hive.goals._create_record(agent["swarm_id"], f"Create plan {m['plan_id']}: build {m['piece']}",
                                              f"Write the piece's files; the packet is in your messages.", 0.6,
-                                             created_by=f"create-plan:{m['plan_id']}", assignee=agent["id"],
+                                             created_by=goal_creator(m['plan_id']), assignee=agent["id"],
                                              goal_id=body["goal_id"])
         files = await engine.member_ports.read(run)
         read_only = await engine.member_ports.read_only(run)

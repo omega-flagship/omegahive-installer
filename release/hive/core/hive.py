@@ -2720,12 +2720,12 @@ class Hive:
 
     # ---- usage ----------------------------------------------------------------------------------
 
-    def user_for(self, agent):
-        """Who a mind's model call is for: the asker of the Ask turn open on this mind (at most one: ask.py admits no other
-        person's turn or session alongside it); else the owner of an active ordinary Session with this mind (one payer
-        person at a time: sessions.py refuses a second); else the mind's owner when that is a named person; else the
-        hive. An Ask thread with no open turn is for no one. J3 R4 (plan §3.6): first, while a Studio session is live, every
-        call its maker makes is for the session's person (inert with Studio off)."""
+    def _session_person(self, agent):
+        """The person whose session holds this mind now, or None: J3 R4 (plan §3.6) first, while a Studio session is live,
+        the session's person, for every call its maker makes (inert with Studio off); else the asker of the Ask turn open
+        on this mind (at most one: ask.py admits no other person's turn or session alongside it); else the owner of an
+        active ordinary Session with this mind (one payer person at a time: sessions.py refuses a second). An Ask thread
+        with no open turn holds it for no one."""
         from .ask import OPEN_HOST_MIND, states_sql   # the host's mind answering; never a conductor or browser turn
         studio = getattr(self, "studio", None)
         principal = studio.call_principal(agent["id"]) if studio is not None else None
@@ -2739,10 +2739,23 @@ class Hive:
                         "ORDER BY created_at DESC LIMIT 1", (agent["id"],)) if getattr(self, "sessions", None) else None
         if s and str(s["owner"]).startswith("user:u_"):
             return s["owner"]
+        return None
+
+    def user_for(self, agent):
+        """Who a mind's model call is for: the person whose session holds it (_session_person); else the mind's owner
+        when that is a named person; else the hive."""
+        person = self._session_person(agent)
+        if person:
+            return person
         owner = agent.get("owner") or ""
-        if owner.startswith("user:u_"):
-            return owner
-        return "hive"
+        return owner if owner.startswith("user:u_") else "hive"
+
+    def present_for(self, agent):
+        """The person whose own live work this mind's call is part of, or None when the mind acts on its own: the person
+        whose session holds it (_session_person), else the person whose live Create plan waits on it
+        (CreatePlanEngine.waiting_on). The spend-rate guard paces only a call with no one present
+        (cost_reservations.Reservations.reserve, paced): a person's own work is held by its limits and its own budget."""
+        return self._session_person(agent) or self.create_plans.waiting_on(agent["id"])
 
     def payer_for(self, agent, key_owner=None):
         """Who pays for this mind's model call, and whether it is on their own key (user_for names who it is for):

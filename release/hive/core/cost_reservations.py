@@ -2,8 +2,8 @@
 # itself, never by hand: at its real cost when it answers, released when its provider documents a refusal as unbilled,
 # from OpenRouter's record of it, or, when its outcome stays unknown, at its worst case (a free model's at $0) as an
 # estimate after an hour, which OpenRouter's record of the call, once it appears, or a person may correct for 30 days;
-# and the spend-rate guard that paces every monthly allowance and cap a call is held against: the payer's, the hive's,
-# and a team's or a mind's where one is set.
+# and the spend-rate guard that paces what a mind spends on its own against every monthly allowance and cap the call is
+# held against: the payer's, the hive's, and a team's or a mind's where one is set.
 """Host integration candidate: durable shared liabilities, no provider dispatch.
 
 The host supplies current budgets/spend inside the admission transaction and
@@ -153,6 +153,10 @@ def exhausted_limit(exc):
 # c x 30 days / L of tat time and is admitted while max(tat, now) + that cost <= now + 3 days (a tenth of 30 days, the
 # burst's own time, whatever L is). A call bigger than the burst is admitted only when the guard is full (tat <= now),
 # so it is never blocked for good. A refused call holds nothing. With $50 a month that is $1.67 a day and a $5 burst.
+# It paces only what a mind spends on its own, the runaway Jon asked it to stop (#299). A call a person's live work holds
+# (Hive.present_for: their Studio session, Ask turn, Session or live Create plan) is held by its limits alone and charges
+# no tat (reserve's paced=False): that person is there, can stop it, and the work has its own budget. Pacing it too held
+# Make on a $1 month for 17 hours after one 2-cent planner call, since each call reserves nearly the whole $0.10 burst.
 GUARD_MONTH_SECONDS=30*86400
 GUARD_BURST_SECONDS=GUARD_MONTH_SECONDS/10
 
@@ -303,7 +307,7 @@ class Reservations:
     def pending(self,label):
         """Micro-USD open S5 and delegated commitments for the existing budget subject."""
         return pending_micros(self.db, label)
-    def reserve(self,key,payload,maximum,budgets,metadata=None,dispatched=False,subjects=None):
+    def reserve(self,key,payload,maximum,budgets,metadata=None,dispatched=False,subjects=None,paced=True):
         """budgets() -> [(scope+period identifier, limit USD, recorded spend USD)].
         subjects: what the call spends against (host_subjects); recorded with the liability so every later row about
         any of them counts it. Without it, the subjects of the rows in force now (and the hive) are recorded.
@@ -313,7 +317,8 @@ class Reservations:
         dispatched=True admits and marks the call dispatched in that one transaction, so a crash can never strand
         a 'reserved' row. Only a hash of the payload is kept, never the call content.
         The spend-rate guard (guard_charges) then paces each monthly allowance and cap it is held against (guarded): a call
-        that fits its limits but not their pace raises SpendRateLimited and holds nothing.
+        that fits its limits but not their pace raises SpendRateLimited and holds nothing. paced=False is a call a
+        person's own live work holds (Hive.present_for): its limits alone hold it and it charges the guard nothing.
         """
         if not isinstance(key,str) or not key:raise ValueError('Request identity required')
         metadata={} if metadata is None else metadata
@@ -337,7 +342,7 @@ class Reservations:
                 held_now=self.pending(scope)
                 if micros(spent)+held_now+ceiling>micros(limit,ROUND_FLOOR):
                     raise BudgetExhausted(scope,float(limit),float(spent),held_now/1_000_000,ceiling/1_000_000)
-            charges=guard_charges(self.db,rows,ceiling,self.clock())
+            charges=guard_charges(self.db,rows,ceiling,self.clock()) if paced else []
             held={'hive'}|{s for s in (subjects or ()) if s}|{s for s in (subject_of(l) for l,_,_ in rows) if s}
             self.db.execute("INSERT INTO cost_reservations(id,binding,maximum,state,dispatched_at,reserved_at) VALUES(?,?,?,?,?,?)",(key,binding,ceiling,'dispatched' if dispatched else 'reserved',time.time() if dispatched else None,time.time()))
             self.db.execute('INSERT INTO cost_reservation_details(reservation,metadata) VALUES(?,?)',(key,details))

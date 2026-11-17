@@ -1,3 +1,5 @@
+# Purpose: the Create plan engine: journals each plan, runs the MeTTa plan controller over it, performs the effects
+# it decides, and says which person's live plan waits on a mind.
 """Create plans: the host engine for the MeTTa plan controller R4.4 (slice 1: "make me a small web page that shows X").
 
 Every decision lives in the vendored reducer modules/create/controller/create_plan_controller_r4_4.metta (R4.4, sha-pinned
@@ -48,6 +50,7 @@ import tempfile
 
 from .code_controller_engine import EngineError, Reducer, Str, parse, q, render, render_any
 from .db import new_id, now
+from .goals import UNFINISHED
 
 log = logging.getLogger("hive")
 
@@ -90,6 +93,17 @@ MAX_FILES_PER_PIECE = 20
 FILE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]{0,159}")
 ID = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,47}")
 TERMINAL = ("deployed", "stopped")
+# Every goal a plan gives a mind (create_plan_ports.GoalMinds: planner, designer, test author, reviewer; and
+# code_controller_member: a piece's build) names the plan as its creator, which no other writer uses (a mind's own goals
+# are agent:<id>), so the hive can tell a mind is doing a person's plan (CreatePlanEngine.waiting_on).
+GOAL_CREATOR = "create-plan:"
+# The states of such a goal the plan still waits on: unfinished and not yet submitted, since the plan reads a submitted
+# goal's proposal as the answer (GoalMinds.collect, code_controller_member.helper_result).
+AWAITED = tuple(s for s in UNFINISHED if s != "submitted")
+
+
+def goal_creator(plan_id):
+    return GOAL_CREATOR + plan_id
 
 SCHEMA = [
     """CREATE TABLE IF NOT EXISTS create_plan_runs (plan_id TEXT PRIMARY KEY, person TEXT NOT NULL, sentence TEXT NOT NULL,
@@ -355,6 +369,19 @@ class CreatePlanEngine:
 
     def enabled(self):
         return bool(getattr(self.hive.settings, "create_plan_engine", False))
+
+    def waiting_on(self, agent_id):
+        """The person whose live plan waits on this mind, or None: the plan gave it a goal it hasn't answered yet (AWAITED)
+        and is neither deployed nor stopped, while the engine runs. Only a person starts a plan (start), so what the mind
+        spends on it is that person's own work (Hive.present_for). Time: one scan of goals (no index on assignee) and of
+        the plan runs."""
+        if not self.enabled():
+            return None
+        row = self.db.one(f"SELECT r.person FROM goals g JOIN create_plan_runs r ON g.created_by = ? || r.plan_id "
+                          f"WHERE g.assignee = ? AND g.status IN ({','.join('?' * len(AWAITED))}) "
+                          f"AND COALESCE(r.phase, '') NOT IN ({','.join('?' * len(TERMINAL))}) ORDER BY r.created_at LIMIT 1",
+                          (GOAL_CREATOR, agent_id, *AWAITED, *TERMINAL))
+        return row["person"] if row else None
 
     @property
     def reducer(self):

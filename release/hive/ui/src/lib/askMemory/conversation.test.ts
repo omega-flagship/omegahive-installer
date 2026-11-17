@@ -110,6 +110,24 @@ describe('a new conversation starts at New thread, and stays started across a re
   })
 })
 
+describe('the conversation keeps its order when the clock does not move', () => {
+  // a fast machine stamps two steps in one millisecond: an exchange kept right after a chat heard the last one, or right
+  // after New thread, tied with it and fell on the wrong side of the mark
+  it('stamps each exchange after the last, and a new conversation between them, on one millisecond', async () => {
+    const { s } = store()
+    await s.whenReady()
+    await s.rememberTurn({ turn_id: 'at_a', mind_id: TAIGA, words: 'first', answer: 'One.' })
+    await s.rememberTurn({ turn_id: 'at_b', mind_id: WORKER, words: 'second', answer: 'Two.' })
+    const [a, b] = s.conversationTalks()
+    expect(b.at).toBeGreaterThan(a.at)
+    s.startConversation()
+    expect(s.getView().conversationSince).toBeGreaterThan(b.at)
+    expect(s.conversation()).toEqual([])
+    await s.rememberTurn({ turn_id: 'at_c', mind_id: TAIGA, words: 'after the mark', answer: 'Three.' })
+    expect(s.conversation().map((e) => e.said)).toEqual(['after the mark'])
+  })
+})
+
 describe('the answering mind\'s name travels with the exchange through a memory file', () => {
   it('export, then restore into an empty memory, keeps mind_id and mind_name', async () => {
     const { s } = store()

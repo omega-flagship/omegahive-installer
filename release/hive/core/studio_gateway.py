@@ -1,3 +1,4 @@
+# Purpose: a Studio maker's paid calls, each bound to one step and one execution and checked and held at call time.
 """J3 host round R4 (money at call time): a Studio maker's paid calls, bound to one step and one execution.
 
 Plan: PLATFORM_J3R4_HOST_O1_O2_G1_PLAN.md §3.6 "Gateway", §6, r1.1 S1 (the monthly total at
@@ -218,18 +219,16 @@ class StudioGateway:
         """A maker's reservation (E1, F1, G1): the step and the captured epoch in its metadata, the Studio checks and rows
         inside its transaction, reserved and not dispatched (the send gate dispatches). A refusal reserves nothing; it
         ends the step and pauses or holds the session after the rollback, and raises the HiveError to answer."""
-        from .cost_reservations import BudgetExhausted, SpendRateLimited
+        from .cost_reservations import BudgetExhausted
         from .hive import HiveError
         call.reservation = key
         try:
+            # a maker's call is its session's person's own live work (Hive.present_for): its limits alone hold it
             return reservations.reserve(key, payload, estimate, call.budgets(budgets), metadata=call.metadata(metadata),
-                                        dispatched=False, subjects=subjects)
+                                        dispatched=False, subjects=subjects, paced=False)
         except StudioRefused as exc:
             self.gateway_refused(call, exc.after)
             raise exc.error from None
-        except SpendRateLimited as exc:   # within its limits but faster than this month allows: nothing held, it waits
-            self.gateway_refused(call, ("paused", "budget_exhausted", "refused_budget"))
-            raise self._err(429, "spend_rate", str(exc), scope=exc.scope, retry_after=exc.retry_after) from None
         except BudgetExhausted as exc:
             self.gateway_refused(call, ("paused", "budget_exhausted", "refused_budget"))
             raise self._err(402, "reservation_refused", str(exc), scope=exc.scope) from None

@@ -623,17 +623,21 @@ allowance's notices, the admins get the hive cap's and any person's 100%. A pers
 cap is that limit's 100% notice too. The marks are the table `limit_notices(label, month, threshold, limit_micros)`, so a
 restart never repeats one. A hive cap that is a day rule has no monthly notice.
 
-**The spend-rate guard** (`cost_reservations.guard_charges`). The payer's monthly allowance, the hive's monthly cap and
-a team's or a mind's monthly cap where one is set (`cost_reservations.guarded`; a day or total rule and a key's cap are
-held by their limit alone) each refill at a thirtieth of the month a day with a burst of a tenth (GCRA, ITU-T I.371
-annex A, one theoretical arrival time per limit in `limit_rates`): with $50 a month that is $1.67 a day and a $5 burst.
+**The spend-rate guard** (`cost_reservations.guard_charges`). What a mind spends on its own is paced: the payer's monthly
+allowance, the hive's monthly cap and a team's or a mind's monthly cap where one is set (`cost_reservations.guarded`; a
+day or total rule and a key's cap are held by their limit alone) each refill at a thirtieth of the month a day with a
+burst of a tenth (GCRA, ITU-T I.371 annex A, one theoretical arrival time per limit in `limit_rates`): with $50 a month
+that is $1.67 a day and a $5 burst. A call a person's own live work holds (`Hive.present_for`: their Studio session, the
+Ask turn open on the mind, an active Session with it, or their live Create plan waiting on a goal it gave the mind; and
+every call of the Ask conductor and the personal-mind gateway) is held by its limits alone and charges the guard nothing,
+so Make can spend a small month in one sitting: paced, a $1 month held Make's planner about 17 hours after one 2-cent
+call, since each call's worst case was nearly the whole $0.10 burst.
 A call is admitted while its worst case fits the burst left, inside the reservation's own transaction; a call bigger
 than the burst only when the guard is full. A call settled below its worst case gives the difference back and a released
 call all of it (a trigger on `cost_reservations`, so every path that ends a hold does), so the guard counts what was
 actually spent. A refused call holds nothing and is answered 429 `spend_rate` with `scope`, `period`, `limit_usd`,
 `retry_after` (whole seconds, also the `Retry-After` header) and `until`, the same shape as a provider's rate limit;
-`budget.slowed` announces it once until a call is admitted again. An Ask turn the guard pauses ends `spend_cap` with
-`done.limit` `{kind: "spend_rate", retry_after, until}`, so the person's screen says when they can carry on.
+`budget.slowed` announces it once until a call is admitted again.
 
 ### `GET /api/budgets/limits` (admins only; 403 `admin_only` otherwise)
 

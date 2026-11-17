@@ -1,12 +1,14 @@
 """Purpose: the Ask and a mind's own chat are one conversation (Jon, 16 Nov: "context and continuity are consistently
 persistent regardless of which model you interact", "without needing additional LLM calls to pass through convo").
 
-Invented lives only: Ann (user:u_ann) and her own mind, renamed Taiga here; the test world's swarm Home with its
-coordinator Orchestra and a mind called Worker.
+Invented lives only: Ann (user:u_ann) and her own mind, renamed Taiga here; Bob (user:u_bob) and his own mind; the
+test world's swarm Home with its coordinator Orchestra and a mind called Worker.
 - a message in her own chat with a mind may carry the Ask exchanges that mind has not heard (from_ask); the mind's
   envelope holds them as lines naming who answered, both channel kinds show them before her words, and her own view of
   the chat shows only her words;
-- from_ask is taken only in her own chat with the mind, in the conversation's shape;
+- from_ask is taken only in her own chat with the mind, in the conversation's shape; a mind that isn't her own (Bob's
+  own mind, a swarm's) is told only the exchanges it answered itself, whatever her page sends;
+- a stamp in her chat that doesn't read costs that line its age, never the Ask turn;
 - an Ask turn reads her own chat with the mind that answers, and nothing else of the mind's messages.
 """
 import json
@@ -41,6 +43,13 @@ def _inbox(client, mind):
     return [json.loads(m["text"]) for m in out]
 
 
+def _told(hive, mind):
+    """What the newest message to this mind tells it of the Ask (its envelope's ask_earlier), read from the store: a
+    person's own mind has no token a test can hold."""
+    row = hive.db.one("SELECT extra FROM messages WHERE agent_id = ? AND direction = 'in' ORDER BY rowid DESC LIMIT 1", (mind["id"],))
+    return json.loads(row["extra"] or "{}").get("ask_earlier") if row else None
+
+
 def test_her_message_carries_the_ask_exchanges_and_the_mind_reads_them_before_her_words(client, monkeypatch, tmp_path):
     w = _world(client, monkeypatch)
     worker, mine = w["worker"], w["mine"]
@@ -52,8 +61,8 @@ def test_her_message_carries_the_ask_exchanges_and_the_mind_reads_them_before_he
     assert r.status_code == 200, r.text
     envelope = _inbox(client, worker)[-1]
     assert envelope["text"] == "and the seed tracker?"
-    assert envelope["ask_earlier"] == ["they said “what do you build?”; you answered “The garden planner.”",
-                                       f"they said “{CODE}”; Taiga, their own mind answered “Noted.”"]   # Atlas never
+    # Worker isn't her own mind: it hears what it answered, never what she told Taiga, and Atlas never
+    assert envelope["ask_earlier"] == ["they said “what do you build?”; you answered “The garden planner.”"]
     # her own view of the chat shows only her words
     assert [m["text"] for m in client.get(url, headers=w["ann"]).json()] == ["and the seed tracker?"]
     # the omega channel shows them first, in the same event as her words
@@ -93,6 +102,49 @@ def test_from_ask_is_taken_only_in_her_own_chat_and_in_its_shape(client, monkeyp
     # without from_ask her message is exactly as before: no ask_earlier
     assert client.post(url, headers=w["ann"], json={"text": "plain"}).status_code == 200
     assert "ask_earlier" not in _inbox(client, worker)[-1]
+
+
+def test_her_own_mind_hears_every_exchange_and_another_persons_own_mind_only_its_own(client, monkeypatch):
+    # Kabir's review of #347: a message to another member's own mind would carry every Ask exchange, her words with
+    # her own mind included. The hive refuses her a chat with Bob's own mind outright, and keeps the rule itself for
+    # any mind that isn't hers (heard_by): only what that mind answered.
+    from hive.core.conductor import heard_by
+    w = _world(client, monkeypatch)
+    hive, mine, worker = w["hive"], w["mine"], w["worker"]
+    bobs = hive.personal.ensure("user:u_bob")
+    from_ask = [{"said": CODE, "answer": "Noted.", "by": mine["id"], "at": _at(20)},
+                {"said": "what do you build?", "answer": "The garden planner.", "by": worker["id"], "at": _at(15)},
+                {"said": "and Bob's diary?", "answer": "It is Bob's to share.", "by": bobs["id"], "at": _at(10)}]
+    before = hive.db.one("SELECT COUNT(*) AS n FROM messages")["n"]
+    r = client.post(f"/api/agents/{bobs['id']}/messages", headers=w["ann"], json={"text": "hello", "from_ask": from_ask})
+    assert r.status_code == 404 and hive.db.one("SELECT COUNT(*) AS n FROM messages")["n"] == before
+    assert heard_by(from_ask, bobs["id"], own=False) == from_ask[2:]
+    assert heard_by(from_ask, worker["id"], own=False) == from_ask[1:2]
+    # her own mind hears every exchange, whoever answered it; another person's own mind is never named to it
+    r = client.post(f"/api/agents/{mine['id']}/messages", headers=w["ann"], json={"text": "hi", "from_ask": from_ask})
+    assert r.status_code == 200, r.text
+    assert _told(hive, mine) == [f"they said “{CODE}”; you answered “Noted.”",
+                                 "they said “what do you build?”; Worker answered “The garden planner.”",
+                                 "they said “and Bob's diary?”; a mind answered “It is Bob's to share.”"]
+
+
+def test_a_chat_stamp_that_does_not_read_costs_its_line_the_age_never_the_turn(client, monkeypatch):
+    # Kabir's review of #347: one unreadable stamp in her chat ended every Ask turn as refused
+    w = _world(client, monkeypatch)
+    hive, mine = w["hive"], w["mine"]
+    conversation = hive.person_conversation(mine["id"], "user:u_ann")
+    hive.enqueue_message(mine["id"], "remember the gate code 4417", conversation, "user:u_ann")
+    hive.enqueue_message(mine["id"], "and the shed is blue", conversation, "user:u_ann")
+    first = hive.db.one("SELECT id FROM messages WHERE text = 'remember the gate code 4417'")["id"]
+    hive.db.execute("UPDATE messages SET created_at = 'not a time' WHERE id = ?", (first,))
+    s = script(client, Script("It's 4417."))
+    r = ask(client, w["ann"], "op-mca-stamp-01", text="what was the gate code?")
+    assert r.status_code == 202, r.text
+    fs = wait(hive, "op-mca-stamp-01", closed)
+    assert fs[-1]["outcome"] == "complete"
+    chat = s.bodies[0]["messages"][1]["content"]
+    # the bad stamp sorts wherever its text does: its line keeps her words without an age, the other line has its age
+    assert "\n- they said: “remember the gate code 4417”" in chat and "- just now, they said: “and the shed is blue”" in chat
 
 
 def test_an_ask_turn_reads_her_own_chat_with_the_mind_that_answers(client, monkeypatch):

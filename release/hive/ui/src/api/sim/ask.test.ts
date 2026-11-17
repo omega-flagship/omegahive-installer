@@ -1,8 +1,8 @@
-// Purpose: tests that the simulated Ask host plays the built host's shapes: routing, keys, phase order and recovery, steers, a Continue's admission, and its stops (the spend-rate guard's pause included).
+// Purpose: tests that the simulated Ask host plays the built host's shapes: routing, keys, phase order and recovery, steers, a Continue's admission, and its stops.
 import { describe, expect, it, vi } from 'vitest'
 import { SimAsk } from './ask'
 import type { AskEvent } from '../ask'
-import type { Agent, Goal, HiveEvent, Swarm } from '../types'
+import type { Agent, Goal, Swarm } from '../types'
 
 /** SIM ONLY: the invented host plays the built host's shapes (platform/ask-p1 6100794) and Jon's routing ruling. */
 const agents = [
@@ -19,9 +19,8 @@ const swarms = [
 
 function host() {
   const events: AskEvent[] = []
-  const hive: HiveEvent[] = []
   const queue: [number, () => void][] = []
-  const h = new SimAsk({ emit: (e) => events.push(e), later: (ms, fn) => queue.push([ms, fn]), agents: () => agents, swarms: () => swarms, goals: () => [] as Goal[], principal: () => 'user:p_ada', hive: (e) => hive.push(e) })
+  const h = new SimAsk({ emit: (e) => events.push(e), later: (ms, fn) => queue.push([ms, fn]), agents: () => agents, swarms: () => swarms, goals: () => [] as Goal[], principal: () => 'user:p_ada' })
   const step = () => {
     queue.sort((a, b) => a[0] - b[0])
     queue.shift()?.[1]()
@@ -29,7 +28,7 @@ function host() {
   const flush = () => {
     while (queue.length) step()
   }
-  return { h, events, hive, flush, step }
+  return { h, events, flush, step }
 }
 const body = (text: string, ctx: Record<string, unknown> = {}, op = `ask:t:${Math.random().toString(36).slice(2, 10)}`) => ({ operation_id: op, text, via: 'typed' as const, context: { route: 'hive', experience: 'classic', ...ctx } })
 
@@ -99,18 +98,6 @@ describe('SimAsk', () => {
     expect(all.map((e) => e.phase)).toEqual(expect.arrayContaining(['accepted', 'thinking', 'answer', 'done']))
     expect(h.turn(b.operation_id, 2).events[0].seq).toBe(3)
     expect(events.length).toBeLessThanOrEqual(all.length) // a dropped frame is only in the recovery read
-  })
-  it('"spending too fast" plays the spend-rate guard pausing the turn: the host’s words, done.limit with when, budget.slowed once', () => {
-    const { h, hive, flush } = host()
-    const b = body('keep at it even if you are spending too fast')
-    const mind = h.ask(b).thread.mind.id
-    flush()
-    const ev = h.turn(b.operation_id, 0).events
-    expect((ev.find((e) => e.phase === 'answer') as { text: string }).text).toBe("I stopped here: this is spending faster than this month allows, so it's pausing for a moment. You can carry on in about 25 minutes.")
-    const done = ev.find((e) => e.phase === 'done') as unknown as { outcome: string; limit: { until: string } }
-    expect(done).toMatchObject({ outcome: 'spend_cap', limit: { kind: 'spend_rate', current_usd: null, limit_usd: 50, retry_after: 1500 } })
-    expect(Date.parse(done.limit.until) - Date.now()).toBeGreaterThan(1_400_000)
-    expect(hive).toEqual([expect.objectContaining({ type: 'budget.slowed', agent_id: mind, scope: 'person:p_ada', period: 'month', limit_usd: 50, retry_after: 1500, until: done.limit.until })])
   })
   it('"lose a step" (Review B2): a frame is lost before a move and the recovery read fails for that turn', () => {
     const { h, events, flush } = host()

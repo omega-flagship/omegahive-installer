@@ -1,9 +1,9 @@
 {
-  "source_commit": "9174e1b7aca3fa1153ec0c00a6baf20b502b17da",
-  "mac_zip_sha256": "5e8bcfe52e7af121921412100b77d7d121bd952884041fa565ec770bddcbf092",
+  "source_commit": "c3e187dda7116cb35986b3358b2256924a74c90b",
+  "mac_zip_sha256": "05e99b31e0b65819414563cc7af93970c7c047169a988f0c2d466e78d1181a5b",
   "ui": {
     "mac_zip_prefix": "Omega Hive v0.36/omegahive/hive/ui/dist/",
-    "archive_sha256": "dc8b74e18c0d7934e13eac86dc22f03e0df74545a7cef141cdbe10f6339846ba",
+    "archive_sha256": "40b9d9c8a3e2b80e00e8d898e626f6c7134f459c9f86276b12ce1b70118800ad",
     "file_count": 302
   },
   "omega_core": {

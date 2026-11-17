@@ -1,4 +1,3 @@
-// Purpose: the universal Ask's host side played in the browser for the simulator, every phase and stop of the built host's turn (spend limits and the spend-rate guard's pause included) with invented words.
 /**
  * Purpose: SIM ONLY. The universal Ask's host side, played in the browser with an invented answering mind (Surface
  * universal Ask phase 1). It follows UNIVERSAL_ASK_HOST_CONTRACT_DRAFT_20261005 and Jon's ruling: the swarm's
@@ -14,7 +13,7 @@
 import { plural } from '../../lib/plural'
 import { AskRefusal } from '../ask'
 import type { ActResult, AskAccepted, AskCapabilities, AskBody, AskSettingsPut, AskEvent, AskSettings, AskSteerBody, AskSteerResult, AskThread, AskTurnState, AskWho, ResearchView } from '../ask'
-import type { Agent, Goal, HiveEvent, Room, Swarm, WorkSession } from '../types'
+import type { Agent, Goal, Room, Swarm, WorkSession } from '../types'
 import { href } from '../../lib/router'
 import { designStarter } from './omegadesign'
 import { simBankedDemo } from './omegaTools'
@@ -30,8 +29,6 @@ export interface SimAskDeps {
   swarms: () => Swarm[]
   goals: () => Goal[]
   principal: () => string
-  /** a hive event the turn causes besides its own frames (budget.slowed when the guard pauses it) */
-  hive?: (e: HiveEvent) => void
 }
 
 interface Turn {
@@ -790,23 +787,13 @@ export class SimAsk {
     // ($0.23 of $0.25: the next call would not fit), so the stop's New thread and raise can be tried
     // j0-fixes r1: the done frame names the limit, as ask-limits r1's host does (done.limit); "hit the mind limit" plays
     // the mind's own limit instead, and ?simlimit=absent plays today's host (no `limit` on the frame)
-    // SIM (spend-rate guard): "spending too fast" plays the guard pausing the turn on the person's $50 allowance, as the
-    // host does: spend_cap with done.limit {kind: spend_rate, retry_after, until} (conductor.limit_frame), the host's
-    // words (SPEND_RATE_SAY), and budget.slowed once for the mind (Hive.spend_rate_refusal)
-    const paced = /\bspend(ing)? too fast\b/.test(text)
-    const capHit = paced || /\b(hit|reach) the (mind |swarm )?(spending )?limit\b/.test(text)
-    const capKind = paced ? 'spend_rate' : /\bthe mind (spending )?limit\b/.test(text) ? 'mind_total' : /\bthe swarm (spending )?limit\b/.test(text) ? 'swarm' : 'thread'
+    const capHit = /\b(hit|reach) the (mind |swarm )?(spending )?limit\b/.test(text)
+    const capKind = /\bthe mind (spending )?limit\b/.test(text) ? 'mind_total' : /\bthe swarm (spending )?limit\b/.test(text) ? 'swarm' : 'thread'
     const limitAbsent = typeof window !== 'undefined' && new URLSearchParams(window.location?.search ?? '').get('simlimit') === 'absent'
     const spend = capHit && capKind !== 'thread' ? 0 : capHit ? Math.max(0, Math.round((t.thread.budget_usd - 0.02 - t.thread.spent_usd) * 1000) / 1000) : Math.round((0.008 + (body.text.length % 7) * 0.002) * 1000) / 1000
-    const retryAfter = 1500
-    const until = new Date(Math.ceil(Date.now() / 1000) * 1000 + retryAfter * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
-    if (capHit) answer = paced ? `I stopped here: this is spending faster than this month allows, so it's pausing for a moment. You can carry on in about ${retryAfter / 60} minutes.` : 'I started on that, then stopped before the next step.'
-    if (paced) this.d.later(700, () => this.d.hive?.({ type: 'budget.slowed', at: new Date().toISOString(), agent_id: mind.id, scope: `person:${t.principal.replace(/^user:/, '')}`, period: 'month', limit_usd: 50, retry_after: retryAfter, until }))
-    const limit = capKind === 'spend_rate' ? { kind: 'spend_rate', current_usd: null, limit_usd: 50, estimate_usd: 0.25, retry_after: retryAfter, until }
-      : capKind === 'thread' ? { kind: 'thread', current_usd: Math.round((t.thread.spent_usd + spend) * 1000) / 1000, limit_usd: t.thread.budget_usd, estimate_usd: 0.03 }
-      : { kind: capKind, current_usd: capKind === 'swarm' ? 45.66 : 3.89, limit_usd: capKind === 'swarm' ? 45.66 : 3.92, estimate_usd: 0.25 }
+    if (capHit) answer = 'I started on that, then stopped before the next step.'
     let at = 0
-    const ending: [number, Record<string, unknown>][] = [[650, { phase: 'answer', text: answer, message_id: `m_ask${t.turnId.slice(-5)}` }], [220, { phase: 'done', spent_usd: 0, turn_spent_usd: spend, outcome: capHit ? 'spend_cap' : 'complete', ...(capHit && !limitAbsent ? { limit } : {}) }]]
+    const ending: [number, Record<string, unknown>][] = [[650, { phase: 'answer', text: answer, message_id: `m_ask${t.turnId.slice(-5)}` }], [220, { phase: 'done', spent_usd: 0, turn_spent_usd: spend, outcome: capHit ? 'spend_cap' : 'complete', ...(capHit && !limitAbsent ? { limit: capKind === 'thread' ? { kind: 'thread', current_usd: Math.round((t.thread.spent_usd + spend) * 1000) / 1000, limit_usd: t.thread.budget_usd, estimate_usd: 0.03 } : { kind: capKind, current_usd: capKind === 'swarm' ? 45.66 : 3.89, limit_usd: capKind === 'swarm' ? 45.66 : 3.92, estimate_usd: 0.25 } } : {}) }]]
     const send = (f: Record<string, unknown>, drop?: boolean) => {
       let frame = f
       if (frame.phase === 'answer' && t.heard.length) frame = { ...frame, text: `${String(frame.text)} You told me: “${t.heard.join('”, then “')}”; I took that in as I went.` }

@@ -3192,7 +3192,6 @@ export class SimClient implements HiveClient {
     swarms: () => [...this.swarms.values()],
     goals: () => [...this.goals.values()],
     principal: () => this.simMe().principal,
-    hive: (e) => this.emit(e),
   })
   ask(body: import('../ask').AskBody) {
     return this.delay(() => this.askHost.ask(body))

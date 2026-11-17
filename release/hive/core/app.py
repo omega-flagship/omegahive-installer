@@ -3095,15 +3095,18 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
                 raise HiveError(403, "not_member", "join the room to speak in it")
         # Jon, 16 Nov: continuity "regardless of which model you interact", "without needing additional LLM calls to pass
         # through convo". from_ask: the person's Ask exchanges this mind has not heard, which their browser keeps (the
-        # conversation's shape, conductor.check_conversation); only in their own chat with the mind. The mind reads them
-        # with this very message, so no model call is added; the person's chat shows only their words.
+        # conversation's shape, conductor.check_conversation); only in their own chat with the mind, and a mind that isn't
+        # theirs keeps only those it answered (conductor.heard_by). The mind reads them with this very message, so no
+        # model call is added; the person's chat shows only their words.
         extra = None
         if "from_ask" in data:
-            from .conductor import ask_earlier_lines, check_conversation, fence_conversation, mind_names
+            from .conductor import ask_earlier_lines, check_conversation, fence_conversation, heard_by, mind_names
             if not principal.startswith("user:u_") or conversation_id != hive.person_conversation(agent_id, principal) \
                     or not check_conversation(data["from_ask"]):
                 raise HiveError(400, "bad_request", "from_ask is the person's own Ask exchanges, sent in their own chat with the mind")
-            lines = ask_earlier_lines(fence_conversation(data["from_ask"]), mind_names(hive, principal, agent_id))
+            mind = hive.db.one("SELECT personal_of FROM agents WHERE id = ?", (agent_id,)) or {}
+            heard = heard_by(fence_conversation(data["from_ask"]), agent_id, own=mind.get("personal_of") == principal)
+            lines = ask_earlier_lines(heard, mind_names(hive, principal, agent_id))
             extra = {"ask_earlier": lines} if lines else None
         return await hive.send_to_agent(agent_id, data.get("text", ""), conversation_id, sender=principal, extra=extra)
 
@@ -4427,8 +4430,10 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
             meta = {"agent":agent["id"],"model":agent["model"],"payer":payer,"key":key_id}
             try:
                 if studio_call is None:
+                    # paced only when no person's live work holds the mind (Hive.present_for): a runaway is a mind alone
                     cost_reservations.reserve(reservation, {"agent": agent["id"], "model": agent["model"], "body": data, "payer": payer, "key": key_id}, estimate, current_budgets, metadata=meta, dispatched=True,
-                                              subjects=host_subjects(hive, agent["id"], key_id, payer, own_key))
+                                              subjects=host_subjects(hive, agent["id"], key_id, payer, own_key),
+                                              paced=hive.present_for(agent) is None)
                 else:
                     # reserved, not dispatched: SEND_GATE re-reads this reservation's own step before anything is sent
                     studio_reserve(studio_call, reservation, {"agent": agent["id"], "model": agent["model"], "body": data, "payer": payer, "key": key_id},
@@ -4627,7 +4632,8 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
             try:
                 if studio_call is None:
                     cost_reservations.reserve(reservation, payload, estimate, current_budgets, metadata=meta,
-                                              dispatched=True, subjects=host_subjects(hive, agent["id"], key_id, payer, own_key))
+                                              dispatched=True, subjects=host_subjects(hive, agent["id"], key_id, payer, own_key),
+                                              paced=hive.present_for(agent) is None)   # as the chat route
                 else:
                     studio_reserve(studio_call, reservation, payload, estimate, current_budgets, meta,
                                    host_subjects(hive, agent["id"], key_id, payer, own_key))
