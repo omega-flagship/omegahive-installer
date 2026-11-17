@@ -102,8 +102,8 @@ class BoundaryTests(unittest.TestCase):
             opener.assert_not_called()
 
     def test_serve_drops_ambient_secrets_and_only_sets_reviewed_template(self):
-        cfg = {'python': '/selected/venv/bin/python', 'swipl_bin': '/selected/swipl/bin/swipl',
-               'port': 8700, 'browser_port': 8701, 'sandbox_python': '/selected/runtime/python',
+        cfg = {'runtime_root': '/selected', 'python': '/selected/venv/bin/python', 'swipl_bin': '/selected/swipl/bin/swipl',
+               'port': 8700, 'browser_port': 8701, 'sandbox_python': '/selected/venv/bin/python',
                'data_dir': '/private/data', 'release_root': '/selected/app',
                'petta_path': '/selected/petta', 'plugin_dirs': ['/selected/plugins'],
                'app_pins': {}, 'libpython_dir': '/selected/lib', 'studio_maker_template': None,
@@ -112,22 +112,33 @@ class BoundaryTests(unittest.TestCase):
                'code_service': {'release': 'e' * 64, 'root': '/home/test/.local/share/omegahive/code',
                                 'config': '/home/test/.local/share/omegahive/code/config.json',
                                 'repository': '/home/test/.local/share/omegahive/repos/small-app', 'port': 8724}}
-        for template in (None, 'a_1234abcd'):
-            cfg['studio_maker_template'] = template
-            with self.subTest(template=template), \
-                 mock.patch.object(serve.sys, 'argv', ['serve.py', '--runtime', '/synthetic']), \
+        # The venv's base interpreter, the install the venv was made from (install.py: runtime/python)
+        base = '/selected/runtime/python'
+        base_python = base + '/bin/python{}.{}'.format(*sys.version_info[:2])
+        selected = {'HIVE_SANDBOX_PYTHON': cfg['sandbox_python'], 'LD_LIBRARY_PATH': cfg['libpython_dir']}
+
+        def launch(environ, base_prefix=base):
+            """serve.main() with the descriptor, the filesystem and exec stubbed: (execve's mock, executable's mock)."""
+            with mock.patch.object(serve.sys, 'argv', ['serve.py', '--runtime', '/synthetic']), \
                  mock.patch.object(serve.sys, 'platform', 'linux'), \
+                 mock.patch.object(serve.sys, 'base_prefix', base_prefix), \
                  mock.patch.object(serve.os, 'getuid', return_value=1000), \
                  mock.patch.object(serve.os, 'geteuid', return_value=1000), \
-                 mock.patch.dict(serve.os.environ, {'HIVE_SANDBOX_PYTHON': cfg['sandbox_python'],
-                     'OPENAI_API_KEY': 'FAKE_SENTINEL', 'HIVE_GOOGLE_CLIENT_ID': 'FAKE_SENTINEL',
-                     'LD_LIBRARY_PATH': cfg['libpython_dir']}, clear=True), \
+                 mock.patch.dict(serve.os.environ, environ, clear=True), \
                  mock.patch.object(serve, 'runtime', return_value=(cfg, Path('/home/test'), 'pin')), \
                  mock.patch.object(serve, 'directory', side_effect=lambda value, private=False: Path(value)), \
+                 mock.patch.object(serve, 'executable',
+                                   side_effect=lambda value, root, allow_link=False: (Path(value), Path(value))) as checked, \
                  mock.patch.object(serve.os, 'umask'), \
                  mock.patch.object(serve.os, 'chdir'), \
                  mock.patch.object(serve.os, 'execve') as execute:
                 serve.main()
+            return execute, checked
+
+        for template in (None, 'a_1234abcd'):
+            cfg['studio_maker_template'] = template
+            with self.subTest(template=template):
+                execute, checked = launch(dict(selected, OPENAI_API_KEY='FAKE_SENTINEL', HIVE_GOOGLE_CLIENT_ID='FAKE_SENTINEL'))
                 path, argv, env = execute.call_args.args
                 self.assertEqual(argv, [path, '-B', '-m', 'hive'])
                 for key in ('OPENAI_API_KEY', 'HIVE_GOOGLE_CLIENT_ID', 'PYTHONPATH', 'PYTHONHOME'):
@@ -147,11 +158,13 @@ class BoundaryTests(unittest.TestCase):
                     self.assertNotIn('HIVE_STUDIO_MAKER_TEMPLATE', env)
                 else:
                     self.assertEqual(env['HIVE_STUDIO_MAKER_TEMPLATE'], template)
-                # Make's settings, as the Mac and WSL installers give every hive: the acceptance check's Python with its
-                # own prefix readable, the check on the sandbox list, Create's apps folder last on the plugin path, and
-                # the Code service's repository as the scaffold
+                # Make's settings, as the Mac and WSL installers give every hive: the acceptance check's Python, the
+                # venv's base interpreter with only its own install readable (the venv's copy can't start in the sandbox
+                # without it), the check on the sandbox list, Create's apps folder last on the plugin path, and the
+                # Code service's repository as the scaffold
                 self.assertEqual(json.loads(env['HIVE_SANDBOX_RUNTIMES']),
-                                 {'python': {'exe': '/selected/runtime/python', 'reads': ['/selected']}})
+                                 {'python': {'exe': base_python, 'reads': [base]}})
+                checked.assert_called_once_with(base_python, Path(base))
                 self.assertEqual(env['HIVE_SANDBOX_RUN_APPS'], 'create-acceptance-check')
                 self.assertEqual(env['HIVE_PLUGIN_DIRS'].split(os.pathsep), ['/selected/plugins', '/private/data/create/apps'])
                 self.assertEqual(env['HIVE_CREATE_SCAFFOLD_REPO'], 'small-app')
@@ -159,19 +172,14 @@ class BoundaryTests(unittest.TestCase):
                 self.assertNotIn('HIVE_STUDIO_SESSIONS', env)
         # With Studio pinned, its tools stay on the sandbox list ahead of the acceptance check and its live drawing is on.
         cfg.update(studio_maker_template=None, app_pins={'omegadesign': {'release': '/selected/apps/omegadesign'}})
-        with mock.patch.object(serve.sys, 'argv', ['serve.py', '--runtime', '/synthetic']), \
-             mock.patch.object(serve.sys, 'platform', 'linux'), \
-             mock.patch.object(serve.os, 'getuid', return_value=1000), mock.patch.object(serve.os, 'geteuid', return_value=1000), \
-             mock.patch.dict(serve.os.environ, {'HIVE_SANDBOX_PYTHON': cfg['sandbox_python'],
-                 'LD_LIBRARY_PATH': cfg['libpython_dir']}, clear=True), \
-             mock.patch.object(serve, 'runtime', return_value=(cfg, Path('/home/test'), 'pin')), \
-             mock.patch.object(serve, 'directory', side_effect=lambda value, private=False: Path(value)), \
-             mock.patch.object(serve.os, 'umask'), mock.patch.object(serve.os, 'chdir'), \
-             mock.patch.object(serve.os, 'execve') as execute:
-            serve.main()
-            env = execute.call_args.args[2]
-            self.assertEqual(env['HIVE_SANDBOX_RUN_APPS'], 'omegadesign,create-acceptance-check')
-            self.assertEqual(env['HIVE_STUDIO_SESSIONS'], 'on')
+        env = launch(selected)[0].call_args.args[2]
+        self.assertEqual(env['HIVE_SANDBOX_RUN_APPS'], 'omegadesign,create-acceptance-check')
+        self.assertEqual(env['HIVE_STUDIO_SESSIONS'], 'on')
+        # A hive whose interpreter isn't a venv of the release's own Python never starts: Make's check would run on a
+        # Python the installer never reviewed (a system /usr, or the venv itself when it isn't one).
+        for other in ('/usr', '/selected/venv'):
+            with self.subTest(base_prefix=other), self.assertRaisesRegex(serve.Refused, '^selected_base_python_required$'):
+                launch(selected, other)
 
     def test_nonhome_data_path_refuses_before_directory_access(self):
         for module in (control, serve):

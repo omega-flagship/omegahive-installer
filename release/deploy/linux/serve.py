@@ -235,11 +235,16 @@ def main():
     if 'omegadesign' in config['app_pins']:
         env['HIVE_STUDIO_SESSIONS'] = 'on'
     # Create's Make, on in every install (hive/core/config.py), needs what the Mac and WSL installers give every hive
-    # (install/macos/omegahive.sh app_settings): the Python its acceptance check runs on in the sandbox, the selected
-    # interpreter with its own prefix readable, and Create's apps folder on the plugin path, where a plan's deploy puts
-    # what the person made (hive/core/create_plan_ports.py).
-    interpreter = os.path.realpath(config['sandbox_python'])
-    env['HIVE_SANDBOX_RUNTIMES'] = json.dumps({'python': {'exe': interpreter, 'reads': [str(Path(interpreter).parent.parent)]}},
+    # (install/macos/omegahive.sh app_settings): the Python its acceptance check runs on in the sandbox, and Create's
+    # apps folder on the plugin path, where a plan's deploy puts what the person made (hive/core/create_plan_ports.py).
+    # The check runs on the venv's base interpreter with only that install readable, as on the Mac (the realpath of
+    # venv/bin/python, reads its toolchain); its sandboxed tool needs only the standard library. The venv's own python
+    # can't stand in: install.py makes it a plain copy whose standard library stays in runtime/python, which the sandbox
+    # wouldn't grant, so it exits on "No module named 'encodings'" and the preflight refuses every mind and tool.
+    base = Path(sys.base_prefix)
+    require(base == Path(config['runtime_root']) / 'runtime/python', 'selected_base_python_required')
+    _, interpreter = executable(str(base / 'bin' / 'python{}.{}'.format(*sys.version_info[:2])), base)
+    env['HIVE_SANDBOX_RUNTIMES'] = json.dumps({'python': {'exe': str(interpreter), 'reads': [str(base)]}},
                                               sort_keys=True, separators=(',', ':'))
     env['HIVE_PLUGIN_DIRS'] = os.pathsep.join(list(config['plugin_dirs']) + [str(Path(config['data_dir']) / 'create' / 'apps')])
     # Create's Code service: the release the hive's Code guard accepts and the config it reads the port from. The
