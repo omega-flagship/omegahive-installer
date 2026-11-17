@@ -191,8 +191,10 @@ def answers(client, mind, conversation):
     (["ana"], "u_ana"),
     (["bob"], "u_bob"),                               # Jon's line 170: Bob's message is waiting
     (["bob", "answer bob"], "u_bob"),                 # answered, and nothing came since
-    (["bob", "answer bob", "hive"], "u_ana"),         # then a scheduled goal: no person behind it
-    (["bob", "answer bob", "mind"], "u_ana"),         # then another mind's message: mind-to-mind work
+    (["bob", "answer bob", "hive"], 400),             # then a scheduled goal: it could still be about Bob's chat
+    (["bob", "answer bob", "mind"], 400),             # then another mind's message: the same (Jon on #366)
+    (["ana", "answer ana", "hive"], "u_ana"),         # only the mind's own person wrote: its own work is theirs
+    (["ana", "answer ana", "mind"], "u_ana"),
     (["bob", "answer bob", "ben"], "u_ben"),
     (["bob", "hive"], 400),                           # Bob still waiting when the goal came: it could be either
     (["ana", "hive"], "u_ana"),                       # ... unless the one waiting is the mind's own person
@@ -202,7 +204,8 @@ def answers(client, mind, conversation):
 def test_a_draft_naming_no_conversation_waits_for_the_person_the_mind_is_answering(client, steps, waits_for):
     """Jon on #366: the hive works out the conversation a draft came up in when the mind names none, by the reply binding a
     plain reply follows, and refuses when it could be several people's unless each is the owner's; a draft with no person
-    behind it, from mind-to-mind work or a scheduled goal, goes to the mind's owner."""
+    behind it, from mind-to-mind work or a scheduled goal, goes to the mind's owner, unless someone else has written to
+    the mind, when it could be about their chat and is refused too."""
     hive = client.app.state.hive
     ana, ben, mind = setting(client)
     bob = person(client, "u_bob")
@@ -211,8 +214,8 @@ def test_a_draft_naming_no_conversation_waits_for_the_person_the_mind_is_answeri
     for step in steps:
         if step in ("ana", "bob", "ben"):
             chats[step] = told(client, mind, {"ana": ana, "bob": bob, "ben": ben}[step])
-        elif step == "answer bob":
-            answers(client, mind, chats["bob"])
+        elif step.startswith("answer "):
+            answers(client, mind, chats[step.removeprefix("answer ")])
         elif step == "hive":
             hive.enqueue_message(mind["id"], "your weekly goal is due", f"c_{mind['id']}", "hive:goals")
         elif step == "mind":
@@ -232,6 +235,36 @@ def test_a_draft_naming_no_conversation_waits_for_the_person_the_mind_is_answeri
     (kept,) = client.get("/api/feedback/drafts", headers={"u_ana": ana, "u_bob": bob, "u_ben": ben}[waits_for]).json()["drafts"]
     name = waits_for[2:]
     assert kept["source"]["conversation"] == (chats.get(name) if name in chats and steps[-1] not in ("hive", "mind") else None), kept
+
+
+def test_a_mind_others_wrote_to_names_their_chat_or_own_for_its_own_work(client):
+    """Jon on #366: Bob writes to Ana's public mind, it answers him, then a scheduled goal comes in. A draft naming no
+    conversation could be about Bob's chat, so it is refused rather than sent to Ana; the mind then names Bob's chat for a
+    problem from it, or own for its own work, which waits for Ana; the refusal says so in words the mind gets whole."""
+    hive = client.app.state.hive
+    ana, ben, mind = setting(client)
+    bob = person(client, "u_bob")
+    assert client.put(f"/api/agents/{mind['id']}/visibility", headers=ana, json={"visibility": "public"}).status_code == 200
+    bobs = told(client, mind, bob, "Ben told me his diagnosis")
+    answers(client, mind, bobs)
+    hive.enqueue_message(mind["id"], "your weekly goal is due", f"c_{mind['id']}", "hive:goals")
+    unnamed = client.post("/api/feedback/drafts", headers=agent_headers(mind), json=DRAFT)
+    assert unnamed.status_code == 400 and unnamed.json()["error"]["code"] == "bad_draft", unnamed.text
+    assert "or own for a problem from this mind's own work" in unnamed.json()["error"]["message"], unnamed.text
+    assert all(client.get("/api/feedback/drafts", headers=who).json() == {"drafts": []} for who in (ana, bob, ben))
+    about_bob = client.post("/api/feedback/drafts", headers=agent_headers(mind), json=dict(DRAFT, conversation=bobs))
+    assert about_bob.status_code == 201 and about_bob.json()["for"] == "user:u_bob", about_bob.text
+    own = client.post("/api/feedback/drafts", headers=agent_headers(mind),
+                      json=dict(DRAFT, title="My weekly goal could not run", conversation="own"))
+    assert own.status_code == 201 and own.json()["for"] == "user:u_ana", own.text
+    # a chat whose person never wrote there is still refused, Ana's own included: own is the one way to her
+    for silent in (f"c_{mind['id']}~user:u_ben", f"c_{mind['id']}~user:u_ana"):
+        refused = client.post("/api/feedback/drafts", headers=agent_headers(mind), json=dict(DRAFT, conversation=silent))
+        assert refused.status_code == 400 and refused.json()["error"]["code"] == "bad_draft", refused.text
+    assert [d["id"] for d in client.get("/api/feedback/drafts", headers=bob).json()["drafts"]] == [about_bob.json()["id"]]
+    assert [d["id"] for d in client.get("/api/feedback/drafts", headers=ana).json()["drafts"]] == [own.json()["id"]]
+    assert client.get("/api/feedback/drafts", headers=ana).json()["drafts"][0]["source"]["conversation"] is None
+    assert client.get("/api/feedback/drafts", headers=ben).json() == {"drafts": []}
 
 
 def test_an_ask_turns_draft_waits_for_the_person_who_asked(client):

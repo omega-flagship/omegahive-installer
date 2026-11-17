@@ -50,7 +50,7 @@ jobs:
           # Entries dated at the release commit's time (ci/RELEASE_COMMIT_TIME), since a tree archive is otherwise
           # dated now and every run would make a different download from the same source.
           git archive --format=tar --mtime="$(cat ci/RELEASE_COMMIT_TIME)" --prefix="$PREFIX/" HEAD:release | gzip -n > "$RUNNER_TEMP/inputs/source.tar.gz"
-      - name: Use the UI, the Omega core and Studio from the exact v0.34 rc1 Mac build
+      - name: Use the UI, the Omega core, Studio and the Code service from the published Mac v0.34 build (rc2)
         run: |
           cd ci/linux-x86/inputs
           sha256sum -c ui-dist.tar.gz.sha256
@@ -73,7 +73,7 @@ jobs:
         run: |
           python3 -B ci/linux-x86/prepare_release.py --source release --inputs "$RUNNER_TEMP/inputs" \
             --catalogue ci/linux-x86/public-catalogue.json --tree "$(cat ci/RELEASE_TREE)" \
-            --output "$RUNNER_TEMP/catalogue.json" --built-with "Mac v0.34 rc1 vite build, the same bytes as rc3 at 04:57; provenance ci/linux-x86/mac-zip-inputs.json"
+            --output "$RUNNER_TEMP/catalogue.json" --built-with "Mac v0.34 rc2 vite build, the published Mac v0.34; provenance ci/linux-x86/mac-zip-inputs.json"
           python3 -I -B -S ci/linux-x86/make_catalogue.py \
             --base-catalogue "$RUNNER_TEMP/catalogue.json" --pins ci/linux-x86/x86_64-pins.json \
             --source-tar "$RUNNER_TEMP/inputs/source.tar.gz" --prefix "$PREFIX" \

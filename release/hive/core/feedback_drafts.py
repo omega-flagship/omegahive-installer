@@ -6,8 +6,10 @@ their own send, copy or save there makes it a report (feedback.py). Each draft w
 lists it, deletes it or hears of it: the person whose conversation with the mind it came up in, so what someone told a
 mind never lands in another person's area. A draft names that conversation, or the hive works it out from the mind's own
 messages (answering); one with no person behind it, from mind-to-mind work or a scheduled goal, waits for the mind's
-owner as its approvals name it, else the hive's owner. A mind repeating an open draft (the same person, mind and title)
-replaces its words and time and keeps its id, so a looping mind leaves one draft, never a pile."""
+owner as its approvals name it, else the hive's owner, but only while nobody else has written to the mind: then it could
+be about one of their chats, so the mind names the conversation, or OWN for its own work. A mind repeating an open draft
+(the same person, mind and title) replaces its words and time and keeps its id, so a looping mind leaves one draft,
+never a pile."""
 from __future__ import annotations
 
 import secrets
@@ -18,6 +20,10 @@ from .feedback import KINDS
 
 TITLE_MAX = 80
 TEXT_MAX = 4000
+# What a mind names as a draft's conversation for a problem from its own work, no person's chat: the draft waits for its
+# own person (person_of). A word, since a mind told to name its owner's chat by id would get that id with the person
+# hidden ("someone"): error text names no person but the caller (keyview.redact_text).
+OWN = "own"
 
 SCHEMA = """CREATE TABLE IF NOT EXISTS feedback_drafts (
   id TEXT PRIMARY KEY, principal TEXT NOT NULL, agent TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL,
@@ -51,9 +57,13 @@ class FeedbackDrafts:
         sent it; else None, a draft with no person behind it (mind-to-mind work, a scheduled goal, a Health question),
         which waits for the mind's own person (Jon on #366). Several people waiting, or another message arriving after the
         one waiting, could be any of them, so it is a 400 naming them unless each is the mind's own person: the mind names
-        the conversation then. Messages are ordered by rowid, the order they were stored in, since two can share a
-        millisecond. Cost: two reads of the mind's inbound messages through messages_agent_dir_conv, one MAX per
-        conversation a person wrote in."""
+        the conversation then. A draft with no person behind it is a 400 too once anyone besides the mind's own person has
+        written to the mind, since it could be about their chat: Bob writes, the mind answers him, a scheduled goal or
+        another mind's message comes in, and a draft about Bob's chat would land with the owner (Jon on #366, the hive and
+        mind cases of test_feedback_drafts.py). The hive has no measure of how long a chat stays in a mind's view, so any
+        such message counts, however old; the mind names the chat, or OWN for its own work.
+        Messages are ordered by rowid, the order they were stored in, since two can share a millisecond. Cost: three reads
+        of the mind's inbound messages through messages_agent_dir_conv, one MAX per conversation a person wrote in."""
         agent_id = agent["id"]
         waiting = self.db.all(
             "SELECT i.conversation_id, i.sender, i.last FROM (SELECT conversation_id, sender, MAX(rowid) AS last "
@@ -65,17 +75,23 @@ class FeedbackDrafts:
         if last["seq"] is None:
             return None
         person_sent = str(last["sender"]).startswith("user:")
-        if not waiting:
-            return last["conversation_id"] if person_sent else None
+        if not waiting and person_sent:
+            return last["conversation_id"]
         if len(waiting) == 1 and waiting[0]["last"] == last["seq"]:
             return waiting[0]["conversation_id"]
         own = self.person_of(agent)
-        if own is not None and all(w["sender"] == own for w in waiting) and (not person_sent or last["sender"] == own):
-            return None
-        ids = [w["conversation_id"] for w in waiting]
-        raise self.hive.error(400, "bad_draft", "this mind may be answering any of " + ", ".join(ids[:5])
-                              + (f" and {len(ids) - 5} more" if len(ids) > 5 else "")
-                              + ", so name the conversation the problem came up in")
+        if waiting and not (own is not None and all(w["sender"] == own for w in waiting)
+                            and (not person_sent or last["sender"] == own)):
+            ids = [w["conversation_id"] for w in waiting]
+            raise self.hive.error(400, "bad_draft", "this mind may be answering any of " + ", ".join(ids[:5])
+                                  + (f" and {len(ids) - 5} more" if len(ids) > 5 else "")
+                                  + ", so name the conversation the problem came up in")
+        if self.db.one("SELECT 1 FROM messages WHERE agent_id = ? AND direction = 'in' AND sender LIKE 'user:%' "
+                       "AND sender != ? LIMIT 1", (agent_id, own or "")) is not None:
+            raise self.hive.error(400, "bad_draft", "no person started the turn this draft came up in, and people besides "
+                                                    "this mind's own have written to it, so name the conversation the "
+                                                    f"problem came up in, or {OWN} for a problem from this mind's own work")
+        return None
 
     def person_for(self, agent, conversation):
         """(The person a draft waits for, the conversation it came up in): the person of the conversation it names or,
@@ -84,8 +100,10 @@ class FeedbackDrafts:
         person's chat with the mind and the operator's own c_<mind> as hive.conversation_owner names them, an Ask turn of
         this mind by its asker. The conversation must hold a message that person sent this mind, since a mind may send into
         any conversation id it picks; one without, or one no single person has (a room), is a 400, so no draft lands with
-        someone the mind never heard from. A draft with no person behind it is the mind's own (person_of), with no
-        conversation."""
+        someone the mind never heard from. A draft with no person behind it, or naming OWN, is the mind's own (person_of),
+        with no conversation."""
+        if conversation == OWN:
+            return self.person_of(agent), None
         named = conversation is not None
         if not named:
             conversation = self.answering(agent)
@@ -150,8 +168,8 @@ class FeedbackDrafts:
 
     def draft(self, agent, data):
         """A mind drafts a report for the person of the conversation it came up in, named or worked out, or for its own
-        person when no person is behind it (POST /api/feedback/drafts; person_for). Repeating an open draft's title
-        replaces it in place. Sends nothing anywhere: feedback.draft tells the person it is waiting."""
+        person when no person is behind it or it names OWN (POST /api/feedback/drafts; person_for). Repeating an open
+        draft's title replaces it in place. Sends nothing anywhere: feedback.draft tells the person it is waiting."""
         fields = self._checked(data)
         principal, fields["conversation"] = self.person_for(agent, fields["conversation"])
         if principal is None:

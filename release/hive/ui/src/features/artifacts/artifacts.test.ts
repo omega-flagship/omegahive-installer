@@ -222,6 +222,18 @@ describe('creations: what the swarms a person sees keep', () => {
     expect(rows[2]).toMatchObject({ action: 'Open flows', about: null })
   })
 
+  it('a saved plan never opens in Design, which opens only Studio sources', () => {
+    // Design showed "This design could not be opened" for a plan a mind saved, on a hive offering Design
+    const saved = composeArtifacts({ creations: [{ ...creations[0], revision: 1, digest }] })
+    const rows = artifactsScreen({ status: 'ready', list: { items: saved, missing: [] } }, NO_FILTER, { ...names, apps: { omegadesign: 'Design' } }, now).data['artifacts.shown'] as ArtifactRow[]
+    expect(saved[0]).toMatchObject({ creation_kind: 'plan', ref: { artifact_id: 'ar5', revision: 1, digest } })
+    // the row's next place answers instead: its mind's chat here, Read it where a hive reads a plan in place
+    expect(rows[0].detail).toBe('Plan')
+    expect(rows[0].action).not.toBe('Open in Design')
+    expect(rows[0].action).not.toBe('')
+    expect(rows[0].route?.name).not.toBe('program')
+  })
+
   it('the Creation kind keeps only them', () => {
     expect(filterArtifacts(items, { ...NO_FILTER, kind: 'creation' }).map((a) => a.key)).toEqual(['creation:ar5', 'creation:ar6'])
     expect(withInput(NO_FILTER, 'kind', 'creation').kind).toBe('creation')

@@ -123,8 +123,14 @@ function emptyWords(a: HiveArtifact, maker: string | null): string {
   return maker ? `${maker} started ${what} but saved nothing in it, so there is nothing to open.` : `Nothing was saved in ${what}, so there is nothing to open.`
 }
 
+/** Design opens only what Studio keeps, its editable source (kind studio-source, hive/core/studio_sessions.py's
+ * SOURCE_KIND); a plan a mind saved shows "This design could not be opened" there. A review row names no kind of its
+ * own, so it keeps Design. */
+const designOpens = (a: HiveArtifact) => a.kind !== 'creation' || a.creation_kind === 'studio-source'
+
 /** Where a row's button goes: the place the thing lives, and only when that place opens for this person. An exact
- * revision opens in Design when the hive offers Design to them, a flow opens the flows, an exhibit who sees it, and an
+ * revision Design can open opens there when the hive offers Design to them, a flow opens the flows, an exhibit who
+ * sees it, and an
  * app's result the app when it is theirs to open. A saved view opens as the view it was made to be, in place on this
  * page. A saved creation Design can't open here is read in place on this
  * page. A row whose place does not open here (a creation with nothing saved in it, a review with no Design) opens the
@@ -132,7 +138,7 @@ function emptyWords(a: HiveArtifact, maker: string | null): string {
  * and the mind can say what happened and save it again; with no such mind to ask, the row has no button. */
 function openFor(a: HiveArtifact, swarm: string | null, names: Names, appName: (id: string) => string, mindName: (id: string) => string): { label: string; route?: Route; read?: ArtifactRow['read'] } | null {
   if (a.kind === 'creation' && a.ref && a.creation_kind === 'view') return { label: 'Open it', read: { artifact_id: a.ref.artifact_id, revision: a.ref.revision, view: true } }
-  const design = a.ref && swarm ? openInDesign(a.ref, swarm) : undefined
+  const design = a.ref && swarm && designOpens(a) ? openInDesign(a.ref, swarm) : undefined
   if (design?.name === 'program' && names.apps[design.id]) return { label: 'Open in Design', route: design }
   if (a.kind === 'flow') return { label: 'Open flows', route: { name: 'flow' } }
   if (a.kind === 'exhibit' && a.mind_id && names.minds[a.mind_id]) return { label: 'Who sees it', route: { name: 'dot', id: a.mind_id, tab: 'memory' } }
