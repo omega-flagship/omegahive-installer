@@ -1259,8 +1259,13 @@ Applies only to conductor turns (`HIVE_ASK_CONDUCTOR=1`).
   `invalid`, whatever the switches. It is continuity, not learned memory: on every conductor turn, with
   `HIVE_ASK_MEMORY` on or off and whichever mind answers, the model reads it as one transcript, each exchange with how
   long ago it was and who answered (`you` for the mind answering now, a mind the asker may see by its name, their own
-  mind as theirs, anything else "a mind"). An exchange naming a private app never reaches the model; it is never
-  stored, and the log has a count and a digest. With the conductor off it is accepted and ignored.
+  mind as theirs, anything else "a mind"). A turn reads only the exchanges its answer may show (Jon on #346: "carry
+  own-mind exchanges only into turns that keep no words on the host, and limit swarm turns to exchanges answered by
+  minds in that swarm"): a turn as the asker's own mind keeps no words on the host and reads them all; any other turn
+  keeps its answer in its swarm's thread and reads only those a mind of that swarm answered (not anyone's own mind),
+  so what the person said with their own mind, with another swarm's mind or with an id the page made up is left out.
+  An exchange naming a private app never reaches the model; it is never stored, and the log has a count and a digest
+  (and how many were left out). With the conductor off it is accepted and ignored.
 - **Their own chat with the mind (input).** A conductor turn also reads the person's own chat with the mind that
   answers (its conversation `c_<mind>~<person>`, the hive's own copy): the latest 8 messages they and the mind said
   there, oldest first, each cut at 400 characters and the whole at 4 KB, with how long ago. A hive note, a message kept

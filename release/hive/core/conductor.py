@@ -12,8 +12,11 @@ Contract: ASK_CONDUCTOR_ACTION_VOCABULARY_v1_20261007.md, with "Platform's answe
   are always shape-checked, and only while HIVE_ASK_MEMORY=on (or on a personal-mind turn: mind-voice r1, turn_notes)
   reach that turn's model context (never stored or logged). The page also sends the person's Ask conversation so far
   (up to 8 exchanges, <= 8 KB, each with the mind that answered it): continuity, not learned memory, so it reaches
-  every turn's model whichever mind answers, as one transcript naming each speaker (check_conversation,
-  conversation_text), never stored or logged. The turn also reads the person's own chat with the mind that answers
+  the model whichever mind answers, as one transcript naming each speaker (check_conversation, conversation_text),
+  never stored or logged. A turn takes only the exchanges its answer may show (Conductor._carried): a turn as the
+  person's own mind keeps no words on the host and takes them all; a turn whose answer is kept in a swarm's thread
+  takes only those a mind of that swarm answered, so what she said with her own mind never comes back there. The
+  turn also reads the person's own chat with the mind that answers
   (own_chat_text: the hive's copy of that chat, its latest lines), so the Ask and that chat are one conversation; the
   other way, the person's next message in that chat carries what it has not heard of the Ask (app.py, from_ask).
 - show, recall and compare put a creation, a mind or a task on the asker's stage (stage.py), the statements a mind makes
@@ -967,9 +970,11 @@ def memory_digest(item):
 # interact", "without needing additional LLM calls to pass through convo". The person's browser keeps their Ask
 # conversation (Jon's memory ruling) and sends its latest exchanges with each Ask, oldest first, as {said, answer, by, at}:
 # `by` the id of the mind that answered, `at` when (the browser's clock, epoch ms). They are shape-checked like the notes,
-# held by the turn's task only (the log gets a count and a digest), and given to whichever mind answers as one
-# transcript naming each speaker, the form the OpenAI Agents SDK uses to hand a conversation to its next agent. This is
-# continuity, not learned memory: it reaches every turn whatever HIVE_ASK_MEMORY says, as the person's words do.
+# held by the turn's task only (the log gets a count and a digest), and given to the mind answering as one transcript
+# naming each speaker, the form the OpenAI Agents SDK uses to hand a conversation to its next agent. This is
+# continuity, not learned memory: it reaches every turn whatever HIVE_ASK_MEMORY says, as the person's words do, but
+# only the exchanges that turn's answer may show (Conductor._carried; Jon on #346, 18 Nov: "carry own-mind exchanges
+# only into turns that keep no words on the host, and limit swarm turns to exchanges answered by minds in that swarm").
 MAX_CONVERSATION, MAX_CONVERSATION_BYTES = 8, 8 * 1024
 CONVERSATION_KEYS = {"said", "answer", "by", "at"}
 
@@ -1221,10 +1226,14 @@ class Conductor:
         st.note_ids = note_ids(notes)
         if notes:
             log.info("ask conductor: turn %s carries %d memory notes (digest %s)", turn["id"], len(notes), notes_digest(notes))
-        conversation = fence_conversation(conversation)
+        sent = fence_conversation(conversation)
+        conversation = self._carried(turn, sent)
         if conversation:
             log.info("ask conductor: turn %s carries %d earlier exchanges (digest %s)", turn["id"], len(conversation),
                      conversation_digest(conversation))
+        if len(conversation) < len(sent):
+            log.info("ask conductor: turn %s leaves out %d earlier exchanges its answer may not show (kept in swarm %s)",
+                     turn["id"], len(sent) - len(conversation), turn.get("swarm_id"))
         st.personal = bool(turn.get("personal"))
         task = asyncio.create_task(self._run(st, turn, text, context, notes, conversation))
         self.tasks[turn["id"]] = task
@@ -1387,6 +1396,23 @@ class Conductor:
                 if not fut.done():
                     fut.cancel()
             st.pending.clear()
+
+    def _carried(self, turn, conversation):
+        """The exchanges this turn may carry (Jon on #346, 18 Nov). A turn as the asker's own mind (personal = 1) keeps
+        no words on the host (ask.py), so it takes every exchange. Any other turn keeps its answer in its swarm's thread,
+        which the swarm's people read, so it takes only exchanges answered by a mind of that swarm that is nobody's own
+        mind: what the person said with her own mind, with a mind of another swarm, or with an id the page made up never
+        comes back in an answer kept there. A turn with no swarm takes none. One query over at most 8 ids."""
+        if not conversation or turn.get("personal"):
+            return conversation
+        if not turn.get("swarm_id"):
+            return []
+        ids = sorted({e["by"] for e in conversation})
+        marks = ",".join("?" * len(ids))
+        there = {r["id"] for r in self.hive.db.all(
+            f"SELECT id FROM agents WHERE id IN ({marks}) AND swarm_id = ? AND deleted = 0 AND personal_of IS NULL",
+            (*ids, turn["swarm_id"]))}
+        return [e for e in conversation if e["by"] in there]
 
     @staticmethod
     def _context_text(context, notes, earlier="", chat=""):

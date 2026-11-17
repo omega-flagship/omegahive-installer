@@ -4,10 +4,13 @@ convo").
 
 Invented lives only: Ann (user:u_ann) and her own mind, renamed Taiga here; the test world's swarm Home with its
 coordinator Orchestra and a mind called Worker; Bob (user:u_bob) and his own mind.
-- a conductor turn routed to a swarm reads the conversation her browser sent, with HIVE_ASK_MEMORY unset, as one
-  transcript naming each speaker: "you" for the mind answering now, Worker by name, oldest first, with how long ago;
-- a turn with her own mind reads it too, and her own mind is "you" there;
-- a mind she can't see, another person's own mind, or an id the page made up is only "a mind";
+- a conductor turn routed to a swarm keeps its answer in the swarm's thread, so of the conversation her browser sent it
+  reads only what that swarm's minds answered (Jon on #346: "carry own-mind exchanges only into turns that keep no words
+  on the host, and limit swarm turns to exchanges answered by minds in that swarm"): never what she said with her own
+  mind, with a mind of another swarm, or with an id the page made up; with HIVE_ASK_MEMORY unset, as one transcript
+  naming each speaker: Worker by name, with how long ago;
+- a turn with her own mind keeps no words on the host and reads all of it, and her own mind is "you" there;
+- there, a mind she can't see, another person's own mind, or an id the page made up is only "a mind";
 - an exchange naming a private app never reaches the model; nothing of it is stored or logged, only a count and a digest;
 - the shape is checked before anything is written, with the conductor on or off.
 """
@@ -44,15 +47,20 @@ def _context(body):
     return body["messages"][1]["content"]
 
 
-def test_a_swarm_turn_reads_the_conversation_naming_each_speaker_with_memory_off(client, monkeypatch, caplog):
+def test_a_swarm_turn_reads_only_what_its_swarm_answered_never_her_own_mind(client, monkeypatch, caplog):
     caplog.set_level(logging.DEBUG)
     w = _taiga(client, monkeypatch)
     hive = w["hive"]
+    garden = client.post("/api/swarms", json={"name": "Garden", "visibility": "shared", "shared_with": ["user:u_ann"]}).json()
+    gardener = client.post("/api/agents", json={"name": "Gardener", "swarm_id": garden["id"]}).json()
+    worker_said = {"said": "what does Worker build?", "answer": "Worker builds the garden planner.", "by": w["worker"]["id"], "at": _ago(0.5)}
     conversation = [
-        {"said": CODE, "answer": "Got it, HEMLOCK-SEVEN it is.", "by": w["mine"]["id"], "at": _ago(180)},
-        {"said": "what does Worker build?", "answer": "Worker builds the garden planner.", "by": w["worker"]["id"], "at": _ago(0.5)},
+        {"said": CODE, "answer": "Got it, HEMLOCK-SEVEN it is.", "by": w["mine"]["id"], "at": _ago(180)},   # her own mind
+        {"said": "plant what in May?", "answer": "Beans, per GARDEN-ROTA.", "by": gardener["id"], "at": _ago(3)},   # another swarm
+        {"said": "and the shed?", "answer": "Painted on MADEUP-DAY.", "by": "a_madeup01", "at": _ago(2)},     # no such mind
+        worker_said,
     ]
-    s = script(client, Script("It's HEMLOCK-SEVEN."))
+    s = script(client, Script("I don't see a code word in what we said here."))
     r = ask(client, w["ann"], "op-conv-swarm-01", text="what was my code word?", context={"swarm_id": w["swarm"]["id"]},
             conversation=conversation)
     assert r.status_code == 202, r.text
@@ -60,17 +68,21 @@ def test_a_swarm_turn_reads_the_conversation_naming_each_speaker_with_memory_off
     wait(hive, "op-conv-swarm-01", closed)
     context = _context(s.bodies[0])
     transcript = context[context.index("The conversation so far in the Ask"):]
-    assert transcript.index(CODE) < transcript.index("what does Worker build?")   # oldest first
-    assert "- 3 hours ago, they said: “my code word is HEMLOCK-SEVEN”\n  you answered: “Got it, HEMLOCK-SEVEN it is.”" in transcript
     assert "- just now, they said: “what does Worker build?”\n  Worker answered: “Worker builds the garden planner.”" in transcript
+    # what she said with her own mind, with another swarm's mind or with a made-up id never reaches this turn's model,
+    # whose answer is kept in the swarm's thread
+    sent = json.dumps(s.bodies, ensure_ascii=False)
+    for words in ("HEMLOCK", "GARDEN-ROTA", "plant what in May?", "MADEUP-DAY", "and the shed?", "Gardener"):
+        assert words not in sent, words
     # the person's words for this turn stay the user message; the transcript is context, never instructions
     assert s.bodies[0]["messages"][2] == {"role": "user", "content": "what was my code word?"}
     # held by the turn only: no row and no log line carries the carried words (a swarm turn's own answer is its room's,
     # as before); the log has a count and a digest
     stored = dump(hive)
-    for words in (CODE, "Got it, HEMLOCK-SEVEN it is.", "what does Worker build?", "garden planner"):
+    for words in (CODE, "Got it, HEMLOCK-SEVEN it is.", "what does Worker build?", "garden planner", "GARDEN-ROTA"):
         assert words not in stored and words not in caplog.text
-    assert f"carries 2 earlier exchanges (digest {cmod.conversation_digest(conversation)})" in caplog.text
+    assert f"carries 1 earlier exchanges (digest {cmod.conversation_digest([worker_said])})" in caplog.text
+    assert f"leaves out 3 earlier exchanges its answer may not show (kept in swarm {w['swarm']['id']})" in caplog.text
     # the next turn without it has none
     s2 = script(client, Script("Hi."))
     ask(client, w["ann"], "op-conv-swarm-02", text="hello", context={"swarm_id": w["swarm"]["id"]})
@@ -78,7 +90,8 @@ def test_a_swarm_turn_reads_the_conversation_naming_each_speaker_with_memory_off
     assert "HEMLOCK" not in json.dumps(s2.bodies[0]) and "The conversation so far" not in _context(s2.bodies[0])
 
 
-def test_a_turn_with_her_own_mind_reads_it_and_names_another_mind_by_name(client, monkeypatch):
+def test_a_turn_with_her_own_mind_reads_it_all_and_names_another_mind_by_name(client, monkeypatch):
+    # her own mind's turn keeps no words on the host (ask.py), so it reads every exchange, her own mind's and others'
     w = _taiga(client, monkeypatch)
     hive = w["hive"]
     conversation = [{"said": "what does Worker build?", "answer": "The garden planner.", "by": w["worker"]["id"], "at": _ago(10)},
@@ -95,7 +108,8 @@ def test_a_turn_with_her_own_mind_reads_it_and_names_another_mind_by_name(client
     assert "- 2 minutes ago, they said: “my code word is HEMLOCK-SEVEN”\n  you answered: “Noted.”" in transcript
 
 
-def test_a_mind_she_cannot_name_is_only_a_mind(client, monkeypatch):
+def test_a_mind_she_cannot_name_is_only_a_mind_in_her_own_minds_turn(client, monkeypatch):
+    # her own mind's turn reads every exchange (a swarm turn would leave these three out), so it names them
     w = _taiga(client, monkeypatch)
     hive = w["hive"]
     bobs = hive.personal.ensure("user:u_bob")
@@ -106,7 +120,8 @@ def test_a_mind_she_cannot_name_is_only_a_mind(client, monkeypatch):
                     {"said": "two", "answer": "second answer", "by": hidden["id"], "at": _ago(4)},
                     {"said": "three", "answer": "third answer", "by": "a_madeup01", "at": _ago(3)}]
     s = script(client, Script("Ok."))
-    ask(client, w["ann"], "op-conv-names-1", text="hi", context={"swarm_id": w["swarm"]["id"]}, conversation=conversation)
+    r = ask(client, w["ann"], "op-conv-names-1", text="hi", conversation=conversation)
+    assert r.status_code == 202 and r.json()["acting_as"]["name"] == "Taiga"
     wait(hive, "op-conv-names-1", closed)
     transcript = _context(s.bodies[0])
     for answer in ("first answer", "second answer", "third answer"):
