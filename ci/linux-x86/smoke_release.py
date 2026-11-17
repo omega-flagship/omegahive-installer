@@ -69,6 +69,15 @@ def verify(user, output):
     def sessions():
         return subprocess.check_output(["loginctl", "show-user", user, "-p", "Sessions", "--value"], text=True).split()
 
+    def open_sessions(ids):
+        """The sessions among ids that logind still counts as open; one being torn down reads State=closing."""
+        left = []
+        for sid in ids:
+            done = subprocess.run(["loginctl", "show-session", sid, "-p", "State", "--value"], capture_output=True, text=True)
+            if done.returncode == 0 and done.stdout.strip() not in ("closing", ""):
+                left.append(sid)
+        return left
+
     def hive_state():
         done = subprocess.run(["sudo", "-iu", user, *env, "systemctl", "--user", "is-active", "omegahive.service"],
                               capture_output=True, text=True)
@@ -165,7 +174,10 @@ def verify(user, output):
             system("loginctl", "terminate-session", session)
         login.wait()
         facts["sessions_ended"] = len(ended)
-        check("every login session ended", until(lambda: not sessions(), 30), " ".join(sessions()))
+        if not until(lambda: not open_sessions(ended), 30):
+            for sid in open_sessions(ended):
+                diagnose("session " + sid, "loginctl", "session-status", sid, "--no-pager")
+        check("every login session ended", not open_sessions(ended), " ".join(open_sessions(ended)))
         check("hive survives logout", hive_state() == "active")
         # A reboot, as far as one runner can show it: the manager stopped, then started the way linger starts it at
         # boot, and the hive must come up by itself before anyone runs omegahive open.

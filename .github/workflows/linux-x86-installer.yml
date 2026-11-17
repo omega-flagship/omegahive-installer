@@ -231,8 +231,9 @@ jobs:
         run: |
           if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
           docker build --build-arg RELEASE="$RELEASE" -t fresh-ubuntu -f ci/linux-x86/fresh-ubuntu.Dockerfile ci/linux-x86
-          docker run -d --name fresh --privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
-            --tmpfs /run --tmpfs /run/lock fresh-ubuntu
+          # A private cgroup namespace: with the host's, the container's systemd and the runner's own share paths such
+          # as /user.slice/user-1001.slice, and a container user whose uid matches a runner account loses its manager.
+          docker run -d --name fresh --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock fresh-ubuntu
           # systemd makes its private socket a moment after the container starts; systemctl needs it to answer at all
           for _ in $(seq 1 60); do docker exec fresh test -S /run/systemd/private && break; sleep 1; done
           docker exec fresh systemctl is-system-running --wait || docker exec fresh systemctl --failed --no-pager
@@ -259,6 +260,9 @@ jobs:
             python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/install-log.out"
             docker exec fresh sh -c "sudo -iu $HIVE_USER env XDG_RUNTIME_DIR=/run/user/\$(id -u $HIVE_USER) journalctl --user -u omegahive.service --no-pager -n 80" > "$RUNNER_TEMP/journal.out" 2>&1 || true
             python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/journal.out"
+            # Whether this account's user manager runs, and what logind and systemd said about it.
+            docker exec fresh sh -c "loginctl list-users; loginctl list-sessions; loginctl show-user $HIVE_USER; ls -la /run/user /run/user/*; systemctl status 'user@*' 'user-runtime-dir@*' --no-pager -l; journalctl -b -u 'user@*' -u 'user-runtime-dir@*' -u systemd-logind --no-pager -n 150 -o short-precise" > "$RUNNER_TEMP/manager.out" 2>&1 || true
+            python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/manager.out"
           fi
           exit "$code"
       - name: The installer added every build prerequisite itself
