@@ -147,6 +147,31 @@ class BoundaryTests(unittest.TestCase):
                     self.assertNotIn('HIVE_STUDIO_MAKER_TEMPLATE', env)
                 else:
                     self.assertEqual(env['HIVE_STUDIO_MAKER_TEMPLATE'], template)
+                # Make's settings, as the Mac and WSL installers give every hive: the acceptance check's Python with its
+                # own prefix readable, the check on the sandbox list, Create's apps folder last on the plugin path, and
+                # the Code service's repository as the scaffold
+                self.assertEqual(json.loads(env['HIVE_SANDBOX_RUNTIMES']),
+                                 {'python': {'exe': '/selected/runtime/python', 'reads': ['/selected']}})
+                self.assertEqual(env['HIVE_SANDBOX_RUN_APPS'], 'create-acceptance-check')
+                self.assertEqual(env['HIVE_PLUGIN_DIRS'].split(os.pathsep), ['/selected/plugins', '/private/data/create/apps'])
+                self.assertEqual(env['HIVE_CREATE_SCAFFOLD_REPO'], 'small-app')
+                self.assertNotIn('HIVE_CREATE_PLAN_ENGINE', env)   # on by default (hive/core/config.py)
+                self.assertNotIn('HIVE_STUDIO_SESSIONS', env)
+        # With Studio pinned, its tools stay on the sandbox list ahead of the acceptance check and its live drawing is on.
+        cfg.update(studio_maker_template=None, app_pins={'omegadesign': {'release': '/selected/apps/omegadesign'}})
+        with mock.patch.object(serve.sys, 'argv', ['serve.py', '--runtime', '/synthetic']), \
+             mock.patch.object(serve.sys, 'platform', 'linux'), \
+             mock.patch.object(serve.os, 'getuid', return_value=1000), mock.patch.object(serve.os, 'geteuid', return_value=1000), \
+             mock.patch.dict(serve.os.environ, {'HIVE_SANDBOX_PYTHON': cfg['sandbox_python'],
+                 'LD_LIBRARY_PATH': cfg['libpython_dir']}, clear=True), \
+             mock.patch.object(serve, 'runtime', return_value=(cfg, Path('/home/test'), 'pin')), \
+             mock.patch.object(serve, 'directory', side_effect=lambda value, private=False: Path(value)), \
+             mock.patch.object(serve.os, 'umask'), mock.patch.object(serve.os, 'chdir'), \
+             mock.patch.object(serve.os, 'execve') as execute:
+            serve.main()
+            env = execute.call_args.args[2]
+            self.assertEqual(env['HIVE_SANDBOX_RUN_APPS'], 'omegadesign,create-acceptance-check')
+            self.assertEqual(env['HIVE_STUDIO_SESSIONS'], 'on')
 
     def test_nonhome_data_path_refuses_before_directory_access(self):
         for module in (control, serve):

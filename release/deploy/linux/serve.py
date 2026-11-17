@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Fixed user-service launcher. CONTEXT_CF40; Source only, Linux NOT_RUN.
+"""Purpose: start the hive as this account's user service from its closed runtime descriptor, with only the environment
+the release reviewed, Create's Make and Code settings included. Fixed user-service launcher. CONTEXT_CF40.
 
 Uses the same closed runtime descriptor as control.py. No app imports or runtime
 downloads. The installer owns descriptor creation, release pins and user service.
@@ -228,18 +229,29 @@ def main():
     if config['studio_maker_template'] is not None:
         env['HIVE_STUDIO_MAKER_TEMPLATE'] = config['studio_maker_template']
     # The apps this release pins are the ones reviewed to run sandboxed tools (hive/core/sandbox_run.py's allowlist),
+    # beside Create's acceptance check, which the hive itself ships (hive/plugins/create_acceptance_check, so no pin),
     # and with Studio pinned its live drawing is on: off a Mac nothing else gates it (hive/core/studio_sessions.py).
-    if config['app_pins']:
-        env['HIVE_SANDBOX_RUN_APPS'] = ','.join(sorted(config['app_pins']))
+    env['HIVE_SANDBOX_RUN_APPS'] = ','.join(sorted(config['app_pins']) + ['create-acceptance-check'])
     if 'omegadesign' in config['app_pins']:
         env['HIVE_STUDIO_SESSIONS'] = 'on'
+    # Create's Make, on in every install (hive/core/config.py), needs what the Mac and WSL installers give every hive
+    # (install/macos/omegahive.sh app_settings): the Python its acceptance check runs on in the sandbox, the selected
+    # interpreter with its own prefix readable, and Create's apps folder on the plugin path, where a plan's deploy puts
+    # what the person made (hive/core/create_plan_ports.py).
+    interpreter = os.path.realpath(config['sandbox_python'])
+    env['HIVE_SANDBOX_RUNTIMES'] = json.dumps({'python': {'exe': interpreter, 'reads': [str(Path(interpreter).parent.parent)]}},
+                                              sort_keys=True, separators=(',', ':'))
+    env['HIVE_PLUGIN_DIRS'] = os.pathsep.join(list(config['plugin_dirs']) + [str(Path(config['data_dir']) / 'create' / 'apps')])
     # Create's Code service: the release the hive's Code guard accepts and the config it reads the port from. The
     # guard asks this account's user manager about the service's unit (systemctl --user show), which needs the
     # runtime directory; copy-apply claims let Create apply a built change into a copy of an app (code-runtime.py).
     code = config['code_service']
     env.update({'XDG_RUNTIME_DIR': str(directory('/run/user/' + str(os.getuid()), private=True)),
                 'HIVE_CODE_SERVICE_RELEASE': code['release'], 'HIVE_CODE_SERVICE_CONFIG': code['config'],
-                'HIVE_COPY_APPLY_CLAIMS': 'on'})
+                'HIVE_COPY_APPLY_CLAIMS': 'on',
+                # Make starts each plan from the one repository the Code service registers, as
+                # install/macos/code-runtime.py names it for Mac and WSL hives; runtime() checked it is repos/small-app
+                'HIVE_CREATE_SCAFFOLD_REPO': Path(code['repository']).name})
     if config['libpython_dir'] is not None:
         env['LD_LIBRARY_PATH'] = config['libpython_dir']
     require(runtime(args.runtime)[2] == fingerprint, 'descriptor_changed_before_exec')

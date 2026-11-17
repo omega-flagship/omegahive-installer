@@ -209,6 +209,12 @@ def verify(user, output):
         check("the hive's Code guard accepts its Code service", status == 404 and b"not_relayed" in body,
               f"{status} {body[:300]!r}")
 
+    def make_on(call):
+        """Create's Make, on in every install (hive/core/config.py): its plan list answers, as it does only while the
+        plan engine runs, which needs no model, so the demonstration model's install shows it too."""
+        status, body = call.status_of("GET", "/api/create/plans")
+        check("Create's Make is on", status == 200, f"{status} {body[:300]!r}")
+
     try:
         check("linger is enabled", subprocess.check_output(
             ["loginctl", "show-user", user, "-p", "Linger", "--value"], text=True).strip() == "yes")
@@ -218,6 +224,7 @@ def verify(user, output):
         first_light(call)
         create_listed(call)
         code_service(call)
+        make_on(call)
         check("status is available", bool(json.loads(command(cli, "status", "--json"))))
         command("systemctl", "--user", "restart", "omegahive.service")
         check("owner survives hive restart", signin()[0] == first)
@@ -244,6 +251,7 @@ def verify(user, output):
         check("owner survives user-manager restart", again == first)
         create_listed(call)
         code_service(call)
+        make_on(call)
         facts["passed"] = True
     finally:
         pathlib.Path(output).write_text(json.dumps(facts, indent=2) + "\n")
