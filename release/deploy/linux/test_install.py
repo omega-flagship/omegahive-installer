@@ -33,7 +33,11 @@ def catalogue():
     modules = [row('deploy/linux/' + name) for name in ('install.py', 'control.py', 'serve.py', 'omegahive.service.in')]
     platform['source_payload']['files'] = [row('hive/requirements.txt')] + copy.deepcopy(modules)
     platform['source_payload']['prefix'] = 'source-root'
-    apps = []
+    # Studio (omegadesign), shown as Create, is the release's one app package; the digest is what the e2e tests'
+    # program_digest stub returns.
+    apps = [{'id': 'omegadesign', 'path': 'payload/omegadesign.zip', 'prefix': 'omegadesign-release/0.4.22/',
+             'bytes': 1, 'sha256': '9' * 64, 'digest': 'sha256:' + 'd' * 64,
+             'files': [row('plugin.json', b'{}'), row('ui/bundle.lock.json', b'{}')]}]
     return {'schema': 'studio-linux-user-release/2', 'ready': True, 'release_id': 'test-1',
             'source_revision': '1' * 40, 'source_tree': '2' * 40, 'petta_commit': '3' * 40,
             'min_free_bytes': 5 * 1024**3, 'core_roots': sorted(install.CORE_ROOTS),
@@ -109,10 +113,13 @@ def partial_fixture(home):
 
 
 class InstallerTests(unittest.TestCase):
-    def test_public_release_rejects_external_apps_and_obsolete_template_inputs(self):
+    def test_public_release_carries_studio_alone_and_no_obsolete_template_inputs(self):
         value = catalogue()
         install.validate_catalogue(value)
-        for change in ({'apps': [{'id': 'excluded'}]},
+        studio = value['apps'][0]
+        for change in ({'apps': [{'id': 'excluded'}]}, {'apps': []}, {'apps': [studio, dict(studio, id='omegaassist')]},
+                       {'apps': [dict(studio, id='omegaassist')]}, {'apps': [dict(studio, digest='sha256:short')]},
+                       {'apps': [dict(studio, files=[])]},
                        {'bootstrap': dict(value['bootstrap'], seed={'path': 'seed.json'})}):
             candidate = copy.deepcopy(value)
             candidate.update(change)

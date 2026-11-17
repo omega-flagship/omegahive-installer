@@ -119,7 +119,9 @@ def verify(user, output):
         feedback = urllib.request.Request("http://127.0.0.1:8700/api/feedback", headers=headers)
         with opener.open(feedback) as response:
             version = json.load(response)["version"]
-        check("installed hive reports v0.33", re.search(r"\bv0\.33\b", version) is not None)
+        # The release's own RELEASE_VERSION names the version the hive must report (0.34 says "Linux v0.34 (build …)").
+        expected = next((home / ".local/share/omegahive/releases").glob("*/app/RELEASE_VERSION")).read_text().strip()
+        check("installed hive reports v" + expected, re.search(r"\bv" + re.escape(expected) + r"\b", version) is not None, version)
         facts["version"] = version
         # The hive's start-time preflight decides whether minds may start (hive/supervisor/sandbox.py report()).
         settings = urllib.request.Request("http://127.0.0.1:8700/api/settings", headers=headers)
@@ -163,6 +165,13 @@ def verify(user, output):
         facts["first_light"] = redacted(text)[:200]
         call("POST", "/api/agents/" + mind["id"] + "/sleep", {})
 
+    def create_listed(call):
+        """Setup put Studio in as Create (deploy/linux/bootstrap.py): the owner's app list shows it, opening in a swarm."""
+        apps = call("GET", "/api/me/apps")["apps"]
+        create = [app for app in apps if app.get("id") == "omegadesign" and app.get("name") == "Create"]
+        check("Create is on the owner's home screen", len(create) == 1, json.dumps(apps)[:400])
+        facts["create"] = create[0]["open"]
+
     try:
         check("linger is enabled", subprocess.check_output(
             ["loginctl", "show-user", user, "-p", "Linger", "--value"], text=True).strip() == "yes")
@@ -170,6 +179,7 @@ def verify(user, output):
         check("service is enabled", command("systemctl", "--user", "is-enabled", "omegahive.service").strip() == "enabled")
         first, call = signin()
         first_light(call)
+        create_listed(call)
         check("status is available", bool(json.loads(command(cli, "status", "--json"))))
         command("systemctl", "--user", "restart", "omegahive.service")
         check("owner survives hive restart", signin()[0] == first)
@@ -192,7 +202,9 @@ def verify(user, output):
         system("systemctl", "stop", manager)
         system("systemctl", "start", manager)
         check("hive starts with the user manager", until(lambda: hive_state() == "active", 60), hive_state())
-        check("owner survives user-manager restart", signin()[0] == first)
+        again, call = signin()
+        check("owner survives user-manager restart", again == first)
+        create_listed(call)
         facts["passed"] = True
     finally:
         pathlib.Path(output).write_text(json.dumps(facts, indent=2) + "\n")

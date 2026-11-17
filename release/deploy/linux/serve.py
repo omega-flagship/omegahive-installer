@@ -219,6 +219,12 @@ def main():
     }
     if config['studio_maker_template'] is not None:
         env['HIVE_STUDIO_MAKER_TEMPLATE'] = config['studio_maker_template']
+    # The apps this release pins are the ones reviewed to run sandboxed tools (hive/core/sandbox_run.py's allowlist),
+    # and with Studio pinned its live drawing is on: off a Mac nothing else gates it (hive/core/studio_sessions.py).
+    if config['app_pins']:
+        env['HIVE_SANDBOX_RUN_APPS'] = ','.join(sorted(config['app_pins']))
+    if 'omegadesign' in config['app_pins']:
+        env['HIVE_STUDIO_SESSIONS'] = 'on'
     if config['libpython_dir'] is not None:
         env['LD_LIBRARY_PATH'] = config['libpython_dir']
     require(runtime(args.runtime)[2] == fingerprint, 'descriptor_changed_before_exec')

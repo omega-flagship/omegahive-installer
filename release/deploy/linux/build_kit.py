@@ -483,7 +483,9 @@ def references(release):
                     and type(item.get('bytes')) is int and 0 < item['bytes'] <= 512 * 1024**2
                     and type(item.get('sha256')) is str and re.fullmatch('[a-f0-9]{64}', item['sha256']),
                     'public_runtime_pin_required')
-    require(release.get('apps') == [], 'public_source_apps_only')
+    # Studio (omegadesign), shown as Create, is the public release's one app package; Assist stays out.
+    require(type(release.get('apps')) is list and [item.get('id') for item in release['apps']] == ['omegadesign'],
+            'public_studio_app_only')
     for item in release['apps']:
         require(type(item.get('digest')) is str and re.fullmatch('sha256:[a-f0-9]{64}', item['digest']),
                 'program_digest_required')

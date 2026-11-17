@@ -22,7 +22,8 @@ def prepare(args):
     inputs = pathlib.Path(args.inputs)
     source = pathlib.Path(args.source)
     base = json.loads(pathlib.Path(args.catalogue).read_text())
-    assert base["apps"] == [], "A public release must not carry the historical private app inputs"
+    # Studio, which the hive shows as Create, is the one app package; Assist stays out (omega-flagship/omegahive#106).
+    assert [app["id"] for app in base["apps"]] == ["omegadesign"], "A public release carries Studio (omegadesign) alone"
     assert set(base["bootstrap"]) == {"helper"}, "Public setup verifies the local owner only"
     commit = (source / "RELEASE_COMMIT").read_text().strip()
     tree = args.tree
@@ -42,9 +43,9 @@ def prepare(args):
             info = tarfile.TarInfo("dist/" + name)
             info.size, info.mode, info.mtime = len(data), 0o644, 0
             archive.addfile(info, io.BytesIO(data))
-    ui_archive = inputs / "ui-dist-v033.tar.gz"
+    ui_archive = inputs / "ui-dist.tar.gz"
     ui_archive.write_bytes(gzip.compress(raw.getvalue(), mtime=0))
-    manifest = inputs / "ui-dist-v033.manifest.json"
+    manifest = inputs / "ui-dist.manifest.json"
     manifest.write_text(json.dumps({"format": "omegahive.ui-prebuilt/1", "source_commit": commit,
                                    "source_tree": tree, "built_with": args.built_with,
                                    "file_count": len(files), "files": files}, indent=2, sort_keys=True) + "\n")

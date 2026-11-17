@@ -152,17 +152,18 @@ user bus, unsupported system program/layout, occupied port, sandbox failures and
 unsafe ownership remain actionable failures for actual Linux validation. No
 implicit fallback, automatic reissue, password route or consent bypass is added.
 
-## One first-boot template seed (normal host authority only)
+## Studio as Create (normal host authority only)
 
-The descriptor initially contains studio_maker_template:null. The installer
-bootstrap must use a real named local-owner admin session and normal POST/api/agents
-to create the exact reviewed Omega template, asleep. No direct database writes,
-private Hive imports, fake Hive object or implicit paid run. After successful
-normal-route readback, installer atomically replaces the0600 descriptor with the
-actual id and restarts the same user service once. serve.py then sets only that
-HIVE_STUDIO_MAKER_TEMPLATE value. Existing host code validates the id/kind and
-refuses a personal mind. Role/persona/tools/budget seed content is a separate
-reviewed owner input, still pending. P14 install reviews remain named-admin acts.
+The descriptor pins one app, Studio (`omegadesign`), unpacked in
+runtime_root/apps/omegadesign, which is also the one plugin directory, and keeps
+studio_maker_template null: Studio's own manifest names its maker template.
+serve.py passes the pin as HIVE_APP_PINS, names the pinned apps in
+HIVE_SANDBOX_RUN_APPS (hive/core/sandbox_run.py's allowlist) and, with Studio
+pinned, sets HIVE_STUDIO_SESSIONS=on, since off a Mac nothing else gates live
+drawing. The bootstrap helper then makes the P14 install review as the named
+local-owner admin, through the normal routes only, with use_in naming the
+Create · Code controller's swarm, and requires GET /api/me/apps to list Create.
+No direct database writes, private Hive imports, fake Hive object or model call.
 
 The existing control hello does not expose program load/digest. Real
 GET/api/programs and GET/api/programs/{id} via the same normal authenticated

@@ -1,5 +1,418 @@
 {
-  "apps": [],
+  "apps": [
+    {
+      "bytes": 424325,
+      "digest": "sha256:64abf47808a469d37154be509266977b1a3887f0d39f0b974d7d5c3bce7f6f6e",
+      "files": [
+        {
+          "bytes": 1829,
+          "mode": "100644",
+          "path": "HOST_CONTEXT_CONTRACT.md",
+          "sha256": "960df159a21521f8703bf79ba1c93a17e511aa9d8c716938865f8d75e89c63ae"
+        },
+        {
+          "bytes": 0,
+          "mode": "100644",
+          "path": "__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "bytes": 4304,
+          "mode": "100644",
+          "path": "finding_targets.py",
+          "sha256": "869ac98663e3f49bf75ab007e4159f9cdda09deafd932a1eb28f8c527d57af28"
+        },
+        {
+          "bytes": 19077,
+          "mode": "100644",
+          "path": "model_actions.py",
+          "sha256": "dcc0e493c9d64e0af6b2eae0d21a4420481bb2b83f6d3bd0afeab0b332eaf640"
+        },
+        {
+          "bytes": 6265,
+          "mode": "100644",
+          "path": "model_delivery.py",
+          "sha256": "57652e9fddee95734c1f3a66e2f93b4f60cae51ce7c77c455df24b0222459465"
+        },
+        {
+          "bytes": 5203,
+          "mode": "100644",
+          "path": "motion_actions.py",
+          "sha256": "022ca9c0d463c3ad7779ef0aab796abdc0ecb4d873faa366ca1d195cb180fa6c"
+        },
+        {
+          "bytes": 3007,
+          "mode": "100644",
+          "path": "navigation_actions.py",
+          "sha256": "f5870cf7ceccd647499fa89c512941f91d03acc3e6576946899d660ec208c985"
+        },
+        {
+          "bytes": 1843,
+          "mode": "100644",
+          "path": "plugin.json",
+          "sha256": "52e03e5b30ce2c40c25c7624be65020d989cd31a8d506151a37cad572f3f63a5"
+        },
+        {
+          "bytes": 9339,
+          "mode": "100644",
+          "path": "program.py",
+          "sha256": "e5631c48881f461abc6b04443060e35317e62a18e8155fc542c9bf6e8170d1ab"
+        },
+        {
+          "bytes": 6031,
+          "mode": "100644",
+          "path": "proposal_io.py",
+          "sha256": "295feb742ad4f8880a625d2e2434667bdf8e3a798ddfbe34d01fcf94c0376ddd"
+        },
+        {
+          "bytes": 9082,
+          "mode": "100644",
+          "path": "protocol.py",
+          "sha256": "bb7f72310d91503b089b123678e3c1fd9bf2e18edbf04f1f269f01d85d89946d"
+        },
+        {
+          "bytes": 4904,
+          "mode": "100644",
+          "path": "reconcile_output.py",
+          "sha256": "64d870be8c5e138e23d9c83cccf0240b892a1dafd6298172f61edf7eb0b89601"
+        },
+        {
+          "bytes": 3628,
+          "mode": "100644",
+          "path": "semantics.py",
+          "sha256": "e98655068a2d9e5be392e163b1e9dd1e120525ef599929b2afd86c6fc1208085"
+        },
+        {
+          "bytes": 9566,
+          "mode": "100644",
+          "path": "source_io.py",
+          "sha256": "994c9c63f11da40ccb7acc6ce2519e85ba540ca3a2febbcc4f130f3615712d6a"
+        },
+        {
+          "bytes": 8581,
+          "mode": "100644",
+          "path": "studio_actions.py",
+          "sha256": "820a4eba59d0e4fddcc72dd4098795c03b79cc7f8f319cadc0e46ca677c45ef3"
+        },
+        {
+          "bytes": 681,
+          "mode": "100644",
+          "path": "tools/app-reference.mjs",
+          "sha256": "416a3337ef1ce5b599eda22e75ce2c96d26e712252efa6a2cd0cf904175aefd4"
+        },
+        {
+          "bytes": 1850,
+          "mode": "100644",
+          "path": "tools/brief-change.mjs",
+          "sha256": "f47ffc11a3f5bd6d78cc1fb907dac11deaa6da7c417476a0e76f8b95f3ca0932"
+        },
+        {
+          "bytes": 644,
+          "mode": "100644",
+          "path": "tools/brief-form.mjs",
+          "sha256": "01d5f4d51e13c4e941b73f509e7472a57d4223358e063b0fbad5d51191d9e3b9"
+        },
+        {
+          "bytes": 1706,
+          "mode": "100644",
+          "path": "tools/brief-impact.mjs",
+          "sha256": "e26e5f283f1a4530a0c54bc984b45e6c33864984360f8c39c597069689e65864"
+        },
+        {
+          "bytes": 1259,
+          "mode": "100644",
+          "path": "tools/brief-plan.mjs",
+          "sha256": "ec03cbbe6eaabfe15a82b8bcf970f2d66f0e01f69961d9772e02109d51b330d4"
+        },
+        {
+          "bytes": 4180,
+          "mode": "100644",
+          "path": "tools/bundle.lock.json",
+          "sha256": "e0a1e1433b395abf41ed9b7e9a87b430250f846a585f7a4bca3ff64aa6326edb"
+        },
+        {
+          "bytes": 6620,
+          "mode": "100644",
+          "path": "tools/canvas.html",
+          "sha256": "88d8134fece6b0dd1e2ea2b75180b17afab15befacb951d0180458fbf45f0c3c"
+        },
+        {
+          "bytes": 43950,
+          "mode": "100644",
+          "path": "tools/canvas.mjs",
+          "sha256": "d6d87203364e120eb8ec962763ff9874122b5088da9b04773802c3098367ddce"
+        },
+        {
+          "bytes": 14522,
+          "mode": "100644",
+          "path": "tools/deck-editor.mjs",
+          "sha256": "d877be7c9b56aecbcd27c1bc5c04d9dbe52ed26dbb36a4a228ff565111f6c2bc"
+        },
+        {
+          "bytes": 2285,
+          "mode": "100644",
+          "path": "tools/export-motion.mjs",
+          "sha256": "da3db1dc0eb38e6366bb7951b5684dada92ca8a8ab53c72087a37e24d63b42e1"
+        },
+        {
+          "bytes": 1582,
+          "mode": "100644",
+          "path": "tools/image-insertion.mjs",
+          "sha256": "d591fe08d974ad79c7ad390f9caf896b47376ac83237b6a1a6dca27028512426"
+        },
+        {
+          "bytes": 768,
+          "mode": "100644",
+          "path": "tools/inspect-deck-cli.mjs",
+          "sha256": "4ffbe52233297a8e8f7324c0352053b0f74aaf207917bc162ec3f04ddd153bfa"
+        },
+        {
+          "bytes": 1305,
+          "mode": "100644",
+          "path": "tools/inspect-model-cli.mjs",
+          "sha256": "dcebf87b6aa0f15ef19c43aebc8247ab99eb241a6933e926b5b4b7b750dd1307"
+        },
+        {
+          "bytes": 1278,
+          "mode": "100644",
+          "path": "tools/layout.mjs",
+          "sha256": "7655110dc5327c2ff12e122c72a4544259c8c0602cb8c7788764ea3abcda8386"
+        },
+        {
+          "bytes": 3980,
+          "mode": "100644",
+          "path": "tools/live-edits.mjs",
+          "sha256": "07942978aa8642946806d3797e65f453adb000b3cb318271906d2f54607310d2"
+        },
+        {
+          "bytes": 2703,
+          "mode": "100644",
+          "path": "tools/maker-trace.mjs",
+          "sha256": "d1b5b4d0409dd5e96c8497c63a3caabb103e18b706f19011e5257f3b2d6d5528"
+        },
+        {
+          "bytes": 185078,
+          "mode": "100644",
+          "path": "tools/model-export-native.mjs",
+          "sha256": "c02f538651c030a92fef69bfc1218a69cc310f66243cbdbd0990f9003e80c926"
+        },
+        {
+          "bytes": 5425,
+          "mode": "100644",
+          "path": "tools/model-operations.mjs",
+          "sha256": "ee70a706da2d77416c892dad09fdf06f83f320fdd3e69337ff08fb084f866b20"
+        },
+        {
+          "bytes": 4000,
+          "mode": "100644",
+          "path": "tools/model-sandbox-cli.mjs",
+          "sha256": "5205083806fb4ebfe83de52d3feff42ed75c67d894dfee50a328fa4bc80c89fa"
+        },
+        {
+          "bytes": 6749,
+          "mode": "100644",
+          "path": "tools/model-source.mjs",
+          "sha256": "4564b1e6ce66f494ac6e5d721badf01c6e599211826620e22f8bbb26edb70dc6"
+        },
+        {
+          "bytes": 3281,
+          "mode": "100644",
+          "path": "tools/motion-delivery.mjs",
+          "sha256": "bb1e9ee083e12cfaad875e337f30344f486b26f63da55d727a589af9164daf12"
+        },
+        {
+          "bytes": 856,
+          "mode": "100644",
+          "path": "tools/motion-sandbox-cli.mjs",
+          "sha256": "5cad312433358ba62b4e519cf89b43deb7280034658d8af70e4d6ff4d5cc30ca"
+        },
+        {
+          "bytes": 530,
+          "mode": "100644",
+          "path": "tools/motion-source.mjs",
+          "sha256": "6f73374d88751a2efda8112e097153a8518aa3b489208a130f78567cacf1c0cd"
+        },
+        {
+          "bytes": 2628,
+          "mode": "100644",
+          "path": "tools/motion.mjs",
+          "sha256": "112dec201fa278b784178383dc70ffb7e7aa8461b83c6613e98c83a8b378f9c3"
+        },
+        {
+          "bytes": 930,
+          "mode": "100644",
+          "path": "tools/navigation_cli.py",
+          "sha256": "987ba719a90308d30c4aec162700eb24199df9862cb9ce7ebf790eeae433dc66"
+        },
+        {
+          "bytes": 8218,
+          "mode": "100644",
+          "path": "tools/project.mjs",
+          "sha256": "4ddc5a319340571744ec257ff6bd941975d90fa3a7e508ab82425d5c980833f2"
+        },
+        {
+          "bytes": 4302,
+          "mode": "100644",
+          "path": "tools/python_index.py",
+          "sha256": "fdf1f9f4fd308c72153480f6bcb8d1fbf7c44c1797e16b514477cc8290a0f622"
+        },
+        {
+          "bytes": 4833,
+          "mode": "100644",
+          "path": "tools/react-handoff.mjs",
+          "sha256": "0e725aebf1b3cd2584655bf13ef00fcbee3bd4802228d83195d7aa9e87fdb16d"
+        },
+        {
+          "bytes": 631,
+          "mode": "100644",
+          "path": "tools/readability-ui.mjs",
+          "sha256": "f62c1d7b38c396df196bb4627d49b091c727a7dae5da003bc098f6cdee412695"
+        },
+        {
+          "bytes": 2070,
+          "mode": "100644",
+          "path": "tools/readability.mjs",
+          "sha256": "c573d135e9ccad98a44b779f4f6be1f8feb763cd24e4a8bd7b2d9478c0b5012a"
+        },
+        {
+          "bytes": 801,
+          "mode": "100644",
+          "path": "tools/review-target-cli.mjs",
+          "sha256": "bae93aaf172dd2acb6f948077b108e6252613a8f97746bfb9554a5f2befcd892"
+        },
+        {
+          "bytes": 4121,
+          "mode": "100644",
+          "path": "tools/review-target.mjs",
+          "sha256": "b2840e030cf436630bc3f2acc286561b16a1dd94fe4257aade9892f31168a557"
+        },
+        {
+          "bytes": 4418,
+          "mode": "100644",
+          "path": "tools/scene-cli.mjs",
+          "sha256": "402ecb0f4d704b9251d949a8fa373c14d0146e121f2467025fb8b8b4424c4768"
+        },
+        {
+          "bytes": 1449,
+          "mode": "100644",
+          "path": "tools/scene-deck.mjs",
+          "sha256": "e6c56afd6425026c20e6145835e0737c70e8b4c04da5293f94087ea6f54b3dc1"
+        },
+        {
+          "bytes": 8415,
+          "mode": "100644",
+          "path": "tools/scene.mjs",
+          "sha256": "72c4d8c172fb54647f697c8e4394c339689a745b8d84d0e92bc4ce25255adf60"
+        },
+        {
+          "bytes": 1177,
+          "mode": "100644",
+          "path": "tools/source-relations.mjs",
+          "sha256": "17c5274efe69a8313f5a6db6ae6e44f67a5191a2c3b94cb2ddac0761141aba53"
+        },
+        {
+          "bytes": 641,
+          "mode": "100644",
+          "path": "tools/source-steering.mjs",
+          "sha256": "9b81e2c5ce57e000f2d7675579e3197998f12286fe46d70f781c1f3ae679a596"
+        },
+        {
+          "bytes": 9232,
+          "mode": "100644",
+          "path": "tools/source.mjs",
+          "sha256": "f942b45486cbdaf0466123751ec9ab1da29d361f2ac8f7b864bfe6a800411996"
+        },
+        {
+          "bytes": 3305,
+          "mode": "100644",
+          "path": "tools/studio-assets.mjs",
+          "sha256": "99fa842b139f258484a8b9c13c3e19784dad5c64b5e983e00ba997f003598beb"
+        },
+        {
+          "bytes": 27746,
+          "mode": "100644",
+          "path": "tools/studio-drafts.mjs",
+          "sha256": "bd2aa8a81aee39f80119ab07925734326924d51245746a7aa19e13e0d40effdc"
+        },
+        {
+          "bytes": 2946,
+          "mode": "100644",
+          "path": "tools/studio-picked-image.mjs",
+          "sha256": "fd21b3d55c18b2086b811798bd0e9d6d78420a36bc597070ddb61198d558e194"
+        },
+        {
+          "bytes": 1223,
+          "mode": "100644",
+          "path": "tools/studio-snapshot.mjs",
+          "sha256": "a7ae8ddd6754317cab8847621197e1b7f824d9bd45d83a8e93046c09517a8fbc"
+        },
+        {
+          "bytes": 15389,
+          "mode": "100644",
+          "path": "tools/studio-suggestions.mjs",
+          "sha256": "448ea3aa0f310d17e4cf1059447c8bbb06cf1c174f700336da330d196c3cab79"
+        },
+        {
+          "bytes": 604,
+          "mode": "100644",
+          "path": "tools/target-impact-cli.mjs",
+          "sha256": "fcce96f8360ef30f0f0faa6cf529284c47545446cfcd6281050e0907fe5fa629"
+        },
+        {
+          "bytes": 1466,
+          "mode": "100644",
+          "path": "tools/target-impact.mjs",
+          "sha256": "891daa692afd3627578090ef3112e170f77fcf4f3013dd8f1313dcc772e6bd90"
+        },
+        {
+          "bytes": 5947,
+          "mode": "100644",
+          "path": "tools/ui-spec.mjs",
+          "sha256": "0b601b05e7d715b9b497bd2ee97a98f7c911da7b2bf6a93366ace798ffbe3a5f"
+        },
+        {
+          "bytes": 314419,
+          "mode": "100644",
+          "path": "ui/app.js",
+          "sha256": "7db5fb64ab8ad889bb9438057108e23576e5137044b896cfda08c17a77eebace"
+        },
+        {
+          "bytes": 548,
+          "mode": "100644",
+          "path": "ui/bundle.lock.json",
+          "sha256": "71402503b1c0d07885cfc39af26a64c74c80920d1ff2c694311f034f0f911089"
+        },
+        {
+          "bytes": 5832,
+          "mode": "100644",
+          "path": "ui/index.html",
+          "sha256": "10af0e9d11a2cbe42e7996f51e24ba902e7b2e6ec3b77f5071ffce547d0de8db"
+        },
+        {
+          "bytes": 58945,
+          "mode": "100644",
+          "path": "ui/native-three-addons.js",
+          "sha256": "5c1b03f40d546130d93801ea6ae2eea2ecd9e94e4591bc6b19d86007fa51ceec"
+        },
+        {
+          "bytes": 553418,
+          "mode": "100644",
+          "path": "ui/native-three.js",
+          "sha256": "317a9aee68333d3b847f1222bcf90b1cbd7651f273ab108174bc19c54d3b716f"
+        },
+        {
+          "bytes": 23511,
+          "mode": "100644",
+          "path": "ui/style.css",
+          "sha256": "d1e5449bc6fd7288f7a24da6b967f843e28c7c3eee3f491b210e7731c1b49697"
+        }
+      ],
+      "id": "omegadesign",
+      "path": "omegadesign-0.4.22.zip",
+      "prefix": "omegadesign-release/0.4.22/",
+      "sha256": "e40a65eeb866c74048477de16418318152d8af22e38f526594129ee013417712"
+    }
+  ],
   "bootstrap": {
     "helper": {
       "bytes": 20910,

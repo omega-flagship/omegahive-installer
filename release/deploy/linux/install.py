@@ -193,7 +193,9 @@ def validate_catalogue(value):
          and type(core["bytes"]) is int and 0 < core["bytes"] <= 64 * 1024**2
          and type(core["sha256"]) is str and re.fullmatch("[a-f0-9]{64}", core["sha256"]),
          "The Omega core the minds run on is not checksum-pinned.")
-    need(value["apps"] == [], "The public Linux release carries its apps in the source tree, without external app packages.")
+    # Studio, shown as Create, is the one app package; Assist stays out of public releases (omega-flagship/omegahive#106).
+    need(type(value["apps"]) is list and [app.get("id") if type(app) is dict else None for app in value["apps"]] == ["omegadesign"],
+         "The public Linux release carries Studio (omegadesign) as its one app package.")
     for app in value["apps"]:
         need(type(app) is dict and type(app.get("digest")) is str
              and re.fullmatch("sha256:[a-f0-9]{64}", app["digest"])

@@ -120,7 +120,8 @@ def release_fixture():
             'core_roots': sorted(kit.ROOTS), 'python_version': '3.12.1', 'uv_version': '1.0.0',
             'swipl_version': '9.0.0', 'petta_commit': 'e' * 40, 'ui_prebuilt': ui_spec(manifest_raw),
             'platforms': {'x86_64': platform, 'aarch64': copy.deepcopy(platform)},
-            'apps': [],
+            'apps': [{'id': 'omegadesign', 'path': 'omegadesign.zip', 'prefix': 'omegadesign-release/0.4.22/',
+                      'bytes': 1, 'sha256': '9' * 64, 'digest': 'sha256:' + 'd' * 64, 'files': []}],
             'bootstrap': {'helper': {'path': 'bootstrap.py'}},
             'omega_core': {'path': 'omega-core-abcdef1.bundle', 'bytes': 1, 'sha256': 'f' * 64},
             'module_files': [], 'default_model': 'openrouter/example/model',
@@ -212,6 +213,17 @@ class KitContract(unittest.TestCase):
         platform['python']['url'] = 'https://releases.astral.sh/runtime/archive.tar.gz?token=sample'
         with self.assertRaisesRegex(kit.Refused, 'public_runtime_pin_required'):
             kit.references(release)
+
+    def test_studio_is_the_one_app_package_a_public_release_carries(self):
+        release = release_fixture()
+        refs, _payload = kit.references(release)
+        self.assertIn('omegadesign.zip', refs)
+        studio = release['apps'][0]
+        for apps in ([], [dict(studio, id='omegaassist')], [studio, dict(studio, id='omegaassist', path='a.zip')]):
+            candidate = release_fixture()
+            candidate['apps'] = apps
+            with self.subTest(apps=[a['id'] for a in apps]), self.assertRaisesRegex(kit.Refused, 'public_studio_app_only'):
+                kit.references(candidate)
 
     def test_github_metadata_rejects_credentials_and_signed_urls(self):
         for url in ('http://github.com/a/b', 'https://token@github.com/a/b',

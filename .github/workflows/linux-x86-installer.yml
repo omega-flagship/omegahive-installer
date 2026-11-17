@@ -1,16 +1,16 @@
 # Purpose: build one current Linux test kit and prove its fresh-user install on every supported Ubuntu release.
-name: Linux v0.33 test kit
+name: Linux v0.34 test kit
 
 on:
   workflow_dispatch:
   push:
-    branches: ["ci/linux-x86-v033-public"]
+    branches: ["ci/linux-x86-v034-public"]
 
 permissions:
   contents: read
 
 env:
-  RELEASE_ID: linux-hive-v0.33
+  RELEASE_ID: linux-hive-v0.34
 
 jobs:
   baseline:
@@ -29,7 +29,7 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     env:
-      PREFIX: omegahive-linux-v033
+      PREFIX: omegahive-linux-v034
     steps:
       - uses: actions/checkout@v4
       - name: Use runner scratch outside the tested tree
@@ -50,12 +50,13 @@ jobs:
           # Entries dated at the release commit's time (ci/RELEASE_COMMIT_TIME), since a tree archive is otherwise
           # dated now and every run would make a different download from the same source.
           git archive --format=tar --mtime="$(cat ci/RELEASE_COMMIT_TIME)" --prefix="$PREFIX/" HEAD:release | gzip -n > "$RUNNER_TEMP/inputs/source.tar.gz"
-      - name: Use the fresh UI and the Omega core from the exact rc3 Mac build
+      - name: Use the UI, the Omega core and Studio from the exact v0.34 rc1 Mac build
         run: |
           cd ci/linux-x86/inputs
-          sha256sum -c ui-dist-v033.tar.gz.sha256
+          sha256sum -c ui-dist.tar.gz.sha256
           sha256sum -c omega-core-*.bundle.sha256
-          tar -xzf ui-dist-v033.tar.gz -C "$GITHUB_WORKSPACE/release/hive/ui"
+          sha256sum -c omegadesign-*.zip.sha256
+          tar -xzf ui-dist.tar.gz -C "$GITHUB_WORKSPACE/release/hive/ui"
       - name: Fetch checksum-pinned uv and compile the current x86_64 lock
         run: |
           readarray -t PIN < <(python3 -c "import json; p=json.load(open('ci/linux-x86/x86_64-pins.json'))['uv']; print(p['url']); print(p['sha256'])")
@@ -71,7 +72,7 @@ jobs:
         run: |
           python3 -B ci/linux-x86/prepare_release.py --source release --inputs "$RUNNER_TEMP/inputs" \
             --catalogue ci/linux-x86/public-catalogue.json --tree "$(cat ci/RELEASE_TREE)" \
-            --output "$RUNNER_TEMP/catalogue.json" --built-with "Mac rc3 vite build at 04:57; provenance ci/linux-x86/mac-zip-inputs.json"
+            --output "$RUNNER_TEMP/catalogue.json" --built-with "Mac v0.34 rc1 vite build, the same bytes as rc3 at 04:57; provenance ci/linux-x86/mac-zip-inputs.json"
           python3 -I -B -S ci/linux-x86/make_catalogue.py \
             --base-catalogue "$RUNNER_TEMP/catalogue.json" --pins ci/linux-x86/x86_64-pins.json \
             --source-tar "$RUNNER_TEMP/inputs/source.tar.gz" --prefix "$PREFIX" \
@@ -85,20 +86,20 @@ jobs:
           stat -c '%s %n' omegahive-linux.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: omegahive-linux-v033-kit
+          name: omegahive-linux-v034-kit
           path: ${{ runner.temp }}/kit/
       - uses: actions/upload-artifact@v4
         with:
-          name: omegahive-linux-v033-bundle
+          name: omegahive-linux-v034-bundle
           path: ${{ runner.temp }}/bundle/
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: linux-v033-build-inputs
+          name: linux-v034-build-inputs
           path: |
             ${{ runner.temp }}/catalogue.json
             ${{ runner.temp }}/inputs/core.lock
-            ${{ runner.temp }}/inputs/ui-dist-v033.manifest.json
+            ${{ runner.temp }}/inputs/ui-dist.manifest.json
 
   install:
     needs: build
@@ -116,11 +117,11 @@ jobs:
         run: printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v4
         with:
-          name: omegahive-linux-v033-kit
+          name: omegahive-linux-v034-kit
           path: ${{ runner.temp }}/kit
       - uses: actions/download-artifact@v4
         with:
-          name: omegahive-linux-v033-bundle
+          name: omegahive-linux-v034-bundle
           path: ${{ runner.temp }}/bundle
       - name: Fresh user with test-only permission for the installer's fixed system setup commands
         run: |
@@ -184,7 +185,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: matrix.os == 'ubuntu-22.04' && matrix.entry == 'kit'
         with:
-          name: linux-v033-installed-runtime
+          name: linux-v034-installed-runtime
           path: ${{ runner.temp }}/installed-runtime/
       - name: Open, sign in, restart, log out, and restart the user manager
         run: |
@@ -203,7 +204,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: linux-v033-${{ matrix.os }}-${{ matrix.entry }}-receipts
+          name: linux-v034-${{ matrix.os }}-${{ matrix.entry }}-receipts
           path: ${{ runner.temp }}/receipts/
 
   fresh:
@@ -225,7 +226,7 @@ jobs:
         run: printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v4
         with:
-          name: omegahive-linux-v033-kit
+          name: omegahive-linux-v034-kit
           path: ${{ runner.temp }}/kit
       - name: Boot a fresh Ubuntu ${{ matrix.release }} and give it the download and a new user
         env:
@@ -296,5 +297,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: linux-v033-fresh-ubuntu-${{ matrix.release }}-receipts
+          name: linux-v034-fresh-ubuntu-${{ matrix.release }}-receipts
           path: ${{ runner.temp }}/receipts/

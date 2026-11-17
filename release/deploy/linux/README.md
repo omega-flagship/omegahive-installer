@@ -113,13 +113,19 @@ the manager shim and the control interpreter before ELF startup. No ambient
 loader/preload path is appended. This requires the companion product-R3 unit and
 serve/control agreement; product-R2 cannot be substituted.
 
-App ZIP checks alone do not prove live admission. The separately reviewed
-bootstrap helper must use same-UID, one-use signin, memory-only owner credentials
-and the normal authenticated program/agent routes, verify the live Assist/Studio
-pins and create the exact owner-reviewed inactive Studio maker template. It then
-atomically records the returned ID and restarts once. There is no direct store
-write, fake host import, manual validation marker, invented empty template or
-automatic consent grant. That helper and exact seed remain pending inputs here.
+App ZIP checks alone do not prove live admission. Studio (`omegadesign`), which
+the hive shows as Create, is the release's one app package; Assist stays out.
+After the hive starts, `bootstrap.py` checks the named local owner and that minds
+passed the hive's sandbox preflight, then signs in once as that owner (a one-use
+code from the control socket, held in memory only) and uses the normal
+authenticated routes: it checks the loaded Studio release against its pin, raises
+the Create · Code controller's budget to 5 USD as the Mac installer does, runs
+Studio's admin install review with `use_in` naming that controller's swarm
+(`use_in` empty lists no Create), turns Studio on in that swarm if it isn't, and
+checks that `GET /api/me/apps` lists Create. It creates no mind and calls no
+model. Studio's maker template comes from Studio's own manifest, so
+`studio_maker_template` stays null. There is no direct store write, fake host
+import or automatic consent grant.
 
 `~/.local/bin/omegahive open` first starts the fixed user service idempotently,
 then calls the secret-safe local control client. Installation enables the unit
