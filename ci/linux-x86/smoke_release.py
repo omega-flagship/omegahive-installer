@@ -73,8 +73,18 @@ def verify(user, output):
                               capture_output=True, text=True)
         return done.returncode == 0, (done.stderr.strip().splitlines() or [""])[-1]
 
+    def session_class(sid):
+        """The session's logind class, or None once logind no longer has it."""
+        done = subprocess.run(["loginctl", "show-session", sid, "-p", "Class", "--value"], capture_output=True, text=True)
+        return done.stdout.strip() if done.returncode == 0 else None
+
     def sessions():
-        return subprocess.check_output(["loginctl", "show-user", user, "-p", "Sessions", "--value"], text=True).split()
+        """The account's login sessions. From systemd 256 (Ubuntu 26.04 has 259) the user manager holds a session of
+        its own, class manager or manager-early, which no login opens and logging out leaves alone. Counted as a login,
+        it let "a login session is open" pass before su's session existed and left su's session out of the ones
+        logging out ends, so the smoke then waited for su's sleep to run out."""
+        listed = subprocess.check_output(["loginctl", "show-user", user, "-p", "Sessions", "--value"], text=True).split()
+        return [sid for sid in listed if (kind := session_class(sid)) is not None and not kind.startswith("manager")]
 
     def open_sessions(ids):
         """The sessions among ids that logind still counts as open; one being torn down reads State=closing."""
