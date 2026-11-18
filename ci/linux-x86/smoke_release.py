@@ -209,6 +209,33 @@ def verify(user, output):
         check("the hive's Code guard accepts its Code service", status == 404 and b"not_relayed" in body,
               f"{status} {body[:300]!r}")
 
+    def code_tests():
+        """Create's Code tab tests a proposal on Linux's own sandbox (deploy/linux/install.py code_service, serve.py and
+        bootstrap.py enable_proposal_tests): the small app is proposal-only with its tests on once Code has joined, the
+        hive runs with the project test pinned, allowed and claimable, and the release's pinned Node beside the sandbox's
+        Python answers with the version x86_64-pins.json pins."""
+        config = json.loads((home / ".local/share/omegahive/code/config.json").read_text())
+        small = config["repositories"]["small-app"]
+        check("Create's Code service tests proposals in the hive's sandbox",
+              config.get("proposal_tests_enabled") is True and config.get("sandbox_project_tests_enabled") is True
+              and small.get("execution_policy") == "proposal-only",
+              json.dumps({key: config.get(key) for key in ("proposal_tests_enabled", "sandbox_project_tests_enabled")}) + json.dumps(small))
+        shown = command("systemctl", "--user", "show", "-p", "MainPID", "omegahive.service")
+        pid = dict(line.split("=", 1) for line in shown.splitlines() if "=" in line)["MainPID"]
+        raw = pathlib.Path(f"/proc/{pid}/environ").read_bytes().decode("utf-8", "replace")
+        hive = dict(item.split("=", 1) for item in raw.split("\0") if "=" in item)
+        prefixes = json.loads(hive.get("HIVE_PROPOSAL_TEST_ARGV_PREFIXES") or "[]")
+        check("the hive runs proposal tests through its pinned project test",
+              hive.get("HIVE_PROPOSAL_TEST_CLAIMS") == "on" and hive.get("HIVE_CODE_SANDBOX_PROJECT_TESTS") == "on"
+              and "code-project-test" in hive.get("HIVE_SANDBOX_RUN_APPS", "").split(",")
+              and "code-project-test" in json.loads(hive.get("HIVE_APP_PINS") or "{}")
+              and len(prefixes) == 1 and prefixes[0][1:] == ["check_app.py"],
+              json.dumps({"prefixes": prefixes, "apps": hive.get("HIVE_SANDBOX_RUN_APPS")}))
+        pinned = json.loads(pathlib.Path(__file__).with_name("x86_64-pins.json").read_text())["node"]["version"]
+        version = command(str(pathlib.Path(prefixes[0][0]).with_name("node")), "--version").strip()
+        check("the Node beside the sandbox's Python is the pinned one", version == "v" + pinned, version)
+        facts["code_tests"] = {"node": version, "test_command": prefixes[0]}
+
     def make_on(call):
         """Create's Make, on in every install (hive/core/config.py): its plan list answers, as it does only while the
         plan engine runs, which needs no model, so the demonstration model's install shows it too."""
@@ -224,6 +251,7 @@ def verify(user, output):
         first_light(call)
         create_listed(call)
         code_service(call)
+        code_tests()
         make_on(call)
         check("status is available", bool(json.loads(command(cli, "status", "--json"))))
         command("systemctl", "--user", "restart", "omegahive.service")
@@ -251,6 +279,7 @@ def verify(user, output):
         check("owner survives user-manager restart", again == first)
         create_listed(call)
         code_service(call)
+        code_tests()
         make_on(call)
         facts["passed"] = True
     finally:

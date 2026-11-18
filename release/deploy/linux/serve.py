@@ -175,11 +175,16 @@ def runtime(path):
                     and re.fullmatch('(?:sha256:)?[a-f0-9]{64}', digest), 'app_file_pin')
     # Create's Code service: the portable omegacode release in the hive's own code folder (install.py code_service).
     code, hive = value['code_service'], expected.parent
-    require(type(code) is dict and set(code) == {'release', 'root', 'config', 'repository', 'port'}
+    # Its project test runs the hive's own code-project-test program, pinned by this release's reviewed source.
+    require(type(code) is dict and set(code) == {'release', 'root', 'config', 'repository', 'port', 'project_test'}
             and type(code['release']) is str and re.fullmatch('[a-f0-9]{64}', code['release'])
             and code['root'] == str(hive / 'code') and code['config'] == str(hive / 'code/config.json')
             and code['repository'] == str(hive / 'repos/small-app')
-            and type(code['port']) is int and code['port'] == 8724, 'code_service_record_required')
+            and type(code['port']) is int and code['port'] == 8724
+            and type(code['project_test']) is dict and set(code['project_test']) == {'release', 'digest'}
+            and code['project_test']['release'] == str(Path(value['release_root']) / 'hive/plugins/code_project_test')
+            and type(code['project_test']['digest']) is str
+            and re.fullmatch('sha256:[a-f0-9]{64}', code['project_test']['digest']), 'code_service_record_required')
     directory(code['root'], private=True)
     return value, home, hashlib.sha256(raw).hexdigest()
 
@@ -205,6 +210,9 @@ def main():
     loader_agreement(config)
     require(os.environ.get('HIVE_SANDBOX_PYTHON') == config['sandbox_python'],
             'user_unit_sandbox_interpreter_mismatch')
+    # The release's pinned apps, with Create's Code project test, the hive's own program a proposal's test runs on
+    # (install/macos/code-runtime.py prepare pins and allows it the same way on a Mac).
+    app_pins = {**config['app_pins'], 'code-project-test': config['code_service']['project_test']}
     # The unit's selected value is checked, then ALL inherited variables are dropped.
     env = {
         'HOME': str(home), 'LANG': 'C.UTF-8', 'LC_ALL': 'C.UTF-8',   # LC_ALL overrides LANG: UTF-8 MeTTa sources need it
@@ -224,7 +232,7 @@ def main():
         # The pinned apps are checked against their pins (hive/core/programs.py), but no pin is required of every app,
         # as Mac and WSL hives require none: an app Make deploys into <data>/create/apps is the person's own and has
         # no pin, and with HIVE_APP_PINS_REQUIRED the hive refused it ("unpinned"), so the deploy never finished.
-        'HIVE_APP_PINS': json.dumps(config['app_pins'], sort_keys=True, separators=(',', ':')),
+        'HIVE_APP_PINS': json.dumps(app_pins, sort_keys=True, separators=(',', ':')),
         'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null',
         'GIT_TERMINAL_PROMPT': '0', 'GIT_NO_LAZY_FETCH': '1', 'GIT_OPTIONAL_LOCKS': '0',
     }
@@ -233,7 +241,7 @@ def main():
     # The apps this release pins are the ones reviewed to run sandboxed tools (hive/core/sandbox_run.py's allowlist),
     # beside Create's acceptance check, which the hive itself ships (hive/plugins/create_acceptance_check, so no pin),
     # and with Studio pinned its live drawing is on: off a Mac nothing else gates it (hive/core/studio_sessions.py).
-    env['HIVE_SANDBOX_RUN_APPS'] = ','.join(sorted(config['app_pins']) + ['create-acceptance-check'])
+    env['HIVE_SANDBOX_RUN_APPS'] = ','.join(sorted(app_pins) + ['create-acceptance-check'])
     if 'omegadesign' in config['app_pins']:
         env['HIVE_STUDIO_SESSIONS'] = 'on'
     # Create's Make, on in every install (hive/core/config.py), needs what the Mac and WSL installers give every hive
@@ -246,7 +254,12 @@ def main():
     base = Path(sys.base_prefix)
     require(base == Path(config['runtime_root']) / 'runtime/python', 'selected_base_python_required')
     _, interpreter = executable(str(base / 'bin' / 'python{}.{}'.format(*sys.version_info[:2])), base)
-    env['HIVE_SANDBOX_RUNTIMES'] = json.dumps({'python': {'exe': str(interpreter), 'reads': [str(base)]}},
+    # A proposal's project check replaces itself with the node beside that interpreter, the release's pinned Node
+    # (install.py), so the sandbox reads Node's own folder too, as the Mac's reads its toolchain holding both.
+    node_root = Path(config['runtime_root']) / 'runtime/node'
+    _, node = executable(str(base / 'bin/node'), node_root, allow_link=True)
+    require(node == node_root / 'bin/node', 'release_node_required')
+    env['HIVE_SANDBOX_RUNTIMES'] = json.dumps({'python': {'exe': str(interpreter), 'reads': [str(base), str(node_root)]}},
                                               sort_keys=True, separators=(',', ':'))
     env['HIVE_PLUGIN_DIRS'] = os.pathsep.join(list(config['plugin_dirs']) + [str(Path(config['data_dir']) / 'create' / 'apps')])
     # Create's Code service: the release the hive's Code guard accepts and the config it reads the port from. The
@@ -258,7 +271,12 @@ def main():
                 'HIVE_COPY_APPLY_CLAIMS': 'on',
                 # Make starts each plan from the one repository the Code service registers, as
                 # install/macos/code-runtime.py names it for Mac and WSL hives; runtime() checked it is repos/small-app
-                'HIVE_CREATE_SCAFFOLD_REPO': Path(code['repository']).name})
+                'HIVE_CREATE_SCAFFOLD_REPO': Path(code['repository']).name,
+                # Create's Code tab tests a proposal as code-runtime.py prepare has a Mac hive do it, on Linux's own
+                # sandbox: the hive's code-project-test program runs the small app's check_app.py on that interpreter,
+                # the one command a claim may name (code_controller_client.py runs the operator's declared test).
+                'HIVE_CODE_SANDBOX_PROJECT_TESTS': 'on', 'HIVE_PROPOSAL_TEST_CLAIMS': 'on',
+                'HIVE_PROPOSAL_TEST_ARGV_PREFIXES': json.dumps([[str(interpreter), 'check_app.py']], separators=(',', ':'))})
     if config['libpython_dir'] is not None:
         env['LD_LIBRARY_PATH'] = config['libpython_dir']
     require(runtime(args.runtime)[2] == fingerprint, 'descriptor_changed_before_exec')

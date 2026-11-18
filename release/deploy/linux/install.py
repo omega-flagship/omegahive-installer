@@ -40,7 +40,9 @@ CORE_ROOTS = {"fastapi", "uvicorn", "httpx", "websockets", "pytest", "pillow"}
 APT = ("ca-certificates", "curl", "git", "build-essential", "cmake", "ninja-build",
        "pkg-config", "libssl-dev", "libgmp-dev", "libedit-dev", "libpcre2-dev",
        "libyaml-dev", "zlib1g-dev", "libarchive-dev", "sqlite3", "xz-utils", "acl", "util-linux",
-       "dbus-user-session", "xdg-utils", "procps", "apparmor", "patch")
+       "dbus-user-session", "xdg-utils", "procps", "apparmor", "patch",
+       # nodejs.org's Linux Node links libatomic, which build-essential brings only through gcc's own dependencies.
+       "libatomic1")
 SUPPORTED_UBUNTU = ("22.04", "24.04", "26.04")
 # A fresh Ubuntu installs its own updates soon after it starts and holds the package lock meanwhile; apt waits this long
 # for it (DPkg::Lock::Timeout) instead of failing the setup at once.
@@ -167,7 +169,7 @@ def validate_catalogue(value):
     need(type(value["platforms"]) is dict and set(value["platforms"]) == {"x86_64", "aarch64"},
          "Both Ubuntu architectures need a reviewed package set.")
     for selected in value["platforms"].values():
-        need(type(selected) is dict and set(selected) == {"uv", "python", "swipl_source", "petta_source",
+        need(type(selected) is dict and set(selected) == {"uv", "python", "node", "swipl_source", "petta_source",
                                                         "source_payload", "core_lock", "build_lock"},
              "A platform package set is incomplete.")
         for name, item in selected.items():
@@ -181,6 +183,9 @@ def validate_catalogue(value):
                 need(url.scheme == "https" and url.hostname in HOSTS and not url.username
                      and not url.password and not url.query and not url.fragment,
                      "A runtime download is not an approved public HTTPS artifact.")
+        # The Node a proposal's project check runs on: its pin names the version the installer checks it reports.
+        need(type(selected["node"].get("version")) is str
+             and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", selected["node"]["version"]), "The reviewed Node version is missing.")
         need(type(selected["source_payload"].get("files")) is list
              and 1 <= len(selected["source_payload"]["files"]) <= 5000, "The source file inventory is missing.")
         checked_members(selected["source_payload"]["files"])
@@ -589,6 +594,17 @@ def program_digest(folder, rows):
         need(not path.is_symlink(), "An app digest encountered a link.")
         digest.update(str(path.relative_to(folder)).encode() + b"\0" + path.read_bytes() + b"\0")
     return "sha256:" + digest.hexdigest()
+
+
+def code_registered(code):
+    """Whether Create's Code service has joined this hive, by its own record of the registration it made, as
+    install/macos/code-runtime.py registered() reads it: a fresh install or an update has none until bootstrap.py
+    enrols the service, and a rerun of setup keeps it."""
+    path = code / "state/registration.json"
+    if not present(path):
+        return False
+    value = json.loads(path.read_text(encoding="utf-8"))
+    return type(value) is dict and type(value.get("receipt")) is dict and value["receipt"].get("status") == "active"
 
 
 def code_releases(app):
@@ -1317,6 +1333,18 @@ class Installer:
                       + repr(self.catalogue["python_version"]) + " else 1)"], timeout=10)
             self.run([str(uv), "--no-config", "venv", "--python", str(python), str(runtime / "venv")], timeout=120)
             venv = materialize_venv_python(runtime / "venv/bin/python", python)
+            # Create's Code tab tests a proposal with the small app's check_app.py (install/macos/check-app.py), which
+            # replaces itself with the node beside the sandbox's Python, where the Mac's toolchain keeps one. The pinned
+            # Node goes in its own folder, linked beside runtime/python's interpreter; serve.py lets the sandbox read it.
+            noderoot = runtime / "runtime/node"
+            extract_tool(self.fetch(selected["node"]), noderoot)
+            node = noderoot / "bin/node"; plain(node)
+            nodelink = pybase / "bin/node"
+            if not nodelink.is_symlink():
+                os.symlink("../../node/bin/node", nodelink)
+            need(nodelink.resolve(strict=True) == node, "The Node beside Python is not this release's pinned Node.")
+            self.run([str(nodelink), "-e", "process.exit(process.version === "
+                      + json.dumps("v" + selected["node"]["version"]) + " ? 0 : 1)"], timeout=30)
             swisrc, pettasrc = runtime / "runtime/swipl-source", runtime / "runtime/PeTTa"
             extract_tool(self.fetch(selected["swipl_source"]), swisrc)
             extract_tool(self.fetch(selected["petta_source"]), pettasrc)
@@ -1338,7 +1366,7 @@ class Installer:
             self.run([str(venv), "-I", "-B", "-c", "import janus_swi as j; assert j.query_once('X is 1+1')['X'] == 2"], timeout=30)
             self.run([str(swipl), "-g", "use_module(library(janus)),py_call(operator:add(20,22),V),(V=:=42->halt(0);halt(1))"], timeout=30)
             self.omega_core(app, venv)
-            code = self.code_service(app, venv)
+            code = self.code_service(app, selected["source_payload"]["files"])
             data = self.root / "data"
             if not data.exists(): private_dir(data)
             plain(data, directory=True); need(stat.S_IMODE(data.stat().st_mode) == 0o700, "Your hive data folder must be private.")
@@ -1384,12 +1412,14 @@ class Installer:
              "The bundled Omega core is not the revision this release pins.")
         self.run([str(python), "-I", "-B", str(app / "scripts/setup_core.py"), "--source", str(bundle)], timeout=300)
 
-    def code_service(self, app, python):
+    def code_service(self, app, source_files):
         """Create · Code's service, set up as install/macos/setup-code.sh sets it up, all inside this hive's folder:
         the published omegacode release unpacked from the kit's pinned tarball and checked, made the portable release
         the hive accepts by the release's two adapters, checked again and left read-only; one disposable small-app
-        repository the minds build in, with the installer's project check; a private config and operator token; and
-        empty private working, home and temp folders. Rerunning keeps the release, repository, token and state."""
+        repository the minds build in, with the installer's project check, which tests each proposal in the hive's own
+        sandbox; a private config and operator token; and empty private working, home and temp folders. Rerunning keeps
+        the release, repository, token and state. `source_files` is the release source inventory, for the project
+        test's pin."""
         published, portable = code_releases(app)
         code = self.root / "code"
         private_dir(code)
@@ -1443,15 +1473,24 @@ class Installer:
         token = code / "operator-token"
         if not present(token):
             write_new(token, secrets.token_urlsafe(48).encode())
-        # install/macos/code-runtime.py prepare's config, as it writes it off a Mac: no proposal or project tests.
+        # install/macos/code-runtime.py prepare's config with a Mac's proposal tests, on Linux's own sandbox: the small
+        # app runs only retained proposal snapshots, through the hive's sandbox (proposal-only), whose Linux backend is
+        # Landlock in its own namespaces; the purpose listener those test runs answer to waits for enrolment, which
+        # bootstrap.py makes before it turns the listener on, as code-runtime.py enable does on a Mac.
         config = {"data_root": str(code / "state"), "operator_token_file": str(token), "port": CODE_PORT,
-                  "hive_url": "http://127.0.0.1:8700", "repositories": {"small-app": {"path": str(repo)}},
-                  "proposal_tests_enabled": False, "sandbox_project_tests_enabled": False,
+                  "hive_url": "http://127.0.0.1:8700",
+                  "repositories": {"small-app": {"path": str(repo), "execution_policy": "proposal-only"}},
+                  "proposal_tests_enabled": code_registered(code), "sandbox_project_tests_enabled": True,
                   "copy_effect_policy": {"kind": "disposable-app-files-v1", "repository_id": "small-app",
                                          "paths": ["index.html", "app.js", "style.css", "README.md"]}}
         atomic_json(code / "config.json", config)
+        # The hive runs a proposal's test only through its code-project-test program under a pin, which this release's
+        # reviewed source gives, by the digest install/macos/code-runtime.py project_pin takes (hive/core/programs.py).
+        plugin, prefix = app / "hive/plugins/code_project_test", "hive/plugins/code_project_test/"
+        rows = [dict(row, path=row["path"][len(prefix):]) for row in source_files if row["path"].startswith(prefix)]
+        project_test = {"release": str(plugin), "digest": program_digest(plugin, rows)}
         return {"release": portable, "root": str(code), "config": str(code / "config.json"),
-                "repository": str(repo), "port": CODE_PORT}
+                "repository": str(repo), "port": CODE_PORT, "project_test": project_test}
 
     def git_env(self):
         """git for the small-app repository only: no system or account configuration, no prompts."""

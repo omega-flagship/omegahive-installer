@@ -114,6 +114,8 @@ def release_fixture():
     source = {'path': 'source.tar.gz', 'bytes': 1, 'sha256': 'a' * 64, 'prefix': 'release', 'files': inventory()}
     platform = {name: {'url': 'https://releases.astral.sh/runtime/archive.tar.gz', 'bytes': 1, 'sha256': 'a' * 64}
                 for name in ('uv', 'python', 'swipl_source', 'petta_source')}
+    platform['node'] = {'url': 'https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-x64.tar.xz', 'bytes': 1,
+                        'sha256': 'a' * 64, 'version': '26.13.0'}
     platform.update(source_payload=source, core_lock={'path': 'core.lock'}, build_lock={'path': 'build.lock'})
     manifest_raw = json.dumps(ui_manifest(), sort_keys=True).encode()
     return {'schema': 'studio-linux-user-release/2', 'ready': True, 'release_id': 'fixture-release',
@@ -354,7 +356,9 @@ class KitContract(unittest.TestCase):
             kit.references({'schema': 'studio-linux-user-release/2', 'ready': True})
 
 
-    def test_release_v2_keeps_independent_ui_pins_and_refuses_legacy_node_inputs(self):
+    def test_release_v2_keeps_independent_ui_pins_and_only_a_versioned_runtime_node(self):
+        # The UI ships prebuilt, so no release names a Node to build it with; each platform pins the one Node a Code
+        # proposal's project check runs on, with its version.
         release = release_fixture()
         refs, _ = kit.references(release)
         self.assertNotEqual(release['source_revision'], release['ui_prebuilt']['source_revision'])
@@ -362,13 +366,16 @@ class KitContract(unittest.TestCase):
         self.assertIn(release['ui_prebuilt']['archive']['path'], refs)
         self.assertIn(release['ui_prebuilt']['manifest']['path'], refs)
         self.assertNotIn('node_version', release)
-        self.assertTrue(all('node' not in item for item in release['platforms'].values()))
+        self.assertTrue(all(item['node']['version'] == '26.13.0' for item in release['platforms'].values()))
         self.assertIn(release['omega_core']['path'], refs)
-        for variant in ('legacy-node-version', 'legacy-platform-node', 'missing-ui', 'missing-ui-manifest', 'shared-ui-path', 'unhashed-ui',
+        for variant in ('legacy-node-version', 'unversioned-platform-node', 'missing-platform-node', 'odd-node-host',
+                        'missing-ui', 'missing-ui-manifest', 'shared-ui-path', 'unhashed-ui',
                         'missing-omega-core', 'odd-omega-core-name', 'unhashed-omega-core'):
             bad = copy.deepcopy(release)
             if variant == 'legacy-node-version': bad['node_version'] = '20.0.0'
-            if variant == 'legacy-platform-node': bad['platforms']['x86_64']['node'] = dict(bad['platforms']['x86_64']['uv'])
+            if variant == 'unversioned-platform-node': bad['platforms']['x86_64']['node'] = dict(bad['platforms']['x86_64']['uv'])
+            if variant == 'missing-platform-node': del bad['platforms']['aarch64']['node']
+            if variant == 'odd-node-host': bad['platforms']['x86_64']['node']['url'] = 'https://example.com/node.tar.xz'
             if variant == 'missing-ui': del bad['ui_prebuilt']
             if variant == 'missing-ui-manifest': del bad['ui_prebuilt']['manifest']
             if variant == 'shared-ui-path': bad['ui_prebuilt']['manifest']['path'] = bad['ui_prebuilt']['archive']['path']

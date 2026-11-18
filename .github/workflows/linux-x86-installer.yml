@@ -372,6 +372,7 @@ jobs:
       - name: Open, sign in, restart, log out, and restart the user manager in the fresh Ubuntu
         run: |
           docker cp ci/linux-x86/smoke_release.py fresh:/root/smoke_release.py
+          docker cp ci/linux-x86/x86_64-pins.json fresh:/root/x86_64-pins.json
           docker exec fresh python3 /root/smoke_release.py verify "$HIVE_USER" /root/verification.json
       - name: Retain secret-free verification receipts
         if: always()

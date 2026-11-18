@@ -84,6 +84,7 @@ def main():
     x86 = {
         "uv": {k: pins["uv"][k] for k in ("url", "bytes", "sha256")},
         "python": {k: pins["python_stripped"][k] for k in ("url", "bytes", "sha256")},
+        "node": {k: pins["node"][k] for k in ("url", "bytes", "sha256", "version")},
         "swipl_source": arm["swipl_source"],
         "petta_source": arm["petta_source"],
         "source_payload": source,

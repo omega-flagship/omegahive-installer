@@ -209,6 +209,49 @@ class CreateTests(unittest.TestCase):
         self.assertTrue(bootstrap.failure_message(bootstrap.Refused()).startswith("The installed hive could not confirm"))
 
 
+class ProposalTestsTests(unittest.TestCase):
+    """bootstrap.enable_proposal_tests: Create's Code tab tests proposals once its service has joined the hive."""
+
+    @staticmethod
+    def setup_code(folder, enabled=False, policy="proposal-only"):
+        root = Path(folder) / "code"; root.mkdir(mode=0o700)
+        path = root / "config.json"
+        path.write_text(json.dumps({"port": 8724, "proposal_tests_enabled": enabled, "sandbox_project_tests_enabled": True,
+                                    "repositories": {"small-app": {"path": "/r", "execution_policy": policy}}}))
+        path.chmod(0o600)
+        return {"code_service": {"root": str(root), "config": str(path), "port": 8724}}
+
+    def test_tests_go_on_after_enrolment_and_the_service_restarts_into_them(self):
+        with tempfile.TemporaryDirectory() as folder:
+            config = self.setup_code(folder); CodeEnrolmentTests.register_as(config, CodeEnrolmentTests.NEW)
+            with unittest.mock.patch.object(bootstrap.subprocess, "run") as run, \
+                    unittest.mock.patch.object(bootstrap, "loopback_listener_owned", side_effect=[False, True]), \
+                    unittest.mock.patch.object(bootstrap.time, "sleep"):
+                bootstrap.enable_proposal_tests(config, bootstrap.time.monotonic() + 60)
+            path = Path(config["code_service"]["config"])
+            self.assertIs(json.loads(path.read_text())["proposal_tests_enabled"], True)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(run.call_args.args[0], ["/usr/bin/systemctl", "--user", "restart", "omegacode.service"])
+            self.assertEqual(run.call_args.kwargs["env"]["XDG_RUNTIME_DIR"], "/run/user/" + str(os.getuid()))
+
+    def test_a_service_already_testing_is_left_running(self):
+        with tempfile.TemporaryDirectory() as folder:
+            config = self.setup_code(folder, enabled=True); CodeEnrolmentTests.register_as(config, CodeEnrolmentTests.NEW)
+            with unittest.mock.patch.object(bootstrap.subprocess, "run") as run:
+                bootstrap.enable_proposal_tests(config, bootstrap.time.monotonic() + 60)
+            run.assert_not_called()
+
+    def test_a_service_not_joined_or_set_to_run_natively_is_refused(self):
+        for joined, policy in ((False, "proposal-only"), (True, "trusted-native")):
+            with self.subTest(joined=joined, policy=policy), tempfile.TemporaryDirectory() as folder:
+                config = self.setup_code(folder, policy=policy)
+                if joined:
+                    CodeEnrolmentTests.register_as(config, CodeEnrolmentTests.NEW)
+                with unittest.mock.patch.object(bootstrap.subprocess, "run") as run, self.assertRaises(bootstrap.Refused):
+                    bootstrap.enable_proposal_tests(config, bootstrap.time.monotonic() + 60)
+                run.assert_not_called()
+
+
 class CodeEnrolmentTests(unittest.TestCase):
     TOKEN = "t" * 48
     OLD, NEW = "svc_" + "0" * 32, "svc_" + "1" * 32
