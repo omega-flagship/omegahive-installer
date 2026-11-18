@@ -221,8 +221,10 @@ def main():
         'HIVE_ASK_CONDUCTOR_MODEL': config['default_model'],
         'HIVE_EMBEDDING_MODEL': config['embedding_model'],
         'HIVE_PLUGIN_DIRS': os.pathsep.join(config['plugin_dirs']),
+        # The pinned apps are checked against their pins (hive/core/programs.py), but no pin is required of every app,
+        # as Mac and WSL hives require none: an app Make deploys into <data>/create/apps is the person's own and has
+        # no pin, and with HIVE_APP_PINS_REQUIRED the hive refused it ("unpinned"), so the deploy never finished.
         'HIVE_APP_PINS': json.dumps(config['app_pins'], sort_keys=True, separators=(',', ':')),
-        'HIVE_APP_PINS_REQUIRED': '1',
         'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null',
         'GIT_TERMINAL_PROMPT': '0', 'GIT_NO_LAZY_FETCH': '1', 'GIT_OPTIONAL_LOCKS': '0',
     }

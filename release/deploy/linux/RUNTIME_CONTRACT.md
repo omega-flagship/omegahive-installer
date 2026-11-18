@@ -52,7 +52,10 @@ the selected venv Python as `-B -m hive` from release_root. The stdlib launcher
 itself runs as `python -I -B serve.py`. It checks the unit's
 HIVE_SANDBOX_PYTHON agrees with the descriptor, then drops inherited environment.
 The new environment has loopback/local-owner/sandbox enabled, explicit model choices,
-exact data/PeTTa/plugin paths, required app pins and scoped PATH. The sole optional
+exact data/PeTTa/plugin paths, the pinned apps' pins and scoped PATH. A pin is
+checked, not required of every app: an app Make deploys into
+`<data_dir>/create/apps` is the person's own and loads unpinned, as on the Mac.
+The sole optional
 loader value is the descriptor's LD_LIBRARY_PATH; no inherited suffix survives.
 No provider/Google identity secret, PYTHONPATH/PYTHONHOME or ambient HIVE setting
 is copied. Provider setup remains the existing First Light/private key flow.

@@ -151,7 +151,8 @@ class BoundaryTests(unittest.TestCase):
                 self.assertEqual(env['HIVE_DEFAULT_MODEL'], cfg['default_model'])
                 self.assertEqual(env['HIVE_ASK_CONDUCTOR_MODEL'], cfg['default_model'])
                 self.assertNotEqual(env['HIVE_DEFAULT_MODEL'], 'mock/echo')
-                self.assertEqual(env['HIVE_APP_PINS_REQUIRED'], '1')
+                # Pins are checked, not required of every app: Make's deployed apps are the person's own and unpinned
+                self.assertNotIn('HIVE_APP_PINS_REQUIRED', env)
                 self.assertEqual((env['XDG_RUNTIME_DIR'], env['HIVE_CODE_SERVICE_RELEASE'], env['HIVE_CODE_SERVICE_CONFIG'],
                                   env['HIVE_COPY_APPLY_CLAIMS']), ('/run/user/1000', 'e' * 64, cfg['code_service']['config'], 'on'))
                 if template is None:
