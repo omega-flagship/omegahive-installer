@@ -62,6 +62,7 @@ def release_catalogue(rows):
     artifact = {'url': 'https://github.com/publisher/releases/download/fixture/runtime.tar.gz',
                 'bytes': 1, 'sha256': 'a' * 64}
     platform = {name: dict(artifact) for name in ('uv', 'python', 'swipl_source', 'petta_source')}
+    platform['node'] = dict(artifact, url='https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-x64.tar.xz', version='26.13.0')
     platform.update(core_lock={'path': 'core.lock', 'bytes': 1, 'sha256': 'b' * 64},
                     build_lock={'path': 'build.lock', 'bytes': 1, 'sha256': 'b' * 64},
                     source_payload={'path': 'source.tar.gz', 'prefix': PREFIX, 'files': rows,

@@ -30,5 +30,12 @@
     "bytes": 34505639,
     "sha256": "ce4f6d0a6cfdb3bed6e44c2f9affd85943c76a42e25ad3a259002f31d6fb8a20",
     "publisher_check": "matches SHA256SUMS; mirrors the aarch64 catalogue's install_only_stripped choice"
+  },
+  "node": {
+    "version": "26.13.0",
+    "url": "https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-x64.tar.xz",
+    "bytes": 34083252,
+    "sha256": "d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997",
+    "publisher_check": "matches nodejs.org's v26.13.0 SHASUMS256.txt, whose signature gpgv checks against nodejs/release-keys (Richard Lau, C82FA3AE1CBEDC6BE46B9360C43CEC45C17AB93C), 18 Nov; the Node 26.13.0 the Mac and WSL conda-forge lock pins (install/macos/locks/conda-linux-64.txt)"
   }
 }

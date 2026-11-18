@@ -37,7 +37,7 @@ All 19 keys are mandatory; no extra keys or secrets:
 | default_model | Explicit non-mock openrouter/openai/anthropic model id; no credential |
 | embedding_model | Explicit model id, or mock/hash with that scope stated |
 | ssh_target | Nonsecret validated user@reachable-linux-host for exact SSH guidance, or explicit null (unconfigured) |
-| code_service | Create's Code service: `release` (64 hex), `root` exactly `<installation>/code`, `config` exactly `<installation>/code/config.json`, `repository` exactly `<installation>/repos/small-app`, `port` exactly 8724 |
+| code_service | Create's Code service: `release` (64 hex), `root` exactly `<installation>/code`, `config` exactly `<installation>/code/config.json`, `repository` exactly `<installation>/repos/small-app`, `port` exactly 8724, `project_test` the pin of the release's own `hive/plugins/code_project_test` (`release` that folder, `digest` its program digest) |
 
 Files/directories and ancestry must not be writable by another account; selected
 runtime folders must belong to the account. Named venv Python may be a leaf link
@@ -81,6 +81,15 @@ It starts after the hive and stops with it. Its release, state, token, temp, hom
 `~/.local/share/omegahive/code`; the small-app repository its builds change lives in `repos/small-app` and is kept, like
 conversations, unless uninstall is told DELETE. serve.py gives the hive its release, config and copy-apply claims, and
 its runtime directory, since the guard asks the user manager about the unit.
+
+Create's Code tab tests each proposal as a Mac hive does (install/macos/PROPOSAL_TESTS.md), on Linux's own sandbox:
+small-app is `proposal-only`, so Code runs only retained proposal snapshots, through the hive's code-project-test
+program, which runs the repository's check_app.py under Landlock in its own namespaces. serve.py pins that program by
+the release's own source, puts it on HIVE_SANDBOX_RUN_APPS, turns on HIVE_CODE_SANDBOX_PROJECT_TESTS and
+HIVE_PROPOSAL_TEST_CLAIMS, and allows the one test command `[<base interpreter>, check_app.py]`. The service's
+purpose listener, which those runs answer to, starts once it has joined the hive: install.py writes
+`proposal_tests_enabled` from the service's own registration, and bootstrap.py turns it on and restarts the service
+right after enrolling it.
 
 Exactly six placeholders exist: PYTHON is the named descriptor Python, SERVE
 the installed absolute serve.py, RUNTIME the fixed descriptor, WORKDIR the
@@ -197,7 +206,8 @@ there. It names the Code service's repository, small-app, as
 HIVE_CREATE_SCAFFOLD_REPO. HIVE_SANDBOX_RUNTIMES holds one runtime, python, for
 the acceptance check. That runtime is the environment's base interpreter,
 `runtime_root/runtime/python/bin/python3.12` as `sys.base_prefix` names it,
-with only `runtime_root/runtime/python` readable. The check's sandboxed tool
+with `runtime_root/runtime/python` and `runtime_root/runtime/node` readable, the second for the pinned Node the
+project check replaces itself with, linked beside the interpreter as `runtime/python/bin/node`. The check's sandboxed tool
 needs only the standard library, and the environment's own executable, a plain
 copy, finds its standard library only there. serve.py refuses with
 selected_base_python_required when its own interpreter is not an environment
@@ -251,8 +261,9 @@ schema/2 descriptor with fixed service8700 and browser8701; the control/serve lo
 and identity checks remain in force. v0.34's schema/3 adds the nineteenth key,
 code_service, for Create's Code service. The installer ships verified prebuilt `hive/ui/dist`
 from its separately pinned UI source commit/tree; host deploy-only changes may
-have another source identity. No Node/npm install, prerequisite or build runs
-on the user's machine. UI artifact/build-source metadata is retained separately
+have another source identity. No npm install, UI build or Node prerequisite runs
+on the user's machine; the one Node it gets is the pinned nodejs.org runtime each
+platform's `node` entry names with its version, which the installer checks it reports. UI artifact/build-source metadata is retained separately
 from the descriptor, without introducing environment, credential or authority fields.
 
 The installer validates the rendered unit using `systemd-analyze --user verify`

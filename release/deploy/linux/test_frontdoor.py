@@ -111,7 +111,9 @@ class BoundaryTests(unittest.TestCase):
                'ssh_target': None,
                'code_service': {'release': 'e' * 64, 'root': '/home/test/.local/share/omegahive/code',
                                 'config': '/home/test/.local/share/omegahive/code/config.json',
-                                'repository': '/home/test/.local/share/omegahive/repos/small-app', 'port': 8724}}
+                                'repository': '/home/test/.local/share/omegahive/repos/small-app', 'port': 8724,
+                                'project_test': {'release': '/selected/app/hive/plugins/code_project_test',
+                                                 'digest': 'sha256:' + 'c' * 64}}}
         # The venv's base interpreter, the install the venv was made from (install.py: runtime/python)
         base = '/selected/runtime/python'
         base_python = base + '/bin/python{}.{}'.format(*sys.version_info[:2])
@@ -128,7 +130,7 @@ class BoundaryTests(unittest.TestCase):
                  mock.patch.object(serve, 'runtime', return_value=(cfg, Path('/home/test'), 'pin')), \
                  mock.patch.object(serve, 'directory', side_effect=lambda value, private=False: Path(value)), \
                  mock.patch.object(serve, 'executable',
-                                   side_effect=lambda value, root, allow_link=False: (Path(value), Path(value))) as checked, \
+                                   side_effect=lambda value, root, allow_link=False: (Path(value), Path(root) / 'bin/node' if allow_link else Path(value))) as checked, \
                  mock.patch.object(serve.os, 'umask'), \
                  mock.patch.object(serve.os, 'chdir'), \
                  mock.patch.object(serve.os, 'execve') as execute:
@@ -164,9 +166,15 @@ class BoundaryTests(unittest.TestCase):
                 # without it), the check on the sandbox list, Create's apps folder last on the plugin path, and the
                 # Code service's repository as the scaffold
                 self.assertEqual(json.loads(env['HIVE_SANDBOX_RUNTIMES']),
-                                 {'python': {'exe': base_python, 'reads': [base]}})
-                checked.assert_called_once_with(base_python, Path(base))
-                self.assertEqual(env['HIVE_SANDBOX_RUN_APPS'], 'create-acceptance-check')
+                                 {'python': {'exe': base_python, 'reads': [base, '/selected/runtime/node']}})
+                self.assertEqual(checked.call_args_list, [mock.call(base_python, Path(base)),
+                                 mock.call(base + '/bin/node', Path('/selected/runtime/node'), allow_link=True)])
+                # Create's Code tab tests a proposal on Linux's own sandbox: the hive's pinned project test runs the
+                # small app's check_app.py on that interpreter, the one command a test claim may name.
+                self.assertEqual((env['HIVE_CODE_SANDBOX_PROJECT_TESTS'], env['HIVE_PROPOSAL_TEST_CLAIMS']), ('on', 'on'))
+                self.assertEqual(json.loads(env['HIVE_PROPOSAL_TEST_ARGV_PREFIXES']), [[base_python, 'check_app.py']])
+                self.assertEqual(json.loads(env['HIVE_APP_PINS']), {'code-project-test': cfg['code_service']['project_test']})
+                self.assertEqual(env['HIVE_SANDBOX_RUN_APPS'], 'code-project-test,create-acceptance-check')
                 self.assertEqual(env['HIVE_PLUGIN_DIRS'].split(os.pathsep), ['/selected/plugins', '/private/data/create/apps'])
                 self.assertEqual(env['HIVE_CREATE_SCAFFOLD_REPO'], 'small-app')
                 self.assertNotIn('HIVE_CREATE_PLAN_ENGINE', env)   # on by default (hive/core/config.py)
@@ -174,7 +182,7 @@ class BoundaryTests(unittest.TestCase):
         # With Studio pinned, its tools stay on the sandbox list ahead of the acceptance check and its live drawing is on.
         cfg.update(studio_maker_template=None, app_pins={'omegadesign': {'release': '/selected/apps/omegadesign'}})
         env = launch(selected)[0].call_args.args[2]
-        self.assertEqual(env['HIVE_SANDBOX_RUN_APPS'], 'omegadesign,create-acceptance-check')
+        self.assertEqual(env['HIVE_SANDBOX_RUN_APPS'], 'code-project-test,omegadesign,create-acceptance-check')
         self.assertEqual(env['HIVE_STUDIO_SESSIONS'], 'on')
         # A hive whose interpreter isn't a venv of the release's own Python never starts: Make's check would run on a
         # Python the installer never reviewed (a system /usr, or the venv itself when it isn't one).
@@ -574,7 +582,9 @@ class FixedBrowserRuntimeTests(unittest.TestCase):
             'swipl_bin': str(swipl), 'libpython_dir': None, 'studio_maker_template': None,
             'default_model': 'openrouter/example/real', 'embedding_model': 'mock/hash', 'ssh_target': None,
             'code_service': {'release': 'e' * 64, 'root': str(code), 'config': str(code / 'config.json'),
-                             'repository': str(home / '.local/share/omegahive/repos/small-app'), 'port': 8724}}
+                             'repository': str(home / '.local/share/omegahive/repos/small-app'), 'port': 8724,
+                             'project_test': {'release': str(app / 'hive/plugins/code_project_test'),
+                                              'digest': 'sha256:' + 'c' * 64}}}
         path = data.parent / 'runtime.json'
         return cfg, path
 
@@ -599,6 +609,8 @@ class FixedBrowserRuntimeTests(unittest.TestCase):
                       ('schema', 'studio-linux-user-runtime/2'), ('code_service', None),
                       ('code_service', dict(cfg['code_service'], port=8725)),
                       ('code_service', dict(cfg['code_service'], root='/elsewhere/code')),
+                      ('code_service', dict(cfg['code_service'], project_test={'release': '/elsewhere', 'digest': 'sha256:' + 'c' * 64})),
+                      ('code_service', {k: v for k, v in cfg['code_service'].items() if k != 'project_test'}),
                       ('missing_browser_port', None), ('unexpected', 1)]
             for key, value in faults:
                 bad = dict(cfg)

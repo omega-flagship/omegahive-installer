@@ -40,7 +40,7 @@ TEXT_SUFFIXES = {'.py', '.sh', '.md', '.txt', '.json', '.yaml', '.yml', '.toml',
                  '.css', '.svg', '.metta'}
 PUBLIC_HOSTS = {'github.com', 'files.pythonhosted.org',
                 'www.swi-prolog.org', 'download.swi-prolog.org', 'astral.sh',
-                'releases.astral.sh'}
+                'releases.astral.sh', 'nodejs.org'}
 
 
 class Refused(Exception):
@@ -475,14 +475,17 @@ def references(release):
     refs.add(code['path'])
     payload = None
     for platform in release['platforms'].values():
-        require(type(platform) is dict and set(platform) == {'uv', 'python', 'swipl_source',
+        require(type(platform) is dict and set(platform) == {'uv', 'python', 'node', 'swipl_source',
                 'petta_source', 'source_payload', 'core_lock', 'build_lock'}, 'closed_platform_inputs')
         if payload is None:
             payload = platform['source_payload']
         require(platform['source_payload'] == payload, 'one_identical_source_tarball_required')
         for key in ('source_payload', 'core_lock', 'build_lock'):
             refs.add(relative_name(platform[key]['path']))
-        for key in ('uv', 'python', 'swipl_source', 'petta_source'):
+        # The Node a proposal's project check runs on also names its version, which the installer checks it reports.
+        require(type(platform['node'].get('version')) is str
+                and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', platform['node']['version']), 'node_version_required')
+        for key in ('uv', 'python', 'node', 'swipl_source', 'petta_source'):
             item = platform[key]
             url = urlsplit(item['url'])
             require(url.scheme == 'https' and url.hostname in PUBLIC_HOSTS and not url.username

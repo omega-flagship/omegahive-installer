@@ -39,6 +39,7 @@ def catalogue():
     artifact = {'url': 'https://github.com/publisher/releases/download/reviewed/archive.tar.gz',
                 'bytes': 1, 'sha256': 'a' * 64}
     platform = {key: dict(artifact) for key in ('uv', 'python', 'swipl_source', 'petta_source')}
+    platform['node'] = dict(artifact, url='https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-x64.tar.xz', version='26.13.0')
     platform.update({key: {'path': 'payload/' + key, 'bytes': 1, 'sha256': 'b' * 64}
                      for key in ('core_lock', 'build_lock', 'source_payload')})
     modules = [row('deploy/linux/' + name) for name in ('install.py', 'control.py', 'serve.py', 'omegahive.service.in', 'omegacode.service.in')]
@@ -742,25 +743,29 @@ class InstallerTests(unittest.TestCase):
         value = catalogue()
         self.assertIs(install.validate_catalogue(value), value)
         self.assertNotEqual(value['ui_prebuilt']['source_revision'], value['source_revision'])
-        for mutation in ('legacy_schema', 'node_version', 'platform_node', 'missing_ui', 'ui_prefix'):
+        for mutation in ('legacy_schema', 'node_version', 'unversioned_node', 'missing_ui', 'ui_prefix'):
             value = catalogue()
             if mutation == 'legacy_schema': value['schema'] = 'studio-linux-user-release/1'
             elif mutation == 'node_version': value['node_version'] = '22.1.0'
-            elif mutation == 'platform_node': value['platforms']['aarch64']['node'] = dict(value['platforms']['aarch64']['uv'])
+            elif mutation == 'unversioned_node': value['platforms']['aarch64']['node'] = dict(value['platforms']['aarch64']['uv'])
             elif mutation == 'missing_ui': value.pop('ui_prebuilt')
             else: value['ui_prebuilt']['prefix'] = 'untrusted/'
             with self.subTest(mutation=mutation), self.assertRaises(install.Refused): install.validate_catalogue(value)
 
-    def test_installer_has_no_node_or_npm_execution_or_prerequisite(self):
+    def test_installer_runs_node_only_as_the_pinned_runtime_and_never_npm_or_a_ui_build(self):
+        # The UI ships prebuilt, so no npm, npx or corepack runs and nothing is built with Node; the one Node the
+        # installer runs is the pinned nodejs.org runtime a Code proposal's project check uses, asked its version.
         tree = ast.parse(Path(install.__file__).read_text())
         cls = next(x for x in tree.body if isinstance(x, ast.ClassDef) and x.name == 'Installer')
         body = next(x for x in cls.body if isinstance(x, ast.FunctionDef) and x.name == 'install')
         names = {x.id for x in ast.walk(body) if isinstance(x, ast.Name)}
-        self.assertTrue(names.isdisjoint({'node', 'npm', 'noderoot'}))
-        for call in [x for x in ast.walk(body) if isinstance(x, ast.Call) and isinstance(x.func, ast.Attribute) and x.func.attr in {'run', 'fetch'}]:
-            text = ast.unparse(call)
-            self.assertNotIn('bin/node', text); self.assertNotIn('bin/npm', text)
-            self.assertNotIn("['node']", text); self.assertNotIn("['npm']", text)
+        self.assertTrue(names.isdisjoint({'npm', 'npx', 'corepack'}))
+        runs = [ast.unparse(x) for x in ast.walk(body) if isinstance(x, ast.Call) and isinstance(x.func, ast.Attribute) and x.func.attr == 'run']
+        self.assertEqual([text for text in runs if 'nodelink' in text or 'node' in text.split(',')[0]],
+                         [text for text in runs if 'process.version' in text])
+        self.assertEqual(len([text for text in runs if 'process.version' in text]), 1)
+        for text in runs:
+            self.assertNotIn('bin/npm', text); self.assertNotIn('npx', text); self.assertNotIn("['npm']", text)
         self.assertTrue(set(install.APT).isdisjoint({'nodejs', 'npm'}))
         self.assertNotIn('node_version', catalogue())
 
@@ -894,6 +899,8 @@ class InstallerTests(unittest.TestCase):
             def tool(_archive, destination):
                 destination.mkdir(parents=True)
                 if destination.name == 'uv': (destination / 'uv').write_bytes(b'never executed')
+                if destination.name == 'node':
+                    (destination / 'bin').mkdir(); (destination / 'bin/node').write_bytes(b'never executed')
                 if destination.name == 'python':
                     (destination / 'bin').mkdir(); (destination / 'lib').mkdir()
                     (destination / 'bin/python3.12').write_bytes(b'never executed')
@@ -1337,6 +1344,8 @@ class NativePackageCompilerTests(unittest.TestCase):
             def tool(_archive, destination):
                 destination.mkdir(parents=True)
                 if destination.name == "uv": (destination / "uv").write_bytes(b"never executed")
+                if destination.name == "node":
+                    (destination / "bin").mkdir(); (destination / "bin/node").write_bytes(b"never executed")
                 if destination.name == "python":
                     (destination / "bin").mkdir(); (destination / "lib").mkdir()
                     (destination / "bin/python3.12").write_bytes(b"never executed")
@@ -1530,6 +1539,21 @@ class CodeServiceTests(unittest.TestCase):
             (package / 'sub/__pycache__/c.py').write_text('skipped\n'); (package / 'data.json').write_text('{}')
             self.assertEqual(install.module_digest(package), namespace['_module_digest'](package))
 
+    def test_project_test_pin_is_the_hives_own_program_digest(self):
+        # The hive runs code-project-test only when its digest matches the pin (hive/core/programs.py), so the
+        # installer's independent digest of the release's own program must be the hive's, taken from its source.
+        release = Path(__file__).parents[2]
+        tree = ast.parse((release / 'hive/core/programs.py').read_text())
+        programs = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'Programs')
+        method = next(n for n in programs.body if isinstance(n, ast.FunctionDef) and n.name == '_source_snapshot')
+        method.decorator_list = []
+        namespace = {'hashlib': hashlib}
+        exec(compile(ast.Module(body=[method], type_ignores=[]), 'programs.py', 'exec'), namespace)
+        plugin = release / 'hive/plugins/code_project_test'
+        rows = [{'path': str(p.relative_to(plugin)), 'bytes': p.stat().st_size, 'sha256': hashlib.sha256(p.read_bytes()).hexdigest(),
+                 'mode': '100644'} for p in sorted(plugin.rglob('*')) if p.is_file() and '__pycache__' not in p.parts]
+        self.assertEqual(install.program_digest(plugin, rows), namespace['_source_snapshot'](plugin)[0])
+
     def test_release_pins_are_read_from_the_hive_source_without_importing_it(self):
         published, portable = install.code_releases(Path(__file__).parents[2])
         self.assertRegex(published, '^[a-f0-9]{64}$'); self.assertRegex(portable, '^[a-f0-9]{64}$')
@@ -1541,8 +1565,19 @@ class CodeServiceTests(unittest.TestCase):
                 install.code_releases(Path(name))
 
     def synthetic(self, base):
-        """A release app folder, an omegacode tarball and the two adapters, as the kit and release carry them."""
+        """A release app folder, an omegacode tarball and the two adapters, as the kit and release carry them, with the
+        hive's code-project-test program and its rows in the release's source inventory."""
         app = base / 'app'; (app / 'hive/core').mkdir(parents=True); (app / 'install/macos').mkdir(parents=True)
+        plugin = app / 'hive/plugins/code_project_test'; (plugin / 'tools').mkdir(parents=True)
+        files = {'plugin.json': b'{"id": "code-project-test"}\n', 'program.py': b'PROGRAM = 1\n',
+                 'tools/run.py': b'RUN = 1\n', 'tools/bundle.lock.json': b'{}\n'}
+        rows = []
+        for rel, raw in files.items():
+            (plugin / rel).write_bytes(raw)
+            rows.append({'path': 'hive/plugins/code_project_test/' + rel, 'bytes': len(raw),
+                         'sha256': hashlib.sha256(raw).hexdigest(), 'mode': '100644'})
+        rows.append(dict(rows[0], path='hive/core/code.py'))
+        self.rows = rows
         package = base / 'build/omegacode'; package.mkdir(parents=True)
         (package / '__init__.py').write_text('PORT = 8724\n'); (package / '__main__.py').write_text('MODE = "published"\n')
         published = install.module_digest(package)
@@ -1572,12 +1607,19 @@ class CodeServiceTests(unittest.TestCase):
             with open(os.devnull, 'wb') as log:
                 instance.log = log
                 with patch.object(instance, 'local', return_value=archive):
-                    record = instance.code_service(app, Path('/unused-python'))
-                    again = instance.code_service(app, Path('/unused-python'))
+                    record = instance.code_service(app, self.rows)
+                    again = instance.code_service(app, self.rows)
             code = instance.root / 'code'
+            plugin = app / 'hive/plugins/code_project_test'
             self.assertEqual(record, again)
             self.assertEqual(record, {'release': portable, 'root': str(code), 'config': str(code / 'config.json'),
-                                      'repository': str(instance.root / 'repos/small-app'), 'port': 8724})
+                                      'repository': str(instance.root / 'repos/small-app'), 'port': 8724,
+                                      'project_test': {'release': str(plugin), 'digest': record['project_test']['digest']}})
+            # The pin covers the program's manifest and Python, not its data, by the hive's own recipe.
+            digest = hashlib.sha256()
+            for rel in ('plugin.json', 'program.py', 'tools/run.py'):
+                digest.update(rel.encode() + b'\0' + (plugin / rel).read_bytes() + b'\0')
+            self.assertEqual(record['project_test']['digest'], 'sha256:' + digest.hexdigest())
             release = code / 'releases' / portable / 'omegacode'
             self.assertEqual((release / '__init__.py').read_text(), 'PORT = 8725\n')
             self.assertFalse(any(path.stat().st_mode & 0o222 for path in release.rglob('*') if path.is_file()))
@@ -1588,7 +1630,18 @@ class CodeServiceTests(unittest.TestCase):
             token = code / 'operator-token'
             self.assertEqual(token.stat().st_mode & 0o777, 0o600); self.assertGreaterEqual(len(token.read_text()), 43)
             config = json.loads((code / 'config.json').read_text())
-            self.assertEqual((config['port'], config['hive_url'], config['proposal_tests_enabled']), (8724, 'http://127.0.0.1:8700', False))
+            # Proposal tests on Linux's own sandbox: the small app runs only retained proposal snapshots, and the
+            # listener those tests answer to stays off until the service is enrolled (bootstrap.py turns it on).
+            self.assertEqual((config['port'], config['hive_url'], config['proposal_tests_enabled'],
+                              config['sandbox_project_tests_enabled'], config['repositories']['small-app']),
+                             (8724, 'http://127.0.0.1:8700', False, True,
+                              {'path': str(instance.root / 'repos/small-app'), 'execution_policy': 'proposal-only'}))
+            # What omegacode's registration.py leaves once the service has joined: its receipt, active.
+            (code / 'state/registration.json').write_text(json.dumps({'receipt': {'status': 'active'}}))
+            with open(os.devnull, 'wb') as log, patch.object(instance, 'local', return_value=archive):
+                instance.log = log
+                instance.code_service(app, self.rows)
+            self.assertIs(json.loads((code / 'config.json').read_text())['proposal_tests_enabled'], True)
             repo = instance.root / 'repos/small-app'
             self.assertEqual(sorted(p.name for p in repo.iterdir()), ['.git', 'README.md', 'app.js', 'check_app.py', 'index.html', 'style.css'])
             log = subprocess.run(['/usr/bin/git', '-C', str(repo), 'log', '--format=%an %s'], capture_output=True, text=True,
@@ -1608,5 +1661,5 @@ class CodeServiceTests(unittest.TestCase):
             instance.run = lambda argv, **kwargs: commands.append(argv)
             with patch.object(instance, 'local', return_value=archive), \
                     self.assertRaisesRegex(install.Refused, 'not the published release'):
-                instance.code_service(app, Path('/unused-python'))
+                instance.code_service(app, self.rows)
             self.assertEqual(commands, [])

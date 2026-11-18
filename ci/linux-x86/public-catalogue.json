@@ -560,6 +560,12 @@
         "path": "core.lock",
         "sha256": "725d90dd79980b3548d2d277028d8fb5e5cecca09dde4f16bffce816b283330d"
       },
+      "node": {
+        "bytes": 33049732,
+        "sha256": "406fe3fbde1c054adff8b297c16fdb5af6659db327c1ac8acd46b56ef1af9a92",
+        "url": "https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-arm64.tar.xz",
+        "version": "26.13.0"
+      },
       "petta_source": {
         "bytes": 120306,
         "sha256": "de1e2474b902895f5373fc833ed45341f16e0d283ae957ccb323df42200ce397",

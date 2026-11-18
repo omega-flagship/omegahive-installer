@@ -16,11 +16,12 @@ import pwd
 import re
 import socket
 import stat
+import subprocess
 import sys
 import time
 import types
 
-CONTROL_PIN = (27643, "a5a407577365be37c5090a98d00ddd497cb261742f806872c7b895523f68d871")
+CONTROL_PIN = (28140, "1b1971c0df6a611e8bc61d06647ae1ee96f49aaafb51b751091df2ae9b4df803")
 MAX_BODY = 256 * 1024
 STUDIO = "omegadesign"
 # Create's Code service, by the name the hive's service registry and Code guard know it (hive/core/code.py).
@@ -351,6 +352,34 @@ def enrol_code(api, config):
             api.request("DELETE", "/api/services/" + str(row.get("id")))
 
 
+def enable_proposal_tests(config, deadline):
+    """Create's Code tab tests a proposal once the Code service has joined this hive, as install/macos/code-runtime.py
+    enable and omegahive.sh create do on a Mac: the service's purpose listener, which the hive's test runs answer to,
+    starts only with proposal_tests_enabled, and install.py writes that off until the service is enrolled. So once
+    enrol_code has made the registration this turns it on and restarts the service, which keeps its registration."""
+    code = config["code_service"]
+    require(code_registration(code["root"]) is not None, "Create's Code service has not joined your hive.")
+    path = Path(code["config"])
+    value = strict_json(read_owned(path, private=True))
+    require(type(value) is dict and value.get("sandbox_project_tests_enabled") is True
+            and value.get("repositories", {}).get("small-app", {}).get("execution_policy") == "proposal-only",
+            "Create's Code service isn't set up to test proposals in the hive's sandbox.")
+    if value.get("proposal_tests_enabled") is True:
+        return
+    value["proposal_tests_enabled"] = True
+    temporary = path.with_name(path.name + ".new")
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as output:
+        output.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    os.replace(temporary, path)
+    subprocess.run(["/usr/bin/systemctl", "--user", "restart", CODE + ".service"], check=True, timeout=90,
+                   stdin=subprocess.DEVNULL, env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
+                                                  "XDG_RUNTIME_DIR": "/run/user/" + str(os.getuid())})
+    while not loopback_listener_owned(code["port"]):
+        require(time.monotonic() + 1 < deadline, "Create's Code service did not come back after turning on its tests.")
+        time.sleep(0.5)
+
+
 def create_controller(api):
     """The Create · Code controller's row, once the foundation has made it (at start, or at this sign-in)."""
     while True:
@@ -424,6 +453,7 @@ def bootstrap(runtime):
         api.login(signin.pop("code", None), hello["owner"])
         signin.clear()
         enrol_code(api, config)
+        enable_proposal_tests(config, api.deadline)
         put_in_create(api, studio_pin(config))
     finally:
         signin.clear(); api.logout()

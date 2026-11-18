@@ -187,11 +187,16 @@ def runtime(path):
                     and re.fullmatch('(?:sha256:)?[a-f0-9]{64}', digest), 'app_file_pin')
     # Create's Code service: the portable omegacode release in the hive's own code folder (install.py code_service).
     code, hive = value['code_service'], expected.parent
-    require(type(code) is dict and set(code) == {'release', 'root', 'config', 'repository', 'port'}
+    # Its project test runs the hive's own code-project-test program, pinned by this release's reviewed source.
+    require(type(code) is dict and set(code) == {'release', 'root', 'config', 'repository', 'port', 'project_test'}
             and type(code['release']) is str and re.fullmatch('[a-f0-9]{64}', code['release'])
             and code['root'] == str(hive / 'code') and code['config'] == str(hive / 'code/config.json')
             and code['repository'] == str(hive / 'repos/small-app')
-            and type(code['port']) is int and code['port'] == 8724, 'code_service_record_required')
+            and type(code['port']) is int and code['port'] == 8724
+            and type(code['project_test']) is dict and set(code['project_test']) == {'release', 'digest'}
+            and code['project_test']['release'] == str(Path(value['release_root']) / 'hive/plugins/code_project_test')
+            and type(code['project_test']['digest']) is str
+            and re.fullmatch('sha256:[a-f0-9]{64}', code['project_test']['digest']), 'code_service_record_required')
     directory(code['root'], private=True)
     return value, home, hashlib.sha256(raw).hexdigest()
 
