@@ -1,21 +1,27 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { ApiError } from '../../api/client'
 import { useHive } from '../../store/store'
-import { KEY_PROVIDERS, keyForm, orSeparator, readKey, type ProviderName } from '../keys/keyProvider'
+import { KEY_PROVIDERS, keyForm, orSeparator, readKey, type CopiedKey, type ProviderName } from '../keys/keyProvider'
 import { addKeyRefusalWords } from '../keys/ownLimit'
 import { startingLimitWords } from '../keys/startingLimit'
 import { LEAD_PROVIDER } from './plans'
 
 const OTHERS = KEY_PROVIDERS.filter((p) => p !== LEAD_PROVIDER)
 
-/** One press of the card's Paste button: `key`, the key found in what was copied (null: none, or the browser would not
- *  read it), and `hint`, the line saying what to do next; `n` counts the presses, so pressing again pastes again. */
+/** One press of the card's Paste button: `key`, the key found in what was copied (null: none, more than one, or the
+ *  browser would not read it), and `hint`, the line saying what to do next; `n` counts the presses, so pressing again
+ *  pastes again. */
 export interface Paste { n: number; key: string | null; hint: string }
 
-/** What the field says after a press of Paste: the key is in, or how to paste it by hand. `how`: a Mac (or iPad)
- *  keyboard, another keyboard, or a touch screen. */
-export function pasteHint(found: 'pasted' | 'none' | 'unreadable', how: 'mac' | 'ctrl' | 'touch'): string {
-  if (found === 'pasted') return 'Your key is in. Press Add key.'
+/** What the field says after a press of Paste, by what the copied text held (keyIn), or `unreadable` when the browser
+ *  would not read it: a key whose start names its provider is in; a word whose start names none is in, but it may be
+ *  something else that was copied, such as a password, so the person checks it before it goes; more than one key, so
+ *  the person copies just one; or no key, with how to paste by hand. `how`: a Mac (or iPad) keyboard, another
+ *  keyboard, or a touch screen. */
+export function pasteHint(found: CopiedKey['kind'] | 'unreadable', how: 'mac' | 'ctrl' | 'touch'): string {
+  if (found === 'named') return 'Your key is in. Press Add key.'
+  if (found === 'unnamed') return `Check this is your ${LEAD_PROVIDER.label} key before pressing Add key.`
+  if (found === 'several') return 'What you copied has more than one key in it. Copy just the one you want, then press Paste again.'
   const keys = how === 'touch' ? 'Touch and hold the field, then choose Paste.' : `Click the field and press ${how === 'mac' ? '⌘' : 'Ctrl'} and V together.`
   return found === 'none' ? `There's no key in what you copied. Copy the key, then press Paste again, or ${keys.charAt(0).toLowerCase()}${keys.slice(1)}` : keys
 }
@@ -58,7 +64,7 @@ export function InlineKey({ disabled, focus, paste, onSaved }: { disabled: boole
   const reading = readKey(secret)
   // said only when the key is not the OpenRouter key the field asks for, so nobody wonders where it went
   const note = reading.kind === 'known' && p !== LEAD_PROVIDER ? `${p.label} key, read from how it starts (${p.prefix}).`
-    : reading.kind === 'unknown' ? `Its start names no provider, so it goes to ${LEAD_PROVIDER.label}.` : ''
+    : reading.kind === 'unknown' ? `Its start doesn’t match any company’s keys, so it goes to ${LEAD_PROVIDER.label}.` : ''
   const noteId = useId()
   const sent = secret.trim()
   const blocked = disabled || busy || !sent || refused?.secret === sent
@@ -83,7 +89,7 @@ export function InlineKey({ disabled, focus, paste, onSaved }: { disabled: boole
   return (
     <div className="fl-u1-key" role="group" aria-label={`Paste an ${LEAD_PROVIDER.label} key`} data-fl-inline-key="">
       <label className="fl-field">
-        <span>{p.label} API key</span>
+        <span>{p.label} key</span>
         <input ref={input} className="fl-input" type="password" autoComplete="off" spellCheck={false} autoFocus={focus} value={secret} onChange={(e) => setSecret(e.target.value)} placeholder={`${p.prefix}…`} aria-describedby={noteId} disabled={disabled || busy} />
       </label>
       <p id={noteId} aria-live="polite" className="fl-small">{note}</p>
@@ -101,7 +107,7 @@ export function InlineKey({ disabled, focus, paste, onSaved }: { disabled: boole
         One {LEAD_PROVIDER.label} key reaches every model. Get one at <a href={LEAD_PROVIDER.url} target="_blank" rel="noreferrer">{LEAD_PROVIDER.url.replace(/^https:\/\//, '')}</a>.
       </p>
       <p className="fl-small">
-        A key from {OTHERS.map((x, i) => orSeparator(i, OTHERS.length) + x.label).join('')} works too; how it starts says which. Every key is checked with its provider before it is saved.
+        A key from {OTHERS.map((x, i) => orSeparator(i, OTHERS.length) + x.label).join('')} works too; how it starts says which. Every key is checked with the company it’s from before it’s saved.
       </p>
     </div>
   )

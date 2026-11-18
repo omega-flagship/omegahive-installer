@@ -26,7 +26,7 @@ import time
 
 import httpx
 
-from .config import is_subscription
+from .config import is_free, is_subscription
 from .keyids import KEY_ID
 from .redact import provider_error_text, register as register_secret
 
@@ -35,7 +35,8 @@ ANSWER_TTL = 60.0  # process-local evidence, never a background probe or admissi
 ENDPOINTS_TTL = 900
 OPENROUTER = "openrouter"
 LABELS = {"mock": "Offline", "anthropic": "Anthropic", "openai": "OpenAI", "openrouter": "OpenRouter", "local": "Local server",
-          "subscription-cli": "AI subscription (this Mac)", "subscription-codex": "ChatGPT subscription (this Mac)"}
+          "subscription-cli": "AI subscription (this Mac)", "subscription-codex": "ChatGPT subscription (this Mac)",
+          "asicloud": "ASI Cloud", "free": "Free inference"}
 
 
 def owner_mark(principal):
@@ -265,6 +266,8 @@ class ProviderStore:
 
     def env_key_view(self, name, usage=None, minds=None):
         provider = self.provider(name)
+        if is_free(name):
+            return None   # the deploy's key: never a row anyone sees (free_inference.py)
         secret = os.environ.get(provider.key_env, "") if provider.key_env else ""
         if not secret:
             return None
@@ -309,7 +312,7 @@ class ProviderStore:
         secret = str(secret or "").strip()
         if not secret:
             raise ProviderError(400, "bad_request", "key is required")
-        if provider.local or provider_name == "mock" or is_subscription(provider_name):
+        if provider.local or provider_name == "mock" or is_subscription(provider_name) or is_free(provider_name):
             raise ProviderError(400, "no_key_needed", f"{provider_name} does not take a key")
         # duplicates are per owner (sol on 46f13f98): only the caller's OWN stored copy of this exact secret is refused,
         # found as own_key finds it (constant time, every record). Another person's copy has no effect at all: the add
@@ -496,8 +499,10 @@ class ProviderStore:
 
     def status(self, name):
         provider = self.provider(name)
+        free = is_free(name)
         default_id = self.ring["defaults"].get(name)
-        env = bool(provider.key_env and os.environ.get(provider.key_env))
+        # the free route's key is the deploy's: it never counts as a key, a source, a hint or an account anyone sees
+        env = bool(provider.key_env and os.environ.get(provider.key_env)) and not free
         source = "stored" if default_id else "env" if env else None
         readiness = self._readiness(name)
         # Legacy "connected" means configured, not evidence that a model answered.
@@ -505,18 +510,23 @@ class ProviderStore:
             r["provider"] == name for r in self.ring["keys"].values())
         out = {
             "name": name, "label": LABELS.get(name, name.capitalize()), "local": provider.local,
-            "needs_key": not provider.local and name != "mock" and not is_subscription(name), "connected": connected, "source": source,
+            "needs_key": not provider.local and name != "mock" and not is_subscription(name) and not free,
+            "connected": connected, "source": source,
             "configured": connected, "answer_ready": readiness == "answered",
             "test_only": readiness == "test_only", "readiness": readiness,
             # the subscription bridge's key is never hinted, even in part (it is the bridge's door, not a paying key)
-            "key_hint": self.hint(provider.api_key) if provider.api_key and not is_subscription(name) else "",
+            "key_hint": self.hint(provider.api_key) if provider.api_key and not (is_subscription(name) or free) else "",
             "key_env": provider.key_env, "base_url": provider.base_url, "models": list(provider.models),
             "keys": sum(1 for r in self.ring["keys"].values() if r["provider"] == name) + (1 if env else 0),
-            "account": self.accounts.get(default_id or f"env:{name}"),
+            "account": None if free else self.accounts.get(default_id or f"env:{name}"),
         }
         if name == OPENROUTER:
             out["catalog"] = {"count": len(self.catalog["models"]), "fetched_at": self.catalog["fetched_at"] or None,
                               "error": self.catalog["error"]}
+        if free:
+            from .free_inference import daily_cap, hive_daily_cap
+            # the model calls a day a person can make on it (free_inference.FreeGate): none while either cap admits none
+            out["daily_calls"] = daily_cap() if hive_daily_cap() > 0 else 0
         return out
 
     def list(self):
@@ -532,7 +542,7 @@ class ProviderStore:
 
     async def account(self, name):
         key_id = self.ring["defaults"].get(name) or f"env:{name}"
-        if not self.provider(name).api_key:
+        if not self.provider(name).api_key or is_free(name):   # the deploy's key is never checked or described
             return None
         return await self.refresh_account(key_id)
 

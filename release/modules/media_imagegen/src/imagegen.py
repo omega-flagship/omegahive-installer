@@ -1,3 +1,5 @@
+"""Purpose: the image generator: make an image from a prompt, inside a hive through the host's metered media route
+and otherwise with xAI's image API, keeping a directly made image in the mind's memory folder under outbox/images."""
 import base64
 import json
 import os
@@ -6,8 +8,6 @@ import re
 import time
 import urllib.request
 
-OUTBOX = pathlib.Path(__file__).resolve().parents[1] / "memory" / "outbox" / "images"
-OUTBOX_ROOT = pathlib.Path(__file__).resolve().parents[1] / "memory" / "outbox"
 ENDPOINT = os.environ.get("XAI_IMAGE_ENDPOINT", "https://api.x.ai/v1/images/generations")
 DEFAULT_MODEL = os.environ.get("XAI_IMAGE_MODEL", "grok-imagine-image")
 QUALITY_MODEL = os.environ.get("XAI_IMAGE_QUALITY_MODEL", "grok-imagine-image-quality")
@@ -25,12 +25,22 @@ def _slug(text):
     return "_".join(words) or "image"
 
 
+def memory_dir():
+    """The mind's memory folder, where the images it makes are kept: OMEGACLAW_MEMORY_DIR when a hive runs the mind,
+    else the memory folder of the checkout this file runs from (the nearest folder above it holding modules/), the
+    folder the vision sense reads."""
+    here = pathlib.Path(__file__).resolve()
+    checkout = next((folder for folder in here.parents if (folder / "modules").is_dir()), here.parents[1])
+    return pathlib.Path(os.environ.get("OMEGACLAW_MEMORY_DIR") or checkout / "memory").resolve()
+
+
 def _write_bytes(prompt, image_bytes):
-    OUTBOX.mkdir(parents=True, exist_ok=True)
+    outbox = memory_dir() / "outbox"
+    (outbox / "images").mkdir(parents=True, exist_ok=True)
     filename = f"{int(time.time())}_{_slug(prompt)}.jpg"
-    target = OUTBOX / filename
+    target = outbox / "images" / filename
     target.write_bytes(image_bytes)
-    artifact_id = "outbox:" + target.relative_to(OUTBOX_ROOT).as_posix()
+    artifact_id = "outbox:" + target.relative_to(outbox).as_posix()
     return f"IMAGE-GENERATED path={target} artifact_id={artifact_id}"
 
 

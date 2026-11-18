@@ -1,6 +1,7 @@
 # OmegaHive CI. Every job is blocking: no continue-on-error anywhere.
 #
-# - core-tests:  the OmegaClaw Core unittest suite under tests/ (PeTTa-free).
+# - core-tests:  the OmegaClaw Core unittest suite under tests/ (PeTTa-free), its packages the ones
+#                tests/ci-requirements.lock pins by hash, installed by .github/actions/core-python.
 # - hive-petta-smoke (pull_request) and hive-petta (workflow_dispatch, by hand): both use the
 #                toolchain in .github/actions/petta-toolchain; the smoke runs a fixed selection of hive/tests and then
 #                every hive test module the pull request adds or changes (scripts/ci/pr_hive_tests.py), hive-petta all
@@ -11,11 +12,24 @@
 #                Both end with the mind-sandbox tests under AppArmor's restriction. The notes below describe the toolchain.
 # - toolchain:   builds the pinned toolchain with scripts/dev/setup_petta_env.sh (the same pins as
 #                deploy/setup_runtime.sh: Python 3.12, SWI-Prolog 10.1.14 from swipl-devel built against that Python,
-#                PeTTa ae66fa8, janus-swi 1.5.3), caches it by pin, and runs hive/tests with PETTA_PATH set.
+#                PeTTa ae66fa8, janus-swi 1.5.3), caches it by pin, caches the Python it installs hive's requirements
+#                into by those files, and runs hive/tests with PETTA_PATH set.
 #                Most hive tests start PeTTa, so this job is the hive gate; there is no PeTTa-free hive job.
 #                Tests that need macOS sandbox-exec, Docker, HIVE_E2E=1, or a closed-source sibling repo
 #                (omegafusion, omegasocial, ...) skip themselves and say why in the pytest summary (-rs).
-# - hive-ui:     Node 22.12+ (vitest 5 and vite 8 need it): typecheck, lint, vitest, production build.
+# - hive-ui:     Node 22.12+ (vitest 5 and vite 8 need it) and hive/ui's packages from .github/actions/ui-node, then
+#                the production build (npm run build, whose tsc -b is the typecheck), lint and vitest.
+# - warm-petta and warm (a push to main that changes what a cache is keyed by, and every day): build or confirm the
+#                caches in main's scope, the toolchain and hive's Python on runner 1 and core-tests' wheels and
+#                hive-ui's npm cache on either runner. They run no test.
+#
+# Caches: every job restores its setup from the Actions cache and saves it only on a miss. A run can restore what was
+# saved on its own pull request, its base branch and the default branch, never on another pull request, so while only
+# pull requests saved, each one's first run built the toolchain and fetched every package again: 73 to 79% of smokes on
+# 12, 13 and 15 Nov spent 120 s or more on the toolchain step, against 60 to 100 s on a hit. The warm jobs give main
+# the entries every pull request restores. A self-hosted runner keeps its home and tool cache between jobs, so every
+# folder a cache restores into starts empty and pip's cache is the job's own: no job installs, or saves for main,
+# a file an earlier pull request's job left.
 #
 # Runners: our own, not GitHub's (since 2026-11-05; GitHub-hosted until then). Two self-hosted org runners in the
 # runner group omegahive-ci, both Ubuntu 24.04 x86_64 on one machine. core-tests and hive-ui run on either
@@ -35,9 +49,25 @@
 name: hive-ci
 
 # Once per pull request commit (a newer commit on the same pull request cancels the run still in progress), and the full
-# suite on a dispatch by hand (after substantial merges). There is no schedule. A push alone starts no run.
+# suite on a dispatch by hand (after substantial merges). A push to main that changes what a cache is keyed by, and a
+# daily schedule, run only the warm jobs; no other push starts a run.
 on:
   pull_request:
+  push:
+    branches: [main]
+    paths:   # what the caches are keyed by, and the files that build them
+      - .github/workflows/ci.yml
+      - .github/actions/**
+      - scripts/dev/setup_petta_env.sh
+      - hive/requirements.txt
+      - hive/google-constraints.txt
+      - hive/ci-constraints.txt
+      - tests/ci-requirements.lock
+      - hive/ui/package-lock.json
+  schedule:
+    # Daily, since a new Python 3.12 release changes every Python key with no file changing on main. 00:17 UTC is off
+    # the hour, when GitHub delays scheduled runs the most.
+    - cron: '17 0 * * *'
   workflow_dispatch:   # the full run: hive-petta, and failure-notice if it fails
 
 concurrency:
@@ -54,16 +84,14 @@ env:
 
 jobs:
   core-tests:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, omegahive-ci]
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Test runner (one module imports pytest helpers)
-        run: python -m pip install -c hive/ci-constraints.txt -r tests/ci-requirements.txt
+      - name: Python 3.12 and the test runner (one module imports pytest helpers)
+        uses: ./.github/actions/core-python
       - name: Fetch and prepare the pinned Singnet dependency
         run: python scripts/setup_core.py
       - name: tests/ (OmegaClaw Core, unittest)
@@ -123,8 +151,8 @@ jobs:
           mapfile -t files <<<"$files"
           echo "The ${#files[@]} hive test modules this pull request adds or changes:"
           printf '  %s\n' "${files[@]}"
-          python -m pytest -q -rfEsxX --durations=25 -o faulthandler_timeout=300 -p no:cacheprovider \
-            --basetemp="$TMPDIR/pytest-pr" "${files[@]}"
+          python -m pytest -q -rfEsxX --durations=25 -o faulthandler_timeout=300 -o faulthandler_exit_on_timeout=true \
+            -p no:cacheprovider --basetemp="$TMPDIR/pytest-pr" "${files[@]}"
       - name: tests/'s runtime tests, when the pull request touches the core runtime
         # The tests under tests/ that boot the core runtime through PeTTa, which core-tests skips, having no PeTTa. They
         # run when the pull request touches the runtime, those tests or the CI that runs them
@@ -186,9 +214,14 @@ jobs:
         # The step limit is below the job's, so the always() steps below get their time. -rfEsxX names every failure,
         # error, skip, expected failure and unexpected pass (hive/tests/known_failures.py gives each expected failure
         # its issue), --durations the slowest tests, and faulthandler_timeout dumps every thread's stack when one test
-        # runs past 300 s (pytest-timeout is not installed), so a hang names itself.
+        # runs past 300 s (pytest-timeout is not installed), so a hang names itself. faulthandler_exit_on_timeout then ends
+        # the run: the tests after a hung one never run anyway, and waiting for the step limit holds the one petta runner
+        # every pull request's smoke queues for (a test deadlocked on 16 Nov held it 150 minutes). The slowest passing
+        # test took 161 s (test_newhive_r1a.py, run 43114903331), so 300 s ends only a hang.
         timeout-minutes: 150
-        run: python -m pytest -q -rfEsxX --durations=25 -o faulthandler_timeout=300 -p no:cacheprovider --basetemp="$TMPDIR/pytest" hive/tests
+        run: |
+          python -m pytest -q -rfEsxX --durations=25 -o faulthandler_timeout=300 -o faulthandler_exit_on_timeout=true \
+            -p no:cacheprovider --basetemp="$TMPDIR/pytest" hive/tests
       - name: tests/'s runtime tests
         # Every test under tests/ that boots the core runtime through PeTTa (scripts/ci/runtime-tests.sh with no files
         # runs them all), which core-tests skips, having no PeTTa. It runs when hive/tests failed too, so a full run
@@ -212,6 +245,7 @@ jobs:
           exit "$rc"
 
   hive-ui:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, omegahive-ci]
     defaults:
       run:
@@ -220,19 +254,59 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'   # latest 22.x LTS (>= 22.12)
-          cache: npm
-          cache-dependency-path: hive/ui/package-lock.json
+      - name: Node 22 and hive/ui's packages (npm ci)
+        uses: ./.github/actions/ui-node
       - name: Fetch Singnet sources used by the browser interpreter
         working-directory: .
         run: python3 scripts/setup_core.py
-      - run: npm ci
-      - run: npx tsc -b --noEmit
+      - name: Typecheck and production build
+        # npm run build is tsc -b, the typecheck, then vite build and the bundle checks. It runs first, where the
+        # typecheck was: a separate tsc -b --noEmit checked the same projects again (44 s, then 46 s of the build's 47 s,
+        # job 132982847447), since with noEmit tsc -b checks everything on every run.
+        run: npm run build
       - run: npm run lint
       - run: npx vitest run
-      - run: npm run build
+
+  warm-petta:
+    # A push to main that changes what a cache is keyed by, or the daily schedule: restores, or builds and saves, the
+    # toolchain and the Python with hive's requirements in main's cache scope, so every pull request's smoke restores
+    # them instead of building its own. On runner 1, where the smoke runs, since both are bound to its folders, and
+    # guarded like the petta jobs above, since the toolchain lifts the AppArmor restriction. It runs no test.
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    runs-on: [self-hosted, omegahive-petta]
+    # A cold build (SWI-Prolog, then every package from PyPI) took under 4 minutes on runner 1 (job 132973773919).
+    timeout-minutes: 30
+    steps:
+      - name: AppArmor restriction on (repairs a run whose runner or machine died with it off)
+        run: sudo -n /usr/sbin/sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Host baseline (restriction, /etc/apparmor.d, installed packages)
+        run: bash scripts/ci/host-check.sh baseline "$RUNNER_TEMP/host-check"
+      - name: Job files on tmpfs (TMPDIR), with a peak-use sampler
+        run: bash scripts/ci/job-tmp.sh start
+      - uses: ./.github/actions/petta-toolchain
+      - name: Restriction back on (also after a failure, a cancel or the job timeout)
+        if: always()
+        run: sudo -n /usr/sbin/sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+      - name: Host compare against the baseline, and the tmpfs peak
+        if: always()
+        run: |
+          rc=0
+          bash scripts/ci/host-check.sh compare "$RUNNER_TEMP/host-check" || rc=$?
+          bash scripts/ci/job-tmp.sh peak || true
+          exit "$rc"
+
+  warm:
+    # As warm-petta, for core-tests' wheels and hive-ui's npm cache, which serve both runners. It runs no test.
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    runs-on: [self-hosted, omegahive-ci]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/core-python
+      - uses: ./.github/actions/ui-node
 
   failure-notice:
     # After a full run (workflow_dispatch) whose hive-petta did not succeed: a failure, or the job's time limit, opens

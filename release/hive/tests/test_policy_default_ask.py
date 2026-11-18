@@ -42,13 +42,14 @@ RUNS_UNASKED_ANYWAY = {
 }
 
 # The heads #82 kept from 6606 that ask each time under Jon's rule (omega-flagship/omegahive#230,
-# issuecomment-6827848975), which omega-flagship/omegahive#232 tracks.
+# issuecomment-6827848975), which omega-flagship/omegahive#232 tracks. reboot-self left it: outside the mind's own VM it
+# is refused (omega-flagship/omegahive#299, test_policy_review_299).
 ASK_EACH_TIME = (
     "agentverse-ask", "agentverse-call", "agentverse-listener-start", "agentverse-listener-stop", "capture-webcam",
     "code-exec", "code-proof-check", "code-test-run", "delete-whatsapp-message", "edit-whatsapp-message",
     "edit-whatsapp-message-base64", "generate-image", "generate-image-quality", "generate-video", "initChannels",
     "inspect-image", "inspect-webcam", "mark-whatsapp-read", "mark-whatsapp-unread", "observe", "observe-image",
-    "persistent-merge-atoms", "publish-artifact", "react-whatsapp-message", "reboot-self",
+    "persistent-merge-atoms", "publish-artifact", "react-whatsapp-message",
     "reply-whatsapp-file-caption-to", "reply-whatsapp-file-to", "reply-whatsapp-to", "reply-whatsapp-to-base64",
     "reply-whatsapp-to-message", "reply-whatsapp-to-message-base64", "restart-self", "retire-persistent-expression",
     "run-metta-file", "send-family", "send-family-file", "send-whatsapp", "send-whatsapp-base64", "send-whatsapp-file",
@@ -98,7 +99,7 @@ def test_no_head_runs_unasked_when_its_declared_risk_reaches_outside_or_a_head_s
 
 
 @pytest.mark.parametrize("name,head", [
-    ("restart-self", "restart-omega"), ("reboot-self", "restart-omega"), ("run-metta-file", "metta"),
+    ("restart-self", "restart-omega"), ("run-metta-file", "metta"),
     ("space-merge-atoms", "space-transform"), ("persistent-merge-atoms", "space-transform"),
     ("retire-persistent-expression", "persistent-cleanup-commit"), ("vm-shell", "shell"),
     ("send-whatsapp-file", "send-file"), ("send-family-file", "send-file"), ("reply-whatsapp-file-to", "send-file"),
@@ -145,9 +146,17 @@ def test_one_approval_lets_one_paid_image_through_the_minds_gate_and_the_media_r
     assert asked.value.code == "approval_required"
 
 
+def _command(skill):
+    """A well-formed command for skill: a file skill gets a path inside the mind's folder where it reads its path."""
+    index = policy.FILE_SKILLS.get(skill)
+    if index is None:
+        return f'({skill} "invented argument")'
+    return f'({skill}' + ' "invented-chat@g.us"' * index + ' "invented.txt")'
+
+
 def test_every_head_jons_rule_names_asks_a_person_at_the_policy_gate(client):
     _, (a, _) = make_swarm_and_agents(client)
-    answered = {skill: authorize(client, a, f'({skill} "invented argument")')["decision"] for skill in ASK_EACH_TIME}
+    answered = {skill: authorize(client, a, _command(skill))["decision"] for skill in ASK_EACH_TIME}
     assert {skill: decision for skill, decision in answered.items() if decision != "pending"} == {}
 
 

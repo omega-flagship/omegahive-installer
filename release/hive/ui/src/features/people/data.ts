@@ -69,6 +69,7 @@ export function personItem(p: Person, shared: Record<string, boolean>, viewer: V
         'person.disabled': p.disabled,
         'person.google': p.google_bound === true,
         'person.password': p.password_set === true,
+        'person.test_account': p.test_account === true,
       },
       // a role MeTTa knows, compared as data ((is person.role member)); any other role states none
       values: ROLES.has(p.role) ? { 'person.role': p.role } : {},

@@ -43,9 +43,10 @@
 (RoleWords form "fields to fill in")
 (RoleWords naming "a field for changing a name")
 (RoleWords measure "a bar showing how far along it is")
+(RoleWords figure "a picture, such as one of your screen")
 (RoleWords utterance "words someone said, as they said them")
 (RoleWords collapsed "something put away to its mark, which opens it again")
-(RoleWords figure "a picture, such as one of your screen")
+(RoleWords toolbar "the bar above something, with its title and its buttons")
 (= (scr-role-words $r) (let $w (collapse (match &self (RoleWords $r $x) $x)) (scr-first $w "a part of this page")))
 
 ; ---------- the shared resource states (lib_screens.metta Resource): composed, not declared, so explained from the

@@ -1,3 +1,4 @@
+// Purpose: observe each profile save and retain acknowledgements through partial failures.
 import { stopped } from '../../lib/boundOperation'
 import { FlRefusal, type AskShape, type BoundWrite, type FlHost, type MindRef } from './host'
 import type { ProfileSaveState, WriteState } from './conditionalCopy'
@@ -35,7 +36,7 @@ export async function saveAskObserved(
   try {
     const mind = await host.saveAsk(mindId, shape, async (send) => {
       const field = fields[next++]
-      if (!field) throw new FlRefusal(0, 'profile_unconfirmed', 'The profile write sequence could not be confirmed.')
+      if (!field) throw new FlRefusal(0, 'profile_unconfirmed', 'We couldn’t confirm what was saved. Check your mind’s page before trying again.')
       try {
         const value = await write(() => { observe(field, 'sent'); return send() })
         observe(field, 'saved')
@@ -47,7 +48,7 @@ export async function saveAskObserved(
     })
     if (mind.id !== mindId) {
       observe('name', 'unknown')
-      throw new FlRefusal(409, 'mind_changed', 'Your personal mind changed; nothing further was sent.')
+      throw new FlRefusal(409, 'mind_changed', 'Your mind was changed somewhere else; nothing more was sent.')
     }
     // Keep the adapter's ordinary preference-refusal policy, while withholding
     // an all-saved claim and reading the current profile after a partial result.

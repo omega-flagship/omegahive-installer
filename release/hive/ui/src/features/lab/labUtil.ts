@@ -1,4 +1,4 @@
-import type { LabCase, LabCaseStatus, LabMetric, LabRunStatus, LabRunSummary, LabSeries } from '../../api/types'
+import type { LabCase, LabCaseStatus, LabMetric, LabRunStatus, LabRunSummary, LabSeries, LabSuite } from '../../api/types'
 import type { IconName } from '../../ui/Icon'
 import { shown } from '../../lib/displayName'
 import { ownerWords } from '../../lib/ownerWords'
@@ -42,6 +42,13 @@ export const NEED_TEXT: Record<string, string> = {
   'demo-recording': 'a recording (this demo has none for it)',
 }
 export const needsText = (missing: string[]) => missing.map((n) => NEED_TEXT[n] ?? n).join(' and ')
+/**
+ * The hive's no to this person starting or cancelling a suite's runs (may_run false: only an admin runs them), in the
+ * words a control gives, or null. Only an explicit no counts: a hive that does not say leaves it to the route.
+ */
+export const runRefusal = (suite: Pick<LabSuite, 'may_run'> | undefined): string | null => (suite?.may_run === false ? 'Only a hive admin runs suites' : null)
+/** Whether this person may start the suite: the hive lets them, and its requirements are met here. */
+export const mayStart = (suite: Pick<LabSuite, 'may_run' | 'runnable'>): boolean => suite.runnable && suite.may_run !== false
 
 export const total = (r: Pick<LabRunSummary, 'passed' | 'failed' | 'skipped' | 'errors'>) => r.passed + r.failed + r.skipped + r.errors
 

@@ -1,8 +1,11 @@
+"""Purpose: the Telegram channel: poll the bot API for a mind's messages, keep the files people send it in the mind's
+memory folder under inbox/telegram, and send the mind's replies and files."""
 import json
 import mimetypes
 import os
 import pathlib
 import re
+import stat
 import threading
 import time
 import urllib.parse
@@ -125,12 +128,13 @@ def _api_call(method, params=None, timeout=30, use_post=False):
 
 
 
-def _core_dir():
-    return pathlib.Path(__file__).resolve().parent.parent
-
-
 def _inbox_dir():
-    inbox = _core_dir() / "memory" / "inbox" / "telegram"
+    """Where the files people send this mind land: inbox/telegram in its memory folder, OMEGACLAW_MEMORY_DIR when a hive
+    runs it, else the memory folder of the checkout this file runs from (the nearest folder above it holding modules/),
+    which is where the vision and audio senses read a mind's media."""
+    here = pathlib.Path(__file__).resolve()
+    checkout = next((folder for folder in here.parents if (folder / "modules").is_dir()), here.parents[1])
+    inbox = pathlib.Path(os.environ.get("OMEGACLAW_MEMORY_DIR") or checkout / "memory") / "inbox" / "telegram"
     inbox.mkdir(parents=True, exist_ok=True)
     return inbox
 
@@ -203,13 +207,10 @@ def _extract_file_notice(message, display_name):
     return ""
 
 
-def _api_multipart(method, fields, file_field, file_path, timeout=60):
+def _api_multipart(method, fields, file_field, file_name, file_data, timeout=60):
+    """POST fields and one file, given as its name and bytes (_own_file reads them), as multipart form data."""
     if not _api_base:
         raise RuntimeError("Telegram adapter not initialized")
-
-    path = pathlib.Path(str(file_path)).expanduser()
-    if not path.exists() or not path.is_file():
-        raise FileNotFoundError(str(path))
 
     boundary = f"----OmegaClaw{uuid.uuid4().hex}"
     chunks = []
@@ -219,14 +220,14 @@ def _api_multipart(method, fields, file_field, file_path, timeout=60):
         chunks.append(str(value).encode("utf-8"))
         chunks.append(b"\r\n")
 
-    mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
-    filename = _sanitize_filename(path.name)
+    mime = mimetypes.guess_type(str(file_name))[0] or "application/octet-stream"
+    filename = _sanitize_filename(file_name)
     chunks.append(f"--{boundary}\r\n".encode())
     chunks.append(
         f'Content-Disposition: form-data; name="{file_field}"; filename="{filename}"\r\n'.encode()
     )
     chunks.append(f"Content-Type: {mime}\r\n\r\n".encode())
-    chunks.append(path.read_bytes())
+    chunks.append(file_data)
     chunks.append(b"\r\n")
     chunks.append(f"--{boundary}--\r\n".encode())
 
@@ -436,6 +437,56 @@ def send_message(text):
             return f"TELEGRAM-SEND-FAILED {exc}"
     return f"TELEGRAM-SEND-SUCCESS chunks={sent}"
 
+MAX_FILE_BYTES = 100 * 1024 * 1024   # the hive's cap on a file a mind moves (hive_commons.MAX_ASSET_BYTES)
+# The folders a file send reads from, inside the mind's own folder: what it shares (files/, where hive-asset-put reads
+# too) and what its generators make (memory/outbox/, where IMAGE-GENERATED's path points). The mind's hive token, .env,
+# auth/ sessions, logs and memory stay unsendable however a person answers the ask (omega-flagship/omegahive#304).
+SENDABLE = (("files",), ("memory", "outbox"))
+
+
+def _own_file(path):
+    """(name, bytes) of path, a plain file in one of this mind's SENDABLE folders, opened as the hive's gate checked it.
+    The gate places a relative path against the mind's folder (hive/core/policy.py _outside_folder), which is this
+    process's working directory, so the path is placed there too and opened from it one name at a time with O_NOFOLLOW:
+    a link anywhere on the way, put there before the open or during it, fails to open instead of reaching outside. A
+    file outside those folders, a folder, FIFO or device, a file with a second hard link and one over MAX_FILE_BYTES are
+    refused unread, the opened descriptor checked and closed before any file object holds it. The sender gets these
+    bytes, never the path, which another process would place against its own folder: the WhatsApp bridge runs in its
+    own, beside its session (omega-flagship/omegahive#304). The WhatsApp and Telegram adapters keep this function word
+    for word."""
+    given = os.path.abspath(os.path.expanduser(str(path)))
+    *folders, name = pathlib.PurePath(os.path.relpath(given, os.getcwd())).parts or (os.curdir,)
+    if name in (os.curdir, os.pardir) or not any(tuple(folders[:len(top)]) == top for top in SENDABLE):
+        places = " or ".join("/".join(top) + "/" for top in SENDABLE)
+        raise PermissionError(f"only files in this mind's {places} folder can be sent: {path}")
+    nofollow = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    folder = os.open(os.curdir, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        for part in folders:
+            inner = os.open(part, nofollow | os.O_DIRECTORY, dir_fd=folder)
+            os.close(folder)
+            folder = inner
+        handle = os.open(name, nofollow | os.O_NONBLOCK, dir_fd=folder)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"no such file in this mind's folder: {path}") from None
+    except OSError as exc:
+        raise PermissionError(f"{path} can't be opened without following a link ({exc.strerror}), so it is not sent") from exc
+    finally:
+        os.close(folder)
+    info = os.fstat(handle)
+    reason = ("not a regular file" if not stat.S_ISREG(info.st_mode) else
+              "a file with a second name elsewhere (a hard link)" if info.st_nlink != 1 else
+              f"over {MAX_FILE_BYTES // (1024 * 1024)} MB" if info.st_size > MAX_FILE_BYTES else None)
+    if reason:
+        os.close(handle)   # os.fdopen would raise on a folder without closing it, leaving the descriptor open
+        raise PermissionError(f"{reason}: {path}")
+    with os.fdopen(handle, "rb") as source:
+        data = source.read(MAX_FILE_BYTES + 1)   # a file that grew past the cap since the check is still refused
+    if len(data) > MAX_FILE_BYTES:
+        raise PermissionError(f"over {MAX_FILE_BYTES // (1024 * 1024)} MB: {path}")
+    return name, data
+
+
 def send_file(path, caption=""):
     with _state_lock:
         target_chat = _chat_id
@@ -447,11 +498,13 @@ def send_file(path, caption=""):
         return guard
 
     try:
+        name, data = _own_file(path)
         _api_multipart(
             "sendDocument",
             {"chat_id": target_chat, "caption": str(caption or "")},
             "document",
-            path,
+            name,
+            data,
             timeout=90,
         )
         return "TELEGRAM-SEND-FILE-SUCCESS"

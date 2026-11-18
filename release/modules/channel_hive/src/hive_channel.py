@@ -559,7 +559,15 @@ def send_message(text):
                    + ", ".join(_pending) + "); answer each with send-hive-to conversation_id message")
         _refused.append(f"{refusal}. Your unsent message: {message[:300]}")
         return refusal
-    return _queue(message, _pending[0] if _pending else _current)
+    return _queue(message, reply_conversation())
+
+
+def reply_conversation():
+    """The conversation a plain send answers now, by the reply binding above: the one person's conversation waiting,
+    or with none waiting the one this mind last spoke in; "" when several wait, where a plain send is refused."""
+    if len(_pending) > 1:
+        return ""
+    return _pending[0] if _pending else _current
 
 
 def send_to(conversation, text):

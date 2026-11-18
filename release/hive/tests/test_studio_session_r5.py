@@ -715,6 +715,10 @@ def test_r51_an_outcome_reported_after_stop_is_a_receipt_only(r3):
     s1 = step_row(r3, sid, 1)
     prop = {"artifact_id": session["proposal_artifact_id"], "revision": s1["proposal_n"], "digest": s1["proposal_digest"]}
     ack2 = upload(r3, sid, m, 2, gen=2).json()
+    # Stop's own job puts the maker to sleep with a new token on the worker's thread, so the maker's publish below
+    # would race it and be refused 401 invalid agent token instead of by the fence. The job waits until the fence
+    # and the receipt are checked.
+    r3.hive.studio.worker.pause()
     stop(r3, sid)
     assert publish(r3, session, step["execution_id"]).status_code == 409             # nothing new after the fence
     state = ses_row(r3, sid)["state"]
@@ -724,6 +728,7 @@ def test_r51_an_outcome_reported_after_stop_is_a_receipt_only(r3):
     assert step_row(r3, sid, 1)["outcome"] == "applied" and step_row(r3, sid, 2) is None
     assert ses_row(r3, sid)["state"] in (state, "stopped")                          # Stop goes on; never re-opened
     assert r3.hive.db.one("SELECT COUNT(*) AS n FROM studio_handoffs WHERE session_id = ?", (sid,))["n"] == rows
+    r3.hive.studio.worker.resume()
     stopped_and_released(r3, sid)
     assert step_row(r3, sid, 2) is None
 

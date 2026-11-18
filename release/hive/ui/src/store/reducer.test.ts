@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Agent, Approval, Belief, Goal, HiveEvent, Message, Trace } from '../api/types'
+import type { Agent, Approval, Belief, Goal, HiveEvent, Message, Swarm, Trace } from '../api/types'
 import {
   askingByAgent,
   claimedByAgent,
@@ -156,6 +156,17 @@ describe('reduce · Phase 2', () => {
     s = reduce(s, { type: 'agent.updated', at, agent: agent({ id: 'a_2', may_control: true }) })
     s = reduce(s, { type: 'approval.created', at, approval: approval({ id: 'p_10', agent_id: 'a_2' }) })
     expect(s.approvals.p_10.may_answer).toBeUndefined()
+  })
+
+  it("keeps the host's may_control on a swarm across swarm.updated, which carries none, until a read says otherwise", () => {
+    // review #299: adding to a swarm's vocabulary is its owner's, its person's or an admin's; GET /api/swarms says which
+    const swarm = (p: Partial<Swarm> = {}): Swarm => ({ id: 's_1', name: 'Garden', description: '', hue: 120, member_ids: [], created_at: at, ...p })
+    let s = run([{ type: 'swarm.updated', at, swarm: swarm({ may_control: false }) }])
+    s = reduce(s, { type: 'swarm.updated', at, swarm: swarm({ name: 'Garden club' }) })
+    expect(s.swarms.s_1).toMatchObject({ name: 'Garden club', may_control: false })
+    s = reduce(s, { type: 'swarm.updated', at, swarm: swarm({ may_control: true }) })   // a flag the update carries wins
+    expect(s.swarms.s_1.may_control).toBe(true)
+    expect(run([{ type: 'swarm.updated', at, swarm: swarm({ id: 's_2' }) }]).swarms.s_2.may_control).toBeUndefined()
   })
 
   it('stores policy rules wholesale', () => {

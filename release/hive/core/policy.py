@@ -31,9 +31,9 @@ EXPLICIT_ONLY = frozenset({"hive-update-apply", "hive-flow-publish",
 # test_policy_hive_skills.py fails if a module, skill file or the MCP bridge defines a hive skill missing from this set.
 REVIEWED_HIVE_SKILLS = frozenset({
     "hive-apply-op", "hive-apply-ops", "hive-artifact-create", "hive-asset-get", "hive-asset-list", "hive-asset-put", "hive-belief",
-    "hive-capabilities", "hive-exhibit", "hive-exhibit-space", "hive-finding", "hive-finding-disposition",
-    "hive-finding-response", "hive-findings-read", "hive-flow-cancel", "hive-flow-draft", "hive-flow-drafts",
-    "hive-flow-read", "hive-flow-retire", "hive-flow-revise", "hive-flow-run",
+    "hive-capabilities", "hive-create", "hive-exhibit", "hive-exhibit-space", "hive-finding",
+    "hive-finding-disposition", "hive-finding-response", "hive-findings-read", "hive-flow-cancel", "hive-flow-draft",
+    "hive-flow-drafts", "hive-flow-read", "hive-flow-retire", "hive-flow-revise", "hive-flow-run",
     "hive-flow-run-get", "hive-flows", "hive-goal-cancel-ack", "hive-goal-claim", "hive-goal-create",
     "hive-goal-done", "hive-goal-fail", "hive-goal-get", "hive-goal-heartbeat", "hive-goal-propose",
     "hive-goal-history", "hive-goal-continue", "hive-goal-output",
@@ -114,9 +114,9 @@ DEFAULT_ALLOW = ["send", "wait", "pin", "hive-*", "query", "remember", "episodes
                  "assume-writeback", "attention-focus", "attention-ledger-status",
                  "attention-native-candidates", "attention-reload", "attention-rent",
                  "attention-retire-candidate", "attention-review", "attention-scan-persistent",
-                 "attention-status", "attention-wage", "audio-observation-log", "belief-claim",
+                 "attention-status", "attention-wage", "belief-claim",
                  "belief-derived", "belief-revision-candidate", "body-container-last-trace",
-                 "body-container-launcher", "body-container-self", "body-container-status", "body-status",
+                 "body-container-self", "body-container-status", "body-status",
                  "calendar-read", "choose-skill-for", "cleanup-proposals",
                  "clear-glucose-watch", "code-changes", "code-check", "code-create", "code-diagnostics",
                  "code-git", "code-git-export-state", "code-git-patch", "code-hunk-bytes",
@@ -130,19 +130,17 @@ DEFAULT_ALLOW = ["send", "wait", "pin", "hive-*", "query", "remember", "episodes
                  "episodes-at", "event-note", "explain-skill", "gb-last-trace",
                  "gb-load", "gb-load-state", "gb-observe", "gb-save-state", "gb-screenshot", "gb-status",
                  "gb-step", "gb-stop",
-                 "glucose-app-status", "glucose-history", "glucose-rings", "glucose-watch-status",
-                 "house-action-log", "immune-candidates", "inspect-audio",
+                 "glucose-app-status",
+                 "immune-candidates", "inspect-audio",
                  "list-inbox", "list-published-artifacts", "list-web-pages",
                  "load-runtime-space", "media-observation-log",
-                 "nal-step", "nars-derive", "nars-query", "observe-audio", "observe-device",
-                 "observe-glucose", "observe-house", "observe-house-affordances", "observe-house-full",
-                 "observe-room", "persistent-atoms", "persistent-cleanup-candidates",
-                 "persistent-cleanup-propose", "persistent-expression", "persistent-fact",
+                 "nal-step", "nars-derive", "nars-query", "observe-audio",
+                 "persistent-atoms", "persistent-cleanup-candidates",
+                 "persistent-cleanup-propose", "persistent-fact",
                  "persistent-note", "persistent-review", "persistent-rule",
                  "pln-step", "prepare-reboot", "promote", "promote-scratch", "promote-skill-alias",
                  "promote-skill-trigger", "public-web-url", "query-skill-space",
-                 "read-whatsapp-chat", "read-whatsapp-chat-full",
-                 "read-whatsapp-chat-recent", "receive", "record-house-outcome", "reminder-add",
+                 "receive", "record-house-outcome", "reminder-add",
                  "reminder-cancel", "reminder-due", "reminder-list",
                  "repo-query",
                  "save-runtime-space", "scratch-add",
@@ -152,7 +150,7 @@ DEFAULT_ALLOW = ["send", "wait", "pin", "hive-*", "query", "remember", "episodes
                  "send-primary-operator", "send-primary-operator-base64", "send-telegram",
                  "send-telegram-base64", "send-web-control", "send-web-control-base64",
                  "set-energy-budget",
-                 "set-energy-mode", "set-energy-targets", "set-glucose-watch", "set-loop-energy",
+                 "set-energy-mode", "set-energy-targets", "set-loop-energy",
                  "sleep-for", "space-atoms", "space-examples-default",
                  "space-persistence", "space-registry", "start-cycle-practice",
                  "suggest-skill-alias", "suggest-skill-trigger", "telegram-status", "test-metta",
@@ -161,8 +159,8 @@ DEFAULT_ALLOW = ["send", "wait", "pin", "hive-*", "query", "remember", "episodes
                  "vm-policy-connections", "vm-policy-enforcement-plan", "vm-policy-exit-history",
                  "vm-policy-exit-summary", "vm-policy-exits", "vm-policy-last-trace",
                  "vm-policy-maintenance-window", "vm-policy-metrics", "vm-policy-record-exit",
-                 "vm-policy-status", "vm-status", "wake-for", "webcam-observation-log",
-                 "webcam-status", "webhost-status", "whatsapp-chats", "whatsapp-inbox", "whatsapp-status",
+                 "vm-policy-status", "vm-status", "wake-for",
+                 "webcam-status", "webhost-status", "whatsapp-status",
                  "world-fact", "world-person", "world-room"]
 DEFAULT_ASK = ["shell", "shell-confirm", "metta", "write-file*", "append-file*", "send-file*", "codex-*",
                "space-transform", "remove-atom", "*-commit", "restart-omega",
@@ -202,13 +200,56 @@ DEFAULT_ASK = ["shell", "shell-confirm", "metta", "write-file*", "append-file*",
                # Code that runs: a command in the mind's Code workspace, a Lean check of a file the mind wrote (Lean
                # runs the file's #eval and macros as it checks it) and a proposal's test. OmegaCode asks again for
                # each run it makes (code-run, bound to that exact run).
-               "code-exec", "code-proof-check", "code-test-run"]
+               "code-exec", "code-proof-check", "code-test-run",
+               # Jon's second review (omega-flagship/omegahive#299, item 1): reads of people's private data, the
+               # operator's WhatsApp chats, a person's glucose (a watch also sends it to a channel), the house through
+               # Home Assistant, and the logs of what the camera and microphone took in; a persistent expression, which
+               # can be any atom and so a function definition, and the host launcher descriptor, outside the sandbox.
+               "read-whatsapp-chat", "read-whatsapp-chat-full", "read-whatsapp-chat-recent", "whatsapp-chats",
+               "whatsapp-inbox", "observe-glucose", "glucose-history", "glucose-rings", "glucose-watch-status",
+               "set-glucose-watch", "observe-house",
+               "observe-house-full", "observe-house-affordances", "observe-room", "observe-device", "house-action-log",
+               "webcam-observation-log", "audio-observation-log", "persistent-expression", "body-container-launcher"]
 
-FILE_SKILLS = {"read-file", "write-file", "append-file"}
-# Approved one at a time (no Always or For a time). The second line holds the other names for the first line's acts.
+# Skills that take a path on this computer, each with the 0-based position of its path argument (their SkillArg atoms
+# type it "filepath"; test_policy_review_299 checks every such skill is here). run-metta-file keeps its own path rule,
+# the PeTTa workspace or /tmp (hive_helpers.run_metta_file), and asks every time.
+FILE_SKILLS = {"read-file": 0, "write-file": 0, "write-file-base64": 0, "write-file-b64": 0, "append-file": 0,
+               "append-file-base64": 0, "delete-file": 0, "send-file": 0, "send-file-caption": 0, "send-family-file": 0,
+               "send-whatsapp-file": 0, "send-whatsapp-file-caption": 0, "send-whatsapp-file-to": 1,
+               "send-whatsapp-file-caption-to": 1, "reply-whatsapp-file-to": 1, "reply-whatsapp-file-caption-to": 1}
+# Approved one at a time (no Always or For a time). The second line holds the other names for the first line's acts;
+# the last two are code that runs, which Jon's rule says asks every time (omega-flagship/omegahive#299, item 2), so one
+# "Always" can never let a shell or a code run through for good.
 HIGH_RISK = {"shell-confirm", "metta", "space-transform", "remove-atom", "restart-omega",
-             "restart-self", "reboot-self", "run-metta-file", "space-merge-atoms", "persistent-merge-atoms"}
+             "restart-self", "reboot-self", "run-metta-file", "space-merge-atoms", "persistent-merge-atoms",
+             "shell", "vm-shell", "code-exec", "code-test-run", "code-proof-check",
+             "codex-code", "codex-code-start", "codex-code-readonly", "codex-code-readonly-start"}
 SCOPE_RANK = {"agent": 0, "swarm": 1, "hive": 2}
+
+
+def _plain_argument(tokens, index):
+    """A command's top-level argument at ``index`` (0-based): ("plain", token), ("expression", None) or ("missing",
+    None). A string token is never a parenthesis, even one holding "(" (sexpr.Str)."""
+    position, depth = 0, 0
+    for tok in tokens[2:]:
+        paren = tok in ("(", ")") and not isinstance(tok, sexpr.Str)
+        if paren and tok == ")":
+            if depth == 0:
+                break
+            depth -= 1
+            continue
+        if paren:
+            if depth == 0 and position == index:
+                return "expression", None
+            position += depth == 0
+            depth += 1
+            continue
+        if depth == 0:
+            if position == index:
+                return "plain", str(tok)
+            position += 1
+    return "missing", None
 
 
 def command_skill(command):
@@ -465,18 +506,20 @@ class Policy:
             self.db.after_commit(lambda: self.hive.events.publish("policy.updated", **self.rule_views()))
         return {"ok": True}
 
-    def _outside_folder(self, agent, command):
-        """Why a file skill's path is refused, or None. Minds run as the same OS user as the hive, so the gate
-        keeps file skills inside the mind's own folder (its working directory): the hive's secrets, other minds'
-        folders and private apps are never reachable through them. Symlinks are resolved before the check."""
+    def _outside_folder(self, agent, command, index=0):
+        """Why a file skill's path (its argument at ``index``) is refused, or None. Minds run as the same OS user as the
+        hive, so the gate keeps file skills inside the mind's own folder (its working directory): the hive's secrets,
+        other minds' folders and private apps are never reachable through them. Symlinks are resolved before the check."""
         import pathlib
         try:
             tokens = sexpr.tokenize(str(command))
         except ValueError:
             return "unparseable path"
-        if len(tokens) < 4 or tokens[2] in ("(", ")") or not isinstance(tokens[2], str):
+        kind, raw = _plain_argument(tokens, index)
+        if kind == "missing":
+            return "the command has no path argument"
+        if kind == "expression":
             return "the path must be a plain text path, not a computed expression"
-        raw = str(tokens[2])
         if "$" in raw:
             return "the path must be a plain text path, not a variable"
         folder = (self.hive.settings.agents_dir / agent["id"]).resolve()
@@ -530,6 +573,10 @@ class Policy:
             return "ask", "the app that set up this mind asks a person first"
         return mode, reason
 
+    def _embodied_vm(self):
+        """Whether the launcher says this computer is the mind's own embodied VM (HIVE_EMBODIED_VM=1, config.Settings)."""
+        return bool(getattr(getattr(getattr(self, "hive", None), "settings", None), "embodied_vm", False))
+
     def _research(self):
         """The hive's research module, or None for a Policy built without a hive (some host paths and tests construct
         it bare): then there is no Research swarm, so neither research rule applies."""
@@ -543,6 +590,9 @@ class Policy:
             return "deny", "the Research swarm's coordinator acts only through the hive"
         if any(_matches(p, skill) for p in HUMAN_ONLY):
             return "deny", "human-only action"
+        if skill == "reboot-self" and not self._embodied_vm():
+            # #299 item 1: sudo reboot restarts the whole computer, so only a hive that is the mind's own VM offers it
+            return "deny", "reboot-self restarts the whole computer, so only a hive set up as the mind's own VM offers it"
         rules = [*self.all_rules(), *extra]
         if skill in EXPLICIT_ONLY:
             exact = [r for r in rules if r["scope"] == f"agent:{agent['id']}" and r["skill"] == skill]
@@ -566,6 +616,8 @@ class Policy:
         candidates = []
         for rule in rules:
             if rule["scope"] in scopes and _matches(rule["skill"], skill):
+                if rule["mode"] == "allow" and rule.get("origin") == ORIGIN_ANSWER and skill in HIGH_RISK:
+                    continue   # #299 item 2: an Always or For a time answered before the act became one at a time
                 exact = 0 if rule["skill"] == skill else 1
                 if unreviewed and exact and rule["mode"] == "allow":
                     continue
@@ -650,7 +702,7 @@ class Policy:
         if skill is None:
             return {"decision": "deny", "message": "HIVE-DENIED unparseable command"}
         if skill in FILE_SKILLS:
-            outside = self._outside_folder(agent, command)
+            outside = self._outside_folder(agent, command, FILE_SKILLS[skill])
             if outside:
                 return {"decision": "deny", "message": f"HIVE-DENIED {skill}: {outside}"}
         if skill == "syntax-error" and _only_text_arguments(command):

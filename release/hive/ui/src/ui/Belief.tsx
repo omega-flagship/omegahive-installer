@@ -12,8 +12,8 @@ import { Words } from '../features/views/Words'
 
 /** "Show as written": a small disclosure that reveals the exact text the mind wrote. Closed by default. It is the
  *  as-written part of the composed words (features/views/words.metta), drawn the same way in every look. */
-export function AsWritten({ text, className, label = 'as written' }: { text: string; className?: string; label?: string }) {
-  return <Words text={text} said={false} written label={label} className={className} />
+export function AsWritten({ text, className }: { text: string; className?: string }) {
+  return <Words text={text} said={false} written className={className} />
 }
 
 /** Sureness in words, its numbers on hover and for screen readers: "fairly sure". */

@@ -789,6 +789,33 @@ def test_binding_decision_and_writes_are_one_transaction(env):
     assert not _err(r) and row["google_sub"] == "g-A" and row["disabled"] == 0 and _latest_invite(c, admin) == "accepted"
 
 
+@pytest.mark.parametrize(("provider_error", "expected_code"), [
+    ("access_denied", "google_cancelled"),
+    ("server_error", "google_refused"),
+    ("temporarily_unavailable", "google_refused"),
+    ("unknown_provider_error", "google_refused"),
+])
+def test_google_callback_errors_distinguish_cancellation_from_failure(env, provider_error, expected_code):
+    c, google, _ = env
+    start = c.get("/omegahive/api/auth/google/start", follow_redirects=False)
+    assert start.status_code == 303 and c.cookies.get("hive_oauth")
+    state = urllib.parse.parse_qs(urllib.parse.urlparse(start.headers["location"]).query)["state"][0]
+    r = c.get(
+        "/omegahive/api/auth/google/callback",
+        params={"error": provider_error, "state": state, "code": "good-code"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert r.headers["location"] == f"/omegahive/?signin_error={expected_code}"
+    assert google.exchanges == 0
+    assert not r.cookies.get("hive_signin") and not c.cookies.get("hive_signin")
+    assert not c.cookies.get("hive_oauth")
+    cleared = [h.lower() for h in r.headers.get_list("set-cookie") if h.lower().startswith("hive_oauth=")]
+    assert len(cleared) == 1
+    assert all(attr in cleared[0] for attr in ("max-age=0", "path=/omegahive/", "httponly", "samesite=lax", "secure"))
+    assert "domain=" not in cleared[0]
+
+
 @pytest.mark.parametrize("fail", ["connect", "token_json", "token_list", "userinfo_json", "userinfo_timeout"])
 def test_google_endpoint_failures_are_stable_and_clear_the_cookie(env, fail):
     c, google, admin = env

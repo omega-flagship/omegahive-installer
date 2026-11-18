@@ -35,6 +35,60 @@ and are not repeated here.
   request). Before, one stall of over a minute failed the update and the next try began again at the first byte. A
   server that sends the whole file again starts the download over, and the update gives up only after six tries in a
   row get no further. The zip's length and sha256 are checked as before.
+### Added (an action's inputs on its app's page, #403)
+- An action can declare each of its `params` as one form field in the shape MCP's elicitation form mode uses (a
+  string, number, integer or boolean, one choice of several or several of them, with a title, description and
+  default), beside the words contract 0.1 takes. On an app's graph page an action that declares inputs asks for them
+  first and sends each in its declared type, leaving a blank field out; the same form asks for what a `needs_input`
+  result names. Both are composed in MeTTa (program.metta program-act and program-act-field).
+- `applies_to: []` marks an action on the app itself. With nothing selected the page lists every action that needs no
+  item under In this app, in the inspector and in the narrow drawer, so the Dot panel has it too (program-actions).
+
+### Added (free inference)
+- A deploy can put an inference key in `HIVE_FREE_INFERENCE_KEY`, and the endpoint it belongs to in
+  `HIVE_FREE_INFERENCE_URL` (Singularity Compute's by default). First Light then offers **Use free inference** to everyone the
+  hive invited, owners, members and guests alike, naming the model and that the deploy provides it: their mind thinks
+  on the deploy's key with no key of their own. Each person gets `HIVE_FREE_INFERENCE_DAILY_CALLS` model calls a day
+  (default 200, their minds' room replies and goals included) and the hive `HIVE_FREE_INFERENCE_HIVE_DAILY_CALLS`
+  (default 2000). Each hive counts only its own calls, so a key several deploys share is bounded across them only by
+  its limits at its provider. Public visitors only with `HIVE_FREE_INFERENCE_VISITORS=1`. Only the deploy's models
+  (`HIVE_FREE_INFERENCE_MODELS`, default `minimax/minimax-m3.1-flash`) run on it. The calls cost the hive nothing, so
+  no spending limit counts them, and the key never shows on any page, in any log line or answer, to admins either.
+  Without the key nothing offers it and a call on it is refused before anything is sent.
+- A free call its endpoint answers 429 (its key's limit on calls a second) is tried again after the wait the answer
+  asks for, or a short random wait, up to four times. A call still refused ends in plain words and counts toward no
+  one's calls. An Ask turn that free inference refuses, busy or out of calls, ends with the refusal's own words instead
+  of failing.
+- Upgrading: the free route's default endpoint is now Singularity Compute's. A deploy that set an ASI Cloud key in
+  `HIVE_FREE_INFERENCE_KEY` with no `HIVE_FREE_INFERENCE_URL` sets
+  `HIVE_FREE_INFERENCE_URL=https://inference.asicloud.cudos.org/v1` to keep the key on ASI Cloud.
+- ASI Cloud is a provider for a person's own key or `ASI_API_KEY`, with `asi1-mini`, which ASI Cloud serves free. A
+  hive whose installer was given an ASI Cloud key already has it in `ASI_API_KEY`, so its owner can use `asi1-mini` on
+  that key. Those calls pass the hive's spending checks but cost $0, so they use up no money limit; only the key's
+  own limits at ASI Cloud bound how many there are.
+
+### Changed (the operator password from outside)
+- From outside the hive's machine the operator password login is refused (`403 password_login_local_only`) before
+  the password is read, with `HIVE_PUBLIC_PASSWORD=1` too: the refusal a member's login gets there without that
+  flag. Its session never counted from outside, so the login only told an outside caller whether a guess was right.
+  With no outside operator guesses left to count, the outside operator wait (`PasswordAttempts`) is gone; on the
+  hive's own machine a wrong password is a 401 as before.
+
+### Added (one test account beside Google sign-in, #218, #336)
+- `HIVE_TEST_ACCOUNT_EMAIL` and `HIVE_TEST_ACCOUNT_PASSWORD` name the hive's one test account. At start the hive makes
+  that member, or marks the member who has that email, with that password. Once Google sign-in is on, it keeps
+  signing in from outside with its password, still only with `HIVE_PUBLIC_PASSWORD=1`, so a UI tester or an agent
+  driving a browser can sign in on staging while people use Google. Everyone else's outside password sign-in is
+  refused with one answer that names Google and never says which email is the test account.
+- The hive does not start on a bad setting: more than one address, one variable without the other, or a password
+  shorter than 10 characters, of more than one line, with a single quote or ending in a backslash. The error names
+  the variable, never the password. An admin (a row or an address in `HIVE_ADMIN_EMAILS`) and a disabled person are
+  never made the test account, and a J1 local-owner hive refuses the setting. Changing or unsetting the variables
+  moves or ends the mark at the next start; a changed password ends the account's password sessions.
+- No request sets the mark: `test_account` on `POST /api/people/members` or `PATCH /api/people/{id}` is `400`, and
+  so are `role: admin` and a password reset on the test account. People shows the mark read-only.
+- The sign-in card offers **Continue with Google** beside the email and password form when both count, and offers
+  the operator's hive password only on the hive's own machine, where its session counts.
 
 ### Fixed (prompt defaults)
 - A fresh checkout reads `src/base_prompt.txt` when no prompt or memory directory is configured and
@@ -72,6 +126,17 @@ and are not repeated here.
   named for Evolve, not just its plugin folder, and a test fails if one is tracked again.
 - **CI**: `ci.yml` (hive-ci) gates pull requests and builds its toolchain with PhysixSNET #70's PeTTa helper;
   `build.yml` builds the Docker image; `release.yml` publishes it on a `v*` tag or by hand.
+
+### Fixed (members' gaps, #299 item 4, #307)
+- **Apps**: turning an app on or off and reloading apps are an admin's, as installing and uninstalling are; anyone
+  else gets 403 `admin_only`. A member's reload could bring back an app an admin had uninstalled.
+- **The Lab**: starting and cancelling a run is an admin's, since a run uses the hive's machine and its environment.
+  Reading runs stays open, and each suite says `may_run`.
+- **A swarm's vocabulary**: adding a term is the swarm's owner's, its person's or an admin's, because the
+  vocabulary decides which statements its commons admits; a person who only sees the swarm gets 403 `owner_only`.
+  Swarm views carry `may_control`.
+- **The session token**: HTTP routes read it from the `Authorization` header only, so `?token=` alone is 401. The
+  events WebSocket still takes `?token=`, since a browser cannot set a header there.
 
 ### Fixed (commons data, #111 item 1)
 - Commons publish statements, belief lookups and query patterns are passed as quoted data to PeTTa. A query can no

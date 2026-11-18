@@ -17,6 +17,9 @@ Every error answer the hive gives carries an id (e-xxxxxxxx) in its X-Hive-Error
 most recent ones with the person who met them, so a report can name what failed by id, code and route, and for an
 unexpected error where in the hive it was raised. The id goes in a header so no answer's body changes: an unknown
 thing and one the person may not see still answer alike.
+
+What is kept of an answer's words names no key id or person of this hive (keyview.strip_identities), whoever met it:
+GET /api/feedback answers them on a 200, which the key projection does not rewrite, and a report leaves the hive.
 """
 from __future__ import annotations
 
@@ -36,6 +39,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
+from . import keyview
 from .db import now
 
 log = logging.getLogger("hive.feedback")
@@ -177,10 +181,12 @@ class Feedback:
 
     def noted(self, request, principal: str | None, status: int, code: str, message: str, exc: BaseException | None = None) -> str:
         """Keep one error answer with the person who met it and return its id, which the answer carries. An answer to
-        a request no session was found for (principal None, as for a 401) is kept with nobody, so no report names it."""
+        a request no session was found for (principal None, as for a 401) is kept with nobody, so no report names it.
+        Its words are kept as a report may carry them: "key:k_0000b0b1 has spent its month" as "key has spent its
+        month", each of this hive's key ids and people taken out before the cut, so no id is left half cut."""
         error_id = "e-" + secrets.token_hex(4)
         entry = {"id": error_id, "at": now(), "method": request.method, "route": _route_of(request), "status": status,
-                 "code": code, "message": str(message)[:300], "principal": principal}
+                 "code": code, "message": keyview.strip_identities(str(message))[:300], "principal": principal}
         if exc is not None:
             entry["raised"] = _raised_at(exc)
         with self._lock:

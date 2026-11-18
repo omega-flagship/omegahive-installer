@@ -46,14 +46,21 @@ const FIXTURE = `
   (field checks "Shelves it goes on" loft.shelves ((action shelve)))))))
 (Screen harvest "Harvest")
 (Part harvest 10 progress ((source harvest.parts) (text (bind harvest.words)) (partial harvest.partial)))
-(Screen gate "The gate")
-(Part gate 10 mark ((glyph latch) (label (bind gate.label)) (title "Open the gate (G)") (state (bind gate.state)) (news gate.news)
-  (left (bind gate.left)) (bottom (bind gate.bottom)) (mode (bind gate.mode)) (action open-gate)))
-(When gate 10 (on gate.shut))
+(Screen latch "The latch")
+(Part latch 10 mark ((glyph latch) (label (bind latch.label)) (title "Open the gate (G)") (state (bind latch.state)) (news latch.news)
+  (left (bind latch.left)) (bottom (bind latch.bottom)) (mode (bind latch.mode)) (action open-gate)))
+(When latch 10 (on latch.shut))
 (Screen pond "The pond")
 (Part pond 10 picture ((source (bind pond.shot)) (alt "The pond at dawn") (caption (words "Taken by " (bind pond.who)))
   (action drop-shot) (action_label "Remove the picture")))
 (Part pond 20 fields ((items ((field long "What happened at the pond?" pond.note ((rows 5) (placeholder "Who came by")))))))
+(Screen gate "The gate")
+(Part gate 10 bar ((icon apps) (title (bind gate.name)) (title_id (bind gate.id)) (edge gate.wide) (flush yes)
+  (items ((button "Open wide" widen ((icon unfold) (variant ghost) (off gate.wide))) (button "Close" narrow ((icon x) (variant ghost) (on gate.wide)))))))
+(Part gate 20 confirm ((alert yes) (tone plain) (label "Let the cows in") (text "Let the cows into the orchard?")
+  (yes "Let them in") (yes_action let-in) (no "Keep them out") (no_action keep-out)))
+(Part gate 30 confirm ((text "Lock the gate?") (yes "Lock") (yes_action lock) (no "Not now") (no_action keep)))
+(Part gate 40 header ((title "Orchard gate") (title_id (bind gate.heading))))
 `
 const space = ScreensSpace.open([...SCREEN_SOURCES, ['garden', FIXTURE]])
 const compose = (screen: string, facts: ScreenFacts = {}) => space.compose(screen, 'classic', facts)
@@ -228,24 +235,54 @@ describe('the composing blocks (real MeTTa)', () => {
     expect(html.match(/font-mono/g)).toHaveLength(1)   // Cider's 0; Jam carries no count
     expect(html).toMatch(/>Cider<\/span><span[^>]*font-mono[^>]*>0</)
   })
+
+  it('a bar: its icon, its title carrying the id the page names things by, and only the buttons whose flag holds; edge draws it as a top edge', () => {
+    const narrow = draw('gate', {}, { data: { 'gate.name': 'North gate', 'gate.id': 'gate-title', 'gate.wide': false, 'gate.heading': 'gate-h' } })
+    expect(narrow).toMatch(/<span id="gate-title" class="[^"]*truncate[^"]*">North gate<\/span>/)
+    expect(narrow).toContain('Open wide</button>')
+    expect(narrow).not.toContain('Close</button>')
+    expect(narrow).not.toContain('h-12 border-b')
+    const wide = draw('gate', {}, { data: { 'gate.name': 'North gate', 'gate.id': 'gate-title', 'gate.wide': true } })
+    expect(wide).toContain('Close</button>')
+    expect(wide).not.toContain('Open wide</button>')
+    expect(wide).toContain('h-12 border-b')
+    // (flush yes): the bar's part sits right against the next one, without the screen's spacing; others keep it
+    expect(narrow).toMatch(/<div data-screen-part="gate\.10" data-block="bar"[^>]*class="[^"]*\bmb-0\b/)
+    expect(narrow).not.toMatch(/<div data-screen-part="gate\.20"[^>]*class="[^"]*\bmb-0\b/)
+    // a header's title carries its id too
+    expect(narrow).toContain('<h2 id="gate-h"')
+  })
+
+  it('confirm: an alertdialog named by its label and described by its question, its yes plain on (tone plain); without (alert yes), a group with a risky yes', () => {
+    const html = draw('gate', {}, { data: {} })
+    const alert = /<div role="alertdialog" aria-label="Let the cows in" aria-describedby="([^"]+)"[^>]*>(.*?)<\/div>/.exec(html)
+    expect(alert).not.toBeNull()
+    expect(alert![2]).toContain(`<span id="${alert![1]}"`)
+    expect(alert![2]).toContain('>Let the cows into the orchard?</span>')
+    expect(alert![2]).toMatch(/<button[^>]*bg-tint\/\[0\.06\] border border-line[^>]*>Let them in<\/button>/)
+    const group = /<div role="group" aria-label="Lock the gate\?"( [a-z-]+="[^"]*")*>(.*?)<\/div>/.exec(html)
+    expect(group).not.toBeNull()
+    expect(group![0]).not.toContain('aria-describedby')
+    expect(group![2]).toMatch(/<button[^>]*text-bad bg-bad\/10[^>]*>Lock<\/button>/)
+  })
 })
 
 describe('the mark: something put away to its mark, which opens it again (screens/ask.metta)', () => {
   const host = (news: boolean): ScreenHost => ({
-    data: { 'gate.label': 'Open the gate', 'gate.state': 'answering', 'gate.news': news, 'gate.left': 60, 'gate.bottom': 18, 'gate.mode': 'desktop' },
+    data: { 'latch.label': 'Open the gate', 'latch.state': 'answering', 'latch.news': news, 'latch.left': 60, 'latch.bottom': 18, 'latch.mode': 'desktop' },
     islands: { latch: createElement('b', null, 'Ω') },
   })
   it('MeTTa knows it by its role, the collapsed, and composes it only while its condition holds', () => {
-    expect(compose('gate', { flags: { 'gate.shut': true } }).parts.map((p) => [p.block, p.how.kind])).toEqual([['mark', 'direct']])
-    expect(compose('gate', { flags: { 'gate.shut': false } }).parts).toEqual([])
+    expect(compose('latch', { flags: { 'latch.shut': true } }).parts.map((p) => [p.block, p.how.kind])).toEqual([['mark', 'direct']])
+    expect(compose('latch', { flags: { 'latch.shut': false } }).parts).toEqual([])
     expect(space.blocks()).toContain('mark')
   })
   it('draws the page’s glyph in one round control where the page places it, its rim’s state, its words and a dot for news', () => {
-    const html = draw('gate', { flags: { 'gate.shut': true } }, host(true))
+    const html = draw('latch', { flags: { 'latch.shut': true } }, host(true))
     expect(html).toContain('<b>Ω</b>')
     expect(html).toMatch(/<div class="ask-dock ask-collapsed-dock" data-block="mark" data-mode="desktop" data-state="answering" data-xc-keep-clear="" style="left:60px;bottom:calc\(var\(--sab\) \+ 18px\)">/)
     expect(html).toMatch(/<button type="button" class="ask-capsule ask-collapsed" data-state="answering" data-ask-mark-open="" aria-label="Open the gate" title="Open the gate \(G\)">/)
     expect(html).toContain('class="ask-dot"')
-    expect(draw('gate', { flags: { 'gate.shut': true } }, host(false))).not.toContain('ask-dot')
+    expect(draw('latch', { flags: { 'latch.shut': true } }, host(false))).not.toContain('ask-dot')
   })
 })

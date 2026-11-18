@@ -6,8 +6,9 @@
 ;           google.ready can.invite can.add_member can.withdraw viewer.admin passwords.on invite.fresh invite.copied
 ;           password.shown password.copied password.ended; the value password.reason (added or reset);
 ;           (count invites.pending)
-;   people-person: person.self person.disabled person.google person.password viewer.admin passwords.on can.update
-;           can.clear_google can.reset_password can.remove_password; the value person.role (admin or member)
+;   people-person: person.self person.disabled person.google person.password person.test_account viewer.admin
+;           passwords.on can.update can.clear_google can.reset_password can.remove_password; the value person.role
+;           (admin or member)
 
 (Screen people "People")
 
@@ -146,12 +147,15 @@
 (Part people-person 23 note ((text "Signs in with a hive password")))
 (When people-person 23 (off person.google))
 (When people-person 23 (on person.password))
+(Part people-person 24 note ((text "Test account, from the hive settings: its password also works from outside once Google sign-in is on")))
+(When people-person 24 (on person.test_account))
 
-; their role, changed here for anyone else still in the hive
+; their role, changed here for anyone else still in the hive (not the test account, which is never an admin)
 (Part people-person 30 chooser ((label (bind person.role_label)) (value person.role) (action set-role)
   (options ((option member "Member") (option admin "Admin")))))
 (When people-person 30 (on can.update))
 (When people-person 30 (none-of ((on person.disabled) (on person.self))))
+(When people-person 30 (off person.test_account))
 
 ; what can be done to someone else, side by side in one row (never to yourself)
 ; removing and restoring
@@ -174,7 +178,7 @@
 (When people-person 42 (off person.self))
 
 ; member passwords (admins, when this hive offers them, for someone still in the hive): make or reset one for a
-; member, remove one anyone has
+; member (not the test account, whose password is HIVE_TEST_ACCOUNT_PASSWORD), remove one anyone has
 (Part people-person 43 actions ((items ((action "Reset password" reset-password)))))
 (Row people-person 43 person-actions)
 (When people-person 43 (on passwords.on))
@@ -183,6 +187,7 @@
 (When people-person 43 (is person.role member))
 (When people-person 43 (on person.password))
 (When people-person 43 (none-of ((on person.disabled) (on person.self))))
+(When people-person 43 (off person.test_account))
 (Part people-person 44 actions ((items ((action "Make a password" reset-password)))))
 (Row people-person 44 person-actions)
 (When people-person 44 (on passwords.on))
@@ -191,6 +196,7 @@
 (When people-person 44 (is person.role member))
 (When people-person 44 (off person.password))
 (When people-person 44 (none-of ((on person.disabled) (on person.self))))
+(When people-person 44 (off person.test_account))
 (Part people-person 45 actions ((items ((action "Remove password" remove-password)))))
 (Row people-person 45 person-actions)
 (When people-person 45 (on passwords.on))

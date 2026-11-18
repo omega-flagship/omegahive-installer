@@ -14,6 +14,7 @@ import pytest
 
 from hive.core import redact
 from hive.core.config import Provider
+from hive.core.refusals import refused
 from hive.core.gateway import signal_send
 from hive.core.hive import token_hash
 from hive.tests.test_ask import ask, world
@@ -1020,3 +1021,24 @@ def test_settings_mind_gateway_mirrors_the_flag(monkeypatch):
     assert load_settings().mind_gateway is True
     monkeypatch.setenv("HIVE_MIND_GATEWAY", "on")
     assert load_settings().mind_gateway is False
+
+
+@pytest.mark.parametrize("where", ["admission", "dispatch"])
+def test_a_browser_turn_refused_by_free_inference_gets_its_plain_words(gw, where):
+    """Refused when the call is priced (the person's calls for today used up) or when it is sent (the endpoint busy), the
+    browser turn gets the refusal's code and its sentence from refusals.py's table, never the generic words."""
+    client = gw["client"]
+    refusal = refused("free_inference_daily_cap", 429, limit=200) if where == "admission" else refused("free_inference_busy", 429)
+    if where == "admission":
+        def full(*args, **kwargs):
+            raise refusal
+        client.app.state.gateway.estimate = full
+    else:
+        async def busy(agent, body, principal=None):
+            await signal_send()
+            raise refusal
+        client.app.state.gateway.chat = busy
+    token = mint(client, gw["ann"])
+    turn = open_turn(client, gw["ann"], "op-free-busy-0001" if where == "dispatch" else "op-free-full-0001")
+    r = call(client, token, turn)
+    assert (r.status_code, code(r), r.json()["error"]["message"]) == (429, refusal.code, refusal.message)

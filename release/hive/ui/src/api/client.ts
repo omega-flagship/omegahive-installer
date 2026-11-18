@@ -1,4 +1,4 @@
-// Purpose: the HiveClient interface every client implements (the live hive and the simulator), and the API error it raises.
+// Purpose: HiveClient, every read and write the page makes of a hive, which the live client and the simulator both implement.
 import type { Board, Matches, Scope } from '../features/boards/types'
 import type { Exchange } from '../lib/askMemory/types'
 import type {
@@ -251,6 +251,15 @@ export interface HiveClient {
   createPlanDeploy?(planId: string): Promise<unknown>
   createPlanStop?(planId: string): Promise<unknown>
   createPlanFile?(planId: string, path: string, ckpt: string): Promise<unknown>
+  /**
+   * A mind's offers to build something in Create (create_offers.py): GET /api/me/create-offers?mind= (this person's
+   * open offers from that mind, newest first), POST /api/create/offers/{id}/start (the person's press: Create starts the
+   * plan with the offer's words; answers {offer, plan}, pressed again the same plan) and POST …/{id}/dismiss (Not now;
+   * answers the offer). Untrusted: features/dot/createOffer parses them. A hive without them never shows an offer.
+   */
+  createOffers?(mind: string): Promise<unknown>
+  createOfferStart?(offerId: string): Promise<unknown>
+  createOfferDismiss?(offerId: string): Promise<unknown>
   codeTargets?(): Promise<import('../features/code/CodePage').Target[]>
   codeAttach?(task: string, workspace: string, repository: string): Promise<import('../features/code/CodePage').Opened>
   codeTree?(target: string): Promise<{ target: string; commit: string; subdir: string; files: string[]; truncated: boolean }>
@@ -742,12 +751,16 @@ export interface HiveClient {
 }
 
 export interface AuthMethods {
+  /** The operator's hive password counts here: on the hive's own machine only, never from outside. */
   password: boolean
   public: boolean
   sso: { enabled: boolean; provider: string; login_url: string | null; invite_login_url?: string | null; invites?: boolean }
   /** J1b: a local-owner hive (the installer's): its events socket signs in with its first frame, never ?token= */
   local_owner?: boolean
-  /** T-101: members may sign in here with their email and the password an admin gave them (absent on older hives). */
+  /**
+   * T-101: members may sign in here with their email and the password an admin gave them (absent on older hives).
+   * From outside once Google sign-in is on, that is a test account's way in only.
+   */
   member_password?: boolean
 }
 
@@ -821,6 +834,8 @@ export interface Person {
   google_bound?: boolean
   /** T-101: the member has a hive-made password (never the password itself; absent on older hives). */
   password_set?: boolean
+  /** The hive's one test account (HIVE_TEST_ACCOUNT_EMAIL, read-only here): its password keeps working from outside beside Google sign-in. */
+  test_account?: boolean
 }
 /** A hive-made member password, in the one answer that carries it (add or reset). The hive cannot show it again. */
 export interface MemberPassword {

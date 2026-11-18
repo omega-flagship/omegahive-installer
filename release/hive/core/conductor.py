@@ -95,7 +95,8 @@ from starlette.concurrency import run_in_threadpool
 from .cost_reservations import BudgetExhausted, host_subjects, host_use_check
 from .db import now, parse_stamp
 from .collab import artifact_command
-from .config import CORE_ROOT, is_subscription
+from .config import CORE_ROOT, caller_judged
+from .refusals import spoken
 from .gateway import SEND_GATE, GatewayError, billable, split_model
 from .ask import refusal
 from .ask_intents import AUTO_SEND, KINDS, STUDIO, TEST
@@ -678,6 +679,8 @@ def reserve_detail(hive, exc):
 def stop_say(stop):
     """The host's own last sentence for a stop."""
     if stop.limit == "error":
+        if stop.detail.get("say"):
+            return stop.detail["say"]   # a refusal from refusals.py's table, in the words written there for the person
         return ERROR_SAY.get(stop.detail.get("code"), ERROR_SAY["not_available"])
     if stop.limit != "spend_cap":
         return LIMIT_SAY[stop.limit]
@@ -1388,7 +1391,10 @@ class Conductor:
             if stop.limit == "spend_cap":
                 outcome, extra = "spend_cap", {"limit": limit_frame(stop.detail)}
             elif stop.limit == "error":
-                outcome, extra = "error", {"error": stop.detail.get("code") if stop.detail.get("code") in ERROR_SAY else "not_available"}
+                code, remedy = stop.detail.get("code"), stop.detail.get("remedy")
+                # a spoken refusal also carries what the person can do, so the page offers it and words nothing twice
+                outcome, extra = "error", {"error": code if code in ERROR_SAY or remedy else "not_available",
+                                           **({"remedy": remedy} if remedy else {})}
             else:
                 outcome, extra = stop.limit, None
             try:
@@ -1475,9 +1481,9 @@ class Conductor:
         provider_name, _ = split_model(st.model)
         try:
             # Ask's fixed turn cap needs a worst-case price even when an operator allows unpriced calls elsewhere.
-            # the asker, for the one route that reads it (a subscription instance): a conducting turn is theirs, and Hive.user_for
-            # does not read it; every other route's call is unchanged
-            who = {"principal": st.principal} if is_subscription(provider_name) else {}
+            # the asker, for the routes that read it (a subscription instance, the free route): a conducting turn is theirs,
+            # and Hive.user_for does not read it; every other route's call is unchanged
+            who = {"principal": st.principal} if caller_judged(provider_name) else {}
             paid, estimate = gw.estimate(agent, body, allow_unpriced=False, **who)
             # OI-13 r1.2: the call is for the asking person (a 'conducting' turn is not one Hive.user_for reads), so a
             # default that is another person's own key switches to the asker's own key for this provider, if they have one
@@ -1489,6 +1495,8 @@ class Conductor:
         except GatewayError as exc:
             if exc.status == 402:   # unpriced_model, key_unavailable: not a spend limit (ask-limits r1)
                 raise _Stop("error", {"code": exc.code}) from None
+            if spoken(exc):   # out of free calls, or free inference not offered to them: said plainly
+                raise _Stop("error", {"code": exc.code, "say": exc.message, "remedy": exc.remedy}) from None
             raise
         try:
             if paid:   # OI-13 r1.2: never another person's key, judged for the asker (402 own_key_needed)
@@ -1609,6 +1617,10 @@ class Conductor:
                     self.hold_unknown(reservation, exc)   # a refusal with a charge settles; a guaranteed-unbilled one (OpenRouter 402) is released
             else:
                 release()
+            if spoken(exc):
+                # the free route refused the call (busy after its retries, or its calls ran out meanwhile): the turn ends
+                # with its plain words, not as a failure
+                raise _Stop("error", {"code": exc.code, "say": exc.message, "remedy": exc.remedy}) from None
             raise
         await self._account(st, agent, reservation, response, usage)
         try:

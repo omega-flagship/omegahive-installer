@@ -103,3 +103,67 @@ export function localModels(models: readonly ModelOption[] | null | undefined, p
     return !p?.test_only && p?.readiness !== 'not_answering' && p?.readiness !== 'test_only'
   })
 }
+
+/** The free route's provider name (hive/core/config.py FREE). */
+export const FREE_PROVIDER = 'free'
+
+export interface FreeRoute {
+  /** the model the tap sets: the route's first listed model, the deploy's default, as `free/<model>` */
+  model: string
+  /** every model the deploy pays for, as `free/<model>` */
+  models: string[]
+  /** each person's model calls a day, as the host states it; null when an older host does not */
+  dailyCalls: number | null
+  /** where what a person writes goes to be answered: the endpoint's host */
+  host: string
+}
+
+const hostOf = (url: string | undefined): string => {
+  try {
+    return new URL(url ?? '').hostname
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * The free route as the host states it to this person: the hive's deploy pays an endpoint for the minds of everyone it
+ * admits, each person up to their model calls a day (hive/core/free_inference.py). There while the host lists it as
+ * configured for them, with a model and calls a day; null otherwise: no free route, a day of no calls, or one the host
+ * doesn't open to this person (a public visitor where the deploy hasn't opted visitors in). Example: a host listing
+ * free with models ['minimax/minimax-m3.1-flash'], daily_calls 200 and base_url https://inference.asicloud.cudos.org/v1
+ * gives { model: 'free/minimax/minimax-m3.1-flash', models: ['free/minimax/minimax-m3.1-flash'], dailyCalls: 200,
+ * host: 'inference.asicloud.cudos.org' }.
+ */
+export function freeRoute(providers: readonly ProviderStatus[] | null | undefined): FreeRoute | null {
+  const p = providers?.find((x) => x.name === FREE_PROVIDER)
+  if (!p || !(p.configured ?? p.connected) || p.test_only || p.daily_calls === 0) return null
+  const models = p.models.filter((m) => typeof m === 'string' && m.trim()).map((m) => `${FREE_PROVIDER}/${m.trim()}`)
+  if (models.length === 0) return null
+  return { model: models[0], models, dailyCalls: typeof p.daily_calls === 'number' ? p.daily_calls : null, host: hostOf(p.base_url) }
+}
+
+/**
+ * "Use free inference": offered to every signed-in person the route is there for, owner or not, unless the host has
+ * seen it fail to answer. Offering changes nothing: the model is set only on the person's tap (store.thinkWith).
+ */
+export function freeWay(providers: readonly ProviderStatus[] | null | undefined): FreeRoute | null {
+  const route = freeRoute(providers)
+  return route && providers?.find((x) => x.name === FREE_PROVIDER)?.readiness !== 'not_answering' ? route : null
+}
+
+/** Whether a mind on `model` is set to think with the hive's free inference. */
+export const onFreeWay = (model: string | null): boolean => model?.split('/')[0] === FREE_PROVIDER
+
+/**
+ * Why a mind set to think with free inference can't now: 'off' when the host no longer offers this person the free
+ * route (the deploy took its key away, allows no calls, or doesn't open it to them), 'model' when it still does but no
+ * longer offers the mind's model; null when it can, when the mind isn't set to it, and before the providers are read.
+ * A route that only hasn't answered lately is no lapse: connectionState says that one.
+ */
+export type FreeLapse = 'off' | 'model'
+export function freeLapse(model: string | null, providers: readonly ProviderStatus[] | null | undefined): FreeLapse | null {
+  if (!onFreeWay(model) || !providers) return null
+  const route = freeRoute(providers)
+  return route === null ? 'off' : route.models.includes(model as string) ? null : 'model'
+}

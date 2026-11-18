@@ -10,6 +10,7 @@
 (SkillSignature hive-goal-done (Arg text goal) (Arg multiline result))
 (SkillSignature hive-goal-fail (Arg text goal) (Arg rest-text reason))
 (SkillSignature hive-goal-create (Arg text parent) (Arg rest-text title))
+(SkillSignature hive-create (Arg rest-text sentence))
 (SkillSignature hive-shares)
 (SkillSignature hive-share-request (Arg text owner) (Arg text space) (Arg number minutes) (Arg rest-text reason))
 (SkillSignature hive-share-grant (Arg text share))

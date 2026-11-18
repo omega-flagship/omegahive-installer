@@ -489,6 +489,17 @@ describe('thread rows: dispatched and streamed answers', () => {
     expect(rows().filter((x) => x.op === op && x.kind === 'note')).toHaveLength(0)
     expect(checkAskEvent({ type: 'ask', operation_id: 'ask:x', seq: 2, phase: 'done', outcome: 'HOST SAYS worker died' })).not.toHaveProperty('outcome')
   })
+  it('a refusal the hive spoke is read once: its answer, and no note of the page beside it', async () => {
+    const op = await turn()
+    deliver(op, { phase: 'answer', text: 'Free inference is busy right now: more calls came in at once than its key takes. Try again in a moment, or add a key of your own.' })
+    deliver(op, { phase: 'done', spent_usd: 0, outcome: 'error', error: 'free_inference_busy', remedy: 'wait' })
+    expect(rows().filter((x) => x.op === op && x.kind === 'answer').map((x) => x.text)).toEqual(['Free inference is busy right now: more calls came in at once than its key takes. Try again in a moment, or add a key of your own.'])
+    expect(rows().filter((x) => x.op === op && x.kind === 'note')).toHaveLength(0)
+    useAskStore.getState().reset()
+    const plain = await turn()   // an error the hive did not speak keeps the page's own words
+    deliver(plain, { phase: 'done', spent_usd: 0, outcome: 'error', error: 'free_inference_busy' })
+    expect(rows().filter((x) => x.op === plain && x.kind === 'note').map((x) => x.text).join(' ')).toMatch(/went wrong/)
+  })
   it('done settles an answer still streaming', async () => {
     const op = await turn()
     deliver(op, { phase: 'answer', delta: true, text: 'Part of it' })

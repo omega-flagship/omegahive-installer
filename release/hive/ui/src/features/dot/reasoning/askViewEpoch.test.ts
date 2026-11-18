@@ -1,4 +1,9 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+// Purpose: the reasoning viewers' Ask view is dropped at once when the person changes, before any effect runs.
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+
+// the first test signs two people in through the identity kit (the worker's first two simulated hives) and renders the
+// reasoning modules for the first time; about 3x its worst on a slow CI runner, bounded in api/sim/simTimeouts.test.ts
+vi.setConfig({ testTimeout: 15_000 })
 
 /**
  * Root r5 intake, bounded Ask origin correction (Kimi's stale-PageView observation): the reasoning viewers' PageView is
@@ -32,6 +37,18 @@ vi.mock('../../../store/store', async (importOriginal) => {
   const useHive = Object.assign(<T,>(select: (s: ReturnType<typeof store.getState>) => T) => select(store.getState()), store)
   return { ...real, useHive }
 })
+// The first import of the identity kit, the Ask's view and the reasoning modules transforms their whole module graph
+// (about a second on a loaded laptop, several on a busy CI runner). It is paid once here, under the hook's own
+// timeout, and each test below imports them again fresh after vi.resetModules, as the second test always has.
+const page = () => ({ location: { search: '', hash: '#/dot/a_invented/tools', pathname: '/' }, addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false }) })
+beforeAll(async () => {
+  vi.stubGlobal('window', page())
+  await import('../../../lib/identityEpoch.testkit')
+  await import('../../ask/view')
+  await import('./ReasoningModules')
+  vi.unstubAllGlobals()
+  vi.resetModules()
+})
 afterEach(async () => {
   effects.splice(0).reverse().forEach((cleanup) => cleanup())
   const { releasePersons } = await import('../../../lib/identityEpoch.testkit')
@@ -42,7 +59,7 @@ afterEach(async () => {
 
 describe('the reasoning viewers’ Ask view follows the person', () => {
   it('a person switch invalidates the previous person’s PageView at once, before effects run', async () => {
-    vi.stubGlobal('window', { location: { search: '', hash: '#/dot/a_invented/tools', pathname: '/' }, addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false }) })
+    vi.stubGlobal('window', page())
     const { signInAs, switchPerson, testPerson } = await import('../../../lib/identityEpoch.testkit')
     const { currentView } = await import('../../ask/view')
     const { ReasoningModules } = await import('./ReasoningModules')
@@ -62,7 +79,7 @@ describe('the reasoning viewers’ Ask view follows the person', () => {
   })
 
   it('a re-login on the same tab (credential only) invalidates it too', async () => {
-    vi.stubGlobal('window', { location: { search: '', hash: '#/dot/a_invented/tools', pathname: '/' }, addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false }) })
+    vi.stubGlobal('window', page())
     const { signInAs, switchPerson, testPerson } = await import('../../../lib/identityEpoch.testkit')
     const { currentView } = await import('../../ask/view')
     const { ReasoningModules } = await import('./ReasoningModules')

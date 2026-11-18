@@ -1,3 +1,4 @@
+// Purpose: the identity kit for tests: people on synthetic simulated hives, signed in and switched on the real store.
 import { Emitter } from '../api/client'
 import { SimClient } from '../api/sim/SimClient'
 import { useHive } from '../store/store'
@@ -38,8 +39,11 @@ interface Tab {
 }
 const tabs = new WeakMap<SimClient, Tab>()
 
+/** A person's simulated hive: the kit's one way to make one, so warmPersons builds exactly what tab uses. */
+const hiveFor = (seed: number) => new SimClient({ seed, latency: false, autoStart: false, historyDays: 1 })
+
 function tab(seed: number): Tab {
-  const sim = new SimClient({ seed, latency: false, autoStart: false, historyDays: 1 })
+  const sim = hiveFor(seed)
   made.push(sim)
   const t: Tab = { sim, token: null, handle: {}, events: new Emitter<void>(), principals: new Map() }
   Object.assign(sim, {
@@ -51,7 +55,20 @@ function tab(seed: number): Tab {
   return t
 }
 
-let seeds = 900
+// Each test's people get the same seeds in the same order, the test's first new tab 901, its next 902 and so on
+// (releasePersons starts them again), so a test's hives differ from one another as before, and every test after a
+// file's first takes its hives from the simulator's seed cache (api/sim/SimClient SEED_CACHE) instead of running the
+// commons' seed program again: 0.3 s per person on a loaded laptop, more than a second on a busy CI runner.
+const FIRST_SEED = 900
+let seeds = FIRST_SEED
+
+/**
+ * Build, once, the hives a test's first `people` new tabs use, so a file's first test takes them from the seed cache
+ * too. Call it in beforeAll: the commons' seed program then runs under the hook's own timeout, not a test's.
+ */
+export function warmPersons(people = 2): void {
+  for (let seed = FIRST_SEED + 1; seed <= FIRST_SEED + people; seed++) hiveFor(seed).disconnect()
+}
 /**
  * A person on their own tab (client), or, with `sameTab`, on another person's tab: switching between two people who
  * share a tab is a re-login on the same client without a logout (a credential-only identity change).
@@ -122,4 +139,5 @@ export function switchPerson(from: TestPerson, to: TestPerson): Promise<{ before
 /** Disconnect every client the kit made. */
 export function releasePersons(): void {
   for (const c of made.splice(0)) c.disconnect()
+  seeds = FIRST_SEED
 }

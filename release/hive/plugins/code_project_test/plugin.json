@@ -9,5 +9,6 @@
     "sandbox:run"
   ],
   "icon": "flask",
-  "placement": "swarm"
+  "placement": "swarm",
+  "test": true
 }

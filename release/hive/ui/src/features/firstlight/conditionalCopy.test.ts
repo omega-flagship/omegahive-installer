@@ -8,19 +8,19 @@ const limit: MonthlyLimit = { done: false, enforced: false, enforced_by: null, l
 describe('R1.1 conditional copy uses only observed evidence', () => {
   it('distinguishes proposed, saved-unconfirmed, read-back enforced and unknown limits without inventing no-enforcement capability', () => {
     expect(spendingCopy(limit, 5, null)).toBe('Proposed limit: $5 a month. It starts when you save.')
-    expect(spendingCopy(limit, 5, 9)).toBe("We couldn't confirm a spending limit here.")
+    expect(spendingCopy(limit, 5, 9)).toBe("We couldn't read your monthly limit.")
     expect(spendingCopy(limit, 5, 9, true)).toBe('Checking your limit…')
     expect(spendingCopy({ ...limit, enforced: true, enforced_by: 'own', limit_usd: 0 }, 5, null)).toBe('Your minds may spend up to $0 a month.')
-    expect(spendingCopy({ ...limit, enforced: true, enforced_by: 'own', limit_usd: 5 }, 9, null, false, true)).toBe("We couldn't confirm a spending limit here.")
-    expect(spendingCopy(null, null, null)).toBe("We couldn't confirm a spending limit here.")
+    expect(spendingCopy({ ...limit, enforced: true, enforced_by: 'own', limit_usd: 5 }, 9, null, false, true)).toBe("We couldn't read your monthly limit.")
+    expect(spendingCopy(null, null, null)).toBe("We couldn't read your monthly limit.")
     expect(spendingCopy(limit, null, null)).not.toContain("can't enforce")
   })
 
   it('retained pending/chosen amounts and an old enforced value cannot imply a request is in flight', () => {
     const stale = { ...limit, chosen_usd: 9 }
-    expect(spendingCopy(stale, null, 9)).toBe("We couldn't confirm a spending limit here.")
+    expect(spendingCopy(stale, null, 9)).toBe("We couldn't read your monthly limit.")
     expect(spendingCopy(stale, 9, null)).toBe('Proposed limit: $9 a month. It starts when you save.')
-    expect(spendingCopy({ ...stale, enforced: true, limit_usd: 5 }, 9, 9)).toBe("We couldn't confirm a spending limit here.")
+    expect(spendingCopy({ ...stale, enforced: true, limit_usd: 5 }, 9, 9)).toBe("We couldn't read your monthly limit.")
     expect(spendingCopy({ ...stale, enforced: true, limit_usd: 5 }, 9, null, true)).toBe('Checking your limit…')
     for (const words of [spendingCopy(stale, null, 9), spendingCopy(null, null, null)]) {
       expect(words).not.toContain('Checking')
@@ -44,7 +44,7 @@ describe('R1.1 conditional copy uses only observed evidence', () => {
   it('names saved and unsent fields while a sent request with no acknowledgement stays unknown, never falsely not-saved', () => {
     const copy = profileSaveCopy({ ...blank(), name: 'saved', purpose: 'unknown' })
     expect(copy).toContain("name was saved")
-    expect(copy).toContain("couldn't confirm what saved for purpose")
+    expect(copy).toContain("couldn't tell whether its purpose was saved")
     expect(copy).toContain("preferences weren't sent")
     expect(copy).not.toContain("purpose wasn't")
     expect(copy).not.toContain('Nothing changed')
@@ -57,7 +57,7 @@ describe('R1.1 conditional copy uses only observed evidence', () => {
   })
 
   it('no current outbound-policy field means no universal approval promise', () => {
-    expect(outboundCopy).toBe("The outbound-approval policy could not be confirmed here")
+    expect(outboundCopy).toBe('We can’t tell whether it asks you before it sends or posts anything.')
     expect(outboundCopy).not.toContain('asks you before anything leaves')
   })
 })

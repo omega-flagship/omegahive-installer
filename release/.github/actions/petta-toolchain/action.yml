@@ -1,18 +1,42 @@
-# The pinned hive-petta toolchain, shared by hive-ci's hive-petta-smoke and hive-petta jobs so the two cannot drift.
-# Expects the repository checked out. Sets PATH, PETTA_PATH and LD_LIBRARY_PATH for the steps after it.
+# The pinned hive-petta toolchain, shared by hive-ci's hive-petta-smoke, hive-petta and warm-petta jobs so they cannot
+# drift. Expects the repository checked out. Sets PATH, PETTA_PATH and LD_LIBRARY_PATH for the steps after it.
+#
+# Two caches, each restored whole and saved only on a miss: the Python setup-python installs, with hive's requirements
+# installed into it, keyed by the requirement and constraint files; and SWI-Prolog + PeTTa, keyed by their pins. A pull
+# request restores what its own earlier runs saved or, failing that, what main's warm-petta job saved, which every pull
+# request can read (GitHub lets a run restore caches of its own branch, its base branch and the default branch, not of
+# another pull request). Before the installed Python was cached, pip resolved every requirement against PyPI on every
+# run: 58 s with its wheel cache restored (job 132982847303), 123 s without (job 132973773919).
+#
+# Every folder a cache restores into starts empty, and pip's cache is the job's own: a self-hosted runner keeps its
+# home and tool cache between jobs, a restore extracts over what is there without removing it, and a pull request's job
+# must not leave a file a later job installs or a later main job saves.
 name: petta-toolchain
 description: Python 3.12, hive requirements under hive/ci-constraints.txt, and SWI-Prolog + PeTTa built (or restored) by pin.
 runs:
   using: composite
   steps:
+    - name: Empty what an earlier job could have left (setup-python's Python, the toolchain, pip's cache)
+      shell: bash
+      run: |
+        rm -rf "${RUNNER_TOOL_CACHE:?}/Python" ~/swipl-patched ~/PeTTa
+        echo "PIP_CACHE_DIR=$RUNNER_TEMP/pip-cache" >> "$GITHUB_ENV"
     - uses: actions/setup-python@v5
       id: py
       with:
         python-version: '3.12'
-        cache: pip
-        cache-dependency-path: |
-          hive/requirements.txt
-          hive/ci-constraints.txt
+    - name: Where setup-python installed Python (the folder the next step restores into)
+      id: where
+      shell: bash
+      run: echo "python=$pythonLocation" >> "$GITHUB_OUTPUT"
+    - name: Restore the Python with hive's requirements installed (keyed by its version and the requirement files)
+      # The folder is in the cache's identity as well as the key, so a Python installed under another runner's tool
+      # cache is never restored here. hive/requirements.txt reads hive/google-constraints.txt through its -c line.
+      id: python-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ steps.where.outputs.python }}
+        key: hive-python-${{ runner.os }}-${{ runner.environment }}-py${{ steps.py.outputs.python-version }}-${{ hashFiles('hive/requirements.txt', 'hive/google-constraints.txt', 'hive/ci-constraints.txt') }}-v1
     - name: Build prerequisites are installed (ci-runner-setup installs them; jobs have no apt-get)
       shell: bash
       run: |
@@ -43,7 +67,7 @@ runs:
       # command line and the same with =1.
       shell: bash
       run: sudo -n /usr/sbin/sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-    - name: Install hive requirements
+    - name: Install hive requirements (nothing to install when the Python was restored)
       shell: bash
       run: |
         python -m pip install --upgrade pip
@@ -51,6 +75,14 @@ runs:
     - name: Installed Python packages are exactly hive/ci-constraints.txt (before the toolchain adds janus-swi)
       shell: bash
       run: python scripts/dev/check_ci_constraints.py hive/ci-constraints.txt --requirements hive/requirements.txt
+    - name: Save the Python with hive's requirements installed
+      # Saved after the check above passed and before setup_petta_env.sh installs janus-swi, so a restored Python holds
+      # exactly hive/ci-constraints.txt and the check above passes on it.
+      if: steps.python-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ steps.where.outputs.python }}
+        key: ${{ steps.python-cache.outputs.cache-primary-key }}
     - name: Pinned toolchain (builds on a cache miss; always re-checks the bridges and a MeTTa run)
       shell: bash
       run: bash scripts/dev/setup_petta_env.sh --prefix "$HOME/swipl-patched" --petta "$HOME/PeTTa" --python "$(which python)" --runtime "$RUNNER_TEMP/omegadots-runtime"

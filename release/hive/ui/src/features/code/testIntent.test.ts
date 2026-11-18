@@ -85,6 +85,12 @@ it('accepts the known test kind in a mixed personal list without weakening defau
 it('still refuses an unknown intent kind instead of treating it as a code test', () => {
   expect(() => parseIntentList({ intents: [view('unknown.execute')] })).toThrow()
 })
+it('leaves out the Studio sessions and research requests other pages own, newest or not', () => {
+  // the person's own list, newest first: a research question and a Studio session asked after the Code change
+  expect(parseIntentList({ intents: [view('research.request'), view('studio.session'), view('code.request')] }).map((v) => v.kind)).toEqual(['code.request'])
+  expect(parseIntentList({ intents: [view('research.request')] })).toEqual([])
+  expect(() => parseIntentList({ intents: [view('research.request'), view('unknown.execute')] })).toThrow()
+})
 
 it('matches the Host reference-list and Unicode/total context limits without executable commands', () => {
   expect(codeTestBody({ ...request, selection: ['hunk_one', 'hunk_two'], test_filter: '😀'.repeat(512) }).request.selection).toEqual(['hunk_one', 'hunk_two'])

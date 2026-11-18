@@ -120,7 +120,8 @@ sudo -iu omegahive bash -lc 'cd /opt/omegahive/app/hive/ui && npm ci && npm run 
    - the Google client ID and secret;
    - or, before Google is set up, `HIVE_PUBLIC_PASSWORD=1` so members can sign in from outside with a password an
      admin makes on the People page (shown once; see hive/API.md, Auth, "Member passwords"). Once the Google client
-     is filled in, members sign in with Google from outside and their passwords work only on this machine;
+     is filled in, members sign in with Google from outside and their passwords work only on this machine, except
+     test accounts while `HIVE_PUBLIC_PASSWORD=1` stays set (below);
    - optionally the model key.
 
    Keep comments on their own lines; systemd reads this file.
@@ -134,9 +135,79 @@ removing it ends that person's password sign-ins, and disabling them drops it. A
 authority, including after a role promotion. The operator uses the hive password with the email field empty.
 
 Public member-password access additionally requires explicit `HIVE_PUBLIC_PASSWORD=1`. Once Google sign-in is
-configured, public member-password login and earlier member-password sessions are refused; the same email continues
-with Google as the same person. Public operator-password sessions remain refused in this fork. No live setting is
+configured, public member-password login and earlier member-password sessions are refused, test accounts aside
+(below); the same email continues with Google as the same person. The operator password login is refused from outside
+whatever `HIVE_PUBLIC_PASSWORD` says, and the operator signs in with it on this machine only. No live setting is
 changed by installing this code. J1 local-owner hives keep their one-time app sign-in and hide/refuse member passwords.
+
+### Test accounts beside Google sign-in
+
+A UI tester or an agent that drives a browser needs a password where people use Google. The hive has one test
+account, and only its env file names it: keep `HIVE_PUBLIC_PASSWORD=1` set after filling in the Google client, set
+`HIVE_TEST_ACCOUNT_EMAIL` and `HIVE_TEST_ACCOUNT_PASSWORD` (at least 10 characters, one line, no single quote, no
+trailing backslash), and restart. The hive makes that member, or marks the member who has that email, with that
+password. That account signs in from outside with its email and password, beside **Continue with Google** on the
+sign-in card; everyone else is refused and continues with Google. People shows the mark but cannot set it.
+
+- To change the password, change the variable and restart: the account's password sessions end.
+- To end it, unset both variables (or give another address) and restart: nobody else keeps a mark.
+- A former test account keeps its password. It no longer counts from outside, but it still works on the hive's own
+  machine: remove it on People (Remove password) if it should not.
+- Disabling the test account on People drops its mark with its password. Re-enabled, it is marked again, with the
+  variable's password, at the next restart.
+- A bad setting stops the hive at start with an error naming the variable, never the password. An admin's address
+  and a disabled person are skipped (logged), never made the test account.
+- Without `HIVE_PUBLIC_PASSWORD=1` no password works from outside, the test account's included.
+
+### Free inference
+
+To let people's minds think without a key of their own, put the deploy's inference key in `HIVE_FREE_INFERENCE_KEY` and,
+unless it is a Singularity Compute key, the OpenAI-compatible endpoint it belongs to in `HIVE_FREE_INFERENCE_URL`
+(https, or plain http to `127.0.0.1` for a stand-in; any other address turns free inference off rather than send the key
+there). An ASI Cloud key needs `HIVE_FREE_INFERENCE_URL=https://inference.asicloud.cudos.org/v1`: without it the hive
+sends the key to the default, Singularity Compute's endpoint. Then restart. First Light offers **Use free inference** to
+everyone the hive invited: owners, members and guests. It names the model and says this hive's deploy provides it, and
+one press moves the person's own mind onto the first model in `HIVE_FREE_INFERENCE_MODELS` (default
+`minimax/minimax-m3.1-flash`). Only the listed models run on the key: a mind set to another one, or to one later taken
+off the list, is refused before anything is sent.
+
+Two limits bound it, each counted per UTC day before a call goes out:
+
+- each person's `HIVE_FREE_INFERENCE_DAILY_CALLS` model calls (default 200). Everything their minds do counts toward
+  them, the minds' replies in rooms and their work on goals too, so a mind busy with goals can use up its person's day;
+- the whole hive's `HIVE_FREE_INFERENCE_HIVE_DAILY_CALLS` (default 2000), so many accounts can't multiply what the key
+  spends.
+
+Past either, a mind is refused in plain words until midnight UTC, or until its person adds a key of their own. 0 for
+either turns free inference off. A call that ends before it is sent, refused or cancelled, doesn't count. The calls
+are recorded with their tokens at no cost to the hive, so no limit on the Limits page counts them.
+
+Both limits are this hive's alone. Each hive counts only its own calls, so a key that several deploys share is bounded
+across them only by its own limits at its provider. Set those limits too, as the last bound.
+
+A key also has its own limit on calls a second at its provider, shared by every hive the key is in, so ask the provider
+to raise it before many people use it at once. When the endpoint answers 429, the hive waits and tries the call again,
+up to four times. It waits as long as the answer asks, up to 8 seconds each time, so up to about 32 seconds in all;
+when the answer doesn't say, it waits a random time under 1, 2, 4 and then 8 seconds, under 15 seconds in all. An
+answer asking for a longer wait isn't tried again. A call still refused ends in plain words, "Free inference is busy
+right now", and counts toward no one's calls; an Ask turn ends with those words instead of failing.
+
+Public visitors, anyone who signs in on a public hive without an invite, are left out: First Light doesn't offer
+them free inference and their minds' calls on it are refused. Set `HIVE_FREE_INFERENCE_VISITORS=1` to include them.
+
+The Ask answers as a person's own mind with that mind's model, so once their mind thinks with free inference their
+Asks do too, counted in the same calls a day. The Ask's other turns use `HIVE_ASK_CONDUCTOR_MODEL`. On a hive with no
+other model key, set it to a free model too (`HIVE_ASK_CONDUCTOR_MODEL=free/minimax/minimax-m3.1-flash`), and each such turn
+counts against the calls of the person who asked.
+
+The key stays in this file. No page, log line or answer shows any of it, to admins either, and nobody can assign it to
+a mind or check it from the hive. To stop, unset it and restart: a mind left on free inference is then refused with
+words saying so, until its person chooses another way for it to think.
+
+Free inference is separate from `ASI_API_KEY`. A hive whose installer was given an ASI Cloud key has it there, and that
+key is the hive owner's for ASI Cloud's own provider (`asicloud`). Its model `asi1-mini` costs $0: calls on it pass
+the same spending checks as any priced model but use up none of a money limit, so only the key's limits at ASI Cloud
+bound how many there are.
 
 Install the pinned `xkcdpass==1.30.0` from `hive/requirements.txt` with the deployment's ordinary dependency step.
 The packaged EFF long list must be present and readable at startup; the server refuses a missing or shortened list,

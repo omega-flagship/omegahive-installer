@@ -78,6 +78,10 @@ describe('what never leaves the hive', () => {
     ['call +46 76 340 86 52 now', 'call [phone] now'],
     // a key built from parts, so the repository's own secret check (tests/test_repo_boundary.py) sees no key here
     [`key ${'sk-or'}-v1-abcdef0123456789abcdef`, 'key [key]'],
+    // the hive's own key ids, alone or as a key: scope, as its refusals name them (hive/core/keyids.py)
+    ['key:k_0000b0b1 has spent its month', '[key] has spent its month'],
+    ['paid by k_0123456789abcdef0123456789abcdef and env:openrouter', 'paid by [key] and [key]'],
+    ['a mind named k_wren, the env: prefix, and k_0000b0b1x stay', 'a mind named k_wren, the env: prefix, and k_0000b0b1x stay'],
     ['Authorization: Bearer abc.def.ghi', 'Authorization: Bearer [token]'],
     ['by user:u_7f3k2abc', 'by [person]'],
     ['thread c_a_vega01~user:u_7f3k2abc', 'thread [conversation]'],

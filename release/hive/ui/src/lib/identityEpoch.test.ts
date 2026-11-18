@@ -1,9 +1,15 @@
+// Purpose: verify the identity epoch bumps on every change of person, client or session, runs its clear hooks before
+// anyone sees the new identity, and lets results that started under the old one drop.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HiveClient } from '../api/client'
 import { useHive } from '../store/store'
 import { askConfirm, confirmShowing } from '../ui/confirm'
 import { askConfirmBound, bindEpoch, currentEpoch, guard, identityKey, onIdentityChange, STALE } from './identityEpoch'
 import { isCurrent, releasePersons, signInAs, switchPerson, testPerson } from './identityEpoch.testkit'
+
+// the first test boots the worker's first two simulated hives (each runs the commons' seed program once before the kit's
+// per-seed cache has it); about 3x its worst on a slow CI runner, bounded in api/sim/simTimeouts.test.ts
+vi.setConfig({ testTimeout: 15_000 })
 
 /**
  * The identity epoch: one key for who and where (client + sign-in + store session + inits), bumped synchronously on

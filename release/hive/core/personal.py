@@ -410,6 +410,10 @@ class PersonalMinds:
             return "no one: this model costs nothing"
         if s["reason"] and not s["key_id"]:
             return f"no one yet: a call on this model would be refused ({s['reason']})"
+        if s.get("payer_mode") == "free":
+            from .free_inference import daily_cap
+            return (f"no one: the free inference this hive's deploy provides, up to {daily_cap()} model calls a day for you, "
+                    "its replies in rooms and its goals included")
         if s["own_key"] and s["payer"] == person:
             return "you, on your own key" if s["bounded"] else "you, on your own key, once you set your monthly limit"
         if not s["hive_key"]:

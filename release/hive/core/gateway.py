@@ -16,10 +16,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import datetime
+import email.utils
 import hashlib
 import json
 import logging
 import math
+import random
 import re
 import time
 import os
@@ -28,7 +31,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .config import SUBSCRIPTION_CLI, SUBSCRIPTION_CODEX, Provider, is_subscription
+from .config import SUBSCRIPTION_CLI, SUBSCRIPTION_CODEX, Provider, is_free, is_subscription
 from .providers import openrouter_routing
 from .redact import provider_category
 
@@ -86,6 +89,11 @@ def _plan_counters(usage):
 
 
 class GatewayError(Exception):
+    # set only on a refusal built from refusals.py's table (refusals.refused): what the person can do, and the seconds
+    # until trying again can help; refusals.spoken tells such a refusal apart
+    remedy = None
+    retry_after = None
+
     def __init__(self, status, code, message):
         super().__init__(message)
         self.status, self.code, self.message = status, code, message
@@ -108,6 +116,40 @@ def upstream_refusal(provider_name, response):
     err.unbilled = (status in UNBILLED_REFUSALS.get(provider_name, frozenset())
                     and err.refusal_usage is None and canonical_refusal_body(response.content, status, provider_name))
     return err
+
+
+# A free call its endpoint answers 429 is retried. That endpoint's key takes so many calls a second, shared by every hive
+# the deploy's key is in: Singularity Compute's took about 5 at once and 3 a second on 17 Nov, refusing the rest with 429
+# and no Retry-After after about 1 s. The wait honours the answer's Retry-After (retry-after-ms first), as
+# openai-python's client does, and is otherwise exponential backoff with full jitter, which AWS's "Exponential Backoff
+# And Jitter" (2015) found finishes contended work soonest. Its 1 s base is that endpoint's window. Four retries wait
+# 7.5 s on average and 15 s at most, and in a simulation of that limit they served a burst of 20 calls within about 5 s.
+FREE_RETRIES = 4
+FREE_RETRY_BASE, FREE_RETRY_CAP = 1.0, 8.0
+
+
+def free_retry_delay(attempt, headers, rng=random.random):
+    """Seconds to wait before retry `attempt` (0 for the first) of a free call answered 429, or None when the answer asks
+    for a longer wait than FREE_RETRY_CAP, which this call doesn't make. retry-after-ms first, then retry-after as seconds
+    or an HTTP date; a zero, past or unreadable value counts as none given; without one, full jitter: uniform over
+    [0, min(FREE_RETRY_CAP, FREE_RETRY_BASE * 2 ** attempt)). Example: attempt 2 with no header waits 0 to 4 s;
+    'retry-after: 3' waits 3 s; 'retry-after: 30' gives None."""
+    for name, scale in (("retry-after-ms", 0.001), ("retry-after", 1.0)):
+        raw = headers.get(name)
+        if raw is None:
+            continue
+        try:
+            seconds = float(raw) * scale
+        except ValueError:
+            try:
+                when = email.utils.parsedate_to_datetime(raw)
+                seconds = (when - datetime.datetime.now(datetime.timezone.utc)).total_seconds()
+            except (TypeError, ValueError, IndexError, OverflowError):
+                continue
+        if not math.isfinite(seconds) or seconds <= 0:
+            continue
+        return seconds if seconds <= FREE_RETRY_CAP else None
+    return rng() * min(FREE_RETRY_CAP, FREE_RETRY_BASE * 2 ** attempt)
 
 
 # Error answers a provider documents as never charged, by provider and status. The hive never streams, so an error
@@ -476,12 +518,15 @@ class Gateway:
         # subscription_cli.SubscriptionGate, attached by the app: admits a call on any subscription instance (owner only,
         # that instance's daily cap). None: every subscription call is refused (fails closed).
         self.subscription_gate = None
+        # free_inference.FreeGate, attached by the app: admits a call on the free route for the person it is for, under
+        # their model calls for the day. None: every free call is refused (fails closed).
+        self.free_gate = None
 
     def _agent_guard(self, agent):
         if self.authorize_agent is not None and agent is not None:
             self.authorize_agent(agent["id"])
 
-    def _trace(self, agent, recheck=None, on_send=None):
+    def _trace(self, agent, recheck=None, on_send=None, on_commit=None):
         async def trace(name, info):
             if name.endswith("send_request_headers.started"):
                 if on_send is not None:
@@ -491,6 +536,8 @@ class Gateway:
                 self._agent_guard(agent)   # a gate may have awaited while authority changed
                 if recheck is not None:
                     recheck()   # a subscription instance: its authority and egress, now, after any awaited gate
+                if on_commit is not None:
+                    on_commit()   # every check here passed: the request is written next, so from now it may arrive
         return trace
 
     def enforce_egress(self, agent, provider_name):
@@ -544,6 +591,23 @@ class Gateway:
         elif callable(getattr(gate, "bridge_up", None)):
             gate.bridge_up(provider)
 
+    def admit_free(self, agent, principal=None, dispatch=False):
+        """A call on the free route is admitted only by the hive's FreeGate (free_inference.py: offered, a model the deploy
+        pays for, for a person it admits, under their calls and the hive's for the day). dispatch=True counts this call
+        and returns its ticket (for free_uncommitted). principal: as admit_subscription. Refuses with no gate."""
+        if self.free_gate is None:
+            from .refusals import refused
+            raise refused("free_inference_off", 403)
+        return self.free_gate.admit(agent, principal=principal, dispatch=dispatch)
+
+    def free_uncommitted(self, ticket, committed):
+        """A counted free call ended, any way (no connection, a refusal or a closed turn at the send boundary, a
+        cancellation), before it committed at the send boundary (_trace's on_commit, after every check there): its request
+        was never written, so nothing reached the endpoint and its count is given back. Past that point it counts,
+        whatever happens to the answer."""
+        if not committed and self.free_gate is not None:
+            self.free_gate.release(ticket)
+
     def _subscription_recheck(self, agent, principal, provider=SUBSCRIPTION_CLI):
         """At the send boundary: egress and the gate's authority again (no second count of the attempt)."""
         def recheck():
@@ -551,6 +615,17 @@ class Gateway:
             if self.subscription_gate is None:
                 raise GatewayError(403, "subscription_unavailable", "This model route is not available on this hive.")
             self.subscription_gate.authorize(agent, principal, provider=provider)
+        return recheck
+
+    def _free_recheck(self, agent, principal):
+        """At the send boundary: egress and the free route's authority again (FreeGate.authorize: offered, the deploy's
+        model, a person it admits), never the day's counts, which this call already holds."""
+        def recheck():
+            self.enforce_egress(agent, "free")
+            if self.free_gate is None:
+                from .refusals import refused
+                raise refused("free_inference_off", 403)
+            self.free_gate.authorize(agent, principal)
         return recheck
 
     @staticmethod
@@ -633,6 +708,9 @@ class Gateway:
     def provider(self, name) -> Provider:
         provider = self.providers.get(name)
         if provider is None:
+            if is_free(name):   # a mind left on free inference after the deploy took the key away
+                from .refusals import refused
+                raise refused("free_inference_off", 403)
             raise GatewayError(400, "unknown_provider", f"no provider {name!r}")
         return provider
 
@@ -650,6 +728,10 @@ class Gateway:
             # R3.2 §M: its own branch. No money is reserved: it is the owner's plan usage, recorded with its tokens at
             # $0 and payer_mode 'plan', bounded by the gate's day call cap, never by a price (and never called free)
             self.admit_subscription(agent, principal, provider=provider_name)
+            return False, 0.0
+        if is_free(provider_name):
+            # the deploy's key, not the hive's money: no price, no reservation; the person's calls for the day bound it
+            self.admit_free(agent, principal)
             return False, 0.0
         if provider.local:
             return False, 0.0
@@ -741,7 +823,8 @@ class Gateway:
         if not provider.base_url:
             raise GatewayError(500, "provider_unconfigured", f"{provider_name} has no base_url")
         subscription = is_subscription(provider_name)
-        ticket, sent = None, []
+        free = is_free(provider_name)
+        ticket, sent, committed = None, [], []
         if subscription:
             # again just before dispatch (R3.1 §F), recorded as an attempt against the instance's day cap
             ticket = self.admit_subscription(agent, principal, dispatch=True, provider=provider_name)
@@ -750,8 +833,9 @@ class Gateway:
             upstream["tool_choice"] = "auto"   # 'required' maps to Anthropic 'any', rejected by some models (as provider_features.py)
         if provider_name == "anthropic":
             upstream.pop("enable_thinking", None)   # Iter's vLLM/Qwen switch, not an Anthropic field
-        # a subscription never has a paying key (R3.2 §M): the CLI holds its own sign-in; this is the bridge's own key
-        key_id, secret = (self.paying_key(agent, provider_name) if not (provider.local or subscription)
+        # a subscription never has a paying key (R3.2 §M): the CLI holds its own sign-in; this is the bridge's own key.
+        # Nor does the free route: the deploy's key pays, never a key in the ring or one assigned to the mind
+        key_id, secret = (self.paying_key(agent, provider_name) if not (provider.local or subscription or free)
                           else (None, provider.api_key))
         headers = {"Authorization": f"Bearer {secret}"} if secret else {}
         if provider_name == "openrouter":
@@ -764,23 +848,61 @@ class Gateway:
         if subscription:   # always traced: authority and egress are judged again at the send boundary itself
             extensions = {"trace": self._trace(agent, self._subscription_recheck(agent, principal, provider_name),
                                                on_send=lambda: sent.append(True))}
+        elif free:   # authority and egress judged again at the send boundary, and the commit marked there (free_uncommitted)
+            extensions = {"trace": self._trace(agent, self._free_recheck(agent, principal),
+                                               on_commit=lambda: committed.append(True))}
         readiness = self.keyring
         if not all(callable(getattr(readiness, method, None))
                    for method in ('answer_context', 'record_answer', 'record_failure')):
             readiness = None  # existing stand-ins do not acquire evidence authority
         context = readiness.answer_context(provider_name, model, secret) if readiness is not None else None
+        if free:
+            # again just before dispatch, counted as one of the person's calls and the hive's for the day; given back
+            # below if the call ends before it commits
+            ticket = self.admit_free(agent, principal, dispatch=True)
         try:
-            response = await self.client.post(f"{provider.base_url.rstrip('/')}/chat/completions", json=upstream, headers=headers,
-                                              extensions=extensions)
+            attempt = 0
+            while True:
+                response = await self.client.post(f"{provider.base_url.rstrip('/')}/chat/completions", json=upstream,
+                                                  headers=headers, extensions=extensions)
+                if not (free and response.status_code == 429):
+                    break
+                # the endpoint's rate limit refused it unserved: uncommitted again (the retry commits at its own send
+                # boundary, after the same checks), and retried after a wait while retries remain and the answer asks for
+                # no longer wait than this call makes
+                committed.clear()
+                delay = free_retry_delay(attempt, response.headers) if attempt < FREE_RETRIES else None
+                logging.getLogger("hive").info("free inference: the endpoint answered 429 (attempt %d); %s", attempt + 1,
+                                               "giving up" if delay is None else f"retrying in {delay:.1f} s")
+                if delay is None:
+                    break
+                await asyncio.sleep(delay)
+                attempt += 1
         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadError, httpx.ReadTimeout,
                 httpx.WriteError, httpx.WriteTimeout, httpx.RemoteProtocolError) as exc:
             if readiness is not None:
                 readiness.record_failure(context)
             if subscription:
                 self.subscription_transport_failed(provider_name, ticket, exc, sent)
+            elif free:
+                self.free_uncommitted(ticket, committed)
+            raise
+        except BaseException:   # a refusal at the send boundary, a cancelled turn, a full pool: whatever ended it there
+            if free:
+                self.free_uncommitted(ticket, committed)
             raise
         if subscription and callable(getattr(self.subscription_gate, "bridge_up", None)):
             self.subscription_gate.bridge_up(provider_name)   # the bridge answered: any cooldown ends
+        if free and response.status_code == 429:
+            # still refused after its retries: nothing was served, so its count goes back, and the person reads why in
+            # plain words, never the provider's
+            if readiness is not None:
+                readiness.record_failure(context)
+            self.free_uncommitted(ticket, committed)
+            logging.getLogger("hive").warning("free inference: the endpoint still answered 429 after %d retries", attempt)
+            from .refusals import refused
+            # the next wait this loop would have made (None when the answer asks for more than it makes)
+            raise refused("free_inference_busy", 429, retry_after=free_retry_delay(attempt, response.headers))
         # Pool exhaustion, local protocol errors, budget/policy/SEND_GATE refusal and
         # cancellation are not observations that the provider failed to answer.
         if response.status_code >= 400:
@@ -830,6 +952,9 @@ class Gateway:
                 # the owner's plan, not the hive's money: tokens kept, $0 recorded, marked as plan usage (R3.1 §H); a
                 # CLI-reported figure is notional on a plan, so it is not recorded as a charge
                 result[1].update(cost_usd=0.0, reported_cost_usd=None, payer_mode="plan")
+            elif free:
+                # the deploy's key, not the hive's money: tokens kept, $0 to the hive, marked as free inference
+                result[1].update(cost_usd=0.0, reported_cost_usd=None, payer_mode="free")
         except (AttributeError, TypeError, ValueError, OverflowError):
             if readiness is not None:
                 readiness.record_failure(context)
@@ -847,7 +972,7 @@ class Gateway:
         self._agent_guard(agent)
         provider_name, model = split_model(embedding_model)
         self.enforce_egress(agent, provider_name)
-        if is_subscription(provider_name):
+        if is_subscription(provider_name) or is_free(provider_name):
             raise GatewayError(400, "unsupported_route", "This model route does not serve embeddings.")
         inputs = body.get("input", "")
         inputs = inputs if isinstance(inputs, list) else [inputs]

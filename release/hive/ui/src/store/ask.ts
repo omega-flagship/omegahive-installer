@@ -37,7 +37,7 @@ import { EXPERIENCES } from '../experiences/registry'
 import { featureById } from '../features/registry'
 import { domUnsaved, hasUnsaved } from '../features/ask/dirty'
 import type { KeySetup } from '../features/ownKey/addOwnKey'
-import { DONE_OFFERS, DONE_WORDS, doneErrorWords, readDoneLimit, refusalOf, refusedSay, RESEARCH_WORDS, setOwnMind, spendStop, THREAD_LIMIT_MAX_USD, type Offer } from '../features/ask/words'
+import { DONE_OFFERS, DONE_WORDS, doneErrorWords, readDoneLimit, refusalOf, refusedSay, RESEARCH_WORDS, setOwnMind, spendStop, spokenRefusal, THREAD_LIMIT_MAX_USD, type Offer } from '../features/ask/words'
 import { href, navigate, parse, type Route } from '../lib/router'
 import { asOwnChoice, DEFAULT_VARIANT, keepLook, lookName, lookState, previewLook, SEED_VARIANTS, withExperience, type Layout, type UiPrefs, type UiVariant } from '../shell/uiVariant'
 import { hiveBus, useHive } from './store'
@@ -678,7 +678,8 @@ export function turnRows(t: TurnMeta, mindName?: string, thread?: { spent_usd: n
         // (ask-limits r1); a model with no price or a missing key is its own error, not a limit
         const stop = e.outcome === 'spend_cap' ? spendStop(readDoneLimit(e.limit), thread) : null
         // a turn the page carried and stopped itself: where the words went, never "This request was stopped"
-        const said = t.carried && e.outcome === 'cancelled' ? t.carried : stop ? stop.text : e.outcome === 'error' ? doneErrorWords(e.error) : e.outcome ? DONE_WORDS[e.outcome] : null
+        // a refusal the hive spoke (done.remedy) is already the turn's answer, in the hive's words: read once, never twice
+        const said = t.carried && e.outcome === 'cancelled' ? t.carried : stop ? stop.text : e.outcome === 'error' ? (spokenRefusal(e.remedy) ? null : doneErrorWords(e.error)) : e.outcome ? DONE_WORDS[e.outcome] : null
         const offer = stop ? (stop.offer.length ? stop.offer : undefined) : e.outcome ? DONE_OFFERS[e.outcome] : undefined
         if (said) rows.push({ ...base, kind: 'note', text: said, ...(offer ? { offer } : {}) })
         break

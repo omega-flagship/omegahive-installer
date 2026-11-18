@@ -26,7 +26,7 @@ import {
   total,
   type CaseFilter,
 } from './labUtil'
-import { DEMO_LABEL, formerlyText } from './labUtil'
+import { DEMO_LABEL, formerlyText, runRefusal } from './labUtil'
 import { aboutSince, stalledFor } from './stallCompare'
 import { Card, Counts, DemoChip, MetricTile, StatusChip, StatusIcon } from './parts'
 
@@ -117,7 +117,7 @@ function RunHeader({ run, suite, cases, expected, list }: { run: LabRunSummary; 
             <DemoChip demo={run.demo} />
           </div>
         </div>
-        {running && (
+        {running && !runRefusal(suite) && (
           <Button variant="danger" icon="stop" onClick={() => void cancel(run.id)}>
             Cancel
           </Button>
@@ -127,7 +127,7 @@ function RunHeader({ run, suite, cases, expected, list }: { run: LabRunSummary; 
         <div role="status" data-lab-stalled={run.id} className="mt-3 rounded-xl border border-bad/40 bg-bad/[0.07] px-3 py-2.5 text-[12.5px] leading-snug">
           <p className="font-semibold text-bad">This run looks stalled: no new case for {aboutSince(stalled)}.</p>
           <p className="mt-0.5 text-ink-2">
-            The hive still marks it running, but {suite ? `${suite.title} usually takes about ${fmtDuration(suite.estimate_s * 1000)}` : 'it should have finished long ago'}. {cases} case{cases === 1 ? '' : 's'} came in before it stopped. Cancel it to free the suite for a new run.
+            The hive still marks it running, but {suite ? `${suite.title} usually takes about ${fmtDuration(suite.estimate_s * 1000)}` : 'it should have finished long ago'}. {cases} case{cases === 1 ? '' : 's'} came in before it stopped. {runRefusal(suite) ? 'An admin can cancel it to free the suite for a new run.' : 'Cancel it to free the suite for a new run.'}
           </p>
         </div>
       )}

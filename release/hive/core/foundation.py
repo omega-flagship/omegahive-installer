@@ -854,7 +854,9 @@ class HiveFoundation:
                 raise self._error("Code is unavailable until its matching service and built-in template are ready.")
             if not self._choice(agent,self._need(CODE),selected=agent["model"]).get("route"):
                 raise self._error("The current controller has no real supported funded route.")
+            # the helper Minds.spawn would make: its team's owner and visibility
             child = {"id":"", "owner":agent["owner"], "swarm_id":team_id, "_foundation_preview": True,
+                     "visibility":team.get("visibility") or "private",
                      "model":template["model_id"], "options":None,
                      "budget_usd":min(float(template["max_allocation_usd"]),0.25)}
             if not self._choice(child,self._need(CODE),selected=child["model"]).get("route"):

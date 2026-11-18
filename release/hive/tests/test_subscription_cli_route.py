@@ -216,7 +216,20 @@ def _swarm(**kw):
     (OWNER, _swarm(archived_at="2026-11-01T00:00:00Z"), [OWNER], ("s_00000001",), False),
 ])
 def test_owner_scope_matrix(mind_owner, swarm, minds, allowed, admitted):
-    assert owner_scope(OWNER, {"owner": mind_owner}, swarm, minds, frozenset(allowed)) is admitted
+    mind = {"owner": mind_owner, "visibility": "private"}
+    assert owner_scope(OWNER, mind, swarm, minds, frozenset(allowed)) is admitted
+
+
+@pytest.mark.parametrize("visibility,allowed,admitted", [
+    ("private", (), True),
+    ("shared", (), False),
+    ("public", (), False),
+    (None, (), False),                          # a mind from before visibility was recorded reads as public
+    ("public", ("s_00000001",), True),          # opted in: any visibility, held to the owner by the caller checks
+])
+def test_owner_scope_needs_the_mind_itself_private_by_default(visibility, allowed, admitted):
+    mind = {"owner": OWNER, "visibility": visibility}
+    assert owner_scope(OWNER, mind, _swarm(), [OWNER], frozenset(allowed)) is admitted
 
 
 def test_owner_scope_needs_a_named_owner():
@@ -466,6 +479,57 @@ def test_another_persons_open_ask_turn_on_the_mind_refuses(hive_client):
             row[col["name"]] = 0 if "INT" in (col["type"] or "").upper() or "REAL" in (col["type"] or "").upper() else "x"
     db.insert("ask_turns", row)
     assert call(hive_client, agent).status_code == 403 and hive_client.bridge.seen == []
+
+
+# Another person's ordinary chat with the owner's mind: (their role, the swarm's visibility, the mind's own, opted in).
+# The last case is a Code helper, which takes its public team's visibility (Minds.spawn).
+CHATS = {"public_mind_in_private_swarm": ("member", "private", "public", False),
+         "shared_mind_in_private_swarm": ("member", "private", "shared", False),
+         "admin_with_private_mind": ("admin", "private", "private", False),
+         "public_mind_in_opted_in_swarm": ("member", "public", "public", True)}
+# An admin sees every mind and an opted-in swarm takes any visibility, so owner_scope can't refuse these two: the gate
+# needs to know whose message a mind's own call answers (#333).
+UNATTRIBUTED = pytest.mark.xfail(strict=True, reason="a mind's own model call is not attributed to whom it answers (#333)")
+
+
+@pytest.mark.parametrize("case", [pytest.param(c, marks=UNATTRIBUTED) if c in ("admin_with_private_mind",
+                                                                              "public_mind_in_opted_in_swarm") else c
+                                  for c in CHATS])
+def test_another_persons_chat_with_the_owners_mind_is_not_on_the_plan(hive_client, monkeypatch, case):
+    """Whoever sees a mind may message it (Visibility.check_path reads the mind, not its swarm, and an admin sees every
+    mind), and an ordinary chat leaves Hive.user_for on the owner. The mind's model call answering that person must
+    not go out on the owner's plan."""
+    role, swarm_visibility, mind_visibility, opted_in = CHATS[case]
+    hive = hive_client.hive
+    agent = owned_mind(hive_client, visibility=swarm_visibility)
+    hive.db.execute("UPDATE agents SET visibility = ?, shared_with = ? WHERE id = ?",
+                    (mind_visibility, json.dumps([OTHER] if mind_visibility == "shared" else []), agent["id"]))
+    if opted_in:
+        monkeypatch.setenv(hive_client.sub.env("SWARMS"), json.dumps([agent["swarm_id"]]))
+    other = person(hive_client, OTHER[5:], role)
+    heard = hive_client.post(f"/api/agents/{agent['id']}/messages", headers=other, json={"text": "invented question"})
+    assert heard.status_code == 200, heard.text   # they reach the mind
+    response = call(hive_client, agent)   # the model call the mind makes to answer them
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["code"] == "subscription_owner_only"
+    assert hive_client.bridge.seen == [] and usage_rows(hive_client, agent) == []
+
+
+@pytest.mark.parametrize("swarm_visibility,refused", [("private", (404, "not_available")), ("public", (403, "not_allowed"))])
+def test_another_persons_ask_at_the_owners_public_mind_starts_no_turn(hive_client, monkeypatch, swarm_visibility, refused):
+    """An Ask needs sight of the swarm and a part in it (Ask.orchestrator), so seeing the mind alone starts no turn."""
+    hive = hive_client.hive
+    agent = owned_mind(hive_client, visibility=swarm_visibility)
+    hive.db.execute("UPDATE agents SET visibility = 'public' WHERE id = ?", (agent["id"],))
+    if swarm_visibility == "public":
+        monkeypatch.setenv(hive_client.sub.env("SWARMS"), json.dumps([agent["swarm_id"]]))
+    other = person(hive_client, OTHER[5:])
+    asked = hive_client.post("/api/ask", headers=other, json={"operation_id": "op-subcli-public-mind-1",
+                                                              "text": "invented question",
+                                                              "context": {"mind": agent["id"]}})
+    assert (asked.status_code, asked.json()["error"]["code"]) == refused, asked.text
+    assert hive.db.all("SELECT id FROM ask_turns WHERE mind_id = ?", (agent["id"],)) == []
+    assert hive_client.bridge.seen == [] and usage_rows(hive_client, agent) == []
 
 
 def test_local_only_swarm_refused_on_the_route(hive_client, monkeypatch):

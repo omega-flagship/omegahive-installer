@@ -1,3 +1,5 @@
+// Purpose: verify Flux and Canvas drop a revoked motivation while open, and show nothing of the previous person after
+// another person signs in on the tab.
 import { createElement, type ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -12,6 +14,10 @@ import { Motivations as CanvasMotivations } from '../experiences/canvas/HivePane
 import { GoalSlot } from '../experiences/canvas/slots'
 import { BoardOutline } from '../experiences/canvas/BoardOutline'
 import type { Outline } from '../experiences/canvas/outline'
+
+// the person-switch test starts a whole simulated hive and reads every swarm's goals, then reads again as the next
+// person; about 3x its worst on a slow CI runner, bounded in api/sim/simTimeouts.test.ts
+vi.setConfig({ testTimeout: 18_000 })
 
 /**
  * Stand-in r3 verdict item 5 (STANDIN_SURFACE_MOTIVATIONS_r3_VERDICT_20261007): behavioural revocation and person-switch

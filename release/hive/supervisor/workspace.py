@@ -46,8 +46,10 @@ ITER_TEMPLATE = pathlib.Path(__file__).resolve().parents[1] / "templates" / "ite
 COMMCHANNEL = "hive"
 HIVE_BASE_PROMPT = pathlib.Path(__file__).resolve().parents[1] / "templates" / "omega" / "prompt.txt"
 # Iter (upstream iter.py) reads every memory/ file only while together they fit MAX_MEMORY_CHARS = 3000; past that it
-# sees an index of names. Its hive note keeps well under that, leaving room for what the Iter writes itself.
-ITER_NOTE_CHARS = 2200
+# sees an index of names. Its hive note keeps well under that, leaving room for what the Iter writes itself: at least
+# 700 characters. 2200 left the role no room once the template held both the Create line and the earlier-work line
+# (2203 characters with both); at 2300 a role of about 190 characters fits whole and a longer one is cut and marked.
+ITER_NOTE_CHARS = 2300
 # Iter is a pinned external dependency like Omega (core-dependency.json "iter", cloned to third_party/iter). A worker
 # gets the whole clone, less its Git metadata and the channels that would connect it to outside chats.
 ITER_SKIP = {".git", "irc.py", "mattermost.py"}

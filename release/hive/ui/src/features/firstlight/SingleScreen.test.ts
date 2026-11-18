@@ -1,3 +1,4 @@
+// Purpose: verify First Light renders its observed states and actions in everyday words.
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
@@ -5,6 +6,7 @@ import { DEFAULT_ASK_PURPOSE, askToSave } from './host'
 import { SingleScreen, connectionState, landingAfter, monthProposal, monthToSave, ownMonthEditable } from './SingleScreen'
 import type { Run } from './store'
 import type { ProviderStatus } from '../../api/types'
+import { outboundCopy, unknownModelCopy } from './conditionalCopy'
 
 /** Explicit pure-view props; no claim that setState changes Zustand's SSR initial snapshot. */
 const sample = (): Run => ({
@@ -39,7 +41,7 @@ describe('U1 single-screen view and explicit intent projection', () => {
     expect(s).toContain(DEFAULT_ASK_PURPOSE)
     expect(s).toContain('Invented provider')
     expect(s).not.toContain('actual-host/model')
-    expect(s).toContain('this setting alone is not proof it answers')
+    expect(s).not.toContain('read how it thinks') // a model the hive names needs no line about it
     expect(s.match(/data-u1-wake=/g)).toHaveLength(1)
     expect(s).toContain('Wake Wren')
     expect(s).not.toContain('<form')
@@ -55,12 +57,12 @@ describe('U1 single-screen view and explicit intent projection', () => {
     r.facts.askHow = null
     r.u1!.context = 'unavailable'
     const unknown = render(r)
-    expect(unknown).toContain('not known yet')
+    expect(unknown).toContain('couldn’t read what it’s for yet')
     expect(unknown).not.toContain(DEFAULT_ASK_PURPOSE)
     expect(unknown).toMatch(/data-u1-wake=""[^>]*disabled/)
     r.facts.askHow = 'Whole\n' + 'x'.repeat(900)
     const long = render(r)
-    expect(long).toContain('saving here keeps them')
+    expect(long).toContain('saving here keeps it')
     expect(long).not.toContain('<textarea')
     expect(askToSave('Wren', null, r.facts.askHow)).toEqual({ name: 'Wren', how: null })
     expect(askToSave('Wren', '', '')).toEqual({ name: 'Wren', how: '' })
@@ -98,10 +100,20 @@ describe('U1 single-screen view and explicit intent projection', () => {
     const s = render(r)
     expect(s).not.toContain('Sign in with')
     expect(s).not.toContain('not connected to this screen yet')
-    expect(s).toContain('current model is not confirmed')
-    expect(s).toContain('limit could not be read')
+    expect(s).toContain('couldn’t read how it thinks yet')
+    expect(s).toContain('read your monthly limit')
     expect(s).toMatch(/data-u1-wake=""[^>]*disabled/)
     expect(s).not.toContain('Everything is ready')
+  })
+
+  it('distinguishes a known hive limit from an unread limit on the person’s own keys', () => {
+    const r = sample()
+    r.facts.limit = null
+    r.facts.hiveMonthUsd = 50
+    const s = render(r)
+    expect(s).toContain('Your hive may spend up to $50 a month.')
+    expect(s).toContain('We couldn’t read the monthly limit on your own keys. Check again before waking it.')
+    expect(s).not.toContain('We couldn’t read your monthly limit. Check again before waking it.')
   })
 
   it('only an actual greeted host record produces the attributed quote; this is not suite readiness', () => {
@@ -112,9 +124,9 @@ describe('U1 single-screen view and explicit intent projection', () => {
     r.facts.greeted = true
     r.u1!.phase = 'greeted'
     const s = render(r)
-    expect(s).toContain('Recorded greeting from Wren')
+    expect(s).toContain('Wren says')
     expect(s).toContain('<blockquote>Host-owned reply.</blockquote>')
-    expect(s).toContain('does not establish that every creation service is ready')
+    expect(s).toContain('Wren is awake.')
     expect(s).not.toContain('data-u1-wake=')
   })
 
@@ -122,8 +134,9 @@ describe('U1 single-screen view and explicit intent projection', () => {
     const r = sample()
     r.status = 'paused'
     const s = render(r)
-    expect(s).toContain('Any request already sent may still finish')
+    expect(s).toContain('Anything already sent may still finish')
     expect(s).toContain('Resume First Light')
+    expect(s).toContain(outboundCopy)
     expect(s).not.toContain('data-u1-wake=')
   })
 
@@ -157,7 +170,7 @@ describe('U1 single-screen view and explicit intent projection', () => {
     expect(s).toContain('Here’s what Wren has now')
     expect(s).toContain('x'.repeat(900))
     expect(s).toContain('Wren acts only for you.')
-    expect(s).toContain("The outbound-approval policy could not be confirmed here")
+    expect(s).toContain(outboundCopy)
     expect(s).not.toContain('Nothing was charged')
     expect(s).not.toContain('asks before anything leaves your space')
   })
@@ -169,12 +182,12 @@ describe('U1 single-screen view and explicit intent projection', () => {
     r.u1!.completion = 'unknown'
     r.hello.hello = { mind: { id: 'a_personal', name: 'Wren', status: 'awake' }, state: 'greeted', greeting: { id: 'm', text: 'A recorded answer.', created_at: null }, created: true, retryable: false, requested_at: null }
     const pending = render(r)
-    expect(pending).toContain('Save completion again')
+    expect(pending).toContain('Try saving again')
     expect(pending).toMatch(/disabled=""[^>]*>Continue/)
     expect(pending).not.toContain('data-u1-wake=')
     r.u1!.completion = 'confirmed'
     const done = render(r)
-    expect(done).toContain('First Light is saved as complete.')
+    expect(done).toContain('First Light is finished.')
     expect(done).not.toMatch(/disabled=""[^>]*>Continue/)
   })
 
@@ -217,7 +230,7 @@ describe('U1 single-screen view and explicit intent projection', () => {
     expect(s.match(/data-tone="primary"/g)).toHaveLength(1)
     const configured = renderToStaticMarkup(createElement(SingleScreen, { run: r, now: 1000, providers: [{ ...provider, connected: true, configured: true, readiness: 'unverified', answer_ready: false, key_hint: 'set' }] }))
     expect(configured).not.toContain('data-u1-provider=""')
-    expect(configured).toContain('This provider has not answered recently.')
+    expect(configured).toContain('hasn’t answered lately. Wake tries it.')
     expect(configured).not.toMatch(/data-u1-wake=""[^>]*disabled/)
   })
   it('only active limit work shows Checking; stale amounts and unrelated busy profile work do not', () => {
@@ -225,7 +238,7 @@ describe('U1 single-screen view and explicit intent projection', () => {
     r.u1!.limitPending = 9
     r.facts.limit!.chosen_usd = 9
     const stale = render(r)
-    expect(stale).toContain('We couldn&#x27;t confirm a spending limit here.')
+    expect(stale).toContain('We couldn&#x27;t read your monthly limit.')
     expect(stale).not.toContain('Checking your limit')
     expect(stale).toContain('<summary>Set a limit</summary>')
     expect(stale.match(/Monthly total on your own keys, dollars/g)).toHaveLength(1)
@@ -252,13 +265,13 @@ describe('U1 single-screen view and explicit intent projection', () => {
     r.u1!.limitUncertain = true
     r.u1!.limitPending = null
     const s = render(r)
-    expect(s).toContain('We couldn&#x27;t confirm a spending limit here.')
+    expect(s).toContain('We couldn&#x27;t read your monthly limit.')
     expect(s).not.toContain('Your minds may spend up to $5')
     expect(s).not.toContain('Checking your limit')
     expect(s).toContain('<summary>Set a limit</summary>')
     expect(s).not.toMatch(/<input type="number"[^>]*value="5"/)
     expect(s).toMatch(/data-u1-wake=""[^>]*disabled/)
-    expect(s).toContain('Read current setup again')
+    expect(s).toContain('Check again')
   })
 
   it('keeps one primary after a refusal and visible consent without repeating the purpose helper', () => {
@@ -266,7 +279,7 @@ describe('U1 single-screen view and explicit intent projection', () => {
     r.u1!.error = 'The host refused this attempt.'
     const s = render(r)
     expect(s.match(/data-tone="primary"/g)).toHaveLength(1)
-    expect(s).toContain('Read current setup again')
+    expect(s).toContain('Check again')
     expect(s).toMatch(/data-u1-wake=""[^>]*disabled/)
     expect(s).toContain('Wren acts only for you.')
     expect(s.match(/You can change this any time/g)).toHaveLength(1)
@@ -280,13 +293,15 @@ describe('U1 single-screen view and explicit intent projection', () => {
 
 })
 
+/** The mind has woken and greeted the person: the card's own part is over. */
+const greet = (r: Run) => {
+  r.facts.greeted = true
+  r.u1!.phase = 'greeted'
+  r.hello.hello = { mind: { id: 'a_personal', name: 'Wren', status: 'awake' }, state: 'greeted', greeting: { id: 'm', text: 'A recorded answer.', created_at: null }, created: true, retryable: false, requested_at: null }
+}
+
 describe('until First Light is finished its one way out is Not now', () => {
   const EXITS = ['>Close<', 'Take a tour', 'Change its look', 'Choose your role', 'Check usage']
-  const greet = (r: Run) => {
-    r.facts.greeted = true
-    r.u1!.phase = 'greeted'
-    r.hello.hello = { mind: { id: 'a_personal', name: 'Wren', status: 'awake' }, state: 'greeted', greeting: { id: 'm', text: 'A recorded answer.', created_at: null }, created: true, retryable: false, requested_at: null }
-  }
   const states: Array<[string, (r: Run) => void]> = [
     ['editing', () => undefined],
     ['paused', (r) => { r.status = 'paused' }],
@@ -336,6 +351,35 @@ describe('until First Light is finished its one way out is Not now', () => {
   })
 })
 
+describe('the card asks for Check again only where it shows it', () => {
+  const view = (r: Run, providers: ProviderStatus[] | null) => renderToStaticMarkup(createElement(SingleScreen, { run: r, now: 1000, providers }))
+  const BUTTON = /<button[^>]*>Check again<\/button>/
+
+  it('an unread provider status or own-key limit offers Check again while waking is ahead and no press is in flight, and no line names it otherwise', () => {
+    for (const providers of [[answered], null]) for (const limitRead of [true, false]) for (const greeted of [false, true]) for (const busy of [false, true]) {
+      const r = sample()
+      if (!limitRead) r.facts.limit = null
+      if (greeted) greet(r)
+      r.u1!.busy = busy
+      const s = view(r, providers)
+      const state = `providers ${providers ? 'read' : 'unread'}, limit ${limitRead ? 'read' : 'unread'}${greeted ? ', greeted' : ''}${busy ? ', busy' : ''}`
+      expect(BUTTON.test(s), state).toBe(!greeted && !busy && (!providers || !limitRead))
+      if (!BUTTON.test(s)) expect(s, state).not.toContain('Check again')
+      if (!providers) expect(s, state).toContain('We couldn’t check whether it can think.')
+      if (!limitRead) expect(s, state).toContain('We couldn’t read the monthly limit on your own keys.')
+    }
+  })
+
+  it('a hive that couldn’t say how its providers stand offers Check again as the one primary, holds Wake, and keeps the choices open with what else to do', () => {
+    const s = view(sample(), null)
+    expect(s).toMatch(/<button[^>]*data-tone="primary"[^>]*>Check again<\/button>/)
+    expect(s.match(/data-tone="primary"/g)).toHaveLength(1)
+    expect(s).toMatch(/data-u1-wake=""[^>]*disabled/)
+    expect(s).toMatch(/<details[^>]*open=""[^>]*data-u1-choices/)
+    expect(s).toContain('We couldn’t check whether it can think. Check again, or choose another way for it to think.')
+  })
+})
+
 describe('every way to think is offered inside the card', () => {
   const openrouter: ProviderStatus = { name: 'openrouter', label: 'OpenRouter', local: false, needs_key: true, connected: true, configured: true, readiness: 'unverified', source: 'stored', keys: 1, key_hint: '…4400', key_env: '', base_url: '', models: [] }
   const models = [{ id: 'openrouter/anthropic/claude-sonnet-5.5', provider: 'openrouter', label: 'anthropic/claude-sonnet-5.5', local: false }]
@@ -367,7 +411,7 @@ describe('every way to think is offered inside the card', () => {
     const mock: ProviderStatus = { name: 'mock', label: 'Mock', local: true, needs_key: false, connected: true, configured: true, readiness: 'test_only', test_only: true, source: null, keys: 0, key_hint: '', key_env: '', base_url: '', models: ['echo'] }
     const s = view(r, [mock])
     expect(s).toContain('data-fl-inline-key')
-    expect(s).toContain('OpenRouter API key')
+    expect(s).toContain('OpenRouter key</span>')
     expect(s).toContain('One OpenRouter key reaches every model. Get one at <a href="https://openrouter.ai/keys"')
     expect(s).toContain('Wren can&#x27;t think yet. Paste an OpenRouter key above to give it a way to think.')
     expect(s).not.toContain('Choose how Wren thinks')
@@ -385,3 +429,50 @@ describe('every way to think is offered inside the card', () => {
     expect(view(r, [answered, openrouter])).toMatch(/data-u1-way="openrouter"[^>]*aria-pressed="true"/)
   })
 })
+
+describe('every line of the card is in everyday words', () => {
+  // words an engineer writes and a person reads as something being broken (round 1 of user testing), and a raw time
+  const ENGINEER = /\b(host|hosts|host’s|policy|outbound|invented|establish(es|ed)?|proof|readiness|scope|api|egress|explicit|provider|recorded|omega|sequence)\b/i
+  const ISO_TIME = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/
+  // the fixture's own provider label says "Invented provider"; a real one is a company's name
+  const named: ProviderStatus = { ...answered, label: 'OpenRouter' }
+  // the hive's free inference (plans.freeRoute), as free.test.ts states it
+  const free: ProviderStatus = { ...named, name: 'free', label: 'Free inference', needs_key: false, source: null, keys: 0, base_url: 'https://inference.asicloud.cudos.org/v1', models: ['minimax/minimax-m3.1-flash'], daily_calls: 200 }
+  const greeted = { mind: { id: 'a_personal', name: 'Wren', status: 'awake' }, state: 'greeted' as const, greeting: { id: 'm', text: 'Hello, I am Wren.', created_at: '2026-11-10T06:00:11.934Z' }, created: true, retryable: false, requested_at: null }
+  /** The card in every state a person can meet it: each one a change from the plain editing card. */
+  const STATES: Record<string, (r: Run) => ProviderStatus[]> = {
+    editing: () => [named],
+    'model unknown': (r) => { r.u1!.model = null; r.u1!.context = 'unavailable'; return [named] },
+    'model unknown with error': (r) => { r.u1!.model = null; r.u1!.context = 'unavailable'; r.u1!.error = unknownModelCopy; return [named] },
+    'provider not answered lately': (r) => { r.u1!.model = 'remote/model'; return [{ ...named, name: 'remote', label: 'OpenRouter', readiness: 'unverified', answer_ready: false }] },
+    'readiness unknown': () => null as unknown as ProviderStatus[],
+    'key field open': (r) => { r.facts.ownKeys = 0; r.u1!.model = 'mock/echo'; return [{ ...named, name: 'mock', label: 'Mock', local: true, needs_key: false, readiness: 'test_only', test_only: true, keys: 0, source: null }] },
+    'limit unread': (r) => { r.facts.limit = null; return [named] },
+    'purpose unread': (r) => { r.facts.askHow = null; return [named] },
+    'long purpose': (r) => { r.facts.askHow = 'Whole\n' + 'x'.repeat(900); return [named] },
+    waiting: (r) => { r.u1!.phase = 'waiting'; r.hello.postedAt = 0; return [named] },
+    greeted: (r) => { r.facts.greeted = true; r.u1!.phase = 'greeted'; r.u1!.completion = 'confirmed'; r.hello.hello = greeted; return [named] },
+    'completion unsaved': (r) => { r.facts.greeted = true; r.u1!.phase = 'greeted'; r.u1!.completion = 'unknown'; r.hello.hello = greeted; return [named] },
+    'completion saving': (r) => { r.facts.greeted = true; r.u1!.phase = 'greeted'; r.u1!.completion = 'saving'; r.hello.hello = greeted; return [named] },
+    paused: (r) => { r.status = 'paused'; return [named] },
+    'wake unknown': (r) => { r.u1!.wakeUnknown = true; r.u1!.error = "Wren couldn't finish waking. We couldn't confirm whether this was charged."; return [named] },
+    'free inference offered': () => [named, free],
+    'thinking with free inference': (r) => { r.u1!.model = 'free/minimax/minimax-m3.1-flash'; return [named, free] },
+    'free inference no longer offered': (r) => { r.u1!.model = 'free/minimax/minimax-m3.1-flash'; return [named] },
+    'free inference model dropped': (r) => { r.u1!.model = 'free/acme/retired-model'; return [named, free] },
+  }
+  it('no state shows an engineer’s word or a raw time, and the greeting is quoted with plain words around it', () => {
+    for (const [name, make] of Object.entries(STATES)) {
+      const r = sample()
+      const providers = make(r)
+      const text = renderToStaticMarkup(createElement(SingleScreen, { run: r, now: 12_000, providers })).replace(/<[^>]+>/g, ' ')
+      expect(text, name).not.toMatch(ENGINEER)
+      expect(text, name).not.toMatch(ISO_TIME)
+    }
+    const r = sample()
+    STATES.greeted(r)
+    const s = renderToStaticMarkup(createElement(SingleScreen, { run: r, now: 12_000, providers: [named] }))
+    expect(s).toContain('<p>Wren says</p><blockquote>Hello, I am Wren.</blockquote><p>Wren is awake.</p>')
+  })
+})
+

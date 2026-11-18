@@ -125,8 +125,8 @@ def test_ref_is_stable_within_a_session(env):
     assert first["auth_session_ref"] == expected_ref(app, t)
     for _ in range(3):
         assert me(c, t).json() == first
-    # the legacy ?token= form reads the same session, so the same reference
-    assert c.get("/api/auth/me", params={"token": t}).json() == first
+    # the legacy ?token= form reads no session at all on HTTP (#299: the header only), so it names no reference
+    assert c.get("/api/auth/me", params={"token": t}).status_code == 401
 
 
 def test_ref_differs_across_sessions_of_the_same_principal(env):

@@ -1,3 +1,5 @@
+// Purpose: verify every test file that sets its own timeout is listed here with its measured worst, and keeps its cap
+// within the bounds below.
 import { describe, expect, it } from 'vitest'
 import viteConfig from '../../../vite.config.ts?raw'
 
@@ -12,6 +14,17 @@ import viteConfig from '../../../vite.config.ts?raw'
  * followups-r8 (P3): two files outside api/sim (named by their path under src), measured with six other heavy files in
  * parallel at load 7-8.5: approvalAnswers (its first test pays the cold transform) and dualP2 (a fresh simulated hive
  * per test).
+ * The identity-switch files (named by their path under src): identityEpoch's and askViewEpoch's first tests boot the
+ * worker's first two simulated hives, and motivations.r4b's person-switch test starts a whole simulated hive and reads
+ * every swarm's goals. On hive-ui CI run 44162990720 (17 Nov), on a runner at about twice its usual time, each ran past
+ * the 5 s default and was stopped there, so its worst is at least the time listed; the same runner's earlier green run
+ * gave 2130, 3175 and 2647 ms, and the Mac mini, beside six heavy sim files on two workers at load 2, 496, 2267 and
+ * 494 ms.
+ * Two more ran past it on hive-ui run 44200540828 (18 Nov), on the same kind of runner: vibeIdentity's tests each run
+ * the invented Code service's session across a real change of person (5018 ms for the first, then 3713 and 3880), and
+ * askCustody's presence test is the first to load the Ask's echo into the console (5018 ms; the file's others took at
+ * most 3199). On the Mac mini beside the same six heavy sim files, two workers at load 3 to 4, their slowest tests took
+ * at most 1805 and 316 ms over two runs.
  */
 const MEASURED: Record<string, { worst: number; hookWorst?: number }> = {
   'agreements.test.ts': { worst: 14189 },
@@ -27,6 +40,11 @@ const MEASURED: Record<string, { worst: number; hookWorst?: number }> = {
   'experiences/dualP2.test.ts': { worst: 26153 },
   // the Ask's screen against the whole screens space for every look, size and screen: two passes, 3 workers, load 95 to 165
   'features/ask/askScreen.test.ts': { worst: 10562 },
+  'lib/identityEpoch.test.ts': { worst: 5157 },
+  'lib/motivations.r4b.test.ts': { worst: 5008 },
+  'features/dot/reasoning/askViewEpoch.test.ts': { worst: 5201 },
+  'features/code/canvas/vibeIdentity.test.ts': { worst: 5018 },
+  'experiences/construct/askCustody.test.ts': { worst: 5018 },
 }
 /**
  * r1.5: the screen and feature tests that share the standard 20 s cap (`vi.setConfig({ testTimeout: 20_000 })`). The
@@ -40,10 +58,13 @@ const SCREEN_CAP = 20000
 const SCREEN_CAPPED: Record<string, number> = {
   'features/artifacts/artifacts.test.ts': 531,
   'features/ask/askStopped.screen.test.ts': 146, // the Ask's Continue (thread.metta), measured two passes at load 36-41
+  'features/artifacts/creationReader.test.ts': 1066, // the Artifacts reader composed by MeTTa, measured two passes at load 135-175
   'features/createPlan/plan.screen.test.ts': 619, // r1.6: the Create plan view, measured two passes at load 4-7
   'features/dot/conversations.screen.test.ts': 1011,
+  'features/dot/createOffer.mounted.test.ts': 3205, // a mind's Create offer in every look (its guards test), two passes, 3 workers (Linux, 12 threads)
   'features/explore/explore.screen.test.ts': 2333,
   'features/feedback/feedback.screen.test.ts': 2027, // the feedback area, measured two passes at load 136-149 (16 Nov)
+  'features/firstlight/free.test.ts': 3048, // First Light's free inference (its guards test), two passes at load 40 (Linux, 32 threads)
   'features/flow/flow.screen.test.ts': 1123,
   'features/health/health.screen.test.ts': 649,
   'features/keys/profile.screen.test.ts': 1513,
@@ -57,6 +78,7 @@ const SCREEN_CAPPED: Record<string, number> = {
   'features/people/clearGoogle.test.ts': 606,
   'features/people/people.screen.test.ts': 1455,
   'features/people/people.test.ts': 420,
+  'features/programs/actForm.test.ts': 1274, // an app page's action form: measured two passes, 3 workers, load 9-23
   'features/programs/personAppPage.test.ts': 229,
   'features/programs/program.screen.test.ts': 1322,
   'features/programs/programs.screen.test.ts': 1076,

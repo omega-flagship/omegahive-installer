@@ -77,13 +77,13 @@ const SWARMS = [
   { id: 's_old', name: 'Old', coordinator_id: 'a_3', archived_at: '2026-10-01T00:00:00Z' },
   { id: 's_nocoord', name: 'Loose', coordinator_id: null },
 ]
-function teamHive(templates: (url: string) => Response, offering = ['s_code']) {
+function teamHive(templates: (url: string) => Response, offering = ['s_code'], intents: unknown[] = []) {
   answer = (url) => {
     if (url.endsWith('/api/swarms')) return json(SWARMS)
     const m = /\/api\/swarms\/([^/]+)\/services$/.exec(url)
     if (m) return json({ swarm_id: m[1], kinds: offering.includes(m[1]) ? ['code'] : ['review'], connection_only_kinds: [] })
     if (url.includes('/api/teams/')) return templates(url)
-    if (url.includes('/api/ask/intents')) return json({ intents: [] })
+    if (url.includes('/api/ask/intents')) return json({ intents })
     return json({ error: { code: 'not_relayed', message: 'held' } }, 404)
   }
 }
@@ -104,6 +104,14 @@ describe('r3 live: the Code team’s offer', () => {
     expect(calls.some((c) => /s_old|s_nocoord/.test(c.url))).toBe(false)
     const r = await vibeAvailability(live, CTX0, 'ws_w')
     expect(r).toMatchObject({ ok: true, offer })
+  })
+  it('a newest intent of Studio or a research question still offers the code team', async () => {
+    // a person who asked a research question in the Ask saw Create's Code card stop at this first check
+    for (const kind of ['research.request', 'studio.session']) {
+      teamHive(() => json({ to_swarm: 's_code', templates: [TEMPLATE] }), ['s_code'], [{ ...VIEW, kind }])
+      const r = await vibeAvailability(new LiveClient('http://hive.invalid'), CTX0, 'ws_w')
+      expect(r, kind).toMatchObject({ ok: true, offer: { to_swarm: 's_code', template_ids: ['tpl_coder'] } })
+    }
   })
   it('a templates answer for another team, or without template ids, is refused', async () => {
     teamHive(() => json({ to_swarm: 's_other', templates: [TEMPLATE] }))

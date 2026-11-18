@@ -27,10 +27,13 @@ export interface Who {
   host: string
   /** keys of the person's own (provider_key own_keys) */
   ownKeys: number
+  /** the person's mind thinks with the hive's free inference, set to it and still served (store.whoOf): nobody's key of theirs pays */
+  free?: boolean
 }
 
 /** Whose key pays, in one line. Said on every key, limit and guest screen. */
 export function payerLine(w: Who): string {
+  if (w.free) return 'This hive’s deploy pays for your mind’s free inference: nothing to you, and you need no key of your own.'
   if (w.path === 'guest') return `${w.host}’s key pays, not yours. You never see ${w.host}’s key.`
   if (w.path === 'owner') return w.ownKeys > 0 ? 'Your own key pays: you pay the model company directly.' : 'Your own key will pay, once you add one: you pay the model company directly.'
   return w.ownKeys > 0 ? 'Your own key pays for your minds: you pay the model company directly.' : `${w.host}’s keys pay for your minds here.`

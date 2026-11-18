@@ -29,7 +29,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ..supervisor.drivers import Supervisor
 from .ask import TRACE_ENTRY
-from .config import Settings, load_settings
+from .config import FREE, Settings, is_free, load_settings
 from .db import now
 from .feedback import ERROR_ID_HEADER, SEND_MAX_BYTES as FEEDBACK_MAX_BYTES
 from . import session_launch
@@ -40,10 +40,10 @@ from .gateway import Gateway, GatewayError, billable as gateway_billable, report
 from .hive import Hive, HiveError, token_hash
 from .health import people_frame
 from .providers import ProviderError, ProviderStore
-from .sso import SSO, AccountAttempts, PasswordAttempts, PublicGate
+from .sso import SSO, AccountAttempts, PublicGate
 from .session_ref import SessionRefs
 from .me_decisions import MeDecisions, Person, human_session
-from .people import OAUTH_COOKIE, SIGNIN_COOKIE, People, SignInError
+from .people import OAUTH_COOKIE, SIGNIN_COOKIE, TEST_ACCOUNT_EMAIL, People, SignInError
 from .google_connector import GoogleConnector, GoogleConnectorError
 from .ui_prefs import StalePrefs, UiPrefs, UiPrefsError
 from .services import ServiceError
@@ -71,7 +71,9 @@ def page_csp(nonce: str | None) -> str:
     scripts and styles carry the page's nonce (hive/ui/src/lib/appFrame.ts frameNonce), their style attributes need
     style-src-attr (an attribute can restyle but fetch nothing beyond img-src and font-src), and their inlined assets are
     data: and blob:. Connections, frames and workers are the hive's own; nothing may frame the page, plugins are off and
-    no <base> can move it. A build made before the nonce slot (`nonce` None) keeps working: its inline boot script and
+    no <base> can move it. frame-src 'self' also keeps an artifact view's sandboxed frame from navigating itself to
+    another site: Chromium, Firefox and WebKit check a frame's own navigation against this policy before the request
+    leaves (hive/ui/src/features/views/ViewFrame.tsx). A build made before the nonce slot (`nonce` None) keeps working: its inline boot script and
     its frames' own nonces need 'unsafe-inline', which a nonce in the same directive would switch off."""
     inline = f"'nonce-{nonce}'" if nonce else "'unsafe-inline'"
     return ("default-src 'self'; "
@@ -290,11 +292,11 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
     gateway.keyring = providers
     hive.keyring = providers   # who owns which key (personal spend views)
     sso = SSO(settings)
-    attempts = PasswordAttempts()
     people = People(hive, gateway.client)
     hive.people = people
-    hive.google_connector = GoogleConnector(
-        hive, settings, person_role=lambda principal: role_of({"kind": "sso", "principal": principal}))
+    person_role = lambda principal: role_of({"kind": "sso", "principal": principal})   # noqa: E731  (a principal's current role)
+    hive.person_role = person_role   # Hive.grows_vocabulary: whose mind may add words to a vocabulary by publishing
+    hive.google_connector = GoogleConnector(hive, settings, person_role=person_role)
     local = None
     if local_mode:   # J1 r3 K1 / r4 KM3: the local owner exists, and owns the hive, before anything else reads the owner
         local = localowner.LocalOwner(settings, hive)
@@ -312,6 +314,8 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
     gateway.own_key_for = hive.ownhive.own_key_for   # a guest or public visitor with no grant pays with their own key
     from .subscription_cli import SubscriptionGate
     gateway.subscription_gate = SubscriptionGate(hive)   # every subscription instance: the owner's own private minds only, a day cap each
+    from .free_inference import FreeGate
+    gateway.free_gate = FreeGate(hive)   # free inference: the deploy's key, for every person, their calls a day each
     hive.gateway = gateway   # read-only use: Budgets.settlement works out who pays with the gateway's own paying_key
     hive.reconcile_removed_keys()   # keyview: tombstones of removed keys no mind names any more (orphans from before)
     from .research import Research
@@ -636,7 +640,6 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
     # not run a mounted app's lifespan).
     app = FastAPI(title="OmegaHive", version="0.1.0", lifespan=None if settings.base_path else lifespan)
     app.state.hive = hive
-    app.state.password_attempts = attempts
     app.state.member_attempts = member_attempts
     app.state.gateway = gateway
     app.state.reconcile_once = reconcile_once
@@ -744,13 +747,24 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
             return None  # new-hive R1a (r1.1 §3): a setup helper session is never an ordinary session anywhere
         return row
 
-    def member_password_public():
-        """Member passwords count from outside only with HIVE_PUBLIC_PASSWORD=1 and while Google sign-in is not set
-        up (T-101): once HIVE_GOOGLE_* are on, members continue with Google."""
-        return sso.public_password and not people.google_ready
+    def member_password_outside(person):
+        """Whether this person's member password counts from outside: only with HIVE_PUBLIC_PASSWORD=1, and once
+        Google sign-in is set up (HIVE_GOOGLE_*) only for the test account, never an admin; everyone else continues with
+        Google (T-101, people.py). ``person`` is their people row, or None for an email that has none."""
+        return sso.public_password and (not people.google_ready or bool(
+            person and person.get("test_account") and person.get("role") != "admin"))
+
+    def member_password_offered_outside():
+        """Whether the sign-in card offers member passwords from outside: when they count for someone there."""
+        return sso.public_password and (not people.google_ready or people.outside_test_account())
 
     def public_session_allowed(row):
-        return row.get("kind") == "sso" or (row.get("kind") == "member_password" and member_password_public())
+        if row.get("kind") != "member_password":
+            return row.get("kind") == "sso"
+        principal = row.get("principal") or ""
+        person = hive.db.one("SELECT test_account, role FROM people WHERE id = ?", (principal[5:],)) \
+            if principal.startswith("user:u_") else None
+        return member_password_outside(person)
 
     hive.mind_tokens.public_session_allowed = public_session_allowed
 
@@ -765,9 +779,11 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         return hive.newhive.admit(row, request, header_token)
 
     def operator(request: Request, *, check_path=True):
+        # The session token comes in the Authorization header only. A token in a URL is kept by proxy logs, browser
+        # history and Referer headers; the events WebSocket is the one place that takes ?token=, since a browser
+        # cannot set a header there (API.md, Auth).
         header_token = _bearer(request.headers.get("authorization"))
-        token = header_token or request.query_params.get("token", "")
-        row = session_for(token, request.scope.get("hive_public", False))
+        row = session_for(header_token, request.scope.get("hive_public", False))
         if row is None:
             row = bootstrap_session(header_token, request)
             if row is not None:
@@ -963,7 +979,10 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
 
     def provider_keys_seen(name, may_see):
         """How many of a provider's keys this caller may see (its stored keys, and its environment key when that holds a
-        usable secret). Inventory only: whether they can pay is pay_route's answer, never this count."""
+        usable secret). Inventory only: whether they can pay is pay_route's answer, never this count. The free route's key
+        is the deploy's, never one anyone holds or sees, so it is never counted."""
+        if is_free(name):
+            return 0
         stored = sum(1 for r in (providers.ring.get("keys") or {}).values() if r["provider"] == name and may_see(r["id"]))
         env = providers.provider(name).key_env if name in providers.providers else ""
         return stored + (1 if env and os.environ.get(env, "").strip() and may_see(f"env:{name}") else 0)
@@ -981,6 +1000,14 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         if gw is None or name not in providers.providers:
             return None
         proposed = {"id": "", "name": "your mind", "owner": me, "model": f"{name}/", "options": {}}
+        if is_free(name):
+            # the free route pays with the deploy's key for every named person it admits (free_inference.FreeGate), whatever
+            # they have used today: the route, never a key, so it names no key id
+            try:
+                gw.free_gate.person_for(proposed, principal=me)
+            except (GatewayError, AttributeError):
+                return None
+            return FREE if gw.free_gate.offered() else None
         try:
             key_id, secret = gw.paying_key(proposed, name)
         except GatewayError:
@@ -1014,6 +1041,12 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         def provider_for(status, may_see):
             name = status["name"]
             seen = provider_keys_seen(name, may_see)
+            if is_free(name):
+                # the deploy's route, offered to this caller only where the free gate admits them (pay_route); to anyone
+                # else (a public visitor where the deploy hasn't opted visitors in) it reads unconfigured, so nothing
+                # offers it to them
+                return {"keys": seen} if pay_route(name, me) is not None else {"keys": seen, "connected": False,
+                                                                                "configured": False}
             if status.get("local") or name == "mock" or not status.get("needs_key", True):
                 return {"keys": seen}
             route = pay_route(name, me)
@@ -1162,6 +1195,10 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
     async def optional_body(request: Request):
         return await body(request) if await request.body() else {}
 
+    # The refusal of a password sign-in from outside where it may not happen: PublicGate gives it to every login
+    # without HIVE_PUBLIC_PASSWORD=1, and the routes below to the operator always and to a member once that flag is off.
+    LOCAL_ONLY = {"error": {"code": "password_login_local_only", "message": "sign in with your Google account"}}
+
     @app.post("/api/auth/login")
     async def login(request: Request):
         if local is not None:   # J1b r1.1 (stand-in r1.0 P2-3): a local-owner hive has no password and no operator session
@@ -1170,18 +1207,11 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         data = await body(request)
         if str(data.get("email") or "").strip():
             return await member_login(request, data)
-        public = request.scope.get("hive_public", False)
-        # Ported operator counter: no await between wait/check/update; parallel requests serialize on this loop.
-        if public:
-            wait = attempts.wait()
-            if wait is None:
-                raise HiveError(429, "password_login_closed", "too many wrong passwords from outside: sign in on the "
-                                "hive's own machine, or rotate the password, to open the password login again")
-            if wait > 0:
-                seconds = math.ceil(wait)
-                return JSONResponse({"error": {"code": "too_many_attempts", "retry_after_seconds": seconds,
-                                               "message": f"too many wrong passwords, try again in {seconds} s"}},
-                                    status_code=429, headers={"Retry-After": str(seconds)})
+        # The operator's session never counts from outside (sso.py), and #82 asked to keep the operator refused there,
+        # so from outside the login is refused before the password is read, HIVE_PUBLIC_PASSWORD=1 included: no guess
+        # at the hive password is answered or counted from outside.
+        if request.scope.get("hive_public", False):
+            return JSONResponse(LOCAL_ONLY, status_code=403)
         try:
             password = str(data.get("password", "")).encode("utf-8")
         except UnicodeEncodeError:
@@ -1189,28 +1219,28 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         else:
             matches = hmac.compare_digest(password, settings.admin_password.encode("utf-8"))
         if not matches:
-            if public:
-                attempts.failed()
-                logging.getLogger("hive").warning("wrong operator password from outside: %d in a row", attempts.failures)
             raise HiveError(401, "unauthorized", "wrong password")
-        attempts.reset()
         token = secrets.token_urlsafe(32)
         hive.db.insert("sessions", {"token_hash": token_hash(token), "created_at": now(), "kind": "password",
                                     "principal": "user:operator", "expires_at": time.time() + PASSWORD_SESSION_SECONDS})
         return {"token": token}
 
-    LOCAL_ONLY = {"error": {"code": "password_login_local_only", "message": "sign in with your Google account"}}
+    # From outside once Google is on, every refused member login gets these words, whether the email is unknown, its
+    # password is wrong, or it belongs to someone who is not the test account: the answer never tells which it was.
+    WRONG_OR_GOOGLE = "wrong email or password; people in this hive sign in with Google"
 
     def member_attempt_key(email):
         # Bound retained state by both entry count and identifier size, without looking up membership.
         return hashlib.sha256(email.encode("utf-8", "surrogatepass")).hexdigest()
 
     async def member_login(request, data):
-        """Email + password -> a member_password session for that person (T-101). Every failure is the same 401; from
-        outside, refused like the operator password once Google is on, and wrong guesses wait per typed email."""
+        """Email + password -> a member_password session for that person (T-101). Every failure is the same 401, and
+        from outside wrong guesses wait per typed email. From outside once Google is on, only the test account signs in
+        (member_password_outside): anyone else's right password fails like a wrong one."""
         public = request.scope.get("hive_public", False)
-        if public and not member_password_public():
+        if public and not sso.public_password:
             return JSONResponse(LOCAL_ONLY, status_code=403)   # the same body PublicGate gives the operator's
+        wrong = WRONG_OR_GOOGLE if public and people.google_ready else "wrong email or password"
         email, password = people.normal_email(data.get("email")), str(data.get("password", ""))
         attempt_key = member_attempt_key(email)
         if public:
@@ -1225,17 +1255,18 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
                                     status_code=429, headers={"Retry-After": str(seconds)})
             member_attempts.failed(attempt_key)   # counted before the slow check, so concurrent guesses wait too
         person = await asyncio.to_thread(people.member_for_password, email, password)
-        if person is None:
+        if person is None or (public and not member_password_outside(person)):
             if public:
-                logging.getLogger("hive").warning("wrong member password from outside")
-            raise HiveError(401, "unauthorized", "wrong email or password")
+                logging.getLogger("hive").warning("member password refused from outside")
+            raise HiveError(401, "unauthorized", wrong)
         # Verification ran in a worker: a reset/removal/disable may have committed while it was in flight.
         # Recheck the exact verified credential and issue its session in one short transaction, without awaiting.
         with hive.db.transaction():
             current = hive.db.one("SELECT * FROM people WHERE id = ?", (person["id"],))
             if (current is None or current["disabled"] or current["role"] not in ("admin", "member")
-                    or current.get("password_hash") != person.get("password_hash")):
-                raise HiveError(401, "unauthorized", "wrong email or password")
+                    or current.get("password_hash") != person.get("password_hash")
+                    or (public and not member_password_outside(current))):
+                raise HiveError(401, "unauthorized", wrong)
             token = secrets.token_urlsafe(32)
             hive.db.insert("sessions", {"token_hash": token_hash(token), "created_at": now(), "kind": "member_password",
                                         "principal": f"user:{person['id']}", "expires_at": time.time() + PASSWORD_SESSION_SECONDS})
@@ -1255,8 +1286,11 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         # is bound to (and hd), and the family sign-in refuses every bound person, so offering the family login to them
         # would loop. A family session already in the browser is still used by POST /api/auth/sso on page load.
         primary = own or family
-        out = {"password": (not public) or sso.public_password, "public": public,
-               "member_password": (not public) or member_password_public(),
+        # ``password``: the operator's hive password counts here, which is never from outside (sso.py), so the card
+        # offers that way in only on the hive's own machine; ``member_password``: members' passwords count here for
+        # someone, from outside the test account once Google is on.
+        out = {"password": not public, "public": public,
+               "member_password": (not public) or member_password_offered_outside(),
                "sso": {"enabled": bool(own) or sso.enabled, "provider": "google",
                        "login_url": primary, "invite_login_url": own,
                        "invites": people.google_ready}}
@@ -1294,7 +1328,8 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
             return response
 
         if error:
-            return done(RedirectResponse(f"{home}?signin_error=google_cancelled", status_code=303))
+            error_code = "google_cancelled" if error == "access_denied" else "google_refused"
+            return done(RedirectResponse(f"{home}?signin_error={error_code}", status_code=303))
         try:
             person, token = await people.callback(code, state, request.cookies.get(OAUTH_COOKIE, ""))
         except SignInError as exc:
@@ -1969,6 +2004,13 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         if local is not None:
             raise HiveError(403, "password_signin_off", "this hive signs in through its one-time link")
 
+    def no_test_account_mark(data):
+        """The one test account comes from the environment (people.py): a request that tries to set the mark is refused,
+        whatever the value, so a client that still sends it learns why."""
+        if "test_account" in data:
+            raise HiveError(400, "bad_request", f"the test account comes from {TEST_ACCOUNT_EMAIL}, not from "
+                            "this request")
+
     SHOWN_ONCE = "Shown once: pass it to the member now; the hive keeps only a hash and cannot show it again."
 
     @app.post("/api/people/members")
@@ -1976,6 +2018,7 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         member_password_enabled()
         session = admin(request)
         data = await body(request)
+        no_test_account_mark(data)
         view, password = people.add_member(data.get("email"), data.get("name", ""), by=_who(session))
         return JSONResponse({"person": view, "password": password, "note": SHOWN_ONCE}, status_code=201)
 
@@ -2079,7 +2122,7 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
     def p4b_person(request: Request):
         # A positive preflight prevents generic bootstrap/fallback/include handling from turning a nonhuman
         # credential into either a person or a non-401 result. Existing operator transport checks still run.
-        token = _bearer(request.headers.get("authorization")) or request.query_params.get("token", "")
+        token = _bearer(request.headers.get("authorization"))   # the header only, as operator()
         def positive(row):
             if (not isinstance(row, dict) or row.get("kind") not in ("password", "sso", "member_password")
                     or (row.get("principal") is not None and not isinstance(row["principal"], str))
@@ -2125,6 +2168,7 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
     async def people_update(person_id: str, request: Request):
         session = admin(request)
         data = await body(request)
+        no_test_account_mark(data)
         view = people.update(person_id, data.get("role"), data.get("disabled"), by=session.get("principal"),
                            clear_google=data.get("clear_google_identity") is True)
         if data.get("disabled"):
@@ -2369,7 +2413,6 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         tmp.replace(path)
         settings.admin_password = new
         ended = hive.db.execute("DELETE FROM sessions WHERE kind = 'password'").rowcount
-        attempts.reset()   # a new password: wrong guesses at the old one no longer count
         return {"password": new, "ended_password_sessions": ended,
                 "note": "Shown once. Password sign-ins (including this browser if it used the password) must sign in again."}
 
@@ -2756,11 +2799,26 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         return {"model": model_id, "endpoints": list(cached[1]) if cached else [], "known": cached is not None,
                 "can_refresh": False}
 
+    def swarm_refusal(session, row):
+        """Why a route that acts on this swarm refuses this caller, as (status, code, message), or None. Acting on a swarm
+        is its owner's, its person's or a hive admin's (Viewer.controls; visibility.py's notes say what acting covers).
+        Sight is checked before this, by operator()'s check_path, so a swarm the caller does not see is already not
+        found. may_control on swarm views is exactly "this is None", so the flag cannot drift from its route."""
+        if row is None:
+            return 404, "not_found", "no such swarm"
+        if not viewer(session).controls(row):
+            return 403, "owner_only", "only this swarm's owner or a hive admin can do that"
+        return None
+
+    def swarm_flags(session, view):
+        """A swarm view with this viewer's may_control, a hint for the UI: the routes still enforce."""
+        return dict(view, may_control=swarm_refusal(session, view) is None)
+
     @app.get("/api/swarms")
     async def swarms(request: Request, archived: int = 0):
         session = admin(request) if archived else operator(request)   # retired swarms: admin sight only
         listed = [s for s in hive.swarms() if archived or not s.get("archived_at")]   # archived swarms only on request
-        return hive.visibility.swarms(viewer(session), listed)
+        return [swarm_flags(session, s) for s in hive.visibility.swarms(viewer(session), listed)]
 
     @app.post("/api/swarms/{swarm_id}/archive")
     async def archive_swarm(swarm_id: str, request: Request):
@@ -2820,8 +2878,8 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
 
     @app.get("/api/swarms/{swarm_id}")
     async def swarm(swarm_id: str, request: Request):
-        operator(request)
-        return hive.swarm(swarm_id)
+        session = operator(request)
+        return swarm_flags(session, hive.swarm(swarm_id))
 
     @app.get("/api/swarms/{swarm_id}/beliefs")
     async def beliefs(swarm_id: str, request: Request):
@@ -2841,8 +2899,12 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
 
     @app.post("/api/swarms/{swarm_id}/vocab")
     async def add_vocab(swarm_id: str, request: Request):
-        operator(request)
-        hive.swarm(swarm_id)
+        session = operator(request)
+        # A term decides which statements the commons admits (hive-publish! quarantines one with a symbol outside the
+        # vocabulary, hive/spaces/lib_hive.metta), so adding one acts on the swarm; seeing the swarm is not enough.
+        refused = swarm_refusal(session, hive.db.one("SELECT * FROM swarms WHERE id = ?", (swarm_id,)))
+        if refused:
+            raise HiveError(*refused)
         data = await body(request)
         try:
             return await run_in_threadpool(hive.spaces.add_vocab, swarm_id, list(data.get("terms", [])))
@@ -4983,8 +5045,9 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
 
     @app.get("/api/lab/suites")
     async def lab_suites(request: Request):
-        operator(request)
-        return await run_in_threadpool(hive.lab.suites)
+        session = operator(request)
+        may_run = role_of(session) == "admin"   # admin()'s own test: start and cancel refuse anyone else
+        return [dict(s, may_run=may_run) for s in await run_in_threadpool(hive.lab.suites)]
 
     @app.get("/api/lab/runs")
     async def lab_runs(request: Request, suite: str = "", limit: int = 50):
@@ -4993,7 +5056,7 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
 
     @app.post("/api/lab/runs")
     async def lab_start(request: Request):
-        operator(request)
+        admin(request)   # a run uses the hive's machine and its whole environment, keys included (lab.py _env)
         data = await body(request)
         return await run_in_threadpool(hive.lab.start, str(data.get("suite", "")))
 
@@ -5004,7 +5067,7 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
 
     @app.post("/api/lab/runs/{run_id}/cancel")
     async def lab_cancel(run_id: str, request: Request):
-        operator(request)
+        admin(request)
         return hive.lab.cancel(run_id)
 
     @app.get("/api/lab/scorecard")
@@ -5550,6 +5613,11 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
     @app.get("/api/agent/goals/{goal_id}/output")
     async def agent_goal_output(goal_id: str, request: Request, offset: int = 0):
         return hive.goals.output(agent_from(request), goal_id, offset)
+    @app.post("/api/agent/create")
+    async def agent_create_offer(request: Request):
+        # hive-create: a mind offers its person a Create build; only the person's press starts a plan (create_offers.py)
+        status, view = hive.create_offers.offer(agent_from(request), await body(request))
+        return JSONResponse(view, status_code=status)
 
     @app.post("/api/agent/goals")
     async def agent_create_goal(request: Request):
@@ -5677,7 +5745,7 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
 
     @app.post("/api/programs/reload")
     async def programs_reload(request: Request):
-        operator(request)
+        admin(request)   # re-reads every app folder; uninstall leaves the files, so it would also bring an app back
         return await run_in_threadpool(hive.programs.reload)
 
     @app.get("/api/programs/{program_id}")
@@ -5693,12 +5761,12 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
 
     @app.post("/api/programs/{program_id}/enable")
     async def program_enable(program_id: str, request: Request):
-        session = operator(request)
+        session = admin(request)   # managing an app is an admin's, as installing, activating and uninstalling are
         return await run_in_threadpool(hive.programs.set_enabled, program_id, True, session.get("principal"))
 
     @app.post("/api/programs/{program_id}/disable")
     async def program_disable(program_id: str, request: Request):
-        session = operator(request)
+        session = admin(request)
         return await run_in_threadpool(hive.programs.set_enabled, program_id, False, session.get("principal"))
 
     @app.post("/api/programs/{program_id}/grants/revoke")
@@ -6290,8 +6358,7 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
     async def team_child_control(swarm_id: str, child_id: str, request: Request):
         # The person gate runs before any look at the team (Kimi kimi-mind-control-p1 #1): who may not act learns nothing
         # about whether the team exists; a team this person cannot see, or one that does not exist, is the same 404.
-        session = session_for(_bearer(request.headers.get("authorization")) or request.query_params.get("token", ""),
-                              request.scope.get("hive_public", False))
+        session = session_for(_bearer(request.headers.get("authorization")), request.scope.get("hive_public", False))
         if session is None:
             raise HiveError(401, "unauthorized", "log in first")
         principal = session.get("principal") or "user:operator"
@@ -6438,6 +6505,22 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
     @app.post("/api/create/plans")
     async def create_plan_start(request: Request):
         return await _plan_person_action(request, lambda e, who, data: e.start(who, data.get("sentence")), optional=False)
+
+    @app.get("/api/me/create-offers")
+    async def my_create_offers(request: Request, mind: str | None = None):
+        v = g_person(request, mutating=False, admin_only=False)
+        return hive.create_offers.list_for(v.principal, mind)
+
+    @app.post("/api/create/offers/{offer_id}/start")
+    async def create_offer_start(offer_id: str, request: Request):
+        # the person's press on a mind's offer: the same §G person gate as POST /api/create/plans, which it then is
+        return await _plan_person_action(request, lambda e, who, data: hive.create_offers.start(e, who, offer_id))
+
+    @app.post("/api/create/offers/{offer_id}/dismiss")
+    async def create_offer_dismiss(offer_id: str, request: Request):
+        v = g_person(request, mutating=True, admin_only=False)
+        await g_body(request, 1024, optional=True)
+        return hive.create_offers.dismiss(v.principal, offer_id)
 
     @app.get("/api/create/plans")
     async def create_plan_list(request: Request):
@@ -6710,7 +6793,7 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         outer = FastAPI(title="OmegaHive", version="0.1.0", lifespan=lifespan, openapi_url=None,
                         docs_url=None, redoc_url=None)
         outer.state.hive, outer.state.gateway = hive, gateway
-        outer.state.password_attempts, outer.state.member_attempts = attempts, member_attempts
+        outer.state.member_attempts = member_attempts
         outer.state.reconcile_once, outer.state.offer_refresh = reconcile_once, offer_refresh
         for prefix in settings.base_path.split(","):
             outer.mount(prefix, app)

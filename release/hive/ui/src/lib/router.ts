@@ -1,3 +1,5 @@
+// Purpose: the page's routes: every place in the app as a Route value, read from and written to the location hash, and
+// the navigation between them.
 import { useEffect, useRef, useSyncExternalStore } from 'react'
 
 export type CreationReference = { artifact_id: string; revision: number; digest: string }
@@ -60,7 +62,7 @@ export type Route =
   /** `view: 'graph'` opens the app's graph view (the guided tour's apps chapter) rather than its own form */
   /** `view: 'studio'` (j3r43-o3 r1.13) opens the app's OWN native interface (not Surface's form over it), e.g. a live
    *  Studio session's canvas in the person's own Studio space */
-  | { name: 'program'; id: string; swarm?: string; source?: CreationReference; view?: 'graph' | 'studio' }
+  | { name: 'program'; id: string; swarm?: string; source?: CreationReference; view?: 'graph' | 'studio' | 'make' }
   | { name: 'models'; provider?: string }
   /** #/me, and #/me/mind: You › your personal mind (Surface personal mind r1) */
   | { name: 'me'; view?: 'mind' }
@@ -144,7 +146,7 @@ export function parse(hash: string): Route {
     case 'assets':
       return { name: 'assets', swarm: q.get('swarm') ?? undefined }
     case 'program':
-      return parts[1] ? { name: 'program', id: parts[1], swarm: parts[2], ...(sourceQuery(q.get('source')) ? { source: sourceQuery(q.get('source')) } : {}), ...(q.get('view') === 'graph' ? { view: 'graph' as const } : q.get('view') === 'studio' ? { view: 'studio' as const } : {}) } : { name: 'programs' }
+      return parts[1] ? { name: 'program', id: parts[1], swarm: parts[2], ...(sourceQuery(q.get('source')) ? { source: sourceQuery(q.get('source')) } : {}), ...(q.get('view') === 'graph' ? { view: 'graph' as const } : q.get('view') === 'studio' ? { view: 'studio' as const } : q.get('view') === 'make' ? { view: 'make' as const } : {}) } : { name: 'programs' }
     case 'swarms':
       if (parts[1] === 'new') return { name: 'launch' }
       if (parts[1] && parts[2] === 'lifecycle') return { name: 'lifecycle', swarm: parts[1] }
@@ -237,7 +239,7 @@ export function href(r: Route): string {
       return `#/models${r.provider ? `/${encodeURIComponent(r.provider)}` : ''}`
     case 'program':
       {
-        const q = [r.source ? `source=${encodeURIComponent(JSON.stringify(r.source))}` : '', r.view === 'graph' ? 'view=graph' : r.view === 'studio' ? 'view=studio' : ''].filter(Boolean).join('&')
+        const q = [r.source ? `source=${encodeURIComponent(JSON.stringify(r.source))}` : '', r.view === 'graph' ? 'view=graph' : r.view === 'studio' ? 'view=studio' : r.view === 'make' ? 'view=make' : ''].filter(Boolean).join('&')
         return `#/program/${encodeURIComponent(r.id)}${r.swarm ? `/${encodeURIComponent(r.swarm)}` : ''}${q ? `?${q}` : ''}`
       }
     case 'swarms':

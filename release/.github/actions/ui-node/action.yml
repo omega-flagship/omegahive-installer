@@ -1,0 +1,34 @@
+# Node 22 and hive/ui's npm packages (npm ci), for hive-ci's hive-ui and warm jobs. Expects the repository checked out.
+#
+# npm's download cache (~/.npm) comes from the Actions cache, keyed by hive/ui/package-lock.json. setup-node's own
+# cache input keys its entry by the folder npm reports, which is each runner's home, so neither runner could restore
+# what the other saved; the path written as ~/.npm is the same on both, so one entry serves both, and main's warm job
+# saves it where every pull request can restore it. The folder starts empty in every job, since a self-hosted runner
+# keeps its home between jobs, and npm ci checks every package against the lockfile's integrity hash.
+name: ui-node
+description: Node 22 (22.12 or later, which vitest 5 and vite 8 need) and hive/ui's packages from a shared npm cache.
+runs:
+  using: composite
+  steps:
+    - name: Empty npm's cache folder (an earlier job could have left files in it)
+      shell: bash
+      run: rm -rf ~/.npm
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'   # latest 22.x LTS (>= 22.12)
+    - name: Restore npm's cache (keyed by hive/ui/package-lock.json)
+      id: npm-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.npm
+        key: npm-${{ runner.os }}-${{ hashFiles('hive/ui/package-lock.json') }}
+    - name: npm ci
+      shell: bash
+      working-directory: hive/ui
+      run: npm ci
+    - name: Save npm's cache
+      if: steps.npm-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.npm
+        key: ${{ steps.npm-cache.outputs.cache-primary-key }}

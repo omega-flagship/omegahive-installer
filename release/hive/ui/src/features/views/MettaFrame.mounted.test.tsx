@@ -1,4 +1,7 @@
 // @vitest-environment node
+// Purpose: a view a mind wrote in MeTTa, mounted as a person sees it: drawn by the hive's blocks from its MeTTa under the
+// bar views.metta composes, typed into, changed by its mind while open, and, when a change can't be drawn, why, in words
+// views.metta says.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
 import type { Root } from 'react-dom/client'
@@ -100,6 +103,10 @@ describe('a view a mind wrote in MeTTa, as a person sees it', () => {
     await act(async () => root.render(<MettaFrame view={latest} place="page" port={bared} />))
     await settle()
     expect(dialog().getAttribute('data-view-state')).toBe('drawn')
+    // the bar above it, its title naming the view's dialog
+    const title = container.findAll((n) => n.nodeType === 1 && n.getAttribute('id') === dialog().getAttribute('aria-labelledby'))[0]
+    expect(title?.textContent).toBe('Tip calculator')
+    expect(container.findAll((n) => n.tagName === 'BUTTON' && n.textContent === 'Full screen')).toHaveLength(1)
     expect(text()).toContain('Type the bill to see the split.')
     expect(text()).toContain('View made by Wren. It runs on its own and cannot see your hive.')
 
@@ -135,6 +142,21 @@ describe('a view a mind wrote in MeTTa, as a person sees it', () => {
     await saved(revision(3, `${tipSource}\n(Part tip 70 keyfield ((label "Your key")))`))
     expect(text()).toContain("The view kept its last state: revision 3 can't be drawn: part 70 uses the keyfield block, which a view may not use.")
     expect(text()).toContain('1.50')
+  })
+
+  it('says when its mind saved a revision that is no longer a view written in MeTTa, and keeps the last one drawn', async () => {
+    await act(async () => root.render(<MettaFrame view={latest} place="page" port={bared} />))
+    await settle()
+    await saved({ ...revision(2, tipSource), carrier: 'view', source: null } as never)
+    expect(text()).toContain('Revision 2 is not one this view can take up, so open the view again to see it.')
+    expect(text()).toContain('Type the bill to see the split.')
+  })
+
+  it('names a mind the person cannot see as a mind', async () => {
+    useHive.setState({ agents: {} as never })
+    await act(async () => root.render(<MettaFrame view={latest} place="page" port={bared} />))
+    await settle()
+    expect(text()).toContain('View made by a mind. It runs on its own and cannot see your hive.')
   })
 
   it('draws nothing in a worker whose scope was not bared', async () => {

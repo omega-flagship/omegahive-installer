@@ -45,7 +45,12 @@ session is a member's even if the row is later made an admin. An admin resets it
 password sessions end) or removes it (the hash is dropped; the same). Disabling a person drops the hash too. From
 outside this machine it works only while HIVE_PUBLIC_PASSWORD=1 and Google sign-in is not configured; once HIVE_GOOGLE_*
 are set it is refused from outside, as the operator password is, and the same email continues with Google as the same
-row (bound on first use, below).
+row (bound on first use, below). The one exception is the test account (T-329-env, #336): HIVE_TEST_ACCOUNT_EMAIL and
+HIVE_TEST_ACCOUNT_PASSWORD name it, and only they mark a row ``test_account`` (sync_test_account at start; no request
+can, and a request that tries is a 400). It keeps its password from outside beside Google, still only while
+HIVE_PUBLIC_PASSWORD=1, so a tester or an agent driving a browser can sign in where people use Google. It is one
+enabled member, never an admin: an admin's address and a disabled row are skipped, a configured admin promotion clears
+the mark, and role admin or a password reset on it is refused (its password comes from the variable).
 
 Roles: ``admin`` (everything, including people, invitations and limits) and ``member`` (uses the hive).
 
@@ -232,6 +237,51 @@ def signin_domains(raw=None):
     return tuple(out)
 
 
+# The one test account (module notes): its address and its password come from the environment, nothing else marks one.
+TEST_ACCOUNT_EMAIL, TEST_ACCOUNT_PASSWORD = "HIVE_TEST_ACCOUNT_EMAIL", "HIVE_TEST_ACCOUNT_PASSWORD"
+TEST_ACCOUNT_BY = "config:" + TEST_ACCOUNT_EMAIL
+TEST_ACCOUNT_PASSWORD_MIN = 10
+
+
+def tester_password_problem(password):
+    """Why this test-account password is refused, or None. The rules are the hive press's for the passwords it writes
+    into the hive's env file (.github-private hive-staging-plan D21): at least 10 characters, one line, no single
+    quote, no trailing backslash. The words never quote the password."""
+    if not password:
+        return f"is not set (it is required with {TEST_ACCOUNT_EMAIL})"
+    if len(password) < TEST_ACCOUNT_PASSWORD_MIN:
+        return f"must be at least {TEST_ACCOUNT_PASSWORD_MIN} characters"
+    if "\n" in password or "\r" in password:
+        return "must be one line"
+    if "'" in password:
+        return "must not contain a single quote (')"
+    if password.endswith("\\"):
+        return "must not end with a backslash"
+    return None
+
+
+def configured_test_account(environ=None):
+    """``(email, password)`` from HIVE_TEST_ACCOUNT_EMAIL and HIVE_TEST_ACCOUNT_PASSWORD, or None when neither is set.
+    Raises RuntimeError (the hive does not start) for one without the other, for anything but exactly one address, or
+    for a password the rules above refuse; the message names the variable, never its value."""
+    environ = os.environ if environ is None else environ
+    email = str(environ.get(TEST_ACCOUNT_EMAIL, "")).strip().lower()
+    password = str(environ.get(TEST_ACCOUNT_PASSWORD, ""))
+    if not email:
+        if password:
+            raise RuntimeError(f"{TEST_ACCOUNT_PASSWORD} is set without {TEST_ACCOUNT_EMAIL}: set both for the test "
+                               "account, or neither")
+        return None
+    local, _, domain = email.partition("@")
+    if (not local or not domain or "@" in domain or len(email) > 254
+            or any(c.isspace() or c in ",;" for c in email)):
+        raise RuntimeError(f"{TEST_ACCOUNT_EMAIL} must be exactly one email address (this hive has one test account)")
+    problem = tester_password_problem(password)
+    if problem:
+        raise RuntimeError(f"{TEST_ACCOUNT_PASSWORD} {problem}")
+    return email, password
+
+
 def _id_token_claims(id_token):
     """The ID token's payload. It came straight from Google's token endpoint over TLS (OIDC Core 3.1.3.7), so it is
     read, not signature-checked. None when absent; raises ValueError when present but unreadable."""
@@ -270,6 +320,8 @@ class People:
         for column in ("promoted_by", "promoted_at", "password_hash"):   # password_hash: T-101 member passwords
             if column not in columns:
                 hive.db.execute(f"ALTER TABLE people ADD COLUMN {column} TEXT")
+        if "test_account" not in columns:   # a test account keeps its password from outside beside Google (above)
+            hive.db.execute("ALTER TABLE people ADD COLUMN test_account INTEGER NOT NULL DEFAULT 0")
         from .ownhive import OwnHive
         OwnHive.migrate_people(hive.db)   # own hive H1: people.access, invites.kind / limit_usd / terms (additive)
         self.dummy_hash = password_hash(secrets.token_urlsafe(18))   # checked for an unknown email: same cost
@@ -287,6 +339,7 @@ class People:
                                           "invited_by": "config", "created_at": now()})
             else:
                 self.promote_configured_admin(row, at="startup")
+        self.sync_test_account(configured_test_account())   # after the admins: a configured admin is never the tester
 
     @property
     def db(self):
@@ -302,13 +355,17 @@ class People:
         if person is None or person["email"] not in self.admin_emails or person["role"] == "admin" or person["disabled"]:
             return person
         stamp = {"role": "admin", "promoted_by": "config:HIVE_ADMIN_EMAILS", "promoted_at": now()}
-        cur = self.db.execute("UPDATE people SET role = ?, promoted_by = ?, promoted_at = ? "
+        # An admin is never a test account: the configured promotion wins and clears the mark (module notes).
+        cur = self.db.execute("UPDATE people SET role = ?, promoted_by = ?, promoted_at = ?, test_account = 0 "
                               "WHERE id = ? AND role != 'admin' AND disabled = 0",
                               (stamp["role"], stamp["promoted_by"], stamp["promoted_at"], person["id"]))
         promoted = self.get(person["id"])
         if cur.rowcount:
             logging.getLogger("hive").warning("people: %s promoted %s -> admin by HIVE_ADMIN_EMAILS at %s",
                                               person["id"], person["role"], at)
+            if person.get("test_account"):
+                logging.getLogger("hive").warning("people: %s is no longer a test account (an admin never is)",
+                                                  person["id"])
             view = self.view(promoted)
             self.db.after_commit(lambda: self.hive.events.publish("people.updated", person=view, change="promoted",
                                                                   via="config", previous_role=person["role"], trigger=at))
@@ -325,7 +382,7 @@ class People:
         return {k: row[k] for k in ("id", "email", "name", "role", "invited_by", "created_at", "last_seen_at")} | {
             k: row.get(k) for k in ("promoted_by", "promoted_at", "access", "profile_kind")} | {
             "disabled": bool(row["disabled"]), "google_bound": bool(row.get("google_sub")),
-            "password_set": bool(row.get("password_hash"))}
+            "password_set": bool(row.get("password_hash")), "test_account": bool(row.get("test_account"))}
 
     def list(self):
         return [self.view(r) for r in self.db.all("SELECT * FROM people ORDER BY created_at")]
@@ -368,11 +425,16 @@ class People:
         if role is not None:
             if role not in ROLES:
                 raise SignInError(400, "bad_role", f"role is one of {list(ROLES)}")
+            if role == "admin" and row.get("test_account"):
+                raise SignInError(400, "bad_request", f"the test account is never an admin: unset {TEST_ACCOUNT_EMAIL} "
+                                  "or give it another address, restart the hive, then make this person an admin")
             changes["role"] = role
         if disabled is not None:
             changes["disabled"] = 1 if disabled else 0
             if disabled:
                 changes["password_hash"] = None   # re-enabling never brings an old password back
+                changes["test_account"] = 0       # nor the mark (an invite may re-enable it as an admin); the next
+                                                  # start marks it again if it is still the environment's member
         if by == f"user:{person_id}" and (changes.get("role") == "member" or changes.get("disabled")):
             raise SignInError(400, "not_yourself", "you cannot remove your own admin access")
         if changes:
@@ -394,6 +456,60 @@ class People:
 
     password_hash = staticmethod(password_hash)
     password_matches = staticmethod(password_matches)
+
+    def sync_test_account(self, setting):
+        """At startup the environment decides the one test account (module notes). ``setting`` is
+        ``configured_test_account()``: ``(email, password)`` or None. In one transaction: every marked row that is not
+        the enabled member with that email is unmarked (rows marked through the API before marks came only from the
+        environment, a changed address, the variables unset); that member is marked, made if it has no row, and its
+        password set, with its password sessions ended, only when the password changed. An admin (or an address in
+        HIVE_ADMIN_EMAILS) and a disabled row are skipped, never promoted, demoted or re-enabled. Logs name ids, never
+        the password; ``people.updated`` follows the commit for each change."""
+        log = logging.getLogger("hive")
+        with self.db.transaction():
+            tester, password = None, None
+            if setting is not None:
+                email, password = setting
+                tester = self.db.one("SELECT * FROM people WHERE email = ?", (email,))
+                if tester is not None and (tester["role"] != "member" or email in self.admin_emails):
+                    log.warning("people: %s is %s, and an admin is never a test account: %s skipped", tester["id"],
+                                "an admin" if tester["role"] != "member" else "listed in HIVE_ADMIN_EMAILS",
+                                TEST_ACCOUNT_EMAIL)
+                    tester = False
+                elif tester is not None and tester["disabled"]:
+                    log.warning("people: %s is disabled: %s skipped (an admin enables them, then restart)",
+                                tester["id"], TEST_ACCOUNT_EMAIL)
+                    tester = False
+            keep = tester["id"] if tester else None
+            for row in self.db.all("SELECT id FROM people WHERE test_account = 1"):
+                if row["id"] != keep:
+                    self.db.update("people", row["id"], {"test_account": 0})
+                    log.warning("people: %s is no longer a test account (only %s makes one)", row["id"],
+                                TEST_ACCOUNT_EMAIL)
+                    self._publish(row["id"], "test_account_unmarked", TEST_ACCOUNT_BY)
+            if tester is None and setting is not None:
+                person_id = new_id("u")
+                self.db.insert("people", {"id": person_id, "email": setting[0], "name": "", "role": "member",
+                                          "invited_by": TEST_ACCOUNT_BY, "created_at": now(),
+                                          "password_hash": self.password_hash(password), "test_account": 1})
+                log.warning("people: %s made as the test account by %s", person_id, TEST_ACCOUNT_EMAIL)
+                self._publish(person_id, "test_account_made", TEST_ACCOUNT_BY)
+            elif tester:
+                changes = {} if tester["test_account"] else {"test_account": 1}
+                if not (tester.get("password_hash") and self.password_matches(tester["password_hash"], password)):
+                    changes["password_hash"] = self.password_hash(password)
+                if changes:
+                    self.db.update("people", tester["id"], changes)
+                    ended = self.end_password_sessions(tester["id"]) if "password_hash" in changes else 0
+                    log.warning("people: %s is the test account by %s%s", tester["id"], TEST_ACCOUNT_EMAIL,
+                                f"; password set, {ended} password session(s) ended" if "password_hash" in changes else "")
+                    self._publish(tester["id"], "test_account_set", TEST_ACCOUNT_BY)
+
+    def outside_test_account(self):
+        """Whether the test account is enabled, a member and has a password: the sign-in card offers the password form
+        from outside beside Google only then."""
+        return self.db.one("SELECT 1 AS found FROM people WHERE test_account = 1 AND disabled = 0 AND role != 'admin' "
+                           "AND password_hash IS NOT NULL LIMIT 1") is not None
 
     @staticmethod
     def normal_email(email):
@@ -429,6 +545,9 @@ class People:
             raise SignInError(400, "member_only", "only a member has a hive password; admins sign in with Google")
         if row["disabled"]:
             raise SignInError(409, "disabled", "enable this person before giving them a password")
+        if row.get("test_account"):
+            raise SignInError(400, "bad_request", f"the test account's password comes from {TEST_ACCOUNT_PASSWORD}: "
+                              "change it there and restart the hive")
         password = new_password()
         stored = self.password_hash(password)
         with self.db.transaction():

@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { HiveEvent, Program, WorkGraph } from '../api/types'
+import { paramWords, type HiveEvent, type Program, type WorkGraph } from '../api/types'
 import { SimClient } from '../api/sim/SimClient'
 import {
   actionsFor,
+  actionsOnApp,
   applyResult,
+  asksFirst,
   backStep,
   currentStep,
+  declaredInput,
   jumpTo,
   newSession,
   pushStep,
@@ -122,6 +125,14 @@ describe('program action results', () => {
     const { session } = applyResult(base(), { status: 'needs_input', needs: { text: '' }, message: 'say what' }, { action: 'correct', items: ['e1'], params: {}, def })
     expect(session.input?.needs).toEqual({ text: 'the corrected wording' })
     expect(session.input?.items).toEqual(['e1'])
+    expect(session.input?.asked).toBe(true)
+  })
+
+  it('needs_input words come from a form field’s description, else its title, when the app gives none', () => {
+    const def = { id: 'connect', params: { redirect_url: { type: 'string' as const, title: 'Address', description: 'where your browser lands' }, flow: { type: 'string' as const, title: 'How' } } }
+    const { session } = applyResult(base(), { status: 'needs_input', needs: { redirect_url: '', flow: '' } }, { action: 'connect', items: [], params: { flow: 'browser' }, def })
+    expect(session.input?.needs).toEqual({ redirect_url: 'where your browser lands', flow: 'How' })
+    expect(session.input?.params).toEqual({ flow: 'browser' })
   })
 
   it('started records a task; refused and error show the message', () => {
@@ -135,7 +146,24 @@ describe('program action results', () => {
     const acts = [{ id: 'a', applies_to: ['evidence'] }, { id: 'b', applies_to: ['claim', 'evidence'] }, { id: 'c' }]
     expect(actionsFor(acts, ['evidence']).map((a) => a.id)).toEqual(['a', 'b', 'c'])
     expect(actionsFor(acts, ['evidence', 'claim']).map((a) => a.id)).toEqual(['b', 'c'])
-    expect(actionsFor(acts, [])).toEqual([])
+  })
+
+  it('with nothing selected, only the actions that need no item; one on the app itself never on a selection', () => {
+    const acts = [{ id: 'a', applies_to: ['server'] }, { id: 'any' }, { id: 'app', applies_to: [] }]
+    expect(actionsFor(acts, []).map((a) => a.id)).toEqual(['any', 'app'])
+    expect(actionsFor(acts, ['server']).map((a) => a.id)).toEqual(['a', 'any'])
+    // the list on the app itself: every one of them with nothing in focus, only the app's own beside a subject
+    expect(actionsOnApp(acts, []).map((a) => a.id)).toEqual(['any', 'app'])
+    expect(actionsOnApp(acts, ['server']).map((a) => a.id)).toEqual(['app'])
+  })
+
+  it('an action that declares its inputs asks for them first, in their order, nothing sent yet', () => {
+    const def = { id: 'add-server', params: { name: { type: 'string' as const, title: 'Name' }, url: 'where it listens' } }
+    expect(asksFirst(def)).toBe(true)
+    expect(asksFirst({ id: 'list', params: {} })).toBe(false)
+    expect(asksFirst({ id: 'list' })).toBe(false)
+    expect(declaredInput(def, [])).toEqual({ action: 'add-server', items: [], needs: { name: 'Name', url: 'where it listens' }, params: {}, asked: false })
+    expect([paramWords('words'), paramWords({ title: 'T', description: 'D' }), paramWords({ title: 'T' }), paramWords({}), paramWords(undefined)]).toEqual(['words', 'D', 'T', '', ''])
   })
 })
 
@@ -178,6 +206,10 @@ describe('store · program session against the sim', () => {
     // needs_input, then the retry with params
     await useHive.getState().programAct(key, 'correct', ['e1'])
     expect(useHive.getState().programSessions[key].input?.needs.text).toBe('the corrected wording')
+      // pressing Correct on the page asks first, from its declaration; Send then runs it with what was typed
+      useHive.getState().programDismiss(key, 'input')
+      useHive.getState().programOpenInput(key, 'correct', ['e1'])
+      expect(useHive.getState().programSessions[key].input).toEqual({ action: 'correct', items: ['e1'], needs: { text: 'the corrected wording', note: 'why it changed' }, params: {}, asked: false })
     await useHive.getState().programAct(key, 'correct', ['e1'], { text: 'Valid until 2025', note: 'expiry missed' })
     s = useHive.getState().programSessions[key]
     expect(s.graph?.revision).toBe('r2')

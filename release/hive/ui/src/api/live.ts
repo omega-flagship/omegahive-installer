@@ -1,4 +1,4 @@
-// Purpose: the live HiveClient: every hive API route the UI calls, over HTTP, with the session's identity.
+// Purpose: LiveClient, the HiveClient that makes each read and write as a request to a running hive.
 import { personSwarmCardRoute, readPersonSwarmCard, type PersonSwarmShown } from './personSwarms'
 import type { UiPrefs, UiPrefsResponse, UiPrefsWriteOptions } from '../shell/uiVariant'
 import type { Exchange } from '../lib/askMemory/types'
@@ -999,6 +999,10 @@ export class LiveClient implements HiveClient {
   createPlanDeploy = (planId: string) => this.request<unknown>('POST', `/api/create/plans/${enc(planId)}/deploy`, {})
   createPlanStop = (planId: string) => this.request<unknown>('POST', `/api/create/plans/${enc(planId)}/stop`, {})
   createPlanFile = (planId: string, path: string, ckpt: string) => this.request<unknown>('GET', `/api/create/plans/${enc(planId)}/files?path=${enc(path)}&ckpt=${enc(ckpt)}`)
+  // a mind's offers to build something in Create (features/dot/createOffer; the host's create_offers.py)
+  createOffers = (mind: string) => this.request<unknown>('GET', `/api/me/create-offers?mind=${enc(mind)}`)
+  createOfferStart = (offerId: string) => this.request<unknown>('POST', `/api/create/offers/${enc(offerId)}/start`, {})
+  createOfferDismiss = (offerId: string) => this.request<unknown>('POST', `/api/create/offers/${enc(offerId)}/dismiss`, {})
   codeTargets = () => this.request<import('../features/code/CodePage').Target[]>('GET', '/api/code/targets')
   codeAttach = (task: string, workspace: string, repository: string) => this.request<import('../features/code/CodePage').Opened>('POST', '/api/code/attach', { task_id: task, workspace_id: workspace, repository_id: repository })
   codeTree = (target: string) => this.request<{ target: string; commit: string; subdir: string; files: string[]; truncated: boolean }>('GET', `/api/code/targets/${enc(target)}/tree`)

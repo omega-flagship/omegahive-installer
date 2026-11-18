@@ -364,7 +364,8 @@ export function reduce(s: HiveData, e: HiveEvent): HiveData {
     }
 
     case 'swarm.updated':
-      return { ...s, swarms: { ...s.swarms, [e.swarm.id]: e.swarm } }
+      // the event carries no per-viewer may_control: keep the last read's until a fresh GET replaces it
+      return { ...s, swarms: { ...s.swarms, [e.swarm.id]: keepHostFlags(s.swarms[e.swarm.id], e.swarm) } }
 
     case 'swarm.deleted': {
       const swarms = { ...s.swarms }

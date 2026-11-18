@@ -1,8 +1,10 @@
+import base64
 import json
 import mimetypes
 import os
 import pathlib
 import re
+import stat
 import subprocess
 import time
 import urllib.parse
@@ -255,43 +257,88 @@ def send_mention_to_chat(jid, phone, text):
         return f"WHATSAPP-MENTION-TO-CHAT-FAILED {exc}"
 
 
-def send_file(path, caption=""):
-    file_path = pathlib.Path(str(path)).expanduser()
-    mimetype = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+MAX_FILE_BYTES = 100 * 1024 * 1024   # the hive's cap on a file a mind moves (hive_commons.MAX_ASSET_BYTES)
+# The folders a file send reads from, inside the mind's own folder: what it shares (files/, where hive-asset-put reads
+# too) and what its generators make (memory/outbox/, where IMAGE-GENERATED's path points). The mind's hive token, .env,
+# auth/ sessions, logs and memory stay unsendable however a person answers the ask (omega-flagship/omegahive#304).
+SENDABLE = (("files",), ("memory", "outbox"))
+
+
+def _own_file(path):
+    """(name, bytes) of path, a plain file in one of this mind's SENDABLE folders, opened as the hive's gate checked it.
+    The gate places a relative path against the mind's folder (hive/core/policy.py _outside_folder), which is this
+    process's working directory, so the path is placed there too and opened from it one name at a time with O_NOFOLLOW:
+    a link anywhere on the way, put there before the open or during it, fails to open instead of reaching outside. A
+    file outside those folders, a folder, FIFO or device, a file with a second hard link and one over MAX_FILE_BYTES are
+    refused unread, the opened descriptor checked and closed before any file object holds it. The sender gets these
+    bytes, never the path, which another process would place against its own folder: the WhatsApp bridge runs in its
+    own, beside its session (omega-flagship/omegahive#304). The WhatsApp and Telegram adapters keep this function word
+    for word."""
+    given = os.path.abspath(os.path.expanduser(str(path)))
+    *folders, name = pathlib.PurePath(os.path.relpath(given, os.getcwd())).parts or (os.curdir,)
+    if name in (os.curdir, os.pardir) or not any(tuple(folders[:len(top)]) == top for top in SENDABLE):
+        places = " or ".join("/".join(top) + "/" for top in SENDABLE)
+        raise PermissionError(f"only files in this mind's {places} folder can be sent: {path}")
+    nofollow = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    folder = os.open(os.curdir, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0))
     try:
-        payload = _json_request(
-            "POST",
-            "/send-file",
-            {"path": str(file_path), "caption": str(caption or ""), "mimetype": mimetype, "to": _target_jid},
-            timeout=90,
-        )
-        if payload.get("ok"):
-            return f"WHATSAPP-SEND-FILE-SUCCESS handled={payload.get('handled')}"
-        return f"WHATSAPP-SEND-FILE-FAILED {payload.get('error')}"
-    except Exception as exc:
-        return f"WHATSAPP-SEND-FILE-FAILED {exc}"
+        for part in folders:
+            inner = os.open(part, nofollow | os.O_DIRECTORY, dir_fd=folder)
+            os.close(folder)
+            folder = inner
+        handle = os.open(name, nofollow | os.O_NONBLOCK, dir_fd=folder)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"no such file in this mind's folder: {path}") from None
+    except OSError as exc:
+        raise PermissionError(f"{path} can't be opened without following a link ({exc.strerror}), so it is not sent") from exc
+    finally:
+        os.close(folder)
+    info = os.fstat(handle)
+    reason = ("not a regular file" if not stat.S_ISREG(info.st_mode) else
+              "a file with a second name elsewhere (a hard link)" if info.st_nlink != 1 else
+              f"over {MAX_FILE_BYTES // (1024 * 1024)} MB" if info.st_size > MAX_FILE_BYTES else None)
+    if reason:
+        os.close(handle)   # os.fdopen would raise on a folder without closing it, leaving the descriptor open
+        raise PermissionError(f"{reason}: {path}")
+    with os.fdopen(handle, "rb") as source:
+        data = source.read(MAX_FILE_BYTES + 1)   # a file that grew past the cap since the check is still refused
+    if len(data) > MAX_FILE_BYTES:
+        raise PermissionError(f"over {MAX_FILE_BYTES // (1024 * 1024)} MB: {path}")
+    return name, data
 
 
-def send_file_to_chat(jid, path, caption=""):
-    file_path = pathlib.Path(str(path)).expanduser()
-    mimetype = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+def _send_file(to, path, caption, label):
+    """Send the mind's own file at path to the chat to: its bytes, read by _own_file, go to the bridge's /send-file."""
+    try:
+        name, data = _own_file(path)
+    except OSError as exc:
+        return f"{label}-FAILED {exc}"
     try:
         payload = _json_request(
             "POST",
             "/send-file",
             {
-                "path": str(file_path),
+                "data": base64.b64encode(data).decode("ascii"),
+                "fileName": name,
                 "caption": str(caption or ""),
-                "mimetype": mimetype,
-                "to": str(jid or ""),
+                "mimetype": mimetypes.guess_type(name)[0] or "application/octet-stream",
+                "to": to,
             },
             timeout=90,
         )
         if payload.get("ok"):
-            return f"WHATSAPP-SEND-FILE-TO-CHAT-SUCCESS handled={payload.get('handled')}"
-        return f"WHATSAPP-SEND-FILE-TO-CHAT-FAILED {payload.get('error')}"
+            return f"{label}-SUCCESS handled={payload.get('handled')}"
+        return f"{label}-FAILED {payload.get('error')}"
     except Exception as exc:
-        return f"WHATSAPP-SEND-FILE-TO-CHAT-FAILED {exc}"
+        return f"{label}-FAILED {exc}"
+
+
+def send_file(path, caption=""):
+    return _send_file(_target_jid, path, caption, "WHATSAPP-SEND-FILE")
+
+
+def send_file_to_chat(jid, path, caption=""):
+    return _send_file(str(jid or ""), path, caption, "WHATSAPP-SEND-FILE-TO-CHAT")
 
 
 def reply_file_to_chat(jid, path, caption=""):

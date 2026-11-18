@@ -3,6 +3,7 @@ import { VisibilityControl } from '../../ui/Visibility'
 import { AnimatePresence, m } from 'framer-motion'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { Belief } from '../../api/types'
+import { hostRefusesControl } from '../../api/idleMinds'
 import { hsl, surenessColor } from '../../lib/color'
 import { useIsDesktop } from '../../lib/hooks'
 import { navigate } from '../../lib/router'
@@ -183,7 +184,7 @@ export default function SwarmView({ id, statement, tab: startTab }: { id: string
               <SwarmBreadcrumbs swarm={swarm} />
               <p className="text-small leading-relaxed text-ink-3">{shown(swarm.description)}</p>
               <SwarmTeam swarm={swarm} />
-              <Vocab swarmId={id} />
+              <Vocab swarmId={id} refused={hostRefusesControl(swarm)} />
             </aside>
             {commons}
           </div>
@@ -205,7 +206,7 @@ export default function SwarmView({ id, statement, tab: startTab }: { id: string
               ]}
             />
             <div className="min-h-[440px] flex-1">
-              {tab === 'commons' ? commons : tab === 'members' ? <div className="space-y-6 pb-6"><SwarmTeam swarm={swarm} /><SwarmRequestInbox swarm={swarm} /></div> : tab === 'connections' ? <><SwarmServices swarm={swarm} /><CapabilityCatalogue swarm={swarm} /><SwarmConnections swarm={swarm} /></> : <Vocab swarmId={id} />}
+              {tab === 'commons' ? commons : tab === 'members' ? <div className="space-y-6 pb-6"><SwarmTeam swarm={swarm} /><SwarmRequestInbox swarm={swarm} /></div> : tab === 'connections' ? <><SwarmServices swarm={swarm} /><CapabilityCatalogue swarm={swarm} /><SwarmConnections swarm={swarm} /></> : <Vocab swarmId={id} refused={hostRefusesControl(swarm)} />}
             </div>
           </div>
         )}
@@ -215,7 +216,11 @@ export default function SwarmView({ id, statement, tab: startTab }: { id: string
   )
 }
 
-function Vocab({ swarmId }: { swarmId: string }) {
+/**
+ * The swarm's vocabulary; `refused`: the hive said this person may not add to it (only its owner, its person or an
+ * admin). Exported for its test.
+ */
+export function Vocab({ swarmId, refused = false }: { swarmId: string; refused?: boolean }) {
   const client = useHive((s) => s.client)
   const toast = useHive((s) => s.toast)
   const [terms, setTerms] = useState<string[] | null>(null)
@@ -257,7 +262,7 @@ function Vocab({ swarmId }: { swarmId: string }) {
         </div>
       ) : (
         <div className="flex flex-wrap gap-1.5">
-          {terms.length === 0 && <p className="px-1 text-sm text-ink-3">No terms yet. Anything goes until you add some.</p>}
+          {terms.length === 0 && <p className="px-1 text-sm text-ink-3">{refused ? 'No terms yet. Anything goes until its owner or an admin adds some.' : 'No terms yet. Anything goes until you add some.'}</p>}
           {terms.map((t) => (
             <m.span
               key={t}
@@ -271,19 +276,23 @@ function Vocab({ swarmId }: { swarmId: string }) {
           ))}
         </div>
       )}
-      <form onSubmit={add} className="mt-2.5 flex gap-1.5">
-        <label className="sr-only" htmlFor={`voc-${swarmId}`}>
-          Add vocabulary terms
-        </label>
-        <input
-          id={`voc-${swarmId}`}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder="add terms, comma separated"
-          className="min-h-11 min-w-0 flex-1 rounded-xl border border-line bg-shade/25 px-3 font-mono text-[13px] text-ink outline-none placeholder:font-sans placeholder:text-ink-4 focus:border-line-2"
-        />
-        <IconButton icon="plus" label="Add terms" type="submit" className="border border-line" disabled={!draft.trim()} />
-      </form>
+      {refused ? (
+        <p className="mt-2.5 px-1 text-[12.5px] text-ink-3">Only this swarm’s owner or a hive admin adds terms.</p>
+      ) : (
+        <form onSubmit={add} className="mt-2.5 flex gap-1.5">
+          <label className="sr-only" htmlFor={`voc-${swarmId}`}>
+            Add vocabulary terms
+          </label>
+          <input
+            id={`voc-${swarmId}`}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="add terms, comma separated"
+            className="min-h-11 min-w-0 flex-1 rounded-xl border border-line bg-shade/25 px-3 font-mono text-[13px] text-ink outline-none placeholder:font-sans placeholder:text-ink-4 focus:border-line-2"
+          />
+          <IconButton icon="plus" label="Add terms" type="submit" className="border border-line" disabled={!draft.trim()} />
+        </form>
+      )}
     </section>
   )
 }

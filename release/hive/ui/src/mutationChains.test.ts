@@ -152,8 +152,12 @@ describe('the mutation sets are derived, and pinned', () => {
     // mind's draft, or its report left); feedbackDrafts, its GET, is a read
     // the Ask above the UI (Jon, 17 Nov: "stop shouldn't happen"): 212 = 213 less askTakeover (POST
     // /api/ask/{op}/takeover), since the person's use of the page no longer asks the host to end the turn
-    expect(client.writes.size).toBe(212)
+    // a mind's offer to build in Create: 214 = 212 plus createOfferStart (POST /api/create/offers/{id}/start: the
+    // person's Start in Create) and createOfferDismiss (POST …/{id}/dismiss: their Not now); createOffers, its GET, is a read
+    expect(client.writes.size).toBe(214)
     expect(client.writes.has('askTakeover')).toBe(false)
+    for (const m of ['createOfferStart', 'createOfferDismiss']) expect(client.writes.has(m), m).toBe(true)
+    expect(client.writes.has('createOffers')).toBe(false)
     expect(client.writes.has('consentView')).toBe(true)
     expect(client.writes.has('checkUpdates')).toBe(true)
     expect(client.writes.has('dismissFeedbackDraft')).toBe(true)
@@ -219,9 +223,12 @@ describe('the mutation sets are derived, and pinned', () => {
     // send, sendFeedback, is a write.
     // feedback drafts: 158 = 157 plus feedbackDrafts (GET /api/feedback/drafts: the reports minds drafted for the
     // person). A GET; dismissFeedbackDraft is a write.
-    expect(client.reads.size).toBe(158)
+    // a mind's offer to build in Create: 159 = 158 plus createOffers (GET /api/me/create-offers?mind=, the person's open
+    // offers from that mind). A GET; its presses, createOfferStart and createOfferDismiss, are writes.
+    expect(client.reads.size).toBe(159)
     for (const r of ['artifactView', 'artifact', 'myStage', 'research']) expect(client.reads.has(r), r).toBe(true)
     expect(client.reads.has('feedbackDrafts')).toBe(true)
+    expect(client.reads.has('createOffers')).toBe(true)
     expect(client.reads.has('feedback')).toBe(true)
     expect(client.reads.has('hiveThroughput')).toBe(true)
     expect(client.reads.has('listEstimated')).toBe(true)

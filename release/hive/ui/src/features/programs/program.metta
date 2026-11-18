@@ -1,7 +1,8 @@
 ; One app's page (#/program/<id>): the app in its own space, declared as atoms (screens/lib_screens.metta composes
 ; them). The app draws itself: its frame, its native form, its work graph, and Create's Code and Flow benches are
 ; islands the page offers and these atoms place. MeTTa composes everything around them: the notes over the app, the
-; states before it opens, the bench tabs, and the app's Ω menu entries.
+; states before it opens, the bench tabs, and the app's Ω menu entries. On the work graph (here and in the Dot panel) it
+; composes the actions that need no item and the form that asks for an action's inputs (the screens at the end).
 ;
 ; The page states one set of facts for program, program-stage and program-menu (features/programs/appPage.ts):
 ;   flags  app.current (a swarm is open) app.ui (the app has its own interface) app.form (a form is built for it)
@@ -287,3 +288,45 @@
 (Row program-closed 31 closed-actions)
 (When program-closed 31 (none-of ((is state opening))))
 (Part program-closed 90 island ((name omega-menu)))
+
+; ---------- an app's actions on its graph (ProgramHost, on this page and in the Dot panel; features/programs/actForm.ts)
+; the actions that need no item: an action on the app itself (applies_to empty, such as adding the first server), and
+; with nothing in focus, one that takes any item or none (applies_to absent). States: (count actions.none).
+(Screen program-actions "What an app offers on itself")
+(Part program-actions 10 line ((title "In this app")))
+(When program-actions 10 (has actions.none))
+(Part program-actions 11 list ((label "In this app") (source actions.none) (icon icon) (title label) (meta (takes)) (open act)))
+(When program-actions 11 (has actions.none))
+
+; what an action takes, asked before it is sent when it declares its inputs, or what the app asked for (needs_input).
+; States: act.asked (the app asked) act.said (it said why) act.items (it asks for items, selected on the stage);
+; (count act.fields).
+(Screen program-act "An action's inputs")
+(Part program-act 10 line ((title (bind act.title)) (meta "Fill in what it takes. A blank field is left out.")))
+(When program-act 10 (off act.asked))
+(Part program-act 11 line ((title (words (bind act.title) ": the app needs more")) (meta "Fill it in and send it again.")))
+(When program-act 11 (on act.asked))
+(Part program-act 20 notice ((tone info) (text (bind act.message))))
+(When program-act 20 (on act.said))
+(Part program-act 30 note ((text (words "It needs " (bind act.items) ". Select them on the stage (shift-click, or Select more), then run it again."))))
+(When program-act 30 (on act.items))
+(Part program-act 40 stack ((source act.fields) (label (bind act.title))))
+(When program-act 40 (has act.fields))
+(Part program-act 50 buttons ((items ((button "Send" act-send ((variant primary))) (button "Cancel" act-cancel ((variant ghost)))))))
+(When program-act 50 (has act.fields))
+(Part program-act 51 buttons ((items ((button "Close" act-cancel ((variant ghost)))))))
+(When program-act 51 (none act.fields))
+
+; one input, drawn for how the app declared it (MCP's form field shapes): words, a number, one choice of several, or
+; tick boxes (yes or no, or several choices). States: value field.kind (text, number, choice or ticks); field.helped.
+(Screen program-act-field "One input an action takes")
+(Part program-act-field 10 fields ((items ((field text (bind field.label) field.value ())))))
+(When program-act-field 10 (is field.kind text))
+(Part program-act-field 11 fields ((items ((field number (bind field.label) field.value ((least (bind field.least)) (most (bind field.most)) (step (bind field.step))))))))
+(When program-act-field 11 (is field.kind number))
+(Part program-act-field 12 fields ((items ((field select (bind field.label) field.value ((source field.options) (prompt "Choose")))))))
+(When program-act-field 12 (is field.kind choice))
+(Part program-act-field 13 fields ((items ((field checks (bind field.label) field.ticks ((action act-tick)))))))
+(When program-act-field 13 (is field.kind ticks))
+(Part program-act-field 20 note ((text (bind field.help))))
+(When program-act-field 20 (on field.helped))

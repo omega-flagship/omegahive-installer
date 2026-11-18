@@ -37,15 +37,17 @@ import profile from '../features/keys/profile.metta?raw'
 import explore from '../features/explore/explore.metta?raw'
 import flow from '../features/flow/flow.metta?raw'
 import conversations from '../features/dot/conversations.metta?raw'
+import createOffer from '../features/dot/createOffer.metta?raw'
 import setup from '../features/setup/setup.metta?raw'
+import firstLightFree from '../features/firstlight/free.metta?raw'
 import mind from '../features/mind/mind.metta?raw'
 import plan from '../features/createPlan/plan.metta?raw'
 import frame from './frame.metta?raw'
 import allowance from '../features/usage/allowance.metta?raw'
+import feedback from '../features/feedback/feedback.metta?raw'
 import viewHost from '../features/views/views.metta?raw'
 import saidWords from '../features/views/words.metta?raw'
 import beliefLink from '../features/minds/beliefLink.metta?raw'
-import feedback from '../features/feedback/feedback.metta?raw'
 import askScreen from './ask.metta?raw'
 import askThread from '../features/ask/thread.metta?raw'
 
@@ -76,15 +78,17 @@ export const SCREEN_SOURCES: readonly (readonly [string, string])[] = [
   ['explore', explore],
   ['flow', flow],
   ['conversations', conversations],
+  ['create-offer', createOffer],
   ['setup', setup],
+  ['first-light-free', firstLightFree],
   ['mind', mind],
   ['plan', plan],
   ['frame', frame],
   ['allowance', allowance],
+  ['feedback', feedback],
   ['views', viewHost],
   ['words', saidWords],
   ['belief-link', beliefLink],
-  ['feedback', feedback],
   ['ask', askScreen],
   ['ask-thread', askThread],
 ]

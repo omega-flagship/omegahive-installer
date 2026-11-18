@@ -1,6 +1,8 @@
-# The Python packages tests/ needs beyond hive's requirements (hive/requirements.txt), installed under
-# hive/ci-constraints.txt by hive-ci's core-tests, and by hive-petta-smoke's runtime step together with chromadb,
-# which only the tests that boot the core runtime need. openai (Omega's provider module) and py-landlock (Omega's
+# The Python packages tests/ needs beyond hive's requirements (hive/requirements.txt). hive-ci's core-tests installs
+# them from tests/ci-requirements.lock, this file resolved under hive/ci-constraints.txt with every wheel's sha256
+# (after changing this file, regenerate the lock with the command in its header; tests/test_ci_requirements_lock.py
+# fails while the two disagree). hive-petta-smoke's runtime step installs this file under hive/ci-constraints.txt
+# together with chromadb, which only the tests that boot the core runtime need. openai (Omega's provider module) and py-landlock (Omega's
 # policy module) are also what the core runtime imports at boot.
 pytest>=8
 PyYAML

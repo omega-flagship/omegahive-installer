@@ -115,7 +115,8 @@ const BLOCKS: Record<string, Block> = {
         </button>
       )}
       {!host.framed && p.eyebrow && <p className="text-[11px] font-medium tracking-[0.08em] text-ink-3 uppercase">{text(p.eyebrow, host)}</p>}
-      {!host.framed && <h2 className="text-xl font-semibold text-balance text-ink">{text(p.title, host)}</h2>}
+      {/* (title_id …): the id the title carries, so the page can name what the header heads by it (aria-labelledby) */}
+      {!host.framed && <h2 id={text(p.title_id, host) || undefined} className="text-xl font-semibold text-balance text-ink">{text(p.title, host)}</h2>}
       {p.body && <p className="max-w-prose text-sm text-ink-2">{text(p.body, host)}</p>}
     </header>
   ),
@@ -454,20 +455,24 @@ const BLOCKS: Record<string, Block> = {
    * A chip carries no colour of its own: it reads in the colour of the words around it, so in every look's line or
    * bubble it has the words' own contrast.
    * The words between chips take the page's own mark when it gives one (`words.mark`: the Ask lights up what was asked).
+   * A chip's words are the part's: (unnamed …) while its title is still being read, (missing …) and (missing_why …) for
+   * one this person cannot open.
    */
   said: (p, host) => {
     const mark = host.data['words.mark'] as ((words: string) => ReactNode) | undefined
+    const named = chipWords(p, host)
     return (
       <>
         {plainPieces(text(p.text, host)).map((piece, i) =>
-          piece.raw === undefined ? <Fragment key={i}>{withChips(piece.t, host, mark)}</Fragment> : <span key={i} data-said={piece.kind}>{withChips(piece.t, host, mark)}</span>)}
+          piece.raw === undefined ? <Fragment key={i}>{withChips(piece.t, host, named, mark)}</Fragment> : <span key={i} data-said={piece.kind}>{withChips(piece.t, host, named, mark)}</span>)}
       </>
     )
   },
-  /** The same words as they were written, behind a small "Show as written" that names what it reveals; an artifact id in
-   *  them is still drawn as its chip. Closed, the words stay in the DOM, hidden, so aria-controls always names them.
-   *  (class …) is the place's own class for the disclosure (the commons style it). */
-  written: (p, host) => <Written words={text(p.text, host)} label={text(p.label, host) || 'as written'} className={text(p.class, host)} host={host} />,
+  /** The same words as they were written, behind a small disclosure, (show …) while closed and (hide …) while open; an
+   *  artifact id in them is still drawn as its chip, in the chip words `said` takes. Closed, the words stay in the DOM,
+   *  hidden, so aria-controls always names them. (class …) is the place's own class for the disclosure (the commons
+   *  style it). */
+  written: (p, host) => <Written words={text(p.text, host)} show={text(p.show, host)} hide={text(p.hide, host)} named={chipWords(p, host)} className={text(p.class, host)} host={host} />,
   /**
    * The Ask collapsed to its mark (screens/ask.metta): one round control where the Ask's row starts, showing the
    * page's own glyph ((glyph <island>), the look's living Omega), dressed as the look's field is (features/ask/ask.css
@@ -601,34 +606,25 @@ const BLOCKS: Record<string, Block> = {
    * Buttons that each carry their own weight, icon and accessible name: (button label action ((aria "…") (icon pause)
    * (variant primary))). The aria text may name the row it sits in ("Hold reloads of {app.name}").
    */
-  buttons: (p, host) => (
-    <div className="flex flex-wrap items-center gap-2">
-      {(Array.isArray(p.items) ? p.items : []).map((b, i) => {
-        if (!Array.isArray(b) || b[0] !== 'button') return null
-        const opts: Record<string, PropValue> = {}
-        for (const o of Array.isArray(b[3]) ? b[3] : []) if (Array.isArray(o) && o.length === 2 && typeof o[0] === 'string') opts[o[0]] = o[1]
-        const variant = name(opts.variant)
-        const aria = text(opts.aria, host)
-        return (
-          // (expanded flag-path): a button that opens and closes something says which it is
-          <Button key={i} type="button" disabled={host.busy} variant={variant === 'primary' || variant === 'ghost' || variant === 'danger' ? variant : 'subtle'}
-            icon={opts.icon ? iconOr(name(opts.icon), 'sparkles') : undefined} aria-label={aria ? fill(aria, {}, host) : undefined}
-            aria-expanded={opts.expanded !== undefined ? host.data[name(opts.expanded)] === true : undefined}
-            onClick={() => host.onAction?.(name(b[2]), {})}>
-            {text(b[1], host)}
-          </Button>
-        )
-      })}
+  buttons: (p, host) => <div className="flex flex-wrap items-center gap-2">{buttonItems(p.items, host)}</div>,
+  /**
+   * The bar above something the page draws under it, such as a view: an icon, the title on one line, and its buttons at
+   * the end, as `buttons` draws them. (title_id …) is the id the title carries, so the page names what the bar heads by
+   * it (aria-labelledby); (edge flag-path): while that bound flag is true the bar is the top edge of a full-screen frame.
+   */
+  bar: (p, host) => (
+    <div className={cx('flex items-center gap-2', host.data[name(p.edge)] === true ? 'h-12 border-b border-line px-3' : 'pb-1.5')}>
+      {p.icon !== undefined && <Icon name={iconOr(name(p.icon), 'apps')} size={15} className="shrink-0 text-ink-3" />}
+      <span id={text(p.title_id, host) || undefined} className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-ink-2">{text(p.title, host)}</span>
+      {buttonItems(p.items, host, 'min-h-9 px-2.5 text-[12px]')}
     </div>
   ),
-  /** A question, then one button that goes ahead (drawn as risky) and one that cancels. */
-  confirm: (p, host) => (
-    <div role="group" aria-label={text(p.text, host)} className="flex flex-wrap items-center gap-2">
-      <span className="text-[12.5px] text-ink-2">{text(p.text, host)}</span>
-      <Button type="button" variant="danger" disabled={host.busy} className="min-h-8 px-3 text-[12.5px]" onClick={() => host.onAction?.(name(p.yes_action), {})}>{text(p.yes, host)}</Button>
-      <Button type="button" variant="ghost" disabled={host.busy} className="min-h-8 px-3 text-[12.5px]" onClick={() => host.onAction?.(name(p.no_action), {})}>{text(p.no, host)}</Button>
-    </div>
-  ),
+  /**
+   * A question, then one button that goes ahead (drawn as risky) and one that cancels. (tone plain) draws the go-ahead
+   * as an ordinary button, for a yes that destroys nothing. (alert yes): an alertdialog, which a screen reader announces
+   * as it appears, named by (label …) and described by the question.
+   */
+  confirm: (p, host) => <Confirm p={p} host={host} />,
   /**
    * A value shown once (a new password, say): a warning above it, Copy and Hide beside it, a note under it. The two
    * buttons may be renamed (copy_label, hide_label); (alert yes) announces the value as it appears.
@@ -644,6 +640,49 @@ const BLOCKS: Record<string, Block> = {
       {p.note && <p className="text-[12px] text-ink-4">{text(p.note, host)}</p>}
     </div>
   ),
+}
+
+/**
+ * The buttons of `buttons` and `bar`: (button label action ((aria "…") (icon pause) (variant primary) (expanded flag)
+ * (on flag) (off flag))). (on flag) draws a button only while that bound flag is true, (off flag) only while it is
+ * false. Each is keyed by its place among those drawn, so two that trade places on a flag (Full screen, then Close) are
+ * one element, and the person's focus stays on it.
+ */
+function buttonItems(items: PropValue | undefined, host: ScreenHost, className?: string): ReactNode[] {
+  const drawn = (Array.isArray(items) ? items : []).flatMap((b) => {
+    if (!Array.isArray(b) || b[0] !== 'button') return []
+    const opts: Record<string, PropValue> = {}
+    for (const o of Array.isArray(b[3]) ? b[3] : []) if (Array.isArray(o) && o.length === 2 && typeof o[0] === 'string') opts[o[0]] = o[1]
+    const holds = (opts.on === undefined || host.data[name(opts.on)] === true) && (opts.off === undefined || host.data[name(opts.off)] !== true)
+    return holds ? [{ b, opts }] : []
+  })
+  return drawn.map(({ b, opts }, i) => {
+    const variant = name(opts.variant)
+    const aria = text(opts.aria, host)
+    return (
+      // (expanded flag-path): a button that opens and closes something says which it is
+      <Button key={i} type="button" disabled={host.busy} variant={variant === 'primary' || variant === 'ghost' || variant === 'danger' ? variant : 'subtle'}
+        icon={opts.icon ? iconOr(name(opts.icon), 'sparkles') : undefined} aria-label={aria ? fill(aria, {}, host) : undefined}
+        aria-expanded={opts.expanded !== undefined ? host.data[name(opts.expanded)] === true : undefined}
+        className={className} onClick={() => host.onAction?.(name(b[2]), {})}>
+        {text(b[1], host)}
+      </Button>
+    )
+  })
+}
+
+/** The confirm block: the question and its two buttons, one group, or one alertdialog the question describes. */
+function Confirm({ p, host }: { p: Props; host: ScreenHost }) {
+  const question = useId()
+  const alert = p.alert === 'yes'
+  const words = text(p.text, host)
+  return (
+    <div role={alert ? 'alertdialog' : 'group'} aria-label={text(p.label, host) || words} aria-describedby={alert ? question : undefined} className="flex flex-wrap items-center gap-2">
+      <span id={alert ? question : undefined} className="min-w-0 text-[12.5px] text-ink-2 [overflow-wrap:anywhere]">{words}</span>
+      <Button type="button" variant={p.tone === 'plain' ? 'subtle' : 'danger'} disabled={host.busy} className="min-h-8 px-3 text-[12.5px]" onClick={() => host.onAction?.(name(p.yes_action), {})}>{text(p.yes, host)}</Button>
+      <Button type="button" variant="ghost" disabled={host.busy} className="min-h-8 px-3 text-[12.5px]" onClick={() => host.onAction?.(name(p.no_action), {})}>{text(p.no, host)}</Button>
+    </div>
+  )
 }
 
 /**
@@ -1141,16 +1180,42 @@ function Entry({ p, item, host, first }: { p: Props; item: ScreenItem; host: Scr
   )
 }
 
+/**
+ * One part's drawing, apart from the rest: a part that throws while it is drawn shows a short line in its place, the
+ * other parts stay, and the failure is told to lib/screenFailures, which the page's errors hear and the feedback area
+ * drafts a report from.
+ */
+class PartBoundary extends Component<{ screen: string; order: number; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+  componentDidCatch(error: unknown) {
+    screenFailed({ where: `${this.props.screen} (part ${this.props.order})`, message: error instanceof Error ? error.message : String(error) })
+  }
+  render() {
+    return this.state.failed ? <p role="status" className="rounded-xl border border-line px-4 py-2.5 text-[13px] text-ink-3">This part could not be drawn.</p> : this.props.children
+  }
+}
+
+/** A block drawn inside its part's boundary, so a throw while drawing it is caught there. */
+function Drawn({ draw, props, host }: { draw: Block; props: Props; host: ScreenHost }) {
+  return <>{draw(props, host)}</>
+}
+
 /** One artifact the words name, as the page looked it up for this person: its title and kind, or that it is missing. */
 export interface NamedArtifact { title?: string; kind?: string; missing?: boolean }
+/** What a chip says that is not the artifact's own title: while it is read, and for one this person cannot open. */
+type ChipWords = { unnamed: string; missing: string; why: string }
+const chipWords = (p: Props, host: ScreenHost): ChipWords => ({ unnamed: text(p.unnamed, host), missing: text(p.missing, host), why: text(p.missing_why, host) })
 const CHIP = 'mx-0.5 inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 align-baseline text-[0.92em] leading-snug'
 
 /**
  * Words with every artifact id in them drawn as its artifact (lib/artifactRefs finds them): the title the page found
- * in `words.named`, "Artifact" while it is still being read, and a plain notice for one this person cannot open. A
+ * in `words.named`, the part's words for one still being read, and a plain notice for one this person cannot open. A
  * press goes to the page as `onOpen('artifact', { id, kind })`. `mark`, when given, draws the words between chips.
  */
-function withChips(words: string, host: ScreenHost, mark?: (words: string) => ReactNode): ReactNode {
+function withChips(words: string, host: ScreenHost, said: ChipWords, mark?: (words: string) => ReactNode): ReactNode {
   const named = (host.data['words.named'] ?? {}) as Record<string, NamedArtifact>
   return refPieces(words).map((piece, i) => {
     if (piece.ref === undefined) return <Fragment key={i}>{mark ? mark(piece.text) : piece.text}</Fragment>
@@ -1158,9 +1223,9 @@ function withChips(words: string, host: ScreenHost, mark?: (words: string) => Re
     const found = own(named, id) ?? {}
     if (found.missing) {
       return (
-        <span key={i} className={cx(CHIP, 'border-dashed border-current/30 text-inherit')} title="It is no longer here, or not shown to you." data-artifact-ref="missing">
+        <span key={i} className={cx(CHIP, 'border-dashed border-current/30 text-inherit')} title={said.why || undefined} data-artifact-ref="missing">
           <Icon name="doc" size={12} className="shrink-0 opacity-70" />
-          <span className="truncate">Artifact not available</span>
+          <span className="truncate">{said.missing}</span>
         </span>
       )
     }
@@ -1168,14 +1233,14 @@ function withChips(words: string, host: ScreenHost, mark?: (words: string) => Re
       <button key={i} type="button" data-artifact-ref={id} onClick={(e) => { e.stopPropagation(); host.onOpen?.('artifact', { id, kind: found.kind }) }}
         className={cx(CHIP, 'border-current/30 bg-current/[0.06] font-medium text-inherit hover:bg-current/[0.12] focus-visible:outline-2 focus-visible:outline-offset-1')}>
         <Icon name={found.kind === 'view' ? 'apps' : 'doc'} size={12} className="shrink-0 opacity-70" />
-        <span className="truncate">{found.title?.trim() || 'Artifact'}</span>
+        <span className="truncate">{found.title?.trim() || said.unnamed}</span>
       </button>
     )
   })
 }
 
 /** The written block: a closed disclosure that reveals the words exactly as written (uifix-r3, r3.1). */
-function Written({ words, label, className, host }: { words: string; label: string; className: string; host: ScreenHost }) {
+function Written({ words, show, hide, named, className, host }: { words: string; show: string; hide: string; named: ChipWords; className: string; host: ScreenHost }) {
   const [open, setOpen] = useState(false)
   const id = useId()
   return (
@@ -1191,10 +1256,10 @@ function Written({ words, label, className, host }: { words: string; label: stri
           setOpen((o) => !o)
         }}
       >
-        {open ? `Hide ${label}` : `Show ${label}`}
+        {open ? hide : show}
       </button>
       <code id={id} hidden={!open} data-as-written="" className={cx('mt-1 font-mono text-[0.85em] opacity-80 [overflow-wrap:anywhere]', open && 'block')}>
-        {withChips(words, host)}
+        {withChips(words, host, named)}
       </code>
     </span>
   )
@@ -1240,29 +1305,6 @@ export function InlineParts({ plan, host }: { plan: ScreenPlan; host: ScreenHost
       })}
     </>
   )
-}
-
-/**
- * One part's drawing, apart from the rest: a part that throws while it is drawn shows a short line in its place, the
- * other parts stay, and the failure is told to lib/screenFailures, which the page's errors hear and the feedback area
- * drafts a report from.
- */
-class PartBoundary extends Component<{ screen: string; order: number; children: ReactNode }, { failed: boolean }> {
-  state = { failed: false }
-  static getDerivedStateFromError() {
-    return { failed: true }
-  }
-  componentDidCatch(error: unknown) {
-    screenFailed({ where: `${this.props.screen} (part ${this.props.order})`, message: error instanceof Error ? error.message : String(error) })
-  }
-  render() {
-    return this.state.failed ? <p role="status" className="rounded-xl border border-line px-4 py-2.5 text-[13px] text-ink-3">This part could not be drawn.</p> : this.props.children
-  }
-}
-
-/** A block drawn inside its part's boundary, so a throw while drawing it is caught there. */
-function Drawn({ draw, props, host }: { draw: Block; props: Props; host: ScreenHost }) {
-  return <>{draw(props, host)}</>
 }
 
 /** px of depth per layer in a 3D look: enough to read as stacked planes, never enough to blur text. */
@@ -1335,9 +1377,10 @@ function Parts({ plan, host, className }: { plan: ScreenPlan; host: ScreenHost; 
       <div key={partKey(part)} data-screen-part={`${plan.screen}.${part.order}`} data-block={part.block!} data-layer={part.depth.layer}
         data-tour={text(part.props.tour, host) || undefined} hidden={hidden || undefined}
         // (fill yes): the part grows to the height its screen is given (a studio or canvas that fills its bench); (grow
-        // yes): in a row it takes an equal share of the width, at least 20rem, so on a narrow screen it has the row to itself
+        // yes): in a row it takes an equal share of the width, at least 20rem, so on a narrow screen it has the row to itself;
+        // (flush yes): the part sits right against the one after it, without the screen's spacing (a bar on its view)
         className={cx(!deep && part.depth.z >= 3 && 'drop-shadow-[0_6px_18px_rgb(0_0_0/0.18)]', !deep && part.depth.z === 2 && 'drop-shadow-[0_2px_8px_rgb(0_0_0/0.12)]',
-          part.props.fill === 'yes' && 'flex min-h-0 flex-1 flex-col', part.props.grow === 'yes' && 'min-w-[min(100%,20rem)] flex-1')}
+          part.props.fill === 'yes' && 'flex min-h-0 flex-1 flex-col', part.props.grow === 'yes' && 'min-w-[min(100%,20rem)] flex-1', part.props.flush === 'yes' && 'mb-0')}
         style={lift ? { transform: `perspective(${PERSPECTIVE}px) translateZ(${part.depth.z * Z_STEP}px)` } : undefined}>
         <PartBoundary screen={plan.screen} order={part.order}><Drawn draw={draw} props={part.props} host={host} /></PartBoundary>
       </div>

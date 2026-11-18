@@ -282,6 +282,9 @@ describe('the rules point at real things', () => {
       'plan-start': 'features/createPlan/PlanCanvas.tsx',
       'view-host': 'features/views/MettaFrame.tsx',
       ask: 'features/ask/askScreen.ts',
+      'view-page': 'features/views/ViewFrame.tsx',
+      'view-chat': 'features/views/ViewFrame.tsx',
+      'artifact-reader': 'features/artifacts/CreationReader.tsx',
       plan: 'features/createPlan/PlanCanvas.tsx',
       'plan-ready': 'features/createPlan/PlanCanvas.tsx',
     }

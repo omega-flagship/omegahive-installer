@@ -1,3 +1,5 @@
+// Purpose: an app's page: the app in its own frame, form or graph, where it opens, and for Create its Studio, Make, Code
+// and Flow benches.
 import { PersonSwarmConsentHost } from './PersonSwarmConsent'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { closePage, navigate, sameCreation, type CreationReference } from '../../lib/router'
@@ -54,7 +56,7 @@ function rememberedSwarm(id: string): string | null {
   }
 }
 
-type ProgramPageProps = { id: string; swarm?: string; source?: CreationReference; view?: 'graph' | 'studio' }
+type ProgramPageProps = { id: string; swarm?: string; source?: CreationReference; view?: 'graph' | 'studio' | 'make' }
 
 /**
  * #/program/<id>[/<swarm>]: the host as a full page. A program call is scoped to one swarm.
@@ -171,7 +173,8 @@ function ListedProgramPage({ id, swarm, source, view }: ProgramPageProps) {
   const askingHelpers = personApp && personState.kind === 'ready' && personState.helpers === 'consent'
   const current = personApp ? (swarm && swarm === personSwarm ? swarm : null) : swarm && swarms[swarm] ? swarm : null
   // Create's bench (Jon 10-31: one app, Code/Design/Flow as bench kinds): Studio is the app's own canvas
-  const [bench, setBench] = useState<'studio' | 'make' | 'code' | 'flow'>('studio')
+  // a make link (a mind's offer the person started in its chat) opens Create on its Make bench
+  const [bench, setBench] = useState<'studio' | 'make' | 'code' | 'flow'>(view === 'make' ? 'make' : 'studio')
   const codeShown = id === CREATE_APP_ID && !!current && bench === 'code'
   const flowShown = id === CREATE_APP_ID && !!current && bench === 'flow'
   // Make: one sentence to a planned, built, checked thing (features/createPlan)
@@ -201,6 +204,7 @@ function ListedProgramPage({ id, swarm, source, view }: ProgramPageProps) {
     setLinkedView(view)
     if (view === 'graph') setViewLink((n) => n + 1)
     if (view === 'studio') setOwnLink((n) => n + 1)
+    if (view === 'make') setBench('make')
   }
   // an app built for its purpose: its form, in the grammar of the experience the person is in (the graph stays one click away)
   const detail = useHive((s) => s.programDetails[id])

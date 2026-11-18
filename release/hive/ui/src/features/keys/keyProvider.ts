@@ -26,17 +26,28 @@ export function readKey(key: string): KeyReading {
   return best ? { kind: 'known', provider: best } : { kind: 'unknown' }
 }
 
+/** The fewest characters a copied word needs to be taken for a key. Every provider's keys are far longer (OpenRouter's
+ *  are 73 characters, Anthropic's over 100), and a shorter word that starts like one, such as sk-learn, is not a key. */
+export const KEY_MIN_LENGTH = 20
+
+/** What copied text holds, as Paste reads it: one key whose start names its provider (`named`); one long word whose
+ *  start names none, which may be a key or something else that was copied, such as a password (`unnamed`); more than
+ *  one different key (`several`); or no key (`none`). */
+export type CopiedKey = { kind: 'named' | 'unnamed'; key: string } | { kind: 'several' | 'none' }
+
 /**
  * The key in text a person copied. A key often arrives inside a message ("Here is your key: sk-or-v1-…."), so the one
- * word that starts the way a provider's keys start is the key, without the quotes or stops around it; text that is one
- * long word is a key whose start names no provider. Null when the text holds no key, or two different ones.
+ * word of at least KEY_MIN_LENGTH characters that starts the way a provider's keys start is the key, without the quotes
+ * or stops around it, and two different such words are several keys. Text that is one long word and nothing else is
+ * read as a key whose start names no provider; a long word inside a sentence is not.
  * Time: one pass over the words, n = text length.
  */
-export function keyIn(text: string): string | null {
+export function keyIn(text: string): CopiedKey {
   const words = text.split(/\s+/).map((w) => w.replace(/^[^\w-]+|[^\w-]+$/g, '')).filter(Boolean)
-  const named = [...new Set(words.filter((w) => readKey(w).kind === 'known'))]
-  if (named.length) return named.length === 1 ? named[0] : null
-  return words.length === 1 && words[0].length >= 20 ? words[0] : null
+  const named = [...new Set(words.filter((w) => w.length >= KEY_MIN_LENGTH && readKey(w).kind === 'known'))]
+  if (named.length > 1) return { kind: 'several' }
+  if (named.length === 1) return { kind: 'named', key: named[0] }
+  return words.length === 1 && words[0].length >= KEY_MIN_LENGTH ? { kind: 'unnamed', key: words[0] } : { kind: 'none' }
 }
 
 /** The separator before item `i` of `n` in a list read as "a, b or c". */

@@ -26,9 +26,12 @@ person's, and a mind set to owner_only approvals has its approvals answered by i
 mind but may not act on it gets 403; one who does not see it gets 'not found', as above.
 
 Using a mind or swarm is not acting on it: whoever sees one talks to its minds, and whoever sees a swarm may give it a
-goal, add a term to its commons vocabulary or publish a flow in it (the goal, vocab and flow routes check sight), with
-who pays for the work decided by the payer rules, not by this one. A swarm's own settings and its deletion are an
-admin's, and who sees it is its owner's or an admin's (Visibility.set, the same rule as a mind's).
+goal or publish a flow in it (the goal and flow routes check sight), with who pays for the work decided by the payer
+rules, not by this one. Adding a term to a swarm's commons vocabulary acts on the swarm, because the vocabulary decides
+which statements its commons admits: it is the swarm's owner's, its person's or an admin's (Viewer.controls, through
+app.py's swarm_refusal, whose answer swarm views carry as may_control), and a mind's publishing adds words to it only
+when the mind acts for one of them (Hive.grows_vocabulary). A swarm's own settings and its deletion are an admin's,
+and who sees it is its owner's or an admin's (Visibility.set, the same rule as a mind's).
 """
 
 from __future__ import annotations
@@ -304,6 +307,8 @@ EVENT_RULES = {
     "notice": "person",
     # the stage (stage.py): a mind's Show, Recall or Compare reaches the one person its turn answers, the same way
     "stage.said": "person",
+    # a mind's offer to build in Create (create_offers.py): {principal, offer_id, agent_id, state}, to that person only
+    "create.offer": "person",
     # a mind's draft report and its removal (feedback_drafts.py) go to the draft's person only, the same way
     "feedback.draft": "person", "feedback.draft.removed": "person",
     # Create plans (create_plan_engine.py): judged against the stored create_plan_runs row by plan_id, reaching the plan's
@@ -692,7 +697,7 @@ class Visibility:
         asked = self._ask_content(viewer, text)
         if asked is not None:
             return asked
-        # a person's own frame (a notice, a stage.said, a mind's draft report) reaches that person only, admins included
+        # a person's own frame (a notice, a stage.said, a mind's offer or draft report) reaches that person only, admins included
         if event_rule(_kind_of(text)) == "person":
             try:
                 return json.loads(text).get("principal") == viewer.principal

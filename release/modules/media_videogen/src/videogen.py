@@ -1,3 +1,5 @@
+"""Purpose: the video generator: make a video from a prompt with xAI's video API, wait for it, and keep it in the
+mind's memory folder under outbox/videos."""
 import json
 import os
 import pathlib
@@ -6,8 +8,6 @@ import time
 import urllib.error
 import urllib.request
 
-OUTBOX = pathlib.Path(__file__).resolve().parents[1] / "memory" / "outbox" / "videos"
-OUTBOX_ROOT = pathlib.Path(__file__).resolve().parents[1] / "memory" / "outbox"
 START_ENDPOINT = os.environ.get("XAI_VIDEO_ENDPOINT", "https://api.x.ai/v1/videos/generations")
 STATUS_ENDPOINT = os.environ.get("XAI_VIDEO_STATUS_ENDPOINT", "https://api.x.ai/v1/videos/{request_id}")
 DEFAULT_MODEL = os.environ.get("XAI_VIDEO_MODEL", "grok-imagine-video")
@@ -30,12 +30,21 @@ def _slug(text):
     return "_".join(words) or "video"
 
 
+def memory_dir():
+    """The mind's memory folder, where the videos it makes are kept: OMEGACLAW_MEMORY_DIR when a hive runs the mind,
+    else the memory folder of the checkout this file runs from (the nearest folder above it holding modules/)."""
+    here = pathlib.Path(__file__).resolve()
+    checkout = next((folder for folder in here.parents if (folder / "modules").is_dir()), here.parents[1])
+    return pathlib.Path(os.environ.get("OMEGACLAW_MEMORY_DIR") or checkout / "memory").resolve()
+
+
 def _write_bytes(prompt, video_bytes):
-    OUTBOX.mkdir(parents=True, exist_ok=True)
+    outbox = memory_dir() / "outbox"
+    (outbox / "videos").mkdir(parents=True, exist_ok=True)
     filename = f"{int(time.time())}_{_slug(prompt)}.mp4"
-    target = OUTBOX / filename
+    target = outbox / "videos" / filename
     target.write_bytes(video_bytes)
-    artifact_id = "outbox:" + target.relative_to(OUTBOX_ROOT).as_posix()
+    artifact_id = "outbox:" + target.relative_to(outbox).as_posix()
     return f"VIDEO-GENERATED path={target} artifact_id={artifact_id}"
 
 

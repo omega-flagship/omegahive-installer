@@ -92,10 +92,12 @@ def test_capabilities_errors_and_disable(client, tmp_path, monkeypatch):
     assert unknown.status_code == 400
 
 
-def test_is_test_app_is_the_manifest_mark_or_a_named_pinned_launcher():
-    from hive.core.programs import NAMED_TEST_APPS, is_test_app
-    assert is_test_app("x", {"test": True}) and not is_test_app("x", {"test": "true"}) and not is_test_app("x", {})
-    assert NAMED_TEST_APPS == {"code-project-test"} and is_test_app("code-project-test", {})
+def test_is_test_app_reads_only_the_manifest_mark():
+    from hive.core.programs import is_test_app
+    assert is_test_app({"test": True}) and not is_test_app({"test": "true"}) and not is_test_app({})
+    # the code project test launcher is marked in its own plugin.json, as every other test app is, not by its name
+    launcher = pathlib.Path(__file__).resolve().parents[1] / "plugins" / "code_project_test" / "plugin.json"
+    assert is_test_app(json.loads(launcher.read_text()))
 
 
 def test_a_test_app_is_marked_by_its_manifest(client, tmp_path, monkeypatch):
@@ -113,7 +115,7 @@ def test_a_test_app_is_marked_by_its_manifest(client, tmp_path, monkeypatch):
     monkeypatch.setenv("HIVE_PLUGIN_DIRS", str(tmp_path))
     listed = {p["id"]: p for p in client.post("/api/programs/reload").json()}
     assert listed["contract-fixture"]["test"] is True and listed["commons-explorer"]["test"] is False
-    assert listed["code-project-test"]["test"] is True                    # named until its pinned release is marked
+    assert listed["code-project-test"]["test"] is True                    # its plugin.json carries the mark
     assert [listed[a]["test"] for a in ("marked", "unmarked", "worded")] == [True, False, False]
     assert listed["marked"]["enabled"]                                         # a test app still loads and runs
     assert client.get("/api/programs/contract-fixture").json()["test"] is True

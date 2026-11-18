@@ -209,10 +209,22 @@ export function parseIntentView(raw: unknown, expect?: { intent_id?: string; kin
   }
 }
 
-/** Strictly read the list answer (GET /api/ask/intents): `{intents: [...]}`. */
+/**
+ * Each kind the hive records an Ask intent under (hive/core/ask_intents.py: KIND, TEST, STUDIO, RESEARCH) and how the
+ * list is read for this page: its own two strictly, Studio's sessions and the Ask's research requests left out. Those
+ * belong to their own pages, and the list is the person's own, newest first, so a research question asked before a
+ * Code change made the change's first check fail ("The intent was not understood (kind)"). A kind not here is refused.
+ */
+const LIST_KINDS = new Map<unknown, 'read' | 'leave out'>([
+  [INTENT_KIND, 'read'], ['code.test', 'read'], ['studio.session', 'leave out'], ['research.request', 'leave out'],
+])
+
+/** Strictly read the list answer (GET /api/ask/intents): `{intents: [...]}`, without the kinds other pages own. */
 export function parseIntentList(raw: unknown): IntentView[] {
   if (!obj(raw) || !Array.isArray(raw.intents)) throw new IntentContractError('The intent list', ['no intents array'])
-  return raw.intents.map((v) => parseIntentView(v, objectKind(v) === 'code.test' ? { kind: 'code.test' } : undefined))
+  return raw.intents
+    .filter((v) => LIST_KINDS.get(objectKind(v)) !== 'leave out')
+    .map((v) => parseIntentView(v, objectKind(v) === 'code.test' ? { kind: 'code.test' } : undefined))
 }
 
 /** Strictly read the recorded r2.13 admission submit answers (closed shape; state "accepted"). */

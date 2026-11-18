@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
-import type { ProgramAction, ProgramDescription, Uncertainty, WorkItem } from '../../api/types'
+import { paramWords, type ProgramAction, type ProgramDescription, type Uncertainty, type WorkItem } from '../../api/types'
 import { paramsSummary } from '../../lib/hostConfirm'
 import type { ActContext } from '../contract'
 import { ARM_MS, finished, opened, released, tryConfirm, type GateState } from './confirmGate'
@@ -371,7 +371,8 @@ export function ActionSheet({ sheet, cs, revision, m, className }: { sheet: Shee
   const headRef = useRef<HTMLHeadingElement>(null)
   const boxRef = useRef<HTMLDivElement>(null)
   const id = useId()
-  const fields = Object.entries(action.params ?? {})
+  // each declared input with its words, whether the app gave words or a form field (api/types ParamSchema)
+  const fields = Object.entries(action.params ?? {}).map(([k, spec]) => [k, paramWords(spec)] as const)
   // Review B1: Tab and Shift-Tab (from the initial heading too) stay in the sheet; the case behind is inert
   useModalContainment(boxRef)
 

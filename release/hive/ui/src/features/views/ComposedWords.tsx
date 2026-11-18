@@ -44,8 +44,8 @@ function composerFor(look: string): Compose {
 }
 
 const NONE: Record<string, NamedArtifact> = {}
-const host = ({ text, label, className, mark }: WordsProps, found: Record<string, NamedArtifact>): ScreenHost => ({
-  data: { text, label: label ?? '', class: className ?? '', 'words.named': found, 'words.mark': mark },
+const host = ({ text, className, mark }: WordsProps, found: Record<string, NamedArtifact>): ScreenHost => ({
+  data: { text, class: className ?? '', 'words.named': found, 'words.mark': mark },
   onOpen: (target, item) => {
     if (target === 'artifact') openArtifact(String(item.id), typeof item.kind === 'string' ? item.kind : undefined)
   },

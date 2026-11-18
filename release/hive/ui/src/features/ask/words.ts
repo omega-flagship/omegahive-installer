@@ -215,6 +215,12 @@ export const DONE_ERROR_WORDS: Record<string, string> = {
   // conductor.py ERROR_SAY: a person's own mind still on the demonstration model, whose empty answer used to read "Done."
   mind_not_connected: 'Stopped here: your mind isn’t connected to a model yet. Add your key under You & your keys, then ask again.',
 }
+/** What a person can do about a refusal the hive spoke (hive/core/refusals.py REMEDIES). A done frame carrying one ended a
+ * turn whose answer already says the refusal in the hive's words, so the page adds no sentence of its own. */
+export const REMEDIES = ['wait', 'credit', 'key', 'model'] as const
+export function spokenRefusal(remedy: unknown): boolean {
+  return typeof remedy === 'string' && (REMEDIES as readonly string[]).includes(remedy)
+}
 export function doneErrorWords(code: unknown): string {
   return typeof code === 'string' && Object.prototype.hasOwnProperty.call(DONE_ERROR_WORDS, code) ? DONE_ERROR_WORDS[code] : DONE_WORDS.error!
 }

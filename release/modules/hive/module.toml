@@ -30,6 +30,7 @@ provides = [
   "skill:hive-goal-done",
   "skill:hive-goal-fail",
   "skill:hive-goal-create",
+  "skill:hive-create",
   "skill:hive-goal-get",
   "skill:hive-goal-propose",
   "skill:hive-goal-cancel-ack",

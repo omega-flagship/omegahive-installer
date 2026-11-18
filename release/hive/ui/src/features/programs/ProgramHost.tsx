@@ -4,15 +4,17 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { ProgramAction, ProgramStage, WorkItem } from '../../api/types'
 import { cx } from '../../lib/cx'
 import { isTypingTarget, useReducedMotion } from '../../lib/hooks'
-import { actionsFor, currentStep, resolveFocus, sessionKey, type TrailStep } from '../../store/programSession'
+import { actionsFor, actionsOnApp, asksFirst, currentStep, resolveFocus, sessionKey, type TrailStep } from '../../store/programSession'
 import { useHive } from '../../store/store'
 import { useOnResync } from '../../lib/resync'
+import { useAdminView } from '../../lib/useAdmin'
 import { Icon } from '../../ui/Icon'
 import { Button, EmptyState, ErrorState, Segmented, Skeleton } from '../../ui/primitives'
 import { Detail } from './Detail'
 import { indexGraph, type GraphIndex } from './layout'
 import { POL, programBackOrExit, STAGE_ICON, STAGE_WORDS } from './style'
-import { ActionBar, InputForm, ItemSummary, NoticeBar, SourcesPanel, TaskChips } from './Rail'
+import { ActionBar, ItemSummary, NoticeBar, SourcesPanel, TaskChips } from './Rail'
+import { ActionForm, AppActions } from './ActionForm'
 import { ResultPanel } from './ResultPanel'
 import { collectSources } from './sources'
 import { Scene } from './Scene'
@@ -77,6 +79,7 @@ function Host({ programId, swarmId, variant, onExit, width }: HostProps & { widt
   const select = useHive((s) => s.programSelect)
   // §9d: confirm actions are asked in the host and sent with its token; the rest go to store.programAct unchanged
   const { act, dialog: confirmDialog } = useConfirmedProgramAct(programId, swarmId)   // review B1: bound to this app and swarm
+  const openInput = useHive((s) => s.programOpenInput)
   const dismiss = useHive((s) => s.programDismiss)
   const refresh = useHive((s) => s.programRefresh)
   const cancelTask = useHive((s) => s.programCancelTask)
@@ -136,9 +139,11 @@ function Host({ programId, swarmId, variant, onExit, width }: HostProps & { widt
       if (a.id === 'compare' || a.stage === 'compare') {
         if (ids.length >= 2) return compare(ids)
       }
+      // an action that declares its inputs asks for them first; the form's Send runs it (ActionForm)
+      if (asksFirst(a)) return openInput(key, a.id, ids)
       void act(key, a.id, ids)
     },
-    [act, compare, key],
+    [act, openInput, compare, key],
   )
   const pick = useCallback(
     (id: string, additive: boolean) => {
@@ -189,7 +194,7 @@ function Host({ programId, swarmId, variant, onExit, width }: HostProps & { widt
     const e = session.error
     body =
       e.code === 'program_disabled' ? (
-        <EmptyState icon="power" title="This app is turned off" body="An operator disabled it. Turn it back on to open its work here." action={<Button variant="primary" icon="power" onClick={() => void setEnabled(programId, true)}>Enable {program?.name ?? programId}</Button>} />
+        <TurnedOff name={program?.name ?? programId} onEnable={() => void setEnabled(programId, true)} />
       ) : e.code === 'program_refused' ? (
         <RefusedHere programId={programId} swarmId={swarmId} programName={program?.name ?? programId} message={e.message} onExit={onExit} />
       ) : e.code === 'not_found' ? (
@@ -270,8 +275,11 @@ function Host({ programId, swarmId, variant, onExit, width }: HostProps & { widt
           </div>
         )}
         {session.input && (
-          <div key={`input-${session.input.action}`} className="pointer-events-auto w-full max-w-[560px]">
-            <InputForm input={session.input} def={inputDef} busy={!!busy} onCancel={() => dismiss(key, 'input')} onSubmit={(params) => void act(key, session.input!.action, session.input!.items.length ? session.input!.items : subjects, params)} />
+          // a new ask (the page's, or the app's needs_input) starts a new form with its own values
+          <div key={`input-${session.input.action}-${session.input.asked}-${Object.keys(session.input.needs).join(',')}`} className="pointer-events-auto w-full max-w-[560px]">
+            <ActionForm input={session.input} def={inputDef} busy={!!busy} onCancel={() => dismiss(key, 'input')}
+              // the items the action was asked on; when the app asked for items, those now selected on the stage
+              onSend={(params) => void act(key, session.input!.action, session.input!.asked && !session.input!.items.length ? subjects : session.input!.items, params)} />
           </div>
         )}
       </AnimatePresence>
@@ -358,6 +366,8 @@ function Host({ programId, swarmId, variant, onExit, width }: HostProps & { widt
   )
 
   const tasks = <TaskChips tasks={session.tasks} swarmId={swarmId} onCancel={(id) => void cancelTask(key, id)} />
+  // the actions that need no item, such as adding an app's first server: on the app itself, never on the subject
+  const appActions = <AppActions actions={actionsOnApp(allActions, subjectItems.map((i) => i.kind))} onAct={(a) => runAction(a, [])} />
 
   return (
     <LayoutGroup id={scope}>
@@ -383,12 +393,13 @@ function Host({ programId, swarmId, variant, onExit, width }: HostProps & { widt
               sourceCount={sourceCount}
               shared={sharedOrigins}
               quick={
-                selection.length > 0 && !drawer ? (
-                  <ActionBar items={subjectItems} gi={gi} actions={[]} busy={busy} compact onNav={(st, id) => pushStage(st, id)} onCompare={compare} onAct={runAction} />
-                ) : null
+                selection.length > 0 ? (
+                  !drawer ? <ActionBar items={subjectItems} gi={gi} actions={[]} busy={busy} compact onNav={(st, id) => pushStage(st, id)} onCompare={compare} onAct={runAction} /> : null
+                ) : appActions
               }
             >
               {subjectBlock}
+              {selection.length > 0 && <div className="mt-4">{appActions}</div>}
               <div className="mt-4">{sourcesPanel}</div>
             </Drawer>
           </>
@@ -397,6 +408,7 @@ function Host({ programId, swarmId, variant, onExit, width }: HostProps & { widt
             {stage}
             <aside className="thin-scroll min-h-0 space-y-5 overflow-y-auto pr-1" aria-label="Inspector">
               {subjectBlock}
+              {appActions}
               {tasks}
               {sourcesPanel}
             </aside>
@@ -408,6 +420,16 @@ function Host({ programId, swarmId, variant, onExit, width }: HostProps & { widt
 }
 
 // ---------------------------------------------------------------- trail, revision, legend, drawer
+
+/** An app that is turned off: an admin turns it back on here, since only an admin may; anyone else is told who can. */
+function TurnedOff({ name, onEnable }: { name: string; onEnable(): void }) {
+  const { adminView } = useAdminView()   // read only while this shows: who is signed in decides the action
+  return adminView ? (
+    <EmptyState icon="power" title="This app is turned off" body="An operator disabled it. Turn it back on to open its work here." action={<Button variant="primary" icon="power" onClick={onEnable}>Enable {name}</Button>} />
+  ) : (
+    <EmptyState icon="power" title="This app is turned off" body="An admin turned it off, and only an admin can turn it back on." />
+  )
+}
 
 function TrailCrumbs({ trail, gi, programId, narrow, onJump }: { trail: TrailStep[]; gi: GraphIndex; programId: string; narrow: boolean; onJump(i: number): void }) {
   const ref = useRef<HTMLOListElement>(null)

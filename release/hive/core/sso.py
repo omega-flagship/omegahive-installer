@@ -21,17 +21,16 @@ peer that is not loopback.  uvicorn rewrites the peer from X-Forwarded-For only 
 is public either way.  A local process can mark its own requests public; that only takes its own local rights away.
 Public requests:
 
-- cannot log in with the operator password (unless HIVE_PUBLIC_PASSWORD=1);
-- with HIVE_PUBLIC_PASSWORD=1, wait after each wrong password before the next one is checked, and lose the
-  password login after 100 wrong in a row until a sign-in on this machine or a rotation (PasswordAttempts);
+- cannot log in with the operator password, HIVE_PUBLIC_PASSWORD=1 included: the login answers
+  ``password_login_local_only`` before the password is read, so no guess at it is checked or counted from outside;
 - cannot reach agent routes (the hub, the LLM gateway, /api/agent/*): minds connect locally only;
 - are operators only with a hive session that was issued by sign-in (``kind = 'sso'``), for an
   allowed person, and that has not expired.  The operator password's session (``kind = 'password'``)
   never counts from outside, wherever it was made, HIVE_PUBLIC_PASSWORD=1 included: that flag opens
   passwords to members, never to the operator;
-- member password sessions count from outside only with HIVE_PUBLIC_PASSWORD=1 and Google sign-in off.
-  Wrong guesses use the same bounded identifier counters for member and unknown emails, whose counts
-  decay rather than reset (AccountAttempts).
+- member password sessions count from outside only with HIVE_PUBLIC_PASSWORD=1, and once Google sign-in is
+  on only for the one test account HIVE_TEST_ACCOUNT_EMAIL names (people.py).  Wrong guesses use the same bounded
+  identifier counters for member and unknown emails, whose counts decay rather than reset (AccountAttempts).
 
 Sign-in reuses the family webhost's session (cookie ``omega_session``, Google login): the hive reads
 the webhost's sessions and users files read-only and never writes them.  A cookie alone never
@@ -134,37 +133,6 @@ def direct_local(scope):
 SESSION_COOKIE = "omega_session"
 
 
-class PasswordAttempts:
-    """Wrong operator passwords from outside this machine, the online guessing NIST SP 800-63B 5.2.2 says a verifier
-    must limit: after n wrong in a row the next outside attempt is not even checked for 2^(n-1) - 1 seconds (none
-    after a single typo, then 1 s, 3 s, 7 s ..., at most an hour, its example's longest wait), and LIMIT in a row
-    close the outside password login until the operator signs in on this machine or rotates the password. Attempts on
-    this machine never count or wait, so nobody outside can lock the operator out. Kept in memory: a restart starts
-    the count again.
-    Time: O(1) per attempt; two numbers of state."""
-
-    LIMIT = 100           # NIST SP 800-63B 5.2.2: no more than 100 consecutive failed attempts on one account
-    LONGEST_WAIT = 3600   # its example of waits that grow "from 30 seconds up to an hour"
-
-    def __init__(self, clock=time.monotonic):
-        self.clock = clock
-        self.failures = 0
-        self.not_before = 0.0
-
-    def wait(self):
-        """Seconds until the next outside attempt may be checked: 0 now, None while the outside login is closed."""
-        if self.failures >= self.LIMIT:
-            return None
-        return max(0.0, self.not_before - self.clock())
-
-    def failed(self):
-        self.failures += 1
-        self.not_before = self.clock() + min(2 ** (self.failures - 1) - 1, self.LONGEST_WAIT)
-
-    def reset(self):
-        self.failures, self.not_before = 0, 0.0
-
-
 class AccountAttempts:
     """Wrong member passwords from outside this machine, the online guessing NIST SP 800-63B 5.2.2 says a verifier must
     limit, counted per typed email: app.py keys each by a hash of the email as typed (after strip and lowercase), with
@@ -172,8 +140,8 @@ class AccountAttempts:
     closures tell which emails belong to someone. Attempts on this machine never count or wait.
 
     Two numbers count per email. ``failures`` sets the wait: after n of them the next outside attempt for that email is
-    not checked for 2^(n-1) - 1 seconds (none after one typo, then 1 s, 3 s, 7 s ..., at most LONGEST_WAIT), omegahive#27's
-    schedule for the operator password. It decays, one failure forgiven per LONGEST_WAIT without a new one, and never
+    not checked for 2^(n-1) - 1 seconds (none after one typo, then 1 s, 3 s, 7 s ..., at most LONGEST_WAIT), the schedule
+    omegahive#27 set. It decays, one failure forgiven per LONGEST_WAIT without a new one, and never
     resets after a quiet spell, so guesses paced an hour apart never buy back the short early waits. ``streak`` counts
     the failures since the last right password or an admin's reset (``clear``) and never decays: LIMIT of them close the
     email's outside login until then. It is a number of its own because waits stop growing at LONGEST_WAIT while a

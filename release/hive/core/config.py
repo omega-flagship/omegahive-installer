@@ -70,7 +70,83 @@ DEFAULT_PROVIDERS = [
     # Self-hosted OpenAI-compatible servers (vLLM, SGLang, Ollama, llama.cpp).
     Provider("local", os.environ.get("HIVE_LOCAL_LLM_URL", "http://127.0.0.1:8000/v1"),
              "HIVE_LOCAL_LLM_KEY", local=True, models=[]),
+    # ASI Cloud with a person's own key, or the hive's ASI_API_KEY (the variable the Omega runtime reads too). asi1-mini is
+    # free there (ASI Cloud's FAQ), so it carries an explicit $0. ASI Cloud shows its other prices only in its dashboard,
+    # and the hive never calls a model it can't price, so another model joins this list with its price.
+    Provider("asicloud", "https://inference.asicloud.cudos.org/v1", "ASI_API_KEY", models=["asi1-mini"],
+             prices={"asi1-mini": {"in": 0, "out": 0}}),
 ]
+
+# Free inference (hive/core/free_inference.py): an OpenAI-compatible endpoint on a key the deploy supplies, offered to the
+# people in the hive and never shown to anyone. HIVE_FREE_INFERENCE_KEY holds the key; _URL the endpoint the key belongs
+# to (Singularity Compute's when unset, where the team's key comes from); _MODELS the models it pays for (comma-separated,
+# the first is the default a person's mind moves to). Its limits are free_inference.py's.
+FREE = "free"
+FREE_KEY_ENV = "HIVE_FREE_INFERENCE_KEY"
+FREE_URL_ENV = "HIVE_FREE_INFERENCE_URL"
+# Singularity Compute's OpenAI-compatible base, the one its model page names; a key from elsewhere comes with its own URL,
+# so an unset URL never sends the team's key to another provider
+FREE_DEFAULT_URL = "https://llm.a.singularitycompute.com/v1"
+# MiniMax M3.1 Flash, the model suggested for the deploy, under the id Singularity Compute serves it (its /models lists
+# minimax/minimax-m3.1-flash, and the hive's loop ran end to end on it with the team's key on 17 Nov); a deploy whose
+# endpoint names it otherwise sets HIVE_FREE_INFERENCE_MODELS
+FREE_DEFAULT_MODELS = ("minimax/minimax-m3.1-flash",)
+
+
+def is_free(name):
+    """Whether a provider name is the free route (the one test every route uses)."""
+    return name == FREE
+
+
+def caller_judged(name):
+    """A route whose gate judges who each call is for (a subscription instance, the free route): a caller that knows
+    who that is (the Ask conductor's asker, the mind gateway's token principal) passes it as principal."""
+    return is_subscription(name) or is_free(name)
+
+
+def _free_provider():
+    """The free route, only while HIVE_FREE_INFERENCE_KEY holds a key and HIVE_FREE_INFERENCE_URL (if set) is an endpoint
+    the key may travel to; else None. Never local: what a person writes leaves the machine for the endpoint. No prices: a
+    call costs the hive nothing, and the calls a day of each person and of the hive bound it instead
+    (free_inference.FreeGate)."""
+    if not os.environ.get(FREE_KEY_ENV, "").strip():
+        return None
+    url = os.environ.get(FREE_URL_ENV, "").strip().rstrip("/") or FREE_DEFAULT_URL
+    if not free_endpoint_ok(url):
+        # never a fallback to the default endpoint: the key may belong to another, and is sent nowhere it wasn't meant for
+        logging.getLogger("hive.config").warning("%s is not an https address (or plain http to a literal loopback "
+                                                 "address on this machine); free inference is off", FREE_URL_ENV)
+        return None
+    models = [m.strip() for m in os.environ.get("HIVE_FREE_INFERENCE_MODELS", "").split(",") if m.strip()]
+    return Provider(FREE, url, FREE_KEY_ENV, models=models or list(FREE_DEFAULT_MODELS))
+
+
+def free_endpoint_ok(url):
+    """Whether the deploy's key may travel to `url`: https, or plain http to a literal loopback address (a stand-in on this
+    machine, as the gateway's local-only egress rule reads loopback), with a host, a readable port if one is given, and no
+    credentials, query or fragment. Example: https://llm.a.singularitycompute.com/v1 and http://127.0.0.1:9911/v1 pass;
+    http://example.org/v1 and https://example.org:bad/v1 don't."""
+    try:
+        parts = urlsplit(str(url or ""))
+        port = parts.port   # raises for a port that isn't a number from 0 to 65535
+    except ValueError:
+        return False
+    try:
+        loopback = ipaddress.ip_address(parts.hostname or "").is_loopback
+    except ValueError:
+        loopback = False   # a name, never a literal address: not counted as this machine
+    return (bool(parts.hostname) and port != 0 and not (parts.username or parts.password or parts.query or parts.fragment)
+            and (parts.scheme == "https" or (parts.scheme == "http" and loopback)))
+
+
+def carries_free_key(provider):
+    """Whether a providers file entry would hold the deploy's free key outside the free route, make that route local, or
+    send the key where free_endpoint_ok refuses: each would show the key or pass the local-only egress rule, so such an
+    entry is refused. An entry named free on the free key replaces the route like any provider (another endpoint, its
+    models), and stays remote."""
+    if is_free(provider.name):
+        return provider.key_env != FREE_KEY_ENV or provider.local or not free_endpoint_ok(provider.base_url)
+    return provider.key_env == FREE_KEY_ENV
 
 
 # The owner's AI subscriptions through local CLI bridges (hive/core/subscription_cli.py): a family of providers, one per
@@ -266,6 +342,10 @@ class Settings:
     # Mac test hive restart prepare (Jon 2026-10-18): POST /api/local/restart-prepare, which asks awake minds to sleep once
     # before a restart, exists only when the launcher sets HIVE_RESTART_PREPARE=1. Off by default: route absent (404).
     restart_prepare: bool = False
+    # Jon's second review (omega-flagship/omegahive#299, item 1): reboot-self runs sudo reboot, which restarts the whole
+    # computer, so a mind may ask for it only where the launcher sets HIVE_EMBODIED_VM=1 because this computer is the
+    # mind's own embodied VM. Off by default: the policy refuses reboot-self.
+    embodied_vm: bool = False
     # Files (hive/core/assets.py, folders.py): the most one uploaded or written file may hold, in bytes
     # (HIVE_ASSET_MAX_BYTES). None (the default) = no cap on the local store; cloud stores keep their own limit.
     asset_max_bytes: int | None = None
@@ -308,6 +388,9 @@ class Settings:
 
 def _load_providers():
     providers = {p.name: p for p in DEFAULT_PROVIDERS}
+    free = _free_provider()
+    if free is not None:
+        providers[FREE] = free
     bridge = subscription_bridge_urls()
     path = os.environ.get("HIVE_PROVIDERS_FILE")
     if path and pathlib.Path(path).exists():
@@ -316,6 +399,10 @@ def _load_providers():
             if aims_at_bridge(provider, bridge):
                 print(f"[hive] providers file entry {provider.name!r} would reach the subscription bridge; refused "
                       "(subscription bridges are set from the environment only)", flush=True)
+                continue
+            if carries_free_key(provider):
+                print(f"[hive] providers file entry {provider.name!r} would carry the free inference key outside its "
+                      "remote route; refused", flush=True)
                 continue
             providers[provider.name] = provider
     local_models = os.environ.get("HIVE_LOCAL_LLM_MODELS", "")
@@ -487,6 +574,7 @@ def load_settings(**overrides) -> Settings:
         media_breaker_refusals=_media_breaker_refusals(),
         web_tools=os.environ.get("HIVE_WEB_TOOLS", "on").strip().lower() not in ("off", "0", "false", "no"),
         restart_prepare=os.environ.get("HIVE_RESTART_PREPARE", "") == "1",
+        embodied_vm=os.environ.get("HIVE_EMBODIED_VM", "") == "1",
         asset_max_bytes=_asset_max_bytes(),
         min_free_bytes=_min_free_bytes(),
         mind_upload_max_bytes=_mind_upload_max_bytes(),

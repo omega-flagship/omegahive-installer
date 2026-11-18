@@ -17,6 +17,7 @@ import { useModalContainment } from '../../ui/useModalContainment'
 import { navCommandsFor, placeCommandsFor } from './navCommands'
 import { goTo } from '../../shell/navGo'
 import { useAdminView } from '../../lib/useAdmin'
+import { mayStart } from '../lab/labUtil'
 import { useAskFillable } from '../ask/fields'
 import { plural } from '../../lib/plural'
 import { guardComposing } from '../../features/ask/keys'
@@ -101,10 +102,10 @@ export default function CommandPalette() {
         label: `Run ${/^(Epistemic|Omega)/.test(x.title) ? x.title : x.title.charAt(0).toLowerCase() + x.title.slice(1)}`,
         icon: 'flask',
         searchOnly: true,
-        hint: running ? 'running now' : !x.runnable ? 'unavailable' : x.kind === 'bench' ? 'benchmark' : 'tests',
+        hint: running ? 'running now' : !mayStart(x) ? 'unavailable' : x.kind === 'bench' ? 'benchmark' : 'tests',
         keywords: `lab ${x.id} ${x.kind === 'bench' ? 'benchmark bench' : 'tests test'} ${x.description}`,
         run: go(() => {
-          if (x.runnable && !running) void startLab(x.id)
+          if (mayStart(x) && !running) void startLab(x.id)
           navigate({ name: 'lab', suite: x.id })
         }),
       })
@@ -115,7 +116,7 @@ export default function CommandPalette() {
       for (const s of Object.values(swarms))
         list.push({ id: `program-${p.id}-${s.id}`, group: 'Navigate', label: `Open ${shown(p.name)} in ${shown(s.name)}`, icon: 'apps', searchOnly: true, keywords: `program ${p.id} ${shown(s.name)}`, run: go(() => navigate({ name: 'program', id: p.id, swarm: s.id })) })
     }
-    if (labSuites?.length) list.push({ id: 'lab-run-all', group: 'Actions', label: 'Run every test and benchmark', icon: 'flask', searchOnly: true, keywords: 'lab run all everything suites ci', run: go(() => (void runAllLab(), navigate({ name: 'lab' }))) })
+    if (labSuites?.some((x) => x.may_run !== false)) list.push({ id: 'lab-run-all', group: 'Actions', label: 'Run every test and benchmark', icon: 'flask', searchOnly: true, keywords: 'lab run all everything suites ci', run: go(() => (void runAllLab(), navigate({ name: 'lab' }))) })
     const sorted = Object.values(agents).sort((a, b) => a.name.localeCompare(b.name))
     for (const a of sorted) {
       list.push({

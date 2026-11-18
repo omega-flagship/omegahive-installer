@@ -62,9 +62,14 @@ def receive():
     return "\n".join(lines)
 
 
+def reply_conversation():
+    """The conversation send() answers: the latest one handed to the mind, or "" before any (tools/hive_create too)."""
+    return CONVERSATION.read_text().strip() if CONVERSATION.exists() else ""
+
+
 def send(content):
     payload = {"text": str(content)}
-    conversation = CONVERSATION.read_text().strip() if CONVERSATION.exists() else ""
+    conversation = reply_conversation()
     if conversation:
         payload["conversation_id"] = conversation
     _hive.call("POST", "/api/agent/messages", payload)

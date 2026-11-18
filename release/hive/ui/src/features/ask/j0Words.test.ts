@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appShown, DONE_WORDS, doneErrorWords, MONTHLY_TOTAL_STOP, paysLine, readDoneLimit, refusalOf, REFUSAL_WORDS, SPEND_STOP_UNNAMED, spendRefusalOffers, spendStop, threadBinds, USAGE_AND_LIMITS, YOUR_KEYS } from './words'
+import { appShown, DONE_WORDS, doneErrorWords, MONTHLY_TOTAL_STOP, paysLine, readDoneLimit, refusalOf, REFUSAL_WORDS, SPEND_STOP_UNNAMED, spendRefusalOffers, spendStop, spokenRefusal, threadBinds, USAGE_AND_LIMITS, YOUR_KEYS } from './words'
 import { limitDraft, limitToSave } from '../usage/limitsScreen'
 import { askThreadFigures, openThreadsOf, END_SAYS, withThreadFigures } from './threadList'
 import type { WorkSession } from '../../api/types'
@@ -77,6 +77,11 @@ describe('item 3: a spending stop offers only a remedy that helps', () => {
     expect(doneErrorWords('key_unavailable')).toBe('Stopped here: the key assigned to pay for this mind is gone or doesn’t fit its model. An admin can assign another key, or use the hive’s default.')
     expect(doneErrorWords('mind_not_connected')).toBe('Stopped here: your mind isn’t connected to a model yet. Add your key under You & your keys, then ask again.')
     for (const odd of [undefined, null, 'not_available', 'toString', '__proto__', 42]) expect(doneErrorWords(odd), String(odd)).toBe(DONE_WORDS.error)
+  })
+  it('a refusal the hive spoke has no stop words of the page: its answer said it once, and done.remedy says what helps', () => {
+    for (const code of ['free_inference_busy', 'free_inference_daily_cap', 'free_inference_off']) expect(doneErrorWords(code), code).toBe(DONE_WORDS.error)
+    for (const remedy of ['wait', 'credit', 'key', 'model']) expect(spokenRefusal(remedy), remedy).toBe(true)
+    for (const odd of [undefined, null, '', 'WAIT', 'toString', '__proto__', 42, ['wait']]) expect(spokenRefusal(odd), String(odd)).toBe(false)
   })
 })
 

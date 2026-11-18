@@ -22,6 +22,7 @@
 (Provides omegaclaw.hive.commons (Skill hive-goal-done))
 (Provides omegaclaw.hive.commons (Skill hive-goal-fail))
 (Provides omegaclaw.hive.commons (Skill hive-goal-create))
+(Provides omegaclaw.hive.commons (Skill hive-create))
 (Provides omegaclaw.hive.commons (Skill hive-goal-get))
 (Provides omegaclaw.hive.commons (Skill hive-goal-propose))
 (Provides omegaclaw.hive.commons (Skill hive-goal-cancel-ack))

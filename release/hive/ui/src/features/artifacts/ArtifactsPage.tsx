@@ -1,5 +1,12 @@
-// Purpose: #/artifacts, everything minds and apps produced across the hive, as MeTTa composes it for the look worn, a
-// saved creation opened in place, and what the page lists told to the Ask by id.
+/**
+ * Purpose: #/artifacts, everything minds and apps produced across the hive, newest first, filterable by kind, words, swarm, mind
+ * and app. The screen is atoms (artifacts.metta) that MeTTa composes for the look being worn; this page only loads the
+ * list, states the facts, and carries out a press, opening a saved creation in place when that is where its row opens
+ * (CreationReader: its text, or its view). #/artifacts/<id> opens that one the same way: a mind's words name what it
+ * made by id, shown as a chip that links here (features/views/Words); a link naming one this person can't open says so
+ * above the list, a part of the same screen. What the page lists is told
+ * to the Ask by id, the creation open in place first.
+ */
 import { useMemo, useState } from 'react'
 import { experienceById } from '../../experiences/registry'
 import { navigate, useRoute, type Route } from '../../lib/router'
@@ -15,13 +22,6 @@ import type { ArtifactFilter } from './artifacts'
 import { CreationReader } from './CreationReader'
 import { artifactsScreen, NO_FILTER, withInput, type ArtifactRow, type Names } from './data'
 
-/**
- * #/artifacts: everything minds and apps produced across the hive, newest first, filterable by kind, words, swarm, mind
- * and app. The screen is atoms (artifacts.metta) that MeTTa composes for the look being worn; this page only loads the
- * list, states the facts, and carries out a press, opening a saved creation in place when that is where its row opens
- * (CreationReader: its text, or its view). #/artifacts/<id> opens that one the same way: a mind's words name what it
- * made by id, shown as a chip that links here (features/views/Words).
- */
 export default function ArtifactsPage() {
   const client = useHive((s) => s.client)
   const agents = useHive((s) => s.agents)
@@ -44,8 +44,9 @@ export default function ArtifactsPage() {
   const names = useMemo<Names>(() => ({ minds: agents, swarms, apps: Object.fromEntries((programs ?? []).map((p) => [p.id, p.name])) }), [agents, swarms, programs])
   const { plan, data, listed } = useMemo(() => {
     const { data, facts, listed } = artifactsScreen({ status: res.status, list: res.data, error: res.error }, filter, names)
-    return { plan: screensSpace().compose('artifacts', look, facts), data, listed }
-  }, [res.status, res.data, res.error, filter, names, look])
+    // a link naming an artifact this person can't open says so above the list (artifacts.metta)
+    return { plan: screensSpace().compose('artifacts', look, { ...facts, flags: { ...facts.flags, 'artifacts.link-missing': linkMissing } }), data, listed }
+  }, [res.status, res.data, res.error, filter, names, look, linkMissing])
   // What the Ask is told this page shows: the creation open in place first, then every row listed, by id (the newest
   // first, as the list is, so trimming the view to its 2 KB keeps the newest). The hive names each from its own data,
   // only what this person may see, so "show me the picture called Harbour at dusk" finds its id here.
@@ -61,30 +62,27 @@ export default function ArtifactsPage() {
         {reading ? (
           <CreationReader key={`${reading.artifactId}@${reading.revision}`} {...reading} onBack={() => { setPicked(null); if (open) navigate({ name: 'artifacts' }) }} />
         ) : (
-          <>
-            {linkMissing && <p role="status" className="mb-3 text-[13px] text-ink-3">That artifact is no longer here, or not shown to you.</p>}
-            <Screen plan={plan} host={{
-              data,
-              busy: res.refreshing,
-              framed: true,
-              onInput: (bind, value) => setFilter((f) => withInput(f, bind, value)),
-              onOpen: (target, item) => {
-                if (target !== 'artifact') return
-                const read = item.read as ArtifactRow['read']
-                if (read) setPicked({ under: open, reading: { artifactId: read.artifact_id, revision: read.revision, title: String(item.title), view: !!read.view } })
-                else if (item.route) {
-                  const route = item.route as Route
-                  // Ask <mind> opens that mind's chat with the artifact on its box, so the question goes about it
-                  if (route.name === 'dot' && item.about) attachAbout(route.id, item.about as ChatAbout)
-                  navigate(route)
-                }
-              },
-              onAction: (action) => {
-                if (action === 'reload') void res.reload()
-                else if (action === 'clear-filters') setFilter(NO_FILTER)
-              },
-            }} />
-          </>
+          <Screen plan={plan} host={{
+            data,
+            busy: res.refreshing,
+            framed: true,
+            onInput: (bind, value) => setFilter((f) => withInput(f, bind, value)),
+            onOpen: (target, item) => {
+              if (target !== 'artifact') return
+              const read = item.read as ArtifactRow['read']
+              if (read) setPicked({ under: open, reading: { artifactId: read.artifact_id, revision: read.revision, title: String(item.title), view: !!read.view } })
+              else if (item.route) {
+                const route = item.route as Route
+                // Ask <mind> opens that mind's chat with the artifact on its box, so the question goes about it
+                if (route.name === 'dot' && item.about) attachAbout(route.id, item.about as ChatAbout)
+                navigate(route)
+              }
+            },
+            onAction: (action) => {
+              if (action === 'reload') void res.reload()
+              else if (action === 'clear-filters') setFilter(NO_FILTER)
+            },
+          }} />
         )}
       </div>
     </Page>

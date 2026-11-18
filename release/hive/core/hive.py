@@ -24,7 +24,7 @@ from functools import wraps
 
 from ..spaces import beliefs as linked_beliefs, sexpr
 from ..spaces.service import SpaceService
-from .config import Settings
+from .config import FREE, Settings
 from .db import Database, latest_stamp, new_id, now, parse_stamp
 from .health import HEALTH_QUESTION, HEALTH_QUESTION_TAG, HEALTH_SENDER, for_people
 from .events import EventBus
@@ -96,6 +96,9 @@ class Hive:
         self.events = EventBus()
         self.supervisor = supervisor
         self.connections: dict[str, object] = {}  # agent_id -> hub websocket
+        # A principal's current role ("admin", "member", or None when no current person holds it), which create_app wires
+        # to its role_of. Until it is wired, no mind's publishing adds words to a swarm's vocabulary (grows_vocabulary).
+        self.person_role = None
         # agent_id -> (its hub websocket, the highest hub_seq sent on it, None until that socket's resume is answered).
         # The channel keeps last_seen_seq as a high-water mark and drops a seq at or below it (hive_channel.py,
         # _Daemon.deliver), so a socket gets the mind's stored messages in hub_seq order, each once (upstream #18/#21).
@@ -225,6 +228,8 @@ class Hive:
         self.code_controller = CodeControllerEngine(self)   # Create - Code: the MeTTa reducer drives each Code request
         from .create_plan_engine import CreatePlanEngine
         self.create_plans = CreatePlanEngine(self)   # Create plans: the MeTTa plan controller R4.0 drives each plan
+        from .create_offers import CreateOffers
+        self.create_offers = CreateOffers(self)   # a mind's hive-create: an offer its person starts in Create, or not
         from .repomap import RepoMaps
         self.repo_maps = RepoMaps(self)   # repo-map/1 Slice A: admin-loaded, read-only repository maps (repomap.py)
         from .credentials import Credentials
@@ -889,7 +894,7 @@ class Hive:
         out = {}
         for row in self.db.all("SELECT id, name, hue, status, model, options FROM agents WHERE deleted = 0"):
             provider = row["model"].partition("/")[0]
-            if store is None or provider in ("mock", "local"):
+            if store is None or provider in ("mock", "local", FREE):   # free inference: the deploy's key, in no key's list
                 continue
             assigned = (json.loads(row["options"]) if row.get("options") else {}).get("key")
             key = assigned or store.ring["defaults"].get(provider) or f"env:{provider}"
@@ -978,6 +983,9 @@ class Hive:
             model = model or role["default_model"]
             if not budget_usd and role["default_budget"] is not None:
                 budget_usd = role["default_budget"]
+        if model:   # chosen by the caller or the role: on the free route, only a model the deploy offers now
+            from .free_inference import check_model
+            check_model(self.settings.providers, model)
         options = self._options(options, model or self.settings.default_model)
         if options.get("approvals") == "owner_only":
             actor = approval_guard() if approval_guard is not None else by
@@ -1110,6 +1118,11 @@ class Hive:
         role_change = "role_id" in changes
         new_role = changes.get("role_id")
         changes = {k: v for k, v in changes.items() if k in EDITABLE}
+        if 'model' in changes and changes['model'] != row['model']:
+            # a move onto the free route takes only a model the deploy offers now; a model kept as it was is judged at
+            # each call instead, so a mind left on one the deploy dropped can still be renamed or moved off it
+            from .free_inference import check_model
+            check_model(self.settings.providers, changes['model'])
         # Refuse a Tool change before existing swarm grant/revoke side effects.
         if changes.get('driver') and changes['driver'] != 'local' and (changes.get('options',json.loads(row['options'] or '{}')) or {}).get('tools'):
             raise HiveError(400,'tools_refused','Tools candidate requires the local driver')
@@ -2228,6 +2241,24 @@ class Hive:
         counter = self.db.one("SELECT evidence_counter FROM agents WHERE id = ?", (agent_id,))["evidence_counter"]
         return [f"ev:{agent_id}:{counter}"]
 
+    def grows_vocabulary(self, agent):
+        """Whether a statement ``agent`` publishes may add its words to its swarm's vocabulary: only when the mind acts
+        for someone who controls the swarm (Viewer.controls: a hive admin, the swarm's owner or its person), the rule
+        app.py's vocabulary route holds people to, since the vocabulary decides which statements the commons admits.
+        A mind acts for its owner (the operator, for one made before owners were recorded) and, for a person's own mind,
+        that person, each with their current role. Any other mind publishes in the vocabulary as it stands, and
+        hive-publish! quarantines a statement with a word outside it, naming the word, until the swarm's control adds
+        it (the Psynese vocabulary in docs/omegadots/PLAN.md: an unknown symbol is quarantined)."""
+        from .visibility import Viewer
+        swarm = self.db.one("SELECT owner, personal_of FROM swarms WHERE id = ?", (agent["swarm_id"],))
+        if swarm is None or self.person_role is None:
+            return False
+        for principal in (agent.get("owner") or "user:operator", agent.get("personal_of")):
+            role = self.person_role(principal) if principal else None
+            if role in ("admin", "member") and Viewer(principal, role == "admin").controls(swarm):
+                return True
+        return False
+
     def publish(self, agent_id, statement, f, c, evidence=None, new_evidence=False):
         """Publish a belief to the agent's swarm commons.
 
@@ -2263,7 +2294,8 @@ class Hive:
         else:
             stamp = self._mint_stamp(agent_id)
         try:
-            result = self.spaces.publish(row["swarm_id"], agent_id, statement, f, c, stamp)
+            result = self.spaces.publish(row["swarm_id"], agent_id, statement, f, c, stamp,
+                                         open_vocab=self.grows_vocabulary(row))
         except ValueError as exc:
             raise HiveError(400, "bad_statement", str(exc)) from exc
         assertion = {

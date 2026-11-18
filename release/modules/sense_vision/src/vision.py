@@ -1,16 +1,21 @@
-"""Purpose: the vision sense: describe an image a mind received, captured or keeps with OpenRouter's vision model, and
-log each observation; images only, and only from the mind's own folders or the hive's checkout."""
+"""Purpose: the vision sense: describe an image a mind received, captured, fetched or made with OpenRouter's vision
+model, and log each observation in the mind's memory folder; images only, and only from that memory folder or the files
+folder its fetched hive assets land in, so minds sharing one checkout never observe each other's media."""
 import base64
 import json
 import os
 import pathlib
+import stat
 import time
 import urllib.error
 import urllib.request
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-INBOX = ROOT / "memory" / "inbox"
-OBSERVATION_LOG = ROOT / "memory" / "media_observations.jsonl"
+# Under the mind's working directory, the folder the hive saves the assets a mind fetches into
+# (modules/hive/src/hive_commons.py FILES_DIR).
+FILES_DIR = "files"
+# The most a sense reads of one file, checked before a byte is read: the hive's own cap on a file a mind moves
+# (modules/hive/src/hive_commons.py MAX_ASSET_BYTES, HIVE_ASSET_MAX_BYTES's default).
+MAX_BYTES = 100 * 1024 * 1024
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 VISION_MODEL = os.environ.get("OMEGACLAW_VISION_MODEL", "qwen/qwen3-vl-30b-a3b-instruct")
@@ -26,12 +31,24 @@ def _api_key():
     return key
 
 
+def memory_dir():
+    """The mind's memory folder, where its received, captured and generated media and this sense's log live:
+    OMEGACLAW_MEMORY_DIR when a hive runs the mind (each mind's own, hive/supervisor/workspace.py), else the memory
+    folder of the checkout this file runs from (the nearest folder above it holding modules/), as channel_hive reads it.
+    It is the path as named, never resolved: a mind could put a link in its place, and _open_root opens it without
+    following one."""
+    here = pathlib.Path(__file__).resolve()
+    checkout = next((folder for folder in here.parents if (folder / "modules").is_dir()), here.parents[1])
+    return pathlib.Path(os.path.abspath(os.environ.get("OMEGACLAW_MEMORY_DIR") or checkout / "memory"))
+
+
 def _candidate_files():
-    if not INBOX.exists():
+    inbox = memory_dir() / "inbox"
+    if not inbox.exists():
         return []
     exts = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
     return sorted(
-        [path for path in INBOX.rglob("*") if path.is_file() and path.suffix.lower() in exts],
+        [path for path in inbox.rglob("*") if path.is_file() and path.suffix.lower() in exts],
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
@@ -73,24 +90,89 @@ IMAGE_SIGNATURES = (
 
 
 def _observable_roots():
-    """Where a mind's images can be: the checkout this file runs from (the nearest folder above it holding modules/,
-    where channels and senses write memory/inbox/<source>), the mind's own folder and its memory folder."""
-    here = pathlib.Path(__file__).resolve()
-    checkout = next((folder for folder in here.parents if (folder / "modules").is_dir()), ROOT)
-    roots = [checkout, pathlib.Path.cwd().resolve()]
-    if os.environ.get("OMEGACLAW_MEMORY_DIR"):
-        roots.append(pathlib.Path(os.environ["OMEGACLAW_MEMORY_DIR"]).resolve())
-    return roots
+    """Where a mind's own files can be, as paths named, never resolved: its memory folder, where the channels, the
+    webcam and the generators write them, and the files folder under its working directory, where the hive saves the
+    assets it fetches. A mind writes its own folder, so either could be a link it put there to any folder it can read;
+    _open_root opens each without following one (omega-flagship/omegahive#249 review). Never the checkout or the rest
+    of the working directory, which minds can share."""
+    return [memory_dir(), pathlib.Path(os.getcwd()) / FILES_DIR]
+
+
+def _open_root(root):
+    """A descriptor for the folder root, reached without following a link anywhere a mind could have put one: from its
+    working directory, its own folder, one name at a time with O_NOFOLLOW when root lies under it, else by its name
+    with O_NOFOLLOW on the last, the one part of such a path a mind writes. The vision and audio senses keep this
+    function word for word."""
+    cloexec = getattr(os, "O_CLOEXEC", 0)
+    folder_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | cloexec
+    rel = os.path.relpath(root, os.getcwd())
+    if rel == os.pardir or rel.startswith(os.pardir + os.sep):
+        return os.open(root, folder_flags)
+    folder = os.open(os.curdir, os.O_RDONLY | os.O_DIRECTORY | cloexec)
+    try:
+        for part in pathlib.PurePath(rel).parts:
+            if part != os.curdir:
+                inner = os.open(part, folder_flags, dir_fd=folder)
+                os.close(folder)
+                folder = inner
+    except BaseException:
+        os.close(folder)
+        raise
+    return folder
+
+
+def _open_inside(path, roots):
+    """A file descriptor for path, opened only when it is a regular file under one of roots. The path is placed against
+    each root as named (os.path.abspath, never resolved) or as the root's real folder, then opened from the root's
+    descriptor (_open_root) one name at a time with O_NOFOLLOW, as the standard library's shutil.rmtree walks against a
+    link swapped in mid-walk: a link anywhere from the mind's own folder down, put there before the open or during it,
+    fails to open instead of reaching outside. A FIFO or device, a file with a second hard link (its other name could
+    be anywhere) and one over MAX_BYTES are refused unread. The vision and audio senses keep this function word for
+    word. Cost: one open per folder between the mind's folder and the file."""
+    given = os.path.abspath(os.path.expanduser(str(path)))
+    rel = None
+    for root in roots:
+        for form in (str(root), os.path.realpath(root)):
+            candidate = os.path.relpath(given, form)
+            if candidate not in (os.curdir, os.pardir) and not candidate.startswith(os.pardir + os.sep):
+                rel = candidate
+                break
+        if rel is not None:
+            break
+    if rel is None:
+        raise PermissionError(f"only files in this mind's memory folder or its files folder can be observed: {path}")
+    *folders, name = pathlib.PurePath(rel).parts
+    nofollow = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    try:
+        folder = _open_root(root)
+    except OSError as exc:
+        raise PermissionError(f"{path} can't be opened without following a link ({exc.strerror}), so it is not read") from exc
+    try:
+        for part in folders:
+            inner = os.open(part, nofollow | os.O_DIRECTORY, dir_fd=folder)
+            os.close(folder)
+            folder = inner
+        opened = os.open(name, nofollow | os.O_NONBLOCK, dir_fd=folder)
+    except OSError as exc:
+        raise PermissionError(f"{path} can't be opened without following a link ({exc.strerror}), so it is not read") from exc
+    finally:
+        os.close(folder)
+    info = os.fstat(opened)
+    reason = ("not a regular file" if not stat.S_ISREG(info.st_mode) else
+              "a file with a second name elsewhere (a hard link)" if info.st_nlink != 1 else
+              f"over {MAX_BYTES // (1024 * 1024)} MB" if info.st_size > MAX_BYTES else None)
+    if reason:
+        os.close(opened)
+        raise PermissionError(f"{reason}: {path}")
+    return opened
 
 
 def _image_bytes(path):
-    """(bytes, mime) of an image under one of _observable_roots. Anything else is refused before a byte is sent, so a
-    mind can't send the vision provider a file it can merely read, such as a key, the hive's data or another mind's
-    folder. Symlinks are resolved first, as the hive's own file skills do (policy.Policy._outside_folder)."""
-    real = pathlib.Path(path).resolve(strict=True)
-    if not any(root in real.parents for root in _observable_roots()):
-        raise PermissionError(f"only images in this mind's folders or the hive's checkout can be observed: {path}")
-    data = real.read_bytes()
+    """(bytes, mime) of an image under one of _observable_roots, read through _open_inside's descriptor. Anything else
+    is refused before a byte is sent, so a mind can't send the vision provider a file it can merely read, such as a
+    key, the hive's data or another mind's media."""
+    with os.fdopen(_open_inside(path, _observable_roots()), "rb") as handle:
+        data = handle.read()
     for mime, marks in IMAGE_SIGNATURES:
         if all(data[offset:offset + len(mark)] == mark for offset, mark in marks):
             return data, mime
@@ -161,13 +243,18 @@ def _call_vision(path, question):
     return parsed["choices"][0]["message"].get("content", "").strip()
 
 
+def _observation_log():
+    return memory_dir() / "media_observations.jsonl"
+
+
 def _append_observation(record):
-    OBSERVATION_LOG.parent.mkdir(parents=True, exist_ok=True)
+    log = _observation_log()
+    log.parent.mkdir(parents=True, exist_ok=True)
     record = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         **record,
     }
-    with OBSERVATION_LOG.open("a", encoding="utf-8") as handle:
+    with log.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
@@ -206,7 +293,8 @@ def recent_media_observations(limit=10):
         limit = max(1, min(int(limit), 50))
     except Exception:
         limit = 10
-    if not OBSERVATION_LOG.exists():
+    log = _observation_log()
+    if not log.exists():
         return "MEDIA-OBSERVATIONS none"
-    lines = OBSERVATION_LOG.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]
+    lines = log.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]
     return "MEDIA-OBSERVATIONS " + " | ".join(lines)

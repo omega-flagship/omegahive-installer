@@ -1,4 +1,4 @@
-; Skill implementation loader.
+; Purpose: load the skill implementations and their symbolic affordance declarations.
 ;
 ; The advertised command catalog lives in ./hive/runtime/extensions/skill_catalog.metta.
 ; This facade preserves the historical hive/runtime/extensions/skills.metta import while keeping
@@ -9,7 +9,9 @@
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skills_memory.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skills_space_mutation.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skills_affordance.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skills_apps.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_affordance_core.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_affordance_memory.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_affordance_reasoning.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_affordance_affordance.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_affordance_apps.metta))

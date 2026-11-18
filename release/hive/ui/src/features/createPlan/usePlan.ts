@@ -1,5 +1,5 @@
 /**
- * The reads and the person's acts behind the Make bench: start from a sentence (or pick up the person's running plan:
+ * Purpose: the reads and the person's acts behind the Make bench: start from a sentence (or pick up the person's running plan:
  * GET /api/create/plans), read the plan again on each create.plan.status / .piece / .question event for it (a slow
  * timer only as a fallback), fetch the verified preview (GET …/preview) when a create.plan.preview event arrives or the
  * view names a new preview, read the file the code pane shows through the files route (cached per path and
@@ -30,6 +30,14 @@ export function followedPlan(): string | null {
   return following && following.epoch === currentEpoch() ? following.id : null
 }
 export function forgetPlan(): void { following = null }
+/** Open Make benches, told when a plan is followed from elsewhere (followPlan). */
+const followers = new Set<(id: string) => void>()
+/** Follow this plan from now on, a plan the person started somewhere else (a mind's offer pressed in its chat,
+ *  features/dot/CreateOffers): a Make bench that is open switches to it, and one that opens next starts on it. */
+export function followPlan(id: string): void {
+  following = { epoch: currentEpoch(), id }
+  for (const switchTo of [...followers]) switchTo(id)
+}
 
 const errText = (e: unknown) => (e as { message?: string } | null)?.message || 'The hive did not answer.'
 
@@ -277,6 +285,17 @@ export function usePlan(): PlanState {
     setAlert(null)
     setStartError(null)
   }, [])
+
+  // a plan started elsewhere (followPlan): this bench lets go of the one it shows and reads that one
+  useEffect(() => {
+    const switchTo = (planId: string) => binding.commit(() => {
+      fresh()
+      following = { epoch: binding.epoch, id: planId }
+      setId(planId)
+    })
+    followers.add(switchTo)
+    return () => { followers.delete(switchTo) }
+  }, [binding, fresh])
 
   return {
     can, following: !!id, view: id ? view : null, file: id ? file : null, frame: id ? frame : null,

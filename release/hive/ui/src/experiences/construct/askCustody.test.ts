@@ -1,4 +1,10 @@
+// Purpose: verify a change of person leaves nothing of the earlier person's in Construct: the answer under the prompt,
+// the console and its echoes, the shared Ask field and a command's late output.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// the presence test is the first to load the Ask's echo into the console, across a real change of person; about 3x its
+// worst on a slow CI runner, bounded in api/sim/simTimeouts.test.ts
+vi.setConfig({ testTimeout: 15_000 })
 
 // Stand-in ASK_EVERYWHERE_R1 (FA6C509D) #1-#3: Construct's prompt-as-Ask, MOUNTED. The real CommandLine and Console
 // components run under the repo's minimal React stand-in (features/programs/HostConfirm.test.ts: hook slots, effects

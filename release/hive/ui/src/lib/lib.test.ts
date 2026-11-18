@@ -101,6 +101,10 @@ describe('gateway errors and leases', () => {
     expect(describeLlmError('402 budget_exhausted: spent')?.code).toBe('budget_exhausted')
     expect(describeLlmError('{"error":{"code":"no_budget"}}')?.status).toBe(402)
     expect(describeLlmError('HTTP 429 Too Many Requests')?.code).toBe('rate_limited')
+    // a free refusal's 429 says its own reason, not the per-minute limit's
+    expect(describeLlmError('llm: 429 {"error":{"code":"free_inference_busy","message":"Free inference is busy right now"}}')).toMatchObject({ code: 'free_inference_busy', status: 429, title: 'Free inference busy' })
+    expect(describeLlmError('429 free_inference_hive_daily_cap')?.code).toBe('free_inference_hive_daily_cap')
+    expect(describeLlmError('403 free_inference_off')).toMatchObject({ code: 'free_inference_off', status: 403 })
     expect(describeLlmError('unpriced_model')?.title).toMatch(/price/)
     expect(describeLlmError('upstream 529')).toMatchObject({ code: 'other', hint: 'upstream 529' })
     expect(describeLlmError(null)).toBeNull()

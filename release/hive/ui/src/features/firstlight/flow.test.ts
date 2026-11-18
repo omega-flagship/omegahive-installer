@@ -1,3 +1,4 @@
+// Purpose: verify First Light observes saves, identity changes and incomplete outcomes through its real coordinator.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { previewLook } from '../../shell/uiVariant'
 import { DEMO_GREET_MS, DemoHost } from './demo'
@@ -9,7 +10,7 @@ import { OperationStopped } from '../../lib/boundOperation'
 import { identityKey } from '../../lib/identityEpoch'
 import { autoHeld, firstLightLimitLine, setFlScreen, stepOf, useFirstLight, type FlScreen } from './store'
 import { DEFAULT_ASK_PURPOSE, askToSave } from './host'
-import { profileSaveCopy, spendingCopy } from './conditionalCopy'
+import { profileSaveCopy, spendingCopy, unknownModelCopy } from './conditionalCopy'
 import { enterFirstRun } from '../../tour/firstRun'
 
 let scopeSerial = 0
@@ -198,7 +199,7 @@ describe('sent limit reconciliation across pause and real adapter/client replace
     expect(g().run!.u1).toMatchObject({ limitPending: 9, limitUncertain: true, limitChecking: true })
     g().toggle()
     expect(g().run!.u1).toMatchObject({ limitPending: 9, limitUncertain: true, limitChecking: false, busy: false })
-    expect(pendingCopy()).toBe("We couldn't confirm a spending limit here.")
+    expect(pendingCopy()).toBe("We couldn't read your monthly limit.")
     expect(pendingCopy()).not.toContain('$5')
     g().stop()
     let releaseRead: (amount: number) => void = () => undefined
@@ -211,7 +212,7 @@ describe('sent limit reconciliation across pause and real adapter/client replace
     expect(g().run!.status).toBe('loading') // old finally did not finish the new read
     releaseRead(9); await reopen
     expect(g().run!.u1).toMatchObject({ limitPending: 9, limitUncertain: true, busy: false })
-    expect(pendingCopy()).toBe("We couldn't confirm a spending limit here.")
+    expect(pendingCopy()).toBe("We couldn't read your monthly limit.")
     world.read = undefined
     await g().reload()
     expect(g().run!.u1).toMatchObject({ limitPending: null, limitUncertain: false })
@@ -271,7 +272,7 @@ describe('sent limit reconciliation across pause and real adapter/client replace
     await g().start({ mode: 'live', host: liveHost(limitClient(world, 'A'), () => 0), singleScreen: true })
     await g().wakeSingleScreen({ name: 'A', how: null }, 9)
     expect(world.calls.filter((x) => x === 'send:A:9')).toHaveLength(1)
-    expect(pendingCopy()).toBe("We couldn't confirm a spending limit here.")
+    expect(pendingCopy()).toBe("We couldn't read your monthly limit.")
     world.amount = 9 // invented delayed remote commit; not a cancellation/receipt assertion
     await g().reload()
     expect(g().run!.u1).toMatchObject({ limitPending: null, limitUncertain: false })
@@ -289,7 +290,7 @@ describe('sent limit reconciliation across pause and real adapter/client replace
     expect(g().run!.u1).toMatchObject({ limitPending: null, limitUncertain: true })
     await g().wakeSingleScreen({ name: 'unproved', how: null }, 7)
     expect(world.calls.filter((x) => x.startsWith('send:'))).toEqual(['send:A:9'])
-    expect(pendingCopy()).toBe("We couldn't confirm a spending limit here.")
+    expect(pendingCopy()).toBe("We couldn't read your monthly limit.")
     world.amount = 9
     g().stop()
     await g().start({ mode: 'live', host: liveHost(limitClient(world, 'A'), () => 0), singleScreen: true })
@@ -381,7 +382,7 @@ describe('all reachable First Light own-limit writers share the same quarantine'
     await g().choose(20)
     expect(h.calls.filter((x) => x.startsWith('dispatch:'))).toEqual(['dispatch:9'])
     expect(g().run!.limit).toMatchObject({ limitPending: 9, limitUncertain: true, busy: false })
-    expect(firstLightLimitLine(g().run!)).toBe("We couldn't confirm a spending limit here.")
+    expect(firstLightLimitLine(g().run!)).toBe("We couldn't read your monthly limit.")
     expect(firstLightLimitLine(g().run!)).not.toContain('$5')
     finish(); await u1
     expect(g().run!.id).toBe(current)
@@ -431,7 +432,7 @@ describe('all reachable First Light own-limit writers share the same quarantine'
     h.setOwnLimit = async (amount) => { h.calls.push(`lost-dispatch:${amount}`); throw new Error('invented lost response') }
     await monthlyChoice(h)
     await g().choose(9)
-    expect(g().run!.limit).toMatchObject({ limitPending: 9, limitUncertain: true, busy: false, error: "We couldn't confirm a spending limit here." })
+    expect(g().run!.limit).toMatchObject({ limitPending: 9, limitUncertain: true, busy: false, error: "We couldn't read your monthly limit." })
     const progressWrites = h.calls.filter((x) => x.startsWith('write:')).length
     await g().checkKey()
     await g().choose(20)
@@ -588,7 +589,7 @@ describe('U1: one explicit, person-bound profile and Wake chain', () => {
     await g().wakeSingleScreen({ name: 'Pip', how: null }, 5)
     const run = g().run!
     expect(run.u1).toMatchObject({ limitChecking: false, limitPending: 5, busy: false })
-    expect(spendingCopy(run.facts.limit, 5, run.u1!.limitPending!, run.u1!.limitChecking)).toBe("We couldn't confirm a spending limit here.")
+    expect(spendingCopy(run.facts.limit, 5, run.u1!.limitPending!, run.u1!.limitChecking)).toBe("We couldn't read your monthly limit.")
     expect(failed.calls).not.toContain('helloWake')
   })
 
@@ -599,6 +600,7 @@ describe('U1: one explicit, person-bound profile and Wake chain', () => {
       else h.model = null
       await g().start({ mode: 'live', host: h, singleScreen: true })
       expect(g().run!.u1!.context).toBe('unavailable')
+      if (problem === 'model') expect(g().run!.u1!.error).toBe(unknownModelCopy)
       expect(g().run!.facts.askHow).toBe(problem === 'profile' ? null : '')
       await g().wakeSingleScreen({ name: 'Pip', how: DEFAULT_ASK_PURPOSE }, 5)
       expect(h.calls.some((x) => /^(setOwnLimit:|saveAsk:|helloWake)/.test(x))).toBe(false)
@@ -628,7 +630,7 @@ describe('U1: one explicit, person-bound profile and Wake chain', () => {
     await g().start({ mode: 'live', host: h, singleScreen: true })
     await g().wakeSingleScreen({ name: 'Pip', how: null }, 5)
     expect(h.calls.some((x) => /^(setOwnLimit:|saveAsk:|helloWake)/.test(x))).toBe(false)
-    expect(g().run!.u1!.error).toContain('host controls')
+    expect(g().run!.u1!.error).toContain('they set your limit')
     await g().wakeSingleScreen({ name: 'Pip', how: null }, null)
     expect(h.calls).toContain('helloWake')
     expect(h.calls.some((x) => x.startsWith('setOwnLimit:'))).toBe(false)
@@ -655,7 +657,7 @@ describe('U1: one explicit, person-bound profile and Wake chain', () => {
     expect(h.calls).toContain('setOwnLimit:5')
     expect(h.calls.some((x) => /^(saveAsk:|helloWake)/.test(x))).toBe(false)
     expect(g().run!.facts.limit!.enforced).toBe(false)
-    expect(g().run!.u1!.error).toContain('may have been saved')
+    expect(g().run!.u1!.error).toContain('couldn’t tell whether your new monthly limit was saved')
   })
 
   it('a host Wake refusal retains saved-profile truth and never invents a greeting', async () => {
@@ -936,7 +938,7 @@ describe('U1: one explicit, person-bound profile and Wake chain', () => {
       expect(identityKey()).toBe(key)
       expect(g().run!.u1!.completion).toBe('unknown')
       expect(g().run!.u1!.completionToken).toBeUndefined()
-      expect(g().run!.u1!.error).toContain('Completion stopped')
+      expect(g().run!.u1!.error).toContain('stopped partway')
       await g().finishSingleScreen()
       expect(g().run!.u1!.completion).toBe('confirmed')
       expect(h.calls.filter((x) => x === 'helloWake')).toHaveLength(1)

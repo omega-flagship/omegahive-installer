@@ -1,3 +1,5 @@
+// Purpose: the WhatsApp bridge: a loopback HTTP service that links one WhatsApp account for the channel, keeps the files
+// people send in the mind's memory folder under inbox/whatsapp_<label>, and relays messages, read marks and sends.
 import makeWASocket, {
   DisconnectReason,
   downloadMediaMessage,
@@ -20,7 +22,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const coreDir = path.resolve(__dirname, '..', '..')
 const authDir = process.env.OMEGACLAW_WA_AUTH_DIR || path.join(__dirname, 'auth')
 const authLabel = path.basename(authDir).replace(/[^A-Za-z0-9_-]+/g, '_') || 'auth'
-const inboxDir = path.join(coreDir, 'memory', 'inbox', `whatsapp_${authLabel}`)
+// The mind's memory folder, where the files people send it land so the vision and audio senses can read them:
+// OMEGACLAW_MEMORY_DIR when a hive runs the mind, else the memory folder of the checkout this file runs from (the
+// nearest folder above it holding modules/).
+function checkoutDir(start) {
+  for (let dir = start; path.dirname(dir) !== dir; dir = path.dirname(dir)) {
+    if (fs.statSync(path.join(dir, 'modules'), { throwIfNoEntry: false })?.isDirectory()) return dir
+  }
+  return coreDir
+}
+const memoryDir = process.env.OMEGACLAW_MEMORY_DIR || path.join(checkoutDir(__dirname), 'memory')
+const inboxDir = path.join(memoryDir, 'inbox', `whatsapp_${authLabel}`)
 const inboxLog = path.join(coreDir, 'memory', `whatsapp_inbox_${authLabel}.jsonl`)
 const qrPng = path.join(coreDir, 'memory', `whatsapp_qr_${authLabel}.png`)
 const qrTxt = path.join(coreDir, 'memory', `whatsapp_qr_${authLabel}.txt`)
@@ -911,20 +923,25 @@ async function handle(req, res) {
     if (req.method === 'POST' && url.pathname === '/send-file') {
       const body = await readJson(req)
       const to = normalizeJid(body.to || targetJid || primaryJid)
-      const filePath = String(body.path || '')
       const caption = body.caption ? `${outboundPrefix}${String(body.caption || '')}` : outboundPrefix.trim()
       if (!connected || !sock) return sendJson(res, 503, { ok: false, error: 'not connected' })
       if (!to) return sendJson(res, 400, { ok: false, error: 'missing target jid' })
       const staleAlias = stalePrimaryAliasError(to)
       if (staleAlias) return sendJson(res, 400, { ok: false, error: staleAlias })
-      if (!filePath || !fs.existsSync(filePath)) return sendJson(res, 400, { ok: false, error: 'file not found' })
+      // The file comes as its bytes, read by the mind's adapter from the mind's own folder (whatsapp.py _own_file).
+      // A path is refused: this process runs in its own folder, beside its session, so a name a mind gives would be
+      // placed here, not where the hive checked it (omega-flagship/omegahive#304).
+      if (body.path !== undefined) return sendJson(res, 400, { ok: false, error: 'send the file as data, never as a path' })
+      if (typeof body.data !== 'string' || !body.data) return sendJson(res, 400, { ok: false, error: 'missing file data' })
+      const data = Buffer.from(body.data, 'base64')
+      const fileName = path.basename(String(body.fileName || '')) || 'file'
       const mimetype = body.mimetype || 'application/octet-stream'
-      const base = { mimetype, fileName: path.basename(filePath), caption }
+      const base = { mimetype, fileName, caption }
       let result
-      if (mimetype.startsWith('image/')) result = await sock.sendMessage(to, { image: { url: filePath }, caption })
-      else if (mimetype.startsWith('video/')) result = await sock.sendMessage(to, { video: { url: filePath }, caption })
-      else if (mimetype.startsWith('audio/')) result = await sock.sendMessage(to, { audio: { url: filePath }, mimetype })
-      else result = await sock.sendMessage(to, { document: { url: filePath }, ...base })
+      if (mimetype.startsWith('image/')) result = await sock.sendMessage(to, { image: data, caption })
+      else if (mimetype.startsWith('video/')) result = await sock.sendMessage(to, { video: data, caption })
+      else if (mimetype.startsWith('audio/')) result = await sock.sendMessage(to, { audio: data, mimetype })
+      else result = await sock.sendMessage(to, { document: data, ...base })
       rememberBridgeSent(result, to, { text: caption, kind: mimetype.startsWith('image/') ? 'image' : mimetype.startsWith('video/') ? 'video' : mimetype.startsWith('audio/') ? 'audio' : 'document' })
       return sendJson(res, 200, { ok: true, messageId: messageIdFor(result, to), handled: { changed: 0, readReceipts: { attempted: 0, sent: 0 }, note: 'send-does-not-mark-inbound-read-use-mark-whatsapp-read' } })
     }

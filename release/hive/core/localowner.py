@@ -54,7 +54,8 @@ CONTROL_LINE_MAX = 1024
 MUTATING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 QUERY_TOKEN_NAMES = frozenset({"token", "access_token"})
 # r4.1 K-3: with any of these set there would be a second way to become a person here; the launcher never sets them
-SIGNIN_SETTINGS = ("HIVE_SSO_USERS", "HIVE_SSO_LOGIN_URL", "HIVE_GOOGLE_CLIENT_ID", "HIVE_SIGNIN_DOMAINS")
+SIGNIN_SETTINGS = ("HIVE_SSO_USERS", "HIVE_SSO_LOGIN_URL", "HIVE_GOOGLE_CLIENT_ID", "HIVE_SIGNIN_DOMAINS",
+                   "HIVE_TEST_ACCOUNT_EMAIL")
 # never public: a local-owner hive is reachable from this computer only
 PUBLIC_SETTINGS = ("HIVE_BASE_PATH", "HIVE_PUBLIC_BASE")
 LOOPBACK_BINDS = ("127.0.0.1", "localhost")

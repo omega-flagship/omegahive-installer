@@ -2,14 +2,18 @@
 ; composes them). The page composes each app for its own facts, and the programs screen stacks them.
 ;
 ; Facts the page states each time:
-;   programs: the resource facts (value resource, resource.stale; data resource.error); can.activity can.access;
-;             (count programs.all)
+;   programs: the resource facts (value resource, resource.stale; data resource.error); can.activity can.access
+;             viewer.admin; (count programs.all)
 ;   programs-app: app.broken (it failed to load) app.enabled app.identity (a designed identity is worn) app.described
-;                 app.test (plugin.json marks it a test app); can.access; (count app.caps)
+;                 app.test (plugin.json marks it a test app); can.access viewer.admin; (count app.caps)
+; Turning an app on or off and reloading app code are an admin's: the hive answers anyone else 403 admin_only.
 
 (Screen programs "Apps")
 (Part programs 10 header ((title "Apps") (eyebrow "In this hive")
   (body "A program supplies the meaning of a piece of work as a graph of items, links and sources. The hive turns it into a space you can unfold, map, compare and inspect, with sources, uncertainty and your trail always in view.")))
+; re-reading every app's code from disk
+(Part programs 15 buttons ((items ((button "Reload" reload ((aria "Re-read app code from disk") (icon reset) (variant subtle)))))))
+(When programs 15 (on viewer.admin))
 
 ; ---------- reading the apps: the shared resource states (lib_screens.metta Resource), in this page's words
 (Resource programs 20 ((waiting "Loading apps")
@@ -22,6 +26,11 @@
   (body "Built-in programs live in hive/plugins/. Point HIVE_PLUGIN_DIRS at your own program directories, then Reload.")))
 (When programs 30 (is resource ready))
 (When programs 30 (none programs.all))
+(When programs 30 (on viewer.admin))
+(Part programs 32 empty ((icon apps) (title "No programs found") (body "An admin adds apps to this hive.")))
+(When programs 32 (is resource ready))
+(When programs 32 (none programs.all))
+(When programs 32 (off viewer.admin))
 (Part programs 31 stack ((tour programs-list) (source programs.all) (frame card) (columns auto) (label "Apps")))
 (When programs 31 (has programs.all))
 
@@ -66,10 +75,12 @@
 (Row programs-app 60 app-controls)
 (When programs-app 60 (off app.broken))
 (When programs-app 60 (on app.enabled))
+(When programs-app 60 (on viewer.admin))
 (Part programs-app 61 toggles ((source app.switch) (label label) (checked on) (action switch) (aria "Enable {app.name}")))
 (Row programs-app 61 app-controls)
 (When programs-app 61 (off app.broken))
 (When programs-app 61 (off app.enabled))
+(When programs-app 61 (on viewer.admin))
 (Part programs-app 62 buttons ((items ((button "Where it runs" access ((aria "Where {app.name} runs") (icon plug)))))))
 (Row programs-app 62 app-controls)
 (When programs-app 62 (on can.access))

@@ -8,16 +8,14 @@ URL-safe strings.
 
 - **Humans**
   - `POST /api/auth/login {"password"}` → `{"token"}`.
-  - From outside this machine an operator password session never counts, `HIVE_PUBLIC_PASSWORD=1` included: that
-    flag is for members' passwords (below). Without the flag the login from outside answers
-    `403 password_login_local_only`. With it the login is still checked, and wrong passwords from
-    outside slow it down (NIST SP 800-63B section 5.2.2): after n wrong ones in a row, the next outside attempt isn't
-    checked for 2^(n-1) - 1 seconds, so none after a single typo, then 1 s, 3 s, 7 s and so on, at most an hour. Until
-    then it answers `429 too_many_attempts` with `retry_after_seconds` and a `Retry-After` header, whatever the password.
-    100 in a row answer `429 password_login_closed` until the operator signs in on the hive's own machine or rotates
-    the password. Attempts on the hive's own machine never wait or count.
-  - Send the token as `Authorization: Bearer <token>`, or as `?token=` on
-    WebSocket URLs.
+  - From outside this machine the operator password login answers `403 password_login_local_only` before the
+    password is read, `HIVE_PUBLIC_PASSWORD=1` included (that flag is for members' passwords, below), so no guess
+    at the hive password is checked or counted from outside. An operator password session made on the hive's own
+    machine never counts from outside either. On the machine a wrong password is `401 unauthorized` and nothing
+    waits.
+  - Send the token as `Authorization: Bearer <token>`. Only the events WebSocket takes it as `?token=`, since a
+    browser can't set a header there; no HTTP route reads a token from the URL, so `?token=` alone is 401
+    `unauthorized`.
   - Without an email, this signs in the local operator using `HIVE_ADMIN_PASSWORD`.
 - **Member passwords** (`hive/core/people.py`)
   - An admin adds a member with `POST /api/people/members {"email", "name"?}`. The 201 response contains
@@ -31,8 +29,24 @@ URL-safe strings.
     Google sessions remain. Disabling a person also drops their password. Reset/removal/disable committed during
     in-flight verification prevents a new session from the old credential.
   - Public member-password sign-in and sessions work only with `HIVE_PUBLIC_PASSWORD=1` while Google sign-in is
-    unconfigured. Google sign-in continues as the same person row when configured. Public operator-password
-    sessions retain this fork's existing refusal; this member path does not grant operator access from outside.
+    unconfigured, and once it is configured only for the test account (below). Google sign-in continues as the same
+    person row when configured. Public operator-password sessions retain this fork's existing refusal; this member
+    path does not grant operator access from outside.
+  - **The test account.** `HIVE_TEST_ACCOUNT_EMAIL` and `HIVE_TEST_ACCOUNT_PASSWORD` name the hive's one test
+    account; at start the hive makes that member or marks the member who has that email, with that password. Once
+    Google sign-in is configured it keeps its password from outside, still only with `HIVE_PUBLIC_PASSWORD=1`;
+    everyone else continues with Google. People views carry `test_account`, read-only: `test_account` on
+    `POST /api/people/members` or `PATCH /api/people/{id}`, any value, is `400 bad_request`, and so are
+    `PATCH /api/people/{id} {"role": "admin"}` and `POST /api/people/{id}/password` on the test account (its password
+    comes from the variable). An admin is never the test account. Unsetting or changing the variables moves or ends
+    the mark at the next start, and that person's password sessions stop counting from outside. From outside with
+    Google configured, every refused member sign-in (an unknown email, a wrong password, or someone who is not the
+    test account) is the same `401 unauthorized`, whose message names Google, so the answers never say which email
+    is the test account.
+  - `GET /api/auth/methods` says which ways in count where the page was opened: `password`, the operator's hive
+    password, only on the hive's own machine (from outside it is `false`, `HIVE_PUBLIC_PASSWORD=1` included, since
+    that session never counts there); `member_password`, member passwords, from outside while Google sign-in is
+    unconfigured and, once it is, while the test account is enabled and has a password; `sso.login_url`, Google.
   - Wrong public guesses use identical counters, responses, expensive checks, retention and eviction for member
     and unknown identifiers. State has at most 10,000 fixed-size identifier keys. Each wrong guess raises the
     identifier's count, whose waits grow up to an hour; the count decays, one failure forgiven per hour without a
@@ -195,6 +209,7 @@ interface Assertion {             // one published contribution
   tv: TruthValue;
   stamp: string[];
   outcome: "adopted" | "revised" | "chosen" | "kept" | "duplicate" | "quarantined" | "denied";
+  unmapped?: string[];            // when quarantined: the words outside the swarm's vocabulary
   created_at: string;
 }
 
@@ -251,9 +266,9 @@ interface ModelOption { id: string; provider: string; label: string; local: bool
 | `GET /api/auth/me` | → `{principal, auth_session_ref, kind, expires_at, role, person, person_kind, local_operator}`. `auth_session_ref` is `"as1_"` + lowercase hex HMAC-SHA256, keyed with this deployment's secret (`HIVE_DATA_DIR/auth-session-ref.key`, 32 random bytes as 64 hex, mode 0600, created atomically on first use; a missing or malformed key is replaced, never skipped), over the ASCII string `hive-auth-session-reference/2`, a NUL byte, then the verified session's `token_hash`. It is stable within one session and across restarts with the same key, different across sessions and principals, changes if the key is replaced, and cannot be computed from the bearer or the sessions table without the key. **No consumer yet: attribution only, not a bound identity.** No route accepts it as authentication or capability authority, and nothing binds actions to it today. |
 | `GET /api/hive` | → `{name, version, agents, swarms, awake, beliefs, spent_usd}`. `beliefs` counts the statements of the swarms this person may see, as `GET /api/swarms/{id}/beliefs` lists them |
 | `GET /api/models` | → `ModelOption[]` |
-| `GET /api/swarms` | → `Swarm[]` |
+| `GET /api/swarms` | → `Swarm[]`, each with this person's `may_control`: whether they may act on it (its owner, its person or an admin), as the vocabulary route below decides. A hint for the UI; the routes still enforce. |
 | `POST /api/swarms` | `{name, description?, hue?}` → `Swarm` |
-| `GET /api/swarms/{id}` | → `Swarm` |
+| `GET /api/swarms/{id}` | → `Swarm`, with `may_control` as above |
 | `POST /api/swarms/{id}/archive` · `/restore` | Admin only. → `Swarm`. Archive hides a swarm with history, deletes nothing and is restorable; refused (409 `swarm_busy`) while a mind there is awake, starting or wants to wake, or a flow is still running. |
 | `DELETE /api/swarms/{id}` | Admin only (a member gets 403 `admin_only`, or 404 for a private swarm they cannot see). No body (or a body without `with_minds: true`): only an empty swarm is deleted → `{deleted: id}`; otherwise 409 `swarm_not_empty` with `counts: {minds, members, goals, artifacts, child_swarms}`, `with_minds: bool` (true when it has minds) and a `hint`. The message lists the counts ("…this one has 2 minds, 1 task"). |
 | `PATCH /api/swarms/{id}` | Admin only. partial `{name, description, coordinator_id, parent_mind_id}` → `Swarm`. Held under the membership fence of the swarm and of the parent mind's swarm: during a delete or restore of either, 409 `swarm_busy`. Validated inside the fence; the parent must still be a live mind in the swarm validated, in the write itself (409 `parent_moved` otherwise). |
@@ -263,11 +278,12 @@ interface ModelOption { id: string; provider: string; label: string; local: bool
 | `GET /api/swarms/{id}/beliefs` | → `Belief[]`: the commons and the beliefs of the swarm's minds this person may see, as each mind's link admits; an admin's leaves out another person's own minds and researchers unless `?include=personal` |
 | `GET /api/swarms/{id}/beliefs/detail?statement=` | → `BeliefDetail`, of the same minds |
 | `GET /api/swarms/{id}/vocab` | → `string[]` |
-| `POST /api/swarms/{id}/vocab` | `{terms: string[]}` → `string[]` |
+| `POST /api/swarms/{id}/vocab` | The swarm's owner, its person or an admin: the vocabulary decides which statements the commons admits, so a person who only sees the swarm gets 403 `owner_only`, and a mind's publishing adds words only for one of them (`POST /api/agent/publish`). `{terms: string[]}` → `string[]` |
 | `GET /api/artifacts?limit=` | → `{artifact_id, kind, title, swarm_id, mind_id, revision, digest, created_at, revised_at}[]`: every artifact of the swarms this person sees (as `GET /api/swarms` lists them), newest first, at most `limit` (200). Metadata only, never a body. `revision`, `digest` and `revised_at` are `null` while nothing is saved in it yet (`GET /api/swarms/{id}/artifacts`, the Studio picker's list, leaves those out). `mind_id` names the mind that made it while that mind is one `GET /api/agents` shows this person, else `null`; a person who made one is never named. The Artifacts page lists these as creations. |
 | `GET /api/artifacts/{id}` | → one row as `GET /api/artifacts` lists it, for a person shown that artifact (the same swarms; anyone else, and an id that names nothing, get 404): a mind names what it made by id, and the page shows that id as the artifact's title and opens it from there, whatever the list's length. Metadata only, never a body. |
+| `GET /api/artifacts/{id}/revisions/{n}` | → `{artifact_id, kind, title, swarm_id, revision, digest, body, created_at}`: one saved revision with its text, for a person shown that artifact (the same swarms; anyone else, and a revision that does not exist, get 404). The Artifacts page's reader shows `body` as text and never draws it, a view's included, since a view's grant gates running it, not reading it. |
 | `GET /api/artifacts/{id}/view?revision=` | One saved revision as an interactive view, for a person shown that artifact (the same swarms as `GET /api/artifacts`; anyone else gets 404). Without `revision`, the latest saved one. A view a mind writes in MeTTa (kind `view`, a body starting with `(` or `;`: one `(Screen name "Title")` and its parts in the screens vocabulary, its `Start` values, `value` rules and `on` rules; hive/ui/src/features/views/lib_view.metta) comes as `{artifact_id, kind, title, swarm_id, mind_id, revision, digest, created_at, carrier: "metta", source}`, which the person's browser composes and draws with the hive's own blocks; it has no document. A create or revision of kind `view` that could not be drawn is refused with 400 `bad_view` and the reason (it does not parse, a line starts with `!`, or it names no screen or two). Only the owning swarm adds a revision, and `POST /api/agent/artifacts` and `POST /api/agent/artifacts/{id}/revisions` are checked as the skills `hive-artifact-create` and `hive-revision`, as the Omega gate checks them: `deny` gives 403 `policy_denied`, `ask` gives 403 `approval_required` with an `approval_id`, and once a person approves it the identical request succeeds once; an open view takes up each new revision as its `artifact.revision` event arrives. Otherwise a view is an artifact of kind `view` whose body is an HTML document or the MCP resource as JSON (`{mimeType: "text/html;profile=mcp-app", text \| blob, _meta: {ui: {csp, permissions, prefersBorder}}}`), or any other artifact whose body is an HTML document. → `{artifact_id, kind, title, swarm_id, mind_id, revision, digest, created_at, carrier: "view" \| "resource" \| "document", resource: {uri: "ui://hive/artifacts/{id}/r{n}", mimeType, _meta: {ui: {csp, permissions, prefersBorder?}}}, allow, refused: [string], document: "/api/views/{ticket}"}`: `csp` and `permissions` are what the hive grants (declared domains that are explicit origins and none of the hive's own addresses; clipboard-write only), `refused` what it dropped, `allow` the iframe allow value. 415 `not_a_view` when the revision holds no view, with the reason when its kind says it should. |
-| `POST /api/artifacts/{id}/view/grants` | The person's own consent to one revision of a view shown to them, given by their click: `{revision, reach?: bool}` records that they ran it, and with `reach: true` (an HTML view only; a MeTTa view reaches no domain, 400) that it may reach the domains it declares. It covers only the person who gave it. No view's text or document is handed out before it: `GET …/view` answers `grant: {ran, reach}` with `source` or `document` null until `ran`, and an HTML view's `asks` lists the declared domains still waiting. Its document is served with `connect-src 'none'` and none of them until `reach`, which is for that one revision; a MeTTa view's run covers its later revisions, which arrive live. Anyone not shown the artifact gets 404. → `{ran, reach}` |
+| `POST /api/artifacts/{id}/view/grants` | The person's own consent to one revision of a view shown to them, given by their click: `{revision, reach?: bool}` records that they ran it, and with `reach: true` (an HTML view only; a MeTTa view reaches no domain, 400) that it may reach the domains it declares. It covers only the person who gave it. No view runs before it: `GET …/view` answers `grant: {ran, reach}` with `source` or `document` null until `ran`, and an HTML view's `asks` lists the declared domains still waiting. It gates running a view, not reading its text, which `GET /api/artifacts/{id}/revisions/{n}` returns as text. Its document is served with `connect-src 'none'` and none of them until `reach`, which is for that one revision; a MeTTa view's run covers its later revisions, which arrive live. Anyone not shown the artifact gets 404. → `{ran, reach}` |
 | `GET /api/views/{ticket}` | The view's document, no session: the ticket from `GET /api/artifacts/{id}/view` names one revision for 10 minutes, signed with a key the hive makes at start. HTML with `Content-Security-Policy: sandbox allow-scripts allow-forms; default-src 'none'; …; frame-ancestors 'self'` built from the granted domains, so the document has an opaque origin wherever it is opened, plus nosniff, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. A script ahead of the view's own gives it in-memory `localStorage` and `sessionStorage` and sends its size (`ui/notifications/size-changed`). An expired or forged ticket gets a 404 page under `sandbox`. |
 | `GET /api/agents` | → `Agent[]` |
 | `POST /api/agents` | `{name, kind, swarm_id?, model, persona?, hue?, budget_usd?}` → `Agent & {token}` |
@@ -288,7 +304,7 @@ Errors are `{"error": {"code", "message"}}` with a 4xx/5xx status. Every error a
 
 | Method & path | Body → Response |
 |---|---|
-| `GET /api/feedback` | Any signed-in person → `{version, which, system, to, errors}`: the hive's version as a report quotes it (`"Mac v0.31 (build f9648d4386)"`, or the build for a hive run from git), which hive it is (`"own hive, Mac install"`, `"the hive at <host>"`), where reports go (`to`: `{kind: "board", owner, repo, url, public}` with `public` true once GitHub answers the board as public, false while private, null while not known; `{kind: "service", url, host}`; `{kind: "none"}`; `{kind: "invalid", reason}`), and this person's newest error answers (`[{id, at, method, route, status, code, message, raised?}]`, newest first, at most 10; `route` is the matched pattern, so no id is named; `raised` locates an unexpected error in the hive's code). Where reports go is the one setting `HIVE_FEEDBACK_TO` (unset: the `FEEDBACK_TO` the release was built with, else the team's feedback board). |
+| `GET /api/feedback` | Any signed-in person → `{version, which, system, to, errors}`: the hive's version as a report quotes it (`"Mac v0.31 (build f9648d4386)"`, or the build for a hive run from git), which hive it is (`"own hive, Mac install"`, `"the hive at <host>"`), where reports go (`to`: `{kind: "board", owner, repo, url, public}` with `public` true once GitHub answers the board as public, false while private, null while not known; `{kind: "service", url, host}`; `{kind: "none"}`; `{kind: "invalid", reason}`), and this person's newest error answers (`[{id, at, method, route, status, code, message, raised?}]`, newest first, at most 10; `route` is the matched pattern, so no id is named; `message` is kept with this hive's key ids, key scopes and people taken out, whoever met it; `raised` locates an unexpected error in the hive's code). Where reports go is the one setting `HIVE_FEEDBACK_TO` (unset: the `FEEDBACK_TO` the release was built with, else the team's feedback board). |
 | `POST /api/feedback/send` | `{schema: "omega-hive-report-1", id: "HR-xxxxxxxx", kind: "bug"\|"ux"\|"idea", title, form, fields, text, picture: "data:image/png;base64,…"\|null}`, at most 12 MB → `{sent: true, to, reference}`. Passes the report, as the person saw it, to the report service that setting names; the page sends it only on the person's press. 409 `no_report_service` when the destination is not a service, 400 `bad_report` for another shape, 502 `report_not_delivered` when the service refused it or could not be reached. |
 | `POST /api/feedback/drafts` | A mind, with its own token (the `hive-report-problem` skill): `{kind: "bug"\|"ux"\|"idea", title, words, steps?, expected?, conversation?}` → 201 `{id: "fd-xxxxxxxx", for: "<principal>"}`. The draft waits for one person: the one whose conversation with the mind it came up in (a person's chat with the mind, the operator's own chat, the asker of an Ask turn the mind answered), so what someone told a mind never reaches another person's area. A draft naming no conversation gets the one the mind is answering, worked out from its messages as a plain reply's is: the one person's conversation waiting for an answer when its message is the last the mind received, or with none waiting the last message's when a person sent it; with no person behind it (another mind's message, the hive's own, or none) it waits for the mind's owner when that is a person, else the hive's owner, but only while no one else has written to the mind, since it could then be about their chat. `conversation: "own"` names a problem from the mind's own work and waits for that same owner. A named conversation must hold a message that person sent the mind. It is sent nowhere from here; only that person's send, copy or save in the feedback area makes it a report. The same person, mind and title again replaces the open draft's words and time and keeps its id. 400 `bad_draft` with the reason (an unknown kind or field; an empty title or words; a title over 80 characters or with a line break; words, steps or expected over 4000; a conversation id over 200; a conversation that is not one of the mind's conversations with one person who wrote to it there: a room's, another mind's, or one only the mind wrote in; no conversation named while several people are waiting, or while another message came after the one waiting, unless each is the mind's owner; no conversation named with no person behind it once someone besides the mind's owner has written to it), and 400 `bad_request` for a body that is not a JSON object, as everywhere; 403 `mind_only` for a person's session; 409 `no_person` when a draft names no conversation and neither the mind nor the hive has a person as owner. |
 | `GET /api/feedback/drafts` | The session's person → `{drafts: [Draft]}`, newest first, only theirs. A Draft is `{id, kind, title, words, steps, expected, created, source: {kind: "mind", agent, name, conversation}}`. |
@@ -346,7 +362,12 @@ The server pushes `{"type", "at", ...}` frames. The client may send
   injects the key, meters the usage, and enforces `budget_usd` (402 once the
   budget is spent).
 - **`POST /api/agent/publish`** `{statement, f, c, evidence?}` → `Assertion`. The
-  stamp is minted by the hive when `evidence` is omitted.
+  stamp is minted by the hive when `evidence` is omitted. A mind acting for
+  someone who controls its swarm (the swarm's owner, its person or an admin)
+  adds the statement's new words to the swarm's vocabulary as it publishes. Any
+  other mind publishes in the vocabulary as it stands: a statement with a word
+  outside it is `quarantined`, its `unmapped` naming the words, until the
+  swarm's control adds them.
 - **`POST /api/agent/query`** `{pattern}` → `{results: string[]}`, the union view
   of the agent's swarm commons and the federation.
 - **`GET /api/agent/belief?statement=`** → `BeliefDetail`.
@@ -497,6 +518,24 @@ interface MemoryAtom { index: number; text: string }
   hive fills in `llm_ms` and `tokens` from the gateway's last call.
 - **`GET /api/agent/control`** → `{ops: [{op: "retire", space, atom} | {op: "reset"}]}`.
   The queued memory operations, polled each loop.
+- **`POST /api/agent/create`** `{sentence, conversation_id?}` → 201 (200 for the
+  same open offer again) `{id, mind, sentence, state: "offered", plan_id: null,
+  created_at}`. A mind's hive-create: what to build (an app, a page, a game, a
+  tool, a script, a change to code) offered to its person, never a plan, since
+  a Create plan starts only on a person's word in their own session. The offer
+  is for the person of the conversation the mind is answering when
+  `conversation_id` names one (an Ask turn's asker, else the last person who
+  wrote there), else the person whose own mind it is, else the last person who
+  wrote to it. 400 `bad_request` with no sentence or one over 2000 characters,
+  403 `person_required` with no person to offer it to, 409 `not_available`
+  while Create plans are off. The person reads it with
+  `GET /api/me/create-offers?mind=` (their open offers, newest first) and
+  presses `POST /api/create/offers/{id}/start`, which starts the plan with the
+  offer's words as `POST /api/create/plans` would, behind the same person gate,
+  and answers `{offer, plan}` (the same plan when pressed again; 409
+  `offer_closed` once set aside), or `POST /api/create/offers/{id}/dismiss`.
+  Someone else's offer is 404. Each change sends `create.offer`
+  `{principal, offer_id, agent_id, state}` to that person only.
 - **Goals:**
   - `GET /api/agent/goals?status=open` → `Goal[]` (the agent's swarm);
   - `GET /api/agent/goals/history?q=&offset=0` → `{goals: Goal[], next_offset: number | null}`.
@@ -559,6 +598,46 @@ interface MemoryAtom { index: number; text: string }
     while the hive has no cap on the Limits page).
   - 429 `rate_limited`: more than `HIVE_MAX_LLM_CALLS_PER_MINUTE` calls (default
     60) in a minute.
+- **Free inference** (`hive/core/free_inference.py`): with `HIVE_FREE_INFERENCE_KEY` set, provider `free` is the
+  endpoint `HIVE_FREE_INFERENCE_URL` names (Singularity Compute's `https://llm.a.singularitycompute.com/v1` when
+  unset; https, or http to a literal loopback address, else there is no provider) on that key, its models
+  `HIVE_FREE_INFERENCE_MODELS` (`free/<model>`). A call on it is for the
+  person `Hive.user_for` names, or the caller's principal (the Ask conductor's asker, the mind gateway's token
+  principal); outside an Ask turn or a work session that is the mind's owner, its replies in rooms and goals included.
+  It is never paid with a key in the ring or one assigned to the mind, reserves nothing, and is recorded with its
+  tokens at `cost_usd` 0, `payer` the person, `payer_mode: "free"` and `key_id` null. Refused before anything is sent:
+  - 403 `free_inference_off`: the hive offers no free inference (no key, or 0 calls a day for a person or the hive), or
+    the mind is left on it after the key went;
+  - 403 `free_model_not_offered`: the mind's model isn't in the deploy's list now;
+  - 403 `free_inference_person_only`: the call is for no named, enabled person;
+  - 403 `free_inference_invited_only`: the call is for a public visitor and `HIVE_FREE_INFERENCE_VISITORS` isn't `1`;
+  - 429 `free_inference_daily_cap`: the person has made `HIVE_FREE_INFERENCE_DAILY_CALLS` calls today (UTC; default
+    200);
+  - 429 `free_inference_hive_daily_cap`: the hive has made `HIVE_FREE_INFERENCE_HIVE_DAILY_CALLS` calls today (UTC;
+    default 2000);
+  - 429 `free_inference_busy`: the endpoint still answered 429 after the retries below; the call counts toward no one's
+    calls;
+  - 400 `unsupported_route` for embeddings.
+  A call counts once it is sent: it is counted for the person and the hive in one step before it goes out, and given
+  back if it ends before its request is written (no connection, a refusal or a closed turn at the send boundary, a
+  cancellation). At the send boundary the route's authority (offered, the deploy's model, a person it admits) and the
+  egress rule are judged again, as for a subscription, so a person disabled while their call waited is refused there.
+  A 429 from the endpoint (its key's limit on calls a second, shared by every hive the key is in) is retried up to four
+  times: after the wait its `retry-after-ms` or `Retry-After` asks for, when that is at most 8 s, else after a random
+  wait under 1, 2, 4 and then 8 s; an answer asking for a longer wait isn't retried. Each retry passes the send
+  boundary's checks again and is the same call, counted once; a call refused to the end is given back and refused with
+  `free_inference_busy`. Each of these refusals is a row of one table, `hive/core/refusals.py`: its code, one sentence
+  written for the person, and its remedy, what the person can do (`wait`, `credit`, `key` or `model`). An Ask turn whose
+  free call is refused for any of these reasons ends with outcome `error`, the refusal's code in `done.error`, its
+  remedy in `done.remedy` and its sentence as the answer, which the page then words no second time; the mind gateway
+  answers a browser turn with the same code and sentence. `POST /api/agents` and `PATCH /api/agents/{id}` refuse a
+  model on the free route the deploy doesn't list (403 `free_model_not_offered`, or `free_inference_off` without the
+  route); an edit that keeps a mind's model as it was is not refused for it.
+  `GET /api/providers` lists `free` with `needs_key: false`, `key_hint: ""`, `keys: 0`, `account: null` and
+`daily_calls`, configured only for a caller the route admits (a public visitor reads `configured: false` unless
+visitors are opted in); `GET /api/models` lists its models for every person it admits. `POST /api/keys` refuses it
+(400 `no_key_needed`), and a mind's `options.key` cannot name it. Provider `asicloud` is ASI Cloud with a person's own
+  key or `ASI_API_KEY`, verified by `GET /models`; it lists `asi1-mini`, free on ASI Cloud.
 
 ## Spending limits: one allowance per payer, one hive cap, caps where set
 
@@ -719,7 +798,11 @@ These apply when no rule matches.
 |---|---|---|
 | `send`, `wait`, `pin`, `hive-*`, `query`, `remember`, `episodes`, `search`, `web-search`, `web-fetch`, `read-file`, space reads | `allow` | No side effects outside the agent and the hive |
 | `shell`, `shell-confirm`, `metta`, `write-file*`, `append-file*`, `send-file*`, `codex-*`, `space-transform`, `remove-atom`, any `*-commit` | `ask` | Side effects on the machine or on durable memory |
+| Private-data reads: `read-whatsapp-chat*`, `whatsapp-chats`, `whatsapp-inbox`, `observe-glucose`, `glucose-history`, `glucose-rings`, `glucose-watch-status`, `set-glucose-watch`, the Home Assistant reads (`observe-house*`, `observe-room`, `observe-device`, `house-action-log`), `webcam-observation-log`, `audio-observation-log`; also `persistent-expression` and `body-container-launcher` | `ask` | People's private data; an atom that can define a function; a host file outside the sandbox (omega-flagship/omegahive#299) |
+| `reboot-self` | `deny` unless the launcher sets `HIVE_EMBODIED_VM=1` | It runs `sudo reboot`, which restarts the whole computer, so only a hive that is the mind's own VM offers it, and then it asks one at a time |
 | (human-only) `change-password`, `transfer-funds`, `pay*`, `purchase*` | `deny` to agents | These always need a human to act; no rule can open them |
+
+Code that runs (`shell`, `vm-shell`, `code-exec`, `code-test-run`, `code-proof-check` and the four `codex-code` runs) is approved one at a time, like `shell-confirm` and `restart-omega`: an answer can't be Always or For a time, and an Always answered before that no longer stands. Every skill that takes a path on the hive's computer (`read-file`, `write-file*`, `append-file*`, `delete-file`, the `send-*file*` and `reply-whatsapp-file*` heads) is refused unless the path is inside the mind's own folder. A file send (`send-*file*`, `reply-whatsapp-file*`) reads only from the mind's `files/` and `memory/outbox/` folders, where its shared files and generated pictures are, so its hive token, `.env`, `auth/` sessions and memory are never sent, whatever a person answered.
 
 ## The Lab: tests and benchmarks
 
@@ -728,11 +811,11 @@ use scratch data, so a run never touches this hive's minds or commons.
 
 | Method & path | Body → Response |
 |---|---|
-| `GET /api/lab/suites` | → `Suite[]` `{id, kind: "tests" \| "bench", title, description, estimate_s, needs, missing, runnable, last_run}` |
+| `GET /api/lab/suites` | → `Suite[]` `{id, kind: "tests" \| "bench", title, description, estimate_s, needs, missing, runnable, last_run, may_run}`. `may_run` says whether this person may start and cancel runs (admins only). |
 | `GET /api/lab/runs?suite=&limit=` | → `RunSummary[]` newest first `{id, suite, status, started_at, finished_at, duration_ms, passed, failed, skipped, errors, commit_sha}` |
-| `POST /api/lab/runs` | `{suite}` → `Run`. Errors: 409 `already_running`, 400 `missing_requirements` |
+| `POST /api/lab/runs` | Admin only (403 `admin_only`): a run uses the hive's machine and its environment. `{suite}` → `Run`. Errors: 409 `already_running`, 400 `missing_requirements` |
 | `GET /api/lab/runs/{id}` | → `Run` = `RunSummary & {log, cases: Case[]}` |
-| `POST /api/lab/runs/{id}/cancel` | → `{cancelling: true}` |
+| `POST /api/lab/runs/{id}/cancel` | Admin only (403 `admin_only`). → `{cancelling: true}` |
 | `GET /api/lab/history/{suite}?limit=` | → `{suite, runs, metrics: [{case_id, case, metric, unit, better, target, legacy_names?, points: [{run_id, at, value, ok, renamed_from?}]}]}` |
 
 `Case` = `{run_id, id, name, group, status, duration_ms, message, notes, metrics: Metric[], series: Series[], renamed_from?}`.
@@ -1454,8 +1537,8 @@ Derived on every read from the live state behind each item; nothing about it is 
 
 | `id` | `done` when | `detail` |
 |---|---|---|
-| `provider_key` | the person owns a model key, or their progress says `key_choice: "hive-keys"`, or they are a guest (the host's key pays) | `{own_keys, choice, guest}` |
-| `monthly_limit` | their progress has a `monthly_spend_usd`; for a person with keys of their own, their own limit on them is set; for a guest, always | `{chosen_usd, allowance_usd, allowance_origin, enforced_by}` (the limit in force, read live); own-key and guest shapes below |
+| `provider_key` | the person owns a model key, or their progress says `key_choice: "hive-keys"`, or they are a guest (the host's key pays), or their personal mind thinks with free inference | `{own_keys, choice, guest, free_inference}` |
+| `monthly_limit` | their progress has a `monthly_spend_usd`, or their personal mind thinks with free inference (nobody's money to limit); for a person with keys of their own, their own limit on them is set; for a guest, always | `{chosen_usd, allowance_usd, allowance_origin, enforced_by, free_inference}` (the limit in force, read live); own-key and guest shapes below |
 | `ask_prefs` | they have saved Ask preferences (`PUT /api/me/ask`) | `{}` |
 | `mind_awake` | their personal mind has started at least once (`last_active_at` set) or is awake or starting | `{mind_id, status}` |
 | `outside_tool` (optional) | a harness invite they made has been redeemed and its member still exists | `{joined}` |

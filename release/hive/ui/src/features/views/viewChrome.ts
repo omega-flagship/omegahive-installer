@@ -1,7 +1,7 @@
 /**
  * Purpose: what every view's frame shares, whatever drew the view (an HTML document in ViewFrame's LiveView, or a MeTTa
  * view in MettaFrame): inline or full screen in one dialog, and where a view's words for its maker go. The bar above a
- * view is ViewBar.tsx.
+ * view, with Full screen and Close, is the first part of views.metta's view-host.
  *
  * The frame lives in a <dialog> from the start: inline it is an open dialog drawn in the page's flow; fullscreen it is
  * the same dialog shown modal, in the browser's top layer, so no transformed ancestor (a sliding panel, an entering row)

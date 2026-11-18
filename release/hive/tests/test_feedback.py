@@ -1,6 +1,7 @@
 # Purpose: tests the hive's side of feedback and bug reports (hive/core/feedback.py and its routes): the one destination
-# setting, the version and hive a report names, every error answer's id kept with the person who met it, the
-# unexpected error answered by id, the board's visibility check and the hand-off to a report service.
+# setting, the release or build and hive a report names, every error answer's id kept with the person who met it and
+# its words with no key id or person of the hive, the unexpected error answered by id, the board's visibility check and
+# the hand-off to a report service.
 import http.server
 import io
 import json
@@ -11,6 +12,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from hive.core import feedback as fb
+from hive.core import updates as updates_mod
+from hive.core.hive import HiveError
 from hive.tests.test_core_api import client  # noqa: F401  (fixture: local operator)
 from hive.tests.test_visibility import person
 
@@ -60,12 +63,20 @@ def test_a_report_names_the_release_or_the_build():
     assert fb.which_hive("Linux", None, "http://127.0.0.1:8700") == "a hive run from source on Linux"
 
 
-def test_the_context_names_an_installed_release_when_the_hive_has_one(client, monkeypatch):
+def test_the_context_names_the_release_an_installed_hive_was_laid_out_from(client, monkeypatch, tmp_path):
+    """An installed hive runs a release folder, no git checkout: its report names the release by the RELEASE_COMMIT and
+    RELEASE_VERSION the release builder wrote beside hive/, as the hive read them at start (Updates.running_release)."""
     hive = client.app.state.hive
-    monkeypatch.setattr(hive.updates, "running_release", {"version": "0.31", "commit": "f9648d4386aa77"}, raising=False)
     monkeypatch.setattr(fb, "system_name", lambda: "Mac")
+    assert "install" not in client.get("/api/feedback").json()["which"]     # this checkout has neither file
+    (tmp_path / "RELEASE_COMMIT").write_text("f9648d4386aa77\n")
+    (tmp_path / "RELEASE_VERSION").write_text("0.31\n")
+    monkeypatch.setattr(updates_mod, "ROOT", tmp_path)
+    monkeypatch.setattr(hive, "updates", updates_mod.Updates(hive))      # a hive started from that folder
     ctx = client.get("/api/feedback").json()
     assert ctx["version"] == "Mac v0.31 (build f9648d4386)" and ctx["which"] == "own hive, Mac install"
+    (tmp_path / "RELEASE_COMMIT").write_text("")
+    assert updates_mod._release() is None       # an empty RELEASE_COMMIT names no release
 
 
 def test_every_error_answer_has_an_id_kept_with_the_person_who_met_it(client):
@@ -120,6 +131,25 @@ def test_an_unexpected_error_is_answered_by_its_id_and_located_for_the_report(cl
     assert any(error_id in rec.getMessage() for rec in caplog.records)    # the log line the id points at
     kept = next(e for e in client.get("/api/feedback").json()["errors"] if e["id"] == error_id)
     assert kept["raised"].startswith("KeyError at hive/tests/test_feedback.py:") and kept["raised"].endswith("in broken")
+
+
+def test_what_is_kept_of_an_answer_names_no_key_or_person_of_this_hive(client, monkeypatch):
+    """GET /api/feedback answers the kept words on a 200, which the key projection does not rewrite, and a report leaves
+    the hive: so a refusal's key ids, key scopes and people are kept taken out, for an admin, whose own answer names
+    them, and for a member, whose answer the projection already cleaned."""
+    hive = client.app.state.hive
+    said = "key:k_0000b0b1 has spent its month; user:u_bob set the limit on env:openrouter"
+
+    def refused(*_):
+        raise HiveError(403, "budget_exceeded", said)
+    monkeypatch.setattr(hive, "summary", refused)
+    ana = person(client, "u_ana")
+    for headers in (client.headers, ana):
+        r = client.get("/api/hive", headers=headers)
+        assert r.status_code == 403
+        kept = next(e for e in client.get("/api/feedback", headers=headers).json()["errors"] if e["id"] == r.headers[fb.ERROR_ID_HEADER])
+        assert kept["message"] == "key has spent its month; someone set the limit on a key"
+    assert "k_0000b0b1" not in r.text and "u_bob" not in r.text      # the member's own answer named neither
 
 
 class _Answer(io.BytesIO):

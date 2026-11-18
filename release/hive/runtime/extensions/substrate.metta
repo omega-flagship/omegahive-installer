@@ -1,6 +1,6 @@
-; OmegaClaw core substrate.
+; Purpose: load the cognitive substrate, host app actions and durable runtime spaces.
 ;
-; This file loads the cognitive substrate and durable runtime spaces only.
+; Host app actions keep policy and approval decisions in the hive.
 ; Modules, attention organs, and the loop are composed after this file so the
 ; loop compiles against the active module-provided affordances.
 
@@ -15,16 +15,19 @@
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_catalog_energy.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_catalog_reasoning.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_catalog_affordance.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_catalog_apps.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skills_core.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skills_runtime_spaces.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skills_memory.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skills_energy.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skills_reasoning_spaces.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skills_affordance.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skills_apps.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_affordance_core.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_affordance_memory.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_affordance_reasoning.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_affordance_affordance.metta))
+!(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skill_affordance_apps.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/skills_space_mutation.metta))
 !(import! &self (library OmegaClaw-Core ./hive/runtime/extensions/symbolic_memory))
 

@@ -5,10 +5,14 @@ These checks are read-only or local-only. They must not send messages, change
 house state, publish/unpublish artifacts, or alter live inbox read state.
 """
 
+import base64
 import json
+import os
 import pathlib
 import re
+import shutil
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -138,18 +142,27 @@ class WhatsAppBridgeDryTests(unittest.TestCase):
                 }
             raise AssertionError(path)
 
+        mind = pathlib.Path(tempfile.mkdtemp())   # a file the mind shares, in its files/: the adapter sends its bytes (#304)
+        self.addCleanup(shutil.rmtree, mind)
+        (mind / "files").mkdir()
+        (mind / "files" / "frame.png").write_bytes(b"\x89PNG frame")
+        cwd = os.getcwd()
         try:
+            os.chdir(mind)
             whatsapp._json_request = fake_request
-            result = whatsapp.reply_file_to_chat("123@lid", "/tmp/frame.png", "frame")
+            result = whatsapp.reply_file_to_chat("123@lid", "files/frame.png", "frame")
         finally:
             whatsapp._json_request = original
+            os.chdir(cwd)
 
         self.assertIn("WHATSAPP-REPLY-FILE-TO-CHAT", result)
         self.assertIn("WHATSAPP-SEND-FILE-TO-CHAT-SUCCESS", result)
         self.assertIn("WHATSAPP-MARK-READ-SUCCESS", result)
         self.assertEqual(calls[0][0:2], ("POST", "/send-file"))
         self.assertEqual(calls[0][2]["to"], "123@lid")
-        self.assertEqual(calls[0][2]["path"], "/tmp/frame.png")
+        self.assertNotIn("path", calls[0][2])
+        self.assertEqual(calls[0][2]["fileName"], "frame.png")
+        self.assertEqual(base64.b64decode(calls[0][2]["data"]), b"\x89PNG frame")
         self.assertEqual(calls[0][2]["caption"], "frame")
         self.assertEqual(calls[1], ("POST", "/chat-state", {"jid": "123@lid", "state": "read", "scope": "all"}))
 

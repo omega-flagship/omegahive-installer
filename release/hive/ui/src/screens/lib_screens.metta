@@ -51,6 +51,7 @@
 (Block written opener)
 (Block mark collapsed)
 (Block picture figure)
+(Block bar toolbar)
 
 ; which block a role uses when neither the screen nor the look decides (rank 1 is the default)
 (Prefer heading header 1)
@@ -99,6 +100,7 @@
 (Prefer opener written 2)
 (Prefer collapsed mark 1)
 (Prefer figure picture 1)
+(Prefer toolbar bar 1)
 
 ; blocks a screen may ask for that nothing draws yet, by the role they play: each falls back to that role's block and
 ; becomes a build task
@@ -182,9 +184,10 @@
 (RoleDepth form surface)
 (RoleDepth naming raised)
 (RoleDepth measure surface)
+(RoleDepth figure surface)
 (RoleDepth utterance surface)
 (RoleDepth collapsed float)
-(RoleDepth figure surface)
+(RoleDepth toolbar surface)
 
 ; a part's layer: what the screen says for it, else its role's, else surface
 (= (scr-role-of-block $b)

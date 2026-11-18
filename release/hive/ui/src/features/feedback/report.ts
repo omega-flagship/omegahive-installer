@@ -111,8 +111,9 @@ function second(at: string): string {
 
 /**
  * What must never leave the hive in a report, replaced where it stands, so the person sees exactly what goes: email
- * addresses, phone numbers, home folders (they name the person), keys and tokens, and the ids of people and
- * conversations. The board goes public later, and the testers' group importer refuses to post any of these. Its own
+ * addresses, phone numbers, home folders (they name the person), keys and tokens, the hive's own key ids (`k_` and 8 or
+ * 32 hex digits, `env:<provider>`, either as a `key:` scope, the grammar of hive/core/keyids.py), and the ids of people
+ * and conversations. The board goes public later, and the testers' group importer refuses to post any of these. Its own
  * hidden marker is taken apart too, and a line it would read as a field's start is LABEL_LINE's, so nothing a person
  * writes is read as the importer's.
  */
@@ -122,6 +123,7 @@ const REDACTIONS: readonly (readonly [RegExp, string])[] = [
   [/\b[A-Z]:\\Users\\[^\\\s]+/gi, '~'],
   [/\bBearer\s+\S+/g, 'Bearer [token]'],
   [/\b(?:sk|pk|rk|ghp|gho|ghs|xox[abp])[-_][A-Za-z0-9_-]{8,}/g, '[key]'],
+  [/(?<![A-Za-z0-9_])(?:key:)?(?:k_(?:[0-9a-f]{32}|[0-9a-f]{8})|env:[a-z0-9_-]+)(?![A-Za-z0-9_-])/g, '[key]'],
   [/\bc_[A-Za-z0-9_.-]*~[A-Za-z0-9_:~.-]+/g, '[conversation]'],
   [/user:[A-Za-z0-9_.-]+/g, '[person]'],
   [/\+\d[\d\s().-]{6,}\d/g, '[phone]'],

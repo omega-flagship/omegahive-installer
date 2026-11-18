@@ -1,3 +1,5 @@
+# Purpose: what is waiting to load into the hive, which release or build it runs, who asked for an update, what must
+# not be interrupted, and applying updates.
 """Updates (R18): what is waiting to load, who asked, what must not be interrupted, and applying it.
 
 - Apps: the loaded code is compared with its folder on disk (manifest version and a digest of its sources), so a

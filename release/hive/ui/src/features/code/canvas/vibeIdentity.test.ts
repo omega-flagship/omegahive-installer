@@ -1,4 +1,9 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+// Purpose: a change of person while a vibe request waits stops its polling, and nothing of the first person's is shown.
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+
+// each test runs the invented Code service's session (its answers come after 90 ms, its looks 5 ms apart) across a real
+// change of person; about 3x its worst on a slow CI runner, bounded in api/sim/simTimeouts.test.ts
+vi.setConfig({ testTimeout: 15_000 })
 
 // A change of person while the vibe request waits for the team's proposal (lib/identityEpoch, on the REAL store
 // identity change: identityEpoch.testkit's synthetic SimClients). A's request stops being polled, and its late answer
@@ -8,9 +13,10 @@ vi.stubGlobal('window', { location: { search: '', hash: '#/' }, matchMedia: () =
 const { SimCodeService } = await import('../../../api/sim/codeService')
 const { intentsKit, until } = await import('./vibeIntents.testkit')
 const { VibeSession } = await import('./vibeSession')
-const { releasePersons, signInAs, switchPerson, testPerson } = await import('../../../lib/identityEpoch.testkit')
+const { releasePersons, signInAs, switchPerson, testPerson, warmPersons } = await import('../../../lib/identityEpoch.testkit')
 type WorkspaceHead = import('../suggestions/contract').WorkspaceHead
 
+beforeAll(() => warmPersons())
 afterEach(() => releasePersons())
 
 const CTX = { task_id: 'g_vibeid', grant_id: 'grant_vibeid', repository_id: 'sim-suggestions' }
@@ -38,7 +44,9 @@ describe('identity: a switch mid-poll drops the request', () => {
     const seen = { writes: writes.length, polls: polls() }
     kit.gates[0].open() // the team files its proposal for A, late
     await asked
-    await new Promise((r) => setTimeout(r, 1200))
+    // three looks' time (the invented service answers each look after 90 ms, and the session waits 5 ms between
+    // looks): a poll still going after the switch would add at least two looks past the one already in flight
+    await new Promise((r) => setTimeout(r, 300))
     expect(writes.length).toBe(seen.writes)
     expect(polls()).toBeLessThanOrEqual(seen.polls + 1) // at most the look already in flight
     expect(session.getState().result).toBeNull()

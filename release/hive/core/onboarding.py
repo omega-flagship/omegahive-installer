@@ -33,6 +33,7 @@ import datetime
 import json
 import secrets
 
+from .config import FREE
 from .db import now
 
 SCHEMA = [
@@ -69,13 +70,22 @@ SAY = {
     "spend_limit": "You've reached your spending limit for now, so your mind can't think until it resets or is raised.",
     "own_key_needed": "Your mind would run on someone else's key. Add your own key in Keys, then try again.",
     "hive_limit": "The hive has reached its spending limit, so minds can't think until an admin raises it.",
+    "free_daily_cap": "You've used today's free model calls, your minds' replies in rooms and their goals included, so "
+                      "your mind can't think on free inference until midnight UTC. Add a key of your own to carry on now.",
+    "free_hive_cap": "This hive has used all of today's free model calls, so your mind can't think on free inference "
+                     "until midnight UTC. Add a key of your own to carry on now.",
+    "free_invited_only": "Free inference on this hive is for the people it invited. Add a key of your own for your mind "
+                         "to think.",
     "cannot_wake": "Your mind couldn't wake just now. Try again in a moment, or ask an admin.",
     "egress_refused": "Your mind's swarm keeps its thinking on this machine, and its model isn't a local one. "
                       "Choose a local model for it, or ask an admin.",
 }
 STATUS = {"person_required": 403, "invalid": 400, "stale_onboarding": 409, "no_model": 409, "no_key": 402,
-          "no_budget": 402, "spend_limit": 402, "own_key_needed": 402, "hive_limit": 402, "cannot_wake": 409,
-          "egress_refused": 403}
+          "no_budget": 402, "spend_limit": 402, "own_key_needed": 402, "hive_limit": 402, "free_daily_cap": 429,
+          "free_hive_cap": 429, "free_invited_only": 403, "cannot_wake": 409, "egress_refused": 403}
+# the free gate's refusals that have words of their own here; any other (off, a model it doesn't offer) is no_model's
+FREE_REFUSALS = {"free_inference_daily_cap": "free_daily_cap", "free_inference_hive_daily_cap": "free_hive_cap",
+                 "free_inference_invited_only": "free_invited_only"}
 
 ROLE_WORDS = {"admin": "run and set up this hive", "coder": "write and review code with minds",
               "researcher": "research and think things through with minds", "explorer": "look around and see what minds can do"}
@@ -239,10 +249,13 @@ class Onboarding:
 
         own = hive.ownhive.setup_limit(principal, own_keys)   # own hive H1: your own limit, or a guest's invite limit
         guest = hive.ownhive.access(principal) == "guest"
+        # free inference (free_inference.py): a personal mind thinking on it needs no key and spends no money of anyone's
+        free = bool(mind) and str(mind.get("model") or "").partition("/")[0] == FREE
         if own is None:
             # enforced: a month limit the model route applies to this person's hive-paid spend at call time
             # (Budgets.applicable: their person:<id> month rule, else the member default; an admin with no rule has none)
-            monthly = {**item("monthly_limit", "Choose how much you'll spend a month", progress["monthly_spend_usd"] is not None,
+            monthly = {**item("monthly_limit", "Choose how much you'll spend a month",
+                              progress["monthly_spend_usd"] is not None or free, free_inference=free,
                               chosen_usd=progress["monthly_spend_usd"], allowance_usd=spend["allowance_usd"],
                               allowance_origin=spend["allowance_origin"], enforced_by=spend["allowance_origin"]),
                        "enforced": spend["allowance_origin"] is not None}
@@ -257,8 +270,8 @@ class Onboarding:
 
         items = [
             item("provider_key", "Connect your own model key, or choose to use the hive's",
-                 own_keys > 0 or progress["key_choice"] == "hive-keys" or guest, own_keys=own_keys,
-                 choice=progress["key_choice"], guest=guest),
+                 own_keys > 0 or progress["key_choice"] == "hive-keys" or guest or free, own_keys=own_keys,
+                 choice=progress["key_choice"], guest=guest, free_inference=free),
             monthly,
             item("ask_prefs", "Set up your Ask: who answers, and what a conversation may spend",
                  hive.db.one("SELECT 1 FROM ask_prefs WHERE principal = ?", (principal,)) is not None),
@@ -279,7 +292,7 @@ class Onboarding:
     def preflight(self, mind):
         """Whether the mind could make one greeting call now, without side effects (no rate counter, no refusal record,
         no reservation): the model route's own gates run again, for real, on the call the mind makes."""
-        from .config import is_subscription
+        from .config import is_free, is_subscription
         from .gateway import GatewayError, split_model
         hive, gw = self.hive, self.gateway
         if gw is None:
@@ -298,6 +311,13 @@ class Onboarding:
                 gw.admit_subscription(mind, provider=provider_name)
             except GatewayError:
                 raise self._refuse("no_model") from None
+            return None
+        if is_free(provider_name):
+            # free inference: no price and no paying key by design; ready exactly when the free gate would admit the call
+            try:
+                gw.admit_free(mind)
+            except GatewayError as exc:
+                raise self._refuse(FREE_REFUSALS.get(exc.code, "no_model")) from None
             return None
         if not provider.priced(model) and not hive.settings.allow_unpriced:
             raise self._refuse("no_model")

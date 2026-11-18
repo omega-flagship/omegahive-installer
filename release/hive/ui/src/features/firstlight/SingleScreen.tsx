@@ -1,5 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+// Purpose: let a person name, connect and wake their mind inside First Light.
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ModelOption, ProviderStatus } from '../../api/types'
+import { experienceById } from '../../experiences/registry'
+import { Screen } from '../../screens/Screen'
+import { useCompose } from '../../screens/useCompose'
+import { useLook } from '../../shell/uiVariant'
 import { useHive } from '../../store/store'
 import { providerAnswerReady } from '../setup/checklist'
 import { KEY_PROVIDERS, keyIn, type ProviderName } from '../keys/keyProvider'
@@ -12,9 +17,9 @@ import { startFirstLight } from './door'
 import { ASK_HOW_MAX, ASK_NAME_MAX, askPurposeValue, askToSave, personaEditable } from './host'
 import { payerLine } from './honest'
 import { InlineKey, pasteHint, type Paste } from './InlineKey'
-import { LEAD_PROVIDER, connectedPlans, currentPlan, keyedWays, localModels, modelForKey } from './plans'
+import { FREE_PROVIDER, LEAD_PROVIDER, connectedPlans, currentPlan, freeLapse, freeRoute, freeWay, keyedWays, localModels, modelForKey, onFreeWay } from './plans'
 import { flDraft, flExit, flFinished, insteadOf, keepFlDraft, u1Busy, useFirstLight, whoOf, type Run } from './store'
-import { outboundCopy, profileSaveCopy, spendingCopy, unknownRetryCopy } from './conditionalCopy'
+import { freeLimitCopy, outboundCopy, profileSaveCopy, spendingCopy, unknownRetryCopy } from './conditionalCopy'
 
 export const U1_MONTH_DEFAULT = 5
 type ReadinessProvider = ProviderStatus
@@ -23,6 +28,7 @@ export function connectionState(model: string | null, providers: ReadinessProvid
   const name = model?.split('/')[0]
   if (name === 'mock') return 'demo'
   if (providers === null || providers === undefined) return 'unknown'
+  if (freeLapse(model, providers)) return 'unavailable'   // set to free inference, which no longer serves it (plans.freeLapse)
   const provider = providers.find((p) => p.name === name)
   if (!provider) return providers.length === 0 && ownKeys === 0 ? 'no-provider' : 'unknown'
   if (provider.test_only || provider.readiness === 'test_only') return 'demo'
@@ -36,6 +42,9 @@ export function connectionState(model: string | null, providers: ReadinessProvid
   }
   return configured(provider) ? 'unverified' : 'unknown'
 }
+/** A mind's status as the hive reports it, in everyday words (an unknown one as the hive names it). */
+const STATUS_WORDS: Record<string, string> = { awake: 'is awake', starting: 'is waking up', asleep: 'is asleep', stopped: 'is asleep', error: 'ran into a problem' }
+export const statusWords = (name: string, status: string): string => `${name} ${STATUS_WORDS[status] ?? `is ${status}`}.`
 export function providerWords(model: string | null, providers: ProviderStatus[] | null | undefined): string {
   const provider = providers?.find((p) => p.name === model?.split('/')[0])
   if (provider?.test_only || provider?.name === 'mock') return 'Demonstration model'
@@ -90,6 +99,20 @@ export function SingleScreen({ run, now, providers, models }: { run: Run; now: n
   const nameRef = useRef<HTMLInputElement | null>(null)
   const thinkingRef = useRef<HTMLDetailsElement | null>(null)
   useEffect(() => { nameRef.current?.focus() }, [])
+  // free inference, where the hive's deploy offers it (plans.freeWay): MeTTa composes what it offers and says, and why
+  // a mind set to it can't use it now (free.metta), for the look being worn; the card carries out its press
+  const compose = useCompose(experienceById(useLook().current?.experience).id)
+  const live = run.mode === 'live' && !!run.facts.mind
+  const thinking = run.u1?.model ?? null
+  const free = live ? freeWay(providers) : null
+  const route = live ? freeRoute(providers) : null
+  const lapse = live ? freeLapse(thinking, providers) : null
+  const offered = !!free
+  const chosen = onFreeWay(thinking) && lapse === null
+  const freePlan = useMemo(() => compose('first-light-free', { flags: { 'free.offered': offered, 'free.chosen': chosen },
+    values: { 'free.lapse': lapse ?? 'none' } }), [compose, offered, chosen, lapse])
+  // the model the words name: the mind's own once it thinks with it, else the one the press moves it to
+  const freeModel = ((chosen ? thinking : route?.model) ?? '').slice(FREE_PROVIDER.length + 1)
   if (!u) return null
   const done = flFinished(run)
   // the card's own part is still open: not greeted, and not ended another way
@@ -98,7 +121,8 @@ export function SingleScreen({ run, now, providers, models }: { run: Run; now: n
   const personal = run.facts.mind?.name ?? (shownName.trim() || 'Your mind')
   const amount = monthToSave(run, month)
   const validAmount = amount === null || (Number.isFinite(amount) && amount >= 0 && amount <= 10000)
-  const limitWords = spendingCopy(run.facts.limit, amount !== null && Number.isFinite(amount) ? amount : null, u.limitPending ?? null, u.limitChecking === true && u.busy && run.status === 'playing', u.limitUncertain === true, run.facts.hiveMonthUsd ?? null)
+  const limitWords = chosen && route ? freeLimitCopy(route.dailyCalls)
+    : spendingCopy(run.facts.limit, amount !== null && Number.isFinite(amount) ? amount : null, u.limitPending ?? null, u.limitChecking === true && u.busy && run.status === 'playing', u.limitUncertain === true, run.facts.hiveMonthUsd ?? null)
   const known = run.status === 'playing' && !run.loadError && u.context === 'known' && !!u.model && !!run.facts.mind
   const budgetUnknown = run.facts.ownKeys > 0 && run.facts.limit === null
   const waiting = u.phase === 'waiting' && !run.hello.hello?.retryable
@@ -114,11 +138,14 @@ export function SingleScreen({ run, now, providers, models }: { run: Run; now: n
   // no plan, no key the hive has, no model on this computer: pasting a key is the one way, so its field is open from
   // the start (its Add key the one primary) and the card says so; a person with no way they can tap is never left with
   // nothing to do. A chosen model on this computer that is not answering keeps the choices as they are.
-  const onlyKey = plans.length === 0 && ways.length === 0 && here.length === 0
+  const onlyKey = !free && plans.length === 0 && ways.length === 0 && here.length === 0
   const keyShown = adding === 'key' || (adding === null && unavailable && onlyKey && connection !== 'local-down')
   const wakeHeld = unavailable || connection === 'unknown'
-  const retrySetup = !known || budgetUnknown || u.limitUncertain === true || u.limitPending != null || (!!u.error && !u.wakeUnknown)
-  const primary = unavailable ? 'choose' : retrySetup || connection === 'unknown' ? 'read' : 'wake'
+  const retrySetup = !known || connection === 'unknown' || budgetUnknown || u.limitUncertain === true || u.limitPending != null || (!!u.error && !u.wakeUnknown)
+  const primary = unavailable ? 'choose' : retrySetup ? 'read' : 'wake'
+  // Check again stands on the card while its own part is open, something it reads is to read again and no press is in
+  // flight; a line asks for it only then, so the card never names a button it doesn't show
+  const recheck = editing && retrySetup && !busy
   const saveWords = u.saves && !u.busy ? profileSaveCopy(u.saves) : null
   const failure = run.loadError ?? u.error
   const outcome = failure ? u.profileSaved && saveWords ? `${failure} ${saveWords}` : failure : saveWords
@@ -137,14 +164,14 @@ export function SingleScreen({ run, now, providers, models }: { run: Run; now: n
     setAdding(which)
   }
   // Paste does what it says: it opens the key field and puts the copied key in it (the key goes only with Add key). The
-  // clipboard is read on this press; when the browser will not read it, or what was copied holds no key, the cursor
-  // goes to the field and the field says how to paste by hand.
+  // clipboard is read on this press; when the browser will not read it, or what was copied holds no key or more than
+  // one, the cursor goes to the field and the field says what to do instead.
   const pasteKey = () => {
     open('key')
     void pastedText().then((text) => {
-      const key = text === null ? null : keyIn(text)
+      const found = text === null ? null : keyIn(text)
       const how = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches ? 'touch' : macKeys() ? 'mac' : 'ctrl'
-      setPaste((p) => ({ n: (p?.n ?? 0) + 1, key, hint: pasteHint(key ? 'pasted' : text === null ? 'unreadable' : 'none', how) }))
+      setPaste((p) => ({ n: (p?.n ?? 0) + 1, key: found && 'key' in found ? found.key : null, hint: pasteHint(found?.kind ?? 'unreadable', how) }))
     })
   }
   // the primary while it cannot think: open the choices and take the person to a way, the key field when it is the only one
@@ -177,11 +204,11 @@ export function SingleScreen({ run, now, providers, models }: { run: Run; now: n
   const leave = flExit(run) === 'close'
     ? <button type="button" className="fl-btn" data-u1-close="" onClick={g.leave}>Close</button>
     : <button type="button" className="fl-btn" data-u1-not-now="" onClick={g.leave}>Not now</button>
-  const completionWords = u.completion === 'confirmed' ? 'First Light is saved as complete.' : u.completion === 'saving' ? 'Saving First Light completion…' : 'First Light completion is not confirmed yet.'
-  const completion = <><p role="status">{completionWords}</p>{u.completion !== 'confirmed' && <button type="button" className="fl-btn" data-tone="primary" disabled={u.completion === 'saving'} onClick={() => void g.finishSingleScreen()}>Save completion again</button>}<button type="button" className="fl-btn" data-tone={done ? 'primary' : undefined} disabled={!done} onClick={() => { const to = landingAfter(run); g.stop(); if (to) navigate(to) }}>Continue</button>{!done && !busy && leave}</>
+  const completionWords = u.completion === 'confirmed' ? 'First Light is finished.' : u.completion === 'saving' ? 'Saving…' : 'First Light isn’t saved as finished yet.'
+  const completion = <><p role="status">{completionWords}</p>{u.completion !== 'confirmed' && <button type="button" className="fl-btn" data-tone="primary" disabled={u.completion === 'saving'} onClick={() => void g.finishSingleScreen()}>Try saving again</button>}<button type="button" className="fl-btn" data-tone={done ? 'primary' : undefined} disabled={!done} onClick={() => { const to = landingAfter(run); g.stop(); if (to) navigate(to) }}>Continue</button>{!done && !busy && leave}</>
   if (run.status === 'paused') return <div className="fl-u1-body" data-firstlight-single="paused">
     <h2>First Light is paused</h2>
-    <p>Any request already sent may still finish. Resume to read the current state before continuing.</p>
+    <p>Anything already sent may still finish. Resume to carry on where you were.</p>
     <p>{shownName || 'Your mind'} acts only for you.</p><p className="fl-small">{outboundCopy}</p>
     <button type="button" className="fl-btn" data-tone="primary" onClick={() => { g.toggle(); void g.reload() }}>Resume First Light</button>
     {leave}
@@ -194,16 +221,22 @@ export function SingleScreen({ run, now, providers, models }: { run: Run; now: n
     <div className="fl-u1-fields"><label className="fl-field"><span>Its name</span><input ref={nameRef} className="fl-input" value={shownName} maxLength={ASK_NAME_MAX} onChange={(e) => setName(e.target.value)} placeholder="Give it a name" autoComplete="off" disabled={busy || !run.facts.mind || run.status === 'loading' || !editing} /></label>
     <label className="fl-field"><span>What do you want it to be?</span>
       {run.facts.askHow !== null && !personaEditable(run.facts.askHow)
-        ? <p>It already has longer words of its own. Change them on its page; saving here keeps them.</p>
+        ? <p>It already has a longer description. Change it on its page; saving here keeps it.</p>
         : <textarea className="fl-input" rows={2} value={shownPurpose} maxLength={ASK_HOW_MAX} onChange={(e) => setPurpose(e.target.value)} disabled={busy || run.facts.askHow === null || !editing} />}
       <span className="fl-field-help">In your own words. You can change this any time on its page.</span>
     </label></div>
     {unsaved && u.phase === 'editing' && <div className="fl-chips"><button type="button" className="fl-btn" data-u1-save-profile="" disabled={busy || run.status !== 'playing' || !run.facts.mind || !shownName.trim()} onClick={() => void saveProfile()}>Save</button></div>}
-    {run.facts.askHow === null && <p role="status">Your existing purpose is not known yet. It will not be replaced by a default.</p>}
+    {run.facts.askHow === null && <p role="status">We couldn’t read what it’s for yet, so nothing you wrote before will be replaced.</p>}
     <section aria-label="How it thinks" className="fl-u1-thinking">
-      {/* while it cannot think the choices stay open: its summary does not fold them away */}
-      <details ref={thinkingRef} open={unavailable || undefined} data-u1-choices=""><summary onClick={(e) => { if (unavailable) e.preventDefault() }}><span>How it thinks · <span data-u1-model="">{providerWords(u.model, providers)}</span></span>{!unavailable && <span className="fl-change">Change</span>}</summary>
-      <p className="fl-small">{u.model ? 'Current host model; this setting alone is not proof it answers.' : 'The current model is not confirmed.'}</p>
+      {/* while Wake is held the choices open, so what the person can do is in view; while it cannot think its summary
+          does not fold them away */}
+      <details ref={thinkingRef} open={wakeHeld || undefined} data-u1-choices=""><summary onClick={(e) => { if (unavailable) e.preventDefault() }}><span>How it thinks · <span data-u1-model="">{providerWords(u.model, providers)}</span></span>{!unavailable && <span className="fl-change">Change</span>}</summary>
+      {!u.model && <p className="fl-small">We couldn’t read how it thinks yet.</p>}
+      <Screen plan={freePlan} host={{
+        data: { 'free.daily_calls': route?.dailyCalls ?? '', 'free.model': freeModel, 'free.host': route?.host ?? '', 'mind.name': shownName.trim() || 'your mind' },
+        busy: choosing,
+        onAction: (action) => { if (action === 'use-free-inference' && free) void g.thinkWith(free.model) },
+      }} />
       <div className="fl-chips">
         {plans.map((p) => <button key={p.provider} type="button" className="fl-btn" data-u1-plan={p.provider} data-tone={!onPlan && p === plans[0] ? 'primary' : undefined}
           aria-pressed={onPlan?.provider === p.provider} disabled={choosing} onClick={() => void g.thinkWith(p.model)}>{p.label}</button>)}
@@ -217,9 +250,9 @@ export function SingleScreen({ run, now, providers, models }: { run: Run; now: n
       </div>}
       {keyNote && <p role="status" className="fl-small">{keyNote}</p>}
       {plans.length > 0 && <p className="fl-small" data-u1-plan-note="">{onPlan ? `Thinking with your ${onPlan.provider === 'subscription-codex' ? 'ChatGPT' : 'Claude'} plan on this computer. Its own daily allowance applies.` : 'Your plan is already connected on this computer. One tap and your mind thinks with it; nothing changes until you choose.'}</p>}
-      <p className="fl-pays">{payerLine(whoOf(run))}</p>
-      {connection === 'unverified' && <p className="fl-small">This provider has not answered recently. Wake is an explicit attempt under the host’s spending and permission checks.</p>}
-      {connection === 'unknown' && <p className="fl-small">Provider readiness could not be read. Read the current setup before Wake.</p>}
+      <p className="fl-pays">{payerLine(whoOf(run, providers))}</p>
+      {connection === 'unverified' && <p className="fl-small">{providerWords(u.model, providers)} hasn’t answered lately. Wake tries it.</p>}
+      {connection === 'unknown' && <p className="fl-small">We couldn’t check whether it can think.{recheck ? ' Check again, or choose another way for it to think.' : ''}</p>}
       </details>
       {unavailable && <p role="status" data-u1-provider="">{connection === 'local-down' ? "The model on this computer isn't answering." : `${shownName || 'Your mind'} can't think yet. ${onlyKey ? `Paste an ${LEAD_PROVIDER.label} key above to give it a way to think.` : 'Choose a way for it to think above.'}`}</p>}
       {/* with the key field the one way, the status line above already says to paste a key */}
@@ -227,17 +260,19 @@ export function SingleScreen({ run, now, providers, models }: { run: Run; now: n
       {startNote && <p role="status" className="fl-small" data-u1-start-limit="">{startNote}</p>}
       <div className="fl-u1-spending"><p data-u1-limit="">{limitWords}</p>
       {ownMonthEditable(run) && <details className="fl-u1-month"><summary>{limitWords === spendingCopy(null, null, null) ? 'Set a limit' : 'Change'}</summary><label className="fl-field"><span>Monthly total on your own keys, dollars</span><input type="number" min={0} max={10000} step={1} value={month ?? (u.limitUncertain ? u.limitPending == null ? '' : String(u.limitPending) : String(monthProposal(run)))} onChange={(e) => setMonth(e.target.value)} disabled={busy} /></label></details>}</div>
-      {budgetUnknown && <p role="status">Your own-key limit could not be read. Wake waits for its current scope; read it again.</p>}
+      {budgetUnknown && <p role="status">We couldn’t read the monthly limit on your own keys.{recheck ? ' Check again before waking it.' : ''}</p>}
     </section>
     {outcome && <p role={failure ? 'alert' : 'status'} className={failure ? 'fl-error' : undefined} data-u1-save={saveWords ? '' : undefined}>{outcome}</p>}
     {u.saves?.readback && <details><summary>Here’s what {u.saves.readback.name} has now</summary><p>Name: {u.saves.readback.name}</p><p className="fl-u1-readback">Purpose: {u.saves.readback.purpose}</p></details>}
     {done && u.wakeUnknown && u.phase !== 'greeted' && <button type="button" className="fl-btn" onClick={() => navigate({ name: 'usage' })}>Check usage</button>}
-    {editing && retrySetup && !busy && <button type="button" className="fl-btn" data-tone={primary === 'read' && !instead ? 'primary' : undefined} disabled={run.status === 'loading'} onClick={() => void g.reload()}>{run.status === 'loading' || u.context === 'reading' ? 'Reading your current setup…' : 'Read current setup again'}</button>}
+    {/* the press reads again what the card shows: First Light's own facts, and the hive's providers, which the store's
+        resync after a gap reads again only once they were read (store.resync) */}
+    {recheck && <button type="button" className="fl-btn" data-tone={primary === 'read' && !instead ? 'primary' : undefined} disabled={run.status === 'loading'} onClick={() => void Promise.allSettled([g.reload(), useHive.getState().loadProviders()])}>{run.status === 'loading' || u.context === 'reading' ? 'Checking…' : 'Check again'}</button>}
     {/* the personal mind cannot wake here: what the hive allows instead, each of which finishes First Light */}
     {editing && instead && <div role="group" aria-label={`Instead of waking ${personal} here`} data-u1-instead="">
       <p role="status">{instead.archived
         ? `${personal} is archived, so it can't wake. ${instead.restore ? `Restore it to wake it here${instead.others.length ? ', or wake another of your minds and finish with that.' : '.'}` : instead.others.length ? 'Only an admin can restore it, so wake another of your minds and finish with that.' : 'Only an admin can restore it, so First Light can finish without it. Ask an admin to restore it, then wake it from its page.'}`
-        : `This hive did not give you a personal mind just now. ${instead.others.length ? 'Read your setup again, or wake another of your minds and finish with that.' : 'Read your setup again.'}`}</p>
+        : `This hive didn’t give you a mind of your own just now. ${instead.others.length ? 'Check again, or wake another of your minds and finish with that.' : 'Check again.'}`}</p>
       <div className="fl-chips">
         {instead.restore && <button type="button" className="fl-btn" data-tone="primary" data-u1-restore="" disabled={busy} onClick={() => void g.restorePersonal()}>Restore {personal}</button>}
         {instead.others.map((m) => <button key={m.id} type="button" className="fl-btn" data-tone={!instead.restore && m === instead.others[0] ? 'primary' : undefined} data-u1-wake-other={m.id} disabled={busy} onClick={() => void g.wakeOther(m.id)}>Wake {m.name}</button>)}
@@ -245,12 +280,13 @@ export function SingleScreen({ run, now, providers, models }: { run: Run; now: n
       </div>
     </div>}
     {editing && <>
-      <div className="fl-u1-actions">{!instead && primary === 'choose' && !keyShown && <button type="button" className="fl-btn" data-tone="primary" data-u1-choose="" disabled={busy} onClick={chooseWay}>Choose how {shownName.trim() || 'your mind'} thinks</button>}{!instead && <button type="button" className="fl-btn" data-tone={primary === 'wake' ? 'primary' : undefined} data-u1-wake="" disabled={!known || wakeHeld || primary === 'read' || busy || budgetUnknown || !shownName.trim() || !validAmount} onClick={() => void g.wakeSingleScreen(askToSave(shownName, purpose, run.facts.askHow), amount)}>{u.busy ? 'Saving and requesting Wake…' : waiting ? 'Waiting for your mind…' : u.wakeUnknown ? unknownRetryCopy : `Wake ${shownName.trim() || 'your mind'}`}</button>}
+      <div className="fl-u1-actions">{!instead && primary === 'choose' && !keyShown && <button type="button" className="fl-btn" data-tone="primary" data-u1-choose="" disabled={busy} onClick={chooseWay}>Choose how {shownName.trim() || 'your mind'} thinks</button>}{!instead && <button type="button" className="fl-btn" data-tone={primary === 'wake' ? 'primary' : undefined} data-u1-wake="" disabled={!known || wakeHeld || primary === 'read' || busy || budgetUnknown || !shownName.trim() || !validAmount} onClick={() => void g.wakeSingleScreen(askToSave(shownName, purpose, run.facts.askHow), amount)}>{u.busy ? `Waking ${shownName.trim() || 'your mind'}…` : waiting ? 'Waiting for your mind…' : u.wakeUnknown ? unknownRetryCopy : `Wake ${shownName.trim() || 'your mind'}`}</button>}
       {!busy && leave}</div>
     </>}
-    {waiting && <p role="status">Waiting for the host’s recorded greeting{run.hello.postedAt !== null ? ` · ${Math.max(0, Math.floor((now - run.hello.postedAt) / 1000))} s` : ''}. No reply is invented here.</p>}
+    {waiting && <p role="status">Waiting for {shownName.trim() || 'your mind'} to say hello{run.hello.postedAt !== null ? ` · ${Math.max(0, Math.floor((now - run.hello.postedAt) / 1000))} s` : ''}</p>}
     {busy && <button type="button" className="fl-btn" onClick={g.toggle}>Pause setup</button>}
-    {greeting && <section aria-label="Recorded greeting"><p>Recorded greeting from {hello!.mind.name}{greeting.created_at ? ` · ${greeting.created_at}` : ''}</p><blockquote>{greeting.text}</blockquote><p>Host-reported mind status: {hello!.mind.status}. This does not establish that every creation service is ready.</p>{completion}</section>}
+    {/* only the hive's own greeting is quoted, never one made up here; and its status says only what the hive reported */}
+    {greeting && <section aria-label="Greeting"><p>{hello!.mind.name} says</p><blockquote>{greeting.text}</blockquote><p>{statusWords(hello!.mind.name, hello!.mind.status)}</p>{completion}</section>}
     {u.phase === 'ended' && <section aria-label="How First Light ended" data-u1-ended=""><p>{u.other ? `${u.other.name} is awake.` : `First Light finishes without waking ${personal}, which stays archived until an admin restores it.`}</p>{completion}</section>}
     {/* a look, a role and the tour each leave this card, so they wait until First Light is finished */}
     {done && <div className="fl-chips" aria-label="More to set up">
@@ -258,6 +294,6 @@ export function SingleScreen({ run, now, providers, models }: { run: Run; now: n
       <button type="button" className="fl-btn" disabled={busy} onClick={() => startFirstLight({ mode: 'live', beat: 'arrive' })}>Choose your role</button>
       <button type="button" className="fl-btn" disabled={busy} onClick={() => { g.stop(); useIntro.getState().startTour() }}>Take a tour</button>
     </div>}
-    <div className="fl-u1-consent"><p>{shownName || 'Your mind'} acts only for you.</p><p>{outboundCopy}</p><details className="fl-small"><summary>What this means</summary><p>The current host API has not reported an outbound-approval policy here. Wake still uses the host’s existing model, key, egress and spending checks; earlier saved changes remain if a later step is refused.</p></details></div>
+    <div className="fl-u1-consent"><p>{shownName || 'Your mind'} acts only for you.</p><p>{outboundCopy}</p><details className="fl-small"><summary>What this means</summary><p>This card can’t see which of its actions need your OK first. Waking it still goes through the hive’s usual checks on its model, key, internet use and spending, and anything you saved stays saved if a later step is refused.</p></details></div>
   </div>
 }

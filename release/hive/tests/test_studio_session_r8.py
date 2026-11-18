@@ -224,6 +224,10 @@ def test_R8_after_stop_expiry_or_a_fence_media_is_refused_with_nothing_reserved_
         assert ses_row(m8, sid)["state"] == "active" and step_row(m8, sid, 1)["state"] == "admitted"
     elif case == "expired":
         hive.db.execute("UPDATE studio_sessions SET expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?", (sid,))
+        # Expiry runs the person's Stop as a job on the worker's own thread, and that job puts the maker to sleep with a
+        # new token, so a call racing it is refused 401 invalid agent token instead of by the session. The job waits
+        # while the refusals below are checked, then runs to its end.
+        hive.studio.worker.pause()
         assert hive.studio.expire_session(sid) is True
     elif case == "fenced":
         assert R3.done(m8, sid, 1, step["execution_id"], more=True).status_code == 200
@@ -239,6 +243,9 @@ def test_R8_after_stop_expiry_or_a_fence_media_is_refused_with_nothing_reserved_
     again = image(m8, op="op-r8-before-0001")
     assert again.status_code in (200, 403, 409), again.text
     assert len(m8.vendor.posts) == posts and len(reservations_of(m8)) == held
+    if case == "expired":
+        hive.studio.worker.resume()
+        stopped_and_released(m8, sid)                   # the expiry's Stop then ends as the person's does
 
 
 # ---- 4. an exact rule still decides ----------------------------------------------------------------------------------------

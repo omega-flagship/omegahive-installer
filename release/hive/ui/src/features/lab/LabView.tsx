@@ -15,7 +15,7 @@ import { Sparkline } from './charts'
 import { SuiteHistory } from './History'
 import { SuiteCompare } from './Compare'
 import { aboutSince, stalledFor } from './stallCompare'
-import { BAD, dimMeta, DIM_ORDER, fmtDuration, fmtValue, GOOD, hair, labText, needsText, RUNNING, runProgress, STATUS, total } from './labUtil'
+import { BAD, dimMeta, DIM_ORDER, fmtDuration, fmtValue, GOOD, hair, labText, mayStart, needsText, RUNNING, runProgress, runRefusal, STATUS, total } from './labUtil'
 import { Card, Counts, DemoBanner, DemoChip, MetricTile, RunButton, RunStrip, StatusIcon } from './parts'
 import { CaseList, RunDetail } from './RunDetail'
 
@@ -140,6 +140,8 @@ function Scorecard({ suites }: { suites: LabSuite[] }) {
   const now = useNow(30_000)
   const h = labHealth(suites)
   const runnable = suites.filter((x) => x.runnable).length
+  const startable = suites.filter(mayStart).length
+  const refused = runRefusal(suites.find((x) => x.may_run === false))   // the hive answers may_run per person
   const running = suites.filter((x) => x.last_run?.status === 'running')
   const last = suites.reduce<string | null>((acc, x) => {
     const at = x.last_run?.finished_at ?? x.last_run?.started_at ?? null
@@ -186,7 +188,7 @@ function Scorecard({ suites }: { suites: LabSuite[] }) {
                 Stop after this one · {queue.length} queued
               </Button>
             ) : (
-              <Button variant="primary" icon="play" onClick={() => void runAll()} disabled={busy || !runnable} className="w-full sm:w-auto" title="Runs every runnable suite one after another, tests first">
+              <Button variant="primary" icon="play" onClick={() => void runAll()} disabled={busy || !startable} className="w-full sm:w-auto" title={refused ?? 'Runs every runnable suite one after another, tests first'}>
                 {busy ? 'Running…' : 'Run everything'}
               </Button>
             )}

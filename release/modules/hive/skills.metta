@@ -44,6 +44,11 @@
 (= (hive-goal-heartbeat $id)
    (py-call (hive_commons.goal_heartbeat $id)))
 
+; ---- building software: a mind asks Create, whose code minds build it once its person starts it ----
+
+(= (hive-create $sentence)
+   (py-call (hive_commons.create $sentence)))
+
 ; ---- timed sharing: show spaces and work to other dots for a while ----
 
 (= (hive-shares)

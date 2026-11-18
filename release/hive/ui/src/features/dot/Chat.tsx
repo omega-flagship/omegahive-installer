@@ -1,4 +1,6 @@
+// Purpose: render a mind conversation, its composer, the action for newer messages and what the mind offers to build in Create.
 import { healthCheck } from '../../lib/healthQuestion'
+import { CreateOffers } from './CreateOffers'
 import { HealthCheckLabel } from '../../ui/HealthCheckLabel'
 import { AnimatePresence, m } from 'framer-motion'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
@@ -236,6 +238,8 @@ export function Chat({ agent, focus, connectAsked = 0 }: { agent: Agent; focus?:
           </Disclosure>
         </div>
       )}
+      {/* what this mind offers to build in Create, composed in MeTTa (createOffer.metta): nothing while none is open */}
+      <CreateOffers agent={agent} />
       <form
         data-tour="chat-composer"
         className="shrink-0 border-t border-line px-3 pt-2.5 pb-3"

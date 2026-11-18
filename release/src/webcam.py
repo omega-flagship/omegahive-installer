@@ -1,7 +1,8 @@
+"""Purpose: the webcam sense: capture a frame from the camera service at OMEGA_WEBCAM_URL, keep it in the mind's memory
+folder under inbox/webcam, where the vision sense describes it, and log each capture and inspection there."""
 import base64
 import json
 import os
-import pathlib
 import time
 import urllib.error
 import urllib.parse
@@ -10,22 +11,23 @@ import urllib.request
 import vision
 
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-INBOX = ROOT / "memory" / "inbox" / "webcam"
-TRACE_LOG = ROOT / "memory" / "webcam_observations.jsonl"
-
 DEFAULT_URL = os.environ.get("OMEGA_WEBCAM_URL", "").strip()
 DEFAULT_CAMERA = os.environ.get("OMEGA_WEBCAM_CAMERA", "BRIO")
 TOKEN = os.environ.get("OMEGA_WEBCAM_TOKEN", "").strip()
 
 
+def _trace_log():
+    return vision.memory_dir() / "webcam_observations.jsonl"
+
+
 def _append_trace(record):
-    TRACE_LOG.parent.mkdir(parents=True, exist_ok=True)
+    log = _trace_log()
+    log.parent.mkdir(parents=True, exist_ok=True)
     record = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         **record,
     }
-    with TRACE_LOG.open("a", encoding="utf-8") as handle:
+    with log.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
@@ -65,9 +67,11 @@ def capture_webcam(camera=""):
             return f"WEBCAM-CAPTURE-FAILED {data.get('error', data)}"
         payload = data.get("image_base64") or data.get("image_b64")
         raw = base64.b64decode(payload, validate=True)
-        INBOX.mkdir(parents=True, exist_ok=True)
+        # the vision sense's own memory folder, so a capture always lands where it may be described
+        inbox = vision.memory_dir() / "inbox" / "webcam"
+        inbox.mkdir(parents=True, exist_ok=True)
         filename = f"webcam_{int(time.time())}.jpg"
-        target = INBOX / filename
+        target = inbox / filename
         target.write_bytes(raw)
         record = {
             "kind": "webcam_capture",
@@ -109,7 +113,8 @@ def recent_webcam_observations(limit=10):
         limit = max(1, min(int(limit), 50))
     except Exception:
         limit = 10
-    if not TRACE_LOG.exists():
+    log = _trace_log()
+    if not log.exists():
         return "WEBCAM-OBSERVATIONS none"
-    lines = TRACE_LOG.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]
+    lines = log.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]
     return "WEBCAM-OBSERVATIONS " + " | ".join(lines)

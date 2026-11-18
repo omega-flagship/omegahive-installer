@@ -210,6 +210,22 @@ describe('the People page, composed by MeTTa', () => {
     expect(row(person('p_2', 'Ada', { password_set: true }), ADMIN, { ...ALL, removePassword: false }).html).not.toContain('Remove password')
     expect(row(person('p_2', 'Ada', { password_set: true, google_bound: true })).html).toContain('Signs in with Google · Signs in with a hive password')
   })
+  it('the test account (HIVE_TEST_ACCOUNT_EMAIL) is marked read-only: its role and password come from the hive’s settings, so no chooser and no reset here', () => {
+    const NOTE = 'Test account, from the hive settings: its password also works from outside once Google sign-in is on'
+    const plain = row(person('p_5', 'Bo', { password_set: true })).html
+    expect(plain).not.toContain('Test account,')
+    expect(plain).toContain('aria-label="Role of Bo"')
+    expect(plain).toContain('>Reset password</button>')
+    const tess = row(person('p_7', 'Tess', { password_set: true, test_account: true })).html
+    expect(tess).toContain(NOTE)
+    expect(tess).not.toContain('aria-label="Role of Tess"')
+    expect(tess).not.toContain('Reset password')
+    expect(tess).toContain('>Remove password</button>')
+    expect(tess).toContain('>Remove</button>')
+    expect(row(person('p_7', 'Tess', { test_account: true })).html).not.toContain('Make a password')
+    expect(tess).not.toContain('test account</button>')
+    expect(row(person('p_3', 'Juniper', { disabled: true, test_account: true })).html).toContain(NOTE)
+  })
   it('someone else’s buttons sit side by side in one row', () => {
     const { item, html } = row(person('p_2', 'Ada', { password_set: true, google_bound: true }))
     const actions = item.plan.parts.filter((p) => p.block === 'actions')

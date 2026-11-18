@@ -91,14 +91,11 @@ def test_first_boot_creates_one_named_admin_owner(local):
     assert hive.db.one("SELECT * FROM hive_owner_log WHERE owner = ?", (owner["owner"],))["by"] == "local-install"
 
 
-def test_operator_throttle_never_changes_local_owner_password_refusal(local):
-    attempts = local.app.state.password_attempts
-    attempts.failures = attempts.LIMIT
+def test_local_owner_password_refusal_holds_for_every_payload(local):
     before = local.app.state.hive.db.one("SELECT COUNT(*) AS n FROM sessions")["n"]
     for payload in [b'{"password":"pw"}', b'{"password":"invented-wrong"}', b'not-json']:
         response = local.post("/api/auth/login", content=payload, headers={"Content-Type": "application/json", **ORIGIN})
         assert response.status_code == 403 and response.json()["error"]["code"] == "password_signin_off"
-    assert attempts.failures == attempts.LIMIT
     assert local.app.state.hive.db.one("SELECT COUNT(*) AS n FROM sessions")["n"] == before
 
 
@@ -167,17 +164,24 @@ def test_the_exchange_sets_no_cookie_and_is_not_cached(local):
 
 
 def _control(path, request):
+    """One request on the control socket and its answer, or None when the hive answers nothing. The hive closes a
+    refused peer's connection without reading its request, which Linux reports as a reset (the request is still
+    unread) and macOS as an end of file, so a reset, or a send that meets the closed socket, is no answer too."""
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(5)
     s.connect(str(path))
-    s.sendall((json.dumps(request) + "\n").encode())
     data = b""
-    while not data.endswith(b"\n"):
-        chunk = s.recv(4096)
-        if not chunk:
-            break
-        data += chunk
-    s.close()
+    try:
+        s.sendall((json.dumps(request) + "\n").encode())
+        while not data.endswith(b"\n"):
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+    except (ConnectionResetError, BrokenPipeError):
+        data = b""
+    finally:
+        s.close()
     return json.loads(data) if data else None
 
 
@@ -506,7 +510,9 @@ def test_without_local_owner_every_behaviour_is_as_before(monkeypatch):
     assert getattr(hive, "local_owner", None) is None
     with TestClient(app) as client:   # Host "testserver": no allowlist
         token = client.post("/api/auth/login", json={"password": "pw"}).json()["token"]
-        assert client.get(f"/api/auth/me?token={token}").status_code == 200   # query token still works here
+        # a query token signs nobody in here either, though it isn't refused as a local owner's hive refuses it:
+        # HTTP routes read the Authorization header only (review #299)
+        assert client.get(f"/api/auth/me?token={token}").status_code == 401
         # CORS answers a hive's own origins only, local owner or not (review #111): no wildcard for anywhere
         cors = client.get("/api/auth/methods", headers={"Origin": "https://anywhere.example"})
         assert "access-control-allow-origin" not in cors.headers

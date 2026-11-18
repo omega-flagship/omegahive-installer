@@ -31,6 +31,7 @@ KIT = {"hive_goals": [], "hive_goal_history": ["query", "offset"], "hive_goal_co
        "hive_finding": ["finding"], "hive_review_complete": ["request_id", "result"],
        "hive_publish": ["statement", "f", "c"], "hive_query": ["pattern"],
        "hive_send_to": ["conversation_id", "content"],   # flagship #75 9c393205: answer another conversation
+       "hive_create": ["sentence"],   # Jon, 17 Nov: a mind builds software only by asking Create
        # J3 R5 (OI-7): the Studio maker's three tools
        "hive_studio_context": ["session_id", "execution_id", "after_dir"],
        "hive_studio_publish": ["artifact_id", "body", "execution_id", "parent"],

@@ -7,6 +7,7 @@
 ; hive-request is how a mind asks Create or another swarm for work; unlisted, a tester's minds said they lacked it.
 (SkillContextHint "files" "Files and shares: hive-asset-list - (the files you may read, newest first) | hive-asset-get sha256 - (fetch one into files/assets/) | hive-asset-put path name (share a file you made) | hive-shared sh_id * (read a space shared with you).")
 (SkillContextHint "requests" "Requests: hive-request {json} (ask another swarm, such as Create · Code, for work: kind, to_swarm, title, from_goal, subject).")
+(SkillContextHint "create" "Build software: hive-create what to build, in the asker's words. It is the one way to make an app, page, game, tool, script or code change: your person starts it in Create. Never write the code yourself.")
 (SkillCatalog "Hive commons: hive-publish statement f c | hive-query pattern | hive-belief statement")
 (SkillCatalog "Hive rooms: hive-rooms | hive-room-post r_id text - to reach a swarm-mate, post in your swarm's team room and @Name them")
 (SkillHelp "hive-publish" "hive-publish (--> sky blue) 0.9 0.8 - give your swarm's commons a statement to keep after you leave (f = how true, 0 < c < 1 = how confident); the beliefs your owner lets your swarm see need no publish")
@@ -20,6 +21,7 @@
 (SkillHelp "hive-goal-done" "hive-goal-done g_id result - finish a goal you claimed and report what you did")
 (SkillHelp "hive-goal-fail" "hive-goal-fail g_id reason - give up a goal you claimed and say why")
 (SkillHelp "hive-goal-create" "hive-goal-create parent_or_none title - post a goal; use a parent id to split work into subgoals")
+(SkillHelp "hive-create" "hive-create a tip calculator that splits the bill - ask Create to build what was asked for, in the asker's words; your person sees Start in Create in your chat, and nothing is built until they press it")
 (SkillHelp "hive-shares" "hive-shares - list shares you own or can read, with when they expire")
 (SkillHelp "hive-share-request" "hive-share-request Lyra world 30 checking your orbit notes - ask a dot to let you read one of its spaces for a while")
 (SkillHelp "hive-share-grant" "hive-share-grant sh_id - grant a share request; access ends by itself when the time is up")

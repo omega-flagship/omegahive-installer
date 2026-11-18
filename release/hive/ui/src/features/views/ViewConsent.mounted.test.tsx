@@ -1,11 +1,13 @@
 // @vitest-environment node
+// Purpose: no view runs until its person asks: the run card views.metta composes (view-run) stands in its place until Run
+// it, names its maker (or a mind, when the person can't see that mind) and the domains an HTML view would reach.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
 import { press } from '../../ui/miniDom.testkit'
 import { useHive } from '../../store/store'
 import type { HtmlArtifactView, MettaArtifactView } from '../../api/moneyWork'
 import { ViewFrame } from './ViewFrame'
-import { ReachPrompt, RunCard } from './ViewConsent'
+import { RunCard } from './ViewConsent'
 import { localPorts, mountPage, settle, type MountedPage } from './mountedView.testkit'
 import tipSource from '../../../../tests/fixtures/views-tip.metta?raw'
 
@@ -13,8 +15,8 @@ vi.setConfig({ testTimeout: 20_000 })
 
 /**
  * No view runs until its person asks (Jon's second review on omegahive#299, item 7): a card stands in its place until
- * Run it, the view's worker starts only then, and an HTML view asks before it reaches the domains it declares, for that
- * revision. The hive here is a stand-in that records each answer and hands out the text only after Run it, as
+ * Run it, and the view's worker starts only then. The prompt under an HTML view that asks before it loads from the domains
+ * it declares, for that revision, is view-host's (ViewFrame.mounted.test.tsx). The hive here is a stand-in that records each answer and hands out the text only after Run it, as
  * hive/core/app.py does. INVENTED mind, ids and domains.
  */
 const ID = `ar_${'6'.repeat(32)}`
@@ -64,22 +66,12 @@ describe('a view runs only when its person asks', () => {
   it('names the domains an HTML view would reach before it runs', async () => {
     await act(async () => page.root.render(<RunCard view={html({ connectDomains: ['https://api.example.com'], resourceDomains: ['https://cdn.example.org', 'https://api.example.com'] })} maker="Wren" onRun={async () => undefined} />))
     await settle()
-    expect(page.container.textContent).toContain('It asks to reach https://api.example.com, https://cdn.example.org. Until you allow that for this version, it runs with no network.')
+    expect(page.container.textContent).toContain("It asks to reach https://api.example.com, https://cdn.example.org. Until you allow that for this version, it can't load anything from there.")
   })
 
-  it('asks before an HTML view reaches its domains, for this version, and says when the answer could not be recorded', async () => {
-    const view = html({ connectDomains: ['https://api.example.com'] })
-    let allowed = 0
-    await act(async () => page.root.render(<ReachPrompt view={view} onAllow={async () => { allowed++; throw new Error('the hive is restarting') }} />))
+  it('names a mind the person cannot see as a mind', async () => {
+    await act(async () => page.root.render(<RunCard view={html({})} maker={null} onRun={async () => undefined} />))
     await settle()
-    expect(page.container.textContent).toContain('This view asks to reach https://api.example.com. It runs with no network until you allow that for this version.')
-    await act(async () => { press(buttons('Allow for this version')[0]) })
-    await settle()
-    expect(allowed).toBe(1)
-    expect(page.container.textContent).toContain('Could not allow it: the hive is restarting')
-    // nothing to ask once nothing waits
-    await act(async () => page.root.render(<ReachPrompt view={html({})} onAllow={async () => undefined} />))
-    await settle()
-    expect(page.container.textContent).toBe('')
+    expect(page.container.textContent).toContain('Tip calculator, a view made by a mind. It runs only when you ask it to.')
   })
 })

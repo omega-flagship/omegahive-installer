@@ -4,7 +4,7 @@ import { cx } from '../../lib/cx'
 import { useHive } from '../../store/store'
 import { Icon } from '../../ui/Icon'
 import { Button } from '../../ui/primitives'
-import { BAD, BETTER_ARROW, BETTER_TEXT, DEMO_LABEL, GOOD, fmtValue, formerlyText, formerNames, labText, needsText, STATUS, SURFACE, targetText, total } from './labUtil'
+import { BAD, BETTER_ARROW, BETTER_TEXT, DEMO_LABEL, GOOD, fmtValue, formerlyText, formerNames, labText, needsText, runRefusal, STATUS, SURFACE, targetText, total } from './labUtil'
 
 export function StatusIcon({ status, size = 22 }: { status: LabRunStatus | LabCaseStatus; size?: number }) {
   const s = STATUS[status]
@@ -142,25 +142,27 @@ export function Card({ title, subtitle, actions, children, className, tone, tour
   )
 }
 
-/** Run, or Cancel while running; disabled with the reason when requirements are missing. */
+/** Run, or Cancel while running; disabled with the reason when requirements are missing or only an admin may run it. */
 export function RunButton({ suite, size = 'md', className }: { suite: LabSuite; size?: 'md' | 'sm'; className?: string }) {
   const start = useHive((s) => s.startLab)
   const cancel = useHive((s) => s.cancelLab)
   const run = suite.last_run
   const running = run?.status === 'running'
+  const refused = runRefusal(suite)
   if (running) {
+    if (refused) return null   // a member watches a run; only an admin cancels it
     return (
       <Button variant="danger" icon="stop" onClick={(e) => (e.stopPropagation(), void cancel(run.id))} className={cx(size === 'sm' && 'min-h-9 px-3 text-[13px]', className)} aria-label={`Cancel ${suite.title}`}>
         Cancel
       </Button>
     )
   }
-  const reason = suite.runnable ? undefined : `Needs ${needsText(suite.missing)}`
+  const reason = refused ?? (suite.runnable ? undefined : `Needs ${needsText(suite.missing)}`)
   return (
     <Button
-      variant={suite.runnable ? 'subtle' : 'ghost'}
+      variant={reason ? 'ghost' : 'subtle'}
       icon="play"
-      disabled={!suite.runnable}
+      disabled={!!reason}
       title={reason ?? `Run ${suite.title}`}
       aria-label={reason ? `Run ${suite.title} (unavailable: ${reason})` : `Run ${suite.title}`}
       onClick={(e) => (e.stopPropagation(), void start(suite.id))}

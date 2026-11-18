@@ -62,31 +62,22 @@ def test_promoted_password_person_has_member_reads_and_no_admin_authority(hive):
     assert error.value.status in (403, 404)
 
 
-@pytest.mark.parametrize("kind", ["operator", "known-member", "unknown-member"])
+# Outside operator guesses are refused before anything is counted or compared (test_password_attempts_port.py).
+@pytest.mark.parametrize("kind", ["known-member", "unknown-member"])
 def test_concurrent_guesses_are_counted_before_another_can_be_verified(timed, monkeypatch, kind):
     import asyncio
     import httpx
     import time
     c, admin, _ = timed
     checked = []
-    if kind == "operator":
-        import hmac
-        original = hmac.compare_digest
-        def compare(left, right):
-            if right == b"pw":
-                checked.append(True)
-            return original(left, right)
-        monkeypatch.setattr(hmac, "compare_digest", compare)
-        body = {"password": "wrong"}
-    else:
-        if kind == "known-member":
-            add(c, admin, "ann@x.org")
-        def verify(email, password):
-            checked.append(email)
-            time.sleep(.05)  # verification yields while other HTTP requests reach the same public limiter
-            return None
-        monkeypatch.setattr(c.app.state.hive.people, "member_for_password", verify)
-        body = {"email": "ann@x.org" if kind == "known-member" else "nobody@x.org", "password": "wrong"}
+    if kind == "known-member":
+        add(c, admin, "ann@x.org")
+    def verify(email, password):
+        checked.append(email)
+        time.sleep(.05)  # verification yields while other HTTP requests reach the same public limiter
+        return None
+    monkeypatch.setattr(c.app.state.hive.people, "member_for_password", verify)
+    body = {"email": "ann@x.org" if kind == "known-member" else "nobody@x.org", "password": "wrong"}
     async def burst():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=c.app), base_url=LOCAL) as client:
             return await asyncio.gather(*(client.post("/omegahive/api/auth/login", json=body) for _ in range(24)))

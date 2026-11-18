@@ -60,15 +60,16 @@ describe('the Artifacts and findings page, composed by MeTTa', () => {
     apps: { garden: 'Garden Planner', omegadesign: 'Design' },
   }
   const ready: Loaded = { status: 'ready', list }
-  const compose = (loaded: Loaded, f: ArtifactFilter = NO_FILTER, look = 'classic') => {
+  // the page adds artifacts.link-missing when it was opened at #/artifacts/<id> for one this person can't open
+  const compose = (loaded: Loaded, f: ArtifactFilter = NO_FILTER, look = 'classic', linkMissing = false) => {
     const d = artifactsScreen(loaded, f, names, now)
-    return { d, plan: space.compose('artifacts', look, d.facts) }
+    return { d, plan: space.compose('artifacts', look, { ...d.facts, flags: { ...d.facts.flags, 'artifacts.link-missing': linkMissing } }) }
   }
-  const draw = (loaded: Loaded, f: ArtifactFilter = NO_FILTER, look = 'classic') => {
-    const { d, plan } = compose(loaded, f, look)
+  const draw = (loaded: Loaded, f: ArtifactFilter = NO_FILTER, look = 'classic', linkMissing = false) => {
+    const { d, plan } = compose(loaded, f, look, linkMissing)
     return renderToStaticMarkup(createElement(Screen, { plan, host: { data: d.data, framed: true, onOpen: () => undefined, onInput: () => undefined } }))
   }
-  const orders = (loaded: Loaded, f: ArtifactFilter = NO_FILTER) => compose(loaded, f).plan.parts.map((p) => p.order)
+  const orders = (loaded: Loaded, f: ArtifactFilter = NO_FILTER, linkMissing = false) => compose(loaded, f, 'classic', linkMissing).plan.parts.map((p) => p.order)
 
   it('lists every row newest first, each with its kind, who made it, where, and its own open button', () => {
     const html = draw(ready)
@@ -135,6 +136,14 @@ describe('the Artifacts and findings page, composed by MeTTa', () => {
     expect(stale).toContain('Tide tables')
   })
 
+  it('a link naming an artifact this person cannot open says so, above the list it opened on', () => {
+    const html = draw(ready, NO_FILTER, 'classic', true)
+    expect(html).toContain('<p role="status"')
+    expect(html).toContain('That artifact is no longer here, or not shown to you.')
+    expect(html.indexOf('no longer here')).toBeLessThan(html.indexOf('water the beds'))
+    expect(draw(ready)).not.toContain('no longer here')
+  })
+
   it('every part can be reached', () => {
     const seen = new Set<number>()
     const cases: [Loaded, ArtifactFilter?][] = [
@@ -144,7 +153,8 @@ describe('the Artifacts and findings page, composed by MeTTa', () => {
       [{ status: 'ready', list: { missing: [], items: list.items.filter((a) => !a.app) } }],
     ]
     for (const [l, f] of cases) for (const o of orders(l, f)) seen.add(o)
-    expect([...seen].sort((a, b) => a - b)).toEqual([4, 5, 7, 8, 9, 11, 12, 14, 15, 20, 30, 31, 32, 40, 41, 42, 90])
+    for (const o of orders(ready, NO_FILTER, true)) seen.add(o)
+    expect([...seen].sort((a, b) => a - b)).toEqual([2, 4, 5, 7, 8, 9, 11, 12, 14, 15, 20, 30, 31, 32, 40, 41, 42, 90])
     expect(space.orders('artifacts')).toEqual([...seen].sort((a, b) => a - b))
   })
 

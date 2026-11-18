@@ -123,8 +123,9 @@ def owner_scope(owner, mind, swarm, swarm_minds, allowed=None):
 
     Always: a named owner; the mind is theirs; the swarm exists, is not archived, and the owner created it or it is
     their personal swarm.
-    - by default: the swarm is private, personal or not (a shared or public personal swarm is refused), and every live
-      mind in it is the owner's;
+    - by default: the swarm is private, personal or not (a shared or public personal swarm is refused), every live
+      mind in it is the owner's, and the mind itself is private: whoever sees a mind may message it whatever its swarm
+      (Visibility.check_path), and its own model calls are then answered for the owner (Hive.user_for);
     - opted in (its id in the instance's <PREFIX>_SWARMS): a swarm the owner created, whatever its visibility (for
       example Create's Code team, which the foundation makes public). The calling mind must still be the owner's, and
       who calls is still held to the owner by the caller checks.
@@ -139,8 +140,9 @@ def owner_scope(owner, mind, swarm, swarm_minds, allowed=None):
     if swarm.get("id") in allowed:
         return created
     private = (swarm.get("visibility") or "public") == "private"
+    alone = (mind.get("visibility") or "public") == "private"   # as Visibility.sees reads it: no value is public
     theirs = created or swarm.get("personal_of") == owner
-    return private and theirs and bool(swarm_minds) and all(o == owner for o in swarm_minds)
+    return private and alone and theirs and bool(swarm_minds) and all(o == owner for o in swarm_minds)
 
 
 TABLE = "subscription_cli_attempts"

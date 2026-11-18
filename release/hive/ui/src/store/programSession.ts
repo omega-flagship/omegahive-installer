@@ -1,4 +1,4 @@
-import type { ActionResult, ProgramAction, ProgramStage, WorkGraph, WorkItem, WorkSource } from '../api/types'
+import { paramWords, type ActionResult, type ProgramAction, type ProgramStage, type WorkGraph, type WorkItem, type WorkSource } from '../api/types'
 import { plural } from '../lib/plural'
 
 /**
@@ -24,14 +24,19 @@ export interface ProgramNotice {
   body?: string
 }
 
-/** A `needs_input` result waiting for the person. */
+/**
+ * What a person is asked for an action: the inputs it declares, asked before it is sent, or what the app asked for in a
+ * `needs_input` result, waiting for the person.
+ */
 export interface PendingInput {
   action: string
   items: string[]
-  /** param -> what is missing (from the result), merged with the action's own params description. */
+  /** param -> its words: what is missing (from the result), else what the action's declaration says it means. */
   needs: Record<string, string>
   message?: string
   params: Record<string, unknown>
+  /** The app asked (needs_input); false while the page asks first, from the action's declaration. */
+  asked: boolean
 }
 
 /** What `inspect-source` returned, shown in the sources rail. */
@@ -324,11 +329,11 @@ export function applyResult(s: ProgramSession, r: ActionResult, ctx: ActContext)
       return { session: next, refresh: false }
     }
     case 'needs_input': {
-      const needs: Record<string, string> = { ...(ctx.def?.params ?? {}), ...(r.needs ?? {}) }
-      // only what the result asks for, described by the action's own params when it has words for it
-      const asked = Object.keys(r.needs ?? {}).length ? Object.keys(r.needs ?? {}) : Object.keys(needs)
-      const described = Object.fromEntries(asked.map((k) => [k, r.needs?.[k] || ctx.def?.params?.[k] || k]))
-      next = { ...next, input: { action: ctx.action, items: ctx.items, needs: described, message: r.message, params: ctx.params } }
+      const declared = ctx.def?.params ?? {}
+      // only what the result asks for (else every declared input), in the app's words, else the declaration's
+      const asked = Object.keys(r.needs ?? {}).length ? Object.keys(r.needs ?? {}) : Object.keys(declared)
+      const described = Object.fromEntries(asked.map((k) => [k, r.needs?.[k] || paramWords(declared[k]) || k]))
+      next = { ...next, input: { action: ctx.action, items: ctx.items, needs: described, message: r.message, params: ctx.params, asked: true } }
       return { session: next, refresh: false }
     }
     case 'stale': {
@@ -355,11 +360,33 @@ export function applyResult(s: ProgramSession, r: ActionResult, ctx: ActContext)
   }
 }
 
-/** Actions that apply to every selected item's kind (absent applies_to = any kind). */
+/**
+ * The actions for a selection: those whose applies_to holds every selected kind (absent: any kind). With nothing
+ * selected, those that need no item: applies_to absent, or empty (an action on the app itself, such as adding the
+ * first server), never one that names the kinds it takes.
+ */
 export function actionsFor(actions: ProgramAction[], kinds: string[]): ProgramAction[] {
-  if (!kinds.length) return []
+  if (!kinds.length) return actions.filter((a) => !a.applies_to?.length)
   return actions.filter((a) => !a.applies_to || kinds.every((k) => a.applies_to!.includes(k)))
 }
+
+/**
+ * The actions a graph lists on the app itself: with nothing in focus, every one that needs no item (actionsFor with no
+ * kinds); beside a subject, those that act on the app alone (applies_to empty), since the subject's own bar already
+ * offers the ones that take any kind.
+ */
+export function actionsOnApp(actions: ProgramAction[], subjectKinds: string[]): ProgramAction[] {
+  return subjectKinds.length ? actions.filter((a) => Array.isArray(a.applies_to) && a.applies_to.length === 0) : actionsFor(actions, [])
+}
+
+/** The form the page asks first for an action that declares its inputs: each of them, nothing sent yet. */
+export function declaredInput(def: ProgramAction, items: string[]): PendingInput {
+  const declared = def.params ?? {}
+  return { action: def.id, items: [...items], needs: Object.fromEntries(Object.keys(declared).map((k) => [k, paramWords(declared[k]) || k])), params: {}, asked: false }
+}
+
+/** Whether a page asks for an action's inputs before it is sent: it declares at least one. */
+export const asksFirst = (def: ProgramAction | undefined): boolean => !!def?.params && Object.keys(def.params).length > 0
 
 /** A short count of changes between two snapshots, for the revision notice. */
 export function diffSummary(prev: WorkGraph | null, next: WorkGraph): string | null {

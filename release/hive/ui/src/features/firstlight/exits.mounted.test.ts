@@ -261,7 +261,7 @@ describe('First Light keeps its place until the person sets it aside or their om
     expect(all((n) => n.hasAttribute('data-fl-inline-key'))).toHaveLength(1)
     expect(words(all((n) => n.hasAttribute('data-u1-provider'))[0])).toBe("Wren can't think yet. Paste an OpenRouter key above to give it a way to think.")
     // it asks for an OpenRouter key by name, with OpenRouter's keys page and why: one key reaches every model
-    expect(text('label')).toContain('OpenRouter API key')
+    expect(text('label')).toContain('OpenRouter key')
     expect(words(all((n) => n.hasAttribute('data-fl-key-lead'))[0])).toBe('One OpenRouter key reaches every model. Get one at openrouter.ai/keys.')
     expect(all((n) => n.tagName === 'A').map((a) => a.getAttribute('href'))).toContain('https://openrouter.ai/keys')
     expect(all((n) => n.getAttribute('role') === 'radio')).toEqual([]) // no provider to pick: the key's start decides
@@ -283,7 +283,7 @@ describe('First Light keeps its place until the person sets it aside or their om
     expect(hive.progress).toMatchObject({ status: 'finished', beats_done: expect.arrayContaining(['ask', 'hello']) })
     expect(hive.log.filter((x) => x.startsWith('limit:'))).toEqual([]) // nobody changed the limit, so Wake wrote none
     expect(doc.body.textContent).toContain('Hello, I am Wren.')
-    expect(doc.body.textContent).toContain('First Light is saved as complete.')
+    expect(doc.body.textContent).toContain('First Light is finished.')
     // finished: the ways out and the later parts appear
     expect(enabled(button('Continue'))).toBe(true)
     expect(buttons().map(words)).not.toContain('Not now') // nothing is left to set aside
@@ -297,7 +297,7 @@ describe('First Light keeps its place until the person sets it aside or their om
   it('a key from another provider still works: its start names the provider and the mind moves onto it', async () => {
     await open()
     await type(field((n) => reactProps(n).type === 'password'), ANTHROPIC_KEY)
-    expect(text('label')).toContain('Anthropic API key')
+    expect(text('label')).toContain('Anthropic key')
     expect(text('p')).toContain('Anthropic key, read from how it starts (sk-ant-).')
     await tap(button('Add key'))
     expect(added).toEqual([{ provider: 'anthropic', key: ANTHROPIC_KEY, default: true }])
@@ -353,6 +353,29 @@ describe('First Light keeps its place until the person sets it aside or their om
     expect(added).toEqual([])
   })
 
+  it('Paste asks for a check before a word whose start names no provider goes, and says when the copy holds two keys', async () => {
+    await open()
+    const key = () => field((n) => reactProps(n).type === 'password')
+    const hint = () => all((n) => n.hasAttribute('data-fl-paste-hint')).map(words)
+    const copied = (text: string) => vi.stubGlobal('navigator', { userAgent: 'invented', platform: 'Win32', clipboard: { readText: async () => text } })
+    // two different keys: nothing goes in, and the field says to copy just one
+    copied(`old: ${KEY}\nnew: ${ANTHROPIC_KEY}`)
+    await tap(button('Paste an OpenRouter key'))
+    expect(reactProps(key()).value).toBe('')
+    expect(hint()).toEqual(['What you copied has more than one key in it. Copy just the one you want, then press Paste again.'])
+    // one long word whose start names no provider, which may be a copied password: it goes in, to be checked first
+    copied('correct-horse-battery-staple')
+    await tap(button('Paste an OpenRouter key'))
+    expect(reactProps(key()).value).toBe('correct-horse-battery-staple')
+    expect(doc.activeElement).toBe(key())
+    expect(hint()).toEqual(['Check this is your OpenRouter key before pressing Add key.'])
+    // a word that only starts like a key is not one
+    copied('pip install sk-learn')
+    await tap(button('Paste an OpenRouter key'))
+    expect(hint()).toEqual(["There's no key in what you copied. Copy the key, then press Paste again, or click the field and press Ctrl and V together."])
+    expect(added).toEqual([])
+  })
+
   it('a model on this computer, chosen in the card, is how it thinks', async () => {
     const local = provider({ name: 'local', label: 'Model on this computer', local: true, needs_key: false, connected: true, configured: true, readiness: 'unverified', models: ['llama-invented'] })
     useHive.setState({ providers: [mock, anthropic, local], models: [echo, { id: 'local/llama-invented', provider: 'local', label: 'llama-invented', local: true }] })
@@ -361,6 +384,24 @@ describe('First Light keeps its place until the person sets it aside or their om
     await tap(button('llama-invented'))
     expect(hive.model).toBe('local/llama-invented')
     expect(words(all((n) => n.hasAttribute('data-u1-model'))[0])).toBe('A model on this computer')
+    expect(enabled(button('Wake Omega'))).toBe(true)
+    expect(nav.calls).toEqual([])
+  })
+
+  it('when the hive couldn’t say how its providers stand, Check again reads them again and Wake opens once they answer', async () => {
+    // the first read of the hive's providers failed, so the hive store holds none (its resync after a gap reads them
+    // again only once read) and the card can't tell whether a mind on Anthropic can think
+    const answering = { ...anthropic, connected: true, configured: true, readiness: 'answered' as const, answer_ready: true, source: 'stored', keys: 1 }
+    Object.assign(hive, { listProviders: async () => { hive.log.push('providers'); return [mock, answering] } })
+    hive.model = 'anthropic/claude-opus-5-5'
+    useHive.setState({ providers: null })
+    await open()
+    expect(text('p')).toContain('We couldn’t check whether it can think. Check again, or choose another way for it to think.')
+    expect(enabled(button('Wake Omega'))).toBe(false)
+    await tap(button('Check again'))
+    expect(hive.log).toContain('providers')
+    expect(text('p')).not.toContain('We couldn’t check whether it can think')
+    expect(buttons().map(words)).not.toContain('Check again')
     expect(enabled(button('Wake Omega'))).toBe(true)
     expect(nav.calls).toEqual([])
   })
@@ -461,7 +502,7 @@ describe('First Light can always be finished, whatever the hive’s state', () =
     expect(hive.log.some((x) => x.startsWith('wake:'))).toBe(false) // the archived personal mind is left as it is
     expect(words(all((n) => n.hasAttribute('data-u1-ended'))[0])).toContain('Helper is awake.')
     expect(hive.progress.status).toBe('finished')
-    expect(doc.body.textContent).toContain('First Light is saved as complete.')
+    expect(doc.body.textContent).toContain('First Light is finished.')
     expect(enabled(button('Continue'))).toBe(true)
     await tap(button('Continue'))
     expect(useFirstLight.getState().run).toBeNull()

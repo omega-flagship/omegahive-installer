@@ -16,8 +16,10 @@
  *    _apply_grant/_apply_revoke do; a principal with no grant is denied by hive-publish! itself;
  *  - vocabulary terms are added with hive-vocab-add!; stamps "ev:agent:n" become sorted (ev agent n); truth values are
  *    read back to 6 places.
- * One difference, chosen by the caller and said there: service.publish(open_vocab=True) first adds a member's symbols
- * to the vocabulary; the sim publishes as open_vocab=False, so a term outside the swarm's vocabulary is quarantined.
+ * One difference, chosen by the caller and said there: the hive publishes a mind's statement with
+ * service.publish(open_vocab=True), which first adds its symbols to the vocabulary, only when the mind acts for someone
+ * who controls its swarm (Hive.grows_vocabulary); the sim publishes as open_vocab=False, so a term outside the swarm's
+ * vocabulary is quarantined.
  *
  * Synchronous, on the page's thread: the sim itself runs there, and the engine is quick (about 15 ms to load the
  * libraries and about 1 ms an assertion, measured in r1). The DATA is invented; the reasoning and the rules are real.

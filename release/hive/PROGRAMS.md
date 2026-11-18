@@ -61,11 +61,13 @@ def act(ctx, action: str, items: list[str], params: dict) -> Result   # sync or 
    is one of `unfold`, `map`, `compare`, `detail`. `focus` is an item id, or
    None for the program's starting view. The return is **always a full
    snapshot** in v0.1.
-3. **Act.** The person picks an action on some items. The host checks
+3. **Act.** The person picks an action on some items, or on the app itself,
+   and gives the inputs it declares (§2). The host checks
    permission, then calls `act` with `params.base_revision` set to the
    revision the person was looking at.
-4. **Reload.** `POST /api/programs/reload` re-reads the code. Enable and
-   disable are operator switches.
+4. **Reload.** `POST /api/programs/reload` re-reads the code. Reload, enable
+   and disable are an admin's, as installing and uninstalling are; anyone else
+   gets 403 `admin_only`.
 
 ## 2. Shapes
 
@@ -84,6 +86,30 @@ def act(ctx, action: str, items: list[str], params: dict) -> Result   # sync or 
 - `polarity` is one of `support`, `oppose`, `qualify` or `neutral`. Polarity
   drives the compare stage. Relation ids are the program's own: for example
   `supports`, `contradicts`, `qualifies` and `depends_on`.
+- `applies_to` lists the kinds of item an action takes. Without it the action
+  takes any kind, or none. `[]` means it acts on the app itself and takes no
+  item, such as adding the first server before any exists. The graph page
+  offers an action on a selection when every selected kind is in its
+  `applies_to`, and lists the actions that need no item under "In this app".
+- `params` names the inputs an action takes. Each one is either the words for
+  what it means, or one form field in the shape MCP's elicitation form mode
+  declares a property (spec 2025-11-25): a `string`, `number`, `integer` or
+  `boolean`, one choice of several strings (`enum`, or `oneOf` with each
+  `const` and its `title`), or several of them (`"type": "array"` with `items`
+  holding `enum` or `anyOf`). Each may carry `title`, `description`, `default`
+  and, for a number, `minimum` and `maximum`. When a person runs an action that
+  declares inputs, the page asks for them first, filling in the defaults, and
+  sends each in its declared type. A blank field is left out, so the app reads
+  an input it did not get as missing and answers `needs_input` or `refused`.
+  The app checks what it gets, as an MCP server does.
+
+  ```jsonc
+  { "id": "connect", "label": "Sign in to this server", "applies_to": ["server"],
+    "params": { "flow": { "type": "string", "title": "How",
+                          "oneOf": [{ "const": "device", "title": "A code to enter" },
+                                    { "const": "browser", "title": "Sign in in this browser" }],
+                          "default": "device" } } }
+  ```
 
 ```jsonc
 // WorkGraph: a full snapshot
@@ -426,9 +452,10 @@ Not in this route:
 - **Test apps** (optional manifest key): `"test": true` marks an app that exists to test hosts and programs,
   such as the contract fixture. The host loads and serves it like any other app, and `GET /api/programs` gives
   `test: true` for it (`false` for every other app, including any value but `true`). One host function,
-  `programs.is_test_app`, decides it: the manifest's mark, or `NAMED_TEST_APPS` for the code project test launcher,
-  whose reviewed, pinned release does not carry the mark yet (editing its manifest would change the digest its pin
-  holds). A person's app list (`GET /api/me/apps`) never lists a test app. The UI lists one in All apps, labelled
+  `programs.is_test_app`, decides it from the manifest's mark alone. The code project test launcher carries the mark
+  in its own `plugin.json`; adding it changed the launcher's release digest, so a hive whose `HIVE_APP_PINS` holds
+  the launcher's earlier digest refuses it until that pin is updated. A person's app list (`GET /api/me/apps`) never
+  lists a test app. The UI lists one in All apps, labelled
   as one, and leaves it out of the everyday menus: the side rail, the phone's More sheet, the command palette's
   list of pages and a swarm's Open in menu. Searching the palette still finds it.
 
@@ -479,7 +506,7 @@ none is needed for this test.
 | `POST /api/programs/{id}/view` | `{swarm_id, focus?, stage?}` → `WorkGraph` (validated, with `contract`, `program`, `stage` added) |
 | `POST /api/programs/{id}/act` | `{swarm_id, action, items, params?, base_revision?, confirm_token?}` → `Result` (`confirm_token`: §9d) |
 | `POST /api/programs/{id}/confirm` | *§9d.* `{swarm_id, action, payload, payload_digest}` → `{confirm_token, expires_at, expires_in}`; person sessions only |
-| `POST /api/programs/{id}/enable` · `/disable` · `POST /api/programs/reload` | operator switches |
+| `POST /api/programs/{id}/enable` · `/disable` · `POST /api/programs/reload` | admin only (403 `admin_only`) |
 | *(any app route above)* | a host-refused app (§4 release pins) answers 403 `release_mismatch`, `duplicate_discovery`, `pin_conflict`, `unpinned` or `pins_invalid`; `GET /api/programs` lists it with `enabled: false` and that `error` |
 | `GET /api/swarms/{swarm_id}/artifacts?kind=&limit=` | *Candidate (§9).* → `[{artifact_id, kind, title, revision, digest, created_at, revised_at}]`: the swarm's own artifacts at their latest revision, metadata only (no body, no author), for a viewer who sees the swarm (404 otherwise) |
 

@@ -5,7 +5,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import { KEY_PROVIDERS, keyForm, keyIn, readKey } from './keyProvider'
+import { KEY_MIN_LENGTH, KEY_PROVIDERS, keyForm, keyIn, readKey } from './keyProvider'
 
 // AddKey reads the store through the hook (invented: a hive with no keys yet); the rest of the store is the real one
 vi.mock('../../store/store', async (importOriginal) => {
@@ -74,21 +74,35 @@ describe('a key’s provider, read from how it starts', () => {
 describe('the key in text a person copied', () => {
   const every = Object.values(SHAPED).flat()
   const messages: ((k: string) => string)[] = [(k) => `Here is your key: ${k}.`, (k) => `"${k}"`, (k) => `(${k}), thanks`, (k) => `chave:\n${k}\nobrigada!`, (k) => `${k} ${k}`]
+  // words that start like a provider's keys, whatever follows: the seeded tails are 1 to 60 characters long
+  const prefixed = [...every, ...TAILS.map((t) => 'sk-or-' + t), ...TAILS.map((t) => 'sk-ant-' + t)]
   it('is the text itself when it is one key, without the spaces and line breaks around it', () => {
     for (const k of every) {
-      expect(keyIn(k)).toBe(k)
-      expect(keyIn(` \n${k}\t`)).toBe(k)
+      expect(keyIn(k)).toEqual({ kind: 'named', key: k })
+      expect(keyIn(` \n${k}\t`)).toEqual({ kind: 'named', key: k })
     }
   })
-  it('is the one key inside a message, without the quotes and stops around it, whatever its tail', () => {
-    for (const k of [...every, ...TAILS.map((t) => 'sk-or-' + t), ...TAILS.map((t) => 'sk-ant-' + t)])
-      for (const say of messages) expect(keyIn(say(k)), say(k)).toBe(k)
+  it('is the one key inside a message, without the quotes and stops around it, when it is at least 20 characters long', () => {
+    const long = prefixed.filter((k) => k.length >= KEY_MIN_LENGTH)
+    expect(long.length).toBeGreaterThan(800)
+    for (const k of long) for (const say of messages) expect(keyIn(say(k)), say(k)).toEqual({ kind: 'named', key: k })
   })
-  it('is one long word whose start names no provider', () => {
-    expect(keyIn('AIzaSyEXAMPLE0000000000000')).toBe('AIzaSyEXAMPLE0000000000000')
+  it('is no key for a shorter word that only starts like one, such as sk-learn', () => {
+    const short = [...prefixed.filter((k) => k.length < KEY_MIN_LENGTH), 'sk-learn', 'sk-or-' + 'v1-short']
+    expect(short.length).toBeGreaterThan(100)
+    for (const k of short) for (const say of [...messages, (w: string) => `pip install ${w}`]) expect(keyIn(say(k)), say(k)).toEqual({ kind: 'none' })
   })
-  it('is none for words with no key, a short word, a bare prefix, or two different keys', () => {
-    for (const t of ['', '   ', 'lunch at noon', 'hello', 'see sk-', 'abc123', `${SHAPED.openrouter[0]} ${SHAPED.anthropic[0]}`]) expect(keyIn(t), t).toBeNull()
+  it('is an unnamed word when the text is one long word whose start names no provider, which may be a password', () => {
+    for (const w of ['AIzaSyEXAMPLE0000000000000', 'correct-horse-battery-staple']) expect(keyIn(` ${w}\n`), w).toEqual({ kind: 'unnamed', key: w })
+  })
+  it('is several keys when the text holds two different ones, and one key when it holds the same one twice', () => {
+    expect(keyIn(`${SHAPED.openrouter[0]} ${SHAPED.anthropic[0]}`)).toEqual({ kind: 'several' })
+    expect(keyIn(`old: sk-or-v1-${'1'.repeat(64)}\nnew: sk-or-v1-${'2'.repeat(64)}`)).toEqual({ kind: 'several' })
+    expect(keyIn(`${SHAPED.openrouter[0]}\n${SHAPED.openrouter[0]}`)).toEqual({ kind: 'named', key: SHAPED.openrouter[0] })
+  })
+  it('is no key for words with none, a short word, a bare prefix, or a long word inside a sentence', () => {
+    for (const t of ['', '   ', 'lunch at noon', 'hello', 'see sk-', 'abc123', 'my password is correct-horse-battery-staple'])
+      expect(keyIn(t), t).toEqual({ kind: 'none' })
   })
 })
 

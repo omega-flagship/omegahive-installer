@@ -17,8 +17,11 @@ export interface Composed { data: Record<string, unknown>; facts: ScreenFacts }
 export interface StackItem { id: string; plan: ScreenPlan; data: Record<string, unknown>; look?: AppCardLook | null }
 export type AppCardLook = { style?: CSSProperties; type?: string; motif?: string }
 export type LookOf = (p: Program) => AppCardLook | null
-/** What this hive offers here: the record of what apps did, and where each app runs. */
-export interface Can { activity: boolean; access: boolean }
+/**
+ * What this hive offers here, and to whom: the record of what apps did, where each app runs, and whether the person
+ * looking is an admin (lib/useAdmin adminViewOf), who alone turns apps on and off and reloads them.
+ */
+export interface Can { activity: boolean; access: boolean; admin: boolean }
 /** The title of the designed identity an app is shown in, or null when the person wears the app's own. */
 export type IdentityOf = (p: Program) => string | null
 
@@ -56,6 +59,7 @@ export function appItem(p: Program, can: Can, identityOf: IdentityOf, compose: C
         'app.described': about !== '',
         'app.test': p.test === true,
         'can.access': can.access,
+        'viewer.admin': can.admin,
       },
     }),
     look: lookOf(p),
@@ -81,15 +85,15 @@ export function programsScreen(programs: Program[] | null, error: string | null,
     data: { 'programs.all': apps },
     facts: {
       counts: { 'programs.all': apps.length },
-      flags: { 'can.activity': can.activity, 'can.access': can.access },
+      flags: { 'can.activity': can.activity, 'can.access': can.access, 'viewer.admin': can.admin },
     },
   })
 }
 
 /** What a press on the Apps screens asks for: the app it came from is the first id in its scope (its card). */
-export type Press = { kind: 'retry' } | { kind: 'switch'; id: string; on: boolean } | { kind: 'open'; id: string } | { kind: 'access'; id: string }
+export type Press = { kind: 'retry' } | { kind: 'reload' } | { kind: 'switch'; id: string; on: boolean } | { kind: 'open'; id: string } | { kind: 'access'; id: string }
 export function pressed(action: string, item: Record<string, unknown>, value?: boolean): Press | null {
-  if (action === 'retry') return { kind: 'retry' }
+  if (action === 'retry' || action === 'reload') return { kind: action }
   const id = Array.isArray(item.scope) && item.scope.length ? String(item.scope[0]) : ''
   if (!id) return null
   if (action === 'switch') return { kind: 'switch', id, on: value === true }

@@ -14,6 +14,7 @@ import pytest
 
 from hive.core import conductor as cmod
 from hive.core.config import Provider
+from hive.core.refusals import refused
 from hive.core.gateway import signal_send
 from hive.tests.test_ask import ask, world
 from hive.tests.test_core_api import client  # noqa: F401  (fixture)
@@ -1528,3 +1529,30 @@ def test_make_is_described_by_the_view_help_the_mind_reads():
     make = next(t for t in cmod.tools() if t["function"]["name"] == "make")["function"]
     assert help_text in make["description"] and make["parameters"]["properties"]["kind"]["enum"] == list(cmod.MAKE_KINDS)
     assert "make what they ask you to make" in cmod.STEERING and "never write it out as code" in cmod.STEERING
+# ---- free inference's refusals end a turn in their own words (refusals.py's table) -------------------------------------
+
+@pytest.mark.parametrize("where,code,slots", [
+    ("send", "free_inference_busy", {}),
+    ("estimate", "free_inference_daily_cap", {"limit": 200}),
+])
+def test_an_ask_turn_refused_by_free_inference_ends_in_its_plain_words(client, on, monkeypatch, where, code, slots):  # noqa: F811
+    refusal = refused(code, 429, **slots)
+    words = refusal.message
+    if where == "estimate":
+        def refuse(*args, **kwargs):
+            raise refusal
+        monkeypatch.setattr(client.app.state.gateway, "estimate", refuse)
+        script(client, Script("never asked"))
+    else:
+        class Busy(Script):
+            async def chat(self, agent, body):
+                await signal_send()   # as the real transport does at its send boundary
+                self.bodies.append(body)
+                raise refusal
+        script(client, Busy())
+    op = f"op-free-refused-{where}"
+    assert ask(client, on["ann"], op, context=on["ctx"]).status_code == 202
+    fs = wait(on["hive"], op, closed)
+    assert fs[-1]["outcome"] == "error" and fs[-1]["error"] == code   # a stop the page words, never a failed turn
+    assert fs[-1]["remedy"] == "wait"   # what the person can do, so the page offers it and says the refusal only once
+    assert fs[-2]["text"] == words

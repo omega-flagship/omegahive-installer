@@ -22,17 +22,13 @@ import traceback
 
 BUILTIN_DIR = pathlib.Path(__file__).resolve().parents[1] / "plugins"
 PIN_REFUSALS = {"release_mismatch", "duplicate_discovery", "pin_conflict", "unpinned", "pins_invalid"}
-#: Host test scaffolding still known by name: the code project test launcher runs only as a reviewed, pinned release,
-#: and marking its plugin.json would change the digest its pin and review hold, so it is named here until a reviewed
-#: release of it carries "test": true. Every other test app says so in its own manifest.
-NAMED_TEST_APPS = frozenset({"code-project-test"})
 
 
-def is_test_app(pid, manifest):
+def is_test_app(manifest):
     """Host test scaffolding that ships in the release so its contract tests can run, never shown to people as an app
-    (Jon 11-04): its plugin.json says "test": true (only true counts), or NAMED_TEST_APPS still names it. All apps
-    lists it; a person's app list and the everyday menus do not."""
-    return manifest.get("test") is True or pid in NAMED_TEST_APPS
+    (Jon 11-04): its plugin.json says "test": true (only true counts). All apps lists it; a person's app list and the
+    everyday menus do not."""
+    return manifest.get("test") is True
 
 
 class ValidationCheck(list):
@@ -730,8 +726,9 @@ class Programs:
         return self._load(folder, folder / "plugin.json", source, refusal=self._pin_refusal(pid, folder, source, copies))
 
     def _missing(self, pid):
+        # no manifest was read, so nothing marks it a test app; its error keeps it out of every menu
         return {"id": pid, "name": pid, "version": "0", "description": "", "icon": "spark", "capabilities": [],
-                "source": "pinned", "path": None, "module": None, "digest": None, "test": is_test_app(pid, {}),
+                "source": "pinned", "path": None, "module": None, "digest": None, "test": False,
                 "error": "release_mismatch: not found at its pinned release"}
 
     def _pin_refusal(self, pid, folder, source, copies=1):
@@ -783,7 +780,7 @@ class Programs:
         try:
             manifest = json.loads(manifest_bytes)
             entry.update({k: manifest[k] for k in ("id", "name", "version", "description", "icon") if k in manifest})
-            entry["test"] = is_test_app(entry["id"], manifest)
+            entry["test"] = is_test_app(manifest)
             if refusal:                            # listed with its reason; nothing of it is imported
                 entry["error"] = refusal
                 return entry

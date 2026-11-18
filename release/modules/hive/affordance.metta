@@ -39,6 +39,18 @@
 (SkillCardLine "hive-goal-done" "hive-goal-done g_id result - report a finished goal")
 (SkillCardLine "hive-goal-create" "hive-goal-create parent title - post a goal or subgoal")
 (Effect "hive-goal-claim" "swarm-goal-claimed")
+
+; hive-create is how a mind builds software: Jon in the testers' group, 17 Nov, "Route them only through create".
+; It is found by the words a mind asked to build something searches for.
+(SkillTopic "hive-create" "hive-create")
+(SkillTopic "hive-create" "create")
+(SkillTopic "hive-create" "build")
+(SkillTopic "hive-create" "code")
+(SkillTopic "hive-create" "app")
+(SkillTopic "hive-create" "software")
+(PreferredWhen "hive-create" "build-or-change-software" 0.95 "the one way to build software here: Create's code minds build it once your person starts it")
+(Effect "hive-create" "create-offered-to-person")
+(SkillCardLine "hive-create" "hive-create <what to build> is the one way to build software here (an app, page, game, tool, script or any change to code): say what to build in the asker's words and the hive offers it to your person in Create, whose code minds build it under its safeguards; never write the code yourself.")
 (Effect "hive-goal-done" "swarm-goal-finished")
 (SkillTopic "hive-shares" "hive-shares")
 (SkillTopic "hive-shares" "share")

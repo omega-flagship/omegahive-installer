@@ -11,8 +11,6 @@ export interface WordsProps {
   said?: boolean
   /** offer the words as written: by default, when they held notation that is said in English */
   written?: boolean
-  /** what the disclosure names ("Show as written") */
-  label?: string
   /** the place's own class for the as-written disclosure, set on its span (the commons style it) */
   className?: string
   /** how the place marks plain words, as the Ask lights up what was asked about; chips and the words as written are

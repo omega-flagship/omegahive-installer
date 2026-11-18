@@ -331,7 +331,7 @@ class Budgets:
         - bounded: the call would be admitted (its own cap, or paid_without_cap) AND a governing limit holds it;
         - host_paid: on a key no named person owns, paid by `user` from the hive's money, and bounded;
         - reason: why not, when it is not (the refusal's code), else None."""
-        from .config import is_subscription
+        from .config import is_free, is_subscription
         from .gateway import GatewayError, split_model
         from .hive import HiveError
         hive = self.hive
@@ -353,6 +353,13 @@ class Budgets:
                 gw.admit_subscription(agent, principal=user, provider=provider_name)
                 return dict(out, payer=hive.ownhive.owner(), own_key=True, subscription=True, payer_mode="plan",
                             bounded=True)
+            if is_free(provider_name):
+                # free inference (free_inference.py): the deploy's key, never a paying key in the ring; the person the call
+                # is for pays nothing, bounded by their model calls a day. Settles exactly as the gateway would admit it now
+                gw.enforce_egress(agent, provider_name)
+                payer = gw.free_gate.person_for(agent, principal=user) if gw.free_gate is not None else None
+                gw.admit_free(agent, principal=user)
+                return dict(out, payer=payer, payer_mode="free", bounded=True)
             if provider.local:
                 return dict(out, free=True, bounded=True)
             if not provider.priced(name):
@@ -488,7 +495,7 @@ class Budgets:
         from .cost_reservations import host_admission_view
         from .gateway import GatewayError
         settle = self.settlement(agent, agent["model"], turn_bound=False)
-        if settle["free"] or settle.get("subscription"):
+        if settle["free"] or settle.get("subscription") or settle.get("payer_mode") == "free":
             return {"free": True, "reason": None, "limits": []}
         # the chat route's own lookups (app.py chat_completions): its paying key, that key's owner, who pays
         gw = self.hive.gateway

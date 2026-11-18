@@ -18,7 +18,8 @@ const compose: Compose = (screen, facts) => {
   seen.set(screen, orders)
   return plan
 }
-const ALL: Can = { activity: true, access: true }
+const ALL: Can = { activity: true, access: true, admin: true }
+const MEMBER: Can = { ...ALL, admin: false }
 const own: IdentityOf = () => null
 
 const app = (id: string, name: string, over: Partial<Program> = {}): Program => ({
@@ -53,7 +54,7 @@ const labels = (html: string, attr: string) => [...html.matchAll(new RegExp(`${a
 describe('the Apps page, composed by MeTTa', () => {
   it('while loading: the words on what apps are, and a placeholder', () => {
     const { plan, html } = page(null)
-    expect(plan.parts.map((p) => p.block)).toEqual(['header', 'waiting', 'island', 'island'])
+    expect(plan.parts.map((p) => p.block)).toEqual(['header', 'buttons', 'waiting', 'island', 'island'])
     expect(html).toContain('A program supplies the meaning of a piece of work')
     expect(html).toContain('aria-label="Loading apps"')
     expect(html).not.toContain('<h2 class="text-xl')   // the page frame shows the title
@@ -71,6 +72,9 @@ describe('the Apps page, composed by MeTTa', () => {
     expect(html).toContain('No programs found')
     expect(html).toContain('then Reload.')
     expect(plan.parts.some((p) => p.block === 'stack')).toBe(false)
+    const member = page([], null, MEMBER).html   // a member can't reload: who adds apps instead
+    expect(member).toContain('An admin adds apps to this hive.')
+    expect(member).not.toContain('then Reload.')
   })
   it('a refresh that failed keeps the apps on screen and says so, with Retry', () => {
     const { html } = page(APPS, 'The hive did not answer')
@@ -112,19 +116,33 @@ describe('the Apps page, composed by MeTTa', () => {
     expect(garden).toContain('aria-checked="false"')
     expect(ledger).toMatch(/style="background[^>]*>.*Open<\/button>/)   // the primary fill
   })
+  it('an admin reloads app code from the page; a member sees how each app stands and opens it, with no switch or Reload', () => {
+    const admin = page(APPS)
+    expect(admin.html).toContain('aria-label="Re-read app code from disk"')
+    expect(admin.html).toMatch(/>Reload<\/button>/)
+    const member = page(APPS, null, MEMBER)
+    const [ledger, garden, almanac] = rows(member.html, 'app-controls')
+    expect(labels(ledger, 'aria-label')).toEqual(['Where Ledger runs', 'Open Ledger'])
+    expect(labels(garden, 'aria-label')).toEqual(['Where Garden runs'])
+    expect(labels(almanac, 'aria-label')).toEqual(['Where Almanac runs'])
+    expect(member.html).not.toContain('aria-checked')                   // no switch on any card
+    expect(member.html).not.toContain('Re-read app code from disk')     // and no Reload
+    expect(member.html).toMatch(/text-good[^>]*>Enabled</)              // how each app stands still shows
+    expect(member.html).toMatch(/>Disabled by an operator</)
+  })
   it('without the record of app actions or app access: no activity, no Where it runs, no access dialog', () => {
     const islands = { 'app-activity': createElement('h2', { id: 'app-activity-h' }, 'What apps did lately'), 'app-access': createElement('div', { role: 'dialog' }, 'Where Ledger runs') }
     const full = page(APPS, null, ALL, { islands })
     expect(full.html).toContain('id="app-activity-h"')
     expect(full.html.indexOf('id="app-activity-h"')).toBeGreaterThan(full.html.indexOf('Almanac'))
     expect(full.html).toContain('role="dialog"')
-    const bare = page(APPS, null, { activity: false, access: false }, { islands })
+    const bare = page(APPS, null, { activity: false, access: false, admin: true }, { islands })
     expect(bare.html).not.toContain('app-activity-h')
     expect(bare.html).not.toContain('role="dialog"')
     expect(bare.html).not.toContain('runs')
     expect(labels(rows(bare.html, 'app-controls')[0], 'aria-label')).toEqual(['Disable Ledger', 'Open Ledger'])
     // access alone (an older hive with activations but no activity record)
-    const access = page(APPS, null, { activity: false, access: true }, { islands })
+    const access = page(APPS, null, { activity: false, access: true, admin: true }, { islands })
     expect(access.html).not.toContain('app-activity-h')
     expect(access.html).toContain('aria-label="Where Ledger runs"')
   })
@@ -141,6 +159,7 @@ describe('the Apps page, composed by MeTTa', () => {
     expect(got.map(([a, it, v]) => pressed(a, it, v))).toEqual([
       { kind: 'switch', id: 'ledger', on: false }, { kind: 'open', id: 'ledger' }, { kind: 'access', id: 'ledger' }])
     expect(pressed('retry', {})).toEqual({ kind: 'retry' })
+    expect(pressed('reload', {})).toEqual({ kind: 'reload' })
     expect(pressed('open', {})).toBeNull()
     expect(pressed('sweep', { scope: ['ledger'] })).toBeNull()
   })
@@ -175,12 +194,12 @@ describe('each card wears its app (the per-item look)', () => {
     const app = (over: Record<string, unknown>) => ({ id: 'ledger', name: 'Ledger', version: '1.0.0', source: 'built-in', description: 'Invented sums', enabled: true, error: null, capabilities: [], icon: 'coin', ...over }) as never
     const lookOf = () => ({ style: { '--app-accent': '#123456' } as never, type: 'serif', motif: 'grid' })
     const compose = (screen: string, facts: Parameters<ScreensSpace['compose']>[2]) => ScreensSpace.open().compose(screen, 'classic', facts)
-    const { data, facts } = programsScreen([app({})], null, { activity: false, access: false }, () => null, compose, lookOf)
+    const { data, facts } = programsScreen([app({})], null, { activity: false, access: false, admin: false }, () => null, compose, lookOf)
     const html = renderToStaticMarkup(createElement(Screen, { plan: compose('programs', facts), host: { data, framed: true } }))
     expect(html).toMatch(/<li[^>]*data-app-type="serif"[^>]*style="--app-accent:#123456"/)
     expect(html).toContain('class="app-motif" data-motif="grid"')
     expect(html).toMatch(/text-accent shadow-[^"]*"><svg/)          // the lit icon tile
-    const off = programsScreen([app({ enabled: false })], null, { activity: false, access: false }, () => null, compose, () => null)
+    const off = programsScreen([app({ enabled: false })], null, { activity: false, access: false, admin: false }, () => null, compose, () => null)
     const offHtml = renderToStaticMarkup(createElement(Screen, { plan: compose('programs', off.facts), host: { data: off.data, framed: true } }))
     expect(offHtml).not.toContain('data-app-type')
     expect(offHtml).toMatch(/text-ink-3"><svg/)                         // an app that is off: the tile is quiet

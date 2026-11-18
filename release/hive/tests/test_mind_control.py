@@ -46,6 +46,11 @@ def w(client, monkeypatch):
     sup.prepare = lambda agent, token: tokens.__setitem__(agent["id"], token)
     sup.driver = lambda agent: type("D", (), {"name": "local", "status": staticmethod(lambda aid: "running" if aid in running else "absent")})()
     monkeypatch.setattr(hive.health, "mind_id", lambda: None)
+    # These tests are about the capability the hive delegates, not about the Code service installed on the machine
+    # they run on: require_intended_release reads that machine's Code user unit and refused on CI's runner and on
+    # developers' machines alike (service_release_mismatch), failing the eight delegated-capability tests in every
+    # full run of main. Its own tests check it; here it is set aside, as test_agent_code_relay does.
+    monkeypatch.setattr(hive.code, "require_intended_release", lambda: None)
     x = World()
     x.hive, x.running, x.tokens, x.client = hive, running, tokens, client
     x.jon, x.ann, x.mia = person(hive, "u_jon"), person(hive, "u_ann"), person(hive, "u_mia", role="member")

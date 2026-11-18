@@ -1,5 +1,6 @@
 /**
- * First Light, playing (one journey at a time). It runs the script (script.ts) on the real hive screens against a
+ * Purpose: coordinate one person's First Light journey and observe its saved progress.
+ * It runs the script (script.ts) on the real hive screens against a
  * host: the live one (the person's own setup, through the routes in host.ts) or, on the simulator, the invented demo
  * one (demo.ts, labelled "simulated").
  *
@@ -21,13 +22,13 @@ import { applyAction } from '../guided/driver'
 import { useHive } from '../../store/store'
 import { DEMO_APPS, DemoHost, type Persona } from './demo'
 import { ASK_HOW_MAX, ASK_NAME_MAX, BLANK_PROGRESS, FlRefusal, asRefusal, cleanWords, firstName, liveHost, personaEditable, readProgress, startApp, type AppRef, type AskShape, type BoundWrite, type FlClient, type FlHost, type Hello, type MindRef, type MonthlyLimit, type Progress, type ProgressWrite, type Setup } from './host'
-import { profileSaveCopy, unknownChargeCopy, type ProfileSaveState } from './conditionalCopy'
+import { profileSaveCopy, unknownChargeCopy, unknownModelCopy, type ProfileSaveState } from './conditionalCopy'
 import { saveAskObserved } from './profileWrites'
 import { refusalSentence, limitLine, payerLine, cents, TRANSIENT_MS, type Who } from './honest'
 import { afterBeat, holds, beatsFromRecord, freshBeats, nextIndex, prevIndex, resumeBeat, roundResolved, startOf, waitsForPerson, type Beats, type Facts } from './journey'
 import { BEAT_LINES, R2_BEATS, stepsFor, type Beat, type FlPath, type FlStep } from './script'
 import { ownMinds, type OwnMind, type OwnMinds } from './ownMinds'
-import { canThink } from './plans'
+import { canThink, freeLapse, onFreeWay } from './plans'
 import { noteFlRecord } from './door'
 import type { ProviderStatus } from '../../api/types'
 
@@ -216,7 +217,7 @@ let seq = 0
 type LimitIntent = { amount: number; settled: boolean }
 type LimitRead = Map<string, { intent: LimitIntent; settledAtStart: boolean }>
 const limitIntents = new Map<string, LimitIntent>()
-const UNKNOWN_LIMIT = "We couldn't confirm a spending limit here."
+const UNKNOWN_LIMIT = "We couldn't read your monthly limit."
 function limitScope(host: FlHost): string | null {
   try {
     const value = host.retainedMutationScope?.()
@@ -253,7 +254,12 @@ let lookChanged: () => void = () => {}
 const noFacts = (): FlFacts => ({ name: null, host: 'your host', ownKeys: 0, limit: null, onlyMind: null, mind: null, lookKept: false, lookName: null, greeted: false, mindOnScreen: null, apps: null, askSaved: false, askHow: null, hiveMonthUsd: null, minds: null, admin: false })
 
 export const factsOf = (r: Run): Facts => ({ path: r.path, onlyMind: r.facts.onlyMind, limit: r.facts.limit, lookKept: r.facts.lookKept, greeted: r.facts.greeted, beats: r.beats, apps: r.facts.apps ? r.facts.apps.length : null, askSaved: r.facts.askSaved })
-export const whoOf = (r: Run): Who => ({ path: r.path, host: r.facts.host, ownKeys: r.facts.ownKeys })
+/** Who pays, as the cards say it. free: the mind thinks with the hive's free inference now, judged against the host's
+ * providers (plans.freeLapse), so a free route that lapsed is never said to pay. */
+export const whoOf = (r: Run, providers: readonly ProviderStatus[] | null | undefined = useHive.getState().providers): Who => {
+  const model = r.u1?.model ?? null
+  return { path: r.path, host: r.facts.host, ownKeys: r.facts.ownKeys, free: onFreeWay(model) && freeLapse(model, providers) === null }
+}
 export const stepOf = (r: Run | null): FlStep | undefined => (r ? r.steps[r.i] : undefined)
 /**
  * First Light is finished once the host records it so: the person named their omega and it woke and greeted them
@@ -357,7 +363,7 @@ export const useFirstLight = create<FlState>()((set, get) => {
     // Explicit invented DemoHost only; never a live-kind facade or a string mode claim.
     if (r.mode === 'demo' && r.host instanceof DemoHost) return write(() => r.host.setOwnLimit(amount))
     return write(async () => {
-      if (path === 'guest' || setup.own_keys <= 0 || setup.limit === null || (setup.limit.enforced && setup.limit.enforced_by !== 'own')) throw new FlRefusal(403, 'own_key_required', 'Your own-key monthly scope is not confirmed.')
+      if (path === 'guest' || setup.own_keys <= 0 || setup.limit === null || (setup.limit.enforced && setup.limit.enforced_by !== 'own')) throw new FlRefusal(403, 'own_key_required', 'We couldn’t read your monthly limit on your own keys.')
       const key = limitScope(r.host)
       if (key === null || limitIntents.has(key)) throw new FlRefusal(0, 'limit_unconfirmed', UNKNOWN_LIMIT)
       const intent: LimitIntent = { amount, settled: false }
@@ -429,7 +435,7 @@ export const useFirstLight = create<FlState>()((set, get) => {
         // A typed stop can precede the store's identity observer. Release only this still-current lock;
         // a stale old attempt cannot clear the completion state of a newer token.
         if (!ownsLock()) return
-        patch(id, (x) => ({ u1: { ...x.u1!, completion: 'unknown', completionToken: undefined, error: stopped(e) ? 'Completion stopped before it could be confirmed. Save completion again; no further Wake request is sent.' : `${beats.includes('hello') ? 'Your mind answered, but First' : 'First'} Light completion could not be confirmed. Save completion again; this only records First Light progress.` } }))
+        patch(id, (x) => ({ u1: { ...x.u1!, completion: 'unknown', completionToken: undefined, error: stopped(e) ? 'Saving First Light as finished stopped partway. Try saving again; your mind won’t be woken twice.' : `${beats.includes('hello') ? 'Your mind answered, but we' : 'We'} couldn’t save First Light as finished. Try saving again; it only saves where you are in First Light.` } }))
       }
     })
     saving = completion
@@ -527,17 +533,17 @@ export const useFirstLight = create<FlState>()((set, get) => {
     const r = live(id)
     const mindId = r?.facts.mind?.id
     if (!r?.u1 || !mindId || !r.host.profile) {
-      if (r?.u1) patch(id, (x) => ({ u1: { ...x.u1!, context: 'unavailable', model: null, error: 'This hive could not provide your personal mind and current model. Read it again or open its settings.' } }))
+      if (r?.u1) patch(id, (x) => ({ u1: { ...x.u1!, context: 'unavailable', model: null, error: 'We couldn’t read your mind or how it thinks. Check again, or open its page.' } }))
       return
     }
     const op = bindOperation(() => { const x = live(id); return !!x?.u1 && x.token === token && x.status === 'playing' })
     try {
       const p = await op.write(() => r.host.profile!(mindId))
-      if (p.id !== mindId || typeof p.name !== 'string' || typeof p.persona !== 'string') throw new FlRefusal(409, 'mind_changed', 'Your personal mind changed. Read its settings again.')
-      patch(id, (x) => x.facts.mind?.id !== mindId ? {} : ({ facts: { ...x.facts, mind: { ...x.facts.mind!, name: p.name }, askHow: p.persona }, u1: { ...x.u1!, context: p.model ? 'known' : 'unavailable', model: p.model, error: p.model ? null : 'The hive has not identified a model for this omega. Choose how it thinks below.' } }))
+      if (p.id !== mindId || typeof p.name !== 'string' || typeof p.persona !== 'string') throw new FlRefusal(409, 'mind_changed', 'Your mind was changed somewhere else. Check again.')
+      patch(id, (x) => x.facts.mind?.id !== mindId ? {} : ({ facts: { ...x.facts, mind: { ...x.facts.mind!, name: p.name }, askHow: p.persona }, u1: { ...x.u1!, context: p.model ? 'known' : 'unavailable', model: p.model, error: p.model ? null : unknownModelCopy } }))
     } catch (e) {
       if (!op.current() || stopped(e)) return
-      patch(id, (x) => ({ u1: { ...x.u1!, context: 'unavailable', model: null, error: 'Your current purpose and model could not be read. Nothing will be replaced with a guessed default.' } }))
+      patch(id, (x) => ({ u1: { ...x.u1!, context: 'unavailable', model: null, error: 'We couldn’t read what your mind is for or how it thinks. Nothing will be replaced.' } }))
     }
   }
 
@@ -624,7 +630,7 @@ export const useFirstLight = create<FlState>()((set, get) => {
     stopPoll()
     const prior = live(id)
     if (prior?.u1 && h.mind.id !== prior.facts.mind?.id) {
-      patch(id, (x) => ({ u1: { ...x.u1!, context: 'unavailable', busy: false, error: 'Your personal mind changed. The Wake result could not be confirmed; read it again.' } }))
+      patch(id, (x) => ({ u1: { ...x.u1!, context: 'unavailable', busy: false, error: 'Your mind was changed somewhere else, so we can’t tell whether it woke. Check again.' } }))
       return
     }
     patch(id, (r) => ({ facts: { ...r.facts, greeted: true }, hello: { ...r.hello, hello: h, at: Date.now(), busy: false } }))
@@ -772,20 +778,20 @@ export const useFirstLight = create<FlState>()((set, get) => {
       if (pending.limitUncertain) return fail(UNKNOWN_LIMIT)
       const own = await op.write(() => r.host.own())
       const profile = await op.write(() => r.host.profile!(mindId))
-      if (profile.id !== mindId || typeof profile.name !== 'string' || typeof profile.persona !== 'string') throw new FlRefusal(409, 'mind_changed', 'Your personal mind could not be identified. Read it again.')
+      if (profile.id !== mindId || typeof profile.name !== 'string' || typeof profile.persona !== 'string') throw new FlRefusal(409, 'mind_changed', 'We couldn’t tell which mind is yours. Check again.')
       if (profile.id !== mindId || profile.name !== r.facts.mind?.name || profile.model !== r.u1.model || profile.persona !== r.facts.askHow || pathOf(own) !== r.path || fresh.own_keys !== r.facts.ownKeys || fresh.limit?.enforced !== r.facts.limit?.enforced || fresh.limit?.enforced_by !== r.facts.limit?.enforced_by || fresh.limit?.limit_usd !== r.facts.limit?.limit_usd) {
         patch(r.id, (x) => ({ path: pathOf(own), facts: { ...x.facts, host: pathOf(own) === 'guest' ? fresh.limit?.host_name ?? own.owner_name ?? 'your host' : own.owner_name ?? x.facts.host, ownKeys: fresh.own_keys, limit: fresh.limit, askHow: profile.persona, mind: { ...x.facts.mind!, name: profile.name } }, u1: { ...x.u1!, context: profile.model ? 'known' : 'unavailable', model: profile.model } }))
         return fail('Your model, purpose or spending context changed. Review the current values and press Wake again.')
       }
       if (monthly !== null) {
-        if (r.path === 'guest' || fresh.own_keys <= 0 || fresh.limit === null || (fresh.limit.enforced && fresh.limit.enforced_by !== 'own')) return fail('An own-key monthly total cannot be changed until its own-key scope is confirmed. Your host controls any guest allowance.')
+        if (r.path === 'guest' || fresh.own_keys <= 0 || fresh.limit === null || (fresh.limit.enforced && fresh.limit.enforced_by !== 'own')) return fail('Your monthly limit can’t be changed until we can read it. In someone else’s hive, they set your limit.')
         if (fresh.limit.enforced_by !== 'own' || fresh.limit.limit_usd !== monthly || !fresh.limit.enforced) {
           await limitRequest(() => dispatchOwnLimit(r, monthly, (send) => op.write(send), fresh, pathOf(own)))
           const sampled = sampleLimits()
           const confirmed = await limitRequest(() => r.host.setup())
           const pending = acceptLimitRead(r, sampled, confirmed)
           patch(r.id, (x) => ({ facts: { ...x.facts, ownKeys: confirmed.own_keys, limit: confirmed.limit }, limit: { ...x.limit, ...pending }, u1: { ...x.u1!, ...pending } }))
-          if (pending.limitUncertain || !confirmed.limit?.enforced || confirmed.limit.enforced_by !== 'own' || confirmed.limit.limit_usd !== monthly) return fail('The monthly-total change could not be confirmed. It may have been saved; nothing was woken. Read it again.')
+          if (pending.limitUncertain || !confirmed.limit?.enforced || confirmed.limit.enforced_by !== 'own' || confirmed.limit.limit_usd !== monthly) return fail('We couldn’t tell whether your new monthly limit was saved. Nothing was woken. Check again.')
           limitSaved = true
         }
       }
@@ -797,10 +803,10 @@ export const useFirstLight = create<FlState>()((set, get) => {
       patch(r.id, (x) => ({ facts: { ...x.facts, mind, askSaved: true, askHow: how ?? x.facts.askHow }, u1: { ...x.u1!, profileSaved: true } }))
       const postedAt = Date.now()
       const existing = await op.write(() => r.host.helloGet())
-      if (existing && existing.mind.id !== mindId) throw new FlRefusal(409, 'mind_changed', 'The recorded greeting is for a changed omega. Read it again.')
+      if (existing && existing.mind.id !== mindId) throw new FlRefusal(409, 'mind_changed', 'That hello came from a mind that has since changed. Check again.')
       if (existing && (existing.state === 'greeted' || !existing.retryable || !r.u1.wakeUnknown)) {
         patch(r.id, (x) => ({ hello: { ...x.hello, hello: existing, postedAt, at: postedAt, busy: false }, u1: { ...x.u1!, phase: 'waiting', wakeUnknown: existing.retryable } }))
-        setBeat(r.id, 'ask', 'ready', 'Your profile choices were recorded.')
+        setBeat(r.id, 'ask', 'ready', 'Your choices are saved.')
         if (existing.state === 'greeted' && existing.greeting) greeted(r.id, existing)
         else startPoll(r.id)
         return
@@ -808,9 +814,9 @@ export const useFirstLight = create<FlState>()((set, get) => {
       patch(r.id, (x) => ({ hello: { ...x.hello, postedAt, at: postedAt, busy: true, refusal: null }, u1: { ...x.u1!, phase: 'waiting' } }))
       wakeSent = true
       const hello = await op.write(() => r.host.helloWake())
-      if (hello.mind.id !== mindId) throw new FlRefusal(409, 'mind_changed', 'The Wake result is for a changed omega. Read it again before continuing.')
+      if (hello.mind.id !== mindId) throw new FlRefusal(409, 'mind_changed', 'Your mind changed while it was waking. Check again before you carry on.')
       patch(r.id, (x) => ({ hello: { ...x.hello, hello, busy: false, at: Date.now() }, u1: { ...x.u1!, wakeUnknown: hello.retryable } }))
-      setBeat(r.id, 'ask', 'ready', 'Your profile choices were recorded.')
+      setBeat(r.id, 'ask', 'ready', 'Your choices are saved.')
       if (hello.state === 'greeted' && hello.greeting) greeted(r.id, hello)
       else startPoll(r.id)
     } catch (e) {
@@ -1201,7 +1207,8 @@ export const useFirstLight = create<FlState>()((set, get) => {
       const r = get().run
       const u = r?.u1
       const mindId = r?.facts.mind?.id
-      if (!r || !u || !mindId || r.mode !== 'live' || r.path !== 'owner' || r.status !== 'playing' || u.busy || u.phase !== 'editing' || !r.host.useModel) return
+      // a plan or a key the hive pays with is the owner's to choose; free inference is everyone's (plans.freeWay)
+      if (!r || !u || !mindId || r.mode !== 'live' || (r.path !== 'owner' && !onFreeWay(model)) || r.status !== 'playing' || u.busy || u.phase !== 'editing' || !r.host.useModel) return
       patch(r.id, (x) => ({ u1: { ...x.u1!, busy: true, error: null } }))
       const op = bindOperation(() => { const x = live(r.id); return !!x && x.status === 'playing' && x.facts.mind?.id === mindId })
       try {

@@ -22,7 +22,7 @@ import { DESKTOP_TICKER_BOTTOM, PHONE_TICKER_BOTTOM } from './tickerPlace'
 import { shown } from '../lib/displayName'
 import { usePhase } from './phase'
 import { clearSigninError, GOOGLE_REQUIRED, readSigninError, signinErrorWords } from './signinError'
-import { signinForm } from './signinForm'
+import { signinForm, signinWays, type SigninWays } from './signinForm'
 
 // the explainer (copy for every view) loads with the views, not with the shell
 const ViewInfo = lazy(() => import('../tour/ViewInfo').then((r) => ({ default: r.ViewInfo })))
@@ -250,9 +250,11 @@ export function Login() {
     )
   }, [client])
 
-  if (methods && !methods.password) {
-    const params = new URLSearchParams(window.location.search)
-    const inviteToken = params.get('invite')
+  // what counts where this page was opened; until the hive has said, the operator's form, as before
+  const ways: SigninWays = methods ? signinWays(methods) : { google: null, members: false, operator: true }
+  const inviteToken = new URLSearchParams(window.location.search).get('invite')
+  // no password counts here, or an invitation, which is accepted with Google: the Google card
+  if (methods && ((!ways.members && !ways.operator) || (inviteToken && ways.google))) {
     const inviteUrl = methods.sso.invite_login_url ?? methods.sso.login_url
     const url = inviteToken ? (inviteUrl ? `${inviteUrl}?invite=${encodeURIComponent(inviteToken)}` : null) : (methods.sso.login_url ?? null)
     if (inviteToken) return <InviteCard token={inviteToken} url={url} />
@@ -264,9 +266,7 @@ export function Login() {
           <p className="mt-1.5 text-sm text-ink-3">Sign in with the Google account your invitation was sent to.</p>
           <SigninNotice code={signinError} />
           {url ? (
-            <a href={url} className="mt-6 flex min-h-12 w-full items-center justify-center gap-2.5 rounded-xl bg-white px-4 text-[15px] font-semibold text-[#1f1f1f] shadow-[0_8px_30px_-8px_color-mix(in_oklab,var(--color-ink)_40%,transparent)] transition-transform active:scale-[0.98]">
-              <GoogleMark /> Continue with Google
-            </a>
+            <GoogleButton href={url} top="mt-6" />
           ) : (
             <p className="mt-6 text-sm text-warn">Sign-in is not set up on this hive yet.</p>
           )}
@@ -276,8 +276,7 @@ export function Login() {
     )
   }
 
-  const members = methods?.member_password === true
-  const form = signinForm(members, operator)
+  const form = signinForm(ways, operator)
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     if (!client || !pw) return
@@ -309,8 +308,10 @@ export function Login() {
       >
         <Brand signin={reach} />
         <h1 className="mt-6 font-display text-2xl font-semibold tracking-tight">{form.heading}</h1>
-        <p className="mt-1.5 text-sm text-ink-3">{form.line}</p>
-        <SigninNotice code={signinError} googleUrl={methods?.sso.login_url ?? null} />
+        {/* from outside, people continue with Google; the form below is for test and agent accounts */}
+        {ways.google && <GoogleButton href={ways.google} top="mt-6" />}
+        <p className={ways.google ? 'mt-5 text-sm text-ink-3' : 'mt-1.5 text-sm text-ink-3'}>{form.line}</p>
+        <SigninNotice code={signinError} googleUrl={ways.google ? null : (methods?.sso.login_url ?? null)} />
         {form.email && (
           <label className="mt-6 block">
             <span className="eyebrow">Email</span>
@@ -376,6 +377,15 @@ function GoogleMark() {
   )
 }
 
+/** Continue with Google: the sign-in card's button, the one beside the password form, and the notice's. */
+function GoogleButton({ href, top }: { href: string; top: string }) {
+  return (
+    <a href={href} className={`${top} flex min-h-12 w-full items-center justify-center gap-2.5 rounded-xl bg-white px-4 text-[15px] font-semibold text-[#1f1f1f] shadow-[0_8px_30px_-8px_color-mix(in_oklab,var(--color-ink)_40%,transparent)] transition-transform active:scale-[0.98]`}>
+      <GoogleMark /> Continue with Google
+    </a>
+  )
+}
+
 /**
  * A sign-in problem in plain words (signinError.ts): fixed words for the code, never the code or anything else from
  * the address. `googleUrl`: for "this account signs in with Google", the Google button (pages that show none).
@@ -388,11 +398,7 @@ export function SigninNotice({ code, googleUrl }: { code: string | null; googleU
       <p className="mt-3 rounded-xl border border-bad/30 bg-bad/10 px-3 py-2 text-[13px] text-bad" role="alert">
         {words}
       </p>
-      {code === GOOGLE_REQUIRED && googleUrl && (
-        <a href={googleUrl} className="mt-3 flex min-h-12 w-full items-center justify-center gap-2.5 rounded-xl bg-white px-4 text-[15px] font-semibold text-[#1f1f1f] shadow-[0_8px_30px_-8px_color-mix(in_oklab,var(--color-ink)_40%,transparent)] transition-transform active:scale-[0.98]">
-          <GoogleMark /> Continue with Google
-        </a>
-      )}
+      {code === GOOGLE_REQUIRED && googleUrl && <GoogleButton href={googleUrl} top="mt-3" />}
     </>
   )
 }

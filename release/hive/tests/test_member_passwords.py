@@ -3,7 +3,9 @@
 An admin adds a member by email; the hive makes the password and shows it once. The member signs in with email +
 password as that person (never admin, never user:operator). Admins reset or remove it. From outside it works only
 while Google is not configured and HIVE_PUBLIC_PASSWORD=1 (the two states .github-private#64 deploys); once Google is
-on, the same email continues with Google as the same person row. Wrong guesses from outside wait per account.
+on, the same email continues with Google as the same person row, except the one test account HIVE_TEST_ACCOUNT_EMAIL
+and HIVE_TEST_ACCOUNT_PASSWORD name (T-329-env), which keeps its password from outside beside Google while
+HIVE_PUBLIC_PASSWORD=1. Wrong guesses from outside wait per account.
 """
 
 import logging
@@ -35,9 +37,17 @@ GOOGLE = {"HIVE_GOOGLE_CLIENT_ID": "cid", "HIVE_GOOGLE_CLIENT_SECRET": "shh",
           "HIVE_GOOGLE_REDIRECT_URI": "https://hive.example/omegahive/api/auth/google/callback"}
 
 
-def make_app(monkeypatch, data=None, google=False, public=True, clock=None):
+TESS, TESS_PW = "tess@x.org", "tess-test-password-1"
+TESTER = (TESS, TESS_PW)
+
+
+def make_app(monkeypatch, data=None, google=False, public=True, clock=None, tester=None):
     """A hive under /omegahive in one of the states #64 deploys: Google off + HIVE_PUBLIC_PASSWORD=1 (default), or
-    Google on without it. ``data`` reuses a data directory, as a redeploy does."""
+    Google on without it. ``data`` reuses a data directory, as a redeploy does. ``tester`` is ``(email, password)``
+    for HIVE_TEST_ACCOUNT_EMAIL / _PASSWORD (None for either leaves it unset); by default neither is set."""
+    email, password = tester or (None, None)
+    for k, v in (("HIVE_TEST_ACCOUNT_EMAIL", email), ("HIVE_TEST_ACCOUNT_PASSWORD", password)):
+        monkeypatch.setenv(k, v) if v is not None else monkeypatch.delenv(k, raising=False)
     for k, v in GOOGLE.items():
         monkeypatch.setenv(k, v) if google else monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("HIVE_PUBLIC_PASSWORD", "1") if public else monkeypatch.delenv("HIVE_PUBLIC_PASSWORD", raising=False)
@@ -75,6 +85,15 @@ def add(c, admin, email="ann@x.org", **extra):
 
 def login(c, email, password, outside=False):
     return c.post((OUT if outside else "") + "/api/auth/login", json={"email": email, "password": password})
+
+
+def person(c, admin, email):
+    """The people row for ``email``, as the admin's people list shows it."""
+    return next(p for p in c.get("/api/people", headers=admin).json()["people"] if p["email"] == email)
+
+
+def stored_hash(c, email):
+    return c.app.state.hive.db.one("SELECT password_hash FROM people WHERE email = ?", (email,))["password_hash"]
 
 
 def assert_three_words(password):
@@ -334,7 +353,7 @@ def test_rotating_the_operator_password_keeps_member_sessions(hive):
     assert c.get("/api/auth/me", headers=member).status_code == 200
 
 
-# ---- 4. Google on: outside member password login refused; the same email continues with Google -----------------
+# ---- 4. Google on: only test accounts keep the outside password; everyone else continues with Google ------------
 
 def test_google_off_and_public_password_member_works_from_outside(hive):
     """4.1 (trap T2): the outside session counts on later outside requests."""
@@ -355,19 +374,315 @@ def test_google_on_refuses_outside_member_login_like_the_operators(monkeypatch):
         assert answers[0].json()["error"]["code"] == "password_login_local_only"
 
 
-def test_google_on_with_public_password_still_refuses_outside_member_login(monkeypatch):
-    """4.5 (not a #64 state): members are refused from outside exactly as in 4.2; the operator password keeps working
-    from outside, as HIVE_PUBLIC_PASSWORD=1 says."""
-    with TestClient(make_app(monkeypatch, google=True, public=True), base_url="https://hive.example") as c:
+def test_google_on_with_public_password_refuses_everyone_but_the_test_account_with_one_answer(monkeypatch):
+    """4.5: with Google on and HIVE_PUBLIC_PASSWORD=1, an ordinary member's right password, an unknown email and the
+    test account's wrong password get one 401, byte-identical and naming Google, so the answers never tell which
+    email is the test account; locally the member's password still works (4.6); the operator password login is
+    refused from outside like everywhere else outside."""
+    with TestClient(make_app(monkeypatch, google=True, public=True, tester=TESTER), base_url="https://hive.example") as c:
         admin = admin_headers(c)
         ann = add(c, admin)
         token = login(c, "ann@x.org", ann["password"]).json()["token"]   # 4.6: locally it still works
-        refused = [login(c, "ann@x.org", ann["password"], outside=True), login(c, "nobody@x.org", "x", outside=True)]
-        assert {r.status_code for r in refused} == {403} and len({r.content for r in refused}) == 1
-        assert refused[0].json()["error"]["code"] == "password_login_local_only"
+        refused = [login(c, "ann@x.org", ann["password"], outside=True), login(c, "nobody@x.org", "x", outside=True),
+                   login(c, TESS, "wrong", outside=True)]
+        assert {r.status_code for r in refused} == {401} and len({r.content for r in refused}) == 1
+        assert "google" in refused[0].json()["error"]["message"].lower()
         assert c.get(OUT + "/api/auth/me", headers=bearer(token)).status_code == 401
         assert c.get("/api/auth/me", headers=bearer(token)).status_code == 200
-        assert c.post(OUT + "/api/auth/login", json={"password": "pw"}).status_code == 200
+        assert c.post(OUT + "/api/auth/login", json={"password": "pw"}).status_code == 403
+
+
+def test_the_test_account_is_made_at_start_and_signs_in_from_outside_beside_google(monkeypatch, caplog):
+    """T-329-env (#336): HIVE_TEST_ACCOUNT_EMAIL + HIVE_TEST_ACCOUNT_PASSWORD make the one test account at start, a
+    member marked test_account with that password; with Google on and HIVE_PUBLIC_PASSWORD=1 it signs in from outside
+    as that member, and the session counts from outside. The logs name the variable, never the password."""
+    with caplog.at_level(logging.DEBUG):
+        app = make_app(monkeypatch, google=True, public=True, tester=TESTER)
+    with TestClient(app, base_url="https://hive.example") as c:
+        tess = person(c, admin_headers(c), TESS)
+        assert tess["role"] == "member" and tess["test_account"] is True and tess["password_set"] is True
+        assert tess["invited_by"] == "config:HIVE_TEST_ACCOUNT_EMAIL"
+        r = login(c, TESS, TESS_PW, outside=True)
+        assert r.status_code == 200, r.text
+        me = c.get(OUT + "/api/auth/me", headers=bearer(r.json()["token"])).json()
+        assert me["principal"] == f"user:{tess['id']}" and me["role"] == "member" and me["kind"] == "member_password"
+    assert any("HIVE_TEST_ACCOUNT_EMAIL" in rec.getMessage() for rec in caplog.records)
+    assert not any(TESS_PW in rec.getMessage() for rec in caplog.records)
+
+
+def test_the_test_account_signed_in_from_outside_never_runs_an_admins_hive_wide_routes(monkeypatch):
+    """The test account is a member: signed in from outside beside Google, as staging lets it, it is refused on the
+    routes that act for the whole hive, reloading, enabling and disabling apps and starting a Lab run (which uses the
+    hive's machine and its environment), and none of them takes effect; the operator still does each. Before #307 these
+    routes asked only for a session, so the test account's reached all four."""
+    app_id = "contract-fixture"   # a built-in app every test hive loads
+    with TestClient(make_app(monkeypatch, google=True, public=True, tester=TESTER), base_url="https://hive.example") as c:
+        admin, lab = admin_headers(c), c.app.state.hive.lab
+        started = []
+        monkeypatch.setattr(lab, "_execute", lambda run_id, suite_id: started.append(suite_id))   # no bench process
+        tess = bearer(login(c, TESS, TESS_PW, outside=True).json()["token"])
+        enabled = lambda: {p["id"]: p["enabled"] for p in c.get("/api/programs", headers=admin).json()}[app_id]  # noqa: E731
+        assert enabled() is True
+        tries = {path: c.post(OUT + path, headers=tess, **extra) for path, extra in (
+            ("/api/programs/reload", {}), (f"/api/programs/{app_id}/disable", {}), (f"/api/programs/{app_id}/enable", {}),
+            ("/api/lab/runs", {"json": {"suite": "bench-drift"}}))}
+        answers = {path: (r.status_code, r.json()["error"]["code"] if r.status_code >= 400 else None)
+                   for path, r in tries.items()}
+        assert answers == dict.fromkeys(tries, (403, "admin_only")), answers
+        assert enabled() is True and lab.runs() == [] and started == []      # nothing the test account asked happened
+        assert c.post(f"/api/programs/{app_id}/disable", headers=admin).json()["enabled"] is False
+        assert c.post(f"/api/programs/{app_id}/enable", headers=admin).json()["enabled"] is True
+        assert app_id in {p["id"] for p in c.post("/api/programs/reload", headers=admin).json()}
+        run = c.post("/api/lab/runs", headers=admin, json={"suite": "bench-drift"}).json()
+        assert run["status"] == "running" and [r["id"] for r in lab.runs()] == [run["id"]]
+
+
+def test_an_existing_member_becomes_the_test_account_and_a_restart_keeps_its_hash(monkeypatch):
+    """T-329-env: a member who already has a row is marked at start and gets the setting's password; a restart with
+    the same setting leaves the stored hash and the member's sessions alone; a changed password is set and ends that
+    member's password sessions, so the old password and its sessions stop working."""
+    with TestClient(make_app(monkeypatch, google=True, public=True), base_url="https://hive.example") as c:
+        own = add(c, admin_headers(c), TESS)["password"]
+        assert login(c, TESS, own, outside=True).status_code == 401   # not the test account yet
+        data = c.app.state.data_dir
+    with TestClient(make_app(monkeypatch, data=data, google=True, public=True, tester=TESTER),
+                    base_url="https://hive.example") as c:
+        assert person(c, admin_headers(c), TESS)["test_account"] is True
+        assert login(c, TESS, own).status_code == 401   # the setting's password replaced the one the hive made
+        token = login(c, TESS, TESS_PW, outside=True).json()["token"]
+        before = stored_hash(c, TESS)
+    with TestClient(make_app(monkeypatch, data=data, google=True, public=True, tester=TESTER),
+                    base_url="https://hive.example") as c:
+        assert stored_hash(c, TESS) == before
+        assert c.get(OUT + "/api/auth/me", headers=bearer(token)).status_code == 200
+    with TestClient(make_app(monkeypatch, data=data, google=True, public=True, tester=(TESS, "another-tester-pw")),
+                    base_url="https://hive.example") as c:
+        assert stored_hash(c, TESS) != before
+        assert c.get("/api/auth/me", headers=bearer(token)).status_code == 401
+        assert login(c, TESS, TESS_PW, outside=True).status_code == 401
+        assert login(c, TESS, "another-tester-pw", outside=True).status_code == 200
+
+
+def test_unsetting_the_test_account_ends_its_outside_sign_in(monkeypatch):
+    """T-329-env: restarted without the variables, nobody is the test account: its password session stops counting
+    from outside and its next outside login fails like anyone's; on the hive's own machine the session still works."""
+    with TestClient(make_app(monkeypatch, google=True, public=True, tester=TESTER), base_url="https://hive.example") as c:
+        token = login(c, TESS, TESS_PW, outside=True).json()["token"]
+        assert c.get(OUT + "/api/auth/me", headers=bearer(token)).status_code == 200
+        data = c.app.state.data_dir
+    with TestClient(make_app(monkeypatch, data=data, google=True, public=True), base_url="https://hive.example") as c:
+        assert person(c, admin_headers(c), TESS)["test_account"] is False
+        assert c.get(OUT + "/api/auth/me", headers=bearer(token)).status_code == 401
+        assert c.get("/api/auth/me", headers=bearer(token)).status_code == 200
+        assert login(c, TESS, TESS_PW, outside=True).status_code == 401
+        assert c.get(OUT + "/api/auth/methods").json()["member_password"] is False
+
+
+def test_a_changed_address_moves_the_mark(monkeypatch):
+    """T-329-env: the hive has one test account. Restarted with another address, the old one is unmarked (it stays a
+    member) and the new one is made and marked."""
+    with TestClient(make_app(monkeypatch, google=True, public=True, tester=TESTER), base_url="https://hive.example") as c:
+        data = c.app.state.data_dir
+    with TestClient(make_app(monkeypatch, data=data, google=True, public=True, tester=("tina@x.org", TESS_PW)),
+                    base_url="https://hive.example") as c:
+        admin = admin_headers(c)
+        assert person(c, admin, TESS)["test_account"] is False and person(c, admin, TESS)["role"] == "member"
+        assert person(c, admin, "tina@x.org")["test_account"] is True
+        assert login(c, TESS, TESS_PW, outside=True).status_code == 401
+        assert login(c, "tina@x.org", TESS_PW, outside=True).status_code == 200
+        assert sum(p["test_account"] for p in c.get("/api/people", headers=admin).json()["people"]) == 1
+
+
+def test_a_row_marked_through_the_api_before_is_unmarked_at_start(monkeypatch):
+    """T-329-env: a hive that ran #329 may hold rows an admin marked through the API; at start only the environment's
+    account keeps the mark, and with the variables unset none does."""
+    with TestClient(make_app(monkeypatch, google=True, public=True), base_url="https://hive.example") as c:
+        ann = add(c, admin_headers(c))
+        db = c.app.state.hive.db
+        with db.transaction():
+            db.update("people", ann["person"]["id"], {"test_account": 1})   # as #329's PATCH stored it
+        data = c.app.state.data_dir
+    with TestClient(make_app(monkeypatch, data=data, google=True, public=True), base_url="https://hive.example") as c:
+        assert person(c, admin_headers(c), "ann@x.org")["test_account"] is False
+        assert login(c, "ann@x.org", ann["password"], outside=True).status_code == 401
+
+
+def test_no_request_sets_the_test_account_mark(monkeypatch):
+    """T-329-env: the mark comes from the environment only. test_account on POST /api/people/members or PATCH
+    /api/people/{id} is a 400 for an admin, whatever the value, naming the variable; a member gets the 403 an
+    admin-only route gives, here the test account itself, on the hive's machine and from outside."""
+    with TestClient(make_app(monkeypatch, google=True, public=True, tester=TESTER), base_url="https://hive.example") as c:
+        admin = admin_headers(c)
+        ann = add(c, admin)
+        for value in (True, False, "yes", 1, None):
+            r = c.patch(f"/api/people/{ann['person']['id']}", json={"test_account": value}, headers=admin)
+            assert r.status_code == 400 and "HIVE_TEST_ACCOUNT_EMAIL" in r.json()["error"]["message"], value
+            r = c.post("/api/people/members", json={"email": "eve@x.org", "test_account": value}, headers=admin)
+            assert r.status_code == 400, value
+        member = bearer(login(c, TESS, TESS_PW, outside=True).json()["token"])
+        for pre in ("", OUT):
+            r = c.patch(f"{pre}/api/people/{ann['person']['id']}", json={"test_account": True}, headers=member)
+            assert r.status_code == 403 and r.json()["error"]["code"] == "admin_only"
+            r = c.post(pre + "/api/people/members", json={"email": "eve@x.org", "test_account": True}, headers=member)
+            assert r.status_code == 403
+        people = {p["email"]: p for p in c.get("/api/people", headers=admin).json()["people"]}
+        assert people["ann@x.org"]["test_account"] is False and "eve@x.org" not in people
+        assert login(c, "ann@x.org", ann["password"], outside=True).status_code == 401
+
+
+def test_the_test_account_is_never_made_an_admin_or_given_a_password_by_request(monkeypatch):
+    """T-329-env: PATCH role=admin and a password reset on the test account are 400s that say where it comes from;
+    its password stays the setting's. Removing its password (and removing the person) stay an admin's."""
+    with TestClient(make_app(monkeypatch, google=True, public=True, tester=TESTER), base_url="https://hive.example") as c:
+        admin = admin_headers(c)
+        tess = person(c, admin, TESS)
+        r = c.patch(f"/api/people/{tess['id']}", json={"role": "admin"}, headers=admin)
+        assert r.status_code == 400 and "HIVE_TEST_ACCOUNT_EMAIL" in r.json()["error"]["message"]
+        r = c.post(f"/api/people/{tess['id']}/password", headers=admin)
+        assert r.status_code == 400 and "HIVE_TEST_ACCOUNT_PASSWORD" in r.json()["error"]["message"]
+        assert person(c, admin, TESS)["role"] == "member"
+        assert login(c, TESS, TESS_PW, outside=True).status_code == 200
+        assert c.delete(f"/api/people/{tess['id']}/password", headers=admin).status_code == 200
+        assert login(c, TESS, TESS_PW, outside=True).status_code == 401
+
+
+@pytest.mark.parametrize("restart", [False, True])
+def test_an_admin_address_is_never_the_test_account(monkeypatch, caplog, restart):
+    """T-329-env: an address in HIVE_ADMIN_EMAILS is skipped (logged) and the hive starts; it stays an admin and its
+    password never counts from outside. A test account whose address is later listed is promoted and loses the mark."""
+    data = None
+    if restart:
+        with TestClient(make_app(monkeypatch, google=True, public=True, tester=TESTER), base_url="https://hive.example") as c:
+            data = c.app.state.data_dir
+    monkeypatch.setenv("HIVE_ADMIN_EMAILS", TESS)
+    with caplog.at_level(logging.WARNING):
+        app = make_app(monkeypatch, data=data, google=True, public=True, tester=TESTER)
+    with TestClient(app, base_url="https://hive.example") as c:
+        tess = person(c, admin_headers(c), TESS)
+        assert tess["role"] == "admin" and tess["test_account"] is False
+        assert login(c, TESS, TESS_PW, outside=True).status_code == 401
+        assert c.get(OUT + "/api/auth/methods").json()["member_password"] is False
+    assert any("never a test account" in rec.getMessage() or "an admin never is" in rec.getMessage()
+               for rec in caplog.records)
+
+
+def test_a_disabled_member_is_not_made_the_test_account(monkeypatch):
+    """T-329-env: a disabled row with the address is skipped, never re-enabled or given the password, and no second
+    row is made; the hive starts."""
+    with TestClient(make_app(monkeypatch, google=True, public=True), base_url="https://hive.example") as c:
+        admin = admin_headers(c)
+        tess = add(c, admin, TESS)
+        assert c.patch(f"/api/people/{tess['person']['id']}", json={"disabled": True}, headers=admin).status_code == 200
+        data = c.app.state.data_dir
+    with TestClient(make_app(monkeypatch, data=data, google=True, public=True, tester=TESTER),
+                    base_url="https://hive.example") as c:
+        admin = admin_headers(c)
+        rows = [p for p in c.get("/api/people", headers=admin).json()["people"] if p["email"] == TESS]
+        assert len(rows) == 1 and rows[0]["disabled"] is True and rows[0]["test_account"] is False
+        assert rows[0]["password_set"] is False
+        assert login(c, TESS, TESS_PW, outside=True).status_code == 401
+
+
+def test_disabling_the_test_account_clears_its_mark_until_the_next_start(monkeypatch):
+    """T-329-env (QA N1): disabling the test account drops its mark with its password, so a later re-enabling (an
+    admin's, or an invite accepted as an admin) never leaves a marked row; the next start marks it again while it is
+    the environment's enabled member, with the setting's password."""
+    with TestClient(make_app(monkeypatch, google=True, public=True, tester=TESTER), base_url="https://hive.example") as c:
+        admin = admin_headers(c)
+        tess = person(c, admin, TESS)
+        r = c.patch(f"/api/people/{tess['id']}", json={"disabled": True}, headers=admin)
+        assert r.status_code == 200 and r.json()["test_account"] is False
+        assert c.patch(f"/api/people/{tess['id']}", json={"disabled": False}, headers=admin).status_code == 200
+        again = person(c, admin, TESS)
+        assert again["test_account"] is False and again["password_set"] is False
+        assert login(c, TESS, TESS_PW, outside=True).status_code == 401
+        data = c.app.state.data_dir
+    with TestClient(make_app(monkeypatch, data=data, google=True, public=True, tester=TESTER),
+                    base_url="https://hive.example") as c:
+        assert person(c, admin_headers(c), TESS)["test_account"] is True
+        assert login(c, TESS, TESS_PW, outside=True).status_code == 200
+
+
+def test_a_marked_admin_row_never_counts_from_outside(monkeypatch):
+    """T-329-env E4 (QA N2): should a marked row ever be an admin (data written around the API), its password session
+    stops counting from outside, its outside login is refused and the card no longer offers member passwords; on the
+    hive's own machine the session still works."""
+    with TestClient(make_app(monkeypatch, google=True, public=True, tester=TESTER), base_url="https://hive.example") as c:
+        token = login(c, TESS, TESS_PW, outside=True).json()["token"]
+        assert c.get(OUT + "/api/auth/me", headers=bearer(token)).status_code == 200
+        tess_id = person(c, admin_headers(c), TESS)["id"]   # before the transaction: a request inside it would wait
+        db = c.app.state.hive.db                             # on the test's own lock forever
+        with db.transaction():
+            db.update("people", tess_id, {"role": "admin"})   # the mark stays
+        assert c.get(OUT + "/api/auth/me", headers=bearer(token)).status_code == 401
+        assert login(c, TESS, TESS_PW, outside=True).status_code != 200
+        assert c.get(OUT + "/api/auth/methods").json()["member_password"] is False
+        assert c.get("/api/auth/me", headers=bearer(token)).status_code == 200
+
+
+@pytest.mark.parametrize("email, password, variable", [
+    ("a@x.org,b@x.org", TESS_PW, "HIVE_TEST_ACCOUNT_EMAIL"),
+    ("a@x.org b@x.org", TESS_PW, "HIVE_TEST_ACCOUNT_EMAIL"),
+    ("a@x.org;b@x.org", TESS_PW, "HIVE_TEST_ACCOUNT_EMAIL"),
+    ("not-an-address", TESS_PW, "HIVE_TEST_ACCOUNT_EMAIL"),
+    (TESS, None, "HIVE_TEST_ACCOUNT_PASSWORD"),
+    (TESS, "short-pw", "HIVE_TEST_ACCOUNT_PASSWORD"),
+    (TESS, "it's-a-long-password", "HIVE_TEST_ACCOUNT_PASSWORD"),
+    (TESS, "two-lines\nof-password", "HIVE_TEST_ACCOUNT_PASSWORD"),
+    (TESS, "carriage-return\rin-it", "HIVE_TEST_ACCOUNT_PASSWORD"),
+    (TESS, "ends-with-a-backslash\\", "HIVE_TEST_ACCOUNT_PASSWORD"),
+    (None, TESS_PW, "HIVE_TEST_ACCOUNT_PASSWORD"),
+])
+def test_a_bad_test_account_setting_stops_the_hive_naming_only_the_variable(monkeypatch, caplog, email, password,
+                                                                             variable):
+    """T-329-env: the hive does not start on a bad setting (a list, not an address, a password missing or refused by
+    the press's D21 rules, a password without an address); the error names the variable, never the password."""
+    with caplog.at_level(logging.DEBUG), pytest.raises(RuntimeError) as refused:
+        make_app(monkeypatch, tester=(email, password))
+    assert variable in str(refused.value)
+    if password:
+        assert password not in str(refused.value)
+        assert not any(password in rec.getMessage() for rec in caplog.records)
+
+
+def test_the_test_account_needs_the_public_password_switch(monkeypatch):
+    """T-329-env: without HIVE_PUBLIC_PASSWORD=1 the test account is refused from outside like everyone (4.2), so the
+    deployer's switch stays the gate for any password from outside."""
+    with TestClient(make_app(monkeypatch, google=True, public=False, tester=TESTER), base_url="https://hive.example") as c:
+        r = login(c, TESS, TESS_PW, outside=True)
+        assert r.status_code == 403 and r.json()["error"]["code"] == "password_login_local_only"
+        assert c.get(OUT + "/api/auth/methods").json()["member_password"] is False
+
+
+@pytest.mark.parametrize("google", [False, True])
+def test_the_sign_in_methods_offer_only_ways_in_that_count_there(monkeypatch, google):
+    """GET /api/auth/methods, the sign-in card's ways in: from outside never the operator's password (password is
+    false with HIVE_PUBLIC_PASSWORD=1 too, since its session never counts there); member passwords from outside while
+    Google is off, and once it is on only while the test account has a password; on the hive's own machine both."""
+    with TestClient(make_app(monkeypatch, google=google, public=True), base_url="https://hive.example") as c:
+        outside = c.get(OUT + "/api/auth/methods").json()
+        assert outside["password"] is False and outside["member_password"] is (not google)
+        if google:
+            assert outside["sso"]["login_url"] == OUT + "/api/auth/google/start"
+        data = c.app.state.data_dir
+    with TestClient(make_app(monkeypatch, data=data, google=google, public=True, tester=TESTER),
+                    base_url="https://hive.example") as c:
+        admin = admin_headers(c)
+        assert c.get(OUT + "/api/auth/methods").json()["member_password"] is True
+        c.delete(f"/api/people/{person(c, admin, TESS)['id']}/password", headers=admin)
+        assert c.get(OUT + "/api/auth/methods").json()["member_password"] is (not google)
+        local = c.get("/api/auth/methods").json()
+        assert local["password"] is True and local["member_password"] is True
+
+
+def test_the_test_account_setting_reads_two_variables():
+    """T-329-env, the parser alone: neither set is None; the address is trimmed and lowercased; the password is kept
+    exactly as given."""
+    read = people_module.configured_test_account
+    assert read({}) is None and read({"HIVE_TEST_ACCOUNT_EMAIL": " ", "HIVE_TEST_ACCOUNT_PASSWORD": ""}) is None
+    assert read({"HIVE_TEST_ACCOUNT_EMAIL": " Tess@X.org ", "HIVE_TEST_ACCOUNT_PASSWORD": " Pass word 1 "}) == (
+        "tess@x.org", " Pass word 1 ")
+    assert people_module.tester_password_problem("ten-chars!") is None
 
 
 def test_turning_google_on_stops_an_earlier_member_session_counting_from_outside(monkeypatch):
@@ -465,7 +780,8 @@ def test_a_local_member_sign_in_reopens_a_closed_account(timed):
 
 
 def test_waits_are_per_account(timed):
-    """5.3: A waiting does not delay B or the operator; the operator's wrong passwords do not delay members."""
+    """5.3: A waiting does not delay B; the operator's login from outside is refused before anything counts, so it
+    never delays members either."""
     c, admin, clock = timed
     a = add(c, admin, "a@x.org")
     b = add(c, admin, "b@x.org")
@@ -473,9 +789,8 @@ def test_waits_are_per_account(timed):
         login(c, "a@x.org", "nope", outside=True)
     assert login(c, "a@x.org", a["password"], outside=True).status_code == 429
     assert login(c, "b@x.org", b["password"], outside=True).status_code == 200
-    assert c.post(OUT + "/api/auth/login", json={"password": "pw"}).status_code == 200
     for _ in range(3):
-        c.post(OUT + "/api/auth/login", json={"password": "nope"})
+        assert c.post(OUT + "/api/auth/login", json={"password": "nope"}).status_code == 403
     assert login(c, "b@x.org", b["password"], outside=True).status_code == 200
 
 
@@ -720,11 +1035,10 @@ def test_member_and_unknown_have_identical_observable_guess_traces(timed, monkey
         assert traces[0][-1][1]["error"]["code"] == "password_login_closed"
 
 
-def test_member_does_not_inherit_operator_counter_or_public_operator_session_policy(timed):
+def test_member_does_not_inherit_the_public_operator_session_policy(timed):
     c, admin, _ = timed
     made = add(c, admin)
     member = bearer(login(c, "ann@x.org", made["password"], outside=True).json()["token"])
     assert c.get(OUT + "/api/auth/me", headers=member).status_code == 200
     # The existing private-fork public operator-session restriction stays unchanged.
     assert c.get(OUT + "/api/auth/me", headers=admin).status_code == 401
-    assert c.app.state.password_attempts.failures == 0

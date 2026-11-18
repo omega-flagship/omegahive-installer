@@ -50,10 +50,11 @@ import httpx
 from .ask import BROWSER_LIVE_SQL, BROWSER_ROUTE, browser_live_params, browser_past_deadline
 from .cost_reservations import BudgetExhausted, host_budget_snapshot, host_subjects, host_use_check
 from .gated_call import GateClosed, gated_chat
-from .config import is_subscription
+from .config import caller_judged
 from .gateway import GatewayError, billable, split_model
 from .hive import HiveError, token_hash
 from .mind_idempotency import KeyTaken, MindIdempotency, Slot, call_id_for, expired as key_expired, in_progress
+from .refusals import spoken
 from .sessions import own_scope, thread_scope
 
 TOKEN_PREFIX = "mt_"
@@ -444,15 +445,17 @@ class MindGateway:
         agent = {**stored, "options": gw.payment_options(stored)}
         provider_name, _ = split_model(agent["model"])
         try:
-            # the token's principal, for the one route that reads it (a subscription instance); every other call is unchanged
-            who = {"principal": row["principal"]} if is_subscription(provider_name) else {}
+            # the token's principal, for the routes that read it (a subscription instance, the free route); every other
+            # call is unchanged
+            who = {"principal": row["principal"]} if caller_judged(provider_name) else {}
             paid, estimate = gw.estimate(agent, body, hive.settings.allow_unpriced, **who)
             key_id = gw.paying_key(agent, provider_name)[0] if paid else None
         except GatewayError as exc:
             if exc.status == 402:   # unpriced_model, key_unavailable: not a spend limit; the turn ends in error
                 hive.ask._close(t["id"], "refused", "failed", error=exc.code)
                 raise _err(402, exc.code, "this call cannot be priced or paid for") from None
-            raise _err(exc.status, exc.code, "this request was refused") from None
+            # a refusal from refusals.py's table is written for the person; any other stays generic
+            raise _err(exc.status, exc.code, exc.message if spoken(exc) else "this request was refused") from None
         # the shape and the price are checked first (estimate is pure, plus the egress rule), so a malformed or refused
         # request spends neither the token's nor the turn's call ceiling; the counts still come before any payer,
         # budget, reservation or send
@@ -581,6 +584,9 @@ class MindGateway:
                     held = estimate
             else:
                 gated.release()
+            if spoken(exc):
+                # busy after the gateway's retries, or the person's free calls ran out meanwhile: said plainly, as above
+                raise _err(exc.status, exc.code, exc.message) from None
             timeout = isinstance(exc, (asyncio.TimeoutError, TimeoutError, httpx.TimeoutException))
             raise _err(504 if timeout else 502, "upstream_error", "the model's provider did not answer",
                        {"held_usd": round(held, 6)} if held else None) from None

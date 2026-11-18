@@ -20,7 +20,9 @@ const NAMED = `ar_${'0123456789abcdef'.repeat(2)}`
 const GONE = `ar_${'fedcba9876543210'.repeat(2)}`
 const plan = {
   screen: 'words', title: null, look: 'canvas', space: 'flat', missing: [],
-  parts: [{ order: 10, block: 'said', props: { text: `Your converter is ready: ${NAMED}. The old one, ${GONE}, is gone.` } }],
+  // the chip words features/views/words.metta gives the said block
+  parts: [{ order: 10, block: 'said', props: { text: `Your converter is ready: ${NAMED}. The old one, ${GONE}, is gone.`,
+    unnamed: 'Artifact', missing: 'Artifact not available', missing_why: 'It is no longer here, or not shown to you.' } }],
 } as unknown as ScreenPlan
 const host: ScreenHost = { data: { 'words.named': { [NAMED]: { title: 'Celsius to Fahrenheit', kind: 'view' }, [GONE]: { missing: true } } }, onOpen: () => undefined }
 const html = renderToStaticMarkup(createElement(InlineParts, { plan, host }))

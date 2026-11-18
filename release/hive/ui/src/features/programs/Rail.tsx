@@ -1,9 +1,9 @@
 import { AnimatePresence, m } from 'framer-motion'
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo } from 'react'
 import type { ProgramAction, WorkItem } from '../../api/types'
 import { cx } from '../../lib/cx'
 import { navigate } from '../../lib/router'
-import type { PendingInput, ProgramNotice, SourceDetail, TaskRef } from '../../store/programSession'
+import type { ProgramNotice, SourceDetail, TaskRef } from '../../store/programSession'
 import { useHive } from '../../store/store'
 import { Icon, type IconName } from '../../ui/Icon'
 import { Button } from '../../ui/primitives'
@@ -222,87 +222,6 @@ export function ActionBar({
   )
 }
 
-
-// ---------------------------------------------------------------- needs_input
-
-export function InputForm({ input, def, busy, onSubmit, onCancel }: { input: PendingInput; def?: ProgramAction; busy: boolean; onSubmit(params: Record<string, unknown>): void; onCancel(): void }) {
-  const fields = Object.entries(input.needs).filter(([k]) => k !== 'items')
-  const needsItems = 'items' in input.needs
-  const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(fields.map(([k]) => [k, String(input.params[k] ?? '')])))
-  const first = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null)
-  useEffect(() => {
-    const t = setTimeout(() => first.current?.focus(), 80)
-    return () => clearTimeout(t)
-  }, [])
-  const submit = (e: FormEvent) => {
-    e.preventDefault()
-    onSubmit({ ...input.params, ...values })
-  }
-  return (
-    <m.form
-      onSubmit={submit}
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 6 }}
-      className="rounded-2xl border border-accent-2/30 p-3.5"
-      style={{ background: 'linear-gradient(180deg, color-mix(in oklab, var(--color-accent-2) 6%, transparent), color-mix(in oklab, var(--color-accent-2) 2%, transparent)), color-mix(in oklab, var(--color-abyss) 90%, transparent)' }}
-      aria-label={`${def?.label ?? input.action}: more input needed`}
-    >
-      <div className="flex items-start gap-2.5">
-        <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-accent-2/15 text-accent-2">
-          <Icon name={ACTION_ICON[input.action] ?? 'edit'} size={15} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="text-[13.5px] font-semibold text-ink">{def?.label ?? input.action}: the program needs more</div>
-          {input.message && <p className="mt-0.5 text-[12px] leading-snug text-ink-3">{input.message}</p>}
-        </div>
-      </div>
-      {needsItems && (
-        <p className="mt-2.5 rounded-lg border border-line bg-tint/[0.03] px-2.5 py-2 text-[12px] text-ink-2">
-          <b className="font-semibold">Items:</b> {input.needs.items}. Select them on the stage (shift-click, or “Select more”), then run it again.
-        </p>
-      )}
-      <div className="mt-3 space-y-2.5">
-        {fields.map(([k, desc], i) => (
-          <label key={k} className="block">
-            <span className="mb-1 flex items-baseline gap-2 text-[12px]">
-              <span className="font-mono text-ink-2">{k}</span>
-              <span className="text-ink-4">{desc}</span>
-            </span>
-            {k === 'text' || desc.length > 40 ? (
-              <textarea
-                ref={i === 0 ? (el) => void (first.current = el) : undefined}
-                value={values[k] ?? ''}
-                onChange={(e) => setValues((v) => ({ ...v, [k]: e.target.value }))}
-                rows={2}
-                className="w-full resize-y rounded-xl border border-line-2 bg-shade/30 px-3 py-2 text-[14px] text-ink outline-none placeholder:text-ink-4 focus:border-accent-2/60"
-                placeholder={desc}
-              />
-            ) : (
-              <input
-                ref={i === 0 ? (el) => void (first.current = el) : undefined}
-                value={values[k] ?? ''}
-                onChange={(e) => setValues((v) => ({ ...v, [k]: e.target.value }))}
-                className="min-h-10 w-full rounded-xl border border-line-2 bg-shade/30 px-3 text-[14px] text-ink outline-none placeholder:text-ink-4 focus:border-accent-2/60"
-                placeholder={desc}
-              />
-            )}
-          </label>
-        ))}
-      </div>
-      <div className="mt-3 flex items-center justify-end gap-2">
-        <Button type="button" variant="ghost" className="min-h-9 text-[13px]" onClick={onCancel}>
-          Cancel
-        </Button>
-        {fields.length > 0 && (
-          <Button type="submit" variant="primary" hue={190} className="min-h-9 text-[13px]" disabled={busy}>
-            {busy ? 'Sending…' : 'Send'}
-          </Button>
-        )}
-      </div>
-    </m.form>
-  )
-}
 
 // ---------------------------------------------------------------- notices
 

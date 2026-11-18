@@ -1407,7 +1407,7 @@ async def run_hive_tool(name, files, entry, args=(), inputs=None, outputs=(), **
         lock = {"files": {n: hashlib.sha256((tools / n).read_bytes()).hexdigest() for n in files}}
         (tools / "bundle.lock.json").write_text(json.dumps(lock))
         return await _run_admitted({"id": f"omegahive-{name}", "path": str(app)}, entry, args, inputs, outputs,
-                                   "python", "tools", _runtime={"exe": sys.executable, "reads": []}, **limits)
+                                   "python", "tools", _runtime={"exe": sys.executable, "reads": [], "env": {}}, **limits)
     finally:
         shutil.rmtree(app, ignore_errors=True)
 

@@ -1,0 +1,45 @@
+# Python 3.12 with the packages tests/ci-requirements.lock pins, for hive-ci's core-tests and warm jobs. Expects the
+# repository checked out.
+#
+# The packages come from a folder of wheels in the Actions cache, so pip installs them without the index: core-tests'
+# install took p50 72 s and p90 115 s against PyPI (236 runs, 9 to 16 Nov). The lock names every wheel by its sha256
+# and pip checks each one before installing it, and the folder and pip's own cache start empty in every job, since a
+# self-hosted runner keeps its home between jobs and a pull request's job must not leave a file a later job installs.
+# Wheels are the same on both runners, whose setup-python Pythons live in different folders, so one entry serves both.
+name: core-python
+description: Python 3.12 and tests/'s packages from tests/ci-requirements.lock, each wheel checked against its hash.
+runs:
+  using: composite
+  steps:
+    - name: Empty what an earlier job could have left (the wheels folder, setup-python's Python, pip's cache)
+      shell: bash
+      run: |
+        rm -rf ~/.cache/hive-ci/core-wheels "${RUNNER_TOOL_CACHE:?}/Python"
+        echo "PIP_CACHE_DIR=$RUNNER_TEMP/pip-cache" >> "$GITHUB_ENV"
+    - uses: actions/setup-python@v5
+      id: py
+      with:
+        python-version: '3.12'
+    - name: Restore the wheels tests/ci-requirements.lock names (keyed by Python and the lock)
+      id: wheels
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.cache/hive-ci/core-wheels
+        key: core-wheels-${{ runner.os }}-py${{ steps.py.outputs.python-version }}-${{ hashFiles('tests/ci-requirements.lock') }}
+    - name: Download them from PyPI, each checked against the lock (no entry for this lock yet)
+      if: steps.wheels.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        python -m pip download -q --only-binary=:all: --require-hashes --no-deps -d ~/.cache/hive-ci/core-wheels \
+          -r tests/ci-requirements.lock
+    - name: Install them without the index, each checked against the lock
+      shell: bash
+      run: |
+        python -m pip install --no-index --find-links ~/.cache/hive-ci/core-wheels --only-binary=:all: --require-hashes --no-deps \
+          -r tests/ci-requirements.lock
+    - name: Save the wheels
+      if: steps.wheels.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.cache/hive-ci/core-wheels
+        key: ${{ steps.wheels.outputs.cache-primary-key }}

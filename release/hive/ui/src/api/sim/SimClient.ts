@@ -1367,8 +1367,9 @@ export class SimClient implements HiveClient {
    * Publish one assertion into a swarm commons. Every outcome (adopted, revised, chosen, kept, duplicate, quarantined,
    * denied), truth value, stamp, source and choice is the real engine's: lib_hive's hive-publish! on MeTTaScript
    * (./commons, as hive/spaces/service.py runs it on PeTTa), over the swarm's access list and vocabulary. This keeps
-   * only who said what and when. Published as service.publish(open_vocab=False): an unknown term is quarantined (the
-   * host's members add their terms first). Throws a 503 when the engine is not running.
+   * only who said what and when. Published as service.publish(open_vocab=False): an unknown term is quarantined (on the
+   * host, a mind acting for someone who controls the swarm adds its terms first). Throws a 503 when the engine is not
+   * running.
    */
   applyAssertion(swarmId: string, agentId: string, statement: string, tv: TruthValue, stamp: string[], at: string): { assertion: Assertion; belief: Belief | null } {
     const commons = this.beliefs.get(swarmId)
@@ -2154,7 +2155,7 @@ export class SimClient implements HiveClient {
   }
   listSwarms(opts: { archived?: boolean } = {}) {
     // as live: archived swarms only on request (admins; the sim visitor is always an admin)
-    return this.delay(() => clone([...this.swarms.values()].filter((s) => opts.archived || !s.archived_at)))
+    return this.delay(() => clone([...this.swarms.values()].filter((s) => opts.archived || !s.archived_at)).map((s) => this.withSwarmFlag(s)))
   }
   createSwarm(body: CreateSwarmBody) {
     return this.delay(() => {
@@ -2175,7 +2176,16 @@ export class SimClient implements HiveClient {
     })
   }
   getSwarm(id: string) {
-    return this.delay(() => clone(this.mustSwarm(id)))
+    return this.delay(() => this.withSwarmFlag(clone(this.mustSwarm(id))))
+  }
+  /** As app.py swarm_refusal: the viewer acts on a swarm when it is its owner, its person or an admin. */
+  private simControls(s: Pick<Swarm, 'owner' | 'personal_of'>): boolean {
+    const me = this.simMe()
+    return this.simAdmin() || [s.owner, s.personal_of].some((p) => !!p && p === me.principal)
+  }
+  /** A swarm view with this viewer's may_control, as GET /api/swarms gives it. */
+  private withSwarmFlag(s: Swarm): Swarm {
+    return { ...s, may_control: this.simControls(s) }
   }
   updateSwarm(id: string, body: import('../types').UpdateSwarmBody) {
     return this.delay(() => {
@@ -2465,7 +2475,8 @@ export class SimClient implements HiveClient {
   /** hive-vocab-add! on the engine (service.py add_vocab); the words also join what the sim's minds talk about. */
   addVocab(id: string, terms: string[]) {
     return this.delay(() => {
-      this.mustSwarm(id)
+      // as live: a term decides what the commons admits, so adding one is the swarm's owner's, its person's or an admin's
+      if (!this.simControls(this.mustSwarm(id))) throw new ApiError(403, 'owner_only', "only this swarm's owner or a hive admin can do that")
       const words = terms.map((x) => x.trim()).filter(Boolean)
       let held: string[]
       try {
@@ -3117,13 +3128,13 @@ export class SimClient implements HiveClient {
     return this.delay(() => this.programsHost.read(id, swarmId, query, params))
   }
   programEnable(id: string) {
-    return this.delay(() => this.programsHost.setEnabled(id, true))
+    return this.simAdmin() ? this.delay(() => this.programsHost.setEnabled(id, true)) : Promise.reject(adminOnly())
   }
   programDisable(id: string) {
-    return this.delay(() => this.programsHost.setEnabled(id, false))
+    return this.simAdmin() ? this.delay(() => this.programsHost.setEnabled(id, false)) : Promise.reject(adminOnly())
   }
   programsReload() {
-    return this.delay(() => this.programsHost.reload())
+    return this.simAdmin() ? this.delay(() => this.programsHost.reload()) : Promise.reject(adminOnly())
   }
 
   // ------------------------------------------------------------------ Admin surfaces (invented data)
@@ -4261,19 +4272,20 @@ export class SimClient implements HiveClient {
   // ------------------------------------------------------------------ Lab (recorded results)
 
   listLabSuites() {
-    return this.lab.suites()
+    const may_run = this.simAdmin()   // as GET /api/lab/suites: starting and cancelling runs is an admin's
+    return this.lab.suites().then((list) => list.map((s) => ({ ...s, may_run })))
   }
   listLabRuns(opts?: { suite?: string; limit?: number }) {
     return this.lab.listRuns(opts)
   }
   startLabRun(suite: string) {
-    return this.lab.start(suite)
+    return this.simAdmin() ? this.lab.start(suite) : Promise.reject(adminOnly())
   }
   getLabRun(id: string) {
     return this.lab.get(id)
   }
   cancelLabRun(id: string) {
-    return this.lab.cancel(id)
+    return this.simAdmin() ? this.lab.cancel(id) : Promise.reject(adminOnly())
   }
   getLabHistory(suite: string, limit?: number) {
     return this.lab.history(suite, limit)

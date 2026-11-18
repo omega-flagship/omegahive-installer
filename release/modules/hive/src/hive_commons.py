@@ -1207,6 +1207,9 @@ def exhibit_space(to, space, minutes, text_filter):
 LOCAL_ALLOW = {"send", "send-hive-to", "held-message", "wait", "pin", "query", "remember", "episodes", "hive-publish",
                "hive-query", "hive-belief", "hive-goals", "hive-goal-claim", "hive-goal-done", "hive-goal-fail",
                "hive-goal-create", "hive-shares",
+               # only offers a build to the mind's person; the hive's route checks who that is, and nothing is built
+               # until they press Start, so it is always open, the one way a mind builds software
+               "hive-create",
                # stages text in the mind's own memory folder; only hive-revision sends it, and the gate decides that
                "hive-revision-part"}
 
@@ -1625,6 +1628,30 @@ def goal_create(parent_id, title):
     return error or f"HIVE-GOAL-CREATED {result['id']} {result['title']}"
 
 
+def create(sentence):
+    """Ask Create to build software: the hive offers what to build, in the asker's words, to this mind's person in
+    Create, and Create's code minds build it once they press Start in the mind's chat (POST /api/agent/create). The
+    offer goes to the person of the conversation the mind is answering (_reply_conversation); with none, the hive
+    offers it to the mind's own person or else whoever last wrote to it."""
+    payload = {"sentence": _text(sentence)}
+    conversation = _reply_conversation()
+    if conversation:
+        payload["conversation_id"] = conversation
+    result, error = _call("POST", "/api/agent/create", payload)
+    return error or (f"HIVE-CREATE-OFFERED {result['id']}: your person can start it in Create from your chat, and "
+                     "nothing is built until they do.")
+
+
+def _reply_conversation():
+    """The conversation a plain send would answer now (modules/channel_hive, hive_channel.reply_conversation), or ""
+    when several wait for an answer or the mind has no hive channel."""
+    try:
+        import hive_channel
+    except ImportError:
+        return ""
+    return hive_channel.reply_conversation()
+
+
 # ---- semicolons ---------------------------------------------------------------------------------
 # A ';' inside a py-call result starts a MeTTa comment, so the rest of the result is silently lost
 # (found 2026-10-03 in the code module). Every skill result a mind reads is encoded the same way as
@@ -1655,7 +1682,7 @@ def _membrane(fn):
 
 
 RAW = {"trace", "take_control", "post_inventory"}
-SKILLS = ["repo_query", "flow_drafts", "flow_publish", "flow_run", "flow_retire", "flow_run_get", "flow_cancel", "flows", "flow_draft", "flow_revise", "flow_read", "findings_read", "plan_review_context", "finding_response", "finding_disposition", "plan_return", "review_receipts", "asset_put", "asset_get", "asset_list", "goal_review", "rooms", "room_post", "coffee_note", "request", "artifact_create", "revision", "revision_part", "revision_read", "finding", "review_complete", "lifecycle_start", "lifecycle_stop", "lifecycle_status", "health", "shared_body", "belief", "exhibit", "exhibit_space", "stage_show", "stage_recall", "stage_compare", "goal_cancel_ack", "goal_heartbeat", "goal_claim", "goal_create", "goal_finish", "goal_get",
+SKILLS = ["repo_query", "flow_drafts", "flow_publish", "flow_run", "flow_retire", "flow_run_get", "flow_cancel", "flows", "flow_draft", "flow_revise", "flow_read", "findings_read", "plan_review_context", "finding_response", "finding_disposition", "plan_return", "review_receipts", "asset_put", "asset_get", "asset_list", "goal_review", "rooms", "room_post", "coffee_note", "request", "artifact_create", "revision", "revision_part", "revision_read", "finding", "review_complete", "lifecycle_start", "lifecycle_stop", "lifecycle_status", "health", "shared_body", "belief", "exhibit", "exhibit_space", "stage_show", "stage_recall", "stage_compare", "goal_cancel_ack", "goal_heartbeat", "goal_claim", "goal_create", "goal_finish", "goal_get", "create",
           "goal_propose", "goals", "goal_history", "goal_continue", "goal_output", "publish", "query", "share_deny", "share_grant", "share_offer", "share_request", "shared",
           "shared_page", "shares", "calendar_read", "report_problem"]
 for _name in SKILLS:

@@ -245,31 +245,32 @@ def test_base_path_serves_the_api_at_root_and_under_the_prefix():
 
 
 def test_public_password_flag_keeps_the_operator_password_session_refused_from_outside(monkeypatch):
-    """HIVE_PUBLIC_PASSWORD=1 opens passwords to members, never to the operator: an operator password session counts
-    on the hive's own machine only, wherever it was made. Members' password sessions from outside are in
-    test_member_passwords.py."""
+    """HIVE_PUBLIC_PASSWORD=1 opens passwords to members, never to the operator: from outside the operator login is
+    refused with no token, right password or wrong, and a session made on the hive's own machine counts there only.
+    Members' password sessions from outside are in test_member_passwords.py."""
     monkeypatch.setenv("HIVE_PUBLIC_PASSWORD", "1")
     data = tempfile.mkdtemp(prefix="hive-prov-pubpw-")
     settings = load_settings(data_dir=pathlib.Path(data), admin_password="pw", petta_path=PETTA, offline=True,
                              base_path="/omegahive")
     app = create_app(settings, supervisor=FakeSupervisor(), reconcile_seconds=0)
     with TestClient(app) as test_client:
-        assert test_client.post("/omegahive/api/auth/login", json={"password": "nope"}).status_code == 401
-        outside = test_client.post("/omegahive/api/auth/login", json={"password": "pw"}).json()["token"]
+        for password in ("nope", "pw"):
+            refused = test_client.post("/omegahive/api/auth/login", json={"password": password})
+            assert refused.status_code == 403 and refused.json()["error"]["code"] == "password_login_local_only"
+            assert "token" not in refused.json()
         local = test_client.post("/api/auth/login", json={"password": "pw"}).json()["token"]
-        for token in (outside, local):
-            headers = {"Authorization": f"Bearer {token}"}
-            # on the hive's own machine it is the operator's session
-            assert test_client.get("/api/hive", headers=headers).json()["name"] == "OmegaHive"
-            # from outside it counts for nothing: through the prefix, a proxy header, ?token= or the live events
-            assert test_client.get("/omegahive/api/auth/me", headers=headers).status_code == 401
-            assert test_client.get("/omegahive/api/hive", headers=headers).status_code == 401
-            assert test_client.get("/api/hive", headers=headers | {"x-forwarded-for": "192.0.2.1"}).status_code == 401
-            assert test_client.get("/omegahive/api/hive", params={"token": token}).status_code == 401
-            with pytest.raises(WebSocketDisconnect) as closed:
-                with test_client.websocket_connect(f"/omegahive/api/events?token={token}") as ws:
-                    ws.receive_text()
-            assert closed.value.code == 4401
+        headers = {"Authorization": f"Bearer {local}"}
+        # on the hive's own machine it is the operator's session
+        assert test_client.get("/api/hive", headers=headers).json()["name"] == "OmegaHive"
+        # from outside it counts for nothing: through the prefix, a proxy header, ?token= or the live events
+        assert test_client.get("/omegahive/api/auth/me", headers=headers).status_code == 401
+        assert test_client.get("/omegahive/api/hive", headers=headers).status_code == 401
+        assert test_client.get("/api/hive", headers=headers | {"x-forwarded-for": "192.0.2.1"}).status_code == 401
+        assert test_client.get("/omegahive/api/hive", params={"token": local}).status_code == 401
+        with pytest.raises(WebSocketDisconnect) as closed:
+            with test_client.websocket_connect(f"/omegahive/api/events?token={local}") as ws:
+                ws.receive_text()
+        assert closed.value.code == 4401
         # minds still connect locally only
         assert test_client.get("/omegahive/api/agent/inbox", headers={"Authorization": f"Bearer {local}"}).status_code == 404
 

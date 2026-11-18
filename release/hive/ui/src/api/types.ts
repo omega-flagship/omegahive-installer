@@ -1,5 +1,4 @@
-// Purpose: the hive API's shapes as the UI reads them, in lockstep with hive/API.md.
-// Types mirroring hive/API.md (Phase 1 + Phase 2). Keep this file in lockstep with the contract.
+// Purpose: types mirroring hive/API.md (Phase 1 + Phase 2). Keep this file in lockstep with the contract.
 import type { MemoryThemes } from '../lib/memoryTheme'
 
 export type AgentKind = 'omega' | 'iter' | 'module'
@@ -145,6 +144,8 @@ export interface ProviderStatus {
   account?: ProviderAccount | null
   /** fetched_at and error describe the hive's default key's fetch: null unless that is the key you pay with. */
   catalog?: { count: number; fetched_at: number | null; error: string | null }
+  /** Free inference only (hive/core/free_inference.py): each person's model calls a day on the deploy's key. */
+  daily_calls?: number
 }
 
 /** GET /api/keys: a provider key as people see it. Never carries the secret. */
@@ -250,6 +251,11 @@ export interface Swarm {
   archived_by?: string | null
   /** Its minds' mind-to-mind messages an hour, together (hive/core/throughput.py). */
   throughput?: Throughput | null
+  /**
+   * Whether the viewer may act on this swarm (its owner, its person or an admin), as GET /api/swarms says; a live event
+   * carries no flag, so the last read's stays (keepHostFlags). Only an explicit no hides a control (hostRefusesControl).
+   */
+  may_control?: boolean
 }
 
 export interface UpdateSwarmBody {
@@ -432,6 +438,8 @@ export type AgentAction = 'start' | 'stop' | 'sleep' | 'wake'
 
 /** Gateway refusals before an LLM call (API.md "LLM spend is checked before the call"). */
 export type LlmErrorCode = 'no_budget' | 'unpriced_model' | 'budget_exhausted' | 'hive_budget_exhausted' | 'rate_limited'
+  | 'free_inference_busy' | 'free_inference_daily_cap' | 'free_inference_hive_daily_cap' | 'free_inference_off'
+  | 'free_model_not_offered' | 'free_inference_invited_only' | 'free_inference_person_only'
 
 export interface ApiErrorBody {
   error: { code: string; message: string }
@@ -656,6 +664,8 @@ export interface LabSuite {
   missing: string[]
   runnable: boolean
   last_run: LabRunSummary | null
+  /** Whether this person may start and cancel its runs (admins only). A hive that does not say leaves it to the route. */
+  may_run?: boolean
 }
 
 export interface LabMetric {
@@ -766,18 +776,43 @@ export interface ProgramRelation {
 export interface ProgramAction {
   id: string
   label?: string
-  /** Kinds the action applies to; absent means any. */
+  /** Kinds of item the action takes; absent means any kind, or none; empty means none: it acts on the app itself. */
   applies_to?: string[]
   /** The stage the action leads to, as a hint ("detail?"). */
   stage?: string
-  /** Param name -> what it means. */
-  params?: Record<string, string>
+  /**
+   * The inputs it takes, by name: what each means in words (0.1), or one MCP elicitation form field (ParamSchema). A
+   * page asks for them before the action is sent.
+   */
+  params?: Record<string, string | ParamSchema>
   /** Candidate (G2, PROGRAMS.md §9c): the action takes one file from the person (types, and at most max_bytes ≤ 20 MB). */
   accepts_file?: { mimes: string[]; max_bytes: number }
   /** §9d: a human act through the full named-person intent gate (always host-confirmed). */
   person_activity?: boolean
   /** §9d: the effective host confirm (true when the app opts in or the action is person_activity). */
   confirm?: boolean
+}
+/**
+ * One input an action takes, declared as MCP elicitation's form mode declares a property (spec 2025-11-25, SEP-1330): a
+ * string, number, integer or boolean; one of several strings (`enum`, or `oneOf` with each `const` and its `title`); or
+ * several of them (`type: "array"`, `items` holding `enum` or `anyOf`). Each may carry a title, a description and a
+ * default the page fills in. The app checks what it gets, as an MCP server does.
+ */
+export interface ParamSchema {
+  type?: 'string' | 'number' | 'integer' | 'boolean' | 'array'
+  title?: string
+  description?: string
+  default?: string | number | boolean | string[]
+  enum?: string[]
+  oneOf?: { const: string; title?: string }[]
+  minimum?: number
+  maximum?: number
+  items?: { type?: 'string'; enum?: string[]; anyOf?: { const: string; title?: string }[] }
+}
+/** A declared input's words: 0.1's description, or a form field's description, else its title. */
+export function paramWords(spec: string | ParamSchema | undefined): string {
+  if (typeof spec === 'string') return spec
+  return spec?.description || spec?.title || ''
 }
 /** Candidate (G1, PROGRAMS.md §9c): a declared read (POST /api/programs/{id}/read). */
 export interface ProgramRead {
@@ -1071,10 +1106,24 @@ export type HiveEvent =
   | (EventBase<'create.plan.piece'> & { plan_id: string; piece: string; state: string; candidate: string | null; repairs: number })
   | (EventBase<'create.plan.question'> & { plan_id: string; q: string; answered: boolean; about?: string | { piece: string }; text?: string; choices?: string[] })
   | (EventBase<'create.plan.preview'> & { plan_id: string; ckpt: string; preview: string })
+  // a mind's offer to build something in Create for this person (create_offers.py): made, started or set aside; ids
+  // and state only, to that person alone
+  | (EventBase<'create.offer'> & { offer_id: string; agent_id: string; state: CreateOffer['state'] })
   | (EventBase<'code.controller.applied'> & { request_id: string; candidate: string; workspace_id: string; paths: string[]; application_id: string | null; after: { generation: number; tree_digest: string } | null })
   /** A mind drafted a report into this person's feedback area, or a draft it made was dismissed or used (features/feedback). */
   | (EventBase<'feedback.draft'> & { principal?: string; draft: FeedbackDraft })
   | (EventBase<'feedback.draft.removed'> & { principal?: string; id: string })
+
+/** A mind's offer to build something in Create for the person reading it (GET /api/me/create-offers, create_offers.py):
+ *  what to build in the asker's words, offered until the person starts it in Create or sets it aside. */
+export interface CreateOffer {
+  id: string
+  mind: { id: string; name: string } | null
+  sentence: string
+  state: 'offered' | 'started' | 'dismissed'
+  plan_id: string | null
+  created_at: string
+}
 
 /** One spending limit with what has been spent against it (GET /api/budgets, budgets.updated). */
 export interface BudgetLine {

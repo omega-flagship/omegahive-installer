@@ -31,6 +31,7 @@ import type { IconName } from '../ui/Icon'
 import { readContext } from '../lib/readContext'
 import { readResult, resultWords } from '../features/power/api'
 import { startingLimitWords } from '../features/keys/startingLimit'
+import { mayStart } from '../features/lab/labUtil'
 import { shown } from '../lib/displayName'
 import { askMemory } from '../lib/askMemory/store'
 import { canRemindNow, canSleepNow, hasHostFlags, remindRefusalNow, remindRefusal, remindWait, sleepRefusal } from '../api/idleMinds'
@@ -38,6 +39,7 @@ import {
   applyResult,
   backStep,
   currentStep,
+  declaredInput,
   goTo,
   jumpTo,
   loadTrail,
@@ -291,6 +293,8 @@ export interface Actions {
   programSelect(key: string, ids: string[]): void
   /** Run a program action on items; base_revision is always the revision on screen. */
   programAct(key: string, action: string, items: string[], params?: Record<string, unknown>): Promise<void>
+  /** Ask for the inputs an action declares before it is sent (the form's Send runs programAct with them). */
+  programOpenInput(key: string, action: string, items: string[]): void
   programDismiss(key: string, what: 'notice' | 'input' | 'source' | 'result' | 'suggestion'): void
   programCancelTask(key: string, taskId: string): Promise<void>
   // ---- Providers
@@ -1374,7 +1378,7 @@ export const useHive = create<Store>()((set, get) => ({
   async runAllLab() {
     const suites = get().labSuites ?? []
     const order = [...suites.filter((x) => x.kind === 'tests'), ...suites.filter((x) => x.kind === 'bench')]
-    const todo = order.filter((x) => x.runnable && x.last_run?.status !== 'running').map((x) => x.id)
+    const todo = order.filter((x) => mayStart(x) && x.last_run?.status !== 'running').map((x) => x.id)
     if (!todo.length) return
     set({ labQueue: todo.slice(1) })
     await get().startLab(todo[0])
@@ -1546,6 +1550,13 @@ export const useHive = create<Store>()((set, get) => ({
 
   programDismiss(key, what) {
     patchSession(key, (s) => (what === 'notice' ? { ...s, notice: null } : what === 'input' ? { ...s, input: null } : what === 'source' ? { ...s, sourceDetail: null } : what === 'result' ? { ...s, result: null } : { ...s, suggestion: null }))
+  },
+
+  programOpenInput(key, action, items) {
+    const s0 = get().programSessions[key]
+    const def = s0 ? get().programDetails[s0.programId]?.describe?.actions.find((a) => a.id === action) : undefined
+    if (!s0 || !def || s0.busy) return
+    patchSession(key, (s) => ({ ...s, notice: null, result: null, input: declaredInput(def, items) }))
   },
 
   async programCancelTask(key, taskId) {
