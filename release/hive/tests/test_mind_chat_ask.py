@@ -9,7 +9,9 @@ test world's swarm Home with its coordinator Orchestra and a mind called Worker.
 - from_ask is taken only in her own chat with the mind, in the conversation's shape; a mind that isn't her own (Bob's
   own mind, a swarm's) is told only the exchanges it answered itself, whatever her page sends;
 - a stamp in her chat that doesn't read costs that line its age, never the Ask turn;
-- an Ask turn reads her own chat with the mind that answers, and nothing else of the mind's messages.
+- an Ask turn reads her own chat with the mind that answers, and nothing else of the mind's messages;
+- a turn kept in a swarm's thread reads that chat only for one of the swarm's own minds (Jon on #347): a swarm turn
+  speaking as Taiga reads nothing of her chat with Taiga, and Taiga is told it stays private unless she says it there.
 """
 import json
 import time
@@ -164,8 +166,31 @@ def test_an_ask_turn_reads_her_own_chat_with_the_mind_that_answers(client, monke
     assert "your own chat with them" in s.bodies[0]["messages"][0]["content"][0]["text"]   # and her own mind is told so
     assert "- just now, they said: “remember the gate code 4417”\n- just now, you said: “Got it: the gate code is 4417.”" in chat
     assert "hive note" not in context and "another room" not in context
-    # a turn routed to a swarm speaks as Taiga too, so it reads her chat with Taiga
-    s2 = script(client, Script("Hi."))
-    ask(client, w["ann"], "op-mca-chat-02", text="hello", context={"swarm_id": w["swarm"]["id"]})
+
+
+def test_a_swarm_turn_reads_no_chat_with_her_own_mind_and_her_mind_says_it_stays_private(client, monkeypatch):
+    # Jon on #347: a person's exchange with their own mind stays private to them. A turn routed to a swarm speaks as
+    # Taiga but keeps its answer in the swarm's thread, so it reads nothing of her chat with Taiga, and Taiga is told
+    # that what she said with it alone stays between them unless she says it here
+    w = _world(client, monkeypatch)
+    hive, mine = w["hive"], w["mine"]
+    hive.enqueue_message(mine["id"], "remember the gate code 4417", hive.person_conversation(mine["id"], "user:u_ann"),
+                         "user:u_ann")
+    s = script(client, Script("Hi."))
+    r = ask(client, w["ann"], "op-mca-chat-02", text="what was the gate code?", context={"swarm_id": w["swarm"]["id"]})
+    assert r.status_code == 202 and r.json()["thread"]["mind"]["id"] == w["coord"]["id"]
     wait(hive, "op-mca-chat-02", closed)
-    assert "gate code" in s2.bodies[0]["messages"][1]["content"]   # the turn speaks as Taiga: her chat with Taiga
+    system, context = s.bodies[0]["messages"][0]["content"][0]["text"], s.bodies[0]["messages"][1]["content"]
+    assert "gate code" not in context and "Their own chat with you" not in context
+    assert "stays between you and is not brought into this swarm's thread" in system
+    # a swarm turn that speaks as one of the swarm's own minds still reads the person's chat with it, a chat with the
+    # swarm: Jon has no own mind, so his turn to Home speaks as Orchestra and reads his chat with Orchestra
+    assert hive.personal.mind_row("user:u_jon") is None
+    coord = w["coord"]
+    hive.enqueue_message(coord["id"], "the shed key is under the mat", hive.person_conversation(coord["id"], "user:u_jon"),
+                         "user:u_jon")
+    s2 = script(client, Script("Under the mat."))
+    assert ask(client, w["jon"], "op-mca-chat-03", text="where is the shed key?",
+               context={"swarm_id": w["swarm"]["id"]}).status_code == 202
+    wait(hive, "op-mca-chat-03", closed, principal="user:u_jon")
+    assert "they said: “the shed key is under the mat”" in s2.bodies[0]["messages"][1]["content"]

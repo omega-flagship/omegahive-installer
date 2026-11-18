@@ -33,6 +33,8 @@ describe('U1 single-screen view and explicit intent projection', () => {
   it('shows the exact editable default, name, current model and exactly one explicit Wake with no form or Next tour', () => {
     const s = render(sample())
     expect(s).toContain('Meet your mind')
+    // what First Light is, said on the card itself, since its name alone tells a new person nothing
+    expect(s).toContain('First Light is your mind’s first wake-up: name it, say what it’s for, choose how it thinks, then wake it.')
     expect(s).toContain('value="Wren"')
     expect(s).toContain(DEFAULT_ASK_PURPOSE)
     expect(s).toContain('Invented provider')
@@ -339,7 +341,7 @@ describe('every way to think is offered inside the card', () => {
   const models = [{ id: 'openrouter/anthropic/claude-sonnet-5.5', provider: 'openrouter', label: 'anthropic/claude-sonnet-5.5', local: false }]
   const view = (r: Run, providers: ProviderStatus[]) => renderToStaticMarkup(createElement(SingleScreen, { run: r, now: 1000, providers, models }))
 
-  it('a key the hive already has is one tap, for the owner; the key field and the local list open only when asked', () => {
+  it('a key that would pay for this person’s mind is one tap; the key field and the local list open only when asked', () => {
     const r = sample()
     r.u1!.model = 'mock/echo'
     const s = view(r, [answered, openrouter])
@@ -351,8 +353,11 @@ describe('every way to think is offered inside the card', () => {
     expect(local).toMatch(/data-u1-local-open=""[^>]*aria-expanded="false"[^>]*>Use a model on this computer</)
     expect(s).not.toContain('data-fl-inline-key')
     expect(s).not.toContain('data-u1-local=""')
+    // someone else's hive: offered when the host says the key would pay for their mind (their own saved key, a key
+    // granted to them, or the owner's where the owner lets others use it), never when it says it wouldn't
     r.path = 'guest'
-    expect(view(r, [answered, openrouter])).not.toContain('Think with OpenRouter')
+    expect(view(r, [answered, openrouter])).toMatch(/data-u1-way="openrouter"[^>]*>Think with OpenRouter</)
+    expect(view(r, [answered, { ...openrouter, configured: false, connected: false }])).not.toContain('Think with OpenRouter')
   })
 
   it('on the demonstration model with no other way, the key field is open with where to get a key, and nothing folds it away', () => {

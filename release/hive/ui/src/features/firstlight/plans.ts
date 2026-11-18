@@ -65,13 +65,17 @@ export interface KeyedWay {
 }
 
 /**
- * "Think with OpenRouter": a keyed provider this hive already pays with (a stored key, the hive default or an
- * environment key). Offered, as plans are, only to the owner, only while the host lists the provider as configured and
- * has not seen it fail to answer, and only with a model the hive lists for it (GET /api/models lists a keyed provider
- * only when the caller could pay with it). Offering changes nothing: the model is set only on the owner's tap.
+ * "Think with OpenRouter": a keyed provider this person's own mind can already be paid with: for the owner a stored key,
+ * the hive default or an environment key; for anyone else their own saved key, a key granted to them, or the owner's
+ * key where the owner lets others use it. The host decides which, per caller, by the gateway's own admission
+ * (hive/core/app.py pay_route): a provider reads configured to this person only when it would pay for their mind, and
+ * GET /api/models lists its models only then. So a member who saved their own Anthropic key is offered Think with
+ * Anthropic, and one who holds no key they can pay with is offered nothing. Offered only while the host has not seen
+ * the provider fail to answer, and only with a model the hive lists for it. Offering changes nothing: the model is set
+ * only on the person's tap.
  */
-export function keyedWays(providers: readonly ProviderStatus[] | null | undefined, models: readonly ModelOption[] | null | undefined, owner: boolean, remembered: string | null): KeyedWay[] {
-  if (!owner || !providers || !models) return []
+export function keyedWays(providers: readonly ProviderStatus[] | null | undefined, models: readonly ModelOption[] | null | undefined, remembered: string | null): KeyedWay[] {
+  if (!providers || !models) return []
   return providers.flatMap((p) => {
     if (!p.needs_key || !(p.configured ?? p.connected) || p.readiness === 'not_answering' || p.test_only) return []
     const model = modelForKey(p.name, models, remembered)

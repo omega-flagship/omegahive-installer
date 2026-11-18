@@ -1,5 +1,5 @@
 # Purpose: the host's MeTTa coding controller: it holds each Code request, starts its helper attempts, tests and reviews
-# candidates, and journals every step before it acts.
+# candidates, journals every step before it acts, and names the person whose request waits on a second opinion.
 """Create - Code: the MeTTa coding controller drives every Code request (host side of R3.12, root-suggest profile).
 
 The procedure and every decision live in the vendored reducer modules/code/controller/coding_controller_r3_12.metta
@@ -310,6 +310,29 @@ class CodeControllerEngine:
 
     def enabled(self):
         return bool(getattr(self.hive.settings, "code_controller_engine", False))
+
+    def waiting_on(self, agent_id):
+        """The person whose live Code request waits on this mind's second opinion, or None: an open review was sent to it,
+        on a run neither delivered nor stopped, while the engine runs. A review is open from its journalled dispatch,
+        before its packet wakes the mind, until its goal is answered or ended (AWAITED): a shared mind runs on its
+        caller's limits from the call to its answer, as an seL4 passive server runs on its client's scheduling context
+        from Call to Reply. The helper needs no window of its own: a child the request spawned is its asker's for as long
+        as its reservation is held (Hive._request_person), and a plan member's is its plan's (CreatePlanEngine). The
+        controller mind is never one: the engine drives the request with its own credential and wakes no controller mind
+        (receiving_brief), so what it spends meanwhile is its own. Only a signed-in person makes a Code request
+        (Minds.instruct), so what the reviewer spends is that person's own work (Hive.present_for). Time: one scan of
+        the runs, then each live run's reviews through the effects' (request_id, kind, seq) index."""
+        if not self.enabled():
+            return None
+        from .create_plan_engine import AWAITED
+        row = self.db.one(
+            "SELECT r.person FROM code_controller_runs r JOIN code_controller_effects e ON e.request_id = r.request_id "
+            "AND e.kind = 'review' LEFT JOIN goals g ON g.id = json_extract(e.body, '$.goal_id') "
+            "WHERE COALESCE(r.phase, '') NOT IN ('delivered', 'stopped') AND e.state IN ('journaled', 'waiting') "
+            "AND json_extract(e.body, '$.reviewer_id') = ? "
+            f"AND (g.id IS NULL OR g.status IN ({','.join('?' * len(AWAITED))})) ORDER BY r.created_at LIMIT 1",
+            (agent_id, *AWAITED))
+        return row["person"] if row and str(row["person"]).startswith("user:u_") else None
 
     @property
     def reducer(self):

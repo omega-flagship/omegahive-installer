@@ -122,8 +122,8 @@
        (py-call (hive_commons.authorize (repr $cmd)))
        True))
 
-; What a memory write with nothing in it runs as (hive_services.empty_write_refusal): its refusal's text, given back as
-; the command's result.
+; What a memory write or a message with nothing in it runs as (hive_services.empty_call_refusal): its refusal's text,
+; given back as the command's result.
 (= (hive-refused $text) $text)
 
 (= (command-results $items)

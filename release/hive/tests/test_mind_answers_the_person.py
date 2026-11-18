@@ -67,6 +67,36 @@ def test_a_mind_that_rests_owing_an_answer_is_reminded_and_gets_new_turns(client
     assert client.get("/api/agent/replies/owed", headers=agent_headers(mind)).json() == {"owed": []}
 
 
+def test_the_reminder_names_what_the_mind_saved_since_the_message_so_it_answers_instead_of_saving_again(client):
+    # A v0.36 update check: asked to save a plan, a mind saved it, sent nothing and rested; reminded with only the
+    # person's words, it saved the plan a second time before it answered.
+    import time
+    hive, mind = _mind(client)
+    old = client.post("/api/agent/artifacts", headers=agent_headers(mind), json={"kind": "plan", "title": "Last week's plan"}).json()
+    hive.db.execute("UPDATE artifacts SET created_at = ? WHERE id = ?", ("2026-01-01T00:00:00.000Z", old["id"]))
+    asked = _tell(client, mind, "Please make me a short plan for a family weekend in Lisbon and save it in the hive.")
+    time.sleep(0.01)                       # the hive's clock counts milliseconds; the mind saves after the message
+    plan = client.post("/api/agent/artifacts", headers=agent_headers(mind),
+                       json={"kind": "plan", "title": "Family weekend in Lisbon"}).json()
+    client.post(f"/api/agent/artifacts/{plan['id']}/revisions", headers=agent_headers(mind),
+                json={"body": "Saturday: the aquarium. Sunday: the castle.", "parent": None}).raise_for_status()
+    assert _rest(client, mind)["sent"] == "reminder"
+    [reminder] = _from_hive(hive, mind, "hive:reply-reminder")
+    assert reminder["conversation_id"] == asked["conversation_id"]
+    assert (f'Since they asked, you saved "Family weekend in Lisbon" ({plan["id"]}, plan, revision 1); if that is what '
+            "they asked for, tell them so instead of making it again.") in reminder["text"]
+    assert "Last week's plan" not in reminder["text"]
+    assert hive.replies.saved_since(mind["id"], "2026-01-01T00:00:00.000Z")[1]["id"] == old["id"]   # newest first
+
+
+def test_a_reminder_after_nothing_was_saved_names_nothing(client):
+    hive, mind = _mind(client)
+    _tell(client, mind, CODE_MIND)
+    assert _rest(client, mind)["sent"] == "reminder"
+    [reminder] = _from_hive(hive, mind, "hive:reply-reminder")
+    assert "Since they asked" not in reminder["text"] and "Answer them before you rest" in reminder["text"]
+
+
 def test_if_it_rests_again_the_hive_tells_the_person_in_their_chat_once(client):
     hive, mind = _mind(client)
     asked = _tell(client, mind, FLOW)

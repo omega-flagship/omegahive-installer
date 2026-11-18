@@ -108,7 +108,7 @@ export function SingleScreen({ run, now, providers, models }: { run: Run; now: n
   const connection = connectionState(u.model, providers, run.facts.ownKeys)
   const plans = run.mode === 'live' && run.facts.mind ? connectedPlans(providers, run.path === 'owner') : []
   const onPlan = currentPlan(u.model, plans)
-  const ways = run.mode === 'live' && run.facts.mind ? keyedWays(providers, models, run.path === 'owner', remembered) : []
+  const ways = run.mode === 'live' && run.facts.mind ? keyedWays(providers, models, remembered) : []
   const here = localModels(models, providers)
   const unavailable = connection === 'local-down' || connection === 'unavailable' || connection === 'no-key' || connection === 'no-provider' || connection === 'demo'
   // no plan, no key the hive has, no model on this computer: pasting a key is the one way, so its field is open from
@@ -188,6 +188,8 @@ export function SingleScreen({ run, now, providers, models }: { run: Run; now: n
   </div>
   return <div className="fl-u1-body" data-firstlight-single={u.phase}>
     <header><span className="fl-u1-eyebrow">First Light</span><h2>Meet your mind</h2></header>
+    {/* the name alone told a newly signed-in tester nothing (staging, 18 Nov), so the card says what First Light is */}
+    <p data-u1-what="">First Light is your mind’s first wake-up: name it, say what it’s for, choose how it thinks, then wake it.</p>
     {run.facts.minds?.established && !done && !run.loadError && <p className="fl-small" data-u1-may-leave="">You've used this hive before, so you can close this whenever you like.</p>}
     <div className="fl-u1-fields"><label className="fl-field"><span>Its name</span><input ref={nameRef} className="fl-input" value={shownName} maxLength={ASK_NAME_MAX} onChange={(e) => setName(e.target.value)} placeholder="Give it a name" autoComplete="off" disabled={busy || !run.facts.mind || run.status === 'loading' || !editing} /></label>
     <label className="fl-field"><span>What do you want it to be?</span>

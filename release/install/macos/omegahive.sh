@@ -254,21 +254,26 @@ wait_running() {
 # Linux: serve's process, while it lives.
 serving() { [ -f "$SERVE_PID" ] && kill -0 "$(cat "$SERVE_PID" 2>/dev/null)" 2>/dev/null; }
 
+# Linux, once the hive answers: Create's Code service, when setup gave the hive one, is started and enrolled with it
+# (create is a no-op once enrolled), and Studio, when setup laid it out, is turned on, with or without the Code service
+# (studio is a no-op once its owner has it, on or off). create's fail exits the shell it runs in, so the Code steps run
+# in a subshell of their own: a Code service that never answers is said here, and Studio still goes on.
+code_and_studio() {
+  wait_running >/dev/null || return 0
+  if [ -f "$CODE/config.json" ]; then (start_code && create) || say "Create's Code service did not start or enrol; see above"; fi
+  studio
+}
+
 # Linux: the hive in the foreground for as long as this process lives, started again after a crash. A stop (TERM) ends
-# the hive and then this loop; the hive's own clean exit ends the loop too.
+# the hive and then this loop; the hive's own clean exit ends the loop too. Code and Studio go on beside it once it
+# answers (code_and_studio); systemd keeps Code running beside the hive.
 serve() {
   [ -f "$OH/installed" ] || fail "$OH holds no finished install; run the installer again"
   serving && fail "the hive is already being served (pid $(cat "$SERVE_PID"))"
   mkdir -p "$OH/run" "$OH/logs"
   echo "$$" > "$SERVE_PID"
-  # Create's Code service, when setup gave the hive one, starts once the hive answers and is enrolled with it then
-  # (create is a no-op once enrolled); systemd keeps it running beside the hive. Studio, when setup laid it out, is
-  # turned on then too, with or without the Code service (studio is a no-op once its owner has it, on or off).
   if [ -f "$CODE/config.json" ] || [ -f "$OH/apps/omegadesign/plugin.json" ]; then
-    { wait_running >/dev/null || exit 0
-      # errexit would end this block at a failed create, so a Code failure is said here and Studio still goes on
-      if [ -f "$CODE/config.json" ]; then start_code && create || say "Create's Code service did not start or enrol; see above"; fi
-      studio; } >> "$OH/logs/hive.log" 2>&1 &
+    code_and_studio >> "$OH/logs/hive.log" 2>&1 &
   fi
   child=""
   trap '[ -z "$child" ] || kill -TERM "$child" 2>/dev/null; [ -z "$child" ] || wait "$child" 2>/dev/null; rm -f "$SERVE_PID"; exit 0' TERM INT HUP

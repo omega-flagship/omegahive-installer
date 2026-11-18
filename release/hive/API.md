@@ -628,10 +628,12 @@ allowance, the hive's monthly cap and a team's or a mind's monthly cap where one
 day or total rule and a key's cap are held by their limit alone) each refill at a thirtieth of the month a day with a
 burst of a tenth (GCRA, ITU-T I.371 annex A, one theoretical arrival time per limit in `limit_rates`): with $50 a month
 that is $1.67 a day and a $5 burst. A call a person's own live work holds (`Hive.present_for`: their Studio session, the
-Ask turn open on the mind, an active Session with it, or their live Create plan waiting on a goal it gave the mind; and
-every call of the Ask conductor and the personal-mind gateway) is held by its limits alone and charges the guard nothing,
-so Make can spend a small month in one sitting: paced, a $1 month held Make's planner about 17 hours after one 2-cent
-call, since each call's worst case was nearly the whole $0.10 burst.
+Ask turn open on the mind, an active Session with it, a child mind a team spawned for their request until its allocation
+goes back, such as a Code request's helper, their live Create plan waiting on a goal it gave the mind, or their live
+Code request waiting on the mind's second opinion; and every call of the Ask conductor and the personal-mind gateway) is
+held by its limits alone and charges the guard nothing, so Make can spend a small month in one sitting: paced, a $1
+month held Make's planner about 17 hours after one 2-cent call, since each call's worst case was nearly the whole $0.10
+burst, and a $2 month held a Code helper's second call about 13 hours.
 A call is admitted while its worst case fits the burst left, inside the reservation's own transaction; a call bigger
 than the burst only when the guard is full. A call settled below its worst case gives the difference back and a released
 call all of it (a trigger on `cost_reservations`, so every path that ends a hold does), so the guard counts what was
@@ -1269,7 +1271,10 @@ Applies only to conductor turns (`HIVE_ASK_CONDUCTOR=1`).
 - **Their own chat with the mind (input).** A conductor turn also reads the person's own chat with the mind that
   answers (its conversation `c_<mind>~<person>`, the hive's own copy): the latest 8 messages they and the mind said
   there, oldest first, each cut at 400 characters and the whole at 4 KB, with how long ago. A hive note, a message kept
-  for the mind alone, Health's question and every room are left out. The other way, the person's next message in that
+  for the mind alone, Health's question and every room are left out. It follows the conversation's rule (Jon on #347):
+  a turn kept in a swarm's thread reads it only when the mind that answers is one of that swarm's own minds, so a swarm
+  turn that speaks as the person's own mind reads nothing of their chat with it, and that mind is told that what they
+  said with it alone stays private unless they say it in the swarm. The other way, the person's next message in that
   chat carries what the mind has not heard of the Ask (`POST /api/agents/{id}/messages` `from_ask`).
 - **Learning (output).** `HIVE_ASK_MEMORY=on` (off by default; any other value is off) gives the model a `remember`
   tool: `{statement: 1–500 chars, kind: preference|name|place|person|project|correction, confidence?: 0–1 (default 0.8),

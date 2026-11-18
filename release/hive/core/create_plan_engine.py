@@ -98,7 +98,8 @@ TERMINAL = ("deployed", "stopped")
 # are agent:<id>), so the hive can tell a mind is doing a person's plan (CreatePlanEngine.waiting_on).
 GOAL_CREATOR = "create-plan:"
 # The states of such a goal the plan still waits on: unfinished and not yet submitted, since the plan reads a submitted
-# goal's proposal as the answer (GoalMinds.collect, code_controller_member.helper_result).
+# goal's proposal as the answer (GoalMinds.collect, code_controller_member.helper_result). A Code request reads its
+# second opinion's goal the same way (CodeControllerEngine.waiting_on and review_goal).
 AWAITED = tuple(s for s in UNFINISHED if s != "submitted")
 
 

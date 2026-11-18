@@ -10,7 +10,7 @@ direct chats has no answer from it:
 - owed(agent_id): each direct chat (c_<mind>, c_<mind>~<person>...) whose newest message from a person is newer than
   the mind's newest message there. Rooms, Ask turns and the hive's own notes owe nothing here.
 - rest(agent, in_flight): the first rest after such a message sends the mind HIVE-REPLY-OWED, which quotes the message,
-  names the conversation to answer in and only the mind reads. It arrives as new input, so the loop gives the mind
+  names what the mind saved since it (saved_since) and the conversation to answer in, and only the mind reads. It arrives as new input, so the loop gives the mind
   fresh turns to answer. If it rests again without answering, the hive leaves a note in that chat, which the person
   sees and the mind reads: the mind stopped without answering. Each happens once per message. A conversation the mind
   has an answer queued for (in_flight: its channel has not sent it yet) owes nothing at that rest.
@@ -57,6 +57,21 @@ class Replies:
                  "from_name": self.hive.sender_name(r["sender"]) or "the person", "text": excerpt(r["text"]),
                  "at": r["created_at"]} for r in rows]
 
+    def saved_since(self, agent_id, at, limit=5):
+        """Newest first: each artifact this mind made, or wrote a revision of, at or after `at`, as {"id", "title",
+        "kind", "revision"} (its latest revision, None while it has none). The reminder names them, since on a v0.36
+        update check a mind saved the plan a person asked for, rested without answering, and on a reminder that quoted
+        only the person's words saved the plan a second time. Time: one pass over the artifacts and revisions made
+        since `at`, there being no index on their author."""
+        me = f"agent:{agent_id}"
+        rows = self.db.all(
+            "SELECT a.id, a.title, a.kind, (SELECT MAX(n) FROM artifact_revisions v WHERE v.artifact_id = a.id) AS revision, "
+            "MAX(COALESCE(r.created_at, a.created_at)) AS last FROM artifacts a "
+            "LEFT JOIN artifact_revisions r ON r.artifact_id = a.id AND r.author = ? AND r.created_at >= ? "
+            "WHERE (a.created_by = ? AND a.created_at >= ?) OR r.artifact_id IS NOT NULL "
+            "GROUP BY a.id ORDER BY last DESC LIMIT ?", (me, at, me, at, limit))
+        return [{"id": r["id"], "title": r["title"], "kind": r["kind"], "revision": r["revision"]} for r in rows]
+
     async def rest(self, agent, in_flight=()):
         """{"sent": "reminder" | "note" | None, "message_id"?}: what the hive sent because this mind rested while it
         owed a person an answer. Its newest unanswered message gets HIVE-REPLY-OWED to the mind the first time and the
@@ -74,10 +89,14 @@ class Replies:
                 "UPDATE reply_duties SET noted_at = ? WHERE message_id = ? AND noted_at IS NULL",
                 (now(), o["message_id"])).rowcount == 1
         if first:
+            saved = self.saved_since(agent["id"], o["at"])
+            did = ("Since they asked, you saved " + ", ".join(
+                f'"{s["title"]}" ({s["id"]}, {s["kind"]}' + (f', revision {s["revision"]})' if s["revision"] else ")")
+                for s in saved) + "; if that is what they asked for, tell them so instead of making it again. ") if saved else ""
             await self.hive.send_to_agent(
                 agent["id"], f'HIVE-REPLY-OWED {o["from_name"]} asked you "{o["text"]}" and has no answer from you yet. '
-                             f"Answer them before you rest: send-hive-to {o['conversation_id']} <what you did, or why "
-                             "you stopped and what they can do>.",
+                             f"{did}Answer them before you rest: send-hive-to {o['conversation_id']} <what you did, or "
+                             "why you stopped and what they can do>.",
                 o["conversation_id"], sender=REMINDER_SENDER, extra={"reply_owed": o["message_id"]})
             return {"sent": "reminder", "message_id": o["message_id"]}
         if noting:

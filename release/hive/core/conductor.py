@@ -13,12 +13,14 @@ Contract: ASK_CONDUCTOR_ACTION_VOCABULARY_v1_20261007.md, with "Platform's answe
   reach that turn's model context (never stored or logged). The page also sends the person's Ask conversation so far
   (up to 8 exchanges, <= 8 KB, each with the mind that answered it): continuity, not learned memory, so it reaches
   the model whichever mind answers, as one transcript naming each speaker (check_conversation, conversation_text),
-  never stored or logged. A turn takes only the exchanges its answer may show (Conductor._carried): a turn as the
+  never stored or logged. A turn takes only the exchanges its answer may show (Conductor._shown_minds): a turn as the
   person's own mind keeps no words on the host and takes them all; a turn whose answer is kept in a swarm's thread
   takes only those a mind of that swarm answered, so what she said with her own mind never comes back there. The
-  turn also reads the person's own chat with the mind that answers
-  (own_chat_text: the hive's copy of that chat, its latest lines), so the Ask and that chat are one conversation; the
-  other way, the person's next message in that chat carries what it has not heard of the Ask (app.py, from_ask).
+  turn also reads the person's own chat with the mind that answers (own_chat_text: the hive's copy of that chat, its
+  latest lines), so the Ask and that chat are one conversation, under the same rule (Jon on #347): a turn kept in a
+  swarm's thread reads it only when that mind is one of the swarm's own, so her chat with her own mind stays with her,
+  and her mind is told so; the other way, the person's next message in that chat carries what it has not heard of the
+  Ask (app.py, from_ask).
 - show, recall and compare put a creation, a mind or a task on the asker's stage (stage.py), the statements a mind makes
   with its own hive-show, hive-recall and hive-compare skills: the host checks each item against the asker and sends
   their pages one frame, as it does for dispatch, so none is an act and no page result is awaited. A creation may be
@@ -580,6 +582,11 @@ def mind_system(mind, personal=False, swarm_name=None, via=None):
     if personal and via is not None and swarm_name:
         who += (f"On this turn you are working in the swarm {_plain(swarm_name, 80)} (its coordinator, "
                 f"{_plain(via.get('name'), 80) or 'unnamed'}, takes any work you dispatch there); you still answer as yourself.\n")
+        # Jon on #347 (18 Nov): a person's exchange with their own mind stays private to them; this answer is kept in
+        # the swarm's thread, so neither their own chat nor their Ask talk with you alone comes with it (_shown_minds)
+        who += ("What they said with you alone, in your own chat or in the Ask, stays between you and is not brought "
+                "into this swarm's thread. If they refer to it, say it stays private, and that they can say it here if "
+                "they want the swarm to have it.\n")
     if personal:
         # a tester's own mind told her it "can't promise it will be there in a new session" (v0.31): the conversation
         # carries on now, so the mind says what it has and never warns that it may forget
@@ -1083,7 +1090,8 @@ def ask_earlier_lines(conversation, name_of):
 
 # what an Ask turn reads of the person's own chat with the mind that answers (Jon, 16 Nov: continuity "regardless of
 # which model you interact"): its latest messages, each cut at OWN_CHAT_WORDS characters, the oldest dropped past
-# OWN_CHAT_BYTES. Read from the hive's own copy of that chat for this turn only; nothing new is stored.
+# OWN_CHAT_BYTES. Read from the hive's own copy of that chat for this turn only; nothing new is stored. A turn kept in a
+# swarm's thread reads it only for a mind of that swarm that is nobody's own mind (Conductor._shown_minds).
 OWN_CHAT_MAX, OWN_CHAT_WORDS, OWN_CHAT_BYTES = 8, 400, 4 * 1024
 
 
@@ -1333,7 +1341,14 @@ class Conductor:
                                  via=mind if speaker["id"] != mind["id"] else None)
             system += SYSTEM_MEMORY if memory_enabled() else ""
             earlier = conversation_text(conversation, mind_names(self.hive, st.principal, speaker["id"]), time.time() * 1000) if conversation else ""
-            chat = own_chat_text(self.hive, st.principal, speaker["id"], time.time() * 1000)
+            # her own chat with the mind that speaks, under the conversation's rule (Jon on #347, 18 Nov): a turn kept in
+            # a swarm's thread reads it only when that mind is one of the swarm's own, never her chat with her own mind
+            if speaker["id"] in self._shown_minds(turn, [speaker["id"]]):
+                chat = own_chat_text(self.hive, st.principal, speaker["id"], time.time() * 1000)
+            else:
+                chat = ""
+                log.info("ask conductor: turn %s leaves out the own chat with %s (kept in swarm %s)", st.turn_id,
+                         speaker["id"], turn.get("swarm_id"))
             messages = [{"role": "system", "content": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]},
                         {"role": "system", "content": self._context_text(context, notes, earlier, chat)},
                         {"role": "user", "content": text}]
@@ -1397,21 +1412,27 @@ class Conductor:
                     fut.cancel()
             st.pending.clear()
 
-    def _carried(self, turn, conversation):
-        """The exchanges this turn may carry (Jon on #346, 18 Nov). A turn as the asker's own mind (personal = 1) keeps
-        no words on the host (ask.py), so it takes every exchange. Any other turn keeps its answer in its swarm's thread,
-        which the swarm's people read, so it takes only exchanges answered by a mind of that swarm that is nobody's own
-        mind: what the person said with her own mind, with a mind of another swarm, or with an id the page made up never
-        comes back in an answer kept there. A turn with no swarm takes none. One query over at most 8 ids."""
-        if not conversation or turn.get("personal"):
-            return conversation
-        if not turn.get("swarm_id"):
-            return []
-        ids = sorted({e["by"] for e in conversation})
+    def _shown_minds(self, turn, ids):
+        """Of these mind ids, the minds whose words with the person this turn may carry (Jon on #346 and #347, 18 Nov).
+        A turn as the asker's own mind (personal = 1) keeps no words on the host (ask.py), so it may carry all of them.
+        Any other turn keeps its answer in its swarm's thread, which the swarm's people read, so only a mind of that
+        swarm that is nobody's own mind: what the person said with her own mind, with a mind of another swarm, or with an
+        id the page made up never comes back in an answer kept there. A turn with no swarm carries none. One query over
+        len(ids) ids."""
+        if turn.get("personal"):
+            return set(ids)
+        if not turn.get("swarm_id") or not ids:
+            return set()
         marks = ",".join("?" * len(ids))
-        there = {r["id"] for r in self.hive.db.all(
+        return {r["id"] for r in self.hive.db.all(
             f"SELECT id FROM agents WHERE id IN ({marks}) AND swarm_id = ? AND deleted = 0 AND personal_of IS NULL",
             (*ids, turn["swarm_id"]))}
+
+    def _carried(self, turn, conversation):
+        """The exchanges this turn may carry: those answered by a mind whose words it may carry (_shown_minds)."""
+        if not conversation:
+            return conversation
+        there = self._shown_minds(turn, sorted({e["by"] for e in conversation}))
         return [e for e in conversation if e["by"] in there]
 
     @staticmethod

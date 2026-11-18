@@ -197,46 +197,55 @@ def runtime_file(name):
     return str(runtime_directory(ROOT) / str(name))
 
 
-# A memory write with nothing in it: on v0.33 probe3 a mind's reply ran remember "", belief-claim "" and pin "" before
-# the same three with content. remember stored an empty memory and pin answered PIN-SUCCESS, where belief-claim refused
-# with a shape warning. Every such call is refused before it runs, naming what the skill needs, so the mind sends it again
-# with content on its next turn. The skills and what each needs come from the runtime's own tables: an Effect that writes
-# (writes-*, ltm-entry, working-memory-state) and the usage in the skill's first SkillCardLine.
+# A call with nothing in it, refused before it runs: on v0.33 probe3 a mind's reply ran remember "", belief-claim "" and
+# pin "" before the same three with content, and remember stored an empty memory and pin answered PIN-SUCCESS, where
+# belief-claim refused with a shape warning; on a v0.36 update check a mind's send "" answered success, sent nothing,
+# and the mind rested still owing the person its answer. The refusal names what the skill needs, so the mind sends it
+# again with content on its next turn. The skills and what each needs come from the runtime's own tables: the Effect a
+# skill declares, a memory write (writes-*, ltm-entry, working-memory-state) or a message (message-sent), and the usage
+# in the skill's first SkillCardLine, so a new skill is covered by its declaration.
 _EXTENSIONS = Path(__file__).resolve().parent / 'extensions'
-_WRITING_EFFECT = re.compile(r'\(Effect "([^"]+)" "(?:writes-[^"]*|ltm-entry|working-memory-state)"\)')
+_EFFECT = re.compile(r'\(Effect "([^"]+)" "([^"]+)"\)')
+_UNDONE = (('written', re.compile(r'writes-[^"]*|ltm-entry|working-memory-state')), ('sent', re.compile(r'message-sent')))
 _CARD_LINE = re.compile(r'\(SkillCardLine "([^"]+)" "([^"]*)"\)')
 _EMPTY_CALL = re.compile(r'^\(\s*([^\s()"]+)((?:\s+"(?:\s|\\[nrt])*")*)\s*\)$')
 
 
-def _memory_writes():
-    """{skill: what it needs} for every memory-writing skill the runtime's affordance files declare.
+def _refused_when_empty():
+    """{skill: (what it needs, what a call with nothing leaves undone)} for every skill the runtime's affordance files
+    declare as writing memory or sending a message.
 
     Time: one pass over the affordance files, at import."""
     texts = [p.read_text(encoding='utf-8') for p in sorted(_EXTENSIONS.glob('skill_affordance_*.metta'))]
-    usage = {}
+    usage, refused = {}, {}
     for text in texts:
         for skill, line in _CARD_LINE.findall(text):
             if skill not in usage and line.startswith(skill + ' '):
                 usage[skill] = line[len(skill) + 1:].split(' - ', 1)[0].strip()
-    return {skill: usage.get(skill) or 'content' for text in texts for skill in _WRITING_EFFECT.findall(text)}
+    for text in texts:
+        for skill, effect in _EFFECT.findall(text):
+            for undone, kind in _UNDONE:
+                if kind.fullmatch(effect):
+                    refused[skill] = (usage.get(skill) or 'content', undone)
+    return refused
 
 
-MEMORY_WRITES = _memory_writes()
+REFUSED_WHEN_EMPTY = _refused_when_empty()
 
 
-def empty_write_refusal(expression):
-    """What a memory-writing call with nothing to write runs as instead, or None for any other call:
+def empty_call_refusal(expression):
+    """What a memory write or a message with nothing in it runs as instead, or None for any other call:
     (hive-refused "<text>"), which loop_hooks.metta defines to give its text back, since the loop reduces what runs and
     PeTTa's reduce has no case for a bare string. The text holds no double quote, which PeTTa's reader can't hold."""
     match = _EMPTY_CALL.match(str(expression).strip())
-    if not match or match[1] not in MEMORY_WRITES:
+    if not match or match[1] not in REFUSED_WHEN_EMPTY:
         return None
-    skill, needs = match[1], MEMORY_WRITES[match[1]]
-    return ('(hive-refused "' + skill.upper() + '-REFUSED: nothing was written, since ' + skill + ' was sent nothing. '
-            'Send it again with its ' + needs + ', as ' + skill + ' ' + needs + '")')
+    skill, (needs, undone) = match[1], REFUSED_WHEN_EMPTY[match[1]]
+    return ('(hive-refused "' + skill.upper() + '-REFUSED: nothing was ' + undone + ', since ' + skill + ' was sent '
+            'nothing. Send it again with its ' + needs + ', as ' + skill + ' ' + needs + '")')
 
 
 def checked_command_expr(expression):
-    """The expression a mind's command runs as: its refusal if it is a memory write with nothing in it, else
-    command_expr's."""
-    return empty_write_refusal(expression) or command_expr(expression)
+    """The expression a mind's command runs as: its refusal if it is a memory write or a message with nothing in it,
+    else command_expr's."""
+    return empty_call_refusal(expression) or command_expr(expression)

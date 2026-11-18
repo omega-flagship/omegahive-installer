@@ -1,4 +1,4 @@
-"""First Light, host round R1a: a person's own onboarding progress, their "finish setting up" list, and the first hello.
+"""Purpose: First Light, host round R1a: a person's own onboarding progress, their "finish setting up" list, and the first hello.
 
 Plan: PLATFORM_ONBOARDING_PLAN_R1.md (Jon approved it 2026-10-12, "Sure").
 
@@ -420,7 +420,10 @@ class Onboarding:
         person = self.person(viewer)
         principal = "user:" + person["id"]
         hive = self.hive
-        mind = await run_in_threadpool(hive.personal.ensure, principal)
+        # the greeting comes from the model the mind thinks with: a key saved a moment ago moves it off the demonstration
+        # model first (PersonalMinds.priced_pick_up), never after the hello was answered by the echo model
+        mind = await run_in_threadpool(hive.personal.ensure, principal, None, False)
+        mind = await hive.personal.priced_pick_up(mind) or mind
         conversation = hive.person_conversation(mind["id"], principal)
 
         def current():

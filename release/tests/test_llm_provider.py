@@ -185,11 +185,17 @@ class FailureProvenanceTests(LlmProviderTests):
 
     def chat_with_call(self, name, arguments):
         """One reply holding a single tool call `name` with the raw JSON `arguments`, as the SDK hands it over."""
+        return self.chat_with_calls(None, [(name, arguments)])
+
+    def chat_with_calls(self, content, calls):
+        """One reply holding the text `content` beside the tool calls [(name, raw JSON arguments)], as the SDK hands it
+        over."""
         from hive.runtime import hive_services as services
         def create(_self, **kwargs):
-            call = SimpleNamespace(id='toolu_01', type='function', function=SimpleNamespace(name=name, arguments=arguments))
+            made = [SimpleNamespace(id=f'toolu_0{i}', type='function', function=SimpleNamespace(name=name, arguments=arguments))
+                    for i, (name, arguments) in enumerate(calls, 1)]
             return SimpleNamespace(choices=[SimpleNamespace(
-                message=SimpleNamespace(content=None, tool_calls=[call]), finish_reason='tool_calls')],
+                message=SimpleNamespace(content=content, tool_calls=made), finish_reason='tool_calls')],
                 model=kwargs['model'], usage=None)
         with tempfile.TemporaryDirectory() as tmp, \
              mock.patch.dict(os.environ, {'OPENROUTER_API_KEY': 'synthetic-key', 'OMEGACLAW_MEMORY_DIR': tmp}), \
@@ -197,6 +203,22 @@ class FailureProvenanceTests(LlmProviderTests):
             services.start_provider('OpenRouter', 'any/model')
             result = services.chat(self.request())
         return result, services.last_response_kind()
+
+    def test_text_beside_tool_calls_is_named_in_the_log_and_the_bare_send_beside_it_is_refused(self):
+        # A v0.36 update check: the mind's answer came as text beside a send and a wait with no arguments. Singnet runs
+        # only the calls, so the send carried nothing and the mind rested owing the person its answer.
+        from hive.runtime import hive_services as services
+        answer = 'Your Lisbon plan is saved as "Family weekend in Lisbon (2 kids)". You can open it from Artifacts.'
+        with self.assertLogs('hive_provider', 'INFO') as logged:
+            result, kind = self.chat_with_calls(answer, [('send', '{}'), ('wait', '{}')])
+        self.assertEqual(kind, 'normal')
+        self.assertEqual([call.arguments for call in result.calls], [{'text': 'send'}, {'text': 'wait'}])
+        self.assertIn(f'format: {len(answer)} characters of text came beside 2 tool calls and are not run',
+                      '\n'.join(logged.output))
+        commands, retry = self.prepared(result.calls[0].arguments['text'], kind)
+        self.assertEqual((commands, retry), ('((send ""))', 'normal'))   # what the v0.36 mind's log shows it ran
+        self.assertTrue(services.checked_command_expr('(send "")').startswith(
+            '(hive-refused "SEND-REFUSED: nothing was sent, since send was sent nothing.'))
 
     def test_a_tool_call_named_after_a_skill_runs_as_that_skill_line(self):
         # The Code helper's proposal turn as Claude Sonnet 5.5 sent it through Google Vertex on 12 November (shortened):

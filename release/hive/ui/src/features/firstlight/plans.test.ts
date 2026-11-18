@@ -78,18 +78,19 @@ describe('the other ways to think: a key the hive has, a key just pasted, a mode
     expect(modelForKey('openrouter', models, null)).toBeNull()
   })
 
-  it('offers each keyed provider the hive is configured to pay with, to the owner, while it has not been seen failing', () => {
+  it('offers each keyed provider that would pay for this person’s mind, owner or not, while it has not been seen failing', () => {
     const keyed = provider('anthropic', { label: 'Anthropic', needs_key: true })
-    expect(keyedWays([keyed, claude], models, true, null)).toEqual([{ provider: 'anthropic', label: 'Anthropic', model: 'anthropic/claude-sonnet-5-5' }])
-    for (const [providers, owner] of [
-      [[keyed], false],
-      [[{ ...keyed, configured: false, connected: false }], true],
-      [[{ ...keyed, readiness: 'not_answering' as const }], true],
-      [[{ ...keyed, test_only: true }], true],
-      [[{ ...keyed, name: 'openrouter' }], true], // configured, but no model of it is listed for this person
-    ] as const) expect(keyedWays([...providers], models, owner, null)).toEqual([])
-    expect(keyedWays(null, models, true, null)).toEqual([])
-    expect(keyedWays([keyed], null, true, null)).toEqual([])
+    // the host reads a keyed provider configured to a person, and lists its models, only when it would pay for their
+    // mind: for a member of someone else's hive, their own saved key, so a member with a Claude key is offered it
+    expect(keyedWays([keyed, claude], models, null)).toEqual([{ provider: 'anthropic', label: 'Anthropic', model: 'anthropic/claude-sonnet-5-5' }])
+    for (const providers of [
+      [{ ...keyed, configured: false, connected: false }], // nothing would pay for this person's mind with it
+      [{ ...keyed, readiness: 'not_answering' as const }],
+      [{ ...keyed, test_only: true }],
+      [{ ...keyed, name: 'openrouter' }], // configured, but no model of it is listed for this person
+    ]) expect(keyedWays(providers, models, null)).toEqual([])
+    expect(keyedWays(null, models, null)).toEqual([])
+    expect(keyedWays([keyed], null, null)).toEqual([])
   })
 
   it('lists local models other than the demonstration model, leaving out a provider seen not answering', () => {

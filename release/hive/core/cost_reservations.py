@@ -154,9 +154,10 @@ def exhausted_limit(exc):
 # burst's own time, whatever L is). A call bigger than the burst is admitted only when the guard is full (tat <= now),
 # so it is never blocked for good. A refused call holds nothing. With $50 a month that is $1.67 a day and a $5 burst.
 # It paces only what a mind spends on its own, the runaway Jon asked it to stop (#299). A call a person's live work holds
-# (Hive.present_for: their Studio session, Ask turn, Session or live Create plan) is held by its limits alone and charges
-# no tat (reserve's paced=False): that person is there, can stop it, and the work has its own budget. Pacing it too held
-# Make on a $1 month for 17 hours after one 2-cent planner call, since each call reserves nearly the whole $0.10 burst.
+# (Hive.present_for: their Studio session, Ask turn, Session, live Create plan or live Code request) is held by its limits
+# alone and charges no tat (reserve's paced=False): that person is there, can stop it, and the work has its own budget.
+# Pacing it too held Make on a $1 month for 17 hours after one 2-cent planner call, since each call reserves nearly the
+# whole $0.10 burst, and a Code helper on a $2 month 13 hours after its first call.
 GUARD_MONTH_SECONDS=30*86400
 GUARD_BURST_SECONDS=GUARD_MONTH_SECONDS/10
 

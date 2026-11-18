@@ -184,6 +184,26 @@ class PersonalMinds:
         log.info("personal mind %s moved from the demonstration model to %s (%s)", row["id"], model, choice.get("policy"))
         return self.mind_row(row["personal_of"])
 
+    async def priced_pick_up(self, row):
+        """pick_up_host_provider once the prices it reads are current. A person's mind leaves the demonstration model
+        only for a priced route, and OpenRouter's prices come with its catalogue, which a key saved a moment ago has not
+        fetched yet: on the v0.33 Windows test First Light's hello came a second after the key and was answered by the
+        echo model. So while the mind is still on the demonstration model the host set, and an OpenRouter key is here to
+        price a route at all (ProviderStore.holds_key), the catalogue is read first (ProviderStore.models, which fetches
+        only when it is stale); one that can't be read changes nothing. The callers are the async entries that act on
+        the mind at once (First Light's hello, an Ask turn). Time: at most one catalogue fetch, then the pick-up."""
+        from starlette.concurrency import run_in_threadpool
+        from .model_route import held, is_demo
+        from .providers import OPENROUTER, ProviderError
+        store = getattr(self.hive, "providers", None)
+        if row is not None and store is not None and is_demo(row.get("model")) \
+                and held(self.hive.db, row["id"]) == row.get("model") and store.holds_key(OPENROUTER):
+            try:
+                await store.models()
+            except ProviderError as exc:
+                log.info("personal mind %s: OpenRouter's catalogue could not be read before the move (%s)", row["id"], exc)
+        return await run_in_threadpool(self.pick_up_host_provider, row)
+
     def acting_as(self, principal, mind):
         """{mind_id, name} when `mind` (a row) is this person's own personal mind, else None."""
         if mind and principal and mind.get("personal_of") == principal:

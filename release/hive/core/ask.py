@@ -850,9 +850,8 @@ class Ask:
             # rules, personal.py); an app's prepared Ask writes nothing before its admission, so it keeps the row it has.
             # The pickup takes the mind's transition lock, which a wake or stop holds, so it runs off the event loop as
             # every other async caller of it does (app.py, onboarding.py)
-            if app_binding is None:
-                from starlette.concurrency import run_in_threadpool
-                mind = await run_in_threadpool(hive.personal.pick_up_host_provider, mind) or mind
+            if app_binding is None:   # with the prices current, so a key saved a moment ago already counts
+                mind = await hive.personal.priced_pick_up(mind) or mind
             model = mind.get("model") or model   # the conductor speaks as the person's personal mind, with its model
         prepared_thread = None
         if thread is None:   # outside the lock; an empty thread left by a race or a crash is adopted next time, or swept

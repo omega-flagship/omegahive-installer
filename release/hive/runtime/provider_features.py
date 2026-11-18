@@ -136,6 +136,11 @@ class HiveProviderFeatures:
             return response(text)
         result = super().convert_response(raw)
         transport = tools()[0].name
+        if choices and text.strip() and getattr(choices[0].message, 'tool_calls', None):
+            # Singnet's convert_response reads only the tool calls, so text beside them never runs or reaches anyone:
+            # on a v0.36 update check a mind's answer came as text beside a bare send, which then sent nothing.
+            log.info('format: %d characters of text came beside %d tool calls and are not run: %r', len(text),
+                     len(choices[0].message.tool_calls), text[:200])
         for call in result.calls:
             arguments = call.arguments if isinstance(call.arguments, dict) else {}
             if (call.name != transport and not call.is_error() and _SKILL_NAME.fullmatch(str(call.name or ''))

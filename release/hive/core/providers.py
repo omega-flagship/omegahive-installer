@@ -208,6 +208,11 @@ class ProviderStore:
         provider = self.provider(provider_name)
         return provider_name in self.ring["defaults"] or bool(provider.key_env and os.environ.get(provider.key_env))
 
+    def holds_key(self, provider_name):
+        """Whether any key for the provider is here: its default (stored, or its environment key) or anyone's own. Example:
+        no OpenRouter key at all means no route on it can be priced, so its catalogue need not be read for one."""
+        return self.has_default(provider_name) or any(r["provider"] == provider_name for r in self.ring["keys"].values())
+
     def _apply_defaults(self):
         for record in self.ring["keys"].values():   # every key this hive holds is known to the one redactor (r2 F)
             register_secret(record.get("secret"))

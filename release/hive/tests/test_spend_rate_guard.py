@@ -5,8 +5,9 @@
 # holding nothing and saying when to retry (429 spend_rate with Retry-After), on the hive's cap and on a mind's own
 # month cap; the guard surviving a restart; a call bigger than the burst; a mind looping on calls bigger than the burst
 # that settle by themselves held to the month's pace; a person's own live work held by its limits alone, never paced
-# or charged (whose own work a mind is doing, and a tester's $1 month running Make through the chat route); and the
-# month-apart clock other admission tests give Reservations so the guard is full at each of their calls.
+# or charged (whose own work a mind is doing, a tester's $1 month running Make through the chat route, and a Code
+# request's helper and second opinion on a $2 month, the real engine driving it); and the month-apart clock other
+# admission tests give Reservations so the guard is full at each of their calls.
 """The spend-rate guard (cost_reservations.guard_charges, its refund trigger, Hive.spend_rate_refusal, Hive.present_for)."""
 import math
 import random
@@ -16,8 +17,11 @@ import pytest
 from hive.core.cost_reservations import BudgetExhausted, GUARD_BURST_SECONDS, GUARD_MONTH_SECONDS, Reservations, SpendRateLimited
 from hive.core.create_plan_engine import goal_creator
 from hive.core.db import Database, now
+from hive.tests.test_code_controller_engine import ORIGIN, add_reviewer, fake, helper_finishes, reviewer_finishes, run, x  # noqa: F401  (fixture)
 from hive.tests.test_core_api import agent_headers, client, make_swarm_and_agents  # noqa: F401  (fixture)
 from hive.tests.test_cost_reservations import MODEL as PAID, _fake_chat, _gateway
+from hive.tests.test_mind_control import w  # noqa: F401  (fixture)
+from hive.tests.test_proposal_tests import SUGGESTION
 
 LABEL, LIMIT = "person:u_0a0b0c0d:month", 50.0
 # every monthly figure the guard paces, and the figures it leaves to their limit alone (cost_reservations.guarded)
@@ -340,4 +344,64 @@ def test_a_mind_on_a_persons_live_plan_spends_to_the_month_limit_unpaced_and_on_
     assert codes[-1] == 402 and len(codes) > 5                           # the month itself stops it, never its pace
     spent = h.db.one("SELECT COALESCE(SUM(actual), 0) AS n FROM cost_reservations WHERE state = 'settled'")["n"] / 1e6
     assert spent > 0.9                                                   # most of the $1 month, in one sitting
+    assert h.db.one("SELECT tat FROM limit_rates WHERE label = 'hive:month'")["tat"] == charged   # nothing charged
+
+
+def test_a_code_requests_helper_and_second_opinion_are_its_persons_own_work_until_they_are_done_with_it(x, monkeypatch):
+    """A tester's v0.36 gate on a $2 hive month: a Code helper's first call came from the full guard and its second was
+    held about 13 hours, so the request sat writing with no candidate. Here the real engine drives a request while its
+    minds call the chat route. The helper is the asking person's from its spawn until the request ends and its
+    allocation goes back, and the second opinion from its wake until it answers: past the guard's pace their calls go
+    on, held by the person's limits alone and charging the guard nothing. A reviewer that has answered, a helper whose
+    request has ended, and the controller mind throughout are on their own and paced."""
+    h, jon = x.hive, "user:u_jon"
+    fake(x, monkeypatch, [(True, "calculator passed\n")])
+    reviewer = add_reviewer(x)
+    assert x.client.post("/api/budgets", json={"scope": "hive", "period": "month", "limit_usd": 2.0}).status_code == 200
+    _fake_chat(_gateway(x.client), delay=0)
+    body = {"messages": [{"role": "user", "content": "propose the change"}], "max_tokens": 800}   # about $0.06 a call
+    post = lambda headers: x.client.post("/llm/v1/chat/completions", headers=headers, json=body).status_code
+    seen, spawn, wake = {}, h.minds.spawn, h.send_to_agent
+
+    async def spawn_and_look(agent, data, acting=None):     # the helper's first moment, before its attempt names it
+        out = await spawn(agent, data, acting=acting)
+        child = h.db.one("SELECT id FROM mind_children WHERE request_id = ?", (x.rid,))["id"]
+        seen["helper"] = h.present_for(h.agent(child))
+        return out
+
+    async def wake_and_look(agent_id, text, **kw):           # the reviewer's first moment, before its review waits
+        if agent_id == reviewer["id"]:
+            seen["reviewer"] = h.present_for(h.agent(agent_id))
+        return await wake(agent_id, text, **kw)
+    monkeypatch.setattr(h.minds, "spawn", spawn_and_look)
+    monkeypatch.setattr(h, "send_to_agent", wake_and_look)
+    for mind in (x.ctl, reviewer):
+        h.db.update("agents", mind["id"], {"model": PAID})
+    ctl, rev = agent_headers(x.ctl), agent_headers(reviewer)
+    codes = []
+    while not codes or codes[-1] == 200:                      # the controller on its own: the burst, then the pace
+        codes.append(post(ctl))
+        assert len(codes) <= 10
+    assert codes[-1] == 429
+    charged = h.db.one("SELECT tat FROM limit_rates WHERE label = 'hive:month'")["tat"]
+
+    assert run(x.engine.step(x.rid))["status"] == "writing"   # one helper attempt open
+    child = h.db.one("SELECT id FROM mind_children WHERE request_id = ?", (x.rid,))["id"]
+    h.db.update("agents", child, {"model": PAID})
+    helper = {"Authorization": f"Bearer {x.tokens[child]}"}
+    assert seen["helper"] == jon == h.present_for(h.agent(child))
+    assert h.present_for(h.agent(reviewer["id"])) is None and h.present_for(h.agent(x.ctl["id"])) is None
+    assert [post(helper), post(helper), post(ctl)] == [200, 200, 429]   # past the guard's pace, the person's own work goes
+
+    helper_finishes(x, 1, SUGGESTION)                         # tested, and the reviewer woken; the helper is still theirs
+    assert x.engine.view(x.rid)["status"] == "reviewing"
+    assert seen["reviewer"] == jon == h.present_for(h.agent(reviewer["id"])) == h.present_for(h.agent(child))
+    assert [post(rev), post(rev), post(helper), post(ctl)] == [200, 200, 200, 429]
+
+    reviewer_finishes(x, "pass")                              # answered: the reviewer is on its own again
+    assert x.engine.view(x.rid)["status"] == "ready_for_you"
+    assert h.present_for(h.agent(reviewer["id"])) is None and post(rev) == 429
+    out = x.client.post(f"/api/requests/{x.rid}/controller/apply", headers={**x.jon, **ORIGIN})
+    assert out.status_code == 200 and out.json()["status"] == "applied"   # delivered: the helper stopped, its allocation back
+    assert h.present_for(h.agent(child)) is None
     assert h.db.one("SELECT tat FROM limit_rates WHERE label = 'hive:month'")["tat"] == charged   # nothing charged

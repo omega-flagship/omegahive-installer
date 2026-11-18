@@ -2750,12 +2750,23 @@ class Hive:
         owner = agent.get("owner") or ""
         return owner if owner.startswith("user:u_") else "hive"
 
+    def _request_person(self, agent):
+        """The person who asked at the root of the request a team spawned this child mind for, while its reservation is
+        unreleased (Minds._release), or None: the child works for that request alone, inside its allocation, as a Code
+        request's helper does from its spawn until the request ends and its allocation goes back."""
+        child = self.db.one("SELECT r.from_principal FROM mind_reservations m JOIN requests r ON r.id = m.budget_root "
+                            "WHERE m.child_id = ? AND m.released_at IS NULL", (agent["id"],))
+        return child["from_principal"] if child and str(child["from_principal"]).startswith("user:u_") else None
+
     def present_for(self, agent):
         """The person whose own live work this mind's call is part of, or None when the mind acts on its own: the person
-        whose session holds it (_session_person), else the person whose live Create plan waits on it
-        (CreatePlanEngine.waiting_on). The spend-rate guard paces only a call with no one present
-        (cost_reservations.Reservations.reserve, paced): a person's own work is held by its limits and its own budget."""
-        return self._session_person(agent) or self.create_plans.waiting_on(agent["id"])
+        whose session holds it (_session_person), else the person whose request a team spawned it for
+        (_request_person), else the person whose live Create plan waits on it (CreatePlanEngine.waiting_on), else the
+        person whose live Code request waits on its second opinion (CodeControllerEngine.waiting_on). The spend-rate
+        guard paces only a call with no one present (cost_reservations.Reservations.reserve, paced): a person's own work
+        is held by its limits and its own budget."""
+        return (self._session_person(agent) or self._request_person(agent) or self.create_plans.waiting_on(agent["id"])
+                or self.code_controller.waiting_on(agent["id"]))
 
     def payer_for(self, agent, key_owner=None):
         """Who pays for this mind's model call, and whether it is on their own key (user_for names who it is for):

@@ -3,7 +3,8 @@ in apps/omegadesign only when it matches pins.sh (the hive's own source digest a
 anything else without leaving a folder behind, and omegahive.sh's app_settings mounts and pins it beside the Tools app,
 lets it run in the sandbox, and turns Studio's sessions on unless the owner's hive.env says otherwise. The owner step,
 studio-on.py, turns Studio on in Create · Code the first time, keeps an owner's choice of swarms through a new release,
-leaves a Studio its owner turned off alone, and runs with or without Create's Code service.
+leaves a Studio its owner turned off alone, and runs with or without Create's Code service; serve's background step on
+Linux and WSL turns Studio on after create, even when create stops because Code never answers.
 
 Each test runs the real scripts against a throwaway hive folder whose app is this checkout and whose Python is this one.
 """
@@ -270,9 +271,37 @@ def test_the_studio_step_runs_with_or_without_the_code_service():
     studio = re.search(r"^studio\(\) \{\n(.*?)^\}\n", text, re.S | re.M).group(1)
     assert "omegadesign/plugin.json" in studio and "config.json" not in studio
     serve = re.search(r"^serve\(\) \{\n(.*?)^\}\n", text, re.S | re.M).group(1)
-    assert re.search(r"^\s+studio; \}", serve, re.M)
+    assert re.search(r"^\s+code_and_studio >> .*&$", serve, re.M)
     installer = (MACOS / "Install OmegaHive.command").read_text()
     assert '"$OH/app/install/macos/omegahive.sh" studio' in installer
+
+
+@pytest.mark.parametrize("has_code, answers, said", [
+    (True, False, ["FAIL Create's Code service did not answer, so it can't be enrolled; its log: {code}/logs/service.log",
+                   "Create's Code service did not start or enrol; see above", "STUDIO ON"]),
+    (True, True, ["ENROLLED", "STUDIO ON"]),
+    (False, False, ["STUDIO ON"]),
+])
+def test_serve_turns_studio_on_with_or_without_a_working_code_service(tmp_path, has_code, answers, said):
+    """serve's background step, as Linux and WSL run it. create's fail exits the shell it runs in, which ended the whole
+    step before studio while the two shared one (the QA review of #397 at f7801859), so a hive whose Code service never
+    answered got no Create at any start. Here the step runs with the real create against a Code service that never
+    answers, with an enrolment that works, and on a hive that has no Code service at all."""
+    text = (MACOS / "omegahive.sh").read_text()
+    step, create = (re.search(rf"^{name}\(\) \{{\n.*?^\}}\n", text, re.S | re.M).group(0)
+                    for name in ("code_and_studio", "create"))
+    code = tmp_path / "code"
+    if has_code:
+        code.mkdir()
+        (code / "config.json").write_text("{}")
+    if answers:   # an enrolment that works needs a hive and a Code service, which this test stands in for
+        create = "create() { echo ENROLLED; }\n"
+    stubs = ("say() { printf '%s\\n' \"$*\"; }\nfail() { echo \"FAIL $*\"; exit 1; }\nwait_running() { :; }\n"
+             "start() { :; }\nstart_code() { :; }\ncode_answers() { return 1; }\nstudio() { echo STUDIO ON; }\n")
+    script = f"set -euo pipefail\nCODE={shlex.quote(str(code))}\n{stubs}{create}{step}code_and_studio\n"
+    done = subprocess.run(["bash", "-c", script], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert done.stdout.splitlines() == [line.format(code=code) for line in said]
 
 
 def enrol_lock_run(oh, name, body):
