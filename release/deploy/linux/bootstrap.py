@@ -1,6 +1,8 @@
-"""Purpose: verify the installed public hive's named local owner and that its minds can run in their sandbox, then put
-Studio in as Create: the owner's admin install review of the pinned omegadesign release, turned on in the Create · Code
-controller's swarm, checked by Create appearing in the owner's own app list. No mind is created and no model is called.
+"""Purpose: verify the installed public hive's named local owner and that its minds can run in their sandbox, enrol
+Create's Code service with the hive (anew after an update, whose uninstall removed the service the hive still lists),
+then put Studio in as Create: the owner's admin install review of the pinned omegadesign release, turned on in the
+Create · Code controller's swarm, checked by Create appearing in the owner's own app list. No mind is created and no
+model is called.
 """
 from __future__ import annotations
 
@@ -165,13 +167,17 @@ class OwnerAPI:
 
     PATHS = re.compile(r"/api/auth/(?:local/exchange|me|logout)|/api/agents(?:/a_[A-Za-z0-9_-]{1,96})?|/api/me/apps"
                        r"|/api/programs/" + STUDIO + r"(?:/install|/activations)?|/api/services(?:/enrol)?")
+    # The one removal setup makes: the hive's record of a Code service that is gone (enrol_code).
+    REMOVABLE = re.compile(r"/api/services/svc_[0-9a-f]{32}")
 
     def __init__(self, control, config, home, pid, hello, deadline):
         self.control, self.config, self.home, self.pid, self.hello = control, config, home, pid, hello
         self.deadline, self.token, self.principal = deadline, None, None
 
     def request(self, method, path, payload=None, *, cleanup=False):
-        require(type(path) is str and self.PATHS.fullmatch(path) is not None and method in {"GET", "POST", "PATCH"}
+        require(type(path) is str and ((method in {"GET", "POST", "PATCH"} and self.PATHS.fullmatch(path) is not None)
+                                       or (method == "DELETE" and payload is None
+                                           and self.REMOVABLE.fullmatch(path) is not None))
                 and (not cleanup or (method, path) == ("POST", "/api/auth/logout")))
         end = time.monotonic() + 5 if cleanup else min(self.deadline, time.monotonic() + 5)
         require(end - time.monotonic() > 0.1, "Setup ran out of time talking to your hive.")
@@ -298,23 +304,51 @@ def code_register(port, token, enrol_token, deadline):
             + (" (" + status.group(1).decode() + ")" if status is not None else "") + ".")
 
 
+def code_registration(root):
+    """The service id Create's Code service registered under, from its own state/registration.json (omegacode
+    registration.py), or None while it has none: a new Code folder, as every install after an uninstall has, since
+    install.py's uninstall removes the folder whole. A pending registration is none yet; omegacode acts on none."""
+    try:
+        raw = read_owned(Path(root) / "state" / "registration.json", 65536, private=True)
+    except FileNotFoundError:
+        return None
+    saved = strict_json(raw)
+    require(type(saved) is dict and type(saved.get("receipt")) is dict)
+    if saved["receipt"].get("status") != "active":
+        return None
+    require(type(saved.get("service_id")) is str and re.fullmatch(r"svc_[0-9a-f]{32}", saved["service_id"]) is not None)
+    return saved["service_id"]
+
+
 def enrol_code(api, config):
     """Create's Code service joins this hive as install/macos/omegahive.sh create() enrols it: the owner asks the hive
-    for an enrolment token, and the service, asked with its own operator token, registers with it."""
-    def enrolled():
+    for an enrolment token, and the service, asked with its own operator token, registers with it.
+
+    It has joined only while the hive lists, enabled, the very id the service registered under: the hive proves every
+    relay to the service with that id, and the service answers 404 to any other ("relay challenge refused (404)",
+    and Create's Code tab and Make fail). An update by uninstall and install removes the Code folder with its
+    registration while the hive, its data kept, still lists the old service. So a service without that match enrols
+    anew, and the hive's records of any other Code service, one that is gone, are removed once the new one is listed."""
+    code = config["code_service"]
+    def listed():
         services = api.request("GET", "/api/services")
         require(type(services) is list)
-        return any(type(row) is dict and row.get("name") == CODE and row.get("enabled", True) for row in services)
-    if enrolled():
+        return [row for row in services if type(row) is dict and row.get("name") == CODE]
+    def joined(own, rows):
+        return own is not None and any(row.get("id") == own and row.get("enabled", True) for row in rows)
+    if joined(code_registration(code["root"]), listed()):
         return
     answer = api.request("POST", "/api/services/enrol", {"name": CODE})
     require(type(answer) is dict and type(answer.get("enrol_token")) is str and answer["enrol_token"])
     enrol_token = answer.pop("enrol_token")
-    code = config["code_service"]
     token = read_owned(Path(code["root"]) / "operator-token", 4096, private=True).decode("ascii").strip()
     require(re.fullmatch(r"[A-Za-z0-9_-]{32,128}", token) is not None)
     code_register(code["port"], token, enrol_token, api.deadline)
-    require(enrolled(), "Create's Code service registered, but your hive doesn't list it.")
+    own, rows = code_registration(code["root"]), listed()
+    require(joined(own, rows), "Create's Code service registered, but your hive doesn't list it.")
+    for row in rows:
+        if row.get("id") != own:
+            api.request("DELETE", "/api/services/" + str(row.get("id")))
 
 
 def create_controller(api):

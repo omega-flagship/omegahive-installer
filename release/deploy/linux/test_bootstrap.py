@@ -211,34 +211,86 @@ class CreateTests(unittest.TestCase):
 
 class CodeEnrolmentTests(unittest.TestCase):
     TOKEN = "t" * 48
+    OLD, NEW = "svc_" + "0" * 32, "svc_" + "1" * 32
 
     def config(self, folder):
         root = Path(folder) / "code"; root.mkdir(mode=0o700)
         token = root / "operator-token"; token.write_text(self.TOKEN); token.chmod(0o600)
         return {"code_service": {"root": str(root), "port": 8724}}
 
+    @staticmethod
+    def register_as(config, service_id, status="active"):
+        """What omegacode's registration.py leaves in its state folder: the registration, 0600, its receipt's status."""
+        state = Path(config["code_service"]["root"]) / "state"; state.mkdir(mode=0o700, exist_ok=True)
+        path = state / "registration.json"
+        path.write_text(json.dumps({"service_id": service_id, "receipt": {"service_id": service_id, "status": status}}))
+        path.chmod(0o600)
+
     def test_an_enrolled_service_is_left_alone(self):
         with tempfile.TemporaryDirectory() as folder:
-            api = FakeHive({("GET", "/api/services"): [{"name": "omegacode", "enabled": True}]})
+            config = self.config(folder); self.register_as(config, self.NEW)
+            api = FakeHive({("GET", "/api/services"): [{"id": self.NEW, "name": "omegacode", "enabled": True}]})
             with unittest.mock.patch.object(bootstrap, "code_register") as register:
-                bootstrap.enrol_code(api, self.config(folder))
+                bootstrap.enrol_code(api, config)
             register.assert_not_called()
-            self.assertNotIn("POST", [m for m, _p, _b in api.calls])
+            self.assertEqual({m for m, _p, _b in api.calls}, {"GET"})
 
     def test_the_owner_enrols_and_the_service_registers_with_its_own_token(self):
         with tempfile.TemporaryDirectory() as folder:
-            api = FakeHive({("GET", "/api/services"): Turns([[], [{"name": "omegacode"}]]),
+            config = self.config(folder)
+            api = FakeHive({("GET", "/api/services"): Turns([[], [{"id": self.NEW, "name": "omegacode"}]]),
                             ("POST", "/api/services/enrol"): {"enrol_token": "e" * 40}})
-            with unittest.mock.patch.object(bootstrap, "code_register") as register:
-                bootstrap.enrol_code(api, self.config(folder))
+            with unittest.mock.patch.object(bootstrap, "code_register",
+                                            side_effect=lambda *_a: self.register_as(config, self.NEW)) as register:
+                bootstrap.enrol_code(api, config)
             self.assertIn(("POST", "/api/services/enrol", {"name": "omegacode"}), api.calls)
             register.assert_called_once_with(8724, self.TOKEN, "e" * 40, api.deadline)
+            self.assertNotIn("DELETE", [m for m, _p, _b in api.calls])
+
+    def test_an_update_enrols_the_new_service_and_removes_the_hives_record_of_the_gone_one(self):
+        # Uninstall removed the Code folder with its registration; the kept hive still lists the old service, whose id
+        # the new service would answer 404 to. The old record goes only once the new service is listed.
+        with tempfile.TemporaryDirectory() as folder:
+            config = self.config(folder)
+            old = {"id": self.OLD, "name": "omegacode", "enabled": True}
+            api = FakeHive({("GET", "/api/services"): Turns([[old], [old, {"id": self.NEW, "name": "omegacode"}]]),
+                            ("POST", "/api/services/enrol"): {"enrol_token": "e" * 40}})
+            with unittest.mock.patch.object(bootstrap, "code_register",
+                                            side_effect=lambda *_a: self.register_as(config, self.NEW)) as register:
+                bootstrap.enrol_code(api, config)
+            register.assert_called_once()
+            deletes = [p for m, p, _b in api.calls if m == "DELETE"]
+            self.assertEqual(deletes, ["/api/services/" + self.OLD])
+            self.assertLess(api.calls.index(("POST", "/api/services/enrol", {"name": "omegacode"})),
+                            api.calls.index(("DELETE", "/api/services/" + self.OLD, None)))
+
+    def test_a_registration_naming_another_service_or_still_pending_enrols_anew(self):
+        for registered, status in ((self.OLD, "active"), (self.NEW, "pending")):
+            with self.subTest(registered=registered, status=status), tempfile.TemporaryDirectory() as folder:
+                config = self.config(folder); self.register_as(config, registered, status)
+                api = FakeHive({("GET", "/api/services"): Turns([[{"id": self.NEW, "name": "omegacode"}],
+                                                                 [{"id": self.NEW, "name": "omegacode"}]]),
+                                ("POST", "/api/services/enrol"): {"enrol_token": "e" * 40}})
+                with unittest.mock.patch.object(bootstrap, "code_register",
+                                                side_effect=lambda *_a: self.register_as(config, self.NEW)) as register:
+                    bootstrap.enrol_code(api, config)
+                register.assert_called_once()
 
     def test_a_service_the_hive_does_not_list_after_registering_refuses(self):
         with tempfile.TemporaryDirectory() as folder:
+            config = self.config(folder)
             api = FakeHive({("GET", "/api/services"): [], ("POST", "/api/services/enrol"): {"enrol_token": "e" * 40}})
-            with unittest.mock.patch.object(bootstrap, "code_register"), self.assertRaisesRegex(bootstrap.Refused, "doesn't list it"):
-                bootstrap.enrol_code(api, self.config(folder))
+            with unittest.mock.patch.object(bootstrap, "code_register", side_effect=lambda *_a: self.register_as(config, self.NEW)), \
+                    self.assertRaisesRegex(bootstrap.Refused, "doesn't list it"):
+                bootstrap.enrol_code(api, config)
+
+    def test_the_owner_client_deletes_only_a_service_record_and_with_no_body(self):
+        client = bootstrap.OwnerAPI(Mock(), {"port": 8700}, Path("/home/test"), 1, {}, bootstrap.time.monotonic() + 30)
+        for method, path, payload in (("DELETE", "/api/agents/a_x", None), ("DELETE", "/api/services/enrol", None),
+                                      ("DELETE", "/api/services/" + self.OLD, {}), ("PUT", "/api/services/" + self.OLD, None),
+                                      ("POST", "/api/services/" + self.OLD, None)):
+            with self.subTest(method=method, path=path), self.assertRaises(bootstrap.Refused):
+                client.request(method, path, payload)
 
     def serve(self, status):
         """One loopback HTTP server this account owns, answering every POST with `status`, recording what came."""
