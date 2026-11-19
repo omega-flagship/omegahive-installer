@@ -47,6 +47,9 @@ SUPPORTED_UBUNTU = ("22.04", "24.04", "26.04")
 # A fresh Ubuntu installs its own updates soon after it starts and holds the package lock meanwhile; apt waits this long
 # for it (DPkg::Lock::Timeout) instead of failing the setup at once.
 APT_LOCK_WAIT = 1800
+# A download stops once it moves less than a byte a second for this long, never because it is slow overall: the 68 MB
+# Python archive alone needs over 5 minutes on a link under 1.8 Mbit/s, which a fixed 300 s limit made a failed setup.
+DOWNLOAD_STALL_SECONDS = 300
 # Ubuntu 23.10 and later (on by default from 24.04) let a program create a user namespace only when its AppArmor
 # profile grants `userns`; 22.04's kernels have no such file. rootlesskit reads the same file (pkg/parent/warn.go).
 USERNS_RESTRICTION = P("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
@@ -713,9 +716,21 @@ def apt_get(*argv):
     return ["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=" + str(APT_LOCK_WAIT), *argv]
 
 
+def apt_sandbox_uid():
+    """The real uid apt runs its download methods as (APT::Sandbox::User, "_apt" by default), or None without one.
+    The methods are apt's own children, inside the package step's session."""
+    try:
+        return pwd.getpwnam("_apt").pw_uid
+    except KeyError:
+        return None
+
+
 def package_install():
-    """The one command the package environment may run: the fixed package set, without recommends."""
-    return apt_get("install", "-y", "--no-install-recommends", *APT)
+    """The one command the package environment may run: the fixed package set, without recommends. dpkg keeps a
+    configuration file its administrator changed and never stops to ask about one: the question would go to the
+    private log, and the step would wait for an answer nobody sees."""
+    return apt_get("-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold",
+                   "install", "-y", "--no-install-recommends", *APT)
 
 
 def plain_path_text(path):
@@ -1095,7 +1110,12 @@ class Installer:
             row = tuple(int(value) for value in fields[:5]) + (fields[5],)
             if row[0] == process.pid or row[2] == process.pid or row[3] == process.pid: rows.append(row)
         anchors = [row for row in rows if row[0] == process.pid]
-        allowed = {os.getuid(), 0} if privileged else {os.getuid()}
+        allowed = {os.getuid()}
+        if privileged:
+            # apt's download methods run as its sandbox user inside the package step's session. Without that user here,
+            # stopping the step mid-download refused its cleanup and left apt running with the package lock held.
+            sandbox = apt_sandbox_uid()
+            allowed |= {0} if sandbox is None else {0, sandbox}
         need(process.returncode is None and signal.getsignal(signal.SIGCHLD) == signal.SIG_DFL
              and len(anchors) == 1 and anchors[0][1] == os.getpid()
              and anchors[0][2] == anchors[0][3] == process.pid
@@ -1141,7 +1161,8 @@ class Installer:
                                    stdout=None if console else self.log,
                                    stderr=subprocess.PIPE if terminal is not None else (None if console else self.log),
                                    start_new_session=True, close_fds=True)
-        deadline = time.monotonic() + timeout
+        # timeout=None: no deadline of the installer's own, for a step whose tool stops a stalled transfer itself.
+        deadline = float("inf") if timeout is None else time.monotonic() + timeout
         command_failure = None
         if terminal is not None:
             os.set_blocking(process.stderr.fileno(), False)
@@ -1197,8 +1218,8 @@ class Installer:
         partial = cache / (spec["sha256"] + "." + uuid.uuid4().hex + ".partial")
         self.run(["/usr/bin/curl", "--disable", "--fail", "--silent", "--show-error", "--location", "--max-redirs", "3",
                   "--proto", "=https", "--proto-redir", "=https", "--proxy", "", "--noproxy", "*",
-                  "--tlsv1.2", "--retry", "0", "--max-time", "300", "--max-filesize", str(spec["bytes"]),
-                  "--output", str(partial), spec["url"]], timeout=310)
+                  "--tlsv1.2", "--retry", "0", "--speed-limit", "1", "--speed-time", str(DOWNLOAD_STALL_SECONDS),
+                  "--max-filesize", str(spec["bytes"]), "--output", str(partial), spec["url"]], timeout=None)
         pin_file(partial, spec); os.chmod(partial, 0o600); os.rename(partial, path); return path
 
     def sudo(self, argv, *, timeout, package_environment=False):
@@ -1247,10 +1268,13 @@ class Installer:
               "Code service in its own sandbox" + (" and let its minds start in theirs" if restricted else "")
               + ". You may be asked for your password for each of the five system setup steps. If Ubuntu is installing "
               "its own updates, setup waits for them to finish.", flush=True)
-        self.sudo(apt_get("update"), timeout=APT_LOCK_WAIT + 600)
+        # The package steps have no deadline of their own, so a slow mirror makes setup slower, not failed. apt bounds
+        # what can stall: the package lock by DPkg::Lock::Timeout, a server that stops answering by its own timeout and
+        # retries (about 4 minutes per file), and dpkg asks no question (package_install).
+        self.sudo(apt_get("update"), timeout=None)
         # Package hooks must not ask hidden questions through logged stdout.
         # Report pending restarts; leave host service restarts to its operator.
-        self.sudo(package_install(), timeout=APT_LOCK_WAIT + 900, package_environment=True)
+        self.sudo(package_install(), timeout=None, package_environment=True)
         # Linger keeps this user's own service manager running after logout and at boot.
         self.sudo(["/usr/bin/loginctl", "enable-linger", linger_user()], timeout=60)
         # /etc/apparmor.d is what apparmor.service loads at boot, before linger starts this account's services.
@@ -1379,8 +1403,9 @@ class Installer:
             swipl = place_swipl(swi)
             self.env.update(PATH=str(swi / "bin") + ":" + str(runtime / "venv/bin") + ":" + self.env["PATH"], LD_LIBRARY_PATH=str(libpython))
             # Locks cover current Hive requirements/constraints, the explicit Janus bridge, and reviewed runtime/build dependencies.
+            # No deadline of the installer's own: uv stops a stalled download itself, by its HTTP read timeout.
             self.run([str(uv), "--no-config", "pip", "sync", "--python", str(venv), "--require-hashes", "--require-build-hashes",
-                      "--build-constraint", str(self.local(selected["build_lock"])), str(self.local(selected["core_lock"]))], timeout=1800,
+                      "--build-constraint", str(self.local(selected["build_lock"])), str(self.local(selected["core_lock"]))], timeout=None,
                       env=dict(self.env, CC="/usr/bin/gcc", CXX="/usr/bin/g++"))
             self.run([str(venv), "-I", "-B", "-c", "import janus_swi as j; assert j.query_once('X is 1+1')['X'] == 2"], timeout=30)
             self.run([str(swipl), "-g", "use_module(library(janus)),py_call(operator:add(20,22),V),(V=:=42->halt(0);halt(1))"], timeout=30)
