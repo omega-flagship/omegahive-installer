@@ -200,6 +200,39 @@ def loader_agreement(config, environ=None):
     return expected
 
 
+# Create's Code tab tests a proposal under the hive's own cgroup resource owner (hive/supervisor/cgroup_v2.py), which
+# splits the hive unit's finite caps (install.py: Delegate=yes, MemoryMax, TasksMax, MemorySwapMax=0) by eight capacity
+# settings Linux has no defaults for. They are split here from the caps the unit really has, so the two can't disagree:
+# the pool for test runs holds two tests at the hive's per-test defaults, set here too, or a quarter of the cap where
+# that is less but still holds one; the unit's root keeps a reserve for the hive as it starts, before the owner moves it
+# into its own share; the rest is the hive's, its minds included.
+MIB = 1 << 20
+JOB_MEMORY, JOB_PIDS = 1 << 30, 256       # hive/core/config.py's per-test defaults
+SLACK, RESERVE, RESERVE_PIDS = 16 * MIB, 512 * MIB, 64
+
+
+def code_capacity(cgroup_file=Path('/proc/self/cgroup'), cgroup_root=Path('/sys/fs/cgroup')):
+    """The owner's capacity settings as environment, or none where the unit has no finite caps or leaves the hive under
+    1 GiB or 1024 tasks of its own, so Code's card says tests can't run there, as it did before."""
+    unified = [line[3:] for line in cgroup_file.read_text().splitlines() if line.startswith('0::/')]
+    if len(unified) != 1:
+        return {}
+    root = cgroup_root / unified[0].lstrip('/')
+    try:
+        memory, pids = (int((root / name).read_text().strip()) for name in ('memory.max', 'pids.max'))
+    except (OSError, ValueError):   # "max": a unit with no cap
+        return {}
+    pool = max(JOB_MEMORY + 4 * SLACK, min(2 * JOB_MEMORY + 4 * SLACK, memory // 4 // MIB * MIB))
+    pool_pids = 2 * JOB_PIDS
+    host, host_pids = memory - pool - RESERVE, pids - pool_pids - RESERVE_PIDS
+    if host < 1 << 30 or host_pids < 1024:
+        return {}
+    values = {'MEMORY_BYTES': JOB_MEMORY, 'PIDS': JOB_PIDS, 'HOST_MEMORY_BYTES': host, 'HOST_MEMORY_MIN_BYTES': 0,
+              'POOL_MEMORY_BYTES': pool, 'ROOT_MEMORY_RESERVE_BYTES': RESERVE, 'KERNEL_SLACK_BYTES': SLACK,
+              'HOST_PIDS': host_pids, 'POOL_PIDS': pool_pids, 'ROOT_PIDS_RESERVE': RESERVE_PIDS}
+    return {'HIVE_CODE_SANDBOX_' + key: str(value) for key, value in values.items()}
+
+
 def main():
     require(sys.platform.startswith('linux') and os.getuid() == os.geteuid() != 0
             and not sys.flags.optimize, 'unprivileged_linux_required')
@@ -277,6 +310,7 @@ def main():
                 # the one command a claim may name (code_controller_client.py runs the operator's declared test).
                 'HIVE_CODE_SANDBOX_PROJECT_TESTS': 'on', 'HIVE_PROPOSAL_TEST_CLAIMS': 'on',
                 'HIVE_PROPOSAL_TEST_ARGV_PREFIXES': json.dumps([[str(interpreter), 'check_app.py']], separators=(',', ':'))})
+    env.update(code_capacity())
     if config['libpython_dir'] is not None:
         env['LD_LIBRARY_PATH'] = config['libpython_dir']
     require(runtime(args.runtime)[2] == fingerprint, 'descriptor_changed_before_exec')

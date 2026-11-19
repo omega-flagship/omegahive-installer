@@ -418,6 +418,16 @@ class InstallerTests(unittest.TestCase):
                 switch.write_text('0\n'); self.assertFalse(install.userns_restricted())
                 switch.write_text('1\n'); self.assertTrue(install.userns_restricted())
 
+    def test_hive_memory_cap_is_the_machines_memory(self):
+        with tempfile.TemporaryDirectory() as name:
+            meminfo = Path(name) / 'meminfo'
+            meminfo.write_text('MemTotal:       16314036 kB\nMemFree:         2097152 kB\n')
+            self.assertEqual(install.hive_memory_max(meminfo), 16314036 * 1024)
+            meminfo.write_text('MemFree:         2097152 kB\n')
+            with self.assertRaises(install.Refused):
+                install.hive_memory_max(meminfo)
+        self.assertEqual(install.HIVE_TASKS_MAX, 8768)
+
     def test_preflight_accepts_ubuntu_22_04_24_04_and_26_04_only(self):
         for text, ok in (('ID=ubuntu\nVERSION_ID="22.04"\n', True), ('ID=ubuntu\nVERSION_ID="24.04"\n', True),
                          ('ID=ubuntu\nVERSION_ID="26.04"\n', True), ('ID=ubuntu\nVERSION_ID="20.04"\n', False),

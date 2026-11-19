@@ -252,6 +252,35 @@ class ProposalTestsTests(unittest.TestCase):
                 run.assert_not_called()
 
 
+class CodeAcceptedTests(unittest.TestCase):
+    """bootstrap.code_accepted: setup ends once the hive's Code guard accepts the Code service it just restarted."""
+
+    def test_refusals_while_the_service_comes_back_are_waited_out(self):
+        api = SimpleNamespace(deadline=bootstrap.time.monotonic() + 30, relay_accepts=Mock(side_effect=[False, False, True]))
+        with unittest.mock.patch.object(bootstrap.time, "sleep") as slept:
+            bootstrap.code_accepted(api)
+        self.assertEqual((api.relay_accepts.call_count, slept.call_count), (3, 2))
+
+    def test_a_guard_that_never_accepts_refuses_at_the_deadline(self):
+        api = SimpleNamespace(deadline=bootstrap.time.monotonic() + 0.5, relay_accepts=Mock(return_value=False))
+        with unittest.mock.patch.object(bootstrap.time, "sleep"), self.assertRaises(bootstrap.Refused) as refused:
+            bootstrap.code_accepted(api)
+        self.assertIn("didn't accept Create's Code service", str(refused.exception))
+
+    def test_only_the_relay_answer_and_the_guard_refusal_are_read(self):
+        # hive/core/code.py: CodeError(404, "not_relayed", ...) for a route Code doesn't carry, 503 while the guard refuses
+        self.assertTrue(bootstrap.relay_verdict(404, {"error": "not_relayed", "detail": "GET /setup-ready is not available"}))
+        self.assertFalse(bootstrap.relay_verdict(503, {"error": "service_release_mismatch"}))
+        for status, value in ((404, {"error": "not_found"}), (200, {}), (502, {"error": "not_relayed"})):
+            with self.subTest(status=status, value=value), self.assertRaises(bootstrap.Refused):
+                bootstrap.relay_verdict(status, value)
+
+    def test_the_owner_client_keeps_the_relay_probe_out_of_its_ordinary_routes(self):
+        client = bootstrap.OwnerAPI(Mock(), {"port": 8700}, Path("/home/test"), 1, {}, bootstrap.time.monotonic() + 30)
+        with self.assertRaises(bootstrap.Refused):
+            client.request("GET", bootstrap.OwnerAPI.RELAY_PROBE)
+
+
 class CodeEnrolmentTests(unittest.TestCase):
     TOKEN = "t" * 48
     OLD, NEW = "svc_" + "0" * 32, "svc_" + "1" * 32

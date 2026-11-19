@@ -1,4 +1,4 @@
-# CONTEXT_CF40 Source template; Linux NOT_RUN. Installer renders all five tokens.
+# CONTEXT_CF40 Source template; Linux NOT_RUN. Installer renders all eight tokens.
 [Unit]
 Description=OmegaHive private local-owner hive
 After=network.target
@@ -15,6 +15,12 @@ ExecStart=@PYTHON@ -I -B @SERVE@ --runtime @RUNTIME@
 KillMode=control-group
 TimeoutStopSec=30
 Restart=no
+# The hive's Code resource owner splits these caps into its own share and a pool for proposal tests (serve.py
+# code_capacity): it needs the memory and pids controllers delegated, finite caps and no swap (cgroup_v2.bootstrap).
+Delegate=yes
+MemoryMax=@MEMORY_MAX@
+MemorySwapMax=0
+TasksMax=@TASKS_MAX@
 
 [Install]
 WantedBy=default.target

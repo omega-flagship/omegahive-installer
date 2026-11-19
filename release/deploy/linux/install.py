@@ -696,6 +696,19 @@ def apparmor_enabled():
         return False
 
 
+# The hive unit's task cap: 8192 tasks for the hive and its minds beside serve.py code_capacity's pool of two proposal
+# tests at 256 each and its reserve of 64.
+HIVE_TASKS_MAX = 8192 + 2 * 256 + 64
+
+
+def hive_memory_max(meminfo=P("/proc/meminfo")):
+    """The hive unit's MemoryMax: the machine's whole memory, so the hive may use what it could before, while its Code
+    resource owner gets the finite cap it splits (hive/supervisor/cgroup_v2.py refuses an unbounded one)."""
+    found = re.search(r"^MemTotal:\s+([0-9]{1,15}) kB$", meminfo.read_text(), re.M)
+    need(found is not None, "This computer's memory size could not be read.")
+    return int(found.group(1)) * 1024
+
+
 def apt_get(*argv):
     return ["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=" + str(APT_LOCK_WAIT), *argv]
 
@@ -1578,9 +1591,16 @@ class Installer:
         values = {"PYTHON": str(python), "SERVE": str(app / "deploy/linux/serve.py"),
                   "RUNTIME": str(self.root / "runtime.json"), "WORKDIR": str(app),
                   "SANDBOX_ENV": "HIVE_SANDBOX_PYTHON=" + descriptor["sandbox_python"],
-                  "LIBPYTHON_ENV": "LD_LIBRARY_PATH=" + (descriptor["libpython_dir"] or "")}
+                  "LIBPYTHON_ENV": "LD_LIBRARY_PATH=" + (descriptor["libpython_dir"] or ""),
+                  "MEMORY_MAX": str(hive_memory_max()), "TASKS_MAX": str(HIVE_TASKS_MAX)}
+        # systemd reads a size or a count unquoted; a path keeps its quoting rules below
+        counts = {"MEMORY_MAX", "TASKS_MAX"}
         for key, value in values.items():
             if key in {"PYTHON", "SERVE", "RUNTIME"}: value = value.replace("$", "$$")
+            if key in counts:
+                need(re.fullmatch(r"[1-9][0-9]{0,18}", value) is not None, "The service limits could not be worked out.")
+                body = body.replace("@" + key + "@", value)
+                continue
             quoted = quote(value)
             if key == "WORKDIR":
                 plain_path_text(value)

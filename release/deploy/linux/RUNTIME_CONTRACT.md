@@ -89,13 +89,24 @@ the release's own source, puts it on HIVE_SANDBOX_RUN_APPS, turns on HIVE_CODE_S
 HIVE_PROPOSAL_TEST_CLAIMS, and allows the one test command `[<base interpreter>, check_app.py]`. The service's
 purpose listener, which those runs answer to, starts once it has joined the hive: install.py writes
 `proposal_tests_enabled` from the service's own registration, and bootstrap.py turns it on and restarts the service
-right after enrolling it.
+right after enrolling it, then ends setup only once a request through the hive's relay passes the hive's Code guard,
+since the guard keeps a refusal from the restart window for 5 s.
 
-Exactly six placeholders exist: PYTHON is the named descriptor Python, SERVE
+Those runs happen under the hive's own cgroup resource owner (hive/supervisor/cgroup_v2.py), which accepts the hive's
+user unit as well as a system unit and splits the unit's finite caps itself. So the unit has `Delegate=yes`,
+`MemorySwapMax=0`, `MemoryMax=` the machine's MemTotal, so the hive may still use what it could before, and
+`TasksMax=8768`. serve.py reads those caps back from the unit's own cgroup and sets the eight
+HIVE_CODE_SANDBOX_* capacity settings from them, with the per-test defaults of 1 GiB and 256 tasks: a pool for test
+runs that holds two tests, or a quarter of the memory cap where that still holds one; a 512 MiB and 64-task reserve
+for the hive as it starts; and the rest as the hive's own share. Where that share would be under 1 GiB or 1024 tasks,
+or the unit has no finite caps, it sets none, and Code's card says tests can't run there.
+
+Exactly eight placeholders exist: PYTHON is the named descriptor Python, SERVE
 the installed absolute serve.py, RUNTIME the fixed descriptor, WORKDIR the
 release_root, and SANDBOX_ENV the whole
 `HIVE_SANDBOX_PYTHON=<sandbox_python>` token. LIBPYTHON_ENV is the whole
-`LD_LIBRARY_PATH=<libpython_dir>` token (an empty value for explicit null). Each replacement is one systemd
+`LD_LIBRARY_PATH=<libpython_dir>` token (an empty value for explicit null). MEMORY_MAX and TASKS_MAX are the two caps
+above, as unquoted decimal numbers. Each other replacement is one systemd
 quoted value: reject NUL/CR/LF/control characters, escape backslash/doublequote,
 and reject percent signs in generated paths. Do not interpolate a shell. Refuse leftover
 tokens. The installer owns safe rendering and only fixed daemon-reload/enable/start/stop/disable

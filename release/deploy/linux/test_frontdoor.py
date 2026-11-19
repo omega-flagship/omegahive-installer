@@ -255,6 +255,41 @@ class BoundaryTests(unittest.TestCase):
         self.assertNotIn('\nGroup=', unit)
         self.assertNotIn('sudo', unit)
 
+    def test_unit_delegates_finite_caps_with_no_swap_for_the_code_resource_owner(self):
+        unit = (HERE / 'omegahive.service.in').read_text()
+        for line in ('Delegate=yes', 'MemoryMax=@MEMORY_MAX@', 'MemorySwapMax=0', 'TasksMax=@TASKS_MAX@'):
+            self.assertIn('\n' + line + '\n', unit)
+
+    def capacity(self, memory, pids, cgroup='0::/user.slice/user-1000.slice/user@1000.service/app.slice/omegahive.service\n'):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / 'fs' / 'user.slice/user-1000.slice/user@1000.service/app.slice/omegahive.service'
+            root.mkdir(parents=True)
+            (root / 'memory.max').write_text(str(memory) + '\n'); (root / 'pids.max').write_text(str(pids) + '\n')
+            (Path(folder) / 'cgroup').write_text(cgroup)
+            return serve.code_capacity(Path(folder) / 'cgroup', Path(folder) / 'fs')
+
+    def test_capacity_split_fills_the_units_caps_and_holds_a_test(self):
+        gib = 1 << 30
+        for memory in (3 * gib, 8 * gib + 4096, 16 * gib, 128 * gib):
+            with self.subTest(memory=memory):
+                env = self.capacity(memory, 8768)
+                n = {key[len('HIVE_CODE_SANDBOX_'):]: int(value) for key, value in env.items()}
+                self.assertEqual(n['HOST_MEMORY_BYTES'] + n['POOL_MEMORY_BYTES'] + n['ROOT_MEMORY_RESERVE_BYTES'], memory)
+                self.assertEqual(n['HOST_PIDS'] + n['POOL_PIDS'] + n['ROOT_PIDS_RESERVE'], 8768)
+                self.assertGreaterEqual(n['POOL_MEMORY_BYTES'], n['MEMORY_BYTES'] + n['KERNEL_SLACK_BYTES'])
+                self.assertLessEqual(n['POOL_MEMORY_BYTES'], 2 * n['MEMORY_BYTES'] + 4 * n['KERNEL_SLACK_BYTES'])
+                self.assertGreaterEqual(n['POOL_PIDS'], n['PIDS'])
+                self.assertGreaterEqual(n['HOST_MEMORY_BYTES'], gib)
+                self.assertLess(n['KERNEL_SLACK_BYTES'], min(n['ROOT_MEMORY_RESERVE_BYTES'], n['POOL_MEMORY_BYTES']))
+                self.assertEqual((n['HOST_MEMORY_MIN_BYTES'], n['POOL_MEMORY_BYTES'] % (1 << 20)), (0, 0))
+
+    def test_capacity_is_left_unset_for_an_uncapped_or_small_unit(self):
+        self.assertEqual(self.capacity('max', 8768), {})
+        self.assertEqual(self.capacity(8 << 30, 'max'), {})
+        self.assertEqual(self.capacity(2 << 30, 8768), {})
+        self.assertEqual(self.capacity(8 << 30, 1500), {})
+        self.assertEqual(self.capacity(8 << 30, 8768, cgroup='1:name=systemd:/x\n'), {})
+
 
     @contextlib.contextmanager
     def control_context(self, operation, request, extra=None, display=None):

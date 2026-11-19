@@ -170,6 +170,9 @@ class OwnerAPI:
                        r"|/api/programs/" + STUDIO + r"(?:/install|/activations)?|/api/services(?:/enrol)?")
     # The one removal setup makes: the hive's record of a Code service that is gone (enrol_code).
     REMOVABLE = re.compile(r"/api/services/svc_[0-9a-f]{32}")
+    # A route Create's Code service doesn't carry: through the hive's relay it answers 404 not_relayed once the hive's
+    # Code guard accepts the service, and the guard's refusal answers 503 (code_accepted).
+    RELAY_PROBE = "/api/code/proxy/v1/setup-ready"
 
     def __init__(self, control, config, home, pid, hello, deadline):
         self.control, self.config, self.home, self.pid, self.hello = control, config, home, pid, hello
@@ -180,6 +183,14 @@ class OwnerAPI:
                                        or (method == "DELETE" and payload is None
                                            and self.REMOVABLE.fullmatch(path) is not None))
                 and (not cleanup or (method, path) == ("POST", "/api/auth/logout")))
+        return self._exchange(method, path, payload, cleanup=cleanup)[1]
+
+    def relay_accepts(self):
+        """Whether the hive's Code guard accepts Create's Code service right now (relay_verdict)."""
+        return relay_verdict(*self._exchange("GET", self.RELAY_PROBE, None, accept={404, 503}))
+
+    def _exchange(self, method, path, payload, *, cleanup=False, accept=range(200, 300)):
+        """One request on the owner's session; returns (status, JSON body) for a status in `accept`, refusing any other."""
         end = time.monotonic() + 5 if cleanup else min(self.deadline, time.monotonic() + 5)
         require(end - time.monotonic() > 0.1, "Setup ran out of time talking to your hive.")
         require(self.control.supervisor_pid(self.home) == self.pid)
@@ -217,7 +228,7 @@ class OwnerAPI:
             lines = head.decode("ascii").split("\r\n")
             require(1 <= len(lines) <= 41)
             status = re.fullmatch(r"HTTP/1\.[01] ([0-9]{3}) [^\r\n]{0,128}", lines[0])
-            require(status is not None and 200 <= int(status.group(1)) < 300,
+            require(status is not None and int(status.group(1)) in accept,
                     "Your hive refused a setup step (" + method + " " + path.split("/a_")[0]
                     + (" answered " + status.group(1) if status is not None else "") + ").")
             received = {}
@@ -236,7 +247,7 @@ class OwnerAPI:
                 block = connection.recv(min(65536, size - len(raw)))
                 require(block); raw.extend(block)
             require(self.control.supervisor_pid(self.home) == self.pid)
-            return strict_json(raw)
+            return int(status.group(1)), strict_json(raw)
         finally:
             raw.clear(); connection.close()
 
@@ -263,6 +274,25 @@ class OwnerAPI:
 
 def number(value):
     return type(value) in (int, float) and math.isfinite(value)
+
+
+def relay_verdict(status, value):
+    """A relay probe's answer: 404 naming not_relayed means the hive's Code guard let the request through to Code, whose
+    route list doesn't carry it (the release smoke reads the same answer), and 503 means the guard refused it."""
+    require(status == 503 or (status == 404 and "not_relayed" in json.dumps(value)),
+            "Your hive answered the Code check in a way setup doesn't know.")
+    return status == 404
+
+
+def code_accepted(api):
+    """Setup ends only once the hive's own Code guard accepts the Code service. enable_proposal_tests has just restarted
+    the service, and the guard keeps a refusal for 5 s (hive/core/code.py), so a check made while the service came back
+    left a refusal for whatever asked next: on 19 Nov the update check's first request through the relay, a second after
+    setup, read one. Asking here until the guard accepts means the install ends with Code ready."""
+    while not api.relay_accepts():
+        require(time.monotonic() + 1 < api.deadline,
+                "Your hive didn't accept Create's Code service after turning on its tests.")
+        time.sleep(0.5)
 
 
 def loopback_listener_owned(port):
@@ -454,6 +484,7 @@ def bootstrap(runtime):
         signin.clear()
         enrol_code(api, config)
         enable_proposal_tests(config, api.deadline)
+        code_accepted(api)
         put_in_create(api, studio_pin(config))
     finally:
         signin.clear(); api.logout()
