@@ -95,8 +95,8 @@ def verify(user, output):
                 left.append(sid)
         return left
 
-    def hive_state():
-        done = subprocess.run(["sudo", "-iu", user, *env, "systemctl", "--user", "is-active", "omegahive.service"],
+    def active_state(unit):
+        done = subprocess.run(["sudo", "-iu", user, *env, "systemctl", "--user", "is-active", unit],
                               capture_output=True, text=True)
         return done.stdout.strip()
 
@@ -209,6 +209,19 @@ def verify(user, output):
         check("the hive's Code guard accepts its Code service", status == 404 and b"not_relayed" in body,
               f"{status} {body[:300]!r}")
 
+    def code_stops_cleanly():
+        """A stop of Create's Code service ends the way systemd counts as clean. After its graceful shutdown uvicorn
+        raises SIGTERM at itself, and on Ubuntu 26.04 the unit runs under its profile stacked on unconfined, so unless the
+        profile lets that label signal itself (deploy/linux/install.py code_profile) Python exits 1 and the unit reads
+        failed. It is started again before the verdict, so a failure still leaves the service as the hive had it."""
+        unit = "omegacode.service"
+        command("systemctl", "--user", "stop", unit)
+        shown = command("systemctl", "--user", "show", "-p", "Result", "-p", "ExecMainCode", "-p", "ExecMainStatus", unit)
+        state = dict(line.split("=", 1) for line in shown.splitlines() if "=" in line)
+        command("systemctl", "--user", "start", unit)
+        check("Create's Code service stops cleanly", state.get("Result") == "success", json.dumps(state))
+        check("Create's Code service starts again", until(lambda: active_state(unit) == "active", 30), active_state(unit))
+
     def make_on(call):
         """Create's Make, on in every install (hive/core/config.py): its plan list answers, as it does only while the
         plan engine runs, which needs no model, so the demonstration model's install shows it too."""
@@ -224,6 +237,7 @@ def verify(user, output):
         first_light(call)
         create_listed(call)
         code_service(call)
+        code_stops_cleanly()
         make_on(call)
         check("status is available", bool(json.loads(command(cli, "status", "--json"))))
         command("systemctl", "--user", "restart", "omegahive.service")
@@ -241,12 +255,13 @@ def verify(user, output):
             for sid in open_sessions(ended):
                 diagnose("session " + sid, "loginctl", "session-status", sid, "--no-pager")
         check("every login session ended", not open_sessions(ended), " ".join(open_sessions(ended)))
-        check("hive survives logout", hive_state() == "active")
+        check("hive survives logout", active_state("omegahive.service") == "active")
         # A reboot, as far as one runner can show it: the manager stopped, then started the way linger starts it at
         # boot, and the hive must come up by itself before anyone runs omegahive open.
         system("systemctl", "stop", manager)
         system("systemctl", "start", manager)
-        check("hive starts with the user manager", until(lambda: hive_state() == "active", 60), hive_state())
+        check("hive starts with the user manager", until(lambda: active_state("omegahive.service") == "active", 60),
+              active_state("omegahive.service"))
         again, call = signin()
         check("owner survives user-manager restart", again == first)
         create_listed(call)
