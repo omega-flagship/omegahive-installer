@@ -233,11 +233,34 @@ class LogRing(logging.Handler):
     """The hive's newest warnings and errors as its log has them, for an admin's logs: each record's time, level, logger
     and message, the message cleaned (redact.clean) and cut to LOG_CHARS and an exception named by its type (the hive's
     own log keeps the traceback). One per process (log_ring), on the hive's loggers.
-    Time: one clean of at most CLEAN_CHARS characters per warning or error logged."""
+    It adds to the hive's log and never takes from it: Python writes a record to stderr through logging.lastResort only
+    when no handler is found on the way up (Logger.callHandlers), and the ring would count as one, so a warning logged
+    before the hive's own handlers exist (Studio's startup self-check, for one) would reach the ring and not hive.log.
+    So a record the ring alone handles also goes to lastResort, as it would have without the ring.
+    Time: one clean of at most CLEAN_CHARS characters per warning or error logged, and a walk of its logger's parents."""
 
     def __init__(self, keep: int = KEEP_LOG):
         super().__init__(level=logging.WARNING)
         self._lines: collections.deque = collections.deque(maxlen=keep)
+
+    def _alone(self, record: logging.LogRecord) -> bool:
+        """Whether this ring is the only handler on the record's way up, counted as Logger.callHandlers counts: every
+        handler on each logger up to the root or the first that doesn't propagate, whatever its level."""
+        logger: logging.Logger | None = logging.getLogger(record.name)
+        while logger is not None:
+            if any(h is not self for h in logger.handlers):
+                return False
+            if not logger.propagate:
+                return True
+            logger = logger.parent
+        return True
+
+    def handle(self, record: logging.LogRecord) -> bool:
+        kept = super().handle(record)
+        last = logging.lastResort
+        if kept and last is not None and record.levelno >= last.level and self._alone(record):
+            last.handle(record)
+        return kept
 
     def emit(self, record: logging.LogRecord) -> None:
         try:

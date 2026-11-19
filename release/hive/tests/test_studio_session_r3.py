@@ -29,7 +29,6 @@ from hive.tests.test_ask_intents import a, drain, held, release, token_of, turn 
 from hive.tests.test_core_api import client  # noqa: F401  (fixture)
 from hive.tests.test_mind_control import person, w  # noqa: F401  (fixture)
 from hive.tests.test_studio_session_g1 import MIA, MODEL, KEY, counts, err, record, s, submit  # noqa: F401
-from hive.tests.known_failures import stop_failure_leaves_session_active, stop_failure_rotates_credential
 
 SCENE = "scene-1"
 DIG = "sha256:" + "d" * 64
@@ -411,13 +410,12 @@ def test_F1_a_request_authenticated_with_the_old_epoch_is_refused_once_the_next_
 
 # ---- retirement failures hold (F1.6, F2) -------------------------------------------------------------------------------
 
-@stop_failure_leaves_session_active
 def test_F1f_a_stop_that_raises_holds_and_n_plus_1_is_never_admitted_until_retry(r3):
     hive = r3.hive
     session, sid, m, ack, step = started(r3)
     in_step(r3, sid, step)
+    r3.driver.fail[("stop", r3.maker["id"])] = RuntimeError("process group survived KILL")   # before done (_ready_for_step_2)
     done(r3, sid, 1, step["execution_id"], more=True)
-    r3.driver.fail[("stop", r3.maker["id"])] = RuntimeError("process group survived KILL")
     upload(r3, sid, m, 2, gen=2)
     drive(r3)
     row = ses_row(r3, sid)
@@ -920,6 +918,10 @@ def test_G3_rotation_and_reservation_serialize(r3):
 # ---- r1.4 G4: the ordered credential handoff ------------------------------------------------------------------------------
 
 def _ready_for_step_2(x):
+    """Step 1 done with more work. done(more=True) queues advance(), which opens step 2's attempt at once: the worker
+    stops the maker, writes its next credential and starts it within milliseconds. A test that faults, parks or hooks
+    that attempt calls started and done itself and sets it up in between, since anything set after done can come too
+    late (F1f)."""
     session, sid, m, ack, step = started(x)
     in_step(x, sid, step)
     done(x, sid, 1, step["execution_id"], more=True)
@@ -1037,12 +1039,13 @@ def _files(x):
     return sorted(p.name for p in root.iterdir() if p.name.startswith(("token", "pending", "current")))
 
 
-@stop_failure_rotates_credential
 def test_G4a_a_stop_that_raises_or_leaves_an_execution_installs_no_credential_and_rotates_nothing(r3):
     hive = r3.hive
-    session, sid, m, step = _ready_for_step_2(r3)
+    session, sid, m, ack, step = started(r3)
+    in_step(r3, sid, step)
     before = (token_now(r3), epoch_of(r3))
-    r3.driver.fail[("stop", r3.maker["id"])] = RuntimeError("group survived KILL")
+    r3.driver.fail[("stop", r3.maker["id"])] = RuntimeError("group survived KILL")          # before done (_ready_for_step_2)
+    done(r3, sid, 1, step["execution_id"], more=True)
     upload(r3, sid, m, 2, gen=2)
     drive(r3)
     assert (token_now(r3), epoch_of(r3)) == before                         # no install (a pending file may exist)
@@ -1060,13 +1063,15 @@ def test_G4a_a_stop_that_raises_or_leaves_an_execution_installs_no_credential_an
 
 def test_G4c_a_credential_write_failure_holds_and_the_maker_keeps_running_on_k(r3):
     hive = r3.hive
-    session, sid, m, step = _ready_for_step_2(r3)
+    session, sid, m, ack, step = started(r3)
+    in_step(r3, sid, step)
     running = r3.driver.procs[r3.maker["id"]]
 
     def refuse(kind, path):
         if kind == "write" and path.name.startswith("pending-token"):
             raise OSError("disk full")
-    SH.HOOK = refuse
+    SH.HOOK = refuse                                                       # before done (_ready_for_step_2)
+    done(r3, sid, 1, step["execution_id"], more=True)
     upload(r3, sid, m, 2, gen=2)
     drive(r3)
     assert ses_row(r3, sid)["state_reason"] == "credential_write_failed"

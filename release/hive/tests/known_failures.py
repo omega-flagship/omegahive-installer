@@ -34,12 +34,3 @@ mcp_doc_lacks_code_mind_proof = fails_on_runner_1(
 namespace_misses_same_tick_link = fails_on_runner_1(
     288, "the namespace cache misses a link made in the same clock tick as its last scan",
     pytest.RaisesExc(pytest.fail.Exception, match="DID NOT RAISE HiveError"), strict=False)
-
-# The rest pass alone and fail only inside the full run.
-stop_failure_leaves_session_active = fails_on_runner_1(
-    287, "inside the full run a stop that raises leaves the session active, where it should hold",
-    pytest.RaisesExc(AssertionError, match=r"\('active', None\) == \('held', "), strict=False)
-
-stop_failure_rotates_credential = fails_on_runner_1(
-    287, "inside the full run a stop that raises still installs a new credential",
-    pytest.RaisesExc(AssertionError, match="At index 0 diff"), strict=False)

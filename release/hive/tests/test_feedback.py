@@ -441,6 +441,29 @@ def test_the_hives_log_lines_name_an_exception_by_its_type_and_cut_long_messages
     assert named.lines()[0]["message"] == "the Ask could not close op-1 (KeyError)"   # the type, never the traceback
 
 
+
+def test_the_ring_adds_to_the_hives_log_and_never_takes_a_warning_from_it(capsys):
+    # Studio's startup self-check warned before the hive's own handlers existed: the ring was the only handler on the
+    # way up, so Python never used its last resort and the warning reached the admin's export but not hive.log (20 Nov)
+    ring = fb.LogRing()
+    hive_log, root = logging.getLogger("hive"), logging.getLogger()
+    saved = (hive_log.handlers[:], hive_log.propagate, root.handlers[:])
+    hive_log.handlers[:], hive_log.propagate, root.handlers[:] = [ring], True, []
+    try:
+        logging.getLogger("hive.studio-test").warning("HIVE_STUDIO_SESSIONS is on but this build lacks: %s", "x")
+        assert "HIVE_STUDIO_SESSIONS is on but this build lacks: x" in capsys.readouterr().err
+        logging.getLogger("hive.studio-test").info("an info line is the ring's to skip, as the last resort skips it")
+        assert capsys.readouterr().err == ""
+        # once the hive has a handler of its own, that handler has the warning once and the last resort stays quiet
+        stream = io.StringIO()
+        root.addHandler(logging.StreamHandler(stream))
+        logging.getLogger("hive.studio-test").warning("configured now")
+        assert stream.getvalue() == "configured now\n"
+        assert capsys.readouterr().err == ""
+    finally:
+        hive_log.handlers[:], hive_log.propagate, root.handlers[:] = saved
+    assert [line["message"] for line in ring.lines()] == ["configured now", "HIVE_STUDIO_SESSIONS is on but this build lacks: x"]
+
 @pytest.mark.parametrize("in_schema, status, kept", [(False, 200, False), (False, 404, True), (True, 200, True)])
 def test_a_page_file_that_loaded_is_not_kept_but_a_failure_on_a_page_route_is(in_schema, status, kept):
     got = []

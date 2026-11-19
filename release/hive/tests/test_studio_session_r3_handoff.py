@@ -63,7 +63,10 @@ def credential_ok(x, agent_id=None):
 
 
 def ready2(x):
-    """Step 1 done with more work; the next upload opens the attempt for step 2."""
+    """Step 1 done with more work. done(more=True) queues advance(), which opens step 2's attempt at once: the worker
+    stops the maker, writes its next credential and starts it within milliseconds. A test that faults, parks or hooks
+    that attempt calls started and done itself and sets it up in between, since anything set after done can come too
+    late (test_A_stop_failure_holds_no_install)."""
     session, sid, m, ack, step = started(x)
     in_step(x, sid, step)
     done(x, sid, 1, step["execution_id"], more=True)
@@ -296,9 +299,11 @@ def test_iso_parked_release_fsync_via_production_reconcile(r3, park):
 
 
 def test_iso_slow_fsync_in_job_a_does_not_block_reconcile(r3):
-    session, sid, m, step = ready2(r3)
+    session, sid, m, ack, step = started(r3)
+    in_step(r3, sid, step)
     gate, entered = gate_pair()
-    hook(("fsync", "pending-token-e", (gate, entered)))
+    hook(("fsync", "pending-token-e", (gate, entered)))                                    # before done (ready2)
+    done(r3, sid, 1, step["execution_id"], more=True)
     upload(r3, sid, m, 2, gen=2)
     assert entered.wait(15)
     other = crashed_mind(r3)
@@ -361,8 +366,10 @@ def test_iso_settling_parked_call_other_minds_reconcile(r3):
 
 
 def test_iso_check_skips_busy_mind_lock(r3):
-    session, sid, m, step = ready2(r3)
-    gate, entered = r3.driver.park("stop", r3.maker["id"])
+    session, sid, m, ack, step = started(r3)
+    in_step(r3, sid, step)
+    gate, entered = r3.driver.park("stop", r3.maker["id"])                                 # before done (ready2)
+    done(r3, sid, 1, step["execution_id"], more=True)
     upload(r3, sid, m, 2, gen=2)
     assert entered.wait(15)                                                # job A holds the maker's lock in a stop
     other = crashed_mind(r3)
@@ -542,10 +549,12 @@ def test_iso_nonstudio_mind_skipped_while_busy_then_reconciled_with_fresh_reread
 # ---- attempts (§4) -------------------------------------------------------------------------------------------------------
 
 def test_A_write_failure_leaves_maker_running_on_k(r3):
-    session, sid, m, step = ready2(r3)
+    session, sid, m, ack, step = started(r3)
+    in_step(r3, sid, step)
     k, running = epoch_of(r3), r3.driver.procs[r3.maker["id"]]
     stops = r3.driver.calls.count(("stop", r3.maker["id"]))
-    hook(("write", "pending-token-e", OSError("disk full")))
+    hook(("write", "pending-token-e", OSError("disk full")))                                # before done (ready2)
+    done(r3, sid, 1, step["execution_id"], more=True)
     upload(r3, sid, m, 2, gen=2)
     drive(r3)
     h = handoff(r3, sid)
@@ -556,9 +565,11 @@ def test_A_write_failure_leaves_maker_running_on_k(r3):
 
 
 def test_A_stop_failure_holds_no_install(r3):
-    session, sid, m, step = ready2(r3)
+    session, sid, m, ack, step = started(r3)
+    in_step(r3, sid, step)
     k, before_files, current = epoch_of(r3), files(r3), token_now(r3)
-    r3.driver.fail[("stop", r3.maker["id"])] = RuntimeError("group survived KILL")
+    r3.driver.fail[("stop", r3.maker["id"])] = RuntimeError("group survived KILL")          # before done (ready2)
+    done(r3, sid, 1, step["execution_id"], more=True)
     upload(r3, sid, m, 2, gen=2)
     drive(r3)
     assert (handoff(r3, sid)["state"], handoff(r3, sid)["reason"]) == ("held", "execution_retirement_failed")
@@ -731,19 +742,31 @@ def test_hung_dispatched_unknowned_after_660s(r3):
 # ---- Stop (§5) -----------------------------------------------------------------------------------------------------------
 
 def _into(x, where):
-    """Bring a session to `where`; returns (sid, release-later callable or None)."""
+    """Bring a session to `where`; returns (sid, release-later callable or None). A fault or park on job A, the stop of
+    step 1's execution, is set before step 1's done, which starts job A at once (ready2)."""
     if where == "live":
         session, sid, m, ack, step = started(x)
         return sid, None
-    session, sid, m, step = ready2(x)
     if where in ("held", "exhausted"):
+        session, sid, m, ack, step = started(x)
+        in_step(x, sid, step)
         x.driver.fail[("stop", x.maker["id"])] = RuntimeError("stubborn")
+        done(x, sid, 1, step["execution_id"], more=True)
         upload(x, sid, m, 2, gen=2)
         drive(x)
         del x.driver.fail[("stop", x.maker["id"])]
         if where == "exhausted":
             x.hive.db.execute("UPDATE studio_sessions SET state_reason = 'handoff_retry_exhausted' WHERE id = ?", (sid,))
         return sid, None
+    if where == "mid-job-A":
+        session, sid, m, ack, step = started(x)
+        in_step(x, sid, step)
+        gate, entered = x.driver.park("stop", x.maker["id"])
+        done(x, sid, 1, step["execution_id"], more=True)
+        upload(x, sid, m, 2, gen=2)
+        assert entered.wait(15)
+        return sid, gate.set
+    session, sid, m, step = ready2(x)                                      # job B and the sweep wait for drive or tick
     if where == "settling":
         reserve(x)
         upload(x, sid, m, 2, gen=2)
@@ -756,11 +779,6 @@ def _into(x, where):
         drive(x, rounds=2, connect_started=False)
         assert handoff(x, sid)["state"] == "awaiting_proof"
         return sid, None
-    if where == "mid-job-A":
-        gate, entered = x.driver.park("stop", x.maker["id"])
-        upload(x, sid, m, 2, gen=2)
-        assert entered.wait(15)
-        return sid, gate.set
     if where == "mid-job-B":
         gate, entered = x.driver.park("start", x.maker["id"])
         upload(x, sid, m, 2, gen=2)
@@ -774,6 +792,11 @@ def _into(x, where):
 @pytest.mark.parametrize("where", ["live", "held", "exhausted", "settling", "awaiting_proof", "mid-job-A", "mid-job-B"])
 def test_S_stop_in_each_state(r3, where):
     sid, let_go = _into(r3, where)
+    if let_go is None:
+        # Nothing else holds this Stop back, so on a busy machine the worker could finish it before the reads below:
+        # its maker stop waits for them.
+        gate, _ = r3.driver.park("stop", r3.maker["id"])
+        let_go = gate.set
     rows_before = r3.hive.db.one("SELECT COUNT(*) AS n FROM studio_handoffs WHERE session_id = ?", (sid,))["n"]
     stop(r3, sid)
     row = ses_row(r3, sid)
@@ -1025,6 +1048,14 @@ def test_S_one_release_rotation_across_crashes(r3, monkeypatch):
 
 # ---- delivery (§6) -------------------------------------------------------------------------------------------------------
 
+def _unpatch(monkeypatch, obj, name):
+    """Drop a method patched onto one object, so its class's method shows through again, by way of monkeypatch: since
+    pytest's fix for #10644, monkeypatch's teardown deletes the instance entry its setattr added, and fails with
+    AttributeError when a test has already popped that entry from __dict__ itself."""
+    if name in vars(obj):
+        monkeypatch.delattr(obj, name)
+
+
 def _to_admission(x, monkeypatch):
     """Step 2 proven and admitted, its delivery captured (not run) so a test can act between admission and send."""
     session, sid, m, step = ready2(x)
@@ -1033,7 +1064,7 @@ def _to_admission(x, monkeypatch):
     upload(x, sid, m, 2, gen=2)
     drive(x)
     assert step_row(x, sid, 2)["state"] == "admitted" and len(captured) == 1
-    studio(x).__dict__.pop("_start_delivery", None)
+    _unpatch(monkeypatch, studio(x), "_start_delivery")
     _to_admission.mount = m
     return sid, captured[0]
 
@@ -1095,7 +1126,7 @@ def test_D_admission_commit_failure_sends_nothing(r3, monkeypatch):
     drive(r3)
     assert step_row(r3, sid, 2) is None and handoff(r3, sid)["state"] == "awaiting_proof"
     assert not [f for f in r3.hubs[r3.maker["id"]].frames if f.get("type") == "studio_step"]
-    studio(r3).__dict__.pop("_step_event", None)
+    _unpatch(monkeypatch, studio(r3), "_step_event")
     drive(r3)
     assert step_row(r3, sid, 2)["state"] == "admitted"
 
@@ -1187,7 +1218,7 @@ def test_stop_races_B_right_after_revalidation_no_rotation_no_start(r3, monkeypa
     assert entered.wait(15)
     stop(r3, sid)                                                          # Stop commits first
     gate.set()
-    studio(r3).__dict__.pop("_verify", None)
+    _unpatch(monkeypatch, studio(r3), "_verify")
     stopped_and_released(r3, sid)
     assert r3.driver.calls.count(("start", r3.maker["id"])) == starts      # never started
     assert epoch_of(r3) == k + 1                                           # only the release rotation
@@ -1252,7 +1283,7 @@ def test_B_failures_hold_with_consistent_epochs(r3, monkeypatch, failure, reason
     assert (h["state"], h["reason"]) == ("held", reason)
     expected = k + 1 if failure in ("rename", "start") else k
     assert epoch_of(r3) == expected
-    studio(r3).__dict__.pop("_rotate_to", None)
+    _unpatch(monkeypatch, studio(r3), "_rotate_to")
     SH.HOOK = None
     r3.driver.fail.clear()
     r3.driver.procs.pop(r3.maker["id"], None)
@@ -1409,7 +1440,7 @@ def test_S_second_verify_failure_sets_stop_failed_no_install(r3, monkeypatch):
     studio(r3).worker.wait_idle(15)
     row = ses_row(r3, sid)
     assert (row["stop_failed"], row["stop_verified"], epoch_of(r3)) == (1, 0, k)
-    studio(r3).__dict__.pop("_verify", None)
+    _unpatch(monkeypatch, studio(r3), "_verify")
     assert control(r3, sid, "finish_stopping").status_code == 200        # re-runs the full verified stop
     stopped_and_released(r3, sid)
 
@@ -1672,8 +1703,8 @@ def test_J6_only_retries_count(r3):
     assert studio(r3).retries_this_hour(sid) == 0 and ses_row(r3, sid)["state"] == "active"
     s5 = step_row(r3, sid, 5)
     in_step(r3, sid, s5)
+    r3.driver.fail[("stop", r3.maker["id"])] = RuntimeError("stubborn")    # before done (ready2)
     done(r3, sid, 5, s5["execution_id"], more=True)
-    r3.driver.fail[("stop", r3.maker["id"])] = RuntimeError("stubborn")
     upload(r3, sid, m, 6, gen=6)
     drive(r3)                                                              # step 6, first attempt: held, not counted
     for retry in range(1, 4):
@@ -1687,8 +1718,10 @@ def test_J6_only_retries_count(r3):
 
 
 def test_J6_no_reopen_after_held(r3):
-    session, sid, m, step = ready2(r3)
-    r3.driver.fail[("stop", r3.maker["id"])] = RuntimeError("stubborn")
+    session, sid, m, ack, step = started(r3)
+    in_step(r3, sid, step)
+    r3.driver.fail[("stop", r3.maker["id"])] = RuntimeError("stubborn")    # before done (ready2)
+    done(r3, sid, 1, step["execution_id"], more=True)
     upload(r3, sid, m, 2, gen=2)
     drive(r3)
     del r3.driver.fail[("stop", r3.maker["id"])]
@@ -1699,8 +1732,10 @@ def test_J6_no_reopen_after_held(r3):
 
 
 def test_J6_override_one_attempt(r3):
-    session, sid, m, step = ready2(r3)
-    r3.driver.fail[("stop", r3.maker["id"])] = RuntimeError("stubborn")
+    session, sid, m, ack, step = started(r3)
+    in_step(r3, sid, step)
+    r3.driver.fail[("stop", r3.maker["id"])] = RuntimeError("stubborn")    # before done (ready2)
+    done(r3, sid, 1, step["execution_id"], more=True)
     upload(r3, sid, m, 2, gen=2)
     drive(r3)
     for _ in range(3):
@@ -1767,8 +1802,11 @@ def test_H2a_restart_with_an_adopted_running_maker_and_an_admitted_step(r3):
 
 
 def test_H2b_an_adopted_identity_after_the_start_is_no_proof(r3, monkeypatch):
-    session, sid, m, step = ready2(r3)
+    session, sid, m, ack, step = started(r3)
+    in_step(r3, sid, step)
+    # Before done: its advance task opens step 2's attempt with the window it reads (F1g in test_studio_session_r3.py).
     monkeypatch.setattr(SH, "PROOF_WINDOW_S", 0)
+    done(r3, sid, 1, step["execution_id"], more=True)
     real_start = r3.driver.start
 
     def adopted_start(agent, env):
@@ -1986,7 +2024,7 @@ def test_r32_a_parked_status_read_never_holds_the_database(r3, monkeypatch, wher
     assert ses_row(r3, sid)["stop_status"] == "unknown"
     gate.set()
     r3.driver.fail.pop(("stop", r3.maker["id"]), None)
-    studio(r3).__dict__.pop("_verify", None)
+    _unpatch(monkeypatch, studio(r3), "_verify")
     del r3.driver.gates[("status", r3.maker["id"])]
     assert control(r3, sid, "finish_stopping").status_code == 200
     stopped_and_released(r3, sid)
