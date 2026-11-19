@@ -194,6 +194,9 @@ REVIEW_EVIDENCE = ("none", "render")
 #: rule (create_plan_ports.ANSWER_SHAPES), and a refused plan's next packet names the rule it broke: on a fresh install's
 #: first real plans the planner, told only the fields' names, broke one rule after another and repeated itself, and
 #: told the reducer's bare code design-pieces-carry-the-design it sent the same plan four times
+# the kinds a piece can be (create_plan_ports.PLAN_SHAPE says the same: code, or design for a designed look)
+PIECE_KINDS = ("code", "design")
+
 PLAN_RULES = {
     "plan_not_an_object": "the plan is one JSON object",
     "step_count_limit": f"a plan has 1 to {MAX_PIECES} pieces",
@@ -499,6 +502,13 @@ class CreatePlanEngine:
         if not last:
             return None
         return {k: last.get(k) for k in ("reason", "why", "exit_code", "output", "stderr") if last.get(k) is not None}
+
+    def staffed_kinds(self, person):
+        """The piece kinds this hive can build for `person` now: each kind whose default assignee resolves to a team or
+        mind that offers it. The planner is told them, since a Mac install has no design maker: a design piece there
+        found nobody, and R4.1 asks its person to make one available, which a tester can't. Time: one resolution per
+        kind in PIECE_KINDS."""
+        return [k for k in PIECE_KINDS if self.assignees.resolve(self.assignees.default_selector(k), person)["resolved"]]
 
     def previous_plan_refusal(self, pid):
         """Why the last plan was refused, when none was accepted since: {code, rule}, the refusal's code and the words of

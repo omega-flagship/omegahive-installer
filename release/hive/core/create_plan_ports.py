@@ -268,7 +268,10 @@ class Ports:
         # planner, knowing none of them, added a "code" review of code, which resolved to the piece's own builders
         reviews = [{k: r[k] for k in ("artifact_kind", "review_kind", "evidence")} for r in self.engine.assignees.review_for()]
         packet = {"sentence": run["sentence"], "hive_reviews": reviews,
-                  "scaffold_has_acceptance_check": await self.scaffold_has_check(run)}
+                  "scaffold_has_acceptance_check": await self.scaffold_has_check(run),
+                  # the kinds someone in this hive builds: a Mac install offers no design, and a design piece asked
+                  # its person forever for a builder they couldn't make available
+                  "staffed_kinds": self.engine.staffed_kinds(run["person"])}
         refused = self.engine.previous_plan_refusal(run["plan_id"])
         if refused:   # the last plan was refused: what it broke, so the planner fixes that instead of answering it again
             packet["last_plan_refused"] = refused
@@ -431,7 +434,7 @@ class Ports:
 # which a test reads back from both), so the prompt can't drift from the checks; on a fresh install's first real plans
 # the model, told only the fields' names, wrote evidence as a sentence, a selector as "code", a piece with no files, a
 # review of code by its own builders and a design step beside design pieces, one refused plan after another
-PLAN_SHAPE = ('{"plan": {"title": str, "pieces": [{"id": word, "kinds": [code or design], "assignee": optional ["team", '
+PLAN_SHAPE = ('{"plan": {"title": str, "pieces": [{"id": word, "kinds": [code or design, only kinds in staffed_kinds], "assignee": optional ["team", '
               'swarm] | ["mind", agent] | ["capability", cap] | ["hive", hive, cap] | ["open", cap], "title", "brief", '
               '"deps": [piece ids], "files": [paths it writes]}], "acceptance": [what the finished thing must do, each a sentence; an '
               'example with numbers writes its working out, such as \"two 3.50 items with 10% tax: 7.00 + 0.70 = '

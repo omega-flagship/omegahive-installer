@@ -361,6 +361,11 @@ The server pushes `{"type", "at", ...}` frames. The client may send
   token. The gateway picks the provider and model from the agent's `model`,
   injects the key, meters the usage, and enforces `budget_usd` (402 once the
   budget is spent).
+  A call's output room (`max_tokens` or `max_completion_tokens`, 4096 when it
+  names none) is held to its OpenRouter model's own output limit. A mind
+  holding a claimed goal of a Create plan asks with that whole limit from its
+  first call, as much of it as a new reservation can hold now, and never less
+  than it asked for.
 - **`POST /api/agent/publish`** `{statement, f, c, evidence?}` → `Assertion`. The
   stamp is minted by the hive when `evidence` is omitted. A mind acting for
   someone who controls its swarm (the swarm's owner, its person or an admin)

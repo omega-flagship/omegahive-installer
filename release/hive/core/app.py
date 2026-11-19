@@ -199,7 +199,8 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         supervisor.attach(hive)
     gateway = Gateway(settings.providers)
     gateway.authorize_agent = hive.person_apps.authorize_agent   # P2's require_current, then P14's own-key context rule
-    from .cost_reservations import BudgetExhausted, Reservations, SpendRateLimited, exhausted_limit, host_budget_snapshot, host_subjects, host_use_check
+    from .cost_reservations import (BudgetExhausted, Reservations, SpendRateLimited, exhausted_limit, host_budget_snapshot,
+                                    host_subjects, host_use_check, reservable_micros)
     cost_reservations = Reservations(hive.db)
     gateway.free_unreconciled = cost_reservations.free_unknown   # sol R2 P1: no further $0 call past an unknown one
 
@@ -4477,6 +4478,17 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         payer, own_key = hive.payer_for(agent, key_owner)
         # J3 R4: a live Studio session's maker is bound to the step admitted now (None for every other mind, and off)
         studio_call = hive.studio.gateway_call(agent) if paid else None
+        if limit and studio_call is None and hive.goals.holds_create_step(agent["id"]):
+            # a Create step's answer is whole files (a build, the acceptance check) or a whole plan in one reply, and a
+            # reply cut off at its room is thrown away whole: a Make run of a tester's tic-tac-toe had eleven replies stop
+            # at their 6000-token room. So its first call asks with the model's whole room, as much of it as a new
+            # reservation can hold now (cost_reservations.reservable_micros), never less than the mind asked for.
+            key = "max_completion_tokens" if data.get("max_completion_tokens") else "max_tokens"
+            room = gateway.affordable_room(agent, data, limit,
+                                           reservable_micros(hive, agent["id"], key_id, payer, own_key) if paid else None)
+            if isinstance(data.get(key), int) and room > data[key]:
+                data[key] = room
+                paid, estimate = gateway.estimate(agent, data, settings.allow_unpriced)
         studio_check(studio_call, hive.check_budget, agent, paid, estimate, key_id, payer, own_key)
         reservation = None
         if paid:

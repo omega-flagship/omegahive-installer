@@ -331,6 +331,13 @@ def split_model(model):
     return provider, name
 
 
+def billable_tokens(body):
+    """A call's prompt as a true worst case: every billable input (all of the body but the model and stream fields), in
+    UTF-8 bytes plus one, since a token always covers at least one byte (OmegaReview 2026-10-04)."""
+    billable = {k: v for k, v in body.items() if k not in ("model", "stream")}
+    return len(json.dumps(billable, ensure_ascii=False).encode("utf-8")) + 1
+
+
 def _completion(model, text, prompt_tokens, completion_tokens):
     return {
         "id": f"hive-{int(time.time() * 1000)}",
@@ -770,8 +777,7 @@ class Gateway:
         for field in ("input_audio", "audio", "modalities", "attachments"):
             if field in body:
                 raise GatewayError(400, "unsupported_content", f"{field} is not supported on paid calls")
-        billable = {k: v for k, v in body.items() if k not in ("model", "stream")}
-        prompt_tokens = len(json.dumps(billable, ensure_ascii=False).encode("utf-8")) + 1
+        prompt_tokens = billable_tokens(body)
         max_out = int(body.get("max_completion_tokens") or body.get("max_tokens") or 4096)
         # A model priced at exactly $0 (a free remote model) still goes through every access, payer and budget check:
         # it reserves one micro-dollar, the smallest positive amount, and settles at what the provider reports.
@@ -804,6 +810,23 @@ class Gateway:
     def cost(self, provider, model, prompt_tokens, completion_tokens):
         price_in, price_out = provider.price(model)
         return (prompt_tokens * price_in + completion_tokens * price_out) / 1_000_000
+
+    def affordable_room(self, agent, body, limit, room_micros):
+        """The most output tokens, up to `limit`, a call with this body can reserve when `room_micros` is what a new
+        reservation for it could hold (None: nothing limits it): estimate's worst case solved for the output,
+        (room - prompt x price in) / price out, floored, one micro under so the reservation's own rounding up still
+        fits. The prompt is counted as if the room were `limit`, the widest number it can be. A model with no price
+        here reserves no money and gets `limit`. Example: $0.30 of room, a 40,000-byte prompt, $3 in and $15 out per
+        million tokens: (300,000 - 120,000 - 1) // 15 = 11,999 tokens."""
+        provider_name, model = split_model(agent["model"])
+        provider = self.providers.get(provider_name)
+        if room_micros is None or provider is None or not provider.priced(model):
+            return limit
+        price_in, price_out = provider.price(model)
+        if price_out <= 0:
+            return limit
+        widest = {**body, ("max_completion_tokens" if body.get("max_completion_tokens") else "max_tokens"): limit}
+        return max(0, min(limit, int((room_micros - billable_tokens(widest) * price_in - 1) // price_out)))
 
     async def chat(self, agent, body, principal=None):
         """Returns (response_json, usage_dict). principal: see admit_subscription (only that route reads it)."""

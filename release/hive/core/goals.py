@@ -749,6 +749,14 @@ class Goals:
         self.hive.mark_input(agent["id"])   # a result is meaningful output
         return self._emit(goal_id)
 
+    def holds_create_step(self, agent_id):
+        """Whether the mind is working on a step of a Create plan (a claimed goal the plan stamped create-plan:<plan>:
+        a build, the acceptance check, the plan, a design or a review). Such an answer holds whole files or a whole plan
+        in one reply, and a reply cut off at its room is thrown away whole, so the model route gives these calls the
+        model's whole room at once. Time: one lookup."""
+        return self.db.one("SELECT 1 FROM goals WHERE claimed_by = ? AND status = 'claimed' AND created_by LIKE "
+                           "'create-plan:%' LIMIT 1", (agent_id,)) is not None
+
     def release_rows(self, agent_id, by, why):
         """A deleted mind's unfinished work, released in the caller's transaction (its soft delete); events after commit.
         open / claimed / waiting / stalled where it is assignee or holder: back to open, unassigned and unclaimed, and

@@ -23,6 +23,7 @@ import tempfile
 import pytest
 
 from hive.core import create_plan_engine as cpe
+from hive.core import create_plan_ports as cpp
 from hive.core.create_plan_members import PerChangeBuilds
 from hive.core.create_plan_ports import AppReleases, GoalMinds, Ports, frame_document, parse_check_output
 from hive.tests.test_core_api import client  # noqa: F401  (fixture)
@@ -921,6 +922,33 @@ def test_a_refused_plan_tells_the_planner_the_rule_it_broke_and_its_corrected_pl
     assert {(r["artifact_kind"], r["review_kind"], r["evidence"]) for r in plans[0]["hive_reviews"]} == \
         {("code", "review", "none"), ("design", "design-review", "render")}
     assert any(r["kind"] == "planned" for r in view["journal"])   # the corrected plan is the plan
+
+
+def test_the_planner_is_told_the_kinds_the_hive_staffs(world):
+    """On a Mac install nobody offers design (Studio's design maker is off there), and a real plan's "Visual design"
+    piece found nobody, so R4.1 asked its person again and again to make one available, which a tester can't. The
+    planner is told the kinds this hive staffs, and a plan that keeps to them builds without a designer."""
+    w = world
+    w.minds.question = False
+    assert w.engine.staffed_kinds("user:u_jon") == ["code", "design"]
+    w.hive.db.execute("DELETE FROM person_minds WHERE purpose = 'studio_maker'")
+    w.hive.db.execute("DELETE FROM swarm_services")
+    assert w.engine.staffed_kinds("user:u_jon") == ["code"], w.engine.assignees.resolve(["capability", "design"], "user:u_jon")
+    real = w.minds._answer
+
+    def keeps_to_staffed_kinds(kind, body, packet, agent):
+        answer = real(kind, body, packet, agent)
+        if kind == "plan":
+            for piece in answer["plan"]["pieces"]:
+                piece["kinds"] = [k for k in piece["kinds"] if k in packet["staffed_kinds"]] or ["code"]
+        return answer
+    w.minds._answer = keeps_to_staffed_kinds
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    plans = [packet for kind, _, packet in w.minds.calls if kind == "plan"]
+    assert plans[0]["staffed_kinds"] == ["code"]
+    assert "kinds in staffed_kinds" in cpp.ANSWER_SHAPES["plan"]
+    assert view["phase"] == "ready-to-deploy", (view["phase"], view["status"], view["last_error"])
+    assert all(p["assignee"]["resolved"] for p in view["pieces"]) and not view["questions"]
 
 
 # the planner can never cause these: the host writes the Plan atom as revision 1 with no parent, and reports planned

@@ -524,6 +524,16 @@ def host_budget_snapshot(hive,agent_id,key_id=None,payer=None,own_key=False,turn
     return [(scope,limit,spent) for scope,(limit,spent) in rows.items()]
 
 
+def reservable_micros(hive,agent_id,key_id=None,payer=None,own_key=False):
+    """What a new reservation for this mind's call could hold now, in micro-USD: the least, over the rows the call is
+    checked against (host_budget_snapshot), of the limit less recorded spend less what open reservations already hold
+    (pending_micros), as Reservations.reserve checks it; None when no row limits the call. A read outside the
+    reservation's transaction, so it sizes a call and admits nothing. Time: one pending read per row."""
+    rows=host_budget_snapshot(hive,agent_id,key_id,payer,own_key)
+    if not rows:return None
+    return max(0,min(micros(limit,ROUND_FLOOR)-micros(spent)-pending_micros(hive.db,scope) for scope,limit,spent in rows))
+
+
 def host_admission_view(hive,agent_id,key_id=None,payer=None,own_key=False,turn_bound=False):
     """READ-ONLY. host_budget_snapshot's rows as Reservations.reserve admits a call against them: each limit, the spend
     recorded against it, the worst cases held against it by calls not yet settled (pending_micros) and the room left,
