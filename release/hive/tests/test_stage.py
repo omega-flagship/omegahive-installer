@@ -219,81 +219,124 @@ def test_a_title_is_matched_as_a_person_might_say_it_and_only_among_what_they_se
     assert len(many["matches"]) == cmod.TITLE_MATCHES and many["more"] == 3 and many["reason"] == "ambiguous"
 
 
-# a tip calculator as a mind writes one (modules/hive/catalog.metta's view help): one screen, its parts in order
+# a tip calculator as a mind writes one (modules/hive/catalog.metta's view help): what the model may still send as a
+# view's body, which make never keeps, since Create builds a view
 TIP_VIEW = ('(Screen tip "Tip")\n(Part tip 10 header ((title "Tip") (body "Split the bill")))\n'
             '(Part tip 20 fields ((items ((field number "Bill" bill ((step 0.01)))))))\n(Start bill "")')
 # what the model wrote into the note on v0.31 once its hand-over of the build was refused
 CODE_ANSWER = "Here's a tip calculator you can use:\n\n```html\n<!doctype html>\n<html><body>Tip</body></html>\n```\n\nEnjoy!"
 
 
-def _build_turn(client, w, op, steps):
-    """One Ask turn from the home page asking to build a tip calculator, the conductor's model scripted: the stage frames
-    Ann's page got, the model's tool results after each call, and the answer she was given."""
+def _build_turn(client, w, op, steps, text="Please build a tip calculator app"):
+    """One Ask turn from the home page, asking to build a tip calculator unless `text` asks something else, the
+    conductor's model scripted: the stage frames Ann's page got, the model's tool results after each call, and the
+    answer she was given."""
     from hive.tests.test_ask_conductor import Script, closed, script, tool_results, wait
     s = script(client, Script(*steps))
     with _socket(client, w, "ann") as ann_ws:
         assert ann_ws.receive_json()["type"] == "hello"
-        assert ask(client, w["ann"], op, text="Please build a tip calculator app",
-                   context={"swarm_id": w["swarm"]["id"]}).status_code == 202
+        assert ask(client, w["ann"], op, text=text, context={"swarm_id": w["swarm"]["id"]}).status_code == 202
         fs = wait(w["hive"], op, closed)
         frames = _stage_frames(drain(ann_ws))
     answer = [f for f in fs if f["phase"] == "answer" and not f.get("delta")][-1]["text"]
     return [(f["say"], [i["key"] for i in f["items"]]) for f in frames], [tool_results(b)[-1] for b in s.bodies[1:]], answer
 
 
-def test_the_ask_makes_what_the_person_asks_for_and_shows_it(client, monkeypatch):
-    # on v0.31 the Ask bar had no way to make anything: asked to build a tip calculator it handed the build over, was
-    # refused and wrote out the app's code; make saves it as the mind's creation, the way the mind's own create does
-    from hive.tests.test_ask_conductor import call
+class _Plans:
+    """Create's plan engine as make sees it: switched on or off, and each start's person and sentence, so nothing is
+    planned or built."""
+
+    def __init__(self, on=True):
+        self.on, self.started = on, []
+
+    def enabled(self):
+        return self.on
+
+    async def start(self, principal, sentence):
+        self.started.append((principal, sentence))
+        return {"plan_id": f"plan_{len(self.started)}", "status": "planning"}
+
+    def close(self):
+        """The app closes the plan engine as it shuts down; this one holds nothing to close."""
+
+
+def _conducted(client, monkeypatch, on=True):
     monkeypatch.setenv("HIVE_ASK_CONDUCTOR", "1")
     monkeypatch.setenv("HIVE_ASK_CONDUCTOR_MODEL", "mock/conductor")
     w = world(client)
-    hive = w["hive"]
-    shown, results, answer = _build_turn(client, w, "op-make-01", [
-        [call("make", kind="view", title="Tip calculator", body=TIP_VIEW)], "Your tip calculator is on your screen."])
-    made = results[0]
-    assert made["ok"] and made["shown"] and made["kind"] == "view" and made["title"] == "Tip calculator"
-    art = hive.db.one("SELECT * FROM artifacts WHERE id = ?", (made["id"],))
-    speaker = hive.personal.speaker("user:u_ann", hive.db.one("SELECT * FROM agents WHERE id = ?", (w["coord"]["id"],)), True)
-    # saved as the mind she hears, with its text as revision 1, and on her screen in the same turn
-    assert art["kind"] == "view" and art["created_by"] == f"agent:{speaker['id']}"
-    assert hive.db.one("SELECT body FROM artifact_revisions WHERE artifact_id = ? AND n = 1", (made["id"],))["body"] == TIP_VIEW
-    assert shown == [("show", [made["id"]])]
-    assert answer == "Your tip calculator is on your screen."
+    w["hive"].create_plans = w["plans"] = _Plans(on)
+    return w
 
 
-def test_a_view_that_cannot_be_drawn_is_refused_and_its_code_never_reaches_the_person(client, monkeypatch):
+def test_the_ask_hands_what_the_person_asks_to_build_to_create_and_writes_none_of_it(client, monkeypatch):
+    # Jon on #395: building software goes to Create, with no exceptions. On v0.31 the Ask bar, asked to build a tip
+    # calculator, wrote the app out as code; make now starts it as Ann's own Create plan, which Create plans, builds
+    # and checks, and nothing of the app is saved or shown in the turn, a body the model sent included
     from hive.core import conductor as cmod
     from hive.tests.test_ask_conductor import call
-    monkeypatch.setenv("HIVE_ASK_CONDUCTOR", "1")
-    monkeypatch.setenv("HIVE_ASK_CONDUCTOR_MODEL", "mock/conductor")
-    w = world(client)
+    w = _conducted(client, monkeypatch)
     before = w["hive"].db.one("SELECT COUNT(*) AS n FROM artifacts")["n"]
-    shown, results, answer = _build_turn(client, w, "op-make-02", [
-        [call("make", kind="view", title="Tip calculator", body='(Screen tip "Tip"')], CODE_ANSWER])
-    refused = results[0]
-    # the hive's own view check says what to fix, nothing is saved, and nothing is shown
-    assert refused["ok"] is False and refused["reason"] == "bad_view" and "never closed" in refused["message"]
-    assert refused["next"] == cmod.MAKE_REFUSED_NEXT
+    shown, results, answer = _build_turn(client, w, "op-make-01", [
+        [call("make", kind="view", title="a tip calculator", body=TIP_VIEW)], "Create is building your tip calculator."])
+    assert results[0] == {"ok": True, "kind": "view", "title": "a tip calculator", "plan_id": "plan_1",
+                          "status": "planning", "next": cmod.MAKE_IN_CREATE_NEXT}
+    assert w["plans"].started == [("user:u_ann", "a tip calculator")]
     assert w["hive"].db.one("SELECT COUNT(*) AS n FROM artifacts")["n"] == before and shown == []
+    assert answer == "Create is building your tip calculator."
+
+
+def test_a_build_create_cannot_take_is_refused_and_its_code_never_reaches_the_person(client, monkeypatch):
+    from hive.core import conductor as cmod
+    from hive.tests.test_ask_conductor import call
+    w = _conducted(client, monkeypatch, on=False)
+    shown, results, answer = _build_turn(client, w, "op-make-02", [
+        [call("make", kind="view", title="a tip calculator")], CODE_ANSWER])
+    refused = results[0]
+    # Create is off on this hive: it says so, nothing starts, and nothing is shown
+    assert refused["ok"] is False and refused["reason"] == "create_off" and "Create isn't switched on" in refused["message"]
+    assert refused["next"] == cmod.MAKE_REFUSED_NEXT and w["plans"].started == [] and shown == []
     # the code the model then wrote never reaches her: its words stay, and she is told once why the code is gone
     assert "```" not in answer and "doctype" not in answer
     assert answer == "Here's a tip calculator you can use:\n\nEnjoy!\n\n" + cmod.CODE_KEPT_OUT
 
 
-def test_a_make_with_no_fields_is_refused_on_a_warning_line_and_the_next_make_shows(client, monkeypatch, caplog):
+def test_a_short_code_example_the_person_asks_to_see_reaches_them_whole(client, monkeypatch):
+    # Jon on #340: a person who asks to see a short code example still gets one, since thinking in code is allowed.
+    # Code is taken out only after a refused build; a turn that makes nothing answers with the example as written
+    from hive.core import conductor as cmod
+    w = _conducted(client, monkeypatch)
+    example = "Here's one:\n\n```python\ndef reverse(s):\n    return s[::-1]\n```\n\nThe slice walks the string backwards."
+    shown, results, answer = _build_turn(client, w, "op-code-01", [example],
+                                         text="Can you show me a short Python example that reverses a string?")
+    assert answer == example and results == [] and shown == [] and w["plans"].started == []
+    assert "A short code example they ask to see isn't a build: answer with it." in cmod.STEERING
+
+
+def test_an_image_or_a_note_is_still_made_as_the_minds_creation_and_shown(client, monkeypatch):
+    # a picture and words aren't programs: make saves them as the mind's creation and shows them, as before
+    from hive.tests.test_ask_conductor import call
+    w = _conducted(client, monkeypatch)
+    hive = w["hive"]
+    shown, results, _ = _build_turn(client, w, "op-make-03", [
+        [call("make", kind="note", title="Tipping", body="Ten to fifteen percent is usual.")], "It is on your screen."])
+    made = results[0]
+    assert made["ok"] and made["shown"] and made["kind"] == "note" and shown == [("show", [made["id"]])]
+    speaker = hive.personal.speaker("user:u_ann", hive.db.one("SELECT * FROM agents WHERE id = ?", (w["coord"]["id"],)), True)
+    assert hive.db.one("SELECT created_by FROM artifacts WHERE id = ?", (made["id"],))["created_by"] == f"agent:{speaker['id']}"
+    assert w["plans"].started == []
+
+
+def test_a_make_with_no_fields_is_refused_on_a_warning_line_and_the_next_make_goes_through(client, monkeypatch, caplog):
     # on a v0.31 build with the real model, a make first came with no kind, title or body; only the probe saw it
     import logging
     from hive.core import conductor as cmod
     from hive.tests.test_ask_conductor import call
     caplog.set_level(logging.INFO, logger="hive")
-    monkeypatch.setenv("HIVE_ASK_CONDUCTOR", "1")
-    monkeypatch.setenv("HIVE_ASK_CONDUCTOR_MODEL", "mock/conductor")
-    w = world(client)
+    w = _conducted(client, monkeypatch)
     shown, results, answer = _build_turn(client, w, "op-make-04", [
-        [call("make")], [call("make", kind="view", title="Tip calculator", body=TIP_VIEW)], "It is on your screen."])
+        [call("make")], [call("make", kind="view", title="a tip calculator")], "Create is building it."])
     assert results[0] == {"ok": False, "reason": "invalid", "next": cmod.MAKE_REFUSED_NEXT}
-    assert results[1]["ok"] and shown == [("show", [results[1]["id"]])] and answer == "It is on your screen."
+    assert results[1]["ok"] and results[1]["plan_id"] == "plan_1" and shown == [] and answer == "Create is building it."
     line = next(r for r in caplog.records if "make refused for op-make-04" in r.getMessage())
     assert line.levelname == "WARNING" and line.getMessage().endswith("(invalid); fields []")
 

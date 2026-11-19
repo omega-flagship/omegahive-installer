@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 _INITIALIZED = False
 _PROVIDER_ERROR = None
 _LAST_KIND = 'normal'
+_LAST_WAIT = None   # a hive refusal's retry_after (seconds), for the wait it causes (last_wait_seconds)
 
 
 def initialize(arguments=()):
@@ -119,35 +120,49 @@ def start_provider(name, model):
 
 
 def last_response_kind():
-    """Runtime provenance of the latest chat() result: format, provider or normal.
+    """Runtime provenance of the latest chat() result: format, provider, hive or normal.
 
     Set only by chat() from the provider's own result objects, never parsed from model text, so a model that writes
     "LLM-FORMAT-ERROR" gets an ordinary wait, not the runtime's short, counted retry (hive_helpers.chosen_wait_seconds).
+    hive: the hive itself refused the call for spending or pace, and the wait says its sentence (last_wait_seconds).
     """
     return _LAST_KIND
 
 
-def _failed(kind, text):
-    global _LAST_KIND
+def last_wait_seconds():
+    """How long the latest hive refusal asks the mind to wait (its retry_after), or 0 when it gave none: a number
+    either way, since the loop passes it through MeTTa to hive_helpers.chosen_wait_seconds (loop_hooks.metta
+    honor-chosen-wait)."""
+    return _LAST_WAIT or 0
+
+
+def _failed(kind, text, wait=None):
+    global _LAST_KIND, _LAST_WAIT
     from hive.runtime.hive_provider import response
-    _LAST_KIND = kind
+    _LAST_KIND, _LAST_WAIT = kind, wait
     return response(text)
 
 
 def chat(request):
-    global _LAST_KIND
+    global _LAST_KIND, _LAST_WAIT
     import providers
-    _LAST_KIND = 'normal'
+    from hive.runtime.provider_features import take_refusal
+    _LAST_KIND, _LAST_WAIT = 'normal', None
     if _PROVIDER_ERROR:
         return _failed('provider', 'wait "' + _PROVIDER_ERROR + '"')
     selected = providers._llmprovider
     engine = getattr(selected, 'delegate', getattr(selected, 'engine', selected))
     if hasattr(engine, 'is_available') and not engine.is_available:
         return _failed('provider', 'wait "LLM-PROVIDER-NOT-AVAILABLE provider=' + str(getattr(engine, '_name', 'unknown')) + '"')
+    take_refusal()   # nothing from an earlier call
     try:
         result = providers.llmProviderChat(request)
     except Exception:
         return _failed('provider', 'wait "LLM-PROVIDER-ERROR retry after 60 seconds"')
+    refusal = take_refusal()
+    if refusal is not None and (result.is_error() or not result.calls):
+        # the hive refused it for spending or pace: the mind's wait says why in the hive's words, for as long as it asks
+        return _failed('hive', 'wait "' + refusal[0] + '"', refusal[1])
     errors = [call.error for call in result.calls if call.is_error()]
     if errors or getattr(result, 'error', None) in (
             'List of tool calls is empty', 'Incomplete provider response; no commands executed'):

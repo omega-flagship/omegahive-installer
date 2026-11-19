@@ -212,7 +212,7 @@ CLOSE_OUTCOME = {**CONDUCTOR_OUTCOME, "answered": "complete", "incomplete": "inc
                  "spend_cap": "spend_cap", "call_cap": "call_cap"}
 # with: the mind whose chat or card the person is using (Jon, 16 Nov: "the ask will auto route to whichever mind you're
 # interacting with"); a mind named in the words or selected (mind, selection) and the person's explicit choice still win
-CONTEXT_KEYS = {"route", "experience", "program", "swarm_id", "mind", "with", "selection", "view"}
+CONTEXT_KEYS = {"route", "experience", "program", "swarm_id", "mind", "with", "chosen", "selection", "view"}
 VIEW_KEYS = {"refs", "acts", "summary", "fields", "regions"}
 # the page's declared fields and named regions (vocabulary v1 §3): accepted on every Ask, forwarded to a conductor turn only
 VIEW_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
@@ -548,6 +548,10 @@ class Ask:
         for k, n in (("route", 120), ("program", 120), ("swarm_id", 200), ("mind", 200), ("with", 200)):
             if ctx.get(k) is not None and (not isinstance(ctx[k], str) or not 0 < len(ctx[k]) <= n):
                 raise refusal(hive, "invalid")
+        # chosen: the person chose the mind in `mind` to answer (their pick in the Ask, or an @Name address: "@Name
+        # still lets you choose"), so it speaks for a conducted turn (_context); only true, and only beside that mind
+        if "chosen" in ctx and (ctx["chosen"] is not True or ctx.get("mind") is None):
+            raise refusal(hive, "invalid")
         if ctx.get("experience") is not None and not (isinstance(ctx["experience"], str) and SLUG.fullmatch(ctx["experience"])):
             raise refusal(hive, "invalid")
         if ctx.get("selection") is not None:
@@ -608,8 +612,11 @@ class Ask:
         page["swarm"] = {"id": swarm["id"], "name": swarm["name"]}
         if addressed is not None:   # context only: the coordinator gains no authority over it in phase 1
             page["addressed"] = {"id": addressed["id"], "name": addressed["name"], "status": addressed["status"]}
-            if ctx.get("with") == addressed["id"] and ctx.get("mind") is None:
-                page["with"] = {"id": addressed["id"], "name": addressed["name"]}   # the mind in use: it speaks
+            # who speaks for a conducted turn (personal.speaker): the mind in use, or the mind the person chose; a mind
+            # only named in the words or selected on the page is asked about, in the turn's usual voice
+            chosen = ctx.get("chosen") is True and ctx.get("mind") == addressed["id"]
+            if chosen or (ctx.get("with") == addressed["id"] and ctx.get("mind") is None):
+                page["with"] = {"id": addressed["id"], "name": addressed["name"]}
         if ctx.get("swarm_id") and ctx["swarm_id"] != swarm["id"]:
             other = self._resolve(viewer, "swarm", ctx["swarm_id"])
             if other:
@@ -678,15 +685,14 @@ class Ask:
 
     def _check_continues(self, viewer, data, mind):
         """Jon asked on #394 for Continue to keep a hand-over from happening twice. Only a recent ended turn of
-        this person and answering mind can be continued; check again inside admission's transaction."""
+        this person and answering mind can be continued (ask_intents.continuable), never a deleted one; check again
+        inside admission's transaction."""
         if "continues" not in data:
             return
-        from .ask_intents import TURN_MAX_AGE, _iso_time
+        from .ask_intents import continuable
         t = self._row(data["continues"])
-        created = _iso_time(t["created_at"]) if t else None
-        if t is None or t["deleted_at"] or t["principal"] != viewer.principal or t["mind_id"] != mind["id"] \
-                or t["state"] in OPEN or created is None \
-                or not datetime.timedelta() <= datetime.datetime.now(datetime.timezone.utc) - created <= TURN_MAX_AGE:
+        if t is None or t["deleted_at"] or \
+                not continuable(t, viewer.principal, mind["id"], datetime.datetime.now(datetime.timezone.utc)):
             raise refusal(self.hive, "invalid")
 
     def _conducting(self):

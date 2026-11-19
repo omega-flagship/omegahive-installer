@@ -1,3 +1,4 @@
+// Purpose: the page's store: the hive state, the actions that change it through the client, and its hooks.
 import { personStartedProgramAct } from '../lib/personSwarmAct'
 import { useMemo } from 'react'
 import { create } from 'zustand'
@@ -1923,6 +1924,7 @@ export const useHealthAlertCount = (): number => useHive((s) => countHealthAlert
 
 /** Why a mind's model calls are being refused for spending, if they are. */
 export const useRefusal = (agentId: string | null | undefined) => useHive((s) => (agentId ? s.refusals[agentId] : undefined))
+export const useSlowed = (agentId: string | null | undefined) => useHive((s) => (agentId ? s.slowed[agentId] : undefined))
 
 /** Cross-swarm requests, newest first. */
 export function useRequestList() {

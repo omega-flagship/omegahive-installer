@@ -153,11 +153,15 @@ def exhausted_limit(exc):
 # c x 30 days / L of tat time and is admitted while max(tat, now) + that cost <= now + 3 days (a tenth of 30 days, the
 # burst's own time, whatever L is). A call bigger than the burst is admitted only when the guard is full (tat <= now),
 # so it is never blocked for good. A refused call holds nothing. With $50 a month that is $1.67 a day and a $5 burst.
+# Time ahead is money ahead at the limit's pace, so each row keeps the limit it was counted at (lim): when someone
+# raises or lowers the limit, the next reservation scales the time ahead and the open charges by old / new, so the money
+# ahead stays the same and a raised cap frees its larger burst at once instead of only shortening each wait.
 # It paces only what a mind spends on its own, the runaway Jon asked it to stop (#299). A call a person's live work holds
-# (Hive.present_for: their Studio session, Ask turn, Session, live Create plan or live Code request) is held by its limits
-# alone and charges no tat (reserve's paced=False): that person is there, can stop it, and the work has its own budget.
-# Pacing it too held Make on a $1 month for 17 hours after one 2-cent planner call, since each call reserves nearly the
-# whole $0.10 burst, and a Code helper on a $2 month 13 hours after its first call.
+# (Hive.present_for: their Studio session, Ask turn, Session, live Create plan or live Code request, or their message the
+# mind is answering) is held by its limits alone and charges no tat (reserve's paced=False): that person is there and
+# can stop it, and the work has its own budget or its person waits on it. Pacing it too held Make on a $1 month for 17
+# hours after one 2-cent planner call, since each call reserves nearly the whole $0.10 burst, a Code helper on a $2
+# month 13 hours after its first call, and a mind answering its person's chat once the burst was spent.
 GUARD_MONTH_SECONDS=30*86400
 GUARD_BURST_SECONDS=GUARD_MONTH_SECONDS/10
 
@@ -178,20 +182,27 @@ class SpendRateLimited(ValueError):
         self.scope,self.limit_usd,self.retry_after=scope,limit,max(1,math.ceil(retry_after))
 
 def guard_charges(db,rows,ceiling,now):
-    """Inside the reserve transaction: for each guarded row, (label, its new tat, the seconds this call charges), or
-    SpendRateLimited for the first row the call doesn't fit. Time: one tat read per guarded row (four at most: the
-    payer's, the hive's, the team's and the mind's)."""
+    """Inside the reserve transaction: for each guarded row, (label, its new tat, the seconds this call charges, the limit
+    in micros it is counted at), or SpendRateLimited for the first row the call doesn't fit. A row last counted at another
+    limit first has its time ahead and its open charges scaled by old / new (the money ahead kept). Time: one tat read per
+    guarded row (four at most: the payer's, the hive's, the team's and the mind's), and one update of that row's open
+    charges when its limit changed."""
     out=[]
     for label,limit,_spent in rows:
         lim=micros(limit,ROUND_FLOOR) if guarded(label) else 0
         if lim<=0:continue
-        stored=db.one('SELECT tat FROM limit_rates WHERE label=?',(label,))
-        tat=max(stored['tat'],now) if stored else now
+        stored=db.one('SELECT tat,lim FROM limit_rates WHERE label=?',(label,))
+        tat=stored['tat'] if stored else now
+        if stored and stored['lim'] and stored['lim']!=lim:
+            scale=stored['lim']/lim
+            tat=now+max(0.0,tat-now)*scale
+            db.execute('UPDATE limit_rate_charges SET seconds=seconds*? WHERE label=?',(scale,label))
+        tat=max(tat,now)
         cost=ceiling*GUARD_MONTH_SECONDS/lim
         # within the burst: admitted while tat + cost <= now + the burst's time; bigger than it: only from a full guard
         wait=tat+cost-GUARD_BURST_SECONDS-now if cost<=GUARD_BURST_SECONDS else tat-now
         if wait>0:raise SpendRateLimited(label,float(limit),wait)
-        out.append((label,tat+cost,cost))
+        out.append((label,tat+cost,cost,lim))
     return out
 
 # A reservation ends released (the whole charge back) or settled below its worst case (the difference back, in
@@ -221,7 +232,9 @@ class Reservations:
             db.execute('ALTER TABLE cost_reservations ADD COLUMN unknown_at REAL')
         if 'reserved_at' not in {r[1] for r in db._conn.execute('PRAGMA table_info(cost_reservations)')}:
             db.execute('ALTER TABLE cost_reservations ADD COLUMN reserved_at REAL')
-        db.execute('CREATE TABLE IF NOT EXISTS limit_rates (label TEXT PRIMARY KEY, tat REAL NOT NULL)')
+        db.execute('CREATE TABLE IF NOT EXISTS limit_rates (label TEXT PRIMARY KEY, tat REAL NOT NULL, lim INTEGER)')
+        if 'lim' not in {r[1] for r in db._conn.execute('PRAGMA table_info(limit_rates)')}:
+            db.execute('ALTER TABLE limit_rates ADD COLUMN lim INTEGER')   # a row from before: counted at its next charge
         db.execute('CREATE TABLE IF NOT EXISTS limit_rate_charges (reservation TEXT NOT NULL, label TEXT NOT NULL, seconds REAL NOT NULL, PRIMARY KEY(reservation,label))')
         db.execute(GUARD_REFUND)
         # Schema only. Recovery of a previous process's calls is recover_startup, run once by the lifetime owner
@@ -349,8 +362,8 @@ class Reservations:
             self.db.execute('INSERT INTO cost_reservation_details(reservation,metadata) VALUES(?,?)',(key,details))
             for scope,_,_ in rows:self.db.execute('INSERT INTO cost_reservation_scopes(reservation,scope) VALUES(?,?)',(key,scope))
             for subject in sorted(held):self.db.execute('INSERT INTO cost_reservation_subjects(reservation,subject) VALUES(?,?)',(key,subject))
-            for label,tat,seconds in charges:
-                self.db.execute('INSERT INTO limit_rates(label,tat) VALUES(?,?) ON CONFLICT(label) DO UPDATE SET tat=excluded.tat',(label,tat))
+            for label,tat,seconds,lim in charges:
+                self.db.execute('INSERT INTO limit_rates(label,tat,lim) VALUES(?,?,?) ON CONFLICT(label) DO UPDATE SET tat=excluded.tat,lim=excluded.lim',(label,tat,lim))
                 self.db.execute('INSERT INTO limit_rate_charges(reservation,label,seconds) VALUES(?,?,?)',(key,label,seconds))
             return {**self.get(key),'new':True}
     def dispatch(self,key):

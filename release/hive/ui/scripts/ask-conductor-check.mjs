@@ -4,9 +4,10 @@
  * name in the move's answer. That answer is the page the move opened, read once it has rendered and its list has
  * landed (features/ask/conductor settledPage), its creations named by the hive (core/conductor _named_refs). Then,
  * on the classic look and on Canvas, the person asks from the home page to build a tip calculator, and the conductor
- * makes it (core/conductor make: a view saved as the answering mind's creation, then shown): it is on their screen,
- * waiting for its Run it, and the answer holds no code. On v0.31 that build was handed to Studio, refused, and
- * answered with the app's HTML. Last, the person asks from the home page for research: the conductor hands it to the
+ * hands it to Create (core/conductor make, kind view: the person's own Create plan, which Create plans, builds and
+ * checks), says so, and the answer holds no code. On v0.31 that build was handed to Studio, refused, and answered
+ * with the app's HTML; building software goes to Create with no exceptions (Jon on #395).
+ * Last, the person asks from the home page for research: the conductor hands it to the
  * Research swarm, and the turn shows the hand-over and the whole answer with no gap (on v0.31 the turn's intent frame
  * was dropped by the page, and the answer showed as incomplete); then the researcher finishes, as its own mind would
  * with its own token, and the report comes back to that turn, where the person opens it.
@@ -18,7 +19,8 @@
  * or with unnamed ids, gives it nothing to show, and the check fails. Asked to build: it makes the view with make, as
  * the conductor's prompt says to, then says so. Asked to research: it hands it over with dispatch, then says so. A
  * call that is not the conductor's (a researcher mind the hive starts) is answered with words only. Run the hive with
- *   HIVE_ASK_CONDUCTOR=1 HIVE_ASK_CONDUCTOR_MODEL=local/conductor-script HIVE_LOCAL_LLM_MODELS=conductor-script
+ * Create on and
+ *   HIVE_CREATE_PLAN_ENGINE=on HIVE_ASK_CONDUCTOR=1 HIVE_ASK_CONDUCTOR_MODEL=local/conductor-script HIVE_LOCAL_LLM_MODELS=conductor-script
  *   HIVE_LOCAL_LLM_URL=http://127.0.0.1:<model port>/v1
  *
  * Usage (a disposable hive with invented content; the operator password in HIVE_CHECK_PASSWORD):
@@ -48,9 +50,6 @@ assert(hive && modelPort && browserPath && dataDir && password, 'needs --hive, -
 // waits are generous: the check runs on shared, loaded hosts where the first page also compiles its screens
 const WAIT = 90_000
 const TITLE = 'Harbour at dusk'
-// a tip calculator as the hive's view help writes one (modules/hive/catalog.metta): one screen, its parts in order
-const TIP_VIEW = '(Screen tip "Tip")\n(Part tip 10 header ((title "Tip calculator") (body "Split the bill")))\n' +
-  '(Part tip 20 fields ((items ((field number "Bill" bill ((step 0.01)))))))\n(Start bill "")'
 const RESEARCH_ASK = 'I would like to research reputation systems for decentralised AI networks'
 const SENT_WORDS = 'I have sent this for research. The sourced report will come back to this conversation when it is ready.'
 // a report as a researcher proposes one (research.py REPORT_SCHEMA): its one claim cites no page, so it reads uncited
@@ -88,11 +87,11 @@ function decide(body) {
   const asked = messages[last]?.role === 'user' && typeof messages[last].content === 'string' ? messages[last] : null
   const title = asked?.content.match(/called (.+?)[.?!]*$/i)?.[1]?.trim()
   const results = messages.slice(last).filter((m) => m.role === 'tool').map((m) => { try { return JSON.parse(m.content) } catch { return {} } })
-  // asked to build: made with make, as the conductor's prompt says, never written out; then said
+  // asked to build: handed to Create with make, as the conductor's prompt says, never written out; then said
   if (/\bbuild\b/i.test(asked?.content ?? '')) {
-    const made = results.find((r) => typeof r.shown === 'boolean' || r.reason)
-    if (!made) return { tool_calls: [toolCall('make', { kind: 'view', title: 'Tip calculator', body: TIP_VIEW })] }
-    return { content: made.ok ? 'Your tip calculator is on your screen. Press Run it to use it.' : 'I could not make it here.' }
+    const made = results.find((r) => r.plan_id !== undefined || r.reason)
+    if (!made) return { tool_calls: [toolCall('make', { kind: 'view', title: 'a tip calculator' })] }
+    return { content: made.ok ? 'Create is building your tip calculator. You can follow it in Create.' : 'I could not start it here.' }
   }
   // asked to research: handed over with dispatch, as the conductor's prompt says; then said
   if (/\bresearch\b/i.test(asked?.content ?? '')) {
@@ -219,14 +218,14 @@ await check('from the hive map, one Ask turn asking for a picture by its title m
 const madeSince = async (since) => {
   for (let i = 0; i < WAIT / 500; i++) {
     const given = calls.slice(since).flatMap((c) => c.body.messages.filter((m) => m.role === 'tool').map((m) => JSON.parse(m.content)))
-    const made = given.find((r) => typeof r.shown === 'boolean' || (r.reason && !r.view))
+    const made = given.find((r) => r.plan_id !== undefined || (r.reason && !r.view))
     if (made) return made
     await new Promise((ok) => setTimeout(ok, 500))
   }
   throw new Error('the conductor never made it')
 }
 for (const [look, shot] of [['classic', '49'], ['canvas', '50']]) {
-  await check(`on the ${look} look, from the home page, one Ask turn asking to build a tip calculator makes it and shows it, ready to run, with no code in the answer`, async () => {
+  await check(`on the ${look} look, from the home page, one Ask turn asking to build a tip calculator hands it to Create and says so, with no code in the answer`, async () => {
     // the person's look, as their own look setting saves it (PUT /api/me/ui; null is the classic hive)
     await api('PUT', '/api/me/ui', person, { variant: null, layout: null, experience: look === 'classic' ? null : look })
     // the home page, opened afresh so the look applies and the page hears the stage on a new socket
@@ -247,12 +246,8 @@ for (const [look, shot] of [['classic', '49'], ['canvas', '50']]) {
     else await field.press('Enter')
     assert.equal((await sent).postDataJSON().context.route, 'hive', 'the turn is asked from the home page')
     const made = await madeSince(since)
-    assert.ok(made.ok && made.shown && /^ar_/.test(made.id), `the conductor made and showed it: ${JSON.stringify(made)}`)
-    // on her screen, still waiting for her Run it: nothing a mind made runs until its person asks
-    const item = page.locator(`[data-stage-item="${made.id}"]`)
-    await item.waitFor({ state: 'visible' })
-    await item.getByRole('button', { name: 'Run it' }).first().waitFor({ state: 'visible' })
-    await page.waitForFunction(() => /on your screen/.test(document.querySelector('#ask')?.textContent ?? ''))
+    assert.ok(made.ok && /^plan_/.test(made.plan_id ?? ''), `the conductor started her Create plan: ${JSON.stringify(made)}`)
+    await page.waitForFunction(() => /Create is building/.test(document.querySelector('#ask')?.textContent ?? ''))
     const thread = await page.locator('#ask').innerText()
     assert.ok(!/```|<!doctype|<html|<\/?script/i.test(thread), `no code in the answer: ${thread.slice(0, 400)}`)
     const said = calls.slice(since).map((c) => c.message.tool_calls?.[0]?.function.name ?? 'text')

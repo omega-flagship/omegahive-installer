@@ -1,10 +1,11 @@
+// Purpose: the page's hive state and how each hive event changes it.
 import type {
   Agent,
   Approval,
   AssertionOutcome,
   Belief,
   BudgetLine,
-  BudgetRefusal,
+  BudgetRefusal, BudgetSlowed,
   CollabRequest,
   Goal,
   HarnessConnection,
@@ -116,6 +117,8 @@ export interface HiveData {
   // ---- Live operational state (events the hive publishes beyond the core model)
   /** Minds whose model calls are being refused for spending (budget.refused), by agent id. Cleared when a call is billed again. */
   refusals: Record<string, BudgetRefusal>
+  /** Minds the spend-rate guard is pacing (budget.slowed), by agent id. Cleared when a call is billed again, as refusals. */
+  slowed: Record<string, BudgetSlowed>
   /** Health alerts not yet looked at, keyed agentId + kind (one per pattern; a repeat replaces it). */
   healthAlerts: Record<string, { alert: HealthAlert; at: string }>
   /** Spending limits as last pushed (budgets.updated); null until one arrives. */
@@ -172,6 +175,7 @@ export const emptyData = (): HiveData => ({
   labScorecard: null,
   programs: null,
   refusals: {},
+  slowed: {},
   healthAlerts: {},
   budgets: null,
   requests: {},
@@ -354,6 +358,7 @@ export function reduce(s: HiveData, e: HiveEvent): HiveData {
         agents: omit(s.agents, e.agent_id),
         thinking: omit(s.thinking, e.agent_id),
         refusals: omit(s.refusals, e.agent_id),
+        slowed: omit(s.slowed, e.agent_id),
         swarms: Object.fromEntries(
           Object.entries(s.swarms).map(([id, sw]) => [
             id,
@@ -431,7 +436,7 @@ export function reduce(s: HiveData, e: HiveEvent): HiveData {
     case 'usage': {
       const usage = s.usage.length >= USAGE_CAP ? [...s.usage.slice(1), e.usage] : [...s.usage, e.usage]
       // a billed call means the mind is spending again
-      return { ...s, usage, refusals: omit(s.refusals, e.usage.agent_id) }
+      return { ...s, usage, refusals: omit(s.refusals, e.usage.agent_id), slowed: omit(s.slowed, e.usage.agent_id) }
     }
 
     case 'log': {
@@ -525,6 +530,14 @@ export function reduce(s: HiveData, e: HiveEvent): HiveData {
         ...next,
         ...pushActivity(s, { at: e.at, kind: 'error', agent_id: e.agent_id, swarm_id: s.agents[e.agent_id]?.swarm_id ?? null, text: 'paused: spending limit reached' }),
       }
+    }
+
+    case 'budget.slowed': {
+      // paced, not refused: kept until a call is billed again (usage), with when its next call of that size fits and the
+      // limit pacing it when this viewer may see one
+      const limit = typeof e.scope === 'string' && typeof e.period === 'string' && typeof e.limit_usd === 'number'
+        ? { scope: e.scope, period: e.period, limit_usd: e.limit_usd } : null
+      return { ...s, slowed: { ...s.slowed, [e.agent_id]: { until: e.until, at: e.at, ...(limit ? { limit } : {}), ...(e.hidden === true ? { hidden: true } : {}) } } }
     }
 
     case 'health.alert': {

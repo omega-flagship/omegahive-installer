@@ -39,7 +39,8 @@ CHROMADB_LIB = os.environ.get("HIVE_TEST_CHROMADB_LIB", "")
 class FakeModel:
     """An OpenAI-compatible model and agent API: every chat turn is answered with `answer`, or with the turn's entry
     when `answer` is a list (its last entry for every later turn), an int entry refusing that turn with that HTTP
-    status; each chat request body is kept; other calls get {}, and each other POST is kept as (time, path, body)."""
+    status, a (status, error) entry refusing it with that error object as the hive's gateway does; each chat request
+    body is kept; other calls get {}, and each other POST is kept as (time, path, body)."""
 
     def __init__(self, answer, malformed=False):
         self.answer, self.calls, self.bodies, self.lock = answer, [], [], threading.Lock()
@@ -74,6 +75,9 @@ class FakeModel:
                               else model.answer)
                     if isinstance(answer, int):
                         self._reply({"error": {"message": "invented refusal", "type": "invented"}}, answer)
+                        return
+                    if isinstance(answer, tuple):
+                        self._reply({"error": answer[1]}, answer[0])
                         return
                     self._reply({"id": "x", "object": "chat.completion", "created": 0, "model": "hive",
                                  "choices": [{"index": 0, "finish_reason": "stop",
@@ -377,7 +381,8 @@ class WaitQuietRuntimeTests(unittest.TestCase):
         self._assert_failure_keeps_last_results('read-file "unterminated', 'LLM-FORMAT-ERROR', 60)
 
     def test_a_provider_failure_keeps_the_last_results_in_the_next_prompt(self):
-        # A refused call (the helper's 402 at its cap, an outage) ran nothing either; the retry comes after 60 s.
+        # A refused call (the helper's 402 at its cap, an outage) ran nothing either; the retry comes after 60 s. A
+        # refusal with no say of the hive's keeps the fixed provider text.
         self._assert_failure_keeps_last_results(402, 'LLM-PROVIDER-ERROR', 120)
 
     def _assert_failure_keeps_last_results(self, failing_answer, marker, timeout):
@@ -419,6 +424,25 @@ class WaitQuietRuntimeTests(unittest.TestCase):
             if frame.get("type") == "agent_message":
                 sent.append(frame.get("text"))
         self.assertEqual(sent, ["SENT_AFTER_RESULTS"], self._tail("the person got a held message, or not the later one"))
+
+    def test_a_hive_refusal_waits_in_the_hive_s_words_for_its_retry_after(self):
+        """A tester's Code controller waited "LLM-PROVIDER-ERROR retry after 60 seconds" when the hive's spend-rate guard
+        had refused its call, so she asked whether her key was broken. The hive's own refusal carries say, its sentence
+        for anyone who reads the mind, and retry_after: the mind's wait says that sentence and the next turn comes after
+        that long, here 30 s, not the provider error's 60 s."""
+        say = "Spending faster than this month allows: a call this size fits again in about 1 minute."
+        refusal = (429, {"code": "spend_rate", "message": say, "say": say, "retry_after": 30})
+        model = FakeModel([refusal, refusal, refusal, 'wait 900 done'])   # Singnet's client tries a 429 three times
+        self.addCleanup(model.shutdown)
+        self._boot(model)
+        self._message(1, "alphabetize the list")
+        responses = lambda: self._response_shapes()[0]
+        self._await_runtime(lambda: len(responses()) >= 1, "the message never got a turn", 120)
+        first = time.monotonic()
+        self.assertTrue(responses()[0].startswith('((wait "Spending faster than this month allows'),
+                        self._tail("the wait does not say the hive's sentence"))
+        self.assertTrue(wait_for(lambda: model.count() >= 4, timeout=60), self._tail("no turn after the refusal"))
+        self.assertLess(time.monotonic() - first, 55, self._tail("waited the provider error's 60 s, not retry_after"))
 
     def test_a_provider_error_wait_retries_after_a_short_back_off(self):
         """Kimi r1 K8: with no usable provider the runtime answers its own wait "LLM-PROVIDER-..."; that is not the

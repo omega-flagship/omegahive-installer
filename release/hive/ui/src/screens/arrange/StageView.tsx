@@ -106,9 +106,10 @@ export default function StageView() {
   const parts = useMemo(() => pageParts(screens).map((p) => ({ key: p.key, block: p.part.block! })), [screens])
   const state = useMemo(() => stageState(st, stage, goals, parts), [st, stage, goals, parts])
   const composed = useMemo(() => arrange(state), [state])
-  // open while something is arranged, or something said could not be (a key the page has nothing for is said, never
-  // dropped in silence), until the person puts the stage away
-  const open = !composed.ok || composed.plan.mode !== 'home' || composed.plan.unknown.length > 0
+  // open while something is arranged, something put aside waits in the tray (the last shown item put away comes back
+  // with a press), or something said could not be (a key the page has nothing for is said, never dropped in silence),
+  // until the person puts the stage away
+  const open = !composed.ok || composed.plan.mode !== 'home' || composed.plan.tray.length > 0 || composed.plan.unknown.length > 0
   useLayoutEffect(() => {
     const el = bar.current
     if (!open || !el) return

@@ -4505,9 +4505,10 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
                     raise hive.error(409, "payer_changed", "who pays for this mind changed meanwhile; ask again") from None
                 if isinstance(exc, SpendRateLimited):   # within its limits but faster than this month allows: nothing held
                     raise hive.spend_rate_refusal(agent, exc) from None
+                say = None
                 if isinstance(exc, BudgetExhausted):   # recorded and announced like Budgets.check's refusal, naming its limit
-                    hive.note_refusal(agent, "reservation_refused", str(exc), exhausted_limit(exc))
-                raise hive.error(402, "reservation_refused", str(exc)) from None
+                    say = hive.note_refusal(agent, "reservation_refused", str(exc), exhausted_limit(exc))
+                raise hive.error(402, "reservation_refused", str(exc), {"say": say} if say else None) from None
         if paid:
             hive.note_admitted(agent)   # both checks passed: a pause for spending, if there was one, is over
         hive.thinking(agent["id"], "llm", payer)   # the payer names the Ask turn this call is attributed to, if any
@@ -4705,7 +4706,8 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
                 if isinstance(exc, SpendRateLimited):   # within its limits but faster than this month allows: nothing held
                     raise hive.spend_rate_refusal(agent, exc) from None
                 if isinstance(exc, BudgetExhausted):
-                    hive.note_refusal(agent, "reservation_refused", str(exc), exhausted_limit(exc))
+                    say = hive.note_refusal(agent, "reservation_refused", str(exc), exhausted_limit(exc))
+                    raise HiveError(402, "reservation_refused", str(exc), {"say": say}) from None
                 raise HiveError(402, "reservation_refused", str(exc)) from None
         hive.note_admitted(agent)   # both checks passed: a pause for spending, if there was one, is over
         # J3 R4.1: a maker's call passes the send gate at the transport's send-header boundary (as chat), never before

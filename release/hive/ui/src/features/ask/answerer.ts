@@ -59,9 +59,11 @@ export function speakerName(o: { conductor: boolean; personal: MyMind | null | u
 }
 /** speakerName with the id of the mind it names, so the page names it by the right identity (words.shownMind keeps the
  *  person's own mind under the name they gave it, Omega included, and only that mind) */
-export function speaker(o: { conductor: boolean; personal: MyMind | null | undefined; reaches: string | null | undefined; reachesId: string | null | undefined; inUse?: { id: string; name: string } | null }): { name: string | null | undefined; id: string | null } {
-  // the mind whose chat or card is in use speaks first (Jon, 16 Nov), as the hive's personal.speaker decides
-  if (o.conductor && o.inUse) return { name: o.inUse.name, id: o.inUse.id }
+export function speaker(o: { conductor: boolean; personal: MyMind | null | undefined; reaches: string | null | undefined; reachesId: string | null | undefined; inUse?: { id: string; name: string } | null; chosen?: { id: string; name: string } | null }): { name: string | null | undefined; id: string | null } {
+  // the mind the person chose speaks, then the mind whose chat or card is in use (Jon, 16 Nov), as the hive's
+  // personal.speaker decides
+  const speaking = o.chosen ?? o.inUse
+  if (o.conductor && speaking) return { name: speaking.name, id: speaking.id }
   return o.conductor && o.personal ? { name: o.personal.name, id: o.personal.id } : { name: o.reaches, id: o.reachesId ?? null }
 }
 
@@ -278,7 +280,7 @@ export function continuing(ctx: AskContext, o: Pick<PlanInputs, 'thread' | 'carr
   return { ...c, name: o.thread.mind.name }
 }
 
-export type Plan = Routed & { through?: { mind: string; why: string }; compat?: Routed; chip: AnswererChip | null; inUse?: { id: string; name: string } }
+export type Plan = Routed & { through?: { mind: string; why: string }; compat?: Routed; chip: AnswererChip | null; inUse?: { id: string; name: string }; chosen?: { id: string; name: string } }
 
 /**
  * The mind whose chat or card is in use (context `with`), when it answers: nothing else addresses a mind, no explicit
@@ -293,6 +295,19 @@ export function inUseOf(ctx: AskContext, o: Pick<PlanInputs, 'settings' | 'perso
   const m = o.through?.minds.find((x) => x.id === ctx.with)
   if (!m || !m.swarm_id || m.personal_of || m.kind === 'module') return null
   return o.settings?.eligible?.some((e) => e.id === m.swarm_id) ? { id: m.id, name: m.name } : null
+}
+
+/**
+ * The mind the person chose to answer (context `chosen` beside `mind`: their pick in the Ask or an @Name address), when
+ * it speaks: on a hive whose conductor answers Ask turns, their own mind or a mind of a swarm, never another person's
+ * own mind or an external member, as the host's personal.may_speak_with decides (core/ask.py _context). The host
+ * refuses a chosen mind it can't route to, so the page never names someone else as answering a choice.
+ */
+export function chosenOf(ctx: AskContext, o: Pick<PlanInputs, 'settings' | 'personal' | 'through'>): { id: string; name: string } | null {
+  if ('private' in ctx || ctx.chosen !== true || !ctx.mind || readCapabilities(o.settings?.capabilities)?.conductor !== true) return null
+  if (o.personal && ctx.mind === o.personal.id) return { id: o.personal.id, name: o.personal.name }
+  const m = o.through?.minds.find((x) => x.id === ctx.mind)
+  return m && m.swarm_id && !m.personal_of && m.kind !== 'module' ? { id: m.id, name: m.name } : null
 }
 
 /** The one decision: the context a request is sent with, and the chip that says who answers it. */
@@ -318,7 +333,9 @@ export function planAsk(ctx: AskContext, o: PlanInputs): Plan {
   }
   const to = 'private' in around.context ? undefined : around.context.mind
   const chip = answererChip({ settings: o.settings, personal: o.personal, pageSwarm, to })
-  return { ...around, context: withPreselected(around.context, chip, o.settings), chip }
+  const context = withPreselected(around.context, chip, o.settings)
+  const chosen = chosenOf(context, o)
+  return { ...around, context, chip, ...(chosen ? { chosen } : {}) }
 }
 
 /** What the page knows of minds and swarms, to name who a planned context reaches. */

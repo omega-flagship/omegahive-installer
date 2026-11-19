@@ -164,6 +164,19 @@ describe('the stage', () => {
     expect(drawn(text)).toBeDefined()
   })
 
+  it('keeps the stage and its tray when the last shown item is put away, and brings it back with a press', async () => {
+    say({ say: 'show', key: photo, task: null }, [art(photo, 'image')])
+    await mount()
+    await act(async () => press(buttons('Put Harbour at dusk away')[0]))
+    await settle()
+    expect(drawn(photo)).toBeUndefined()
+    const chip = page.container.findAll((n) => n.getAttribute('data-stage-tray') === photo)[0]
+    expect(chip.textContent).toBe('Harbour at dusk')
+    await act(async () => press(chip))
+    await settle()
+    expect(drawn(photo)).toBeDefined()
+  })
+
   it('learns a dragged divider for the same kinds, by pointer and by keyboard', async () => {
     say({ say: 'show', key: photo, task: null }, [art(photo, 'image')])
     say({ say: 'recall', key: text }, [art(text, 'note')])

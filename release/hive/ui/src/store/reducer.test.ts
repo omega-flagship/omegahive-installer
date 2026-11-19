@@ -240,6 +240,19 @@ describe('reduce · Phase 2', () => {
     expect(s.refusals.a_2).toEqual({ code: 'spend_limit', count: 1, at })
   })
 
+  it('budget.slowed keeps a mind slowed, with when its next call fits, until a call is billed for it', () => {
+    const at = '2026-11-19T08:00:00Z'
+    let s = run([
+      { type: 'budget.slowed', at, agent_id: 'a_1', retry_after: 1260, until: '2026-11-19T08:21:00Z', scope: 'hive', period: 'month', limit_usd: 50 },
+      { type: 'budget.slowed', at, agent_id: 'a_2', retry_after: 60, until: '2026-11-19T08:01:00Z', hidden: true },
+    ])
+    expect(s.slowed.a_1).toEqual({ until: '2026-11-19T08:21:00Z', at, limit: { scope: 'hive', period: 'month', limit_usd: 50 } })
+    expect(s.slowed.a_2).toEqual({ until: '2026-11-19T08:01:00Z', at, hidden: true })   // a limit this viewer may not see
+    s = run([{ type: 'usage', at, usage: { agent_id: 'a_1', model: 'm', prompt_tokens: 1, completion_tokens: 1, cost_usd: 0.01, created_at: at } } as HiveEvent], s)
+    expect(s.slowed.a_1).toBeUndefined()                                   // billed again: no longer paced
+    expect(s.slowed.a_2).toBeDefined()
+  })
+
   it('budget.refused pauses a mind once, keeps the latest count, and clears when it is billed again', () => {
     let s = run([
       { type: 'agent.updated', at, agent: agent() },

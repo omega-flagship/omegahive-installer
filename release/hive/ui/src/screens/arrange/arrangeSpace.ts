@@ -57,7 +57,7 @@ export interface ArrangeState {
   log: Statement[]
   /** The newest statement's number; MeTTa echoes it in `seen`, so interest is credited once per statement. */
   episode: number
-  /** A divider in the person's hand: the i-th divider of the group named by its first item, at that fraction. */
+  /** A divider in the person's hand: the i-th divider of the group with that id (Divider.group), at that fraction. */
   dragging?: { group: string; index: number; at: number }
 }
 
@@ -73,6 +73,7 @@ export interface Placed {
   h: number
 }
 export interface Divider {
+  /** The group it splits, by its path from the outermost group: g, g0 for its first child, g0-1 for that one's second. */
   group: string
   index: number
   dir: Dir
@@ -126,6 +127,12 @@ const kind = (k: string): Atom => {
   if (!KIND.test(k)) throw new ArrangeError(`bad kind ${JSON.stringify(k).slice(0, 40)}`)
   return S(k)
 }
+// A group's id is its path in MeTTa, the child indices from the outermost group ((), (0), (0 1)), written g, g0, g0-1
+const GROUP = /^g(?:\d+(?:-\d+)*)?$/
+const groupPath = (id: string): Atom => {
+  if (id.length > 120 || !GROUP.test(id)) throw new ArrangeError(`bad group ${JSON.stringify(id).slice(0, 40)}`)
+  return E(...(id === 'g' ? [] : id.slice(1).split('-').map((i) => n(Number(i), 'group path'))))
+}
 
 function statementAtom(s: Statement): Atom {
   switch (s.say) {
@@ -170,7 +177,7 @@ function stateAtoms(st: ArrangeState): Atom[] {
     atoms.push(E(S('Shares'), S(l.dir), E(...l.kinds.map(kind)), E(...l.shares.map((x) => n(x, 'share')))))
   }
   atoms.push(E(S('Log'), E(...[...st.log].reverse().map(statementAtom))))
-  if (st.dragging) atoms.push(E(S('Dragging'), key(st.dragging.group), n(st.dragging.index, 'divider'), n(st.dragging.at, 'divider position')))
+  if (st.dragging) atoms.push(E(S('Dragging'), groupPath(st.dragging.group), n(st.dragging.index, 'divider'), n(st.dragging.at, 'divider position')))
   return atoms
 }
 
@@ -200,7 +207,7 @@ function readDivider(v: Val): Divider {
   const dir = word(d[3], 'direction')
   if (dir !== 'row' && dir !== 'column') throw new ArrangeError(`divider direction ${dir}`)
   return {
-    group: word(d[1], 'group'), index: num(d[2], 'index'), dir, x: num(d[4], 'x'), y: num(d[5], 'y'), w: num(d[6], 'w'), h: num(d[7], 'h'),
+    group: 'g' + list(d[1], 'group path').map((i) => num(i, 'group path')).join('-'), index: num(d[2], 'index'), dir, x: num(d[4], 'x'), y: num(d[5], 'y'), w: num(d[6], 'w'), h: num(d[7], 'h'),
     lo: num(d[8], 'lo'), hi: num(d[9], 'hi'), kinds: list(d[10], 'kinds').map((k) => word(k, 'kind')), shares: list(d[11], 'shares').map((x) => num(x, 'share')),
     offset: num(d[12], 'offset'), room: num(d[13], 'room'),
   }

@@ -88,6 +88,11 @@ export interface PageAskContext {
    * explicit choice still win, and the host passes over one whose swarm the Ask may not use
    */
   with?: string
+  /**
+   * the person chose the mind in `mind` to answer (their pick in the Ask, or an @Name address: "@Name still lets you
+   * choose"), so it speaks for the turn; a mind only named in the words is asked about. Only ever true, beside `mind`
+   */
+  chosen?: true
   selection?: { kind: SelectionKind; ref: string }[]
   view?: AskView
 }

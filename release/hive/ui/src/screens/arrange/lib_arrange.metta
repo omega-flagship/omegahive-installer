@@ -15,13 +15,14 @@
 ;   (Shares dir (kinds ...) (shares ...))   the shares a person last dragged a split of these kinds to
 ;   (Log (statement ...))          what was said, newest first: (Show k t) (Recall k) (Compare a b t) (PutAway k) (Clear)
 ;   (Episode n)                    the newest statement's number, echoed in Seen so the page credits interest once
-;   (Dragging group i at)          a divider in the person's hand: the i-th divider of the group named by its first
-;                                  item, at that fraction of the group's length
+;   (Dragging group i at)          a divider in the person's hand: the i-th divider of the group named by its path
+;                                  (below), at that fraction of the group's length
 ;
 ; Answered: (Arranged mode task placed dividers tray (Seen n keys) unknown)
 ;   mode      home, focus, side or compare
 ;   placed    ((Placed key kind role x y w h) ...): role shown, or beside for an item in a strip beside what is shown
-;   dividers  ((Divider group i dir x y w h lo hi kinds shares offset room) ...): lo and hi bound the divider, as
+;   dividers  ((Divider group i dir x y w h lo hi kinds shares offset room) ...): group is the path of the group the
+;             divider splits, () for the outermost and (0) for its first child; lo and hi bound the divider, as
 ;             fractions of the group's length; kinds and shares are what a drag of it teaches; a pointer at p along the
 ;             group's direction puts the divider at (p - offset) / room, the `at` a drag states
 ;   tray      the shown items put away, newest first, that a press brings back
@@ -112,8 +113,10 @@
 (= (arr-step (Compare $a $b $t) $rest $r $g) (View compare $t ($a $b) $r $g))
 (= (arr-step (Clear) $rest $r $g) (View clear none () $r $g))
 (= (arr-step (Recall $k) $rest $r $g) (arr-walk $rest (arr-recall $k $r $g) $g))
-(= (arr-step (PutAway $k) $rest $r $g) (arr-walk $rest $r (arr-cons $k $g)))
+(= (arr-step (PutAway $k) $rest $r $g) (arr-walk $rest $r (arr-put-away $k $r $g)))
+; walking newest first, $g holds the items put away after this statement and $r those recalled after it
 (= (arr-recall $k $r $g) (if (arr-in $k $g) $r (if (arr-in $k $r) $r (arr-cons $k $r))))
+(= (arr-put-away $k $r $g) (if (arr-in $k $r) $g (if (arr-in $k $g) $g (arr-cons $k $g))))
 
 ; every key the log names since the stage last emptied (its newest Clear), newest first, each once
 (= (arr-named $log) (arr-dedupe (arr-named-all $log) ()))
@@ -152,11 +155,11 @@
        (Group $dir (arr-join $anchored $recalled))))
 (= (arr-along-stage ($w $h)) (if (>= $w $h) row column))
 
-; the answer: the tray is every named, known item not placed (none at home, where the stage draws nothing)
+; the answer: the tray is every named, known item not placed, at home too: a shown item put away with nothing left in
+; view waits there to be brought back, and after a Clear nothing is named
 (= (arr-answer $mode $t $placed $dividers $seen $named)
-   (Arranged $mode $t $placed $dividers (arr-tray $mode $placed $named) (Seen (arr-episode) (arr-credit $t $seen))
+   (Arranged $mode $t $placed $dividers (arr-tray $placed $named) (Seen (arr-episode) (arr-credit $t $seen))
              (arr-unknown $named)))
-(= (arr-tray home $placed $named) ())
 ; at home the open page is in view again: its parts are credited with the newest task said, once for this statement, as
 ; anything in view with a task is
 (= (arr-home $named) (arr-answer home (arr-newest-task (arr-one (collapse (match &self (Log $l) $l)) ())) () () (arr-page-parts) $named))
@@ -168,9 +171,7 @@
 (= (arr-task-of (Recall $k) $older) $older)
 (= (arr-task-of (PutAway $k) $older) $older)
 (= (arr-task-of (Clear) $older) $older)
-(= (arr-tray focus $placed $named) (arr-minus (arr-only-known $named) (arr-placed-keys $placed)))
-(= (arr-tray side $placed $named) (arr-minus (arr-only-known $named) (arr-placed-keys $placed)))
-(= (arr-tray compare $placed $named) (arr-minus (arr-only-known $named) (arr-placed-keys $placed)))
+(= (arr-tray $placed $named) (arr-minus (arr-only-known $named) (arr-placed-keys $placed)))
 (= (arr-placed-keys $placed) (if (== $placed ()) () (arr-cons (arr-key-of (car-atom $placed)) (arr-placed-keys (cdr-atom $placed)))))
 (= (arr-key-of (Placed $k $kind $role $x $y $w $h)) $k)
 ; interest is kept per task, so an arrangement without one credits nothing
@@ -185,12 +186,22 @@
 ; the size an item is shown at: its kind's, or, once the page knows the item's own shape, the kind's area in that shape,
 ; so a tall picture is shown tall and a wide one wide, as X11's size hints give a window its own aspect
 (= (arr-shown-size $k) (arr-in-shape (arr-size (arr-kind $k)) (collapse (match &self (ItemShape $k $w $h) ($w $h)))))
+; and the least it is shown at, the kind's least area in the same shape: a tall picture's least is tall too
+(= (arr-shown-least $k) (arr-in-shape (arr-least (arr-kind $k)) (collapse (match &self (ItemShape $k $w $h) ($w $h)))))
 (= (arr-in-shape $size ()) $size)
 (= (arr-in-shape ($kw $kh) (($w $h))) (arr-shaped (* $kw $kh) (arr-div $w $h)))
 (= (arr-shaped $area $r) (let $fw (sqrt-math (* $area $r)) ($fw (arr-div $area $fw))))
 (= (arr-focus-at $t $k ($fw $fh) $cands $named $sw $sh)
-   (arr-focus-scaled $t $k $fw $fh $cands $named $sw $sh
-     (arr-smaller 1 (arr-smaller (arr-div (arr-room-w $cands $sw $sh) $fw) (arr-div (arr-room-h $cands $sw $sh) $fh)))))
+   (arr-focus-fit $t $k $fw $fh (arr-shown-least $k) $cands $named $sw $sh
+     (arr-scale $fw $fh (arr-room-w $cands $sw $sh) (arr-room-h $cands $sw $sh))))
+; the strips give way before the shown item would be drawn under its kind's least size; without them it is shrunk only
+; to fit the stage, so on a stage too small even for its least size it still fits, never at zero or below
+(= (arr-focus-fit $t $k $fw $fh ($lw $lh) $cands $named $sw $sh $s)
+   (if (or (== $cands ()) (and (>= (* $fw $s) $lw) (>= (* $fh $s) $lh)))
+       (arr-focus-scaled $t $k $fw $fh $cands $named $sw $sh $s)
+       (arr-focus-scaled $t $k $fw $fh () $named $sw $sh (arr-scale $fw $fh (arr-room-w () $sw $sh) (arr-room-h () $sw $sh)))))
+; the scale the kind's size is drawn at: never over 1, and with the room taken as at least one pixel, always above 0
+(= (arr-scale $fw $fh $rw $rh) (arr-smaller 1 (arr-smaller (arr-div (arr-larger 1 $rw) $fw) (arr-div (arr-larger 1 $rh) $fh))))
 ; the room the focused item may take: all of the stage inside its margin, less two strips when there are items for
 ; them, each strip as wide (or, on a tall stage, as tall) as the smallest of those items may be drawn
 (= (arr-room-w $cands $sw $sh)
@@ -261,19 +272,19 @@
 ; no percent is set); the shares a person dragged a split of the same kinds to are used instead (one remembered layout
 ; per combination, as react-resizable-panels keeps per combination of panel ids), a pair read in either order.
 (= (arr-lay-root $mode $t $root $named ($sw $sh))
-   (arr-root-answer $mode $t (arr-lay $root (arr-margin) (arr-margin) (- $sw (* 2 (arr-margin))) (- $sh (* 2 (arr-margin)))) $named))
+   (arr-root-answer $mode $t (arr-lay $root () (arr-margin) (arr-margin) (- $sw (* 2 (arr-margin))) (- $sh (* 2 (arr-margin)))) $named))
 (= (arr-root-answer $mode $t (Laid $placed $dividers) $named)
    (arr-answer $mode $t $placed $dividers (arr-placed-keys $placed) $named))
 
 ; a leaf fills its cell; a group shares its length among its children, less the gaps between them. (One equation
 ; each, dispatching on the atom's metatype: a pattern $k would also match a group, and both equations would answer.)
-(= (arr-lay $c $x $y $w $h)
-   (if (arr-leaf $c) (Laid ((Placed $c (arr-kind $c) shown $x $y $w $h)) ()) (arr-lay-group-of $c $x $y $w $h)))
-(= (arr-lay-group-of (Group $dir $children) $x $y $w $h)
-   (arr-lay-group $dir $children (arr-group-id $children) (arr-kinds $children) $x $y $w $h))
-(= (arr-group-id $children) (arr-first-leaf (car-atom $children)))
-(= (arr-first-leaf $c) (if (arr-leaf $c) $c (arr-first-leaf-of $c)))
-(= (arr-first-leaf-of (Group $dir $cs)) (arr-first-leaf (car-atom $cs)))
+; A group is named by its path, the child indices from the root to it: () for the root and (0) for its first child.
+; A name from the items would repeat: Compare a b with c recalled is a row whose first child is the column a over b,
+; and both groups start with a, so one drag would move both their dividers.
+(= (arr-lay $c $path $x $y $w $h)
+   (if (arr-leaf $c) (Laid ((Placed $c (arr-kind $c) shown $x $y $w $h)) ()) (arr-lay-group-of $c $path $x $y $w $h)))
+(= (arr-lay-group-of (Group $dir $children) $path $x $y $w $h)
+   (arr-lay-group $dir $children $path (arr-kinds $children) $x $y $w $h))
 (= (arr-kinds $cs) (if (== $cs ()) () (arr-cons (arr-kind-or-group (car-atom $cs)) (arr-kinds (cdr-atom $cs)))))
 (= (arr-kind-or-group $c) (if (arr-leaf $c) (arr-kind $c) group))
 
@@ -290,11 +301,11 @@
    (if (== $cs ()) (Laid () ())
        (arr-lay-child $dir (car-atom $cs) (cdr-atom $cs) (car-atom $ss) (cdr-atom $ss) $id $kinds $all $leasts $i $before $x $y $w $h $room)))
 (= (arr-lay-child $dir $c $rest $s $ss $id $kinds $all $leasts $i $before $x $y $w $h $room)
-   (arr-merge (arr-lay-cell $dir $c (* $room $s) $x $y $w $h)
+   (arr-merge (arr-lay-cell $dir $c (arr-join $id (arr-cons $i ())) (* $room $s) $x $y $w $h)
               (arr-divider-after $dir $rest $id $kinds $all $leasts $i (+ $before $s) (* $room $s) $x $y $w $h $room)
               (arr-lay-children $dir $rest $ss $id $kinds $all $leasts (+ $i 1) (+ $before $s) (arr-next-x $dir $x (* $room $s)) (arr-next-y $dir $y (* $room $s)) $w $h $room)))
-(= (arr-lay-cell row $c $len $x $y $w $h) (arr-lay $c $x $y $len $h))
-(= (arr-lay-cell column $c $len $x $y $w $h) (arr-lay $c $x $y $w $len))
+(= (arr-lay-cell row $c $path $len $x $y $w $h) (arr-lay $c $path $x $y $len $h))
+(= (arr-lay-cell column $c $path $len $x $y $w $h) (arr-lay $c $path $x $y $w $len))
 (= (arr-next-x row $x $len) (+ (+ $x $len) (arr-gap)))
 (= (arr-next-x column $x $len) $x)
 (= (arr-next-y row $y $len) $y)

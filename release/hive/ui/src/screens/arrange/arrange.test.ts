@@ -3,7 +3,7 @@
 // same kinds, with seeded random cases for the claims that must hold for every stage and every set of items.
 // INVENTED items, ids and tasks.
 import { describe, expect, it } from 'vitest'
-import { ArrangeError, ArrangeSpace, type ArrangeItem, type ArrangeState, type Placed, type Source, type Statement } from './arrangeSpace'
+import { ArrangeError, ArrangeSpace, type ArrangeItem, type ArrangeState, type Arrangement, type Placed, type Source, type Statement } from './arrangeSpace'
 
 const space = ArrangeSpace.open()
 const photo = 'ar_photo01'
@@ -26,6 +26,8 @@ const state = (log: Statement[], over: Partial<ArrangeState> = {}): ArrangeState
 })
 const show = (key: string, task: string | null = tip): Statement => ({ say: 'show', key, task })
 const recall = (key: string): Statement => ({ say: 'recall', key })
+const putAway = (key: string): Statement => ({ say: 'putAway', key })
+const compare = (a: string, b: string): Statement => ({ say: 'compare', a, b, task: tip })
 const at = (placed: Placed[], key: string): Placed => {
   const p = placed.find((x) => x.key === key)
   if (!p) throw new Error(`${key} is not drawn`)
@@ -113,6 +115,15 @@ describe('a shown item keeps its own shape once the page knows it', () => {
     }
   })
 
+  it('keeps the strips beside a tall picture, whose least size is its kind’s least area in the same shape', () => {
+    // a 1 by 10 picture is shown about 85 px wide on this stage, under the image kind's least width of 200 but over its
+    // least in that shape (about 55 by 548), and its height, which the strips do not take, is what bounds it
+    const a = space.compose(state([show(photo)], { items: shaped([100, 1000]) }))
+    const p = at(a.placed, photo)
+    expect(p.h).toBeCloseTo(900 - 2 * MARGIN, 6)
+    expect(at(a.placed, vega).role).toBe('beside')
+  })
+
   it('refuses a shape that is none', () => {
     for (const shape of [[0, 3], [4, -1], [Number.NaN, 2], [Number.POSITIVE_INFINITY, 2]] as const) {
       expect(() => space.compose(state([show(photo)], { items: shaped(shape) })), String(shape)).toThrow(ArrangeError)
@@ -196,7 +207,7 @@ describe('(Recall y) brings y back beside x', () => {
     close(x.w, y.w)
     expect(a.tray).toEqual([orion])
     expect(a.dividers).toHaveLength(1)
-    expect(a.dividers[0]).toMatchObject({ group: photo, index: 0, dir: 'row', kinds: ['image', 'text'], shares: [0.5, 0.5] })
+    expect(a.dividers[0]).toMatchObject({ group: 'g', index: 0, dir: 'row', kinds: ['image', 'text'], shares: [0.5, 0.5] })
   })
 
   it('puts a third recalled item after the others, at equal shares', () => {
@@ -224,6 +235,23 @@ describe('(Recall y) brings y back beside x', () => {
     expect(space.compose(state([show(orion), { say: 'clear' }, show(photo), recall(text), { say: 'putAway', key: text }])).tray).toEqual([text])
     const missing = space.compose(state([show('ar_gone01')]))
     expect([missing.mode, missing.unknown]).toEqual(['home', ['ar_gone01']])
+  })
+})
+
+describe('(PutAway x) of what is shown, then (Recall x)', () => {
+  it('keeps x in the tray even with nothing left in view, and a press brings it back', () => {
+    const away = space.compose(state([show(photo), putAway(photo)]))
+    expect([away.mode, away.placed, away.tray]).toEqual(['home', [], [photo]])
+    const back = space.compose(state([show(photo), putAway(photo), recall(photo)]))
+    expect([back.mode, back.placed.map((p) => p.key), back.tray]).toEqual(['focus', [photo, vega], []])
+  })
+
+  it('brings back one of a compared pair, and the shown item after another was recalled beside it', () => {
+    const pair = space.compose(state([compare(photo, text), putAway(photo)]))
+    expect([pair.mode, pair.tray]).toEqual(['focus', [photo]])
+    expect(space.compose(state([compare(photo, text), putAway(photo), recall(photo)])).mode).toBe('compare')
+    const side = space.compose(state([show(photo), recall(text), putAway(photo), recall(photo)]))
+    expect([side.mode, side.placed.map((p) => p.key), side.tray]).toEqual(['side', [photo, text], []])
   })
 })
 
@@ -258,17 +286,76 @@ describe('a dragged split is learned for the same kinds', () => {
   })
 
   it('moves share between the divider’s two neighbours only, never past either one’s least size', () => {
-    const a = space.compose(state(side, { dragging: { group: photo, index: 0, at: 0.25 } }))
+    const a = space.compose(state(side, { dragging: { group: 'g', index: 0, at: 0.25 } }))
     expect(a.dividers[0].shares).toEqual([0.25, 0.75])
     const d = a.dividers[0]
     // a pointer on the divider's centre reads back as the divider's own position
     expect((d.x + d.w / 2 - d.offset) / d.room).toBeCloseTo(0.25, 9)
-    const tooFar = space.compose(state(side, { dragging: { group: photo, index: 0, at: 0.01 } }))
+    const tooFar = space.compose(state(side, { dragging: { group: 'g', index: 0, at: 0.01 } }))
     expect(tooFar.dividers[0].shares[0]).toBeCloseTo(d.lo, 9)
     // an image is never drawn under 200 px wide, nor a text under 220
     const room = 1440 - 2 * MARGIN - GAP
     expect(d.lo * room).toBeCloseTo(200, 6)
     expect((1 - d.hi) * room).toBeCloseTo(220, 6)
+  })
+})
+
+describe('each divider moves alone', () => {
+  it('names every group by its path, so a drag of one divider of a compared pair with a recalled item leaves the other', () => {
+    // a row of the column (photo over text) and the mind: both groups start with the photo
+    const log = [compare(photo, text), recall(vega)]
+    const group = (x: Arrangement, id: string) => {
+      const d = x.dividers.find((y) => y.group === id)
+      if (!d) throw new Error(`no divider of group ${id}`)
+      return d
+    }
+    const a = space.compose(state(log))
+    expect(a.mode).toBe('side')
+    expect(a.dividers.map((d) => [d.group, d.dir])).toEqual(expect.arrayContaining([['g', 'row'], ['g0', 'column']]))
+    expect(a.dividers).toHaveLength(2)
+    const inner = space.compose(state(log, { dragging: { group: 'g0', index: 0, at: 0.3 } }))
+    expect(group(inner, 'g0').shares[0]).toBeCloseTo(0.3, 9)
+    expect(group(inner, 'g').shares).toEqual(group(a, 'g').shares)
+    const outer = space.compose(state(log, { dragging: { group: 'g', index: 0, at: 0.6 } }))
+    expect(group(outer, 'g').shares[0]).toBeCloseTo(0.6, 9)
+    expect(group(outer, 'g0').shares).toEqual(group(a, 'g0').shares)
+  })
+
+  it('refuses a group id that is not a path', () => {
+    expect(() => space.compose(state([show(photo), recall(text)], { dragging: { group: photo, index: 0, at: 0.5 } }))).toThrow(ArrangeError)
+  })
+})
+
+describe('on a small stage the strips give way before what is shown', () => {
+  // a photo is never drawn under 200 x 150, and a mind's strip takes 24 + 180 + 12 px each side, so 632 px is the least
+  // width that keeps the photo at its least size with a strip each side (632 - 2 x 216 = 200)
+  it('keeps the strips while the shown item stays at its least size, and drops them just under that width', () => {
+    const kept = space.compose(state([show(photo)], { stage: { w: 632, h: 400 } }))
+    expect(at(kept.placed, photo).w).toBeCloseTo(200, 6)
+    expect(at(kept.placed, vega).role).toBe('beside')
+    const dropped = space.compose(state([show(photo)], { stage: { w: 631, h: 400 } }))
+    expect(dropped.placed.map((p) => p.key)).toEqual([photo])
+    // without strips the photo is shrunk only to fit the stage: here its height, 400 - 2 x 24
+    expect(at(dropped.placed, photo).h).toBeCloseTo(400 - 2 * MARGIN, 6)
+  })
+
+  it('does the same with the strips above and below on a tall stage', () => {
+    // a mind's strip there is 24 + 124 + 12 px tall each side, so 470 px keeps the photo 150 tall
+    const kept = space.compose(state([show(photo)], { stage: { w: 300, h: 470 } }))
+    expect(at(kept.placed, photo).h).toBeCloseTo(150, 6)
+    expect(at(kept.placed, vega).role).toBe('beside')
+    const dropped = space.compose(state([show(photo)], { stage: { w: 300, h: 469 } }))
+    expect(dropped.placed.map((p) => p.key)).toEqual([photo])
+    expect(at(dropped.placed, photo).w).toBeCloseTo(300 - 2 * MARGIN, 6)
+  })
+
+  it('never draws the shown item at zero or less, however small the stage', () => {
+    for (const [w, h] of [[440, 400], [420, 400], [60, 60], [10, 10]]) {
+      const p = at(space.compose(state([show(photo)], { stage: { w, h } })).placed, photo)
+      expect(p.w, `${w}x${h}`).toBeGreaterThan(0)
+      expect(p.h, `${w}x${h}`).toBeGreaterThan(0)
+      expect(p.w / p.h, `${w}x${h}`).toBeCloseTo(640 / 480, 6)
+    }
   })
 })
 

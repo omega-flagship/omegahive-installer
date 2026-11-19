@@ -173,7 +173,7 @@ def test_T_NB4_own_key_with_no_total_is_monthly_total_required(money):
     e = refusal(hive.check_budget, mine, True, 0.05, KA, P, True, turn_bound=True)
     assert (e.status, e.code) == (402, "spend_limit")
     assert e.details == {"kind": "own_key_limit", "reason": "monthly_total_required", "scope": None, "period": None,
-                         "limit_usd": None, "spent_usd": None}
+                         "limit_usd": None, "spent_usd": None, "say": e.message}   # names no limit: its message is its say
     assert "Set your monthly limit" in e.message
     # the shared limit frame names it, figures null; the conductor's own sentence says it
     detail = cmod.check_detail(hive, mine, e, 0.05)

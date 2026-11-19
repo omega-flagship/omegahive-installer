@@ -1,3 +1,4 @@
+// Purpose: a mind's panel: its header, status and spending notices (paused or slowed), and its tabs.
 import { plural } from '../../lib/plural'
 import { SwarmMove } from './SwarmMove'
 import { AnimatePresence, m } from 'framer-motion'
@@ -16,7 +17,7 @@ import { useIsDesktop } from '../../lib/hooks'
 import { DOT_PHONE_PEEK } from './phoneLayout'
 import { closeToHome, navigate, type DotTab } from '../../lib/router'
 import { useScene } from '../../scene/sceneStore'
-import { useHive, useRefusal } from '../../store/store'
+import { useHive, useRefusal, useSlowed } from '../../store/store'
 import { bindingElsewhere, budgetMeter, useCallLimits } from './callLimits'
 import { scopeWords, UNSEEN_LIMIT } from '../usage/settle'
 import { useUnsaved } from '../ask/dirty'
@@ -34,7 +35,7 @@ import { Schedule } from './Schedule'
 import { IsolationChip } from './IsolationChip'
 import { VisibilityControl } from '../../ui/Visibility'
 import { OWN_BUDGET_CODES } from './mindStatus'
-import { PausedPill, SpendingPause } from './SpendingPause'
+import { PausedPill, SpendingPause, SpendingSlowed } from './SpendingPause'
 import { LabGuards } from '../../shell/LabBadge'
 import { OpenIn } from '../programs/OpenIn'
 import { sessionKey } from '../../store/programSession'
@@ -201,6 +202,7 @@ function PanelHeader({ agent, onCloseX, tab, setTab, onBudget, onConnect }: { ag
   })
   const swarm = useHive((s) => (agent.swarm_id ? s.swarms[agent.swarm_id] : undefined))
   const refusal = useRefusal(agent.id)
+  const slowed = useSlowed(agent.id)
   const limits = useCallLimits(agent.id, agent.spent_usd, refusal?.at)
   const lastError = describeLlmError(agent.last_error)
   // the spending banner already says why; do not repeat a budget error under it
@@ -252,6 +254,7 @@ function PanelHeader({ agent, onCloseX, tab, setTab, onBudget, onConnect }: { ag
       <UsageRegion covering className="mt-1.5 ml-auto w-[96px]" />
       <AnimatePresence initial={false}>
         {refusal && <SpendingPause key="refused" agent={agent} refusal={refusal} onFixBudget={() => setTab('model')} />}
+        {!refusal && slowed && <SpendingSlowed key="slowed" slowed={slowed} />}
         {showLastError && <LastError key="err" agent={agent} onFix={() => setTab('model')} />}
       </AnimatePresence>
       <Segmented<Tab>

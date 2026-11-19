@@ -21,7 +21,12 @@ export const answererChoice = {
     return true
   },
   clear(): void { if (choice) { choice = null; emit() } },
-  apply(context: AskContext): AskContext {
+  /**
+   * The context a send goes with once the person picked who answers: the picked mind as `mind`, marked `chosen` so it
+   * speaks (a tester on v0.38 picked Create and her own mind answered); a picked swarm by its coordinator
+   * (`coordinatorOf`), or by the swarm alone where none is known, which keeps the swarm's usual voice.
+   */
+  apply(context: AskContext, coordinatorOf: (swarm: string) => string | null | undefined = () => null): AskContext {
     const target = this.get()
     if (!target || 'private' in context || context.mind || context.selection?.some((r) => r.kind === 'mind')) return context
     // the person's explicit choice also beats the mind whose chat is in use
@@ -31,13 +36,18 @@ export const answererChoice = {
     // Program references and view actions belong to the old program's swarm.
     // An explicit recipient change must not carry that scope into another swarm.
     const clean = program ? rest : { ...rest, ...(selection ? { selection } : {}), ...(view ? { view } : {}) }
-    return target.kind === 'swarm' ? { ...clean, swarm_id: target.swarm }
-      : { ...clean, mind: target.mind, ...(target.swarm ? { swarm_id: target.swarm } : {}) }
+    if (target.kind === 'swarm') {
+      const coordinator = coordinatorOf(target.swarm)
+      return coordinator ? { ...clean, mind: coordinator, chosen: true, swarm_id: target.swarm } : { ...clean, swarm_id: target.swarm }
+    }
+    return { ...clean, mind: target.mind, chosen: true, ...(target.swarm ? { swarm_id: target.swarm } : {}) }
   },
-  matches(context: AskContext): boolean {
+  matches(context: AskContext, coordinatorOf: (swarm: string) => string | null | undefined = () => null): boolean {
     const target = this.get()
     if (!target || 'private' in context) return false
-    return target.kind === 'swarm' ? !context.mind && context.swarm_id === target.swarm : context.mind === target.mind
+    if (target.kind !== 'swarm') return context.mind === target.mind
+    const coordinator = coordinatorOf(target.swarm)
+    return context.swarm_id === target.swarm && (coordinator ? context.mind === coordinator && context.chosen === true : !context.mind)
   },
   /** An own-mind selection also requires a fresh host own-mapping check before effects. */
   expectedOwn(context: AskContext): string | undefined {

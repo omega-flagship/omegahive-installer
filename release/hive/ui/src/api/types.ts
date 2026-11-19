@@ -1149,6 +1149,15 @@ export interface BudgetRefusal {
   hidden?: boolean
 }
 
+/** A mind the spend-rate guard is pacing (budget.slowed): when its next call of that size fits again, and the limit
+ *  pacing it for whoever may see it. */
+export interface BudgetSlowed {
+  until: string
+  at: string
+  limit?: { scope: string; period: string; limit_usd: number }
+  hidden?: boolean
+}
+
 /** The limit that refused a call, as budget.refused names it: `scope` (hive, agent:<id>, swarm:<id>, person:<id>, key:<id>,
  *  keyuse:<id>), its period (day, month, total, all-time), the limit, the spend recorded against it, the worst cases
  *  already held against it by calls not yet settled, and the refused call's own worst case (`call_usd`), which is why a

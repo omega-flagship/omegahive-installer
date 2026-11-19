@@ -1,5 +1,6 @@
 # Purpose: tests of an Ask turn's intents and links: recording, submitting and refusing a Code request from the Ask,
-# a Continue's refusal of a hand-over its stopped request already made, the route hygiene and the steer route.
+# a Continue's refusal of a hand-over its stopped request already made and what it is told its turns handed over,
+# the route hygiene and the steer route.
 """Linkage r3.6 §(a) (slice 2): an Ask turn's host-owned intents and links, the §G hygiene of their routes, and the
 Ask steer route with `via`. Synthetic only: temporary data directories, fake supervisor, mock models, no provider call,
 no live hive. A-numbers and G-numbers are the spec's §E rows."""
@@ -188,6 +189,25 @@ def test_continue_guard_follows_the_chain_and_compares_kind_as_well_as_destinati
     # An intent of a different kind with the exact same destination does not block.
     a.hive.db.execute("UPDATE ask_intents SET kind = 'code.test' WHERE id = ?", (intent["intent_id"],))
     assert record(a, "op-continued-02").status_code == 201
+
+
+def test_continue_is_told_the_request_and_what_its_turns_already_handed_over(a, monkeypatch):
+    # what a Continue carries on (conductor._continued, test_ask_continue.py): the request's words from the host's own
+    # record and each hand-over already made, so its model carries on instead of trying one again
+    from hive.tests.test_ask_conductor import Script, closed, script, wait
+    original = turn(a)
+    intent = record(a).json()
+    assert submit(a, intent["intent_id"]).status_code == 201
+    assert a.client.post("/api/ask/op-turn-0001/stop", headers=a.jon).status_code == 200
+    monkeypatch.setenv("HIVE_ASK_CONDUCTOR", "1")
+    monkeypatch.setenv("HIVE_ASK_CONDUCTOR_MODEL", "mock/conductor")
+    s = script(a.client, Script("Carrying on with the calculator."))
+    assert continue_turn(a, original).status_code == 202
+    wait(a.hive, "op-continued-01", closed, principal=JON)
+    context = s.bodies[0]["messages"][1]["content"]
+    section = context[context.index("What they asked you to continue"):]
+    assert "they said: “change add() to subtract”" in section
+    assert "- handed over: code.request “Fix the calculator” to Coders (linked)" in section
 
 
 @pytest.mark.parametrize("problem", ["unknown", "foreign", "live", "old", "other_mind", "deleted"])

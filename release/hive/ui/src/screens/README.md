@@ -226,21 +226,23 @@ view with each task, the shares a person has dragged splits to, and the statemen
 
 | Statement | What MeTTa arranges |
 | --- | --- |
-| `(Show k t)` | k in the centre at its kind's size (`KindSize`), or at that area in k's own shape once the page knows it (`ItemShape`, a picture's pixels), shrunk only to fit the stage; every item with interest or a relation in task t in a strip beside it, as wide as the strip and never smaller than its kind's least size (`KindLeast`); every other item out of view |
+| `(Show k t)` | k in the centre at its kind's size (`KindSize`), or at that area in k's own shape once the page knows it (`ItemShape`, a picture's pixels), shrunk only to fit the stage; every item with interest or a relation in task t in a strip beside it, as wide as the strip and never smaller than its kind's least size (`KindLeast`), while k keeps its own least size (on a smaller stage the strips go first); every other item out of view |
 | `(Recall k)` | k beside what is shown, side by side along the stage's longer side (a row on a wide stage, a column on a tall one); the shown items not in it go in the tray |
 | `(Compare a b t)` | a over b, each half of the stage |
-| `(PutAway k)` | k out of view, into the tray |
+| `(PutAway k)` | k out of view, into the tray, even when it was the last thing shown |
 | `(Clear)` | nothing: the look is as it was |
 
 The newest `Show`, `Compare` or `Clear` anchors the arrangement, and each `Recall` and `PutAway` after it adds or
-takes away one item. A row or column starts at equal shares; a split the person dragged opens at the shares they left
+takes away one item, the anchored ones included; a newer one of the same item undoes an older one, so pressing a put-away
+item in the tray brings it back. A row or column starts at equal shares; a split the person dragged opens at the shares they left
 it at whenever the same kinds are split the same way, a pair in either order.
 
 The answer is `(Arranged mode task placed dividers tray seen unknown)`: every item drawn with its kind and rectangle,
 every divider with the least and most it may be dragged to, the tray, the items to credit with interest in the task
 (once per statement, as `seen.episode` says), and the keys the log names that the page has no item for. A drag is
 stated too, `(Dragging group i at)`, so the divider and its two neighbours move as MeTTa decides, never past either
-neighbour's least size.
+neighbour's least size. A group is named by its path from the outermost one (`()`, `(0)`, `(0 1)`; the page writes `g`,
+`g0`, `g0-1`), so a pair compared beside a recalled item has two dividers a drag tells apart.
 
 `screens/arrange/arrange.test.ts` checks each statement, with seeded random stages and item sets for the rules that
 must hold everywhere: nothing overlaps or leaves the stage, and exactly the items with interest or a relation are

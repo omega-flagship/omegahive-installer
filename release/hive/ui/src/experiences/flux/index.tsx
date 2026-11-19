@@ -13,6 +13,7 @@ import { GooDefs, Glyph, Orb } from './kit'
 import { DecisionCard, MindPanel, NothingCard, SwarmPanel } from './panels'
 import { Sheet } from './sheets'
 import { modalLayers } from '../../ui/useModalContainment'
+import { PageStyle } from '../../lib/PageStyle'
 import { HiveDirectory } from '../HiveDirectory'
 import { usePickSwarm } from './nav'
 import { FluxWorld, hslRgb, type FluxView, type Snapshot } from './world'
@@ -259,7 +260,7 @@ export default function Experience() {
   return (
     <FluxCtx.Provider value={api}>
       <div className="fixed inset-0 overflow-hidden select-none" style={{ fontFamily: FONT, color: INK, background: '#0b0515', isolation: 'isolate' }}>
-        <style>{FLUX_CSS}</style>
+        <PageStyle css={FLUX_CSS} />
         <GooDefs />
         {gpu ? (
           <canvas ref={canvasRef} aria-hidden className="absolute inset-0 h-full w-full" style={{ touchAction: 'none' }} />

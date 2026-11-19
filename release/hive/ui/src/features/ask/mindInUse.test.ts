@@ -1,6 +1,7 @@
 // Purpose: verify the Ask answers as the mind whose chat or card is open (Jon, 16 Nov: "the ask will auto route to
 // whichever mind you're interacting with"): the signal's order, the context that carries it, the one plan that routes
-// and names it as the host does, and every look's chat marking it.
+// and names it as the host does, and every look's chat marking it; and that a mind the person chose (a pick in the Ask,
+// a swarm's by its coordinator, or @Name) is sent as chosen and named as the voice, while a mind only named isn't.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const loc = { hash: '#/', search: '', pathname: '/' }
@@ -114,5 +115,45 @@ describe('every look\'s mind chat marks its mind in use while it is open', () =>
     const text = sources[file]
     const body = text.slice(text.indexOf(component))
     expect(body.slice(0, body.indexOf('\n}\n'))).toContain('useMindInUse(agent.id)')
+  })
+})
+
+// a tester on v0.38 picked Create in the Ask and her own mind answered: a mind the person chose is sent as `mind` with
+// `chosen`, and the plan names it as the voice, the way the host's personal.speaker lets it speak (core/ask.py _context)
+describe('a mind the person chose speaks, and a mind only named in the words does not', () => {
+  it('an @Name address carries chosen beside its mind; a mention, or no mind, carries none', () => {
+    expect(askContext(parse('#/'), 'canvas', 'in Canvas', WORKER.id, true)).toMatchObject({ mind: WORKER.id, chosen: true })
+    expect(routingContext(parse('#/'), 'canvas', WORKER.id, true)).toMatchObject({ mind: WORKER.id, chosen: true })
+    expect(routingContext(parse('#/'), 'canvas', WORKER.id)).not.toHaveProperty('chosen')
+    expect(routingContext(parse('#/'), 'canvas', undefined, true)).not.toHaveProperty('chosen')
+  })
+
+  it('a picked swarm is sent as its coordinator, chosen; a swarm with no coordinator known keeps its usual voice', () => {
+    const coordinatorOf = (id: string) => (id === 's_home' ? 'a_orch0001' : null)
+    answererChoice.select({ kind: 'swarm', swarm: 's_home', name: 'Home' }, () => true)
+    const sent = answererChoice.apply(ctx, coordinatorOf)
+    expect(sent).toEqual({ ...ctx, mind: 'a_orch0001', chosen: true, swarm_id: 's_home' })
+    expect(answererChoice.matches(sent, coordinatorOf)).toBe(true)
+    expect(answererChoice.matches({ ...ctx, mind: 'a_orch0001', swarm_id: 's_home' }, coordinatorOf)).toBe(false)
+    answererChoice.select({ kind: 'swarm', swarm: 's_bare', name: 'Bare' }, () => true)
+    const bare = answererChoice.apply(ctx, coordinatorOf)
+    expect(bare).toEqual({ ...ctx, swarm_id: 's_bare' })
+    expect(answererChoice.matches(bare, coordinatorOf)).toBe(true)
+    answererChoice.select({ kind: 'thread', mind: WORKER.id, swarm: 's_home', name: 'Worker' }, () => true)
+    expect(answererChoice.apply(ctx, coordinatorOf)).toEqual({ ...ctx, mind: WORKER.id, chosen: true, swarm_id: 's_home' })
+  })
+
+  it('the plan names the chosen mind as the voice, never another person\'s own mind or an external member', () => {
+    const plan = planAsk({ ...ctx, mind: WORKER.id, chosen: true }, { ...base, explicitChoice: true })
+    expect(plan.chosen).toEqual({ id: WORKER.id, name: 'Worker' })
+    expect(speaker({ conductor: true, personal: TAIGA, reaches: 'Orchestra', reachesId: 'a_orch0001', chosen: plan.chosen })).toEqual({ name: 'Worker', id: WORKER.id })
+    // the chosen mind speaks before the mind in use, as on the host
+    expect(speaker({ conductor: true, personal: TAIGA, reaches: 'Orchestra', reachesId: 'a_orch0001', chosen: plan.chosen, inUse: { id: TAIGA.id, name: 'Taiga' } })).toEqual({ name: 'Worker', id: WORKER.id })
+    expect(planAsk({ ...ctx, mind: WORKER.id }, base).chosen).toBeUndefined()   // only named: asked about
+    expect(planAsk({ ...ctx, mind: OUTSIDE.id, chosen: true }, { ...base, explicitChoice: true }).chosen).toBeUndefined()
+    const bobs = { id: 'a_bobs0001', name: 'Bob’s mind', swarm_id: 's_bob', status: 'awake', personal_of: 'user:p_bob', kind: 'omega' }
+    expect(planAsk({ ...ctx, mind: bobs.id, chosen: true }, { ...base, explicitChoice: true, through: { minds: [...minds, bobs] } }).chosen).toBeUndefined()
+    const off: AskSettings = { ...settings, capabilities: { conductor: false, memory: false } }
+    expect(planAsk({ ...ctx, mind: WORKER.id, chosen: true }, { ...base, settings: off, explicitChoice: true }).chosen).toBeUndefined()
   })
 })

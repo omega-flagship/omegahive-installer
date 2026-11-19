@@ -1,4 +1,5 @@
-"""Purpose: record and submit host-owned Ask hand-overs without repeating a continued turn's work.
+"""Purpose: record and submit host-owned Ask hand-overs, and walk the turns a Continue carries on, so none of their work
+is handed over twice.
 
 Linkage slice 2, §(a) of PLATFORM_ASK_R2_13_LINKAGE_SPEC r3.6: an Ask turn's host-owned intents and links.
 
@@ -64,6 +65,33 @@ def _iso_time(value):
         return datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def continuable(prior, principal, mind_id, moment):
+    """Whether `prior`, an ask_turns row or None, is a turn `principal` may continue while asking `mind_id` at `moment`
+    (Jon asked on #394 for Continue to keep a hand-over from happening twice, and for a time limit on what's kept): their
+    own turn with that mind, no longer open, started at most TURN_MAX_AGE before. Deletion is each caller's own question:
+    admission refuses a deleted turn (ask.py _check_continues), while a deleted turn's hand-overs were still made."""
+    from .ask import OPEN
+    created = _iso_time(prior["created_at"]) if prior else None
+    return prior is not None and prior["principal"] == principal and prior["mind_id"] == mind_id \
+        and prior["state"] not in OPEN and created is not None \
+        and datetime.timedelta() <= moment - created <= TURN_MAX_AGE
+
+
+def continued_turns(ask, turn, moment=None):
+    """The turns `turn` continues, newest first, each one its successor could continue (continuable), each once, so a
+    damaged cycle ends the walk like a turn that can't be continued.
+    Time: one primary-key read per ancestor. Space: one turn id per ancestor."""
+    moment = moment or datetime.datetime.now(datetime.timezone.utc)
+    seen = {turn["id"]}
+    while turn.get("continues") and turn["continues"] not in seen:
+        prior = ask._row(turn["continues"])
+        if not continuable(prior, turn["principal"], turn["mind_id"], moment):
+            return
+        seen.add(prior["id"])
+        yield prior
+        turn = prior
 
 
 class Intents:
@@ -230,19 +258,9 @@ class Intents:
     def _guard_continued(self, turn, kind, destination):
         """Jon asked on #394 for Continue not to hand the same work over twice. Compare the host's destinations,
         not reworded instructions, inside each recorder's transaction.
-        Time: one primary-key lookup and scan of that turn's intents per ancestor.
-        Space: one turn id per ancestor, to stop a damaged cycle."""
-        from .ask import OPEN
-        moment = datetime.datetime.now(datetime.timezone.utc)
-        seen = {turn["id"]}
-        while turn.get("continues") and turn["continues"] not in seen:
-            prior = self.ask._row(turn["continues"])
-            created = _iso_time(prior["created_at"]) if prior else None
-            if prior is None or prior["principal"] != turn["principal"] \
-                    or prior["mind_id"] != turn["mind_id"] or prior["state"] in OPEN or created is None \
-                    or not datetime.timedelta() <= moment - created <= TURN_MAX_AGE:
-                break
-            seen.add(prior["id"])
+        Time: one primary-key lookup and scan of that turn's intents per ancestor (continued_turns).
+        Space: one turn id per ancestor."""
+        for prior in continued_turns(self.ask, turn):
             blocked = self.hive.db.one(
                 "SELECT state FROM ask_intents WHERE turn_id = ? AND kind = ? AND destination = ? "
                 "AND state IN ('pending', 'dispatching', 'linked')",
@@ -252,7 +270,6 @@ class Intents:
                 log.info("ask: continued turn %s refused a repeated %s from %s (%s)",
                          turn["id"], kind, prior["id"], blocked["state"])
                 raise self._err(409, "intent_already_handed_over", "That work is already handed over.", reason=reason)
-            turn = prior
 
     def _gate(self, kind, admin):
         """The kind's own gate: code.request needs a named admin person (r2.13); studio.session any named person."""

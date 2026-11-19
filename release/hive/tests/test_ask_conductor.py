@@ -1505,30 +1505,34 @@ def test_code_is_taken_out_whole_and_words_around_it_stay():
         assert cmod.without_code(text) == want, text
 
 
-def test_the_conductor_imports_in_a_tree_of_hive_alone_and_a_turn_needing_its_tools_names_the_missing_help(tmp_path):
+def test_the_conductor_imports_and_offers_its_tools_in_a_tree_of_hive_alone(tmp_path):
     """CI's release copy for the mind-sandbox tests holds hive/ and deploy/ only (scripts/ci/release-tests.sh), and its
-    create_app imports this module: reading modules/hive/catalog.metta at import stopped that app from starting (run
-    43745817476). The help is read on the first model call instead, and a hive without it names the missing file."""
+    create_app imports this module (run 43745817476). Make's view goes to Create, so no tool needs
+    modules/hive/catalog.metta: the module imports and offers every tool with none beside it."""
     import os
     import pathlib
     import subprocess
     import sys
     code = ("import pathlib, sys; import hive.core.config as config; config.CORE_ROOT = pathlib.Path(sys.argv[1]); "
-            "import hive.core.conductor as cmod; print('imported'); cmod.tools()")
+            "import hive.core.conductor as cmod; print('imported', len(cmod.tools()))")
     root = pathlib.Path(__file__).resolve().parents[2]
     out = subprocess.run([sys.executable, "-c", code, str(tmp_path)], cwd=root, capture_output=True, text=True,
                          env={**os.environ, "PYTHONPATH": str(root)})
-    assert out.stdout.strip() == "imported", out.stderr[-2000:]
-    assert out.returncode != 0 and "FileNotFoundError" in out.stderr and str(tmp_path / "modules" / "hive" / "catalog.metta") in out.stderr
+    assert out.returncode == 0, out.stderr[-2000:]
+    assert out.stdout.strip() == f"imported {len(cmod._TOOLS)}"
 
 
-def test_make_is_described_by_the_view_help_the_mind_reads():
-    help_text = cmod._view_help()
-    # the help lines after hive-artifact-create's call line, read from modules/hive/catalog.metta, its one source
-    assert help_text.startswith("A view (kind view) is MeTTa declarations") and '(Screen tip "Tip")' in help_text
+def test_make_says_a_view_is_built_by_create_and_takes_no_body():
+    # Jon on #395: building software goes to Create, with no exceptions; a picture and words are made in the turn
     make = next(t for t in cmod.tools() if t["function"]["name"] == "make")["function"]
-    assert help_text in make["description"] and make["parameters"]["properties"]["kind"]["enum"] == list(cmod.MAKE_KINDS)
-    assert "make what they ask you to make" in cmod.STEERING and "never write it out as code" in cmod.STEERING
+    assert "Create builds it" in make["description"] and "no body" in make["description"]
+    assert make["parameters"]["required"] == ["kind", "title"]
+    assert make["parameters"]["properties"]["kind"]["enum"] == list(cmod.MAKE_KINDS)
+    assert "an app goes to Create" in cmod.STEERING and "never write it out as code" in cmod.STEERING
+    # a tester on v0.38: told "Please ask Create to build it", then "Please create a task for this work that Create can
+    # claim" got "I don't have a task-creation control here": both are builds, and make hands them to Create
+    assert "a task Create can claim, that is a build too" in cmod.STEERING
+    assert "Never tell the person to ask Create themselves" in cmod.STEERING
 # ---- free inference's refusals end a turn in their own words (refusals.py's table) -------------------------------------
 
 @pytest.mark.parametrize("where,code,slots", [

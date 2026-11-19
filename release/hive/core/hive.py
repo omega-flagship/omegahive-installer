@@ -2790,15 +2790,35 @@ class Hive:
                             "WHERE m.child_id = ? AND m.released_at IS NULL", (agent["id"],))
         return child["from_principal"] if child and str(child["from_principal"]).startswith("user:u_") else None
 
+    def _answering_person(self, agent):
+        """The person whose message this mind is answering now, or None: a named person's message to it, in its chat or
+        in a room that delivered it (rooms.py: a person's post reaches the minds it @mentions, or a DM's mind), that it
+        hasn't answered in that conversation yet, which is when the hive's reply binding counts a conversation as
+        waiting (FeedbackDrafts.answering), sent at most an Ask turn's TIMEOUT ago, the time the hive gives a host mind
+        to answer a person's Ask. Past it the person is no longer waiting on this answer, so a mind still looping on it
+        is on its own again (#299's runaway) and the guard's burst bounds the tail. Another mind's message or the hive's
+        own never holds it. Messages are ordered by rowid, as the reply binding orders them. Time: a range read of the
+        mind's messages from the last TIMEOUT seconds (messages_agent), then one index seek per person's message among
+        them for the mind's answer (messages_agent_dir_conv)."""
+        from .ask import TIMEOUT
+        from .db import stamp_of
+        since = stamp_of(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=TIMEOUT))
+        row = self.db.one("SELECT i.sender FROM messages i WHERE i.agent_id = ? AND i.created_at >= ? AND i.direction = 'in' "
+                          "AND i.sender GLOB 'user:u_*' AND NOT EXISTS (SELECT 1 FROM messages o WHERE o.agent_id = i.agent_id "
+                          "AND o.direction = 'out' AND o.conversation_id = i.conversation_id AND o.created_at >= i.created_at "
+                          "AND o.rowid > i.rowid) ORDER BY i.rowid DESC LIMIT 1", (agent["id"], since))
+        return row["sender"] if row else None
+
     def present_for(self, agent):
         """The person whose own live work this mind's call is part of, or None when the mind acts on its own: the person
         whose session holds it (_session_person), else the person whose request a team spawned it for
         (_request_person), else the person whose live Create plan waits on it (CreatePlanEngine.waiting_on), else the
-        person whose live Code request waits on its second opinion (CodeControllerEngine.waiting_on). The spend-rate
-        guard paces only a call with no one present (cost_reservations.Reservations.reserve, paced): a person's own work
-        is held by its limits and its own budget."""
+        person whose live Code request waits on its second opinion (CodeControllerEngine.waiting_on), else the person
+        whose message it is answering (_answering_person). The spend-rate guard paces only a call with no one present
+        (cost_reservations.Reservations.reserve, paced): a person's own work is held by its limits, and by its own
+        budget or the time its person waits."""
         return (self._session_person(agent) or self._request_person(agent) or self.create_plans.waiting_on(agent["id"])
-                or self.code_controller.waiting_on(agent["id"]))
+                or self.code_controller.waiting_on(agent["id"]) or self._answering_person(agent))
 
     def payer_for(self, agent, key_owner=None):
         """Who pays for this mind's model call, and whether it is on their own key (user_for names who it is for):
@@ -2838,7 +2858,8 @@ class Hive:
                     self.mindgateway.call_refused(evidence_id or secrets.token_hex(16), refusal_kind(exc))
             if exc.status == 402:
                 details = dict(exc.details or {}, call_usd=round(float(estimate), 6)) if estimate else exc.details
-                self.note_refusal(agent, exc.code, exc.message, details)
+                # the mind reads why in its own words (say), never the limit, which goes only to whoever may see it
+                exc.details = dict(exc.details or {}, say=self.note_refusal(agent, exc.code, exc.message, details))
             raise
 
     # What a refusal names, as budget.refused carries it and the refusal record keeps it: the limit that refused the call
@@ -2854,7 +2875,7 @@ class Hive:
         person's own month allowance running out also asks an admin for more (person_requests.auto_allowance), whichever
         check refused. A refusal naming a limit keeps a message that names none (Health shows it to anyone who reads the
         mind); the limit goes only to whoever may see it. The count starts again once a call is admitted (note_admitted),
-        so a notice comes once per pause."""
+        so a notice comes once per pause. Returns that message, the refusal's say: what the mind's own wait shows."""
         d = details or {}
         limit = {k: d[k] for k in self.REFUSAL_LIMIT if d.get(k) is not None}
         if limit.get("scope"):
@@ -2868,6 +2889,7 @@ class Hive:
             self.person_requests.auto_allowance("user:" + d["scope"][7:], float(d["limit_usd"]))   # stop, notify, ask
         if d.get("period") == "month" and d.get("limit_usd") is not None:   # a month allowance or the hive cap: its 100% notice
             self.db.after_commit(lambda s=str(d.get("scope", "")), l=float(d["limit_usd"]): self.limit_notices.refused(s, "month", l))
+        return str(message)[:300]
 
     def note_admitted(self, agent):
         """A paid call admitted again, by Budgets.check and its reservation both: the mind is no longer paused for
@@ -2884,14 +2906,15 @@ class Hive:
         scope, _, period = exc.scope.rpartition(":")
         until = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=exc.retry_after)) \
             .isoformat(timespec="seconds").replace("+00:00", "Z")
+        minutes = -(-exc.retry_after // 60)
+        say = (f"Spending faster than this month allows: a call this size fits again in about {minutes} "
+               f"minute{'s' if minutes != 1 else ''}.")
         details = {"scope": scope, "period": period, "limit_usd": exc.limit_usd, "retry_after": exc.retry_after,
-                   "until": until}
+                   "until": until, "say": say}
         if agent["id"] not in self.slowed:
             self.slowed[agent["id"]] = until
             self.events.publish("budget.slowed", agent_id=agent["id"], **details)
-        minutes = -(-exc.retry_after // 60)
-        return HiveError(429, "spend_rate", f"Spending faster than this month allows: a call this size fits again in about "
-                                            f"{minutes} minute{'s' if minutes != 1 else ''}.", details)
+        return HiveError(429, "spend_rate", say, details)
 
     def _check_budget(self, agent, paid=False, estimate=0.0, key_id=None, payer=None, own_key=False, turn_bound=False):
         """Refuse an LLM call before it is made when it could overspend.

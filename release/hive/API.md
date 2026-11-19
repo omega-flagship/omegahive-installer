@@ -708,17 +708,24 @@ day or total rule and a key's cap are held by their limit alone) each refill at 
 burst of a tenth (GCRA, ITU-T I.371 annex A, one theoretical arrival time per limit in `limit_rates`): with $50 a month
 that is $1.67 a day and a $5 burst. A call a person's own live work holds (`Hive.present_for`: their Studio session, the
 Ask turn open on the mind, an active Session with it, a child mind a team spawned for their request until its allocation
-goes back, such as a Code request's helper, their live Create plan waiting on a goal it gave the mind, or their live
-Code request waiting on the mind's second opinion; and every call of the Ask conductor and the personal-mind gateway) is
-held by its limits alone and charges the guard nothing, so Make can spend a small month in one sitting: paced, a $1
-month held Make's planner about 17 hours after one 2-cent call, since each call's worst case was nearly the whole $0.10
-burst, and a $2 month held a Code helper's second call about 13 hours.
+goes back, such as a Code request's helper, their live Create plan waiting on a goal it gave the mind, their live Code
+request waiting on the mind's second opinion, or their message to the mind, in its chat or a room that delivered it to
+the mind, that it hasn't answered yet, for an Ask turn's `TIMEOUT` (120 s) from when they sent it; and every call of the
+Ask conductor and the personal-mind gateway) is held by its limits alone and charges the guard nothing, so Make can
+spend a small month in one sitting: paced, a $1 month held Make's planner about 17 hours after one 2-cent call, since
+each call's worst case was nearly the whole $0.10 burst, and a $2 month held a Code helper's second call about 13 hours.
+A month limit someone raises or lowers keeps the money the guard counts ahead: each `limit_rates` row keeps the limit it
+was counted at, and the next call scales its time ahead and its open charges by old over new, so a raised cap frees its
+larger burst at once.
 A call is admitted while its worst case fits the burst left, inside the reservation's own transaction; a call bigger
 than the burst only when the guard is full. A call settled below its worst case gives the difference back and a released
 call all of it (a trigger on `cost_reservations`, so every path that ends a hold does), so the guard counts what was
 actually spent. A refused call holds nothing and is answered 429 `spend_rate` with `scope`, `period`, `limit_usd`,
 `retry_after` (whole seconds, also the `Retry-After` header) and `until`, the same shape as a provider's rate limit;
-`budget.slowed` announces it once until a call is admitted again.
+`budget.slowed` announces it once until a call is admitted again. Every refusal of a mind's call for spending or pace
+also carries `say`, the hive's sentence for anyone who reads the mind, which names no limit (a spending limit's 402 says
+"A spending limit has no room for this call."): the mind's own wait shows it and lasts `retry_after` where the refusal
+gives one, else 60 s, and the mind's page keeps it slowed or paused until a call is billed again.
 
 ### `GET /api/budgets/limits` (admins only; 403 `admin_only` otherwise)
 
@@ -1104,14 +1111,22 @@ rate_limited | too_large | timed_out | operation_conflict | invalid | stopped`, 
   - Continue names its stopped turn with `continues` (the accepted frame's `turn_id`). Typed requests omit it.
     It must name an undeleted, ended turn of the same person and answering mind, created within the last 24 hours
     (`ask_intents.TURN_MAX_AGE`); otherwise admission returns 400 `invalid`. The field is stored on the turn and
-    included in the idempotency body digest.
+    included in the idempotency body digest. A conductor turn's model is told what it continues from the host's own
+    record of the turns it continues: where they kept their words (a swarm thread's turns, and only into a turn of the
+    same swarm) the first request's words and the latest answer, otherwise that the person's browser sends them (an
+    own mind's turns); how often it was continued; and the hand-overs already made. Nothing of it is stored again.
   - `context` (exact keys): `{route?: ≤120, experience?: slug, program?: app id, swarm_id?, mind?: <mind id>,
-    with?: <mind id>, selection?: [≤20 {kind, ref}], view?: ≤2 KB {refs?: [≤50 {kind, ref}], acts?: [≤50 act ids],
+    with?: <mind id>, chosen?: true, selection?: [≤20 {kind, ref}], view?: ≤2 KB {refs?: [≤50 {kind, ref}], acts?: [≤50 act ids],
     summary?: ≤500}}`. The `kind` of a ref is one of `mind|swarm|goal|room|artifact|item|feature`.
   - `with` names the mind whose chat or card the person is using. When the hive's conductor answers the turn and
     nothing in `mind` or `selection` addresses a mind, the turn goes to that mind's swarm (its coordinator holds the
     thread, money and limits) and that mind speaks, named in `speaks_as`. A mind the person can't see, an external
     member, or a mind whose swarm the Ask may not use is passed over, and without the conductor `with` routes nothing.
+  - `chosen: true` beside `mind` says the person chose that mind to answer: their pick in the Ask (a swarm's pick names
+    its coordinator) or an `@Name` address. On a conductor turn the chosen mind speaks, named in `speaks_as`; a mind
+    only named in the words is asked about, in the turn's usual voice. A chosen mind the person can't see, or one the
+    Ask may not route to (another person's own mind among them), refuses the turn as `mind` does, so someone else never
+    answers a choice. `chosen` other than `true`, or without `mind`, is refused `invalid`.
   - Refused field names: authority, model, money and credentials (for example `principal`, `agent_id`, `model`,
     `provider`, `budget_usd`, `to`, `coordinator_id`, `*_key`, `*token*`) get 400 `not_allowed`. Any other unknown
     key gets 400 `invalid`.

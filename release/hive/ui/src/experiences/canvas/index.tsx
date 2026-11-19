@@ -21,6 +21,7 @@ import { withBusy } from './busy'
 import { goalAsk, goalBarActions, type GoalAsk } from './goalAsk'
 import { NO_MOTIVES } from './motives'
 import { useMotivationData } from '../../lib/motivations'
+import { PageStyle } from '../../lib/PageStyle'
 import { plural } from '../../lib/plural'
 import { currentEpoch, onIdentityChange } from '../../lib/identityEpoch'
 import { CanvasActionBoundary, useCanvasCurrent } from './actionAuthority'
@@ -664,7 +665,7 @@ function Board({ engine }: { engine: Engine }) {
         WebkitFontSmoothing: 'antialiased',
       }}
     >
-      <style>{CSS}</style>
+      <PageStyle css={CSS} />
       <BoardOutline
         outline={outline}
         open={outlineOpen}

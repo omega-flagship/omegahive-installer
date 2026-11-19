@@ -173,25 +173,26 @@ export function pageView(r: Route, where: string): ReturnType<typeof fitView> {
  * The context sent with a mind turn: route, experience, the app and swarm in view, and the view export. On a private
  * app's page (Atlas, Truth) exactly `{ private: true }`: no route, ids, kinds or view (Platform r2 Q6).
  */
-export function askContext(r: Route, experience: string, where: string, mind?: string): AskContext {
+/** `chosen`: the person addressed `mind` by name (@Name), so it speaks for the turn; a mind only mentioned is asked about */
+export function askContext(r: Route, experience: string, where: string, mind?: string, chosen = false): AskContext {
   if (isPrivateRoute(r)) return { private: true }
   const inUse = mindInUse.get()
   const program = r.name === 'program' ? r.id : undefined
   const sw = routeSwarm(r)
   const view = pageView(r, where)
-  return { route: contextRoute(r), experience, ...(program ? { program } : {}), ...(sw ? { swarm_id: sw } : {}), ...(mind ? { mind } : {}), ...(inUse ? { with: inUse } : {}), view }
+  return { route: contextRoute(r), experience, ...(program ? { program } : {}), ...(sw ? { swarm_id: sw } : {}), ...(mind ? { mind, ...(chosen ? { chosen: true as const } : {}) } : {}), ...(inUse ? { with: inUse } : {}), view }
 }
 
 /**
  * j0-fixes r1: the parts of the context that decide who answers (askContext without the view, which reads the page):
  * what the chip and the paid row plan from, so they plan from what the send will carry.
  */
-export function routingContext(r: Route, experience: string, mind?: string): AskContext {
+export function routingContext(r: Route, experience: string, mind?: string, chosen = false): AskContext {
   if (isPrivateRoute(r)) return { private: true }
   const inUse = mindInUse.get()
   const program = r.name === 'program' ? r.id : undefined
   const sw = routeSwarm(r)
-  return { route: contextRoute(r), experience, ...(program ? { program } : {}), ...(sw ? { swarm_id: sw } : {}), ...(mind ? { mind } : {}), ...(inUse ? { with: inUse } : {}) }
+  return { route: contextRoute(r), experience, ...(program ? { program } : {}), ...(sw ? { swarm_id: sw } : {}), ...(mind ? { mind, ...(chosen ? { chosen: true as const } : {}) } : {}), ...(inUse ? { with: inUse } : {}) }
 }
 
 /** Who will answer, before the host says (it decides; this is only the label): the orchestrator of the swarm. */

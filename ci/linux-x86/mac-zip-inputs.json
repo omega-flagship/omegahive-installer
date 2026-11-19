@@ -1,26 +1,26 @@
 {
-  "source_commit": "d5485da7fd093bbd541881a48dea452f06116d08",
-  "mac_zip_sha256": "6e63834bbce0271e727d8c5590c28ca21d74da777c9abd62cdca6115db597e2e",
+  "source_commit": "ea609716da2b430db599fa5bd4cfa929fc27776c",
+  "mac_zip_sha256": "da562e2b00f40d1399836ebf63cd955af75379ee19d695d4c3b3429483da073d",
   "ui": {
-    "mac_zip_prefix": "Omega Hive v0.38/omegahive/hive/ui/dist/",
-    "archive_sha256": "2cbffaf8e22b3357c86a71ba605a3d3e702ade983a4492989f49e281fafcbc1f",
-    "file_count": 304
+    "mac_zip_prefix": "Omega Hive v0.39/omegahive/hive/ui/dist/",
+    "archive_sha256": "cfab22e078bcab9c975c5cbec2625dd1425b3f55b081aa0f6579a3e710e7fdc1",
+    "file_count": 305
   },
   "omega_core": {
-    "mac_zip_member": "Omega Hive v0.38/omegahive/install/macos/omega-core-a6bd778.bundle",
+    "mac_zip_member": "Omega Hive v0.39/omegahive/install/macos/omega-core-a6bd778.bundle",
     "bytes": 6856334,
     "sha256": "2ae3b665976eeaa7193b9183b5417219a7488410791373ceeca7d30873379122",
     "revision": "a6bd77859fa326b43bf924e6b65d327d17204376"
   },
   "studio": {
-    "mac_zip_member": "Omega Hive v0.38/omegahive/install/macos/omegadesign-0.4.22.zip",
+    "mac_zip_member": "Omega Hive v0.39/omegahive/install/macos/omegadesign-0.4.22.zip",
     "bytes": 424325,
     "sha256": "e40a65eeb866c74048477de16418318152d8af22e38f526594129ee013417712",
     "digest": "sha256:64abf47808a469d37154be509266977b1a3887f0d39f0b974d7d5c3bce7f6f6e",
     "ui_bundle_lock_sha256": "71402503b1c0d07885cfc39af26a64c74c80920d1ff2c694311f034f0f911089"
   },
   "code_service": {
-    "mac_zip_member": "Omega Hive v0.38/omegahive/install/macos/omegacode-309df.tgz",
+    "mac_zip_member": "Omega Hive v0.39/omegahive/install/macos/omegacode-309df.tgz",
     "bytes": 212230,
     "sha256": "64cbe4a1087a0fa5332b4a0aefec13b23f431cbe806f9dfe595466f51d868a08"
   }

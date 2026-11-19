@@ -6,22 +6,27 @@
 # month cap; the guard surviving a restart; a call bigger than the burst; a mind looping on calls bigger than the burst
 # that settle by themselves held to the month's pace; a person's own live work held by its limits alone, never paced
 # or charged (whose own work a mind is doing, a tester's $1 month running Make through the chat route, and a Code
-# request's helper and second opinion on a $2 month, the real engine driving it); and the month-apart clock other
-# admission tests give Reservations so the guard is full at each of their calls.
+# request's helper and second opinion on a $2 month, the real engine driving it, and a mind answering its person's
+# chat or room message until it answers or an Ask turn's time passes); a raised or lowered limit keeping the money
+# ahead, so a raised cap frees its burst at once; and the month-apart clock other admission tests give Reservations so
+# the guard is full at each of their calls.
 """The spend-rate guard (cost_reservations.guard_charges, its refund trigger, Hive.spend_rate_refusal, Hive.present_for)."""
+import datetime
 import math
 import random
 
 import pytest
 
+from hive.core.ask import TIMEOUT as ASK_TIMEOUT
 from hive.core.cost_reservations import BudgetExhausted, GUARD_BURST_SECONDS, GUARD_MONTH_SECONDS, Reservations, SpendRateLimited
 from hive.core.create_plan_engine import goal_creator
-from hive.core.db import Database, now
+from hive.core.db import Database, now, stamp_of
 from hive.tests.test_code_controller_engine import ORIGIN, add_reviewer, fake, helper_finishes, reviewer_finishes, run, x  # noqa: F401  (fixture)
 from hive.tests.test_core_api import agent_headers, client, make_swarm_and_agents  # noqa: F401  (fixture)
 from hive.tests.test_cost_reservations import MODEL as PAID, _fake_chat, _gateway
 from hive.tests.test_mind_control import w  # noqa: F401  (fixture)
 from hive.tests.test_proposal_tests import SUGGESTION
+from hive.tests.test_visibility import person
 
 LABEL, LIMIT = "person:u_0a0b0c0d:month", 50.0
 # every monthly figure the guard paces, and the figures it leaves to their limit alone (cost_reservations.guarded)
@@ -223,6 +228,7 @@ def test_a_call_the_guard_refuses_holds_nothing_and_says_when_to_retry(client):
     assert r.status_code == 429, r.text
     error = r.json()["error"]
     assert error["code"] == "spend_rate" and (error["scope"], error["period"]) == ("hive", "month")
+    assert error["say"] == error["message"] and "hive" not in error["say"]  # the mind's wait says the hive's own words
     assert error["retry_after"] >= 1 and r.headers["Retry-After"] == str(error["retry_after"]) and error["until"].endswith("Z")
     assert h.db.one("SELECT COUNT(*) AS n FROM cost_reservations")["n"] == before          # nothing held
     assert h.slowed[a["id"]] == error["until"]                                            # announced once, budget.slowed
@@ -405,3 +411,87 @@ def test_a_code_requests_helper_and_second_opinion_are_its_persons_own_work_unti
     assert out.status_code == 200 and out.json()["status"] == "applied"   # delivered: the helper stopped, its allocation back
     assert h.present_for(h.agent(child)) is None
     assert h.db.one("SELECT tat FROM limit_rates WHERE label = 'hive:month'")["tat"] == charged   # nothing charged
+
+
+def test_a_mind_answering_its_persons_chat_or_room_message_is_their_live_work_until_it_answers(client):
+    """A tester's v0.38 hive: her minds answering her in their chat and in a room were paced like a mind alone, so on her
+    month their calls waited on the guard ("Spending faster than this month allows") at about $0.05 each. A person's
+    message the mind hasn't answered yet holds it for them, in its chat or in a room that @mentioned it, until it answers
+    there or an Ask turn's TIMEOUT has passed since they sent it; another mind's message never holds it."""
+    h = client.app.state.hive
+    ana = person(client, "u_ana")
+    swarm, (a, b) = make_swarm_and_agents(client, n=2, model=PAID)
+    for mind in (a, b):
+        h.db.update("agents", mind["id"], {"owner": "user:u_ana"})          # Ana's own minds, Dot0 and Dot1
+    assert client.post("/api/budgets", json={"scope": "hive", "period": "month", "limit_usd": 1.0}).status_code == 200
+    _fake_chat(_gateway(client), delay=0)
+    body = {"messages": [{"role": "user", "content": "alphabetize the list"}], "max_tokens": 800}   # about $0.06 a call
+    post = lambda mind: client.post("/llm/v1/chat/completions", headers=agent_headers(mind), json=body).status_code
+    assert [post(a), post(a)] == [200, 429]                                 # on its own: one call, then the pace
+    charged = h.db.one("SELECT tat FROM limit_rates WHERE label = 'hive:month'")["tat"]
+    mind = lambda m: h.agent(m["id"])
+
+    said = client.post(f"/api/agents/{a['id']}/messages", headers=ana, json={"text": "what's on my list?"})
+    assert said.status_code == 200, said.text
+    chat = said.json()["conversation_id"]
+    assert h.present_for(mind(a)) == "user:u_ana" and h.present_for(mind(b)) is None
+    assert [post(a), post(a), post(b)] == [200, 200, 429]                   # answering Ana, past the guard's pace
+    h.record_agent_message(a["id"], {"text": "three things", "conversation_id": chat})
+    assert h.present_for(mind(a)) is None and post(a) == 429                # answered: on its own again
+
+    room = client.post("/api/rooms", json={"kind": "group", "name": "Lists", "members": ["user:u_ana", f"agent:{a['id']}",
+                                                                                    f"agent:{b['id']}"]}).json()
+    asked = client.post(f"/api/rooms/{room['id']}/messages", headers=ana, json={"text": "@Dot1 please alphabetize the list"})
+    assert asked.status_code == 200 and asked.json()["delivered_to"] == [f"agent:{b['id']}"], asked.text
+    assert h.present_for(mind(b)) == "user:u_ana" and h.present_for(mind(a)) is None   # only the mind she @mentioned
+    assert [post(b), post(a)] == [200, 429]
+    h.record_agent_message(b["id"], {"text": "done", "conversation_id": room.get("alias") or room["id"]})
+    assert h.present_for(mind(b)) is None and post(b) == 429
+
+    h.enqueue_message(b["id"], "and the next list?", f"c_{b['id']}", f"agent:{a['id']}")   # another mind asking: on its own
+    assert h.present_for(mind(b)) is None
+    late = client.post(f"/api/agents/{b['id']}/messages", headers=ana, json={"text": "still there?"}).json()
+    assert h.present_for(mind(b)) == "user:u_ana"
+    old = stamp_of(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=ASK_TIMEOUT + 1))
+    h.db.execute("UPDATE messages SET created_at = ? WHERE id = ?", (old, late["id"]))
+    assert h.present_for(mind(b)) is None and post(b) == 429                # sent longer ago than an Ask turn waits
+    assert h.db.one("SELECT tat FROM limit_rates WHERE label = 'hive:month'")["tat"] == charged   # nothing charged
+
+
+def test_a_raised_limit_frees_its_larger_burst_at_once_and_a_lowered_one_slows_at_once(tmp_path):
+    """Raising a limit used to shorten each wait in proportion but free no burst: the time ahead stayed as the old pace
+    had counted it, up to 3 days. The money ahead is what is kept, so a raised cap admits a call at once and a lowered
+    one waits for its own pace, and a call open across the change gives back its share at the new pace."""
+    clock = Clock()
+    res = guard(tmp_path, clock)
+    cap = {"usd": 50.0}
+    rows = lambda: [(LABEL, cap["usd"], 0.0)]
+    for i in range(4):                                                     # $4 settled at its worst case, $1 still open
+        res.reserve(f"s{i}", {"k": i}, 1.0, rows, dispatched=True)
+        res.settle(f"s{i}", 1.0, lambda: None)
+    res.reserve("open", {"k": "open"}, 1.0, rows, dispatched=True)
+    with pytest.raises(SpendRateLimited):                                  # the $5 burst of a $50 month is spent
+        res.reserve("late", {"k": "late"}, 1.0, rows, dispatched=True)
+    cap["usd"] = 500.0                                                     # raised tenfold: $5 ahead is a tenth of the burst
+    res.reserve("raised", {"k": "raised"}, 1.0, rows, dispatched=True)
+    assert tat(res) == pytest.approx(clock.t + 6.0 * GUARD_MONTH_SECONDS / 500.0)       # $6 ahead at the new pace
+    assert res.release_unbilled("open", 402)
+    assert tat(res) == pytest.approx(clock.t + 5.0 * GUARD_MONTH_SECONDS / 500.0)       # the open dollar comes back whole
+    cap["usd"] = 10.0                                                      # lowered: $5 ahead is past a $1 burst
+    with pytest.raises(SpendRateLimited) as slowed:
+        res.reserve("lowered", {"k": "lowered"}, 0.5, rows, dispatched=True)
+    assert slowed.value.retry_after == math.ceil((5.0 + 0.5 - 1.0) * GUARD_MONTH_SECONDS / 10.0)
+
+
+
+def test_a_spending_limit_s_refusal_tells_the_mind_why_without_naming_the_limit(client):
+    """A mind's wait shows the refusal's say to anyone who reads the mind, so a spending limit's refusal names no limit
+    there (the limit's scope can name a person or a key); its message and fields keep the limit for whoever may see it."""
+    swarm, (a,) = make_swarm_and_agents(client, n=1, model=PAID)
+    assert client.post("/api/budgets", json={"scope": "hive", "period": "month", "limit_usd": 0.05}).status_code == 200
+    _fake_chat(_gateway(client), delay=0)
+    body = {"messages": [{"role": "user", "content": "hi"}], "max_tokens": 4096}   # about $0.31, past the $0.05 month
+    r = client.post("/llm/v1/chat/completions", headers=agent_headers(a), json=body)
+    assert r.status_code == 402, r.text
+    error = r.json()["error"]
+    assert error["say"] == "A spending limit has no room for this call." and error["scope"] == "hive"

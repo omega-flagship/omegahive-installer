@@ -1,4 +1,5 @@
-"""Hive provider extensions. HTTP, retries and tool parsing stay in Singnet."""
+"""Purpose: Hive's extensions to Singnet's model providers: text-only fallback, OpenRouter routing, reply checks, and
+the hive's own refusal of a call kept for the mind's wait. HTTP, retries and tool parsing stay in Singnet."""
 import logging
 import os
 import re
@@ -45,6 +46,38 @@ def tools_unsupported(error):
     return bool(re.search(r'\b400\b', text)) and bool(_TOOLS_UNSUPPORTED.search(text))
 
 
+# The hive's own refusal of the latest model call, as (say, retry_after), or None: its gateway answers a call it refused
+# for spending or pace with `say`, its sentence for anyone who reads the mind, which names no key, account or person
+# (Hive.note_refusal, spend_rate_refusal), and with retry_after when waiting helps. Singnet keeps only the error's text
+# (AIProvider.chat), so the client's create notes it here (_ensure_client) and hive_services.chat takes it. A provider's
+# own refusal has no say: the gateway passes it on in a fixed sentence (gateway.upstream_refusal) and it stays out.
+_REFUSAL = None
+
+
+def note_refusal(error):
+    """Keep the hive's own refusal an SDK error carries (its body is the gateway's error object), else nothing."""
+    global _REFUSAL
+    body = getattr(error, 'body', None)
+    say = body.get('say') if isinstance(body, dict) else None
+    if not isinstance(say, str) or not say.strip():
+        return
+    retry = body.get('retry_after')
+    if not isinstance(retry, (int, float)) or isinstance(retry, bool):
+        headers = getattr(getattr(error, 'response', None), 'headers', None)
+        try:
+            retry = float(headers.get('retry-after')) if hasattr(headers, 'get') else None
+        except (TypeError, ValueError):
+            retry = None
+    _REFUSAL = (re.sub(r'["\\()]', '', say.strip())[:300], retry)
+
+
+def take_refusal():
+    """The hive's own refusal noted since the last take, or None; taking it clears it."""
+    global _REFUSAL
+    refusal, _REFUSAL = _REFUSAL, None
+    return refusal
+
+
 class HiveProviderFeatures:
     # Set once a model refused tools (tools_unsupported): later requests are plain text, as before the native core.
     # The reply text then goes through the same raw-batch check and hive-run-response as any text reply.
@@ -61,6 +94,23 @@ class HiveProviderFeatures:
     # only if that too is all reasoning, 24000 at low. The Ask conductor gives a cut-off answer twice the room the same way.
     _hive_room = 1
     _hive_effort_drop = 0
+
+    def _ensure_client(self):
+        """Singnet's client, its chat create noting the hive's own refusal on the way out (note_refusal); once."""
+        super()._ensure_client()
+        completions = getattr(getattr(self._client, 'chat', None), 'completions', None)
+        if completions is None or getattr(completions, '_hive_notes_refusals', False):
+            return
+        create = completions.create
+
+        def create_noting(*args, **kwargs):
+            try:
+                return create(*args, **kwargs)
+            except Exception as error:
+                note_refusal(error)
+                raise
+        completions.create = create_noting
+        completions._hive_notes_refusals = True
 
     def chat(self, request):
         result = super().chat(request)

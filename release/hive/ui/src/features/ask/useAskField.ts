@@ -329,6 +329,10 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
     const hits = world.minds.filter((m) => t.includes(` ${foldWords(m.name)} `) || t.includes(` ${foldWords(m.name)}'s `))
     return hits.length === 1 ? hits[0].id : undefined
   }, [value, world, addressed, privateAddressWords, privateHash])
+  // `to` came from an @Name address, not a mention: the person chose that mind, so it speaks (context chosen)
+  const toChosen = !!to && !!addressed && addressed.id === to && value.startsWith(addressed.prefix) && addressed.epoch === currentEpoch()
+  // a picked swarm speaks through its coordinator (answererChoice.apply): the one the hive lists for it
+  const coordinatorOf = useCallback((id: string) => swarms[id]?.coordinator_id ?? null, [swarms])
   const answerer = useMemo(
     () => expectedAnswerer(swarms, agents, { to, swarm: scope.swarm, defaultSwarm: settings?.swarm_id ?? null }),
     [swarms, agents, to, scope.swarm, settings],
@@ -340,14 +344,14 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
   // the mind whose chat or card is in use (features/ask/mindInUse): opening or using another mind's chat re-plans
   const inUseId = useSyncExternalStore(mindInUse.subscribe, mindInUse.get, mindInUse.get)
   const plan = useMemo(() => {
-    const ctx = answererChoice.apply(routingContext(route, experience, to))
+    const ctx = answererChoice.apply(routingContext(route, experience, to, toChosen), coordinatorOf)
     const appId = 'private' in ctx ? undefined : ctx.program
     const pageApp = appId ? programs?.find((p) => p.id === appId) ?? { id: appId } : null
-    return planAsk(ctx, { explicitChoice: answererChoice.matches(ctx), settings, personal, swarmOf: (id) => swarms[id], through: { minds: Object.values(agents), app: pageApp, prefer: throughMindOf }, thread, carry, threadOpen })
-  }, [route, experience, to, programs, settings, personal, swarms, agents, thread, carry, threadOpen, chosenAnswerer, inUseId])
+    return planAsk(ctx, { explicitChoice: answererChoice.matches(ctx, coordinatorOf), settings, personal, swarmOf: (id) => swarms[id], through: { minds: Object.values(agents), app: pageApp, prefer: throughMindOf }, thread, carry, threadOpen })
+  }, [route, experience, to, toChosen, coordinatorOf, programs, settings, personal, swarms, agents, thread, carry, threadOpen, chosenAnswerer, inUseId])
   // ONE recipient decision, by identity and name (planRecipient): everything below reads it
   const recipient = useMemo(() => planRecipient(plan, { agents, swarms, personal, settings }), [plan, agents, swarms, personal, settings])
-  const chip: AnswererChip | null = chosenAnswerer && answererChoice.matches(plan.context)
+  const chip: AnswererChip | null = chosenAnswerer && answererChoice.matches(plan.context, coordinatorOf)
     ? chosenAnswerer.kind === 'own'
       ? { kind: 'personal', name: chosenAnswerer.name, resting: personal?.id === chosenAnswerer.mind && personal.status === 'asleep', status: personal?.id === chosenAnswerer.mind ? personal.status : undefined }
       : { kind: 'thread', name: chosenAnswerer.kind === 'thread' ? shownMind(chosenAnswerer.name, chosenAnswerer.mind) : chosenAnswerer.name }
@@ -366,7 +370,7 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
     ? { name: wake.name, id: wake.mindId }
     : open && thread
       ? { name: openTurn?.speaksAs?.name ?? thread.mind.name, id: openTurn?.speaksAs?.mind_id ?? thread.mind.id }
-      : speaker({ conductor: conductorOn, personal, reaches: to ? answerer?.name ?? planned : planned, reachesId: answererId, inUse: plan.inUse })
+      : speaker({ conductor: conductorOn, personal, reaches: to ? answerer?.name ?? planned : planned, reachesId: answererId, inUse: plan.inUse, chosen: plan.chosen })
   const answererName = voice.name ?? null
   // the id of the mind answererName names (the voice, which can differ from answererId on a conductor turn): what the
   // skins name it by (words.shownMind), so an own mind called Omega is never "the orchestrator" on another's thread
@@ -533,7 +537,7 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
         done(you)
         // what opened under the field ("Did you mean…", "None of these: ask …") is answered: it closes
         setPanel(null)
-        const ctx = askContext(route, experience, where, to)
+        const ctx = askContext(route, experience, where, to, toChosen)
         const about = to ? world.minds.find((m) => m.id === to)?.name : undefined
         await askMind(act.text, ctx, { ...extra, about, where, via: spoken })
         return
@@ -547,7 +551,7 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
         const origin = askOrigin()
         const bind = bindEpoch()
         done(you)
-        const sent = askMind(guideText!, askContext(route, experience, where, to), { where, via: spoken })
+        const sent = askMind(guideText!, askContext(route, experience, where, to, toChosen), { where, via: spoken })
         const op = useAskStore.getState().open
         if (op) expectConducted(op, g, { you, where, origin })
         await sent
@@ -578,7 +582,7 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
         setBusy(false)
       }
     },
-    [done, route, experience, where, to, onAct, world, canAsk, addressCurrent, onDispatch, fieldCurrent],
+    [done, route, experience, where, to, toChosen, onAct, world, canAsk, addressCurrent, onDispatch, fieldCurrent],
   )
 
   /** A candidate the person chose (or the policy picked). Person-typed hive actions wait out the arming window. */

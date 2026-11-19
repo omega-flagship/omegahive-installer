@@ -703,7 +703,8 @@ class MediaRoute:
                 refused = self.hive.spend_rate_refusal(agent, exc)
                 raise MediaError(429, refused.code, refused.message, refused.details) from None
             if isinstance(exc, BudgetExhausted):   # recorded and announced like Budgets.check's refusal, naming its limit
-                self.hive.note_refusal(agent, "reservation_refused", str(exc), exhausted_limit(exc))
+                say = self.hive.note_refusal(agent, "reservation_refused", str(exc), exhausted_limit(exc))
+                raise MediaError(402, "reservation_refused", str(exc), {"say": say}) from None
             raise MediaError(402, "reservation_refused", str(exc)) from None
         if not row["new"]:
             return self.replay(reservation)

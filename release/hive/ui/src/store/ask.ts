@@ -1542,7 +1542,9 @@ export const useAskStore = create<AskStore>()((set, get) => {
         return
       }
       // exactly one swarm can answer and nothing else decides: it is named, so the first send works (answerer.ts)
-      context = answererChoice.apply(context)
+      // a picked swarm speaks through its coordinator, the one the hive lists for it (answererChoice.apply)
+      const coordinatorOf = (id: string) => useHive.getState().swarms[id]?.coordinator_id ?? null
+      context = answererChoice.apply(context, coordinatorOf)
       const pageSwarm = 'private' in context ? undefined : context.swarm_id
       // a swarm the Ask cannot use is never targeted because the person stands near it (ask-fix r1)
       const hive = useHive.getState()
@@ -1556,7 +1558,7 @@ export const useAskStore = create<AskStore>()((set, get) => {
       const st = get()
       const around: Around = forced
         ? { ...forced, context: withPreselected(forced.context, answererChip({ settings: st.settings, personal: st.personal, pageSwarm, to: 'private' in forced.context ? undefined : forced.context.mind }), st.settings) }
-        : planAsk(context, { explicitChoice: answererChoice.matches(context), settings: st.settings, personal: st.personal, swarmOf: (id) => hive.swarms[id], words, through: { minds: Object.values(hive.agents), app: pageApp, prefer: (id) => throughMinds.get(id) }, thread: st.thread, carry: st.carry, threadOpen: st.threadOpen })
+        : planAsk(context, { explicitChoice: answererChoice.matches(context, coordinatorOf), settings: st.settings, personal: st.personal, swarmOf: (id) => hive.swarms[id], words, through: { minds: Object.values(hive.agents), app: pageApp, prefer: (id) => throughMinds.get(id) }, thread: st.thread, carry: st.carry, threadOpen: st.threadOpen })
       context = around.context
       const attached = browser?.current() ? browser : null
       const personal = st.personal, eligibility = st.browserMind
