@@ -340,20 +340,47 @@ class InstallerTests(unittest.TestCase):
             root = Path(name); file = root / 'payload'; file.write_bytes(b'changed')
             with self.assertRaises(install.Refused): install.pin_file(file, row('payload', b'original'))
 
-    def apt_commands(self, restricted, uid=1002):
-        """The apt step's privileged commands and the profile file it wrote, on a host restricted or not."""
+    def apt_commands(self, restricted, uid=1002, update_failures=()):
+        """The apt step's privileged commands and the profile file it wrote, on a host restricted or not, each of
+        update_failures being the status the next apt-get update fails with; the pauses between attempts are listed."""
         with tempfile.TemporaryDirectory() as name:
             runtime = Path(name).resolve() / 'releases/test-1'; runtime.mkdir(parents=True)
-            commands = []
+            commands, failures, pauses = [], list(update_failures), []
             instance = install.Installer(Path('/unused'), {}, Path(name).resolve() / 'home')
-            instance.sudo = lambda argv, **kwargs: commands.append((argv, kwargs))
+            def sudo(argv, **kwargs):
+                commands.append((argv, kwargs))
+                if argv[-1] == 'update' and failures:
+                    raise install.CommandFailed('Setup command failed (status %d).' % failures[0], failures.pop(0))
+            instance.sudo = sudo
             with patch.object(install, 'linger_user', return_value='fresh-user'), \
                  patch.object(install, 'userns_restricted', return_value=restricted), \
                  patch.object(install, 'apparmor_enabled', return_value=True), \
+                 patch.object(install, 'pause', side_effect=pauses.append), \
                  patch.object(install.os, 'getuid', return_value=uid):
                 self.assertEqual(instance.apt(runtime), restricted)
             source = runtime / 'omegahive.apparmor'
+            self.assertEqual(pauses, [install.APT_UPDATE_PAUSE] * (len(update_failures) - len(failures)))
             return commands, source.read_text(), source.stat().st_mode & 0o777, source, instance.root
+
+    def test_apt_update_runs_again_only_after_apts_own_error_status(self):
+        # A server publishing updates can serve mismatched package lists (apt-get update exits 100): the update runs
+        # again a minute later and setup goes on. sudo's own failure (1) or a third 100 stops setup as before.
+        commands = self.apt_commands(False, update_failures=(100, 100))[0]
+        self.assertEqual([argv[-1] for argv, _kwargs in commands[:4]], ['update', 'update', 'update', install.APT[-1]])
+        for statuses in ((1,), (100,) * install.APT_UPDATE_ATTEMPTS):
+            with self.subTest(statuses=statuses), self.assertRaises(install.CommandFailed) as failed:
+                self.apt_commands(False, update_failures=statuses)
+            self.assertEqual(failed.exception.status, statuses[-1])
+
+    def test_a_failed_command_carries_its_own_exit_status(self):
+        instance = install.Installer(Path('/unused'), {}, Path.home())
+        with tempfile.TemporaryFile() as log:
+            instance.log = log
+            with self.assertRaises(install.CommandFailed) as failed:
+                instance.run([install.sys.executable, '-I', '-c', 'raise SystemExit(100)'])
+        self.assertEqual(failed.exception.status, 100)
+        self.assertIsInstance(failed.exception, install.Refused)
+        self.assertIn('(status 100)', str(failed.exception))
 
     def test_apt_uses_five_fixed_privileged_commands_and_loads_the_code_profile_on_every_release(self):
         for restricted in (False, True):

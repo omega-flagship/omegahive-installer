@@ -260,7 +260,11 @@ With a foreground terminal, sudo reads directly from that terminal using `-S`;
 NOPASSWD rules do not prompt. Without a controlling terminal, the same fixed
 command runs once with `sudo -n` and stdin closed. No `sudo -v` probe is used and
 no failed command is retried: sudo and its target can share exit codes, and the
-target may already have made changes. A password-requiring install needs a
+target may already have made changes. The one exception is `apt-get update` failing
+with apt's own status 100, which sudo never exits with and whose only effect is the
+package lists: it runs at most three times, a minute apart, since a server that is
+publishing updates can serve package lists that disagree with their index.
+A password-requiring install needs a
 foreground terminal (`ssh -t`); cloud-init and mixed sudo-group/NOPASSWD rules
 remain usable when the fixed commands are authorized without a password.
 
