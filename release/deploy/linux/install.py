@@ -50,6 +50,13 @@ APT_LOCK_WAIT = 1800
 # A download stops once it moves less than a byte a second for this long, never because it is slow overall: the 68 MB
 # Python archive alone needs over 5 minutes on a link under 1.8 Mbit/s, which a fixed 300 s limit made a failed setup.
 DOWNLOAD_STALL_SECONDS = 300
+# apt-get exits 100 on an error of its own (apt-get(8)); sudo's own failures exit 1, so the two never share it.
+APT_ERROR_STATUS = 100
+# apt-get update runs again when it fails with that status, as when a server that is publishing updates serves a package
+# list that disagrees with the index it just served ("File has unexpected size ... Mirror sync in progress?", twice on
+# Ubuntu 26.04 in CI on 19 Nov, on -security and then on -updates): at most this many attempts, this many seconds apart.
+APT_UPDATE_ATTEMPTS = 3
+APT_UPDATE_PAUSE = 60
 # Ubuntu 23.10 and later (on by default from 24.04) let a program create a user namespace only when its AppArmor
 # profile grants `userns`; 22.04's kernels have no such file. rootlesskit reads the same file (pkg/parent/warn.go).
 USERNS_RESTRICTION = P("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
@@ -79,9 +86,26 @@ class Refused(Exception):
     pass
 
 
+class CommandFailed(Refused):
+    """A setup command that ran and ended with a failure status of its own: its exit code, or minus the signal."""
+
+    def __init__(self, message, status):
+        super().__init__(message)
+        self.status = status
+
+
 def need(ok, message):
     if not ok:
         raise Refused(message)
+
+
+def pause(seconds):
+    """Wait this long, or stop at once when setup is cancelled."""
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        need(not STOP, "Installation was cancelled.")
+        time.sleep(min(0.1, max(0.0, end - time.monotonic())))
+    need(not STOP, "Installation was cancelled.")
 
 
 def strict_json(raw):
@@ -1188,6 +1212,8 @@ class Installer:
                     need(self.sole_zombie(process, rows), "A setup step left running descendants; cleanup is required.")
                     code = process.wait(timeout=1)
                     drain_stderr()
+                    if code != 0 and not STOP:
+                        raise CommandFailed(command_failure or "A setup step could not finish or was cancelled.", code)
                     need(code == 0 and not STOP, command_failure or "A setup step could not finish or was cancelled.")
                     break
                 time.sleep(0.1)
@@ -1271,7 +1297,18 @@ class Installer:
         # The package steps have no deadline of their own, so a slow mirror makes setup slower, not failed. apt bounds
         # what can stall: the package lock by DPkg::Lock::Timeout, a server that stops answering by its own timeout and
         # retries (about 4 minutes per file), and dpkg asks no question (package_install).
-        self.sudo(apt_get("update"), timeout=None)
+        for attempt in range(1, APT_UPDATE_ATTEMPTS + 1):
+            try:
+                self.sudo(apt_get("update"), timeout=None)
+                break
+            except CommandFailed as failure:
+                # Running it again repeats no ambiguous or partly made change: its only effect is the package lists,
+                # and 100 is apt's own status, never sudo's.
+                if failure.status != APT_ERROR_STATUS or attempt == APT_UPDATE_ATTEMPTS:
+                    raise
+                print("Ubuntu's package servers sent package lists that don't match yet, which happens while they "
+                      "publish updates. Trying again in a minute; you may be asked for your password again.", flush=True)
+                pause(APT_UPDATE_PAUSE)
         # Package hooks must not ask hidden questions through logged stdout.
         # Report pending restarts; leave host service restarts to its operator.
         self.sudo(package_install(), timeout=None, package_environment=True)
