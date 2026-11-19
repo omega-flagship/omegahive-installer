@@ -747,7 +747,12 @@ def code_profile(uid, runtime, code, repo):
     unconfined here. This profile confines it the way setup-code.sh's seatbelt profile does on a Mac, with no user
     namespace: the system read-only, the account's home closed but for the service's own folders, writable only its
     state, temp, working folder, home, logs and the repository it builds in. It runs git and its own interpreter in
-    this profile, and lets the hive's Code guard read its /proc facts and systemd signal it."""
+    this profile, and lets the hive's Code guard read its /proc facts and systemd signal it.
+
+    The service may also signal itself under either label it runs as. On Ubuntu 26.04 (systemd 259) a user unit's
+    AppArmorProfile= stacks the profile on unconfined, so the process reads "<name>//&unconfined", and a peer=<name> rule
+    alone refused the SIGTERM uvicorn raises at itself after a graceful stop: Python exited 1 and every stop left the
+    unit failed. 22.04's and 24.04's parsers take the stacked peer too."""
     name = code_profile_name(uid)
     runtime, code, repo = plain_path_text(runtime), plain_path_text(code), plain_path_text(repo)
     lines = [
@@ -782,6 +787,7 @@ def code_profile(uid, runtime, code, repo):
         "  network inet6 stream,",
         "  unix,",
         "  signal (send, receive) peer=" + name + ",",
+        "  signal (send, receive) peer=" + name + "//&unconfined,",
         "  signal (receive) peer=unconfined,",
         "  ptrace (readby) peer=unconfined,",
         "",
