@@ -289,10 +289,13 @@ def main():
     _, interpreter = executable(str(base / 'bin' / 'python{}.{}'.format(*sys.version_info[:2])), base)
     # A proposal's project check replaces itself with the node beside that interpreter, the release's pinned Node
     # (install.py), so the sandbox reads Node's own folder too, as the Mac's reads its toolchain holding both.
+    # Make's acceptance check also plays the app on Node (tools/probe.mjs, run on the "node" runtime), as the Mac's and
+    # WSL's installers give it their toolchain's node (install/macos/omegahive.sh), so the same Node is that runtime too.
     node_root = Path(config['runtime_root']) / 'runtime/node'
     _, node = executable(str(base / 'bin/node'), node_root, allow_link=True)
     require(node == node_root / 'bin/node', 'release_node_required')
-    env['HIVE_SANDBOX_RUNTIMES'] = json.dumps({'python': {'exe': str(interpreter), 'reads': [str(base), str(node_root)]}},
+    env['HIVE_SANDBOX_RUNTIMES'] = json.dumps({'python': {'exe': str(interpreter), 'reads': [str(base), str(node_root)]},
+                                               'node': {'exe': str(node), 'reads': [str(node_root)]}},
                                               sort_keys=True, separators=(',', ':'))
     env['HIVE_PLUGIN_DIRS'] = os.pathsep.join(list(config['plugin_dirs']) + [str(Path(config['data_dir']) / 'create' / 'apps')])
     # Create's Code service: the release the hive's Code guard accepts and the config it reads the port from. The

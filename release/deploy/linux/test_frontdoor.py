@@ -166,7 +166,8 @@ class BoundaryTests(unittest.TestCase):
                 # without it), the check on the sandbox list, Create's apps folder last on the plugin path, and the
                 # Code service's repository as the scaffold
                 self.assertEqual(json.loads(env['HIVE_SANDBOX_RUNTIMES']),
-                                 {'python': {'exe': base_python, 'reads': [base, '/selected/runtime/node']}})
+                                 {'python': {'exe': base_python, 'reads': [base, '/selected/runtime/node']},
+                                  'node': {'exe': '/selected/runtime/node/bin/node', 'reads': ['/selected/runtime/node']}})
                 self.assertEqual(checked.call_args_list, [mock.call(base_python, Path(base)),
                                  mock.call(base + '/bin/node', Path('/selected/runtime/node'), allow_link=True)])
                 # Create's Code tab tests a proposal on Linux's own sandbox: the hive's pinned project test runs the
