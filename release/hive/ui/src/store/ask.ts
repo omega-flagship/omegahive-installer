@@ -68,6 +68,13 @@ export type AskOpts = {
   /** Set only by Continue; never inherited by typed or retried words. */
   continues?: string
   /**
+   * The words travel to another swarm on this turn's intent (Create's Code bench's change, carried to Code): a new turn
+   * says carry to the host, which closes it at once with nothing answering it, and the thread says this note in place
+   * of the stop words. They never steer a turn already open, whose answerer a steer reaches: while one is open they are
+   * refused as unsupported, and nothing is sent.
+   */
+  carried?: string
+  /**
    * Told once, with exactly what the hive admitted these words under (or why it did not). Never stored with held or
    * retried words. Additive: callers that do not pass it are unchanged. Read it through `admit`.
    */
@@ -451,12 +458,6 @@ interface AskActions {
   /** Read every turn of the thread back from the host and rebuild it (a reconnect). No effect is applied twice. */
   rebuild(): Promise<void>
   stop(): Promise<void>
-  /**
-   * A turn the page opened only so an intent could ride on it (Code's Propose hands the words to a Code swarm): stop it
-   * now, so the person's own mind never answers or re-sends the same words beside the card, and say `note` in place of
-   * the stop words. Only while `op` is still the open turn; a steer of another turn is never stopped.
-   */
-  closeCarrier(op: string, note: string): Promise<void>
   newThread(): Promise<void>
   deleteThread(): Promise<boolean>
   runUndo(rowId: string): Promise<void>
@@ -591,7 +592,7 @@ export function turnRows(t: TurnMeta, mindName?: string, thread?: { spent_usd: n
   const who = t.speaksAs?.name ?? mindName
   const whoId = t.speaksAs?.mind_id ?? t.answerer?.id ?? thread?.mind?.id
   const rows: AskRow[] = [{ id: `${t.op}#you`, op: t.op, kind: 'you', text: t.you, where: t.where }]
-  // a carried turn is never answered by the person's mind (closeCarrier), so it isn't said to answer it
+  // a carried turn is never answered by the person's mind (the host closes it at admission), so it isn't said to answer it
   if (t.actingAs && !t.carried) rows.push({ id: `${t.op}#as`, op: t.op, kind: 'note', text: `Answering for you: ${yourMind(t.actingAs.name)}.` })
   // the rerouted note, also beside "Answering for you" when it carries the admin's fix (ask-fix r2)
   if (t.rerouted && (!t.actingAs || t.fixSwarm)) rows.push({ id: `${t.op}#around`, op: t.op, kind: 'note', text: t.rerouted, ...(t.reroutedWhy ? { detail: t.reroutedWhy } : {}), ...(t.fixSwarm ? { swarm: t.fixSwarm, fixCoordinator: true } : {}) })
@@ -1534,6 +1535,10 @@ export const useAskStore = create<AskStore>()((set, get) => {
           opts.admission?.({ admitted: false, reason: 'held' })
           return
         }
+        if (opts.carried !== undefined) {   // carried words are Code's: never a direction for the open turn's answerer
+          opts.admission?.({ admitted: false, reason: 'unsupported' })
+          return
+        }
         return get().steer(words, context, opts)
       }
       if (browser?.current() && browser.owner.lifecycle.operation) {
@@ -1563,8 +1568,10 @@ export const useAskStore = create<AskStore>()((set, get) => {
       const attached = browser?.current() ? browser : null
       const personal = st.personal, eligibility = st.browserMind
       const own = !!personal && planRecipient(around, { agents: hive.agents, swarms: hive.swarms, personal, settings: st.settings }).id === personal.id
-      const useBrowser = !!attached && attached.owner.lifecycle.phase === 'ready' && attached.owner.workerReady() && own && !!eligibility && eligibility.mindId === personal?.id && eligibility.gateway && eligibility.available && eligibility.preference
-      const answerOwner = attached && own ? (useBrowser ? 'iter' as const : 'fallback' as const) : undefined
+      // carried words are answered by nothing, the person's browser included
+      const carried = opts.carried !== undefined
+      const useBrowser = !carried && !!attached && attached.owner.lifecycle.phase === 'ready' && attached.owner.workerReady() && own && !!eligibility && eligibility.mindId === personal?.id && eligibility.gateway && eligibility.available && eligibility.preference
+      const answerOwner = attached && own && !carried ? (useBrowser ? 'iter' as const : 'fallback' as const) : undefined
       const op = opId()
       last = { text: words, context, opts: kept(opts), identityEpoch: currentEpoch() }
       lastOp = op
@@ -1576,15 +1583,15 @@ export const useAskStore = create<AskStore>()((set, get) => {
       const memorySince = askMemory.turnMark()
       // the person's own memory for this turn, recalled in this browser; never from a private app's page
       const privatePage = isPrivate(context)
-      const recalled = privatePage ? { notes: [], ids: [] } : askMemory.notesFor(words, own ? personal!.id : undefined)
+      const recalled = privatePage || carried ? { notes: [], ids: [] } : askMemory.notesFor(words, own ? personal!.id : undefined)
       // the conversation so far, whichever mind answers it now (Jon, 16 Nov: "without needing additional LLM calls to pass
-      // through convo"); never from a private app's page
-      const conversation = privatePage ? [] : askMemory.conversation()
+      // through convo"); never from a private app's page, and never on a carried turn, which no mind answers
+      const conversation = privatePage || carried ? [] : askMemory.conversation()
       // the original request: kept as sent, so a check can send exactly it again under the same id (Review B1, 45392df)
-      const body: AskBody = { operation_id: op, text: words.slice(0, 4000), context, via: opts.via ?? 'typed', ...(opts.continues ? { continues: opts.continues } : {}), ...(recalled.notes.length ? { memory_notes: recalled.notes } : {}), ...(conversation.length ? { conversation } : {}) }
+      const body: AskBody = { operation_id: op, text: words.slice(0, 4000), context, via: opts.via ?? 'typed', ...(opts.continues ? { continues: opts.continues } : {}), ...(recalled.notes.length ? { memory_notes: recalled.notes } : {}), ...(conversation.length ? { conversation } : {}), ...(carried ? { carry: true as const } : {}) }
       // This is the original body kept for unknown-admission readback/retry, never a second request or a new owner.
       if (useBrowser) body.answer_in = 'browser'
-      const pendingTurn: TurnMeta = { ...newTurn(op, words, opts.where, opts.about), memorySince, privatePage, ...(pageSwarm ? { swarm: pageSwarm } : {}), ...(around.note ? { rerouted: around.note } : {}), ...(around.why ? { reroutedWhy: around.why } : {}), ...(around.fixSwarm ? { fixSwarm: around.fixSwarm } : {}) }
+      const pendingTurn: TurnMeta = { ...newTurn(op, words, opts.where, opts.about), memorySince, privatePage, ...(pageSwarm ? { swarm: pageSwarm } : {}), ...(around.note ? { rerouted: around.note } : {}), ...(around.why ? { reroutedWhy: around.why } : {}), ...(around.fixSwarm ? { fixSwarm: around.fixSwarm } : {}), ...(carried ? { carried: opts.carried } : {}) }
       set((s) => ({ open: op, threadOpen: opts.quiet ? s.threadOpen : true, turns: { ...s.turns, [op]: pendingTurn }, log: [...s.log, { kind: 'turn' as const, op }] }))
       if (!snap.ok()) {
         // A synchronous observer invalidated this turn before any POST or receipt: these words were not sent.
@@ -2023,12 +2030,6 @@ export const useAskStore = create<AskStore>()((set, get) => {
         // One bounded read of this operation; never another Stop, admission or fallback.
         await get().recover(op)
       }
-    },
-
-    async closeCarrier(op, note) {
-      if (get().open !== op || !get().turns[op]) return
-      patchTurn(op, { carried: note })
-      await get().stop()
     },
 
     async newThread() {

@@ -300,6 +300,38 @@ def test_a_build_create_cannot_take_is_refused_and_its_code_never_reaches_the_pe
     assert answer == "Here's a tip calculator you can use:\n\nEnjoy!\n\n" + cmod.CODE_KEPT_OUT
 
 
+def test_words_the_code_bench_carries_to_code_never_become_a_build_of_their_own(client, monkeypatch):
+    # v0.39's Linux gate, 19 Nov: "Make this a tip calculator" typed in Create's Code tab went to Code, and on the Ask
+    # turn its words rode on, the conductor made the same words with make, so Make built a second app nobody asked for.
+    # The Code bench's turn says carry: the host admits it for the intent it carries and closes it before any model
+    # call, so nothing makes it and nothing reaches a mind. The Ask's own builds still go to make (the tests above).
+    from hive.tests.test_ask_conductor import Script, call, closed, frames, script, wait
+    w = _conducted(client, monkeypatch)
+    hive = w["hive"]
+    s = script(client, Script([call("make", kind="view", title="a tip calculator")], "Create is building it."))
+    words, ctx = "Make this a tip calculator: a bill, a tip and the total", {"swarm_id": w["swarm"]["id"]}
+    sent = hive.db.one("SELECT COUNT(*) AS n FROM messages")["n"]
+    r = ask(client, w["ann"], "op-carry-01", text=words, context=ctx, carry=True)
+    assert r.status_code == 202 and r.json()["state"] == "refused"
+    fs = frames(hive, "op-carry-01")
+    assert [f["phase"] for f in fs] == ["accepted", "done"] and fs[-1]["outcome"] == "cancelled"
+    assert s.bodies == [] and w["plans"].started == [] and not hive.ask.conductor.tasks
+    assert hive.db.one("SELECT COUNT(*) AS n FROM messages")["n"] == sent   # nothing reached a mind
+    # the page's own stop after it is answered as before, and the same request again is the same closed turn
+    assert client.post("/api/ask/op-carry-01/stop", headers=w["ann"]).json()["state"] == "refused"
+    assert ask(client, w["ann"], "op-carry-01", text=words, context=ctx, carry=True).json()["turn_id"] == r.json()["turn_id"]
+    # carry is a flag, and a carried turn takes no answerer's input
+    for extra in ({"carry": False}, {"carry": "yes"}, {"carry": True, "memory_notes": ["the person likes green"]},
+                  {"carry": True, "continues": "op-carry-01"}, {"carry": True, "conversation": []}):
+        bad = ask(client, w["ann"], "op-carry-bad", text=words, context=ctx, **extra)
+        assert bad.status_code == 400 and bad.json()["error"]["code"] == "invalid"
+    # the same words asked in the Ask itself are still a build, which make hands to Create
+    script(client, Script([call("make", kind="view", title="a tip calculator")], "Create is building it."))
+    assert ask(client, w["ann"], "op-carry-02", text=words, context=ctx).status_code == 202
+    wait(hive, "op-carry-02", closed)
+    assert w["plans"].started == [("user:u_ann", "a tip calculator")]
+
+
 def test_a_short_code_example_the_person_asks_to_see_reaches_them_whole(client, monkeypatch):
     # Jon on #340: a person who asks to see a short code example still gets one, since thinking in code is allowed.
     # Code is taken out only after a refused build; a turn that makes nothing answers with the example as written

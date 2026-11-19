@@ -137,6 +137,12 @@ def states_sql(states):
 
 
 BODY_KEYS = {"operation_id", "text", "context", "thread", "via", "continues"}
+# A turn the page opens only to carry words to another swarm on its intent says "carry": true (Create's Code bench: the
+# person's change goes to Code as a code.request riding on the turn, ask_intents.py). The host admits it for that intent
+# and closes it at once: no conductor, model or mind answers it, so its words never become a build of their own. On
+# v0.39's Linux gate (19 Nov) "Make this a tip calculator" typed in the Code tab reached Code and, on the turn it rode
+# on, the conductor, whose make started a second app in Create from the same words.
+CARRY_KEY = "carry"
 # ---- gateway r1b (PLATFORM_PERSONAL_MIND_GATEWAY_R1_PLAN §2.3, r1.1 §E/§H/§I): the browser_mind route -------------------
 # Off unless HIVE_MIND_GATEWAY=1; off, an Ask is exactly as before (answer_in is not a key it accepts). On, a turn is a
 # browser turn when the request says "answer_in": "browser" (the page sends it only once its broker has booted), the
@@ -655,8 +661,14 @@ class Ask:
         # memory_notes are accepted whatever the switches (Surface: the page may always send them) and validated for
         # shape; they reach a turn only while the conductor and HIVE_ASK_MEMORY are both on (Ask.memory_on), or on a
         # personal-mind turn with the conductor on (conductor.turn_notes, mind-voice r1)
-        if set(data) - BODY_KEYS - {NOTES_KEY, CONVERSATION_KEY} - ({CONDUCTOR_KEY} if self._conducting() else set()) \
+        if set(data) - BODY_KEYS - {NOTES_KEY, CONVERSATION_KEY, CARRY_KEY} - ({CONDUCTOR_KEY} if self._conducting() else set()) \
                 - ({ANSWER_IN_KEY} if gateway_enabled() else set()):
+            raise refusal(hive, "invalid")
+        # nothing answers a carried turn, so it takes no answerer, A/B pick or memory notes
+        # nothing answers a carried turn, so it takes nothing that only feeds an answer: memory notes, a conductor pick,
+        # an answer_in, #346's conversation or #394's continued request
+        if CARRY_KEY in data and (data[CARRY_KEY] is not True
+                                  or {NOTES_KEY, CONDUCTOR_KEY, ANSWER_IN_KEY, CONVERSATION_KEY, "continues"} & set(data)):
             raise refusal(hive, "invalid")
         if ANSWER_IN_KEY in data and (data[ANSWER_IN_KEY] != "browser" or CONDUCTOR_KEY in data):
             raise refusal(hive, "invalid")   # r1.1 §E: one value only, and never with an A/B conductor pick
@@ -778,10 +790,12 @@ class Ask:
         return (gateway_enabled() and bool(mind.get("personal_of")) and mind["personal_of"] == viewer.principal
                 and self.hive.personal.browser_mind_on(viewer.principal))
 
-    def _decide(self, viewer, data, body_digest, conducted=False, browser=False, *, write_free=False):
+    def _decide(self, viewer, data, body_digest, conducted=False, browser=False, *, write_free=False, carried=False):
         """Under the person's lock, no awaits: replay, quota, route, sleep, busy, payer and spend. Returns
         (existing turn view, None) for a replay, else (None, (swarm, mind, addressed, context, thread or None)).
-        browser: the request carries answer_in (gateway r1b); refused not_available (409) unless browser_turn."""
+        browser: the request carries answer_in (gateway r1b); refused not_available (409) unless browser_turn.
+        carried: a carried turn (CARRY_KEY), which nothing answers: the mind's state, its payer and the thread's spend
+        don't bear on it, and its thread's cap scope stays as it is."""
         hive = self.hive
         if not write_free:
             self.expire()   # ordinary host maintenance, never a P1 pre-admission side effect
@@ -796,20 +810,22 @@ class Ask:
         self._check_continues(viewer, data, mind)
         if browser and not self.browser_turn(viewer, mind):
             raise refusal(hive, "not_available", 409)
+        # a carried turn wakes and uses no mind, and spends nothing
+        host_side = conducted or browser or carried
         # a conductor turn never wakes or uses the mind; nor does a browser turn, and only for the asker's own personal
         # mind (browser_turn above, on the row): mind_asleep stays for every other mind, awake or asleep (r1.1 §E)
-        if not conducted and not browser and mind["status"] not in ("awake", "starting"):
+        if not host_side and mind["status"] not in ("awake", "starting"):
             raise refusal(hive, "mind_asleep", mind={"id": mind["id"], "name": mind["name"]})
-        if not conducted and not browser and mind.get("personal_of"):
+        if not host_side and mind.get("personal_of"):
             # a personal mind answers only through the conductor: the ordinary path would queue the person's words in the
             # hub outbox and the room, which a personal mind's turn never writes (its history is the browser's)
             raise refusal(hive, "not_available")
-        context = self._context(viewer, data.get("context"), swarm, addressed, conducted or browser)
+        context = self._context(viewer, data.get("context"), swarm, addressed, host_side)
         thread = self._active_thread(viewer.principal, mind["id"])
         # ask-limits r1: a conductor turn's thread is held by its own cap (sessions.py, scope 'thread'), and so is every
         # other Ask thread on the mind, so none of them holds the mind's total rule; a turn the mind answers itself moves
         # its own thread back under the mind's rule, the only measure the mind's calls have
-        if not write_free:
+        if not write_free and not carried:
             if conducted or browser:   # a browser turn's thread is held by its own cap, as a conductor turn's (plan §2.3)
                 hive.sessions.rescope(mind["id"], "thread")
             elif thread is not None and thread.get("cap_scope") == "thread":
@@ -820,11 +836,11 @@ class Ask:
             busy = hive.db.one(f"SELECT operation_id FROM ask_turns WHERE thread_id = ? AND state IN {states_sql(OPEN)}", (thread["id"],))
             if busy:
                 raise refusal(hive, "ask_busy", operation_id=busy["operation_id"])
-        if not conducted and self._payer_conflict(viewer.principal, mind["id"]):
+        if not conducted and not carried and self._payer_conflict(viewer.principal, mind["id"]):
             raise refusal(hive, "coordinator_busy")
         if self._studio_busy(mind["id"]):
             raise refusal(hive, "coordinator_busy")
-        if thread is not None and not write_free:
+        if thread is not None and not write_free and not carried:
             tv = hive.sessions.view(thread)
             # r1.1 (Kimi P2): an own-scope thread is measured as its reservation measures it, spend plus open holds
             held = hive.sessions.thread_held(thread) if thread.get("cap_scope") == "thread" else 0.0
@@ -838,12 +854,15 @@ class Ask:
             raise refusal(hive, "person_required")
         self._validate(data)
         browser = data.get(ANSWER_IN_KEY) == "browser"   # only ever present with HIVE_MIND_GATEWAY=1 (_validate)
-        conducted = self._conducting() and not browser   # once admitted, a browser turn is never re-routed
+        carried = data.get(CARRY_KEY) is True
+        # once admitted, a browser turn is never re-routed; a carried one is never answered at all
+        conducted = self._conducting() and not browser and not carried
         model = self.conductor.model_for(viewer, data.get(CONDUCTOR_KEY)) if conducted else None
         body_digest = app_binding["request_digest"] if app_binding is not None else digest(data)
         lock = self._locks.setdefault(viewer.principal, asyncio.Lock())
         async with lock:   # short: the decision only, never held across an await (Kimi ask-p1 2)
-            replay, decided = self._decide(viewer, data, body_digest, conducted, browser, write_free=app_binding is not None)
+            replay, decided = self._decide(viewer, data, body_digest, conducted, browser, write_free=app_binding is not None,
+                                           carried=carried)
         if replay is not None:
             if app_binding is not None:
                 with hive.db.transaction():
@@ -896,10 +915,13 @@ class Ask:
                     outbox, turn_id = None, existing["id"]
                 else:
                     outbox, turn_id = self._admit(viewer, data, body_digest, swarm, mind, context, model, browser,
-                                                   app_binding=app_binding)
+                                                   app_binding=app_binding, carried=carried)
                 if app_binding is not None:
                     hive.app_ask.before_admit(app_binding)
         if browser:   # the person's browser answers: nothing reaches the mind, the conductor or the room
+            return self.view(self._row(turn_id))
+        if carried:   # nothing answers it: closed now, before any model call; the page's intent rides on it closed
+            self._close(turn_id, "refused", "stopped")
             return self.view(self._row(turn_id))
         if model is not None and outbox is True:   # a new conductor turn: the host answers; nothing reaches the mind
             row = self._row(turn_id)
@@ -915,12 +937,16 @@ class Ask:
             await hive.deliver(mind["id"], outbox)
         return self.view(self._row(turn_id))
 
-    def _admit(self, viewer, data, body_digest, swarm, mind, context, model=None, browser=False, *, app_binding=None):
+    def _admit(self, viewer, data, body_digest, swarm, mind, context, model=None, browser=False, *, app_binding=None,
+               carried=False):
         """model: a conductor turn's model (conductor.py): admitted the same way, but nothing is queued for the mind and it
         opens as 'conducting'. browser (gateway r1b): a browser turn, content-free like a personal conductor turn, opens
-        as 'browser' with route 'browser_mind'; nothing is queued for the mind and no conductor runs. Returns (outbox,
-        turn_id); outbox is True for a new conductor or browser turn, None for a replay."""
+        as 'browser' with route 'browser_mind'; nothing is queued for the mind and no conductor runs. carried: a carried
+        turn (CARRY_KEY), admitted as a host turn that nothing answers (its caller closes it at once): nothing is queued
+        for the mind, and a turn for the person's own mind is content-free as a conductor turn is. Returns (outbox,
+        turn_id); outbox is True for a new conductor, browser or carried turn, None for a replay."""
         hive = self.hive
+        queued = model is None and not browser and not carried   # the mind itself answers: its words go to its outbox
         threads = hive.db.all("SELECT * FROM work_sessions WHERE owner = ? AND agent_id = ? AND purpose = 'ask' AND status = 'active' "
                               "ORDER BY created_at", (viewer.principal, mind["id"]))
         if not threads:   # ended between the decision and now (New thread, deletion): nothing was admitted
@@ -940,7 +966,7 @@ class Ask:
                  "sender_name": hive.rooms._name(viewer.principal),
                  "ask": {"turn_id": turn_id, "reply_in": conversation, "label": PAGE_LABEL, "context": context}}
         frames = []
-        personal = (model is not None or browser) and hive.personal.acting_as(viewer.principal, mind) is not None
+        personal = not queued and hive.personal.acting_as(viewer.principal, mind) is not None
         with hive.db.transaction():   # admission: all of this commits together, or nothing does
             if app_binding is not None:
                 hive.app_ask.before_admit(app_binding)   # after thread creation/awaits, before any message or spend
@@ -968,13 +994,13 @@ class Ask:
             busy = hive.db.one(f"SELECT operation_id FROM ask_turns WHERE thread_id = ? AND state IN {states_sql(OPEN)}", (thread["id"],))
             if busy:
                 raise refusal(hive, "ask_busy", operation_id=busy["operation_id"])
-            if model is None and self._payer_conflict(viewer.principal, mind["id"]):
+            if model is None and not carried and self._payer_conflict(viewer.principal, mind["id"]):
                 raise refusal(hive, "coordinator_busy")
             if self._studio_busy(mind["id"]):          # J3 R4, inside the admission transaction too
                 raise refusal(hive, "coordinator_busy")
             # a personal turn writes nothing to its room: the person's words stay in their browser (and in this request)
             room_msg = None if personal else hive.rooms._append(thread["room_id"], viewer.principal, data["text"], [], 0)
-            if model is None and not browser:
+            if queued:
                 outbox = hive.enqueue_message(mind["id"], data["text"], conversation, viewer.principal, extra)
                 hive.db.execute("UPDATE room_members SET delivered_seq = ? WHERE room_id = ? AND member = ?",
                                 (room_msg["seq"], thread["room_id"], f"agent:{mind['id']}"))
@@ -987,11 +1013,12 @@ class Ask:
                 "continues": data.get("continues"),
                 "text": "" if personal else data["text"], "personal": 1 if personal else 0,
                 "via": data.get("via", "typed"), "context_resolved": "{}" if personal else json.dumps(context),
-                "state": "browser" if browser else "accepted" if model is None else "conducting", "reason": None,
+                "state": "browser" if browser else "accepted" if queued else "conducting", "reason": None,
                 "room_message_id": room_msg["id"] if room_msg else "",
-                "delivery_message_id": outbox["id"] if model is None and not browser else "",
+                "delivery_message_id": outbox["id"] if queued else "",
                 "answer_message_id": None,
-                "deadline": time.time() + (browser_turn_seconds() if browser else TIMEOUT) if model is None else self.conductor.deadline(),
+                "deadline": time.time() if carried else time.time() + (browser_turn_seconds() if browser else TIMEOUT) if model is None
+                            else self.conductor.deadline(),
                 "mind_spent_at_start": float(self._mind(mind["id"])["spent_usd"] or 0),
                 "next_seq": 1, "created_at": now(), "closed_at": None, "spent_usd_approx": None, "deleted_at": None,
                 **({"conductor_model": model} if model is not None else {}),
@@ -1006,7 +1033,7 @@ class Ask:
                                                                         self.with_mind(context))))
         def publish():
             self._publish(frames)
-            if model is None and not browser:
+            if queued:
                 hive.events.publish("message", message=hive.message_view(outbox))
             if room_msg is not None:
                 hive.rooms._event(thread["room_id"], "message")

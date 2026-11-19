@@ -41,14 +41,14 @@ export async function admittedTurn(text: string, context: AskContext, where?: st
   const st = useAskStore.getState()
   // Create's Code bench shows the work in its own stream: the words still go in the person's thread, which stays as it was
   if (openThread) st.setThreadOpen(true)
-  const before = st.open
-  const a = await st.admit(text, context, { where, ...(openThread ? {} : { quiet: true }) })
+  // `carry`: the words go to another swarm on this turn's intent (Code's Propose), so a new turn opened for them says
+  // carry, and the host closes it at admission with nothing answering it: no conductor, model or mind, and so no build
+  // of its own (a tester's v0.39 Linux gate made one from a change typed here); the thread says `carry` in place of the
+  // stop words. They never steer a turn already open (the store refuses them as unsupported until it ends). The intent
+  // rides on the closed turn as on an open one (hive ask_intents record/submit read no turn state).
+  const a = await st.admit(text, context, { where, ...(openThread ? {} : { quiet: true }), ...(carry !== undefined ? { carried: carry } : {}) })
   if (!binding.current()) throw new AskRefusal(409, 'not_admitted', 'The person changed while these words were being sent; nothing was handed over.')
   if (!a.admitted) throw new AskRefusal(409, a.reason, ADMISSION_WORDS[a.reason])
-  // `carry`: the words go to another swarm on this turn's intent, so a turn opened for them closes at once and the
-  // person's own mind never answers them beside the card (Code's Propose); a steer of a turn already open is left alone.
-  // The intent rides on a closed turn as on an open one (hive ask_intents record/submit read no turn state).
-  if (carry !== undefined && a.op !== before) void useAskStore.getState().closeCarrier(a.op, carry)
   return a.op
 }
 const ADMISSION_WORDS: Record<Exclude<AskAdmission, { admitted: true }>['reason'], string> = {

@@ -519,6 +519,23 @@ def test_A12_a_fault_after_the_link_cas_rolls_back_the_request_and_the_intent(a,
     assert json.loads(rec["last_dispatch"])["outcome"] == "not_committed"
 
 
+def test_A12b_a_carried_turn_reaches_no_mind_and_its_intent_rides_on_it_closed(a):
+    # Create's Code bench carries the person's change to Code on a turn that says carry (a tester's v0.39 Linux gate on
+    # 19 Nov: the turn the change rode on was answered too, and made into a second app): the host admits it and closes it
+    # at once, the coordinator never hears the words, and the code.request is recorded and submitted on the closed turn
+    c, hive = a.client, a.hive
+    heard = "SELECT COUNT(*) AS n FROM messages WHERE agent_id = ? AND conversation_id LIKE 'ask:%'"
+    r = c.post("/api/ask", headers=a.jon, json={"operation_id": "op-turn-0001", "text": "change add() to subtract",
+                                                "context": {"swarm_id": a.origin["id"]}, "carry": True})
+    assert r.status_code == 202 and r.json()["state"] == "refused", r.text
+    assert hive.db.one(heard, (a.asker["id"],))["n"] == 0
+    rec = record(a)
+    assert rec.status_code == 201, rec.text
+    s = submit(a, rec.json()["intent_id"])
+    assert s.status_code == 201, s.text
+    assert row(a, rec.json()["intent_id"])["state"] == "linked" and s.json()["state"] == "accepted"
+
+
 # ---- A13: deletion -----------------------------------------------------------------------------------------------
 
 def test_A13_deleting_a_thread_abandons_pending_keeps_linked_and_never_cancels_the_request(a):

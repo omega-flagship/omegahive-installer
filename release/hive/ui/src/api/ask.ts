@@ -109,6 +109,13 @@ export interface AskBody {
   continues?: string
   via: AskVia
   /**
+   * The page opens this turn only to carry the words to another swarm on its intent (Create's Code bench: the person's
+   * change goes to Code as a code.request). The host admits it for that intent and closes it at once: no conductor,
+   * model or mind answers it, so the words never become a build of their own (API.md, POST /api/ask). Never with
+   * memory_notes or answer_in.
+   */
+  carry?: true
+  /**
    * The person's own memory, recalled by this browser for this turn only (lib/askMemory; Jon 2026-10-07: memory is kept
    * by the browser, the hive stores none of it). At most 20 notes and 8 KB; each `{id, text}` so a revise can name it.
    * Accepted only while the hive's conductor answers (otherwise 400 invalid: the page sends again without them).

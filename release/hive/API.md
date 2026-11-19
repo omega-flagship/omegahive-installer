@@ -1107,7 +1107,8 @@ rate_limited | too_large | timed_out | operation_conflict | invalid | stopped`, 
 
 - `POST /api/ask` creates one turn and returns **202** with the turn view (below).
   - Body (exact keys, 32 KB at most):
-    `{operation_id: [A-Za-z0-9_.:-]{8,120}, text: 1–4000 chars, context?, thread?: <Ask thread id>, via?: "typed"|"voice", continues?: <ended turn id>}`.
+    `{operation_id: [A-Za-z0-9_.:-]{8,120}, text: 1–4000 chars, context?, thread?: <Ask thread id>, via?: "typed"|"voice", continues?: <ended turn id>,
+    carry?: true}`.
   - Continue names its stopped turn with `continues` (the accepted frame's `turn_id`). Typed requests omit it.
     It must name an undeleted, ended turn of the same person and answering mind, created within the last 24 hours
     (`ask_intents.TURN_MAX_AGE`); otherwise admission returns 400 `invalid`. The field is stored on the turn and
@@ -1115,6 +1116,11 @@ rate_limited | too_large | timed_out | operation_conflict | invalid | stopped`, 
     record of the turns it continues: where they kept their words (a swarm thread's turns, and only into a turn of the
     same swarm) the first request's words and the latest answer, otherwise that the person's browser sends them (an
     own mind's turns); how often it was continued; and the hand-overs already made. Nothing of it is stored again.
+  - `carry: true` says the page opens the turn only to carry the words to another swarm on the turn's intent (Create's
+    Code bench sends the person's change to Code as a `code.request`). The host admits it for that intent and closes it
+    at once as `refused/stopped`: no conductor, model or mind answers it, nothing reaches the mind's outbox, and the
+    intent is recorded and submitted on the closed turn as on an open one. It takes no `memory_notes`, `answer_in`,
+    conductor pick, `conversation` or `continues` (400 `invalid`).
   - `context` (exact keys): `{route?: ≤120, experience?: slug, program?: app id, swarm_id?, mind?: <mind id>,
     with?: <mind id>, chosen?: true, selection?: [≤20 {kind, ref}], view?: ≤2 KB {refs?: [≤50 {kind, ref}], acts?: [≤50 act ids],
     summary?: ≤500}}`. The `kind` of a ref is one of `mind|swarm|goal|room|artifact|item|feature`.
