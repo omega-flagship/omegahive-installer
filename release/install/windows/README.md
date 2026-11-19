@@ -15,10 +15,12 @@ it in your default browser, signed in as its owner. It is the Windows twin of
    or password. Your Ubuntu, if you have one, is not touched. Canonical takes older point releases off its servers,
    so if that image's address no longer answers, the installer uses the Ubuntu 26.04 image WSL's list names at
    that moment instead. That image is not pinned: it is checked only against the sha256 in that list, the window
-   says so, and it is used only from Canonical's release server (`releases.ubuntu.com`).
+   says so, and it is used only from Canonical's release server (`releases.ubuntu.com`). An interrupted download
+   continues from its saved bytes; a different image starts a new download.
 3. Inside that distro it runs the same setup the Mac installer runs (`install/macos/Install OmegaHive.command`):
    a pinned toolchain, SWI-Prolog built from source, PeTTa, the hash-locked Python packages, and Create's Code
-   service and the Tools app when the release carries them. This takes about 5 minutes on a fast connection.
+   service and the Tools app when the release carries them. The Python package step makes up to three attempts,
+   keeping completed downloads. This takes about 5 minutes on a fast connection.
 4. It starts the hive and opens it in your browser at `http://127.0.0.1:8700` (or the next free port), signed in
    through a one-time link that is never shown.
 

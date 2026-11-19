@@ -111,6 +111,32 @@ function Enable-Wsl {
     }
 }
 
+# Resume only the same image: fallback can select different bytes under a different checksum.
+# Time: at most four transfer attempts plus one checksum of a completed partial file.
+# curl's -C - uses the current file size, https://curl.se/docs/manpage.html#-C.
+function Receive-UbuntuImage([string]$Url, [string]$File, [string]$Sha256) {
+    $part = $File + '.part'
+    $identity = $part + '.sha256'
+    if ((Test-Path $identity) -and ([string](Get-Content -Raw $identity)).Trim() -ne $Sha256) {
+        Remove-Item -Force -LiteralPath $part -ErrorAction SilentlyContinue
+    }
+    Set-Content -LiteralPath $identity -Value $Sha256 -Encoding ASCII -NoNewline
+    if ((Test-Path $part) -and (Get-FileHash -Algorithm SHA256 $part).Hash.ToLower() -eq $Sha256) {
+        return $true
+    }
+    for ($attempt = 1; $attempt -le 4; $attempt++) {
+        # A fresh curl process recomputes the offset after every dropped transfer. A slow download may keep going;
+        # a minute without a byte is a stall, not a deadline for downloading the whole image.
+        & curl.exe --fail --location --continue-at - --speed-limit 1 --speed-time 60 --output $part $Url
+        if ($LASTEXITCODE -eq 0) { return $true }
+        if ($attempt -lt 4) {
+            Say ('The Ubuntu download did not finish. Trying again from the saved part (' + ($attempt + 1) + ' of 4).')
+            Start-Sleep -Seconds 5
+        }
+    }
+    return $false
+}
+
 # The distro: the pinned Ubuntu image, imported, since wsl --install would first make the person choose a Linux user
 # name and password; then one ordinary user, named after the person for the hive's greeting, as its default.
 function New-HiveDistro {
@@ -121,8 +147,7 @@ function New-HiveDistro {
     if (-not (Test-Path $file) -or (Get-FileHash -Algorithm SHA256 $file).Hash.ToLower() -ne $sha) {
         Say ''
         Say ('Downloading Ubuntu for your hive, about ' + $Image.MB + ' MB...')
-        & curl.exe --fail --location --retry 3 --output ($file + '.part') $url
-        if ($LASTEXITCODE -ne 0) {
+        if (-not (Receive-UbuntuImage $url $file $sha)) {
             Say 'That address did not answer; asking WSL''s list of distributions for the current Ubuntu 26.04 image.'
             $entry = (Invoke-RestMethod -UseBasicParsing $Image.Manifest).ModernDistributions.Ubuntu |
                 Where-Object { $_.Name -eq $Image.ManifestName } | Select-Object -First 1
@@ -135,14 +160,15 @@ function New-HiveDistro {
             }
             Say ('Using ' + $url + ' instead. This image is not the one this installer pins: it is checked against ' +
                 'the sha256 WSL''s list gives for it.')
-            & curl.exe --fail --location --retry 3 --output ($file + '.part') $url
-            if ($LASTEXITCODE -ne 0) { Stop-Setup 'Ubuntu could not be downloaded: check the internet connection and run Install Omega again.' }
+            if (-not (Receive-UbuntuImage $url $file $sha)) { Stop-Setup 'Ubuntu could not be downloaded: check the internet connection and run Install Omega again.' }
         }
         if ((Get-FileHash -Algorithm SHA256 ($file + '.part')).Hash.ToLower() -ne $sha) {
             Remove-Item -Force ($file + '.part')
+            Remove-Item -Force ($file + '.part.sha256') -ErrorAction SilentlyContinue
             Stop-Setup 'The Ubuntu download was damaged. Run Install Omega again to download it again.'
         }
         Move-Item -Force ($file + '.part') $file
+        Remove-Item -Force ($file + '.part.sha256') -ErrorAction SilentlyContinue
     }
     Say 'Making the OmegaHive Linux system (a minute)...'
     $disk = Join-Path $Home_ 'wsl'

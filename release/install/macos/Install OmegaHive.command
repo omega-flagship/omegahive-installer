@@ -436,7 +436,20 @@ else
   fetching "the hive's Python packages" "$(sed -n 's/^# download: \([0-9]*\) MB$/\1/p' "$PYLOCK")"
   # uv's line for each of about a hundred packages goes to its own log, as the toolchain's does.
   SUBLOG=$OH/logs/python-packages.log
-  uv pip install --python "$OH/venv/bin/python" --require-hashes --only-binary :all: -r "$PYLOCK" > "$SUBLOG" 2>&1
+  # Keep the environment and uv cache between attempts, so a dropped connection keeps completed packages.
+  # uv documents these HTTP settings at https://docs.astral.sh/uv/reference/environment/.
+  : > "$SUBLOG"
+  for attempt in 1 2 3; do
+    if UV_HTTP_RETRIES=10 UV_HTTP_CONNECT_TIMEOUT=60 UV_HTTP_TIMEOUT=120 uv pip install --python "$OH/venv/bin/python" \
+      --require-hashes --only-binary :all: -r "$PYLOCK" >> "$SUBLOG" 2>&1; then
+      break
+    else
+      install_status=$?
+    fi
+    [ "$attempt" -lt 3 ] || exit "$install_status"
+    say "The Python packages did not finish downloading. Trying again ($((attempt + 1)) of 3); downloaded packages are kept."
+    sleep 5
+  done
   SUBLOG=""
   fetched
 fi

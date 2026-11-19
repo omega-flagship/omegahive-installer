@@ -4,8 +4,10 @@ A sandboxed mind reaches only its hive (127.0.0.1:<hive port>), so the mind-side
 (modules/web_search) are thin calls to two agent-authenticated routes, ``POST /api/agent/web/search`` and
 ``POST /api/agent/web/fetch``. Everything that touches the internet, and every rule about it, is here, on the host:
 
-- search goes through a small provider interface (``SearchProvider``); the default is the ``ddgs`` package (free). A
-  keyed provider (Tavily) can be added beside it; its key stays host-side and never reaches a mind;
+- search goes through a small provider interface (``SearchProvider``); the default is the ``ddgs`` package (free),
+  asked one engine per call, the engines that answered from this hive's network first and those that keep failing
+  left to rest (``DdgsProvider``). A keyed provider (Tavily) can be added beside it; its key stays host-side and never
+  reaches a mind;
 - fetch is https only, port 443, no user info in the URL. The host resolves the name itself and refuses private,
   loopback, link-local, CGNAT, multicast, reserved, unspecified and cloud-metadata addresses (IPv4 and IPv6, IPv4-mapped,
   6to4, Teredo and NAT64 forms unwrapped first). Every address a name resolves to must pass, not just one;
@@ -36,7 +38,11 @@ A sandboxed mind reaches only its hive (127.0.0.1:<hive port>), so the mind-side
   that does not resolve (a typo) never count;
 - a name that does not resolve and one that resolves somewhere refused get the same answer (no probe of internal
   names); the audit keeps the real reason for admins;
-- searches run on a pool of SEARCH_WORKERS threads; when all are busy (a slow call keeps its worker) a search is refused;
+- searches run on a pool of SEARCH_WORKERS threads, so the engines never get more than that many searches from one
+  hive at once; when all are busy (a slow call keeps its worker) a search waits for one, and one deadline of
+  TOTAL_SECONDS covers the wait and the call, so a search answers or is refused within it. Each engine gets
+  ENGINE_SECONDS, well inside the deadline, so a slow or throttling engine is dropped and the search answers from the
+  others;
 - one audit row per call (``web_audit``): tool, URLs of every hop (scheme, host and path only: no query, fragment or
   user info), final URL, status, bytes, content type, outcome and reason, mind and turn. Never a page body. The same
   refusal from one mind within a minute adds to one row's count.
@@ -57,7 +63,7 @@ import socket
 import threading
 import time
 import urllib.robotparser
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
@@ -70,6 +76,12 @@ from .hive import HiveError
 
 MAX_REDIRECTS = 5
 TOTAL_SECONDS = 10.0
+# ddgs asks engines in rounds, waits for every engine of a round up to that engine's own timeout, and starts another
+# round only when the first gave too few results (ddgs.DDGS._search_sync). With the whole deadline as each engine's
+# timeout, one slow or throttling engine timed the search out: during one Ask research on a fresh v0.38 Mac hive, 6
+# of 9 searches ended at the deadline and 2 more found both workers held by them. Two rounds of ENGINE_SECONDS fit
+# inside the deadline with room for the hive's own work.
+ENGINE_SECONDS = 4
 BODY_CAP = 2 * 1024 * 1024
 ROBOTS_CAP = 512 * 1024
 ROBOTS_TTL = 600.0          # a robots.txt answer is kept 10 minutes
@@ -335,13 +347,115 @@ class SearchProvider:
 
 
 class DdgsProvider(SearchProvider):
+    """The free provider: ddgs's text engines, asked one engine per call so the hive knows which answered.
+
+    Engines that answered are asked first, most recent first, then engines not yet tried (by ddgs's own priority),
+    then engines that failed; HEDGE are asked at once and the first rows back are the answer. On 19 Nov only yandex,
+    and yahoo half the time, of ddgs 9.14.4's nine text engines returned rows, from three different networks, while
+    ddgs's own auto mode always began with wikipedia and grokipedia and waited for every engine of each round (ddgs
+    issue 498 reports the same). An engine that fails FAILURES_TO_REST times in a row rests for REST_SECONDS, doubling
+    with each further failure up to REST_MAX_SECONDS, and an answer ends its rest (SearXNG suspends a failing engine
+    the same way, for an hour after a 429). When every engine rests, the one whose rest ends first is asked anyway."""
+
     name, label, cost_usd = "ddgs", "DuckDuckGo and other public engines (ddgs)", 0.0
+    HEDGE = 2                  # ddgs's own round width for up to ten results (DDGS._search_sync: ceil(10 / 10) + 1)
+    FAILURES_TO_REST = 2       # one empty answer may be the query's; a second in a row is the engine's
+    REST_SECONDS = 60.0
+    REST_MAX_SECONDS = 3600.0
+
+    def __init__(self, clock=time.monotonic):
+        self.clock = clock
+        self.health = {}       # engine -> {"answered": clock time or None, "failures": in a row, "rest_until": clock time}
+        self.lock = threading.Lock()
+
+    def engines(self):
+        """The text engines in the order a search asks them, those resting left out (unless all rest)."""
+        from ddgs.engines import ENGINES
+        now = self.clock()
+        with self.lock:
+            rows = [(name, cls.priority, self.health.get(name, {})) for name, cls in ENGINES["text"].items()]
+        ready = [r for r in rows if r[2].get("rest_until", 0.0) <= now]
+        if not ready:
+            return [min(rows, key=lambda r: r[2]["rest_until"])[0]] if rows else []
+
+        def rank(row):
+            name, priority, h = row
+            if h.get("answered") is not None and not h.get("failures"):
+                return (0, -h["answered"], name)
+            return (1 if not h else 2, -priority, name)
+        return [name for name, _, _ in sorted(ready, key=rank)]
+
+    def _outcome(self, name, answered):
+        now = self.clock()
+        with self.lock:
+            h = self.health.setdefault(name, {"answered": None, "failures": 0, "rest_until": 0.0})
+            if answered:
+                h.update(answered=now, failures=0, rest_until=0.0)
+                return
+            h["failures"] += 1
+            over = h["failures"] - self.FAILURES_TO_REST
+            if over >= 0:
+                h["rest_until"] = now + min(self.REST_SECONDS * 2 ** over, self.REST_MAX_SECONDS)
 
     def search(self, query, max_results):
         from ddgs import DDGS        # imported on use: the hive runs without it, and search then says so
-        rows = DDGS(timeout=int(TOTAL_SECONDS)).text(query, max_results=max_results, safesearch="moderate")
-        return [{"title": r.get("title") or "", "url": r.get("href") or r.get("url") or "", "snippet": r.get("body") or ""}
-                for r in rows or []]
+        from ddgs.exceptions import DDGSException, TimeoutException
+
+        def ask(name):
+            begun = time.monotonic()
+            try:
+                return DDGS(timeout=ENGINE_SECONDS).text(query, max_results=max_results, safesearch="moderate",
+                                                         backend=name)
+            except DDGSException as exc:
+                # ddgs waits for an engine exactly as long as the engine's own request may take, so an engine that used
+                # its whole time can end as "No results found." just before its timeout error lands: its time says which
+                if not isinstance(exc, TimeoutException) and time.monotonic() - begun >= ENGINE_SECONDS:
+                    raise TimeoutException(f"no answer within {ENGINE_SECONDS} s") from None
+                raise
+
+        def record(name):
+            def done(future):
+                failed = future.cancelled() or future.exception() is not None or not future.result()
+                self._outcome(name, not failed)
+            return done
+        started, queue = time.monotonic(), self.engines()
+        pending, timed_out, failed = {}, 0, []
+        pool = ThreadPoolExecutor(max_workers=self.HEDGE, thread_name_prefix="web-search-engine")
+        # Time: at most len(engines) engine calls, HEDGE at once, each cut at ENGINE_SECONDS, and none started once
+        # it could not end by TOTAL_SECONDS, so a search takes at most TOTAL_SECONDS here
+        try:
+            while queue or pending:
+                while queue and len(pending) < self.HEDGE and time.monotonic() - started + ENGINE_SECONDS <= TOTAL_SECONDS:
+                    name = queue.pop(0)
+                    future = pool.submit(ask, name)
+                    future.add_done_callback(record(name))
+                    pending[future] = name
+                if not pending:
+                    break
+                done, _ = wait(pending, timeout=max(0.0, TOTAL_SECONDS - (time.monotonic() - started)),
+                               return_when=FIRST_COMPLETED)
+                if not done:                 # the engines still out did not answer by the deadline
+                    timed_out += len(pending)
+                    failed += [f"{name}: still out at the deadline" for name in pending.values()]
+                    break
+                for future in done:
+                    name = pending.pop(future)
+                    error = future.exception()
+                    if error is None and future.result():
+                        return [{"title": r.get("title") or "", "url": r.get("href") or r.get("url") or "",
+                                 "snippet": r.get("body") or ""} for r in future.result()]
+                    timed_out += isinstance(error, TimeoutException)
+                    failed.append(f"{name}: {error or 'no results'}")
+        finally:
+            pool.shutdown(wait=False)      # an engine still out finishes on its own and records how it went
+        audit = ("ddgs: " + "; ".join(failed))[:300] if failed else "ddgs: no engine could be asked in time"
+        if failed and timed_out == len(failed):
+            raise WebError(504, "search_timeout", "the search engines did not answer in time; try again in a moment",
+                           audit=audit)
+        # ddgs says "No results found." both for an empty search and for an engine that refuses or throttles this
+        # network's searches (an anti-bot page, a 429), so the words name both (ddgs issue 498)
+        raise WebError(502, "search_failed", "no search engine returned results: they may be limiting searches from "
+                       "this network, so try again in a minute or with other words", audit=audit)
 
 
 PROVIDERS = {"ddgs": DdgsProvider}
@@ -550,8 +664,7 @@ class WebTools:
         self.turns = {}            # agent_id -> {"n": turn number, "fetch": count, "search": count}
         self.robots = {}           # host -> (expires, parser | True (allow all) | False (disallow all))
         self.search_pool = ThreadPoolExecutor(max_workers=SEARCH_WORKERS, thread_name_prefix="web-search")
-        self.search_busy = 0       # searches still running, including any that outlived their deadline
-        self.search_lock = threading.Lock()
+        self.search_slots = None   # (loop, asyncio.Semaphore of SEARCH_WORKERS), made on the first search's loop
         for sql in SCHEMA:
             hive.db.execute(sql)
         columns = {r["name"] for r in hive.db.all("PRAGMA table_info(web_audit)")}
@@ -752,19 +865,34 @@ class WebTools:
     # -- search --
 
     async def _run_search(self, provider, query, n):
-        """The provider's call on the search pool. A call that outlives its deadline keeps its worker until it ends, so
-        when every worker is taken a new search is refused at once rather than queued behind it."""
-        with self.search_lock:
-            if self.search_busy >= SEARCH_WORKERS:
-                raise WebError(503, "search_busy", "the search service is busy; try again in a moment")
-            self.search_busy += 1
+        """The provider's call on the search pool, inside one deadline of TOTAL_SECONDS for the whole search. When every
+        worker is taken the search waits for one within that deadline, and is refused only once it has passed: a
+        refusal at once failed the searches of an Ask research whose minds searched together. A call that outlives
+        its deadline keeps its worker until it ends, so the engines never get more than SEARCH_WORKERS searches from
+        this hive at once."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + TOTAL_SECONDS
+        if self.search_slots is None or self.search_slots[0] is not loop:
+            self.search_slots = (loop, asyncio.Semaphore(SEARCH_WORKERS))
+        slots = self.search_slots[1]
+        try:
+            await asyncio.wait_for(slots.acquire(), max(0.0, deadline - loop.time()))
+        except asyncio.TimeoutError:
+            raise WebError(503, "search_busy", "the search service is busy; try again in a moment") from None
+        if loop.time() >= deadline:
+            slots.release()
+            raise WebError(503, "search_busy", "the search service is busy; try again in a moment")
 
         def done(_future):
-            with self.search_lock:
-                self.search_busy -= 1
-        future = self.search_pool.submit(provider.search, query, n)
+            with contextlib.suppress(RuntimeError):     # the loop is closed once the hive has stopped
+                loop.call_soon_threadsafe(slots.release)
+        try:
+            future = self.search_pool.submit(provider.search, query, n)
+        except BaseException:
+            slots.release()
+            raise
         future.add_done_callback(done)
-        return await asyncio.wait_for(asyncio.wrap_future(future), TOTAL_SECONDS)
+        return await asyncio.wait_for(asyncio.wrap_future(future), deadline - loop.time())
 
 
     async def search(self, agent, data):

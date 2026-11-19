@@ -20,6 +20,7 @@ function Invoke-Case {
     param([hashtable]$State, [switch]$OpenMode, [switch]$Damaged, [switch]$NoRelease)
     $sim = @{ Wsl = 'Ready'; Distros = @(); Reboot = $false; RebootAfterEnable = $false; DeclineAdmin = $false
               SetupExit = 0; Running = $false; Unreachable = $false; ImportExit = 0; PinnedFails = $false; RootExit = 0; Listening = @()
+              DownloadDrops = 0; DownloadAlwaysFails = $false; SeedPartial = ''; SeedDigest = ''
               ManifestUrl = 'https://releases.ubuntu.com/26.04.2/ubuntu-26.04.2-wsl-amd64.wsl' }
     foreach ($k in $State.Keys) { $sim[$k] = $State[$k] }
     $calls = New-Object System.Collections.ArrayList
@@ -40,6 +41,14 @@ function Invoke-Case {
             Set-Content -Path ($Release + '.sha256') -Value ($sum + '  omegahive.tar.gz')
         }
         $Image.Sha256 = (Get-FileHash -Algorithm SHA256 -InputStream ([IO.MemoryStream]::new([Text.Encoding]::ASCII.GetBytes('image')))).Hash.ToLower()
+        if ($sim.SeedPartial) {
+            $downloads = Join-Path $Home_ 'downloads'
+            New-Item -ItemType Directory -Force -Path $downloads | Out-Null
+            [IO.File]::WriteAllText((Join-Path $downloads 'ubuntu-wsl-amd64.wsl.part'), $sim.SeedPartial)
+            $digest = $Image.Sha256
+            if ($sim.SeedDigest) { $digest = $sim.SeedDigest }
+            [IO.File]::WriteAllText((Join-Path $downloads 'ubuntu-wsl-amd64.wsl.part.sha256'), $digest)
+        }
 
         function wsl.exe {
             $a = @($args)
@@ -64,9 +73,22 @@ function Invoke-Case {
         function curl.exe {
             $a = @($args)
             [void]$calls.Add('curl ' + $a[-1])
+            [void]$calls.Add('curl-args ' + ($a -join ' '))
             $out = $a[[array]::IndexOf($a, '--output') + 1]
             if ($sim.PinnedFails -and $a[-1] -eq $Image.Url) { $global:LASTEXITCODE = 22; return }
-            [IO.File]::WriteAllText($out, 'image')
+            $offset = 0
+            if (($a -contains '--continue-at' -or $a -contains '-C') -and (Test-Path $out)) {
+                $offset = (Get-Item $out).Length
+            }
+            [void]$calls.Add('resume-at ' + $offset)
+            if ($sim.DownloadAlwaysFails -or $sim.DownloadDrops -gt 0) {
+                $sim.DownloadDrops--
+                [IO.File]::WriteAllText($out, 'im')
+                $global:LASTEXITCODE = 18
+                return
+            }
+            if ($offset -gt 0) { [IO.File]::AppendAllText($out, 'image'.Substring($offset)) }
+            else { [IO.File]::WriteAllText($out, 'image') }
             $global:LASTEXITCODE = 0
         }
         function Invoke-RestMethod {
@@ -136,6 +158,21 @@ Check (Has $c 'say Using https://releases.ubuntu.com/26.04.2/ubuntu-26.04.2-wsl-
 
 $c = Invoke-Case -State @{ Distros = @(); PinnedFails = $true; ManifestUrl = 'https://example.invalid/ubuntu-26.04.2-wsl-amd64.wsl' }
 Check (($c.Outcome -like '*not an Ubuntu 26.04 image on Canonical*') -and -not (Has $c 'curl https://example.invalid') -and -not (Has $c 'wsl --import')) 'pinned image gone, manifest names another server: refuses it before downloading or importing'
+
+$c = Invoke-Case -State @{ DownloadDrops = 2 }
+Check ($c.Outcome -eq 'completed' -and (Count $c 'curl https://releases.ubuntu.com/26.04.1/') -eq 3) 'two dropped transfers: resumes the pinned image and completes'
+Check ((Count $c 'resume-at 2') -eq 2 -and -not (Has $c 'manifest')) 'two dropped transfers: keeps saved bytes and does not switch images'
+Check (Has $c 'curl-args --fail --location --continue-at - --speed-limit 1 --speed-time 60') 'image transfer detects a stall without imposing a whole-download deadline'
+
+$c = Invoke-Case -State @{ SeedPartial = 'im' }
+Check ($c.Outcome -eq 'completed' -and (Has $c 'resume-at 2')) 'a later installer run continues its existing partial image'
+
+$c = Invoke-Case -State @{ SeedPartial = 'other'; SeedDigest = ('0' * 64) }
+Check ($c.Outcome -eq 'completed' -and -not (Has $c 'resume-at 5')) 'an image checksum change discards bytes belonging to the previous image'
+
+$c = Invoke-Case -State @{ DownloadAlwaysFails = $true }
+Check ($c.Outcome -like '*could not be downloaded*' -and -not (Has $c 'wsl --import')) 'exhausted transfers stop setup and import nothing'
+Check ((Count $c 'curl https://releases.ubuntu.com/26.04.1/') -eq 4) 'an interrupted image gets four attempts before fallback'
 
 $c = Invoke-Case -State @{ Distros = @('OmegaHive') }
 Check ($c.Outcome -eq 'completed') 'hive distro present: completes'

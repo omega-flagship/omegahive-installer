@@ -7,6 +7,8 @@ import importlib.util
 import json
 import pathlib
 import tempfile
+import threading
+import time
 import urllib.request
 
 import httpx
@@ -485,6 +487,178 @@ def test_search_validates_its_request(w):
     assert w.post("/api/agent/web/search", json={"query": "x"}).status_code == 401   # an admin session is not a mind
 
 
+class _Engine:
+    """One fake ddgs text engine (made per test by _engines): answers its rows after its delay, or, slower than the
+    timeout the hive gives it, ends at that timeout with the error a timed-out request raises, as a real engine's HTTP
+    client does. Each search it is asked is noted in the test's list."""
+    priority = 1
+
+    def __init__(self, proxy=None, timeout=None, verify=True):
+        self.timeout = timeout
+
+    def search(self, query, **kwargs):
+        from ddgs.results import TextResult
+        self.asked.append(self.name)
+        if self.delay > self.timeout:
+            time.sleep(self.timeout)
+            raise TimeoutError(f"{self.name} timed out")
+        time.sleep(self.delay)
+        # ddgs's ranker keeps only rows that name the query (ddgs.similarity.SimpleFilterRanker)
+        return [TextResult(title=f"{query} {self.name} {i}", href=f"https://{self.name}.example/{i}", body=query)
+                for i in range(self.rows)]
+
+
+def _engines(monkeypatch, *specs):
+    """ddgs's text engines are exactly these, (name, delay, rows[, priority]) each, so ddgs's own code asks them;
+    returns the list of the engines asked, in order."""
+    from ddgs.engines import ENGINES
+    asked = []
+    monkeypatch.setitem(ENGINES, "text", {
+        name: type(name, (_Engine,), {"name": name, "provider": name, "delay": delay, "rows": rows, "asked": asked,
+                                      "priority": rest[0] if rest else 1})
+        for name, delay, rows, *rest in specs})
+    return asked
+
+
+def test_each_engine_gets_far_less_than_the_deadline_so_two_rounds_fit():
+    assert 2 * webtools.ENGINE_SECONDS < webtools.TOTAL_SECONDS
+
+
+def test_a_slow_engine_does_not_hold_up_the_answer(monkeypatch):
+    # ddgs's auto mode waited for every engine of a round; the hive asks two at once and takes the first rows back
+    monkeypatch.setattr(webtools, "ENGINE_SECONDS", 1.0)
+    _engines(monkeypatch, ("fast", 0.01, 10), ("slow", 30, 10))
+    started = time.monotonic()
+    rows = webtools.DdgsProvider().search("cepheid variables", 5)
+    assert time.monotonic() - started < 0.5
+    assert len(rows) == 5 and all(r["url"].startswith("https://fast.example/") for r in rows)
+
+
+def test_engines_that_answered_are_asked_first(monkeypatch):
+    asked = _engines(monkeypatch, ("broken", 0.01, 0, 2), ("good", 0.01, 10), ("other", 0.2, 10))
+    provider = webtools.DdgsProvider()
+    assert provider.engines() == ["broken", "good", "other"]       # untried: ddgs's priority, then name
+    assert provider.search("cepheid variables", 5)[0]["url"].startswith("https://good.example/")
+    time.sleep(0.1)                                                 # broken's empty answer is recorded as it ends
+    assert provider.engines() == ["good", "other", "broken"]       # answered, untried, failed
+    asked.clear()
+    rows = provider.search("cepheid variables", 5)
+    # good and other start together (two at once); good answers first, so broken, last in line, is never asked
+    assert rows[0]["url"].startswith("https://good.example/") and "broken" not in asked
+
+
+def test_an_engine_that_keeps_failing_rests_and_an_answer_ends_its_rest():
+    now = [100.0]
+    provider = webtools.DdgsProvider(clock=lambda: now[0])
+    provider._outcome("broken", False)
+    assert provider.health["broken"]["rest_until"] == 0.0           # one empty answer may be the query's
+    provider._outcome("broken", False)
+    assert provider.health["broken"]["rest_until"] == 100.0 + provider.REST_SECONDS
+    provider._outcome("broken", False)
+    assert provider.health["broken"]["rest_until"] == 100.0 + 2 * provider.REST_SECONDS
+    for _ in range(20):
+        provider._outcome("broken", False)
+    assert provider.health["broken"]["rest_until"] == 100.0 + provider.REST_MAX_SECONDS
+    provider._outcome("broken", True)
+    assert provider.health["broken"] == {"answered": 100.0, "failures": 0, "rest_until": 0.0}
+
+
+def test_a_resting_engine_is_skipped_until_its_rest_ends_and_one_is_asked_when_all_rest(monkeypatch):
+    _engines(monkeypatch, ("broken", 0.01, 0), ("good", 0.01, 10))
+    now = [100.0]
+    provider = webtools.DdgsProvider(clock=lambda: now[0])
+    provider._outcome("broken", False)
+    provider._outcome("broken", False)
+    assert provider.engines() == ["good"]
+    now[0] += provider.REST_SECONDS + 1
+    assert provider.engines() == ["good", "broken"]
+    provider._outcome("good", False)
+    provider._outcome("good", False)
+    provider._outcome("broken", False)                               # broken rests longer than good now
+    assert provider.engines() == ["good"]                           # every engine rests: the first to wake is asked
+
+
+def test_engines_that_time_out_or_find_nothing_are_said_plainly(w, monkeypatch):
+    w.tools.provider = webtools.DdgsProvider()
+    monkeypatch.setattr(webtools, "ENGINE_SECONDS", 0.2)
+    _engines(monkeypatch, ("slow", 30, 10), ("slower", 30, 10))
+    r = search(w, "flour prices")
+    assert r.status_code == 504 and "did not answer in time" in message(r)
+    w.tools.provider = webtools.DdgsProvider()
+    _engines(monkeypatch, ("empty", 0.01, 0), ("blank", 0.01, 0))
+    r = search(w, "flour prices")
+    assert r.status_code == 502 and "may be limiting searches from this network" in message(r)
+    found, late = [row["reason"] for row in w.get("/api/web/audit").json()[:2]]
+    assert "empty: No results found." in found and "blank: No results found." in found
+    assert "slow" in late and "timed out" in late
+
+
+def _blocked(w):
+    """The fake provider holds every search until the returned event is set."""
+    release, plain = threading.Event(), w.provider.search
+
+    def held(query, max_results):
+        release.wait(30)
+        return plain(query, max_results)
+    w.provider.search = held
+    return release
+
+
+def test_a_search_waits_for_a_busy_worker_instead_of_being_refused(w):
+    release = _blocked(w)
+    answers = []
+    searches = [threading.Thread(target=lambda: answers.append(search(w, "cepheid variables")))
+                for _ in range(webtools.SEARCH_WORKERS + 1)]
+    for t in searches:
+        t.start()
+    time.sleep(0.5)     # every worker is held and one search waits for one
+    release.set()
+    for t in searches:
+        t.join(30)
+    assert sorted(a.status_code for a in answers) == [200] * (webtools.SEARCH_WORKERS + 1)
+
+
+def test_waiting_for_a_worker_comes_out_of_the_same_deadline(w, monkeypatch):
+    # the wait and the provider's call share one deadline: a search that waited 0.3 s for a worker has 0.2 s left for
+    # a call that takes 0.4 s, so it ends at the deadline (504), not at 0.3 + 0.5 s
+    monkeypatch.setattr(webtools, "TOTAL_SECONDS", 0.5)
+    release, plain = threading.Event(), w.provider.search
+
+    def search_in(query, max_results):
+        if query == "held":
+            release.wait(5)
+        else:
+            time.sleep(0.4)
+        return plain(query, max_results)
+    w.provider.search = search_in
+    held = [threading.Thread(target=lambda: search(w, "held")) for _ in range(webtools.SEARCH_WORKERS)]
+    for t in held:
+        t.start()
+    time.sleep(0.1)
+    threading.Timer(0.3, release.set).start()
+    started = time.monotonic()
+    r = search(w, "cepheid variables")
+    took = time.monotonic() - started
+    assert r.status_code == 504 and took < 0.5 + 0.25, took
+    for t in held:
+        t.join(10)
+
+
+def test_a_search_is_refused_only_once_no_worker_frees_within_the_deadline(w, monkeypatch):
+    monkeypatch.setattr(webtools, "TOTAL_SECONDS", 0.5)
+    release = _blocked(w)
+    held = [threading.Thread(target=lambda: search(w, "held")) for _ in range(webtools.SEARCH_WORKERS)]
+    for t in held:
+        t.start()
+    time.sleep(0.2)
+    started = time.monotonic()
+    r = search(w, "cepheid variables")
+    assert r.status_code == 503 and "busy" in message(r) and time.monotonic() - started >= 0.4
+    release.set()
+    for t in held:
+        t.join(30)
+
+
 def test_the_default_provider_is_ddgs_and_keeps_no_key_on_the_mind():
     assert isinstance(webtools.default_provider(), webtools.DdgsProvider)
     assert "TAVILY" not in (ROOT / "modules/web_search/entry.metta").read_text()
@@ -747,31 +921,37 @@ def test_review7_a_slow_pdf_reader_is_killed_at_the_deadline(w, monkeypatch):
     assert r.status_code == 504 and _time.monotonic() - started < 5
 
 
-def test_review8_a_busy_search_pool_refuses_instead_of_queueing(w, monkeypatch):
+def test_review8_a_busy_search_pool_refuses_once_its_deadline_passes(w, monkeypatch):
+    # review 8: a provider that hangs can't pile searches up behind it. A search waits for a busy worker only until
+    # its own deadline and is refused then, and the provider never gets more than SEARCH_WORKERS calls at once.
     import threading
-    gate = threading.Event()
+    import time as _time
+    gate, calls, most = threading.Event(), [], [0]
 
     class Slow(webtools.SearchProvider):
         name, label = "slow", "a slow invented service"
 
         def search(self, query, max_results):
+            calls.append(query)
+            most[0] = max(most[0], len(calls))
             gate.wait(10)
+            calls.remove(query)
             return []
     w.tools.provider = Slow()
     monkeypatch.setattr(webtools, "TOTAL_SECONDS", 0.2)
     try:
-        assert search(w, "a").status_code == 504
-        assert search(w, "b").status_code == 504
+        assert search(w, "a").status_code == 504 and search(w, "b").status_code == 504
+        started = _time.monotonic()
         r = search(w, "c")
-        assert r.status_code == 503 and "busy" in message(r)
+        assert r.status_code == 503 and "busy" in message(r) and _time.monotonic() - started < 2
+        assert most[0] == webtools.SEARCH_WORKERS and "c" not in calls
     finally:
         gate.set()
-    import time as _time
-    deadline = _time.monotonic() + 5
-    while w.tools.search_busy and _time.monotonic() < deadline:
-        _time.sleep(0.01)
     w.tools.provider = w.provider
-    assert search(w, "d").status_code == 200
+    deadline = _time.monotonic() + 5
+    while (r := search(w, "d")).status_code == 503 and _time.monotonic() < deadline:
+        _time.sleep(0.05)        # the held workers free as their calls end
+    assert r.status_code == 200
 
 
 def test_review9_unknown_and_private_names_get_the_same_answer(w):

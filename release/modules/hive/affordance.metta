@@ -51,6 +51,37 @@
 (PreferredWhen "hive-create" "build-or-change-software" 0.95 "the one way to build software here: Create's code minds build it once your person starts it")
 (Effect "hive-create" "create-offered-to-person")
 (SkillCardLine "hive-create" "hive-create <what to build> is the one way to build software here (an app, page, game, tool, script or any change to code): say what to build in the asker's words and the hive offers it to your person in Create, whose code minds build it under its safeguards; never write the code yourself.")
+(SkillTopic "hive-create" "game")
+(SkillTopic "hive-create" "website")
+
+; A person's words bring the right card into the prompt's SKILL_RECALL (skills_affordance.metta skill-recall). No
+; trigger named hive-create, an artifact or a revision, so "build me a tic tac toe app" recalled none of them while
+; publishing's "website" and "page" brought its own HTML writer, and "change it" recalled nothing (a tester's v0.38
+; mind built their game itself as a view and remade it from scratch when asked to change it, 17 and 19 Nov). A signal is
+; one word as typed, lower-cased (helper_skill_recall.input_skill_signals), so each form a person types is listed.
+(SkillTrigger "hive-create" "mentions-word:build" 0.90 "building software goes to Create")
+(SkillTrigger "hive-create" "mentions-word:app" 0.90 "an app is built in Create")
+(SkillTrigger "hive-create" "mentions-word:apps" 0.85 "apps are built in Create")
+(SkillTrigger "hive-create" "mentions-word:game" 0.85 "a game is software, built in Create")
+(SkillTrigger "hive-create" "mentions-word:website" 0.85 "a website is software, built in Create")
+(SkillTrigger "hive-create" "mentions-word:calculator" 0.80 "a calculator to keep is an app, built in Create")
+(SkillTrigger "hive-create" "mentions-word:program" 0.80 "a program is software, built in Create")
+(SkillTrigger "hive-create" "mentions-word:script" 0.80 "a script is software, built in Create")
+(SkillCardLine "hive-artifact-create" "hive-artifact-create {json} - save a plan, note or view your swarm owns; a view (kind view, MeTTa) is drawn under your message to show a plan, a comparison or a summary, so write its ar_ id in your reply. An app, game or tool they want to keep is hive-create's.")
+(SkillTrigger "hive-artifact-create" "mentions-word:show" 0.70 "showing something is a view drawn in the chat")
+(SkillTrigger "hive-artifact-create" "mentions-word:plan" 0.60 "a plan can be saved, or shown as a view")
+(SkillTrigger "hive-artifact-create" "mentions-word:compare" 0.65 "a comparison is shown as a view")
+(SkillTrigger "hive-artifact-create" "mentions-word:table" 0.65 "a table is shown as a view")
+(SkillTrigger "hive-artifact-create" "mentions-word:chart" 0.65 "a chart is shown as a view")
+(SkillTrigger "hive-artifact-create" "mentions-word:checklist" 0.65 "a checklist is shown as a view")
+(SkillCardLine "hive-revision" "hive-revision ar_id {json} - change something you saved (a view, plan or note) with its whole new body, keeping its id: asked to change what you made, revise it, since a new artifact starts the work over. A change to an app Create built goes to hive-create, naming the app and the change.")
+(SkillTrigger "hive-revision" "mentions-word:change" 0.80 "a change to something saved is a revision of it")
+(SkillTrigger "hive-revision" "mentions-word:fix" 0.75 "a fix to something saved is a revision of it")
+(SkillTrigger "hive-revision" "mentions-word:update" 0.75 "an update to something saved is a revision of it")
+(SkillTrigger "hive-revision" "mentions-word:edit" 0.75 "an edit to something saved is a revision of it")
+(SkillTrigger "hive-revision" "mentions-word:tweak" 0.75 "a tweak to something saved is a revision of it")
+(SkillTrigger "hive-revision" "mentions-word:improve" 0.70 "improving something saved is a revision of it")
+(SkillTrigger "hive-revision" "mentions-word:adjust" 0.70 "adjusting something saved is a revision of it")
 (Effect "hive-goal-done" "swarm-goal-finished")
 (SkillTopic "hive-shares" "hive-shares")
 (SkillTopic "hive-shares" "share")

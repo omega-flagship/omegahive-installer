@@ -21,6 +21,29 @@ const problem = (fn: () => unknown) => {
   try { fn() } catch (e) { if (e instanceof ViewProblem) return e.message; throw e }
   throw new Error('no ViewProblem')
 }
+/**
+ * The declarations in a help text that teaches a view, as hive/tests/test_minds_know_their_skills.py cuts them: each
+ * (Screen …), (Part …), (When …), (Start …) and (= (…) …) up to its balancing parenthesis, strings skipped, leaving out
+ * the prose between them and the forms holding the help's own placeholders (… and $id).
+ * Time: one pass over the text, each declaration read once to its closing parenthesis.
+ */
+const declarations = (text: string): string[] => {
+  const forms: string[] = []
+  for (let at = 0; at < text.length; at++) {
+    if (!['(Screen ', '(Part ', '(When ', '(Start ', '(= ('].some((head) => text.startsWith(head, at))) continue
+    let [depth, end, quoted] = [0, at, false]
+    for (; end < text.length; end++) {
+      const ch = text[end]
+      if (ch === '"' && text[end - 1] !== '\\') quoted = !quoted
+      else if (!quoted && ch === '(') depth++
+      else if (!quoted && ch === ')' && --depth === 0) break
+    }
+    const form = text.slice(at, end + 1)
+    if (!form.includes('...') && !form.includes('$id')) forms.push(form)
+    at = end
+  }
+  return forms
+}
 
 describe('a view written in MeTTa', () => {
   it('is composed by the screen rules from its own atoms, with its values worked out and its conditions read', () => {
@@ -114,19 +137,29 @@ describe('a view written in MeTTa', () => {
     expect([roundedText(Number.NaN, 2), roundedText(Number.POSITIVE_INFINITY, 2)]).toEqual(['', ''])
   })
 
-  it('the example a mind\'s prompt teaches composes and works out its value', async () => {
+  it('the view a mind\'s prompt teaches draws its plan, and the one its help teaches works out its value', async () => {
     // node:fs by name, as screens/engine.test.ts reads page sources: the app's types know no node modules
     const fsName = 'node:fs'
     const fs = (await import(/* @vite-ignore */ fsName)) as { readFileSync: (p: URL, e: 'utf8') => string }
+    // the prompt's example shows something, with nothing to type and nothing worked out, since an app a person uses is
+    // built by Create (hive/tests/test_minds_know_their_skills.py holds the prompt to that)
     const prompt = fs.readFileSync(new URL('../../../../templates/omega/prompt.txt', import.meta.url), 'utf8')
     const line = prompt.split('\n').find((text: string) => text.includes('save it as a view')) ?? ''
     const start = line.indexOf('{"kind":"view"')
     const example = JSON.parse(line.slice(start, line.indexOf('"}', start) + 2)) as { body: string }
-    const view = opened(example.body)
-    view.input('bill', '20')
+    const plan = opened(example.body).render('classic')
+    expect(blocks(plan)).toEqual(['10:facts'])
+    expect(JSON.stringify(plan.plan.parts[0].props)).toContain('Belem by tram')
+    // the help for hive-artifact-create teaches the rest in one example: what a person types or picks, a part shown only
+    // while a condition holds, and a value worked out from what they typed
+    const catalog = fs.readFileSync(new URL('../../../../../modules/hive/catalog.metta', import.meta.url), 'utf8')
+    const help = catalog.split('\n').find((text: string) => text.startsWith('(SkillHelp "hive-artifact-create" "A view')) ?? ''
+    const view = opened(declarations(help.slice(help.indexOf('" "') + 3, help.lastIndexOf('")')).replaceAll('\\"', '"')).join('\n'))
+    expect(blocks(view.render('classic'))).toEqual(['10:header', '20:fields', '30:segmented', '50:actions'])
+    view.input('people', '4')
     const frame = view.render('classic')
-    expect(blocks(frame)).toEqual(['10:fields', '20:facts'])
-    expect(frame.data.tip).toBe('3.00')
+    expect(blocks(frame)).toEqual(['10:header', '20:fields', '30:segmented', '40:facts', '50:actions'])
+    expect(frame.data.lunch).toBe('72.00')
   })
 
   it('the worker answers by the protocol, and refuses everything when its scope was not bared', () => {

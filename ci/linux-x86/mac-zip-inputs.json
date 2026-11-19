@@ -1,6 +1,6 @@
 {
-  "source_commit": "ea609716da2b430db599fa5bd4cfa929fc27776c",
-  "mac_zip_sha256": "da562e2b00f40d1399836ebf63cd955af75379ee19d695d4c3b3429483da073d",
+  "source_commit": "3fd0ca1b116164aa87dade65a3bbc0e05e8d1ad0",
+  "mac_zip_sha256": "68da17a8fed140f2ed62f2d0a563bf4dce1a46700a2f4ea49bcc9bce055aaf86",
   "ui": {
     "mac_zip_prefix": "Omega Hive v0.39/omegahive/hive/ui/dist/",
     "archive_sha256": "cfab22e078bcab9c975c5cbec2625dd1425b3f55b081aa0f6579a3e710e7fdc1",
@@ -23,5 +23,6 @@
     "mac_zip_member": "Omega Hive v0.39/omegahive/install/macos/omegacode-309df.tgz",
     "bytes": 212230,
     "sha256": "64cbe4a1087a0fa5332b4a0aefec13b23f431cbe806f9dfe595466f51d868a08"
-  }
+  },
+  "mac_zip_commit": "6a2ddc3ec8d7386b0366fe4a9a4926005051e3ec"
 }

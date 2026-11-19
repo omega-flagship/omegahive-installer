@@ -15,8 +15,9 @@
 (SkillCardLine "publish-artifact" "publish-artifact artifact shelf title - publish a file into a family shelf")
 (SkillCardLine "list-published-artifacts" "list-published-artifacts - inspect published artifacts")
 
-(SkillTrigger "write-web-page" "mentions-word:website" 0.70 "website wording may need publishing skills")
-(SkillTrigger "write-web-page" "mentions-word:page" 0.58 "page wording may need publishing skills")
+; "website" and "page" bring hive-create's card instead (modules/hive/affordance.metta): a web page a person asks for
+; is software, which Create builds ("Building software goes to Create, with no exceptions", Jon on #395, 17 Nov), so
+; publishing's HTML writer is found by its topic, never pushed by those words.
 (SkillTrigger "publish-artifact" "mentions-word:publish" 0.72 "publish wording may need artifact publishing")
 (SkillTrigger "list-published-artifacts" "mentions-word:artifact" 0.62 "artifact wording may need published artifact inspection")
 

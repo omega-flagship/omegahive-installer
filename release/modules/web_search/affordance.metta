@@ -3,12 +3,29 @@
 (SkillCardLine "web-search" "web-search query - search current external information through the hive")
 (Risk "web-search" "external-network")
 (Effect "web-search" "external-information-observed")
+; Words for current information bring web-search's card into SKILL_RECALL, and a URL in the message brings web-fetch's
+; (helper_skill_recall.input_skill_signals: one mentions-word signal per word, has-url for a link). No trigger named
+; them, so a mind asked about today's weather recalled nothing of the web.
+(SkillTrigger "web-search" "mentions-word:weather" 0.85 "weather is current information")
+(SkillTrigger "web-search" "mentions-word:news" 0.85 "news is current information")
+(SkillTrigger "web-search" "mentions-word:latest" 0.80 "the latest of anything is current information")
+(SkillTrigger "web-search" "mentions-word:today" 0.70 "today's facts are current information")
+(SkillTrigger "web-search" "mentions-word:current" 0.70 "current facts come from the web")
+(SkillTrigger "web-search" "mentions-word:price" 0.75 "a price is current information")
+(SkillTrigger "web-search" "mentions-word:prices" 0.75 "prices are current information")
+(SkillTrigger "web-search" "mentions-word:search" 0.80 "a search of the web")
+(SkillTrigger "web-search" "mentions-word:lookup" 0.75 "a lookup of the web")
+(SkillTrigger "web-search" "mentions-word:google" 0.80 "a web search")
+(SkillTrigger "web-search" "mentions-word:online" 0.70 "something online is on the web")
+(SkillTrigger "web-search" "mentions-word:internet" 0.75 "something on the internet is on the web")
+(SkillTrigger "web-search" "mentions-word:web" 0.75 "something on the web")
 
 (SkillTopic "web-fetch" "web")
 (SkillTopic "web-fetch" "current-info")
 (SkillCardLine "web-fetch" "web-fetch url - read one https page through the hive; cite its URL and fetch time")
 (Risk "web-fetch" "external-network")
 (Effect "web-fetch" "external-information-observed")
+(SkillTrigger "web-fetch" "has-url" 0.80 "a link in the message is read with web-fetch")
 
 (SkillTopic "web-search" "web-search")
 (SkillTopic "web-fetch" "web-fetch")
