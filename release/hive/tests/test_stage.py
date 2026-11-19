@@ -317,6 +317,15 @@ def test_words_the_code_bench_carries_to_code_never_become_a_build_of_their_own(
     assert [f["phase"] for f in fs] == ["accepted", "done"] and fs[-1]["outcome"] == "cancelled"
     assert s.bodies == [] and w["plans"].started == [] and not hive.ask.conductor.tasks
     assert hive.db.one("SELECT COUNT(*) AS n FROM messages")["n"] == sent   # nothing reached a mind
+    # nothing answers it, so it caps nothing: its new thread holds its own cap, never the mind's total rule, and a call
+    # the mind makes next for Create (Make's planner on v0.39 rc5 sat refused by the thread's $0.25 as the mind's
+    # "session cap") is measured by the mind's own limits alone
+    turn = hive.db.one("SELECT * FROM ask_turns WHERE operation_id = 'op-carry-01'")
+    thread = hive.db.one("SELECT * FROM work_sessions WHERE id = ?", (turn["thread_id"],))
+    assert thread["cap_scope"] == "thread"
+    assert hive.db.one("SELECT * FROM budgets WHERE scope = ? AND period = 'total'", (f"agent:{turn['mind_id']}",)) is None
+    assert hive.db.one("SELECT * FROM session_caps WHERE agent_id = ?", (turn["mind_id"],)) is None
+    hive.budgets.check(hive._agent_row(turn["mind_id"]), float(thread["budget_usd"]) + 0.01)   # admitted, no 402
     # the page's own stop after it is answered as before, and the same request again is the same closed turn
     assert client.post("/api/ask/op-carry-01/stop", headers=w["ann"]).json()["state"] == "refused"
     assert ask(client, w["ann"], "op-carry-01", text=words, context=ctx, carry=True).json()["turn_id"] == r.json()["turn_id"]
@@ -330,6 +339,26 @@ def test_words_the_code_bench_carries_to_code_never_become_a_build_of_their_own(
     assert ask(client, w["ann"], "op-carry-02", text=words, context=ctx).status_code == 202
     wait(hive, "op-carry-02", closed)
     assert w["plans"].started == [("user:u_ann", "a tip calculator")]
+
+
+def test_a_carried_turn_moves_no_threads_cap_scope(client, monkeypatch):
+    # A carried turn on a mind whose Ask thread already holds its own cap leaves it so: moving it back under the mind's
+    # rule, as a turn the mind answers itself does, would cap the mind at the thread's budget just the same
+    from hive.tests.test_ask_conductor import Script, closed, script, wait
+    w = _conducted(client, monkeypatch)
+    hive = w["hive"]
+    ctx = {"swarm_id": w["swarm"]["id"]}
+    script(client, Script([], "Here it is."))
+    assert ask(client, w["ann"], "op-own-01", text="what changed today?", context=ctx).status_code == 202
+    wait(hive, "op-own-01", closed)
+    first = hive.db.one("SELECT * FROM ask_turns WHERE operation_id = 'op-own-01'")
+    assert hive.db.one("SELECT cap_scope FROM work_sessions WHERE id = ?", (first["thread_id"],))["cap_scope"] == "thread"
+    r = ask(client, w["ann"], "op-own-carry", text="Make this a tip calculator", context=ctx, carry=True)
+    assert r.status_code == 202 and r.json()["state"] == "refused"
+    turn = hive.db.one("SELECT * FROM ask_turns WHERE operation_id = 'op-own-carry'")
+    assert turn["thread_id"] == first["thread_id"]
+    assert hive.db.one("SELECT cap_scope FROM work_sessions WHERE id = ?", (turn["thread_id"],))["cap_scope"] == "thread"
+    assert hive.db.one("SELECT * FROM budgets WHERE scope = ? AND period = 'total'", (f"agent:{turn['mind_id']}",)) is None
 
 
 def test_a_short_code_example_the_person_asks_to_see_reaches_them_whole(client, monkeypatch):

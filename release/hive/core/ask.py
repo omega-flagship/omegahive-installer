@@ -795,7 +795,9 @@ class Ask:
         (existing turn view, None) for a replay, else (None, (swarm, mind, addressed, context, thread or None)).
         browser: the request carries answer_in (gateway r1b); refused not_available (409) unless browser_turn.
         carried: a carried turn (CARRY_KEY), which nothing answers: the mind's state, its payer and the thread's spend
-        don't bear on it, and its thread's cap scope stays as it is."""
+        don't bear on it, and it moves no thread's cap scope. A thread made for it holds its own cap (create), since a
+        thread under the mind's rule makes its budget the mind's total cap (sessions._compose), which stopped Create's
+        Make on the same mind on v0.39 rc5."""
         hive = self.hive
         if not write_free:
             self.expire()   # ordinary host maintenance, never a P1 pre-admission side effect
@@ -885,7 +887,9 @@ class Ask:
             try:
                 prepared_thread = await hive.sessions.create(
                     viewer, {"mind": mind["id"], "title": "Ask thread", "budget_usd": budget}, purpose="ask",
-                    cap_scope="thread" if model is not None or browser else None,
+                    # held by its own cap unless the mind answers it: a carried turn's thread under the mind's rule would
+                    # cap the mind it never asks at the thread's budget
+                    cap_scope="thread" if model is not None or browser or carried else None,
                     **({"_prepare_ask": True} if app_binding is not None else {}))
             except Exception as exc:   # logged; the page gets the closed reason only
                 log.warning("ask: thread for %s with %s refused: %s", viewer.principal, mind["id"], exc)
@@ -982,7 +986,7 @@ class Ask:
                 # with this turn; any later refusal rolls the scope back too.
                 if model is not None:
                     hive.sessions.rescope(mind["id"], "thread")
-                elif thread.get("cap_scope") == "thread":
+                elif not carried and thread.get("cap_scope") == "thread":   # a carried turn moves no thread's scope
                     hive.sessions.rescope(mind["id"], "mind", thread["id"])
                 thread = hive.db.one("SELECT * FROM work_sessions WHERE id = ?", (thread["id"],))
                 tv = hive.sessions.view(thread)
