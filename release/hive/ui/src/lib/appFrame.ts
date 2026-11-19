@@ -1,6 +1,6 @@
 /** The pinned files `GET /api/programs/{id}/ui` returns: index.html, style.css and app.js, plus (r17) any declared script
  *  parts, which then come with their ordered `scripts` list. */
-import { frameTags, partTag, partsReason } from './appFrameParts'
+import { frameScript, frameTags, partTag, partsReason } from './appFrameParts'
 
 export interface FrameFiles { 'index.html': string; 'app.js': string; 'style.css': string; [part: string]: string }
 export interface FrameDocument { html: string; channel: string }
@@ -104,11 +104,23 @@ export function appDocument(files: FrameFiles, hostOrigin: string, channel: stri
   const moduleTag = (name: string) => `<script type="module" nonce="${nonce}">${files[name].replace(/<\/script/gi, '<\\/script')}</script>`
   let html = inlineAssets(html0, files, false, own)        // other files' data: URIs change no tag boundary
   if (scripts === undefined) {
-    // single-file: the stylesheet link and the module script however the browser reads them (frameTags, the host's
-    // frame_tags), each replaced in place, the later one first
-    const [link, script] = frameTags(html)
+    // single-file: the stylesheet link and the app's script however the browser reads them (frameTags and
+    // frameScript, the host's frame_tags and frame_script), each replaced in place, the later one first. A module
+    // script stays a module; a classic one is inlined as a classic script where the browser would run it, in place,
+    // or at the end of body when it is deferred (defer or async), as the host's frame_document does.
+    const [link] = frameTags(html)
+    const [script, kind] = frameScript(html)
     if (!link || !script) throw new Error('Unexpected app interface format')
-    for (const [[start, end], text] of ([[link, style], [script, moduleTag('app.js')]] as [[number, number], string][]).sort((a, b) => b[0][0] - a[0][0]))
+    const classicTag = `<script nonce="${nonce}">${files['app.js'].replace(/<\/script/gi, '<\\/script')}</script>`
+    let edits: [[number, number], string][] = [[link, style], [script, moduleTag('app.js')]]
+    if (kind === 'classic') edits = [[link, style], [script, classicTag]]
+    else if (kind === 'deferred') {
+      let bodyEnd = -1                               // the last </body, by position in html itself
+      for (const m of html.matchAll(/<\/body/gi)) bodyEnd = m.index ?? bodyEnd
+      const at = bodyEnd > script[1] ? bodyEnd : html.length
+      edits = [[link, style], [script, ''], [[at, at], classicTag]]
+    }
+    for (const [[start, end], text] of edits.sort((a, b) => b[0][0] - a[0][0]))
       html = html.slice(0, start) + text + html.slice(end)
   } else {
     // parts: the canonical tags partsReason has already checked

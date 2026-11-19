@@ -699,8 +699,9 @@ def test_the_render_reads_the_app_interface_however_its_tags_are_written():
     doc = frame_document(files)
     assert '<style nonce="' in doc and "p { color: red }" in doc and "textContent = 'hi'" in doc
     assert "./style.css" not in doc and "./app.js" not in doc
-    with pytest.raises(ValueError):   # a classic script would run differently inlined as a module
-        frame_document({**files, "index.html": files["index.html"].replace("type='module' ", "")})
+    # a classic script would run differently inlined as a module, so it is inlined as a classic script instead
+    classic = frame_document({**files, "index.html": files["index.html"].replace("type='module' ", "")})
+    assert '<script nonce="' in classic and 'type="module"' not in classic and "./app.js" not in classic
 
 
 def test_check_output_parsing_never_guesses_a_pass():
@@ -1452,3 +1453,39 @@ def test_later_steps_get_each_answer_with_its_question_and_what_omega_is(world):
     assert pkt["answers"][0]["question"] == q["text"] and pkt["answers"][0]["text"] == "Yes please"
     assert any(q["text"] in line and "Yes please" in line for line in pkt["the_person_already_answered"])
     assert "OmegaHive" in pkt["what_omega_is"]
+
+# frame_document's output for a module page as v0.39 rc7 framed it, which the classic-script rule must not change
+MODULE_FRAME_RC7 = '<!doctype html><html data-app-host-origin="https://hive.invalid" data-app-channel="render"><head><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'nonce-00000000-0000-0000-0000-000000000000\'; style-src \'nonce-00000000-0000-0000-0000-000000000000\'; style-src-attr \'unsafe-inline\'; connect-src \'none\'; img-src data: blob:; font-src data:; base-uri \'none\'; form-action \'none\'"><!doctype html>\n<html lang="en">\n<head>\n  <style nonce="00000000-0000-0000-0000-000000000000">main{color:red}</style>\n</head>\n<body>\n  <main id="app"></main>\n  <script type="module" nonce="00000000-0000-0000-0000-000000000000">document.getElementById("app").textContent="hi"</script>\n</body>\n</html>\n'
+
+
+def test_the_frame_runs_a_classic_app_script_where_a_browser_would():
+    """A page builder on the published v0.39 rewrote the scaffold's module tag as <script src='./app.js'>, which a
+    browser runs and the preview refused ("Unexpected app interface format"), so the plan blocked. The frame takes a
+    classic script as one, nonce'd where the browser would run it: in place, in head, or at the end of body when it is
+    deferred. A module page frames byte for byte as before, and a page that loads ./app.js neither way is refused."""
+    files = {"style.css": "main{color:red}", "app.js": 'document.getElementById("app").textContent="hi"'}
+    page = ('<!doctype html>\n<html lang="en">\n<head>\n  <link rel="stylesheet" href="./style.css">\n</head>\n<body>\n'
+            '  <main id="app"></main>\n  <script type="module" src="./app.js"></script>\n</body>\n</html>\n')
+    assert frame_document({**files, "index.html": page}) == MODULE_FRAME_RC7
+    tag = '<script nonce="00000000-0000-0000-0000-000000000000">'
+    end = frame_document({**files, "index.html": page.replace('<script type="module" src="./app.js">', "<script src='./app.js'>")})
+    assert tag in end and 'type="module"' not in end and end.index(tag) > end.index("<main")
+    module_line = '  <script type="module" src="./app.js"></script>\n'
+    head_page = page.replace("</head>", "  <script src='./app.js'></script>\n</head>").replace(module_line, "")
+    head = frame_document({**files, "index.html": head_page})
+    assert head.index(tag) < head.index("</head>")
+    deferred = frame_document({**files, "index.html": head_page.replace("<script src", "<script defer src")})
+    assert deferred.index("<main") < deferred.index(tag) < deferred.index("</body>")
+    with pytest.raises(ValueError):
+        frame_document({**files, "index.html": page.replace(module_line, "")})
+
+
+def test_a_page_builder_is_told_to_keep_the_frame_tags():
+    """The builder that writes index.html is told, in its own trusted instructions, to keep the stylesheet link and the
+    module script the frame loads; a builder of other files is not."""
+    from hive.core.code_controller_member import _packet
+    page = {"member": json.dumps({"plan_id": "plan_x", "piece": "page", "paths": ["index.html", "style.css"]})}
+    head = _packet(None, page, {}, "build", None, "g_1").split("UNTRUSTED_DATA")[0]
+    assert '<script type="module" src="./app.js"></script>' in head and 'href="./style.css"' in head
+    logic = {"member": json.dumps({"plan_id": "plan_x", "piece": "logic", "paths": ["app.js"]})}
+    assert 'type="module"' not in _packet(None, logic, {}, "build", None, "g_1").split("UNTRUSTED_DATA")[0]

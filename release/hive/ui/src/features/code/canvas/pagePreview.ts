@@ -24,7 +24,7 @@ const pageOrigin = () => (typeof location !== 'undefined' && /^https?:/.test(loc
 
 /**
  * The three files as one document, the way Create's plan shows its running page (createPlan/LivePair, through
- * lib/appFrame appDocument): its CSP is the first element, the style and the module script are inlined, and nothing
+ * lib/appFrame appDocument): its CSP is the first element, the style and the app script are inlined, and nothing
  * loads by URL, so in a frame sandboxed to scripts only it has no network, no forms and no hive origin.
  * Null when index.html does not load ./style.css and ./app.js as appDocument requires.
  */

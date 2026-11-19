@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { appDocument, frameCsp, inlineAssets, framePrefix, isFrameSender, revisionFrame, subscriptionTarget } from './appFrame'
-import { frameTags, htmlReason, partsReason } from './appFrameParts'
+import { frameScript, frameTags, htmlReason, partsReason } from './appFrameParts'
 
 const ch = '12345678-1234-1234-1234-123456789abc'
 const files = { 'index.html': '<html lang="en"><head><link rel="stylesheet" href="./style.css"></head><body><script type="module" src="./app.js"></script></body></html>', 'app.js': 'x("</script><script>bad</script>")', 'style.css': '/* </style> */' }
@@ -14,8 +14,29 @@ describe('app frame document', () => {
     expect(d).toContain(`<script type="module" nonce="${ch}">`)
     expect(d).not.toContain('./style.css')
     expect(d).not.toContain('./app.js')
+    // a classic script is framed as one, where it stands (a page builder wrote this on the published v0.39)
     const classic = { ...files, 'index.html': quoted['index.html'].replace("type='module' ", '') }
-    expect(() => appDocument(classic, 'https://hive.example.test', ch, ch)).toThrow('Unexpected app interface format')
+    const c = appDocument(classic, 'https://hive.example.test', ch, ch).html
+    expect(c).toContain(`<script nonce="${ch}">`)
+    expect(c).not.toContain('type="module"')
+    expect(c).not.toContain('./app.js')
+  })
+  it('runs a classic app script where a browser would: in place, in head, and at the end of body when deferred', () => {
+    const page = (head: string, body: string) => ({ ...files, 'index.html': `<html><head><link rel="stylesheet" href="./style.css">${head}</head><body><main id="app"></main>${body}</body></html>` })
+    const at = (html: string) => html.indexOf(`<script nonce="${ch}">`)
+    const end = appDocument(page('', '<script src="./app.js"></script>'), 'https://hive.example.test', ch, ch).html
+    expect(at(end)).toBeGreaterThan(end.indexOf('<main'))
+    const inHead = appDocument(page('<script src="./app.js"></script>', ''), 'https://hive.example.test', ch, ch).html
+    expect(at(inHead)).toBeGreaterThan(0)
+    expect(at(inHead)).toBeLessThan(inHead.indexOf('</head>'))
+    const deferred = appDocument(page('<script defer src="./app.js"></script>', ''), 'https://hive.example.test', ch, ch).html
+    expect(at(deferred)).toBeGreaterThan(deferred.indexOf('<main'))
+    expect(at(deferred)).toBeLessThan(deferred.indexOf('</body>'))
+    expect(deferred.slice(0, deferred.indexOf('</head>'))).not.toContain('<script nonce')
+    // a module script wins over a classic one, and a page that loads ./app.js neither way is still refused
+    expect(frameScript('<script src="./app.js"></script><script type="module" src="./app.js"></script>')[1]).toBe('module')
+    expect(frameScript('<script type="text/plain" src="./app.js"></script>')).toEqual([null, null])
+    expect(() => appDocument(page('', ''), 'https://hive.example.test', ch, ch)).toThrow('Unexpected app interface format')
   })
   it('inlines pinned files with no network, forms or base changes', () => {
     const d = appDocument(files, 'https://hive.example.test', ch, ch)

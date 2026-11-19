@@ -50,7 +50,7 @@ import shutil
 from .create_plan_engine import PLAN_RULES, goal_creator
 from .db import new_id, now
 from .goals import UNANSWERED, stored_proposal
-from .ui_parts import frame_tags
+from .ui_parts import ascii_lower, frame_script, frame_tags
 
 log = logging.getLogger(__name__)
 
@@ -137,8 +137,10 @@ def _inline_assets(text, files, in_css):
 
 def frame_document(files):
     """The same rules as hive/ui/src/lib/appFrame.ts appDocument (single-file mode): index.html must load ./style.css
-    with a stylesheet link and ./app.js with a module script, written any way the browser reads them (ui_parts.
-    frame_tags); the style and the module script are inlined in their place; the CSP is the document's first element.
+    with a stylesheet link and ./app.js with a script, written any way the browser reads them (ui_parts.frame_tags
+    and frame_script): the style is inlined in its place, a module script in its place as a module, a classic one
+    as a classic script where the browser would run it (in place, or at the end of body when it is deferred); the CSP
+    is the document's first element.
     Raises ValueError like appDocument throws. Used for the design review's render evidence and the preview's own
     check. The bundle's other files (an icon.svg, a font) are inlined as data: URIs where index.html or style.css
     reference them as ./<path>, the only way the frame's CSP lets them load (img-src data:, font-src data:)."""
@@ -150,13 +152,21 @@ def frame_document(files):
            "connect-src 'none'; img-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'")
     css = _inline_assets(files["style.css"], files, True)
     html = _inline_assets(html0, files, False)          # other files' data: URIs change no tag boundary
-    link, script = frame_tags(html)
+    link, _module = frame_tags(html)
+    script, kind = frame_script(html)
     if link is None or script is None:
         raise ValueError("Unexpected app interface format")
     style = f'<style nonce="{nonce}">' + re.sub(r"</style", r"<\\/style", css, flags=re.I) + "</style>"
-    module = (f'<script type="module" nonce="{nonce}">' + re.sub(r"</script", r"<\\/script", files["app.js"], flags=re.I)
-              + "</script>")
-    for (start, end), text in sorted([(link, style), (script, module)], reverse=True):   # the later one first
+    code = re.sub(r"</script", r"<\\/script", files["app.js"], flags=re.I)
+    if kind == "module":
+        edits = [(link, style), (script, f'<script type="module" nonce="{nonce}">' + code + "</script>")]
+    elif kind == "classic":                              # a classic script runs where it stands, so it is inlined there
+        edits = [(link, style), (script, f'<script nonce="{nonce}">' + code + "</script>")]
+    else:   # deferred (defer or async): it runs once the page is parsed, so it goes at the end of body, still classic
+        body_end = ascii_lower(html).rfind("</body")
+        at = body_end if body_end > script[1] else len(html)
+        edits = [(link, style), (script, ""), ((at, at), f'<script nonce="{nonce}">' + code + "</script>")]
+    for (start, end), text in sorted(edits, reverse=True):   # the later one first
         html = html[:start] + text + html[end:]
     return ('<!doctype html><html data-app-host-origin="https://hive.invalid" data-app-channel="render"><head>'
             f'<meta http-equiv="Content-Security-Policy" content="{csp}">' + html)

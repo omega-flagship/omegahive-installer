@@ -334,6 +334,9 @@ def _packet(engine, run, files, purpose, failing, goal_id, read_only=None):
     if read_only:
         text += (" The app's other files, as they stand on your copy, are under read_only: read them and build on them "
                  "(their names, ids and functions), and never write them.")
+    if "index.html" in m["paths"]:   # the app frame loads these two tags (ui_parts.frame_tags and frame_script)
+        text += (' index.html loads ./style.css with <link rel="stylesheet" href="./style.css"> and ./app.js with '
+                 '<script type="module" src="./app.js"></script>: keep both tags when you write it.')
     if failing and failing.get("refused"):
         text += "\n" + failing["refused"]              # the host's words for why the last answer was refused
     shown = {k: failing.get(k) for k in ("failing", "failing_ref", "notes", "logs", "exit_code", "by")
