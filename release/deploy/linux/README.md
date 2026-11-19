@@ -83,7 +83,12 @@ CPython/SWI compatibility and both platform locks require actual Linux checks.
 
 The installer supports Ubuntu 22.04, 24.04 and 26.04. Its package steps wait up to
 30 minutes for Ubuntu's own updates, which a fresh computer installs soon after it
-starts, instead of failing on the package lock. It refuses other releases, root, unsafe home paths,
+starts, instead of failing on the package lock. Steps that download have no time limit
+of their own, so a slow connection makes setup slower, not failed: apt gives up on a
+server that stops answering by its own timeout and retries, curl stops a download that
+moves under a byte a second for 5 minutes, and uv stops a stalled download by its read
+timeout. dpkg keeps a configuration file its administrator changed, without asking.
+It refuses other releases, root, unsafe home paths,
 missing Landlock ABI, failed user namespace isolation, insufficient disk,
 modified archives, an existing installation and an unreviewed Studio seed.
 Module pins must join both platform Source vectors before sudo. Both dependency
@@ -95,7 +100,8 @@ private install log, which is never dumped on failure. Progress is a few friendl
 lines. Linux waitid(WNOWAIT) retains each original session leader until a bounded
 numeric ps snapshot shows it is the sole zombie in its owned session, including descendant process groups.
 Failed/timed-out steps clean that held group before reaping; cancellation does
-not interrupt cleanup. No post-reap numeric signalling is permitted. Numeric
+not interrupt cleanup. A privileged step's group may also hold apt's download methods,
+which run as apt's sandbox user `_apt`. No post-reap numeric signalling is permitted. Numeric
 snapshots stay in memory and export no process table. Failed cleanup remains
 unresolved; no OS containment or escaped-process guarantee is made. Privileged
 apt and descendant cleanup require actual disposable-VM checks. Failed logs and

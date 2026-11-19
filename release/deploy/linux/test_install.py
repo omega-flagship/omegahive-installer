@@ -361,9 +361,11 @@ class InstallerTests(unittest.TestCase):
                 commands, text, mode, source, root = self.apt_commands(restricted)
                 target = '/etc/apparmor.d/omegahive-1002'
                 wait = ['/usr/bin/apt-get', '-o', 'DPkg::Lock::Timeout=' + str(install.APT_LOCK_WAIT)]
-                self.assertEqual(commands[0], ([*wait, 'update'], {'timeout': install.APT_LOCK_WAIT + 600}))
-                self.assertEqual(commands[1], ([*wait, 'install', '-y', '--no-install-recommends', *install.APT],
-                                               {'timeout': install.APT_LOCK_WAIT + 900, 'package_environment': True}))
+                keep = ['-o', 'Dpkg::Options::=--force-confdef', '-o', 'Dpkg::Options::=--force-confold']
+                # No deadline of the installer's own: apt bounds the lock and a silent server, and dpkg asks nothing.
+                self.assertEqual(commands[0], ([*wait, 'update'], {'timeout': None}))
+                self.assertEqual(commands[1], ([*wait, *keep, 'install', '-y', '--no-install-recommends', *install.APT],
+                                               {'timeout': None, 'package_environment': True}))
                 self.assertEqual([argv for argv, _kwargs in commands[2:]], [
                     ['/usr/bin/loginctl', 'enable-linger', 'fresh-user'],
                     ['/usr/bin/install', '-o', 'root', '-g', 'root', '-m', '0644', str(source), target],
@@ -499,15 +501,19 @@ class InstallerTests(unittest.TestCase):
             home = Path(name); instance = install.Installer(home, {}, home)
             instance.root.mkdir(parents=True); commands = []
             raw = b'reviewed download'; pin = {'url': 'https://github.com/publisher/release', 'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}
-            def download(argv, **_kwargs):
-                commands.append(argv); Path(argv[argv.index('--output') + 1]).write_bytes(raw)
+            def download(argv, **kwargs):
+                commands.append((argv, kwargs)); Path(argv[argv.index('--output') + 1]).write_bytes(raw)
             instance.run = download
             self.assertEqual(instance.fetch(pin).read_bytes(), raw)
-            argv = commands[0]
+            argv, kwargs = commands[0]
             self.assertEqual(argv[:2], ['/usr/bin/curl', '--disable'])
             self.assertEqual(argv[argv.index('--proxy') + 1], '')
             self.assertEqual(argv[argv.index('--proto') + 1], '=https')
             self.assertEqual(argv[argv.index('--proto-redir') + 1], '=https')
+            # A slow download goes on to its end; one that moves under a byte a second for the stall time stops.
+            self.assertNotIn('--max-time', argv); self.assertEqual(kwargs, {'timeout': None})
+            self.assertEqual(argv[argv.index('--speed-limit') + 1], '1')
+            self.assertEqual(argv[argv.index('--speed-time') + 1], str(install.DOWNLOAD_STALL_SECONDS))
 
     def test_uninstall_refuses_the_releases_container_before_commands_or_deletion(self):
         with tempfile.TemporaryDirectory() as name:
@@ -578,6 +584,36 @@ class InstallerTests(unittest.TestCase):
                 patch.object(install.os, 'killpg') as signal_group, self.assertRaises(install.Refused):
             instance.cleanup_group(process)
         self.assertIsNone(process.returncode); signal_group.assert_not_called()
+
+    def test_privileged_session_admits_apt_download_methods_and_no_other_user(self):
+        # apt runs its download methods as its sandbox user inside the package step's session (real uid 100 on 22.04,
+        # 42 on 24.04 and 26.04). Cleanup admits that user in a privileged session only, and still no other user.
+        instance = install.Installer(Path('/unused'), {}, Path('/unused-home'))
+        process = SimpleNamespace(pid=4242, returncode=None)
+        me, sandbox, stranger = install.os.getuid(), 4100, 4200
+        def snapshot(third):
+            table = [(4242, install.os.getpid(), 4242, 4242, me, 'Ss'), (4243, 4242, 4242, 4242, 0, 'S'), third]
+            text = ''.join('%d %d %d %d %d %s\n' % row for row in table)
+            original = subprocess.Popen
+            return lambda argv, **kwargs: original([install.sys.executable, '-I', '-c', 'import sys; sys.stdout.write(%r)' % text],
+                                                   **kwargs)
+        method = (4244, 4243, 4242, 4242, sandbox, 'S')
+        with tempfile.TemporaryFile() as log, patch.object(install, 'apt_sandbox_uid', return_value=sandbox):
+            instance.log = log
+            with patch.object(install.subprocess, 'Popen', side_effect=snapshot(method)):
+                rows = instance.group_rows(process, install.time.monotonic() + 10, privileged=True)
+            self.assertEqual([row[4] for row in rows], [me, 0, sandbox])
+            for privileged, third in ((False, method), (True, (4244, 4243, 4242, 4242, stranger, 'S'))):
+                with self.subTest(privileged=privileged, uid=third[4]), \
+                        patch.object(install.subprocess, 'Popen', side_effect=snapshot(third)), \
+                        self.assertRaises(install.Refused):
+                    instance.group_rows(process, install.time.monotonic() + 10, privileged=privileged)
+
+    def test_step_without_a_deadline_runs_to_its_end(self):
+        instance = install.Installer(Path('/unused'), {}, Path.home())
+        with tempfile.TemporaryFile() as log:
+            instance.log = log
+            instance.run([install.sys.executable, '-I', '-c', 'import time; time.sleep(0.3)'], timeout=None)
 
     def test_service_and_shell_quoting_have_separate_contracts(self):
         with tempfile.TemporaryDirectory(prefix='home-shell-') as name:
