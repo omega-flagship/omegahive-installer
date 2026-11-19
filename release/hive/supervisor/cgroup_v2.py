@@ -297,6 +297,14 @@ def _self_path(owner):
     return path
 
 
+def service_roots(service_unit, uid):
+    """The cgroups the hive's own service may hold the Code resource owner in: the system service, or the same
+    unit run by this account's own systemd user manager, which a local-owner Linux install uses. With Delegate=yes
+    systemd gives either unit its subtree, owned by the service's account (systemd.io/CGROUP_DELEGATION)."""
+    return ("/system.slice/" + service_unit,
+            f"/user.slice/user-{uid}.slice/user@{uid}.service/app.slice/" + service_unit)
+
+
 def _mount(owner, relative_root):
     raw = _io(owner, "/proc/self/mountinfo", cap=_MOUNT_MAX)
     matched = []
@@ -712,7 +720,8 @@ def bootstrap(*, service_unit, monotonic_until, capacity_policy=None, workspace_
     """Call ONCE before workers; never moves processes back or adopts old layout.
 
     service_unit is original operator configuration, not request/body metadata.
-    This target profile is the system service /system.slice/<unit> only.
+    This target profile is the hive's own service: the system service /system.slice/<unit>, or, for a hive that
+    runs as a person's own user service, that account's user unit (service_roots).
     A partial failure is retained for operator reconciliation, not rolled back.
     """
     owner = BootstrapAttempt(_KEY)
@@ -727,7 +736,7 @@ def bootstrap(*, service_unit, monotonic_until, capacity_policy=None, workspace_
         owner.service_uid = _os.geteuid()
         owner.service_unit = service_unit
         owner.relative_root = _self_path(owner)
-        _need(owner.relative_root == "/system.slice/" + service_unit, "original_service_root_required")
+        _need(owner.relative_root in service_roots(service_unit, owner.service_uid), "original_service_root_required")
         _mount(owner, owner.relative_root)
         owner.root = _directory(owner, _CGROUP_MOUNT + owner.relative_root)
         _own_directory(owner.root)
