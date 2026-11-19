@@ -642,7 +642,13 @@ class ResourcePhase(_Evidence):
                 try:
                     remove = loop.remove_writer if write else loop.remove_reader
                     intent.remove_return = remove(slot.value)
-                    _need(type(intent.remove_return) is bool, self, 'readiness_removal_unknown')
+                    # asyncio's own loops answer the removal with a bool. uvloop, which uvicorn runs the hive on
+                    # wherever it's installed (the core lock pins 0.23.0), answers None to every removal, registered
+                    # or not, so before this every Linux proposal test failed to launch with readiness_removal_unknown.
+                    # None can't tell a removal from an absence; it means removed only because this wait registered
+                    # the reader itself. Anything else stays unknown.
+                    _need(type(intent.remove_return) is bool or (intent.remove_return is None and intent.registered),
+                          self, 'readiness_removal_unknown')
                     intent.removed = True
                 except BaseException as error:
                     intent.error = error
