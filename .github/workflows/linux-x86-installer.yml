@@ -1,16 +1,16 @@
 # Purpose: build one current Linux test kit and prove its fresh-user install on every supported Ubuntu release.
-name: Linux v0.39 test kit
+name: Linux v0.39.1 test kit
 
 on:
   workflow_dispatch:
   push:
-    branches: ["ci/linux-x86-v039-public"]
+    branches: ["ci/linux-x86-v0391-public"]
 
 permissions:
   contents: read
 
 env:
-  RELEASE_ID: linux-hive-v0.39
+  RELEASE_ID: linux-hive-v0.39.1
 
 jobs:
   baseline:
@@ -29,7 +29,7 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     env:
-      PREFIX: omegahive-linux-v039
+      PREFIX: omegahive-linux-v0391
     steps:
       - uses: actions/checkout@v4
       - name: Use runner scratch outside the tested tree
@@ -50,7 +50,7 @@ jobs:
           # Entries dated at the release commit's time (ci/RELEASE_COMMIT_TIME), since a tree archive is otherwise
           # dated now and every run would make a different download from the same source.
           git archive --format=tar --mtime="$(cat ci/RELEASE_COMMIT_TIME)" --prefix="$PREFIX/" HEAD:release | gzip -n > "$RUNNER_TEMP/inputs/source.tar.gz"
-      - name: Use the UI, the Omega core, Studio and the Code service from the Mac v0.39 build
+      - name: Use the UI, the Omega core, Studio and the Code service from the Mac v0.39.1 build
         run: |
           cd ci/linux-x86/inputs
           sha256sum -c ui-dist.tar.gz.sha256
@@ -73,7 +73,7 @@ jobs:
         run: |
           python3 -B ci/linux-x86/prepare_release.py --source release --inputs "$RUNNER_TEMP/inputs" \
             --catalogue ci/linux-x86/public-catalogue.json --tree "$(cat ci/RELEASE_TREE)" \
-            --output "$RUNNER_TEMP/catalogue.json" --built-with "Mac v0.39 vite build; provenance ci/linux-x86/mac-zip-inputs.json"
+            --output "$RUNNER_TEMP/catalogue.json" --built-with "Mac v0.39.1 vite build; provenance ci/linux-x86/mac-zip-inputs.json"
           python3 -I -B -S ci/linux-x86/make_catalogue.py \
             --base-catalogue "$RUNNER_TEMP/catalogue.json" --pins ci/linux-x86/x86_64-pins.json \
             --source-tar "$RUNNER_TEMP/inputs/source.tar.gz" --prefix "$PREFIX" \
@@ -87,16 +87,16 @@ jobs:
           stat -c '%s %n' omegahive-linux.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: omegahive-linux-v039-kit
+          name: omegahive-linux-v0391-kit
           path: ${{ runner.temp }}/kit/
       - uses: actions/upload-artifact@v4
         with:
-          name: omegahive-linux-v039-bundle
+          name: omegahive-linux-v0391-bundle
           path: ${{ runner.temp }}/bundle/
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: linux-v039-build-inputs
+          name: linux-v0391-build-inputs
           path: |
             ${{ runner.temp }}/catalogue.json
             ${{ runner.temp }}/inputs/core.lock
@@ -118,11 +118,11 @@ jobs:
         run: printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v4
         with:
-          name: omegahive-linux-v039-kit
+          name: omegahive-linux-v0391-kit
           path: ${{ runner.temp }}/kit
       - uses: actions/download-artifact@v4
         with:
-          name: omegahive-linux-v039-bundle
+          name: omegahive-linux-v0391-bundle
           path: ${{ runner.temp }}/bundle
       - name: Fresh user with test-only permission for the installer's fixed system setup commands
         run: |
@@ -186,7 +186,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: matrix.os == 'ubuntu-22.04' && matrix.entry == 'kit'
         with:
-          name: linux-v039-installed-runtime
+          name: linux-v0391-installed-runtime
           path: ${{ runner.temp }}/installed-runtime/
       - name: Open, sign in, restart, log out, and restart the user manager
         run: |
@@ -205,45 +205,45 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: linux-v039-${{ matrix.os }}-${{ matrix.entry }}-receipts
+          name: linux-v0391-${{ matrix.os }}-${{ matrix.entry }}-receipts
           path: ${{ runner.temp }}/receipts/
 
-  # A v0.37 tester's way to this build: the published v0.37 kit, `omegahive uninstall` keeping conversations, then this
+  # A v0.39 tester's way to this build: the published v0.39 kit, `omegahive uninstall` keeping conversations, then this
   # kit over the kept data folder. A fresh install can't catch what the older release leaves behind.
   upgrade:
     needs: build
     runs-on: ubuntu-26.04
     env:
       HIVE_USER: hiveuser
-      OLD_KIT_URL: https://github.com/omega-flagship/omegahive-installer/releases/download/linux-hive-v0.37/omegahive-linux.sh
-      OLD_KIT_SHA256: 09a9ce318c07bbeb805863522bd725d75459c1285698617047711365faf58555
+      OLD_KIT_URL: https://github.com/omega-flagship/omegahive-installer/releases/download/linux-hive-v0.39/omegahive-linux.sh
+      OLD_KIT_SHA256: a13497674604e57e650647ef99212e4a5c3a529f42760766ade4c07075b1b157
     steps:
       - uses: actions/checkout@v4
       - name: Use runner scratch outside the tested tree
         run: printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v4
         with:
-          name: omegahive-linux-v039-kit
+          name: omegahive-linux-v0391-kit
           path: ${{ runner.temp }}/kit
-      - name: Fresh user allowed both releases' fixed system setup commands, with the published v0.37 kit
+      - name: Fresh user allowed both releases' fixed system setup commands, with the published v0.39 kit
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
           sudo sh ci/linux-x86/test_account.sh "$HIVE_USER" "$RELEASE_ID"
           uid=$(id -u "$HIVE_USER")
-          # v0.37's own AppArmor command, the one v0.34 introduced (b48227e) and v0.36 and v0.37 kept (7477c3e, 120b12c): its one profile file,
+          # v0.39's own AppArmor command, the one v0.34 introduced (b48227e) and v0.36, v0.37 and v0.39 kept (7477c3e, 120b12c, 74f6a22): its one profile file,
           # the Code service's and the mind launcher's, loaded to the same path this build loads; apt and linger are allowed above.
           printf '%s ALL=(root) NOPASSWD: /usr/bin/install -o root -g root -m 0644 %s %s, /usr/sbin/apparmor_parser -r %s\n' \
-            "$HIVE_USER" "/home/$HIVE_USER/.local/share/omegahive/releases/linux-hive-v0.37/omegahive.apparmor" \
+            "$HIVE_USER" "/home/$HIVE_USER/.local/share/omegahive/releases/linux-hive-v0.39/omegahive.apparmor" \
             "/etc/apparmor.d/omegahive-$uid" "/etc/apparmor.d/omegahive-$uid" \
-            | sudo tee /etc/sudoers.d/91-hive-ci-v037 > /dev/null
-          sudo chmod 0440 /etc/sudoers.d/91-hive-ci-v037
-          sudo visudo -cf /etc/sudoers.d/91-hive-ci-v037
-          curl -fLsS "$OLD_KIT_URL" -o "$RUNNER_TEMP/omegahive-linux-v037.sh"
-          printf '%s  %s\n' "$OLD_KIT_SHA256" "$RUNNER_TEMP/omegahive-linux-v037.sh" | sha256sum -c -
+            | sudo tee /etc/sudoers.d/91-hive-ci-v039 > /dev/null
+          sudo chmod 0440 /etc/sudoers.d/91-hive-ci-v039
+          sudo visudo -cf /etc/sudoers.d/91-hive-ci-v039
+          curl -fLsS "$OLD_KIT_URL" -o "$RUNNER_TEMP/omegahive-linux-v039.sh"
+          printf '%s  %s\n' "$OLD_KIT_SHA256" "$RUNNER_TEMP/omegahive-linux-v039.sh" | sha256sum -c -
           (cd "$RUNNER_TEMP/kit" && sha256sum -c omegahive-linux.sh.sha256)
-          sudo install -o "$HIVE_USER" -m 0600 "$RUNNER_TEMP/omegahive-linux-v037.sh" "/home/$HIVE_USER/omegahive-linux-v037.sh"
+          sudo install -o "$HIVE_USER" -m 0600 "$RUNNER_TEMP/omegahive-linux-v039.sh" "/home/$HIVE_USER/omegahive-linux-v039.sh"
           sudo install -o "$HIVE_USER" -m 0600 "$RUNNER_TEMP/kit/omegahive-linux.sh" "/home/$HIVE_USER/omegahive-linux.sh"
-      - name: Install v0.37, uninstall it keeping conversations, then install this build over the kept data
+      - name: Install v0.39, uninstall it keeping conversations, then install this build over the kept data
         run: |
           uid=$(id -u "$HIVE_USER")
           as_user() { sudo -iu "$HIVE_USER" env XDG_RUNTIME_DIR="/run/user/$uid" "$@"; }
@@ -262,12 +262,12 @@ jobs:
               exit "$code"
             fi
           }
-          step omegahive-linux-v037.sh install-v037
+          step omegahive-linux-v039.sh install-v039
           data="/home/$HIVE_USER/.local/share/omegahive/data"
           before=$(sudo stat -c %i "$data")
-          printf '\n' | as_user "/home/$HIVE_USER/.local/bin/omegahive" uninstall > "$RUNNER_TEMP/uninstall-v037.out" 2>&1
-          python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/uninstall-v037.out"
-          grep -q "Your conversations were kept" "$RUNNER_TEMP/uninstall-v037.out"
+          printf '\n' | as_user "/home/$HIVE_USER/.local/bin/omegahive" uninstall > "$RUNNER_TEMP/uninstall-v039.out" 2>&1
+          python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/uninstall-v039.out"
+          grep -q "Your conversations were kept" "$RUNNER_TEMP/uninstall-v039.out"
           step omegahive-linux.sh install-upgrade
           after=$(sudo stat -c %i "$data")
           printf 'data folder inode before %s, after %s\n' "$before" "$after"
@@ -279,7 +279,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/receipts"
-          for name in install-v037 uninstall-v037 install-upgrade; do
+          for name in install-v039 uninstall-v039 install-upgrade; do
             test ! -f "$RUNNER_TEMP/$name.out" || python3 ci/linux-x86/smoke_release.py redact "$RUNNER_TEMP/$name.out" > "$RUNNER_TEMP/receipts/$name.out"
           done
           # shellcheck disable=SC2016,SC2024
@@ -291,7 +291,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: linux-v039-upgrade-from-v037-receipts
+          name: linux-v0391-upgrade-from-v039-receipts
           path: ${{ runner.temp }}/receipts/
 
   fresh:
@@ -313,7 +313,7 @@ jobs:
         run: printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v4
         with:
-          name: omegahive-linux-v039-kit
+          name: omegahive-linux-v0391-kit
           path: ${{ runner.temp }}/kit
       - name: Boot a fresh Ubuntu ${{ matrix.release }} and give it the download and a new user
         env:
@@ -387,5 +387,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: linux-v039-fresh-ubuntu-${{ matrix.release }}-receipts
+          name: linux-v0391-fresh-ubuntu-${{ matrix.release }}-receipts
           path: ${{ runner.temp }}/receipts/
