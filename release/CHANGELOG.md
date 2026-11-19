@@ -66,6 +66,17 @@ and are not repeated here.
   hive whose installer was given an ASI Cloud key already has it in `ASI_API_KEY`, so its owner can use `asi1-mini` on
   that key. Those calls pass the hive's spending checks but cost $0, so they use up no money limit; only the key's
   own limits at ASI Cloud bound how many there are.
+### Added (export the hive's logs from the feedback area)
+- The feedback area gathers the hive's logs into one file on a press: the hive's version, which hive it is and the
+  page's device, the requests the hive answered lately with their status and time to answer, the error answers and
+  the page's own errors by id, the screens visited, and for an admin the whole hive's requests and the hive's own
+  newest warnings and errors. Other people's error answers show there by route, status and code only, never their
+  words. The person sees all of it before saving it as `omega-hive-logs-<time>.txt` or copying it. `GET
+  /api/feedback/logs` gives the hive's part; the hive keeps each person's last 100 requests for it (repeats folded)
+  and its own newest 100 warnings and errors.
+- Keys, tokens, sign-in codes, emails, home folders and ids are cleaned out of the logs as from a report, on the hive
+  as it keeps each line and again on the page. Reports and logs now also take out OAuth codes, cookie values and IPv4
+  and IPv6 addresses.
 
 ### Changed (the operator password from outside)
 - From outside the hive's machine the operator password login is refused (`403 password_login_local_only`) before

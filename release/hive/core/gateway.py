@@ -34,6 +34,7 @@ import httpx
 from .config import SUBSCRIPTION_CLI, SUBSCRIPTION_CODEX, Provider, is_free, is_subscription
 from .providers import openrouter_routing
 from .redact import provider_category
+from .refusals import LONGEST_WAIT_S, provider_code, refused, when
 
 # The commitment point (ask-takeover r3, kept in r5): a caller may set SEND_GATE to an async callable for the duration of
 # one chat call. It is awaited at httpcore's send_request_headers.started trace: after any wait for a pooled connection
@@ -99,18 +100,22 @@ class GatewayError(Exception):
         self.status, self.code, self.message = status, code, message
 
 
-def upstream_refusal(provider_name, response):
-    """A provider's refusal, as this hive passes it on (sol and Kimi on bef0f01b): a fixed sentence per status category,
-    never the provider's own words, which can carry ids, account names or echoed titles no pattern can be sure to catch.
-    The provider's body is not logged either (sol on 593fde34: scrub only runs on a local-owner hive, and a provider can
-    echo a key): the log keeps its status, category and length. The status is kept for callers too, so they still see
-    its class (429 rate limited, 401 refused the key, ...)."""
+def upstream_refusal(provider_name, response, model=None):
+    """A provider's refusal, as this hive passes it on (sol and Kimi on bef0f01b): the row of refusals.py's table for its
+    status category, in the hive's own sentence for a person, never the provider's words, which can carry ids, account
+    names or echoed titles no pattern can be sure to catch. The provider's body is not logged either (sol on 593fde34:
+    scrub only runs on a local-owner hive, and a provider can echo a key): the log keeps its status, category and
+    length. The status is kept for callers too, so they still see its class (429 rate limited, 401 refused the key, ...),
+    and retry_after is the wait the answer asked for, if it asked. `model` is the model as the provider names it.
+    Example: OpenRouter's 402 with no Retry-After is provider_no_credit, remedy credit."""
     status = int(response.status_code)
     category = provider_category(status)   # redact: one category table for every provider refusal
     logging.getLogger("hive").warning("provider %s answered %s (%s, %d bytes)", provider_name, status, category,
                                       len(response.content or b""))
     label = LABELS_UPSTREAM.get(provider_name, provider_name)
-    err = GatewayError(status, "upstream_error", f"{label} refused the request ({category}, {status}).")
+    wait = asked_wait(response.headers, provider_name)
+    err = refused(provider_code(category, wait, is_free(provider_name)), status, retry_after=wait, provider=label,
+                  model=model or "this model", when=when(wait))
     err.refusal_usage = refusal_usage(response)   # a structured top-level usage object, if any (charge_from_refusal)
     err.charge_usd = charge_from_refusal(err.refusal_usage)   # a charge the body itself reports, else None
     err.unbilled = (status in UNBILLED_REFUSALS.get(provider_name, frozenset())
@@ -128,26 +133,42 @@ FREE_RETRIES = 4
 FREE_RETRY_BASE, FREE_RETRY_CAP = 1.0, 8.0
 
 
-def free_retry_delay(attempt, headers, rng=random.random):
-    """Seconds to wait before retry `attempt` (0 for the first) of a free call answered 429, or None when the answer asks
-    for a longer wait than FREE_RETRY_CAP, which this call doesn't make. retry-after-ms first, then retry-after as seconds
-    or an HTTP date; a zero, past or unreadable value counts as none given; without one, full jitter: uniform over
-    [0, min(FREE_RETRY_CAP, FREE_RETRY_BASE * 2 ** attempt)). Example: attempt 2 with no header waits 0 to 4 s;
-    'retry-after: 3' waits 3 s; 'retry-after: 30' gives None."""
-    for name, scale in (("retry-after-ms", 0.001), ("retry-after", 1.0)):
+def asked_wait(headers, provider_name=None):
+    """The seconds an answer asks a caller to wait before calling again, or None when it asks for none: retry-after-ms
+    first, then retry-after as seconds or an HTTP date (RFC 9110 10.2.3), as openai-python's client reads them; a zero,
+    past or unreadable value counts as none given. OpenRouter also names when a free model's limit resets, in
+    X-RateLimit-Reset as milliseconds since the epoch (its API reference, "Limits"), read only from OpenRouter. A wait
+    longer than refusals.LONGEST_WAIT_S is read as that, so no answer holds a mind for longer (a Retry-After of years).
+    Example: 'retry-after: 3' gives 3.0; 'retry-after-ms: 1500' gives 1.5; 'retry-after: 99999999' gives 1800.0;
+    neither gives None."""
+    sources = [("retry-after-ms", 0.001), ("retry-after", 1.0)] + ([("x-ratelimit-reset", None)] if provider_name == "openrouter" else [])
+    for name, scale in sources:
         raw = headers.get(name)
         if raw is None:
             continue
         try:
-            seconds = float(raw) * scale
+            seconds = float(raw) * scale if scale is not None else float(raw) / 1000 - time.time()
         except ValueError:
+            if scale is None:
+                continue
             try:
-                when = email.utils.parsedate_to_datetime(raw)
-                seconds = (when - datetime.datetime.now(datetime.timezone.utc)).total_seconds()
+                moment = email.utils.parsedate_to_datetime(raw)
+                seconds = (moment - datetime.datetime.now(datetime.timezone.utc)).total_seconds()
             except (TypeError, ValueError, IndexError, OverflowError):
                 continue
         if not math.isfinite(seconds) or seconds <= 0:
             continue
+        return min(seconds, float(LONGEST_WAIT_S))
+    return None
+
+
+def free_retry_delay(attempt, headers, rng=random.random):
+    """Seconds to wait before retry `attempt` (0 for the first) of a free call answered 429, or None when the answer asks
+    for a longer wait than FREE_RETRY_CAP, which this call doesn't make. The wait the answer asks for (asked_wait), else
+    full jitter: uniform over [0, min(FREE_RETRY_CAP, FREE_RETRY_BASE * 2 ** attempt)). Example: attempt 2 with no
+    header waits 0 to 4 s; 'retry-after: 3' waits 3 s; 'retry-after: 30' gives None."""
+    seconds = asked_wait(headers)
+    if seconds is not None:
         return seconds if seconds <= FREE_RETRY_CAP else None
     return rng() * min(FREE_RETRY_CAP, FREE_RETRY_BASE * 2 ** attempt)
 
@@ -295,7 +316,8 @@ def unbilled(exc):
 def held_cause(exc, model=None):
     """Why a sent call's cost is unknown, in this hive's own words, never the provider's: the line a person reads beside
     the held call (Reservations.unknown). exc is the call's failure, or None when it answered without a cost the hive
-    could record. A refusal's sentence is upstream_refusal's own ("OpenAI refused the request (rate_limited, 429).")."""
+    could record. A refusal's sentence is upstream_refusal's own, refusals.py's row for its status ("OpenAI is taking no
+    more calls to this model for now, so this mind tries again shortly. Choose another model to go on sooner.")."""
     name = str(model or "").partition("/")[0]
     label = LABELS_UPSTREAM.get(name, name or "the provider")
     if isinstance(exc, GatewayError):
@@ -320,7 +342,7 @@ def refusal_charge(exc):
     return charge if isinstance(charge, float) and math.isfinite(charge) and charge >= 0 else None
 
 
-LABELS_UPSTREAM = {"openrouter": "OpenRouter", "anthropic": "Anthropic", "openai": "OpenAI", "local": "The local model server",
+LABELS_UPSTREAM = {"free": "Free inference", "openrouter": "OpenRouter", "anthropic": "Anthropic", "openai": "OpenAI", "local": "The local model server",
                    SUBSCRIPTION_CLI: "The subscription bridge", SUBSCRIPTION_CODEX: "The ChatGPT subscription bridge"}
 
 
@@ -329,6 +351,13 @@ def split_model(model):
     if not name:
         raise GatewayError(400, "bad_model", f"model must be <provider>/<model>, got {model!r}")
     return provider, name
+
+
+def billable_tokens(body):
+    """A call's prompt as a true worst case: every billable input (all of the body but the model and stream fields), in
+    UTF-8 bytes plus one, since a token always covers at least one byte (OmegaReview 2026-10-04)."""
+    billable = {k: v for k, v in body.items() if k not in ("model", "stream")}
+    return len(json.dumps(billable, ensure_ascii=False).encode("utf-8")) + 1
 
 
 def _completion(model, text, prompt_tokens, completion_tokens):
@@ -596,7 +625,6 @@ class Gateway:
         pays for, for a person it admits, under their calls and the hive's for the day). dispatch=True counts this call
         and returns its ticket (for free_uncommitted). principal: as admit_subscription. Refuses with no gate."""
         if self.free_gate is None:
-            from .refusals import refused
             raise refused("free_inference_off", 403)
         return self.free_gate.admit(agent, principal=principal, dispatch=dispatch)
 
@@ -623,7 +651,6 @@ class Gateway:
         def recheck():
             self.enforce_egress(agent, "free")
             if self.free_gate is None:
-                from .refusals import refused
                 raise refused("free_inference_off", 403)
             self.free_gate.authorize(agent, principal)
         return recheck
@@ -705,11 +732,19 @@ class Gateway:
         cost = data.get("total_cost")
         return float(cost) if type(cost) in (int, float) and math.isfinite(cost) and cost >= 0 else None
 
+    def sender(self, agent, provider_name, provider):
+        """(key id, secret) a mind's call to this provider goes out with: its paying key, except where no key of the ring
+        is used. A subscription never has a paying key (R3.2 §M): the CLI holds its own sign-in, and this is the
+        bridge's own key. Nor does the free route: the deploy's key pays, never a key in the ring or one assigned to the
+        mind. A local model's key is its own. Raises as paying_key does when no key can pay."""
+        if provider.local or is_subscription(provider_name) or is_free(provider_name):
+            return None, provider.api_key
+        return self.paying_key(agent, provider_name)
+
     def provider(self, name) -> Provider:
         provider = self.providers.get(name)
         if provider is None:
             if is_free(name):   # a mind left on free inference after the deploy took the key away
-                from .refusals import refused
                 raise refused("free_inference_off", 403)
             raise GatewayError(400, "unknown_provider", f"no provider {name!r}")
         return provider
@@ -770,8 +805,7 @@ class Gateway:
         for field in ("input_audio", "audio", "modalities", "attachments"):
             if field in body:
                 raise GatewayError(400, "unsupported_content", f"{field} is not supported on paid calls")
-        billable = {k: v for k, v in body.items() if k not in ("model", "stream")}
-        prompt_tokens = len(json.dumps(billable, ensure_ascii=False).encode("utf-8")) + 1
+        prompt_tokens = billable_tokens(body)
         max_out = int(body.get("max_completion_tokens") or body.get("max_tokens") or 4096)
         # A model priced at exactly $0 (a free remote model) still goes through every access, payer and budget check:
         # it reserves one micro-dollar, the smallest positive amount, and settles at what the provider reports.
@@ -794,16 +828,32 @@ class Gateway:
                                "to the providers file")
         settles = self.free_unreconciled(label) if self.free_unreconciled is not None else None
         if settles is not None:
-            minutes = math.ceil((settles - time.time()) / 60)
-            when = f"in about {minutes} minute{'' if minutes == 1 else 's'}" if minutes > 0 else "on the hive's next pass"
-            raise GatewayError(402, "free_model_unreconciled",
-                               f"an earlier call to {label}, priced at $0, has an unknown outcome; this model can be used "
-                               f"again once that call settles by itself, {when}")
+            # its sentence is the table's, saying when that call settles by itself (from OpenRouter's record, or the
+            # hour's expiry); the same wait goes out as its Retry-After
+            wait = max(1, settles - time.time())
+            raise refused("free_model_unreconciled", 402, retry_after=wait, model=label, when=when(wait))
         return FREE_MODEL_RESERVE_USD
 
     def cost(self, provider, model, prompt_tokens, completion_tokens):
         price_in, price_out = provider.price(model)
         return (prompt_tokens * price_in + completion_tokens * price_out) / 1_000_000
+
+    def affordable_room(self, agent, body, limit, room_micros):
+        """The most output tokens, up to `limit`, a call with this body can reserve when `room_micros` is what a new
+        reservation for it could hold (None: nothing limits it): estimate's worst case solved for the output,
+        (room - prompt x price in) / price out, floored, one micro under so the reservation's own rounding up still
+        fits. The prompt is counted as if the room were `limit`, the widest number it can be. A model with no price
+        here reserves no money and gets `limit`. Example: $0.30 of room, a 40,000-byte prompt, $3 in and $15 out per
+        million tokens: (300,000 - 120,000 - 1) // 15 = 11,999 tokens."""
+        provider_name, model = split_model(agent["model"])
+        provider = self.providers.get(provider_name)
+        if room_micros is None or provider is None or not provider.priced(model):
+            return limit
+        price_in, price_out = provider.price(model)
+        if price_out <= 0:
+            return limit
+        widest = {**body, ("max_completion_tokens" if body.get("max_completion_tokens") else "max_tokens"): limit}
+        return max(0, min(limit, int((room_micros - billable_tokens(widest) * price_in - 1) // price_out)))
 
     async def chat(self, agent, body, principal=None):
         """Returns (response_json, usage_dict). principal: see admit_subscription (only that route reads it)."""
@@ -833,10 +883,7 @@ class Gateway:
             upstream["tool_choice"] = "auto"   # 'required' maps to Anthropic 'any', rejected by some models (as provider_features.py)
         if provider_name == "anthropic":
             upstream.pop("enable_thinking", None)   # Iter's vLLM/Qwen switch, not an Anthropic field
-        # a subscription never has a paying key (R3.2 §M): the CLI holds its own sign-in; this is the bridge's own key.
-        # Nor does the free route: the deploy's key pays, never a key in the ring or one assigned to the mind
-        key_id, secret = (self.paying_key(agent, provider_name) if not (provider.local or subscription or free)
-                          else (None, provider.api_key))
+        key_id, secret = self.sender(agent, provider_name, provider)
         headers = {"Authorization": f"Bearer {secret}"} if secret else {}
         if provider_name == "openrouter":
             # The mind's preferred upstream(s) for this model, if it has any (hive/core/providers.py).
@@ -900,15 +947,19 @@ class Gateway:
                 readiness.record_failure(context)
             self.free_uncommitted(ticket, committed)
             logging.getLogger("hive").warning("free inference: the endpoint still answered 429 after %d retries", attempt)
-            from .refusals import refused
-            # the next wait this loop would have made (None when the answer asks for more than it makes)
+            # when trying again can help: the wait the answer asked for, however long (a mind's calls hold that long), else
+            # the next wait this loop would have made; the sentence names the wait only when the endpoint asked for one
+            # (Singularity Compute's 429 asks none, and a jitter draw is no one's promise), else it says "in a moment"
+            asked = asked_wait(response.headers)
+            if asked is not None:
+                raise refused("free_inference_busy", 429, retry_after=asked, when=when(asked))
             raise refused("free_inference_busy", 429, retry_after=free_retry_delay(attempt, response.headers))
         # Pool exhaustion, local protocol errors, budget/policy/SEND_GATE refusal and
         # cancellation are not observations that the provider failed to answer.
         if response.status_code >= 400:
             if readiness is not None:
                 readiness.record_failure(context)
-            err = upstream_refusal(provider_name, response)
+            err = upstream_refusal(provider_name, response, model)
             if provider_name == "openrouter" and paid_extras(upstream):
                 err.unbilled = False   # web search, file parsing or fetch may have run and been billed before the error
             if err.refusal_usage is not None:   # a refusal that reports usage: priced as an answer would be
@@ -991,5 +1042,5 @@ class Gateway:
         response = await self.client.post(f"{provider.base_url.rstrip('/')}/embeddings",
                                           json=dict(body, model=model), headers=headers, extensions=extensions)
         if response.status_code >= 400:
-            raise upstream_refusal(provider_name, response)
+            raise upstream_refusal(provider_name, response, model)
         return response.json()

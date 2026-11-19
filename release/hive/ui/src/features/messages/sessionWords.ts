@@ -1,11 +1,14 @@
 // Purpose: a session page's words for a person: a mind's request as one plain line, and a repository by its name.
-import type { Risk, SessionItem } from '../../api/types'
+import type { ApprovalStatus, Risk, SessionItem } from '../../api/types'
 import type { Target } from '../code/CodePage'
 import { explainApproval } from '../../experiences/still/language'
 
 type ApprovalItem = Extract<SessionItem, { type: 'approval' }>
 
-const STATUS: Record<string, string> = { pending: 'Waiting for you', approved: 'Allowed', used: 'Allowed', denied: 'Not allowed', expired: 'Expired' }
+// every status the host gives a request, so one it adds fails to compile until it has words here
+const STATUS: Record<string, string> = {
+  pending: 'Waiting for you', approved: 'Allowed', used: 'Allowed', denied: 'Not allowed', expired: 'Expired', auto: 'Ran without asking',
+} satisfies Record<ApprovalStatus, string>
 const RISK: Record<string, string> = { high: 'high risk', medium: 'medium risk', low: 'low risk' }
 
 /**

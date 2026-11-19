@@ -38,6 +38,7 @@ import { experienceById } from '../../experiences/registry'
 import { DirectingStudio } from '../studioLive/DirectingStudio'
 import { changeAskSize, halfSwitch, useAskSize } from './askSize'
 import type { AskMode } from './placement'
+import { StoppedTasks } from '../tasks/StoppedTasks'
 
 /** glass: Classic · letter: Still · transmission: Cosmos · liquid: Flux · terminal: Construct · note: Canvas */
 export type ThreadVariant = 'glass' | 'letter' | 'transmission' | 'liquid' | 'terminal' | 'note'
@@ -698,6 +699,7 @@ export function Thread({ variant, words = [] }: { variant: ThreadVariant; words?
   return (
     <>
       <ThreadLog rows={useThreadRows()} variant={variant} words={words} />
+      <StoppedTasks />
       <DirectingStudio />
     </>
   )

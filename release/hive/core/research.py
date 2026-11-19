@@ -1,3 +1,4 @@
+# Purpose: admit research requests, run their researchers and retain their checked results.
 """Research route, part (a): the research.request kind and the hive's Research swarm (RESEARCH_ROUTE_DESIGN_20261109).
 
 Intent-only: a person's mind dispatches {kind: "research.request", request: {title, instruction}} and nothing else. The
@@ -532,8 +533,9 @@ class Research:
             await self.spawn(self.db.one("SELECT * FROM research_reports WHERE request_id = ?", (admitted["request_id"],)))
         except Exception as exc:   # noqa: BLE001
             log.warning("research: no researcher for %s (%s)", admitted["request_id"], getattr(exc, "code", type(exc).__name__))
-            self.db.execute("UPDATE goals SET status = 'failed', result = ?, updated_at = ? WHERE id = ? AND status = 'open'",
-                            ("no researcher could be started", now(), goal["id"]))
+            with self.db.transaction():
+                if hive.goals.get(goal["id"])["status"] == "open":
+                    hive.goals.stop(goal["id"], "failed", "research_start", emit=False)
             hive.goals._emit(goal["id"])
         try:
             hive.events.publish("request.updated",

@@ -564,11 +564,16 @@ def test_authority_rechecked_at_the_send_boundary(hive_client, monkeypatch, chan
 def test_daily_cap_counts_attempts_and_survives_a_restart(hive_client):
     hive = hive_client.hive
     agent = owned_mind(hive_client)
-    use_bridge(hive, Bridge(status=500, answer={"error": "invented"}))   # attempts that fail still count
+    failing = use_bridge(hive, Bridge(status=500, answer={"error": "invented"}))   # attempts that fail still count
     assert call(hive_client, agent).status_code == 500
+    # the bridge's refusal is kept on the mind: the next call is held by the hive, answered 429 with nothing sent and
+    # no attempt counted, until its wait ends (as when someone writes to the mind)
+    held = call(hive_client, agent)
+    assert held.status_code == 429 and held.json()["error"]["code"] == "provider_unavailable" and len(failing.seen) == 1
+    hive.model_refusal_release(agent["id"])
     assert call(hive_client, agent).status_code == 500
     bridge = use_bridge(hive, Bridge())
-    third = call(hive_client, agent)
+    third = call(hive_client, agent)   # the day's cap, the hive's own limit, answers before the refusal kept on the mind
     assert third.status_code == 429 and third.json()["error"]["code"] == "subscription_daily_cap"
     assert bridge.seen == [] and usage_rows(hive_client, agent) == []
     hive.gateway.subscription_gate = SubscriptionGate(hive)   # a restarted gate reads the persisted attempts

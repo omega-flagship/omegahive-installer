@@ -1,9 +1,11 @@
-"""Purpose: check that a mind reports a result only once it has come back. Jon on omega-flagship/omegahive#334: "a mind
-should report a result only after it comes back. The extra turn is fine." A reply's commands run in order and their
-results reach the mind only on its next turn, so a message written after another command in the same reply is held: it
-runs as held-message, which sends nothing and says why. A message before any command, or after only messages and waits,
-goes out as before. tests/test_wait_quiet_runtime.py checks the same on the real runtime, what the person gets
-included."""
+"""Purpose: check that a mind reports a result only once it has come back, and that its person waits one extra turn at
+most. Jon on omega-flagship/omegahive#334: "a mind should report a result only after it comes back. The extra turn is
+fine." A reply's commands run in order and their results reach the mind only on its next turn, so a message written
+after another command in the same reply is held: it runs as held-message, which sends nothing and says why. A message
+before any command, or after only messages and waits, goes out as before, and so does every message of the reply right
+after a hold (Jon on #334: "Could a message that was held once go out the next time it's written?").
+tests/test_wait_quiet_runtime.py checks the same on the real runtime, what the person gets included."""
+import itertools
 import json
 import pathlib
 import sys
@@ -78,3 +80,56 @@ def test_the_omega_prompt_tells_minds_a_message_after_a_command_is_held():
     assert ("Commands run in order and their results reach you only on your next turn, so a message after another "
             "command in the same reply is held, not sent: say what a command did in your next reply, once its result "
             "shows.") in prompt
+
+
+def reply(source, last="clear", failure="normal"):
+    """One turn as the loop runs it (loop_hooks.metta hive-run-response): the commands that run, and the &lastReplyHold
+    the next turn gets."""
+    envelope = helper.prepare_model_response(source, failure, last)
+    return helper.prepared_response_commands(envelope), helper.prepared_response_hold(envelope, last)
+
+
+def test_a_mind_pairing_a_command_with_a_message_every_turn_gets_every_other_message_out():
+    last, got = "clear", []
+    for turn in range(1, 5):
+        ran, last = reply(f'remember "lesson {turn}"\nsend "turn {turn}"', last)
+        got.append("held" if "held-message" in ran else "sent")
+    assert got == ["held", "sent", "held", "sent"]
+
+
+def test_the_reply_right_after_a_hold_sends_every_message_where_it_stands():
+    source = 'hive-goals\nsend "you have two"\nremember "told them"\nsend-hive-to c_1 "and to you"'
+    assert reply(source, "held") == (helper.signature_balance_parentheses(source), "clear")
+    ran, last = reply(source, "clear")
+    assert ran.count("(held-message ") == 2 and last == "held"
+
+
+# A turn the runtime ran none of (a malformed reply, a provider failure) keeps the last hold, so it can't open the way
+# for a second hold in a row.
+SHAPES = {
+    "acts, then speaks": ('remember "x"\nsend "a"', "normal"),
+    "speaks, then acts": ('send "a"\nremember "x"', "normal"),
+    "only speaks": ('send "a"', "normal"),
+    "only acts": ('remember "x"', "normal"),
+    "waits": ("wait 60 nothing new", "normal"),
+    "malformed": ('send "a"\nread-file', "normal"),
+    "provider failure": ('remember "x"\nsend "a"', "provider"),
+}
+
+
+def test_no_message_is_held_twice_in_a_row_whatever_the_turns_between():
+    """Every sequence of five turns over SHAPES (7^5 = 16,807, each turn parsed at most twice): a reply holds a message
+    only when the last reply the runtime ran held none, the one after a hold sends every message, a hold still comes
+    whenever it may, and a turn the runtime ran none of keeps the last hold."""
+    for turns in itertools.product(SHAPES, repeat=5):
+        last = "clear"
+        for name in turns:
+            source, failure = SHAPES[name]
+            ran, after = reply(source, last, failure)
+            held = "(held-message " in ran
+            assert not (held and last == "held"), turns
+            if name == "acts, then speaks":
+                assert held == (last == "clear"), turns
+            ran_none = failure == "provider" or ran.startswith('((wait "LLM-FORMAT-ERROR')
+            assert after == (last if ran_none else "held" if held else "clear"), turns
+            last = after

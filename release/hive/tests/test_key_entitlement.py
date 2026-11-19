@@ -259,3 +259,21 @@ def test_no_refusal_code_or_kind_anywhere_in_the_hive_has_the_shape_of_an_id():
     assert len(codes) > 100, len(codes)                             # the walk found the hive's refusals
     shaped = sorted(c for c in codes if keyview.IDENTITY.search(c))
     assert shaped == [], shaped
+
+
+def test_a_members_first_key_for_a_provider_never_becomes_the_hive_default(p, monkeypatch):
+    """Dot on #459: a member's add with no `default` (or false) is stored as theirs only. OpenAI has no key and no
+    default here; Bob's key must not become the hive default, or every mind without a key would pay with it."""
+    c, hive = p.client, p.hive
+
+    async def verified(name, secret):
+        return {"label": "invented"}
+    monkeypatch.setattr(hive.keyring, "verify", verified)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    assert not hive.keyring.has_default("openai")
+    for n, extra in enumerate(({}, {"default": False})):
+        r = c.post("/api/keys", headers=p.bob, json={"provider": "openai", "key": f"sk-bob-openai-invented-000{n}", **extra})
+        assert r.status_code in (200, 201), r.text
+        assert "openai" not in hive.keyring.ring["defaults"] and not hive.keyring.has_default("openai"), extra
+    r = c.post("/api/keys", headers=p.bob, json={"provider": "openai", "key": "sk-bob-openai-invented-0009", "default": True})
+    assert r.status_code == 403 and r.json()["error"]["code"] == "admin_only"

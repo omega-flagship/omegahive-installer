@@ -1,6 +1,6 @@
 // Purpose: tests the feedback area end to end without a browser: invented state, the facts data.ts states, MeTTa's
 // composition of feedback.metta for them, and the HTML Screen draws, for every kind, route, picture state, error state
-// and outcome; and that every part of the screen can be reached.
+// and outcome, and every moment of the hive's logs; and that every part of the screen can be reached.
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterAll, describe, expect, it, vi } from 'vitest'
@@ -9,7 +9,7 @@ import { Screen } from '../../screens/Screen'
 import { ScreensSpace } from '../../screens/screenSpace'
 import { feedbackScreen, routeOf } from './data'
 import type { Draft } from './drafts'
-import { reportOf, type FeedbackState } from './store'
+import { reportOf, type FeedbackState, type LogsState } from './store'
 
 vi.setConfig({ testTimeout: 20_000 })
 
@@ -23,7 +23,12 @@ const state = (over: Partial<FeedbackState> = {}): FeedbackState => ({
   ctx: { version: 'Mac v0.31 (build f9648d4386)', which: 'own hive, Mac install', system: 'Mac', to: BOARD,
     errors: [{ id: 'e-1a2b3c4d', at: '2026-11-16T00:12:30.000Z', method: 'POST', route: '/api/ask', status: 500, code: 'internal_error', message: 'The hive hit an error it did not expect.' }] },
   ctxError: '', picture: { url: 'data:image/png;base64,iVBORw0KGgo=', drawing: false, failed: false, kept: true }, errorsKept: true,
-  done: 'none', copiedToo: false, reference: '', sending: false, failed: '', draft: null, ...over,
+  done: 'none', copiedToo: false, reference: '', sending: false, failed: '', draft: null,
+  logs: { shown: false, loading: false, text: '', file: '', scope: 'page', missing: '', failed: '', done: 'none' }, ...over,
+})
+const LOGS = (over: Partial<LogsState> = {}): LogsState => ({
+  shown: true, loading: false, text: 'Omega hive logs · 2026-11-17T01:23:45Z\nVersion: Mac v0.31 (build f9648d4386)',
+  file: 'omega-hive-logs-2026-11-17T01-23-45Z.txt', scope: 'hive', missing: '', failed: '', done: 'none', ...over,
 })
 const DRAFTS: Draft[] = [
   { id: 'hd-0a1b2c3d', origin: 'hive', kind: 'bug', title: 'The hive answered 500 to POST /api/ask', words: 'The hive answered 500 internal_error to POST /api/ask (error e-1a2b3c4d): The hive hit an error it did not expect.',
@@ -161,6 +166,11 @@ describe('every look draws it', () => {
     expect(plan.missing).toEqual([])
     expect(html).toContain('Send feedback or report a bug')
     expect(html).toContain('Drafted for you')
+    expect(html).toContain('Show the logs')
+    const shown = draw(state({ logs: LOGS() }), look)
+    expect(shown.plan.missing).toEqual([])
+    expect(shown.html).toContain('Omega hive logs · 2026-11-17T01:23:45Z')
+    expect(shown.html).toContain('Save the logs')
   })
   it('a phone that can share pictures is offered the share', () => {
     expect(draw(state(), 'classic', true).html).toContain('Share the picture')
@@ -188,6 +198,55 @@ describe('drafts wait for the person', () => {
     expect(html).toContain('Started from a draft by Vega, a mind. Change anything before it goes.')
     expect(html).not.toContain('Use the draft: A search tool kept failing')
     expect(html).toContain('Drafted by: Vega, a mind')
+  })
+})
+
+describe("the hive's logs: gathered on a press, shown whole, then saved or copied", () => {
+  it('before the press: what they hold and that nothing leaves, and the one button that gathers them', () => {
+    const { orders, html } = draw(state())
+    expect(orders).toEqual(expect.arrayContaining([70, 71]))
+    expect(orders).not.toEqual(expect.arrayContaining([76]))
+    expect(html).toContain('nothing leaves until you save or copy it.')
+  })
+  it('while they are gathered it says so', () => {
+    const { orders, html } = draw(state({ logs: LOGS({ shown: false, loading: true, text: '' }) }))
+    expect(orders).toEqual(expect.arrayContaining([71, 72]))
+    expect(html).toContain('Gathering the logs…')
+  })
+  it.each([
+    ['hive', 74, 'since you are its admin'],
+    ['person', 75, 'These are your own requests and errors on this hive.'],
+  ] as const)('shown whole with their buttons, and whose they are (%s)', (scope, order, words) => {
+    const { orders, html } = draw(state({ logs: LOGS({ scope }) }))
+    expect(orders).toEqual(expect.arrayContaining([76, 77, order]))
+    expect(orders).not.toContain(71)
+    expect(html).toContain(words)
+    expect(html).toContain('Omega hive logs · 2026-11-17T01:23:45Z\nVersion: Mac v0.31 (build f9648d4386)')
+    expect(html.indexOf('Omega hive logs')).toBeLessThan(html.indexOf('Save the logs'))   // seen before the press that saves
+  })
+  it("the hive's part missing is said, and the page's own still shows", () => {
+    const { orders, html } = draw(state({ logs: LOGS({ scope: 'page', missing: 'the hive did not answer' }) }))
+    expect(orders).toEqual(expect.arrayContaining([73, 76]))
+    expect(html).toContain('The hive did not give its part: the hive did not answer. What this page kept is below.')
+  })
+  it.each([
+    [{ done: 'saved' }, 'Saved omega-hive-logs-2026-11-17T01-23-45Z.txt where your browser keeps downloads.'],
+    [{ done: 'copied' }, 'Copied. Paste it where you talk with the team.'],
+    [{ failed: 'Your browser would not copy them. Save them as a file instead.' }, 'Your browser would not copy them. Save them as a file instead.'],
+  ] as const)('after a press, what happened: %j', (over, words) => {
+    expect(draw(state({ logs: LOGS(over) })).html).toContain(words)
+  })
+  it.each([
+    ['hive', 79, 78, 'where your browser keeps downloads. Send it to the team with your report.'],
+    // up to the apostrophe, which the drawn HTML writes as &#x27;
+    ['person', 78, 79, 'Send it to the team with your report, or in the testers'],
+    ['page', 78, 79, 'Send it to the team with your report, or in the testers'],
+  ] as const)("saved, only a person's own logs are offered the testers' group (%s)", (scope, shown, hidden, words) => {
+    // an admin's hold other people's requests and errors, if only by route, status and code (Jon on #388)
+    const { orders, html } = draw(state({ logs: LOGS({ scope, done: 'saved' }) }))
+    expect(orders).toContain(shown)
+    expect(orders).not.toContain(hidden)
+    expect(html).toContain(words)
   })
 })
 

@@ -2,7 +2,8 @@
 
 Pure checks, each returning a refusal reason or None. ``hive/ui/src/lib/appFrame.ts`` applies the same rules before it
 inlines anything (PROGRAMS.md §9). A bundle without a ``scripts`` key never reaches these checks; its single-file frame
-finds its stylesheet link and module script with ``frame_tags``, on the same tokenizing.
+finds its stylesheet link with ``frame_tags`` and how it loads ./app.js, a module or a classic script, with
+``frame_script``, on the same tokenizing.
 
 index.html must end with the canonical part block: the listed parts' module tags, in order, separated only by
 whitespace, then ``</body>`` (and optionally ``</html>``). Everything before the block is scanned the way the browser
@@ -170,14 +171,36 @@ def _raw_end(low, name, k):
         k = after
 
 
+# what a script's type may say and still be a classic script (the HTML spec's JavaScript MIME type essences, or none)
+JS_TYPES = frozenset(("", "text/javascript", "application/javascript", "text/ecmascript", "application/ecmascript",
+                      "application/x-javascript", "text/x-javascript", "text/jscript", "text/livescript"))
+
+
 def frame_tags(html):
     """A single-file frame (no scripts list): where index.html loads style.css and app.js, as ((start, end) of its
     first stylesheet link to ./style.css, (start, end) of its first module script element for ./app.js, end tag
     included), read the way the browser tokenizes: any quoting, attribute order, case or other attributes, never a
-    tag inside a comment or a raw-text element. None for a file it doesn't load that way; a classic script is never
-    taken, since inlined as a module it would run differently. appFrame.ts frameTags is the same rule.
+    tag inside a comment or a raw-text element. None for a file it doesn't load that way. A classic script is not
+    taken here, since inlined as a module it would run differently; frame_script takes one as itself.
+    appFrameParts.ts frameTags is the same rule. Time: one pass over html."""
+    link, script, _classic, _kind = _frame_scan(html)
+    return link, script
+
+
+def frame_script(html):
+    """How index.html loads ./app.js: ((start, end), kind) of its first module script for it, else of its first
+    classic one, kind "module", "classic" (runs where it stands) or "deferred" (a classic script with defer or async,
+    which runs once the page is parsed); (None, None) when it loads none. A page builder rewrote a scaffold's module
+    tag as <script src='./app.js'> on the published v0.39 (19 Nov), which a browser runs and the frame refused, so the
+    frame now takes a classic script and inlines it as one. appFrameParts.ts frameScript is the same rule."""
+    _link, script, classic, kind = _frame_scan(html)
+    return (script, "module") if script else (classic, kind) if classic else (None, None)
+
+
+def _frame_scan(html):
+    """frame_tags' one tokenizing pass, also noting the first classic script for ./app.js and whether it is deferred.
     Time: one pass over html."""
-    s, low, i, link, script = html, ascii_lower(html), 0, None, None
+    s, low, i, link, script, classic, kind = html, ascii_lower(html), 0, None, None, None, None
     while link is None or script is None:
         j = s.find("<", i)
         if j < 0:
@@ -218,13 +241,17 @@ def frame_tags(html):
             close = s.find(">", close) if close >= 0 else -1
             if close < 0:
                 break
-            if (name == "script" and script is None and ascii_lower(attrs.get("type", "")).strip(WS) == "module"
-                    and attrs.get("src", "").strip(WS) == "./app.js"):
-                script = (j, close + 1)
+            if name == "script" and attrs.get("src", "").strip(WS) == "./app.js":
+                kind_of = ascii_lower(attrs.get("type", "")).strip(WS)
+                if kind_of == "module" and script is None:
+                    script = (j, close + 1)
+                elif kind_of in JS_TYPES and classic is None:
+                    classic = (j, close + 1)
+                    kind = "deferred" if ("defer" in attrs or "async" in attrs) else "classic"
             i = close + 1
             continue
         i = k
-    return link, script
+    return link, script, classic, kind
 
 
 def inert_reason(prefix):

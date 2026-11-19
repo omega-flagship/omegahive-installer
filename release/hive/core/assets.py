@@ -1,3 +1,4 @@
+# Purpose: store, serve, transfer, and delete content-addressed files across local and cloud stores.
 """Binary assets: images, PDFs, decks, media, design originals and previews (R12).
 
 Content-addressed: every file is its sha256, wherever it lives, so moving it never changes what it is and every read
@@ -482,6 +483,54 @@ class Assets:
         inside a database transaction: the deletes are remote calls."""
         with self._placement:
             return self._cleanup(str(digest), by)
+
+    def delete(self, digest, by, viewer):
+        """Permanently remove one visible, single-swarm file. Saved references keep their text but lose its bytes.
+
+        Placement changes share this lock with uploads and transfers. Remote copies go first; a refusal keeps the
+        remaining copies and record for retry. History disappears only once every recorded copy is gone.
+        Time: b setup rows + s log s name comparisons + s store deletes; b = setup receipts, s = placements.
+        Space: s placement names.
+        """
+        digest = str(digest)
+        with self._placement:
+            row = self.row(digest)
+            if self.view_for(viewer, row) is None:
+                raise self.hive.error(404, "not_found", "no such asset")
+            owners = self.owners(digest)
+            if len(owners) > 1:
+                raise self.hive.error(409, "asset_shared", "this file belongs to more than one swarm; deleting it would remove their copy too")
+            # Unmarked installations have no setup tables; persisted receipts still count if setup is inactive.
+            for table in ("local_bootstrap_sessions", "local_bootstrap_completions"):
+                if self.hive.db.one("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)) and self.hive.db.one(
+                        f"SELECT 1 FROM {table} WHERE receipt_sha256 = ? OR envelope_sha256 = ? LIMIT 1", (digest, digest)):
+                    raise self.hive.error(409, "asset_required", "this file is a coding-tools setup receipt or envelope; the hive still needs it")
+            placements = set(json.loads(row["placements"]))
+            removed = []
+            # Preserve this machine's copy while a cloud store still refuses deletion.
+            for name in sorted(placements, key=lambda n: (getattr(self.stores.get(n), "kind", None) == "local", n)):
+                try:
+                    store = self.stores.get(name)
+                    if store is None:
+                        raise LookupError("store not configured")
+                    store.delete(digest)
+                except Exception as exc:
+                    reason = str(exc)[:200] or type(exc).__name__
+                    history = json.loads(row["history"]) + [{"at": now(), "by": by, "event": "delete_failed", "removed": removed, "failed": {name: reason}}]
+                    self.hive.db.execute("UPDATE assets SET placements = ?, history = ? WHERE sha256 = ?",
+                                         (json.dumps(sorted(placements)), json.dumps(history), digest))
+                    raise self.hive.error(503, "asset_delete_failed", f"could not delete the copy in {name}: {reason}. "
+                                          f"Already removed from: {', '.join(removed) or 'no stores'}. "
+                                          f"Still recorded in: {', '.join(sorted(placements))}. Retry deletion to remove the remaining copies.") from exc
+                placements.remove(name)
+                removed.append(name)
+            with self.hive.db.transaction():
+                # The sent messages stay; a later upload of these bytes must be announced as a new file again.
+                self.hive.db.execute("DELETE FROM mind_file_notices WHERE subject = ?", (f"asset:{digest}",))
+                self.hive.db.execute("DELETE FROM asset_owners WHERE sha256 = ?", (digest,))
+                self.hive.db.execute("DELETE FROM assets WHERE sha256 = ?", (digest,))
+        self.hive.db.after_commit(lambda: self.hive.events.publish("asset.deleted", sha256=digest, owner_swarm=next(iter(owners), None), by=by))
+        return {"sha256": digest, "deleted": True}
 
     def _cleanup(self, digest, by):
         row = self.row(digest)

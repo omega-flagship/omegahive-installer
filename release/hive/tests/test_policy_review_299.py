@@ -1,6 +1,7 @@
 """Purpose: the permission-gate items of Jon's second review (omega-flagship/omegahive#299, items 1 and 2) hold: a shell or
 any other run of code is approved one at a time, never "Always"; every skill that takes a path on this computer keeps
-it inside the mind's own folder; the private-data reads, persistent-expression and body-container-launcher ask a person;
+it inside the mind's own folder; the private-data reads and body-container-launcher ask a person (persistent-expression
+is decided by what it writes, test_metta_reach);
 reboot-self exists only where the hive is the mind's own VM; and test-metta, which only checks syntax, stays allowed."""
 import pathlib
 import re
@@ -91,7 +92,7 @@ def test_a_path_inside_the_minds_folder_still_reaches_the_policy(client):
     assert authorize(client, a, '(send-whatsapp-file-to "invented-chat@g.us" "photo.jpg")')["decision"] == "pending"
 
 
-@pytest.mark.parametrize("skill", PRIVATE_READS + ("persistent-expression", "body-container-launcher"))
+@pytest.mark.parametrize("skill", PRIVATE_READS + ("body-container-launcher",))
 def test_private_data_reads_and_the_other_named_heads_ask_a_person(client, skill):
     _, (a, _) = make_swarm_and_agents(client)
     assert authorize(client, a, f'({skill} "invented argument")')["decision"] == "pending"

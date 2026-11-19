@@ -1,21 +1,34 @@
 # Purpose: tests the hive's side of feedback and bug reports (hive/core/feedback.py and its routes): the one destination
 # setting, the release or build and hive a report names, every error answer's id kept with the person who met it and
-# its words with no key id or person of the hive, the unexpected error answered by id, the board's visibility check and
-# the hand-off to a report service.
+# its words with no key id or person of the hive, the unexpected error answered by id, the board's visibility check,
+# the hand-off to a report service, and what the logs a person exports hold from the hive: their requests and errors,
+# or an admin's whole hive's with its own log lines and
+# other people's error answers by where and how they failed only, every message cleaned by the hive as it keeps it with
+# the page's own rules (hive/core/redact.py clean, case for case with report.ts).
+import asyncio
 import http.server
 import io
 import json
+import logging
+import pathlib
+import re
+import secrets
 import threading
 import urllib.error
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 from hive.core import feedback as fb
 from hive.core import updates as updates_mod
 from hive.core.hive import HiveError
+from hive.core import redact
 from hive.tests.test_core_api import client  # noqa: F401  (fixture: local operator)
 from hive.tests.test_visibility import person
+
+# the cases the page's redact runs too (report.test.ts), so the hive and the page clean a line alike
+SHARED_CASES = json.loads((pathlib.Path(__file__).resolve().parents[1] / "ui/src/features/feedback/redact.cases.json").read_text())["cases"]
 
 
 @pytest.mark.parametrize("raw, want", [
@@ -279,3 +292,198 @@ def test_a_report_too_large_is_refused_before_it_is_read_whole(client, service):
     huge = _report(picture="data:image/png;base64," + "A" * fb.SEND_MAX_BYTES)
     assert client.post("/api/feedback/send", json=huge).status_code == 413
     assert _Service.got == []
+
+
+# ---- the logs a person exports (GET /api/feedback/logs) ------------------------------------------------------------
+
+def test_each_request_is_kept_with_the_person_who_made_it_by_route_and_status(client):
+    ana, ben = person(client, "u_ana"), person(client, "u_ben")
+    client.get("/api/swarms/s_no_such_swarm", headers=ana)
+    logs = client.get("/api/feedback/logs", headers=ana).json()
+    assert logs["scope"] == "person" and logs["log"] == [] and logs["version"] and logs["which"]
+    line = next(r for r in logs["requests"] if r["route"] == "/api/swarms/{swarm_id}")
+    assert (line["method"], line["status"], line["count"], line["who"]) == ("GET", 404, 1, "you") and line["ms"] >= 0
+    assert logs["errors"][0]["route"] == "/api/swarms/{swarm_id}" and logs["errors"][0]["status"] == 404
+    bens = client.get("/api/feedback/logs", headers=ben).json()
+    assert "/api/swarms/{swarm_id}" not in [r["route"] for r in bens["requests"]] and bens["errors"] == []   # Ana's are hers
+
+
+def test_a_run_of_one_request_answered_alike_is_one_line_with_its_count(client):
+    ana = person(client, "u_ana")
+    for _ in range(3):
+        client.get("/api/swarms", headers=ana)
+    client.get("/api/swarms/s_missing", headers=ana)
+    requests = client.get("/api/feedback/logs", headers=ana).json()["requests"]
+    assert [(r["route"], r["status"], r["count"]) for r in requests[:2]] == [("/api/swarms/{swarm_id}", 404, 1), ("/api/swarms", 200, 3)]
+
+
+def test_nothing_kept_names_an_id_a_query_or_a_body(client):
+    ana = person(client, "u_ana")
+    secret = secrets.token_urlsafe(32)
+    client.get(f"/api/swarms/s_{secret[:12]}?code={secret}", headers=ana)
+    client.post("/api/swarms", headers=ana, json={"name": f"Ana's {secret}"})
+    client.get(f"/api/no-such-place/{secret}/x", headers=ana)   # no route: the path's first two parts
+    logs = client.get("/api/feedback/logs", headers=ana).json()
+    assert secret not in json.dumps(logs) and secret[:12] not in json.dumps(logs)
+    assert {"/api/swarms/{swarm_id}", "/api/swarms"} <= {r["route"] for r in logs["requests"]}
+    # no route ran, so no session was looked up: it is kept with no one, and only the admin's whole hive shows it
+    whole = client.get("/api/feedback/logs").json()
+    assert secret not in json.dumps(whole)
+    assert {"route": "/api/no-such-place/…", "status": 404, "who": "no session"}.items() <= next(
+        r for r in whole["requests"] if r["route"] == "/api/no-such-place/…").items()
+
+
+def test_an_admins_logs_hold_the_whole_hive_and_its_log_lines_a_persons_only_their_own(client):
+    ana = person(client, "u_ana")
+    marker = "logs-test-" + secrets.token_hex(4)
+    client.get("/api/swarms/s_gone", headers=ana)
+    logging.getLogger("hive").warning("free inference: %s still answered 429", marker)
+    logging.getLogger("hive").info("%s is only information", marker)
+    whole = client.get("/api/feedback/logs").json()
+    assert whole["scope"] == "hive"
+    assert any(r["route"] == "/api/swarms/{swarm_id}" and r["who"] == "another person" for r in whole["requests"])
+    assert any(e["route"] == "/api/swarms/{swarm_id}" and e["who"] == "another person" for e in whole["errors"])
+    mine = [line for line in whole["log"] if marker in line["message"]]
+    assert [(line["level"], line["logger"], line["message"]) for line in mine] == [("WARNING", "hive", f"free inference: {marker} still answered 429")]
+    theirs = client.get("/api/feedback/logs", headers=ana).json()
+    assert theirs["scope"] == "person" and theirs["log"] == [] and {r["who"] for r in theirs["requests"]} == {"you"}
+
+
+def _met(client, principal, message, route="/api/spaces", status=409, code="conflict"):
+    """An error answer the hive kept for `principal` (None: no session), as noting it from a route would."""
+    request = Request({"type": "http", "method": "POST", "path": route, "headers": []})
+    return client.app.state.hive.feedback.noted(request, principal, status, code, message)
+
+
+def test_another_persons_error_shows_in_an_admins_logs_by_where_and_how_it_failed_only(client):
+    # Jon on #388: a private space named after someone's health notes reached the admin's file word for word
+    ana = person(client, "u_ana")
+    theirs = _met(client, "user:u_ana", "a space named Ana's health notes exists already")
+    nobodys = _met(client, None, "no account for the address typed, ana.lopez@example.org", route="/api/signin", status=401, code="unauthorized")
+    mine = client.get("/api/swarms/s_the_admins_own").headers[fb.ERROR_ID_HEADER]
+    whole = client.get("/api/feedback/logs").json()
+    assert "health notes" not in json.dumps(whole) and "ana.lopez" not in json.dumps(whole)
+    by_id = {e["id"]: e for e in whole["errors"]}
+    assert by_id[theirs] == {"id": theirs, "at": by_id[theirs]["at"], "method": "POST", "route": "/api/spaces", "status": 409,
+                             "code": "conflict", "who": "another person"}
+    assert set(by_id[nobodys]) == {*fb.OTHERS_ERROR, "who"} and by_id[nobodys]["who"] == "no session"
+    # the admin's own keep their words; Ana's own logs keep hers, and say nothing of whose since all are hers
+    assert by_id[mine]["who"] == "you" and by_id[mine]["message"]
+    hers = client.get("/api/feedback/logs", headers=ana).json()["errors"]
+    assert [e["message"] for e in hers if e["id"] == theirs] == ["a space named Ana's health notes exists already"]
+    assert all("who" not in e for e in hers)
+
+
+def test_the_hive_cleans_its_own_log_lines_and_error_messages_as_it_keeps_them(client):
+    ana = person(client, "u_ana")
+    token = secrets.token_urlsafe(32)   # a sign-in token's shape: 43 letters, digits, - and _
+    marker = "clean-test-" + secrets.token_hex(4)
+    logging.getLogger("hive").warning("%s sign-in for ana@example.org from 203.0.113.9 with code=4f2a91c, cookie omega_session=%s",
+                                      marker, token)
+    # a token that starts inside the part kept and runs past the cut: cleaned whole first, so no piece of it stays
+    logging.getLogger("hive").warning("%s %s %s", marker, "x" * (fb.LOG_CHARS - len(marker) - 12), token)
+    kept = _met(client, "user:u_ana", f"no space for {token} at /home/ana/work, ask ana@example.org")
+    whole = client.get("/api/feedback/logs").json()
+    lines = [line["message"] for line in whole["log"] if marker in line["message"]]
+    assert lines[1] == f"{marker} sign-in for [email] from [address] with code=[code], cookie omega_session=[cookie]"
+    assert lines[0].endswith(" [token]") and len(lines[0]) <= fb.LOG_CHARS
+    hers = client.get("/api/feedback", headers=ana).json()["errors"]
+    assert [e["message"] for e in hers if e["id"] == kept] == ["no space for [token] at ~/work, ask [email]"]
+    for answer in (whole, client.get("/api/feedback/logs", headers=ana).json()):
+        assert token[:8] not in json.dumps(answer) and "ana@example.org" not in json.dumps(answer)
+
+
+@pytest.mark.parametrize("case", SHARED_CASES, ids=lambda c: c["in"][:40])
+def test_the_hive_cleans_a_line_as_the_page_does(case):
+    assert redact.shared(case["in"]) == case["out"]
+
+
+def test_clean_takes_out_the_keys_this_hive_holds_on_any_hive(monkeypatch):
+    key = "zz" + secrets.token_hex(12)   # 26 characters: no rule knows its shape, only its registration does
+    monkeypatch.setattr(redact.REDACTOR, "enabled", False)   # a hive no local owner runs: scrub() is off, clean() is not
+    assert redact.clean(f"the provider refused {key}") == f"the provider refused {key}"   # unknown to the hive yet
+    redact.register(key)
+    try:
+        assert redact.clean(f"the provider refused {key}") == "the provider refused [key]"
+        assert redact.clean("x-api-key: abcdefgh12") == "x-api-key: [key]"
+    finally:
+        # dropped from the set; the snapshot scrub() and clean() read keeps it until the next registration rebuilds it
+        redact.unregister(key)
+
+
+def test_every_cookie_the_hive_sets_is_one_clean_takes_out():
+    # the cookie names the hive's own code declares, read from its source, so a cookie added there is checked here
+    names = {m.group(1) for f in pathlib.Path(fb.__file__).parent.glob("*.py")
+             for m in re.finditer(r'^[A-Z_]*COOKIE\s*=\s*"([^"]+)"', f.read_text(), re.M)}
+    assert {"hive_signin", "hive_oauth", "omega_session", "hive_google_connector"} <= names
+    for name in names:
+        assert redact.clean(f"{name}=v4lue123x; Path=/") == f"{name}=[cookie]; Path=/", name
+
+
+def test_the_hives_log_lines_name_an_exception_by_its_type_and_cut_long_messages():
+    ring = fb.LogRing(keep=2)
+    log = logging.getLogger("hive.logs-test")
+    log.addHandler(ring)
+    try:
+        try:
+            raise KeyError("missing_field")
+        except KeyError:
+            log.error("the Ask could not close %s", "op-1", exc_info=True)
+        log.warning("x" * (fb.LOG_CHARS + 50))
+        log.warning("newest")
+    finally:
+        log.removeHandler(ring)
+    lines = ring.lines()
+    assert [line["message"] for line in lines] == ["newest", "x" * fb.LOG_CHARS]   # newest first, two kept, cut
+    assert lines[0]["at"].endswith("Z") and lines[0]["level"] == "WARNING"
+    named = fb.LogRing()
+    named.emit(logging.LogRecord("hive", logging.ERROR, __file__, 1, "the Ask could not close %s", ("op-1",), (KeyError, KeyError("k"), None)))
+    assert named.lines()[0]["message"] == "the Ask could not close op-1 (KeyError)"   # the type, never the traceback
+
+
+@pytest.mark.parametrize("in_schema, status, kept", [(False, 200, False), (False, 404, True), (True, 200, True)])
+def test_a_page_file_that_loaded_is_not_kept_but_a_failure_on_a_page_route_is(in_schema, status, kept):
+    got = []
+
+    class Ring:
+        def requested(self, *args):
+            got.append(args)
+
+    class Route:
+        path, include_in_schema = "/{path:path}", in_schema
+
+    async def app(scope, receive, send):
+        scope["route"] = Route()
+        await send({"type": "http.response.start", "status": status, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    async def nothing(message):
+        return None
+
+    middleware = fb.RecentRequests(app, feedback=Ring(), who=lambda session: "user:u_ana")
+    asyncio.run(middleware({"type": "http", "method": "GET", "path": "/assets/index-1a2b.js"}, None, nothing))
+    assert len(got) == int(kept)
+    if kept:   # a page route names its path's first two parts, never its catch-all pattern
+        assert got[0][3] == ("/{path:path}" if in_schema else "/assets/index-1a2b.js")
+
+
+def test_an_error_the_hive_did_not_expect_is_kept_as_its_500(client, monkeypatch):
+    hive = client.app.state.hive
+
+    def broken(*_):
+        raise KeyError("missing_field")
+    monkeypatch.setattr(hive, "summary", broken)
+    quiet = TestClient(client.app, raise_server_exceptions=False)
+    quiet.headers.update(client.headers)
+    assert quiet.get("/api/hive").status_code == 500
+    line = next(r for r in client.get("/api/feedback/logs").json()["requests"] if r["route"] == "/api/hive")
+    assert (line["status"], line["who"]) == (500, "you")
+
+
+def test_each_person_keeps_only_their_newest_hundred_requests(client):
+    feedback = client.app.state.hive.feedback
+    for i in range(fb.KEEP_REQUESTS + 20):   # two routes in turn, so no run folds
+        feedback.requested("user:u_zed", False, "GET", f"/api/r{i % 2}", 200, 1.0, f"2026-11-17T00:{i // 60:02d}:{i % 60:02d}.000Z")
+    assert len(feedback._requests["user:u_zed"]) == fb.KEEP_REQUESTS   # the hive holds no more than that a person
+    kept = feedback.requests_for("user:u_zed", False)
+    assert len(kept) == fb.KEEP_REQUESTS and kept[0]["at"] == "2026-11-17T00:01:59.000Z" and kept[-1]["at"] == "2026-11-17T00:00:20.000Z"

@@ -1,4 +1,5 @@
 import { useHive, type Approval, type Decision } from '../sdk'
+import type { ApprovalStatus } from '../../api/types'
 
 /**
  * A decision is only ever taken on the exact request a person inspected. The inspection keeps a snapshot of
@@ -50,7 +51,10 @@ export function bindingNote(b: Binding): string | null {
   }
 }
 
-const STATUS_WORD: Record<string, string> = { approved: 'approved', denied: 'denied', expired: 'expired', used: 'used', pending: 'pending' }
+// every status the host gives a request, so one it adds fails to compile until it has words here
+const STATUS_WORD: Record<string, string> = {
+  approved: 'approved', denied: 'denied', expired: 'expired', used: 'used', pending: 'pending', auto: 'run without asking',
+} satisfies Record<ApprovalStatus, string>
 
 export const canDecide = (b: Binding) => b.kind === 'ready'
 

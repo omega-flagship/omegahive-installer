@@ -2,7 +2,8 @@
  * r17 "app frame parts": the client's copy of the host's rules (hive/core/ui_parts.py, PROGRAMS.md §9), applied to
  * the server's answer before anything is inlined. Each check returns a refusal reason or null; the reasons match
  * the host's word for word, and tests/fixtures/ui_parts_cases.json is checked by both suites. A single-file frame finds
- * its stylesheet link and module script with frameTags, on the same tokenizing (the host's ui_parts.frame_tags).
+ * its stylesheet link with frameTags and how it loads ./app.js, a module or a classic script, with frameScript, on the
+ * same tokenizing (the host's ui_parts.frame_tags and frame_script).
  */
 export const PART_MAX = 600_000
 export const TOTAL_MAX = 1_800_000
@@ -115,15 +116,41 @@ const trimWs = (v: string) => v.replace(/^[ \t\n\f\r]+|[ \t\n\f\r]+$/g, '')
  * A single-file frame (no scripts list): where index.html loads style.css and app.js, as [[start, end] of its first
  * stylesheet link to ./style.css, [start, end] of its first module script element for ./app.js, end tag included],
  * read the way the browser tokenizes: any quoting, attribute order, case or other attributes, never a tag inside a
- * comment or a raw-text element. null for a file it doesn't load that way; a classic script is never taken, since
- * inlined as a module it would run differently. The host's ui_parts.frame_tags is the same rule, checked on the same
- * cases (tests/fixtures/ui_parts_cases.json, "frame"). Time: one pass over html.
+ * comment or a raw-text element. null for a file it doesn't load that way. A classic script is not taken here, since
+ * inlined as a module it would run differently; frameScript takes one as itself. The host's ui_parts.frame_tags is
+ * the same rule, checked on the same cases (tests/fixtures/ui_parts_cases.json, "frame"). Time: one pass over html.
  */
 export function frameTags(html: string): [[number, number] | null, [number, number] | null] {
+  const [link, script] = frameScan(html)
+  return [link, script]
+}
+
+/** What a script's type may say and still be a classic script (the HTML spec's JavaScript MIME type essences, or none). */
+const JS_TYPES = new Set(['', 'text/javascript', 'application/javascript', 'text/ecmascript', 'application/ecmascript',
+  'application/x-javascript', 'text/x-javascript', 'text/jscript', 'text/livescript'])
+
+export type ScriptKind = 'module' | 'classic' | 'deferred'
+
+/**
+ * How index.html loads ./app.js: [[start, end], kind] of its first module script for it, else of its first classic
+ * one, kind 'module', 'classic' (runs where it stands) or 'deferred' (a classic script with defer or async, which runs
+ * once the page is parsed); [null, null] when it loads none. A page builder rewrote a scaffold's module tag as
+ * <script src='./app.js'> on the published v0.39, which a browser runs and the frame refused, so the frame takes a
+ * classic script and inlines it as one. The host's ui_parts.frame_script is the same rule.
+ */
+export function frameScript(html: string): [[number, number] | null, ScriptKind | null] {
+  const [, script, classic, kind] = frameScan(html)
+  return script ? [script, 'module'] : classic ? [classic, kind] : [null, null]
+}
+
+/** frameTags' one tokenizing pass, also noting the first classic script for ./app.js and whether it is deferred. */
+function frameScan(html: string): [[number, number] | null, [number, number] | null, [number, number] | null, ScriptKind | null] {
   const s = html
   const low = asciiLower(html)
   let link: [number, number] | null = null
   let script: [number, number] | null = null
+  let classic: [number, number] | null = null
+  let kind: ScriptKind | null = null
   let i = 0
   while (link === null || script === null) {
     const j = s.indexOf('<', i)
@@ -155,14 +182,20 @@ export function frameTags(html: string): [[number, number] | null, [number, numb
       const end = rawEnd(low, name, k)
       const close = end >= 0 ? s.indexOf('>', end) : -1
       if (close < 0) break
-      if (name === 'script' && script === null && trimWs(asciiLower(attrs.get('type') ?? '')) === 'module' &&
-          trimWs(attrs.get('src') ?? '') === './app.js') script = [j, close + 1]
+      if (name === 'script' && trimWs(attrs.get('src') ?? '') === './app.js') {
+        const kindOf = trimWs(asciiLower(attrs.get('type') ?? ''))
+        if (kindOf === 'module' && script === null) script = [j, close + 1]
+        else if (JS_TYPES.has(kindOf) && classic === null) {
+          classic = [j, close + 1]
+          kind = attrs.has('defer') || attrs.has('async') ? 'deferred' : 'classic'
+        }
+      }
       i = close + 1
       continue
     }
     i = k
   }
-  return [link, script]
+  return [link, script, classic, kind]
 }
 
 function rawEnd(low: string, name: string, k: number): number {

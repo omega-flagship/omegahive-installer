@@ -11,7 +11,9 @@ The plan engine's `build` effect (piece-started or a route-fix) goes here; there
   - the member's helper writes only the piece's files on the fork and checkpoints them; its test is THIS module's
     run_test, registered as code_controller.member_ports.run_test: the plan's acceptance check (sandboxed, the check
     from the base checkpoint) on the candidate. A piece passes its own test when the check passes, or fails only on
-    files the piece does not own (the other pieces are not built yet): the piece's part is satisfied;
+    files the piece does not own (the other pieces are not built yet): the piece's part is satisfied. The answer keeps
+    the check's verdict (the files it fails and its notes), which the member journals with the output: a repair is
+    shown it, and a member that blocks on it says it on the person's hold card (check_failure);
   - a candidate is CHECKED, never trusted: before it is snapshotted (and before it is tested), every file that differs
     from the fork's origin must be one of the piece's own files, never checks/ or a reserved path (candidate_scope).
     Anything else is a definite refusal: `refused` in the member, `piece-blocked` in the plan;
@@ -29,6 +31,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from .create_plan_ports import CHECK_PATH, ScopeError
 
@@ -36,7 +39,8 @@ log = logging.getLogger(__name__)
 
 TERMINAL = ("delivered", "stopped")
 RESTING = ("blocked", "stopped", "deployed")             # plan phases in which no member should keep working
-BRIEF_TEXT, BRIEF_ANSWERS, BRIEF_FAILING = 3000, 12000, 16000   # characters; the member's brief limit is 40000
+BRIEF_TEXT, BRIEF_ANSWERS, BRIEF_FAILING, BRIEF_PROBE = 3000, 12000, 16000, 6000   # characters; the member's brief limit is 40000
+CHECK_SAID = 200                                         # characters of the check's own note a hold card quotes
 
 
 def _bounded(value, limit):
@@ -46,6 +50,50 @@ def _bounded(value, limit):
     if len(text) <= limit:
         return value
     return {"truncated": True, "chars": len(text), "text": text[:limit]}
+
+
+def check_failure(failing, paths):
+    """What the acceptance check last said about a builder's piece, as a sentence for the person's hold card, or None.
+    `failing` is the member's newest failing since its last version (Code controller _failing_output). It counts only
+    when that is the member's own test (tests-fail, which keeps the check's verdict: the files it fails and its notes,
+    as parse_check_output gives them) and no refused attempt came after it. The check runs on the whole app, so it
+    also fails the files of pieces not built yet: a note is the piece's when it names one of the piece's failing
+    files, or when the check fails nothing else. With no such note, the piece's failing files are named instead."""
+    if failing.get("kind") != "tests-fail" or failing.get("refused"):
+        return None
+    every = [str(f) for f in failing.get("failing") or []]
+    files = [f for f in every if f in paths]
+    # a file is named as a whole name: "app.js is missing" names app.js, "webapp.js" or "app.json is missing" does not
+    names = [re.compile(rf"(?<![\w./-]){re.escape(f)}(?![\w/-]|\.\w)") for f in files]
+    only_ours = set(every) <= set(paths)
+    note = next((n for n in (str(x).strip() for x in failing.get("notes") or [])
+                 if n and (only_ours or any(name.search(n) for name in names))), None)
+    if note:
+        said = note if len(note) <= CHECK_SAID else note[:CHECK_SAID - 1] + "…"
+        return f"Its last version still fails the acceptance check, which says “{said}”."
+    if files:
+        return ("Its last version still fails the acceptance check on "
+                + (" and ".join([", ".join(files[:-1]), files[-1]]) if len(files) > 1 else files[0]) + ".")
+    return None
+
+
+def counted_check(out, built):
+    """A failed check as it counts against the piece being built, whose files and the integrated pieces' are `built`.
+    A probe reports each case with the files it is blamed on (create_plan_ports.check_cases). A failed case naming a
+    file outside `built` can't pass until a later piece is built, so it waits: its files and its note leave failing
+    and notes, which the repair's packet and the hold card read, and "<case> waits on <file>" goes in waits. On a
+    Make run of a tic-tac-toe the board was built before the game logic, every gameplay case named app.js and
+    index.html, and the board was blamed for them until its repairs ran out. A check that reports no cases (a Python
+    check) and a run with every piece built count as they came. Time: one pass over the cases and the notes."""
+    waiting = [(c, sorted(set(c["files"]) - built)) for c in out.get("cases") or [] if not c["passed"]]
+    waiting = [(c, missing) for c, missing in waiting if missing]
+    if not waiting:
+        return out
+    counted = [c for c in out["cases"] if not c["passed"] and set(c["files"]) <= built]
+    names = tuple(c["name"] + ": " for c, _ in waiting)
+    return dict(out, failing=sorted({f for c in counted for f in c["files"]}),
+                notes=[n for n in out.get("notes") or [] if not n.startswith(names)],
+                waits=[f"{c['name']} waits on {', '.join(missing)}" for c, missing in waiting])
 
 
 class PerChangeBuilds:
@@ -92,7 +140,10 @@ class PerChangeBuilds:
                 "brief": _bounded(spec.get("brief"), BRIEF_TEXT),
                 "acceptance": _bounded(plan.get("acceptance") or [], BRIEF_TEXT),
                 "answers": _bounded(self.engine.answers(run["plan_id"]), BRIEF_ANSWERS),
-                "failing": _bounded(failing, BRIEF_FAILING)}
+                "failing": _bounded(failing, BRIEF_FAILING),
+                # the probe the candidate is played by (create_plan_ports.PROBE_PATH): its selectors are the elements
+                # to build, so a builder that sees it builds to them on its first try instead of in a fix round
+                "probe": _bounded(self._space(run).get("probe"), BRIEF_PROBE)}
 
     def _task_key(self, run, op):
         """The member key for this build: the op, or op~n after n members for it were ended (a blocked or stopped plan
@@ -148,8 +199,19 @@ class PerChangeBuilds:
                 return None                              # ended while the plan rests; read back when it resumes
             return {"unknown": "the piece's member was ended before it delivered"}
         if mrun["status"] == "needs_you" or mrun["phase"] == "blocked":
-            why = mrun["last_error"] or self.code.last_refusal(task_id) or "it needs the plan"
-            return {"blocked": f"the piece's builder stopped: {why}"[:500]}
+            member = json.loads(mrun["member"]) if mrun["member"] else {}
+            # why the builder stopped, newest cause first: its error; the acceptance check its last version still
+            # fails, when no refused attempt came after it (check_failure); else its last refused attempt. The builder
+            # and its reason are kept with the block for the person's hold card (engine._stopped): a refused attempt's
+            # goal_reason (its hive-goal-fail words, or the hive's when its mind stopped after refused replies), or
+            # what the check said
+            check = None if mrun["last_error"] else check_failure(self.code._failing_output(task_id) or {},
+                                                                   member.get("paths") or [])
+            refused = {} if mrun["last_error"] or check else (self.code.last_refused(task_id) or {})
+            why = mrun["last_error"] or check or self.code.last_refusal(task_id) or "it needs the plan"
+            return {"blocked": f"the piece's builder stopped: {why}"[:500], "by": member.get("assignee"),
+                    **({"goal_reason": refused["goal_reason"]} if refused.get("goal_reason") else {}),
+                    **({"check_failure": check} if check else {})}
         nxt = mrun["next_action"] or ""
         if not nxt.startswith("(tell member-ready"):
             return None                                  # still working
@@ -166,8 +228,11 @@ class PerChangeBuilds:
             return {"unknown": f"the member's candidate could not be read: {exc}"[:300]}
         self._remember(run, piece, dict(rec, task_id=task_id, cand=cand, seen=cand))
         member = json.loads(mrun["member"]) if mrun["member"] else {}
+        # the builder's own words about the change (a check that looked wrong, a part left out), recorded with the
+        # piece where its reviewer and the person read them; before, they stayed in the member's journal
+        summary = self.code.member_summary(task_id, cand)
         return {"candidate": cand, "files": sorted(member.get("paths") or []),
-                "summary": f"built by per-change member {task_id}", "by": member.get("assignee")}
+                "summary": summary or f"built by per-change member {task_id}", "by": member.get("assignee")}
 
     async def integrated(self, run, piece, op, cand, ckpt):
         """Deliver the member whose candidate the plan integrated. Idempotent: an already delivered member is only
@@ -238,6 +303,19 @@ class PerChangeBuilds:
 
     # ---- the member's test: the plan's acceptance check -----------------------------------------------------------
 
+    def check_for(self, run, piece, cand):
+        """The acceptance check's outcome on a piece's candidate, for its review packet: "passed", "failed" or
+        "not run" (no finished run, or one that gave no verdict), with what the run said. "passed" is the piece's own
+        pass: the check passed, or failed only on files other pieces own (they may not be built yet)."""
+        task_id = (self._members(run).get(piece) or {}).get("task_id")
+        got = self.code.member_check(task_id, cand) if task_id else None
+        if not got or got.get("passed") not in (True, False):
+            return {"check": "not run"}
+        logs = got.get("logs") or {}
+        return {"check": "passed" if got["passed"] else "failed",
+                "check_detail": {"outcome": got.get("outcome"), "exit_code": got.get("exit_code"),
+                                 "output": str((logs.get("stdout") or {}).get("text") or "")[:1500]}}
+
     async def run_test(self, member_run, cand):
         m = json.loads(member_run["member"])
         run = self.engine._run(m["plan_id"])
@@ -252,9 +330,18 @@ class PerChangeBuilds:
         if out.get("outcome") == "pass":
             passed = True
         elif out.get("outcome") == "fail":
+            out = counted_check(out, self._built(run, m))
             passed = not (set(out.get("failing") or []) & set(m["paths"]))   # only other pieces' files still fail
         else:
             passed = None
         return {"passed": passed, "outcome": out.get("outcome"), "exit_code": out.get("exit_code"),
                 "stdout": out.get("output") or out.get("line") or "", "stderr": "", "argv": ["create-acceptance-check"],
-                "failing": out.get("failing")}
+                "failing": out.get("failing"), "notes": out.get("notes"), "waits": out.get("waits")}
+
+    def _built(self, run, m):
+        """The files a check's case may count against member `m`'s piece for: its own, and the files of the plan's
+        pieces already integrated. Time: one pass over the plan's pieces."""
+        integrated = {piece for piece, rec in self._members(run).items() if rec.get("integrated")}
+        plan = self.engine._plan(run["plan_id"]) or {}
+        return set(m["paths"]) | {f for p in plan.get("pieces", []) if p.get("id") in integrated
+                                  for f in p.get("files", [])}

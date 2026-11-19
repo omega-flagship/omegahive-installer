@@ -165,9 +165,11 @@
 (SkillCardLine "hive-shared-page" "hive-shared-page sh_id offset filter - continue reading a long share")
 (SkillTopic "hive-goal-get" "hive-goal-get")
 (SkillTopic "hive-goal-propose" "hive-goal-propose")
+(SkillTopic "hive-goal-file" "hive-goal-file")
 (SkillTopic "hive-goal-cancel-ack" "hive-goal-cancel-ack")
 (SkillCardLine "hive-goal-get" "hive-goal-get g_id - a goal with its assignee and binding")
 (SkillCardLine "hive-goal-propose" "hive-goal-propose g_id proposal - answer a bound request")
+(SkillCardLine "hive-goal-file" "hive-goal-file g_id path <<'EOF_name' - one whole file for a goal's answer, ended by a line EOF_name")
 (SkillCardLine "hive-goal-cancel-ack" "hive-goal-cancel-ack g_id - confirm you stopped a cancelled goal")
 
 ; Goal skills are found by the words a mind actually searches for (observed 2026-10-03: a mind searched

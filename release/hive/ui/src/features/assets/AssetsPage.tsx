@@ -1,3 +1,4 @@
+// Purpose: show stored files and linked folders, with uploads, transfers, cleanup, and confirmed removal.
 import { AnimatePresence } from 'framer-motion'
 import { useRef, useState } from 'react'
 import { storeLimit, type Asset, type AssetStore } from '../../api/moneyWork'
@@ -16,6 +17,7 @@ import { ResourceView } from '../../ui/ResourceView'
 import { useMe } from '../../lib/useAdmin'
 import { CleanupDialog, pendingRemoval } from './Cleanup'
 import { LinkedFolders } from './LinkedFolders'
+import { RemovalControl } from './Removal'
 import { useUnsaved } from '../ask/dirty'
 import { markSaved } from '../../shell/unsavedWork'
 
@@ -69,7 +71,7 @@ export default function AssetsPage({ swarm }: { swarm?: string }) {
           {(list) => (
             <ul className="overflow-hidden rounded-2xl border border-line bg-tint/[0.02]">
               {list.map((a, i) => (
-                <AssetRow key={a.sha256} asset={a} first={i === 0} stores={stores.data ?? []} onChange={(next) => res.mutate((l) => (l ?? []).map((x) => (x.sha256 === next.sha256 ? next : x)))} live={(sha) => res.data?.find((x) => x.sha256 === sha)} />
+                <AssetRow key={a.sha256} asset={a} first={i === 0} stores={stores.data ?? []} onChange={(next) => res.mutate((l) => (l ?? []).map((x) => (x.sha256 === next.sha256 ? next : x)))} onGone={(sha) => res.mutate((l) => (l ?? []).filter((x) => x.sha256 !== sha))} live={(sha) => res.data?.find((x) => x.sha256 === sha)} />
               ))}
             </ul>
           )}
@@ -174,7 +176,7 @@ function Upload({ stores, swarm, onDone }: { stores: AssetStore[]; swarm?: strin
   )
 }
 
-function AssetRow({ asset: a, first, stores, onChange, live }: { asset: Asset; first: boolean; stores: AssetStore[]; onChange: (a: Asset) => void; live: (sha: string) => Asset | undefined }) {
+function AssetRow({ asset: a, first, stores, onChange, onGone, live }: { asset: Asset; first: boolean; stores: AssetStore[]; onChange: (a: Asset) => void; onGone: (sha: string) => void; live: (sha: string) => Asset | undefined }) {
   const client = useHive((s) => s.client)
   const toast = useHive((s) => s.toast)
   const agents = useHive((s) => s.agents)
@@ -189,6 +191,7 @@ function AssetRow({ asset: a, first, stores, onChange, live }: { asset: Asset; f
   const others = stores.filter((s) => !a.placements.includes(s.name))
   const allowed = (s: AssetStore) => !a.local_only || s.kind === 'local'
   const canTransfer = has(client, 'transferAsset') && stores.length > 1
+  const current = live(a.sha256)
 
   const copy = async (to: string) => {
     setBusy(true)
@@ -230,6 +233,7 @@ function AssetRow({ asset: a, first, stores, onChange, live }: { asset: Asset; f
           </div>
         </div>
         <div className="flex shrink-0 flex-wrap justify-end gap-1">
+          <RemovalControl subject={{ kind: 'asset', value: a }} live={current && { kind: 'asset', value: current }} admin={admin} onGone={onGone} />
           {has(client, 'assetBlob') && (
             <Button
               variant="ghost"

@@ -85,9 +85,20 @@ def _temp_dirs_removed_per_test(_temp_dirs_removed_at_run_end):
 def _code_release_guard_isolated(tmp_path_factory, monkeypatch):
     """The Code release guard reads the real Code service LaunchAgent. Tests must not depend on which release the live
     service happens to run, so by default it sees no agent; guard tests set their own agent, and
-    test_the_code_service_on_this_machine_loads_the_intended_release reads the real file itself."""
+    test_the_code_service_on_this_machine_loads_the_intended_release reads the real file itself.
+
+    On Linux the guard reads the Code user unit through `systemctl --user show` instead, and fails closed without one,
+    so on a CI runner (no user bus, no unit) every relay test was refused with 503. By default it checks nothing there
+    either; Linux guard tests give it their own unit facts by patching Code._systemd_show, and then the real check
+    runs."""
     from hive.core.code import Code
     monkeypatch.setattr(Code, "CODE_AGENT_PLIST", str(tmp_path_factory.mktemp("no-agent") / "absent.plist"))
+    host_facts, linux_check = Code.__dict__["_systemd_show"], Code._linux_release_problem
+
+    def linux_release_problem(self):
+        return None if Code.__dict__["_systemd_show"] is host_facts else linux_check(self)
+
+    monkeypatch.setattr(Code, "_linux_release_problem", linux_release_problem)
 
 
 @pytest.fixture(autouse=True)

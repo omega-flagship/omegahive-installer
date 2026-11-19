@@ -137,6 +137,16 @@ describe('reduce · Phase 2', () => {
     expect(s.activity.length).toBe(n)
   })
 
+  it('keeps MeTTa that ran without asking out of the pending count and the activity', () => {
+    const s = run([
+      { type: 'agent.updated', at, agent: agent() },
+      { type: 'approval.created', at, approval: approval({ id: 'p_auto', skill: 'metta', status: 'auto', risk: 'low', decided_by: 'policy', decided_at: at }) },
+    ])
+    expect(countPending(s.approvals)).toBe(0)
+    expect(s.approvals.p_auto.status).toBe('auto')
+    expect(s.activity.some((x) => x.kind === 'approval')).toBe(false)
+  })
+
   it("keeps the host's may_control and may_answer across live events, which carry neither", () => {
     // flagship #111: only a mind's owner or a hive admin acts on it or answers its approvals; the flags come from GETs
     let s = run([{ type: 'agent.updated', at, agent: agent({ may_control: false }) }])

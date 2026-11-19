@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ScreensSpace, type ScreenFacts } from '../../screens/screenSpace'
 import { SimPlans } from '../../api/sim/planSim'
-import { parsePlanView } from './planModel'
+import { isHeld, openQuestions, parsePlanView } from './planModel'
 import { planFacts, planScreen, type PlanUi } from './planFacts'
 import type { PlanView } from './contract'
 
@@ -18,6 +18,7 @@ const compose = (screen: string, facts: ScreenFacts) => {
   return plan
 }
 const shown = (screen: string, facts: ScreenFacts) => compose(screen, facts).parts.map((p) => (p.block === 'island' ? String(p.props.name) : `${p.block}:${p.order}`))
+const openQuestionsOf = (v: PlanView) => openQuestions(v).length
 const UI: PlanUi = { can: true, starting: false, startError: null, stopAsking: false }
 const SENTENCE = 'make me a small web page that shows the weather in London'
 function simAt(ms: number, until?: (v: PlanView) => boolean, mode: 'normal' | 'hive' | 'unreviewed' = 'normal') {
@@ -35,6 +36,16 @@ describe('the empty canvas: one sentence', () => {
     expect(shown('plan-start', planFacts(null, UI).facts)).toEqual(['plan-say', 'note:30'])
     expect(shown('plan-start', planFacts(null, { ...UI, can: false }).facts)).toEqual(['empty:40'])
     expect(shown('plan-start', planFacts(null, { ...UI, startError: 'No answer.' }).facts)).toEqual(['plan-say', 'notice:20', 'note:30'])
+  })
+  it('a build left held (Make something else): one line names the most recent and opens it; its words only in data', () => {
+    const page = planFacts(null, { ...UI, held: { sentence: 'a tip calculator' } })
+    expect(shown('plan-start', page.facts)).toEqual(['plan-say', 'note:15', 'buttons:16', 'note:30'])
+    expect(page.data['held.sentence']).toBe('a tip calculator')
+    expect(JSON.stringify(page.facts)).not.toContain('tip calculator')
+    const open = JSON.stringify(compose('plan-start', page.facts).parts.find((x) => x.order === 16)?.props)
+    expect(open).toContain('Open it')
+    expect(open).toContain('open-held')
+    expect(shown('plan-start', planFacts(null, { ...UI, held: null }).facts)).toEqual(['plan-say', 'note:30'])
   })
 })
 
@@ -75,6 +86,28 @@ describe('the plan at work', () => {
       expect(page.data['plan.status']).toBe('your answer')
     }
     expect(shown('plan', planFacts({ ...v, pieces: [], phase: 'stopped', status: 'stopped' }, UI).facts)).not.toContain('plan-forming')
+  })
+  it('held (waiting on the person or the hive, as the empty canvas names it): make something else meanwhile; not while it works, never once stopped', () => {
+    const { v } = simAt(4000)
+    const leave = ['note:25', 'buttons:26']
+    for (const status of ['needs_you', 'asking_you', 'engine_error', 'assignee_unavailable']) {
+      const held: PlanView = { ...v, status }
+      expect(isHeld(held), status).toBe(true)
+      expect(shown('plan', planFacts(held, UI).facts), status).toEqual(expect.arrayContaining(leave))
+    }
+    // the look question open while the engine still plans: answered here, not left (the canvas would not name it)
+    expect(openQuestionsOf(v)).toBeGreaterThan(0)
+    expect(isHeld(v)).toBe(false)
+    expect(shown('plan', planFacts(v, UI).facts)).not.toContain('buttons:26')
+    const asking: PlanView = { ...v, status: 'asking_you' }
+    const press = JSON.stringify(compose('plan', planFacts(asking, UI).facts).parts.find((x) => x.order === 26)?.props)
+    expect(press).toContain('Make something else')
+    expect(press).toContain('fresh')
+    const moving: PlanView = { ...v, status: 'building', questions: [] }
+    expect(shown('plan', planFacts(moving, UI).facts)).not.toContain('buttons:26')
+    const stopped: PlanView = { ...v, phase: 'stopped', status: 'stopped' }
+    expect(shown('plan', planFacts(stopped, UI).facts)).not.toContain('buttons:26')
+    expect(shown('plan', planFacts(stopped, UI).facts)).toContain('buttons:22')
   })
   it('a mind it waits on is refused for spending: it says which, in the hive\'s words, and offers the limits', () => {
     // a test hive with a 1 USD month limit held the planner 30 minutes with nothing said

@@ -1,0 +1,129 @@
+{
+ "about": "What the page's redact (report.ts) and the hive's redact.shared (hive/core/redact.py) make of each line: both test suites run every case, so the two keep the same rules in the same order.",
+ "cases": [
+  {
+   "in": "mail ana.lopez+hive@example.org about it",
+   "out": "mail [email] about it"
+  },
+  {
+   "in": "read /home/ana/notes.txt",
+   "out": "read ~/notes.txt"
+  },
+  {
+   "in": "C:\\Users\\ana\\AppData\\hive.log",
+   "out": "~\\AppData\\hive.log"
+  },
+  {
+   "in": "Authorization: Bearer eyJhbGciOi.abc.def",
+   "out": "Authorization: Bearer [token]"
+  },
+  {
+   "in": "key sk-proj-abcdef123456 refused",
+   "out": "key [key] refused"
+  },
+  {
+   "in": "conversation c_u_ana~mind_9 closed",
+   "out": "conversation [conversation] closed"
+  },
+  {
+   "in": "user:u_ana asked",
+   "out": "[person] asked"
+  },
+  {
+   "in": "call +61 2 9876 5432 now",
+   "out": "call [phone] now"
+  },
+  {
+   "in": "GET /auth/callback?code=4f2a91&state=xyz9",
+   "out": "GET /auth/callback?code=[code]&state=[code]"
+  },
+  {
+   "in": "the board answered for code=3b9c8a5f1e2d4c6b7a80",
+   "out": "the board answered for code=[code]"
+  },
+  {
+   "in": "could not exchange oauth code 4/0AbC1x",
+   "out": "could not exchange oauth code [code]"
+  },
+  {
+   "in": "oauth code: WDJB-MJHT",
+   "out": "oauth code: [code]"
+  },
+  {
+   "in": "polling {\"device_code\": \"GmRhmhcxhwAzkoEqiMEg\"}",
+   "out": "polling {\"device_code\": \"[code]\"}"
+  },
+  {
+   "in": "exit code 137, status code 429, code=free_inference_busy",
+   "out": "exit code 137, status code 429, code=free_inference_busy"
+  },
+  {
+   "in": "the code was rejected and the auth code expired",
+   "out": "the code was rejected and the auth code expired"
+  },
+  {
+   "in": "Cookie: omega_session=abc123; theme=dark",
+   "out": "Cookie: [cookie]"
+  },
+  {
+   "in": "set-cookie: hive_signin=Zx9y8W7v; Path=/; HttpOnly",
+   "out": "set-cookie: [cookie]"
+  },
+  {
+   "in": "headers {\"cookie\": \"a=1\", \"host\": \"hive.example\"}",
+   "out": "headers {\"cookie\": \"[cookie]\", \"host\": \"hive.example\"}"
+  },
+  {
+   "in": "signed in with hive_signin=Q2xvc2Vk0 from the page",
+   "out": "signed in with hive_signin=[cookie] from the page"
+  },
+  {
+   "in": "sent csrf_token=abc123 and connect.sid=s%3Aabc.def",
+   "out": "sent csrf_token=[cookie] and connect.sid=[cookie]"
+  },
+  {
+   "in": "session ended for u_ana",
+   "out": "session ended for u_ana"
+  },
+  {
+   "in": "from 203.0.113.9:8700 and 10.0.0.1",
+   "out": "from [address]:8700 and [address]"
+  },
+  {
+   "in": "Chrome 153.0.7234.0 on Linux",
+   "out": "Chrome 153.0.7234.0 on Linux"
+  },
+  {
+   "in": "client 2001:db8::1 refused",
+   "out": "client [address] refused"
+  },
+  {
+   "in": "[fe80::1%eth0]:8700",
+   "out": "[[address]]:8700"
+  },
+  {
+   "in": "::ffff:192.0.2.1 connected",
+   "out": "[address] connected"
+  },
+  {
+   "in": "refused 2001:db8::7.",
+   "out": "refused [address]."
+  },
+  {
+   "in": "2026-11-17T04:27:21Z WARNING hive: busy",
+   "out": "2026-11-17T04:27:21Z WARNING hive: busy"
+  },
+  {
+   "in": "aa:bb:cc:dd:ee:ff and std::fmt and Foo::bar",
+   "out": "aa:bb:cc:dd:ee:ff and std::fmt and Foo::bar"
+  },
+  {
+   "in": "token Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MDEyMzQ1Njc4",
+   "out": "token [token]"
+  },
+  {
+   "in": "a <!-- hidden --> b",
+   "out": "a  hidden  b"
+  }
+ ]
+}

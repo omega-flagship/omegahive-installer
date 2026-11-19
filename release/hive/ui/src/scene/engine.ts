@@ -1318,6 +1318,7 @@ export class HiveEngine {
         break
       }
       case 'approval.created': {
+        if (e.approval.status !== 'pending') break   // MeTTa that ran without asking (#76) is no request
         const dot = this.dots.get(e.approval.agent_id)
         if (dot) this.dotSpark(dot, 38, 6)
         break

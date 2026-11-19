@@ -20,6 +20,7 @@ import { EXPERIENCES } from '../../experiences/registry'
 import { liveEnv } from '../guided/store'
 import { applyAction } from '../guided/driver'
 import { useHive } from '../../store/store'
+import { readDefaultModel } from '../models/modelUtil'
 import { DEMO_APPS, DemoHost, type Persona } from './demo'
 import { ASK_HOW_MAX, ASK_NAME_MAX, BLANK_PROGRESS, FlRefusal, asRefusal, cleanWords, firstName, liveHost, personaEditable, readProgress, startApp, type AppRef, type AskShape, type BoundWrite, type FlClient, type FlHost, type Hello, type MindRef, type MonthlyLimit, type Progress, type ProgressWrite, type Setup } from './host'
 import { profileSaveCopy, unknownChargeCopy, unknownModelCopy, type ProfileSaveState } from './conditionalCopy'
@@ -28,7 +29,7 @@ import { refusalSentence, limitLine, payerLine, cents, TRANSIENT_MS, type Who } 
 import { afterBeat, holds, beatsFromRecord, freshBeats, nextIndex, prevIndex, resumeBeat, roundResolved, startOf, waitsForPerson, type Beats, type Facts } from './journey'
 import { BEAT_LINES, R2_BEATS, stepsFor, type Beat, type FlPath, type FlStep } from './script'
 import { ownMinds, type OwnMind, type OwnMinds } from './ownMinds'
-import { canThink, freeLapse, onFreeWay } from './plans'
+import { canThink, freeLapse, memberMayThinkWith, onFreeWay } from './plans'
 import { noteFlRecord } from './door'
 import type { ProviderStatus } from '../../api/types'
 
@@ -1207,8 +1208,11 @@ export const useFirstLight = create<FlState>()((set, get) => {
       const r = get().run
       const u = r?.u1
       const mindId = r?.facts.mind?.id
-      // a plan or a key the hive pays with is the owner's to choose; free inference is everyone's (plans.freeWay)
-      if (!r || !u || !mindId || r.mode !== 'live' || (r.path !== 'owner' && !onFreeWay(model)) || r.status !== 'playing' || u.busy || u.phase !== 'editing' || !r.host.useModel) return
+      // a plan, or a key the hive pays that this person cannot, stays the owner's to choose. Free inference is
+      // everyone's, and a keyed way the host says would pay for this person's mind is theirs (plans.memberMayThinkWith).
+      const hive = useHive.getState()
+      const ownWay = memberMayThinkWith(model, hive.providers, hive.models, readDefaultModel()?.model ?? null)
+      if (!r || !u || !mindId || r.mode !== 'live' || (r.path !== 'owner' && !ownWay) || r.status !== 'playing' || u.busy || u.phase !== 'editing' || !r.host.useModel) return
       patch(r.id, (x) => ({ u1: { ...x.u1!, busy: true, error: null } }))
       const op = bindOperation(() => { const x = live(r.id); return !!x && x.status === 'playing' && x.facts.mind?.id === mindId })
       try {

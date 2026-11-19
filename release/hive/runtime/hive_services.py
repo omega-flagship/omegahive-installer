@@ -15,6 +15,9 @@ _INITIALIZED = False
 _PROVIDER_ERROR = None
 _LAST_KIND = 'normal'
 _LAST_WAIT = None   # a hive refusal's retry_after (seconds), for the wait it causes (last_wait_seconds)
+# Why the latest chat() result was a format failure, in a few plain words for the hive's view of a stopped mind
+# (hive_commons.trace): '' unless _LAST_KIND is 'format'.
+_LAST_CAUSE = ''
 
 
 def initialize(arguments=()):
@@ -136,18 +139,40 @@ def last_wait_seconds():
     return _LAST_WAIT or 0
 
 
-def _failed(kind, text, wait=None):
-    global _LAST_KIND, _LAST_WAIT
+def last_failure_cause():
+    """Why the latest chat() result was a runtime format failure ('' when it wasn't one): the runtime's own words,
+    set beside last_response_kind, never read from model text."""
+    return _LAST_CAUSE
+
+
+def _failed(kind, text, wait=None, cause=''):
+    global _LAST_KIND, _LAST_WAIT, _LAST_CAUSE
     from hive.runtime.hive_provider import response
-    _LAST_KIND, _LAST_WAIT = kind, wait
+    _LAST_KIND, _LAST_WAIT, _LAST_CAUSE = kind, wait, cause
     return response(text)
 
 
+def _format_cause(errors, error):
+    """The runtime's words for why a reply was refused: a tool call its provider couldn't take ("Unknown tool:
+    'Bash'" becomes "a tool call named Bash"), a reply with no command, or what provider_features found wrong with
+    it (cut off at its room, an incomplete batch, filtered). A tool's name is the one part a model chose, so only a
+    short name-shaped one is repeated; the hive says these words to the person and the mind's next attempt."""
+    import re
+    from hive.runtime.provider_features import take_format_cause
+    found = take_format_cause()
+    if errors:
+        named = re.search(r"Unknown tool:\s*'([A-Za-z0-9_.:-]{1,64})'", errors[0])
+        return f"a tool call named {named.group(1)}" if named else "a tool call its provider couldn't read"
+    if error == 'List of tool calls is empty':
+        return 'no command'
+    return found or 'an incomplete reply'
+
+
 def chat(request):
-    global _LAST_KIND, _LAST_WAIT
+    global _LAST_KIND, _LAST_WAIT, _LAST_CAUSE
     import providers
     from hive.runtime.provider_features import take_refusal
-    _LAST_KIND, _LAST_WAIT = 'normal', None
+    _LAST_KIND, _LAST_WAIT, _LAST_CAUSE = 'normal', None, ''
     if _PROVIDER_ERROR:
         return _failed('provider', 'wait "' + _PROVIDER_ERROR + '"')
     selected = providers._llmprovider
@@ -162,13 +187,13 @@ def chat(request):
     refusal = take_refusal()
     if refusal is not None and (result.is_error() or not result.calls):
         # the hive refused it for spending or pace: the mind's wait says why in the hive's words, for as long as it asks
-        return _failed('hive', 'wait "' + refusal[0] + '"', refusal[1])
+        return _failed('hive', 'wait "' + refusal[0] + '"', wait=refusal[1])
     errors = [call.error for call in result.calls if call.is_error()]
     if errors or getattr(result, 'error', None) in (
             'List of tool calls is empty', 'Incomplete provider response; no commands executed'):
         if errors or result.error == 'List of tool calls is empty':   # provider_features logs the incomplete replies
             logging.getLogger('hive_provider').info('format failure: %s', '; '.join(errors) or result.error)
-        return _failed('format', 'wait "LLM-FORMAT-ERROR incomplete response"')
+        return _failed('format', 'wait "LLM-FORMAT-ERROR incomplete response"', cause=_format_cause(errors, result.error))
     if result.is_error() or not result.calls:
         # Keep the existing wait/backoff contract. Detailed provider errors
         # remain in native logs, never a fabricated successful tool action.

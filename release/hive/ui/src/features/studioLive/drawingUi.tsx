@@ -5,6 +5,20 @@ import { studioCapable, type StudioHostClient } from './api'
 export type DrawingMode = 'steer' | 'queue'
 export interface DrawingAvailability { available: boolean; code: string; reason: string | null }
 
+/** What the person can do about the host's reason: nothing (it is the hive's state; a key of theirs doesn't change it). */
+const HOST_OFF_STEP = 'That is for whoever runs this hive; there is nothing for you to do here.'
+
+/**
+ * Show run f4 (2026-11-19): the host's own reason for not offering drawing (/api/me/ask `capabilities.studio_off`, set
+ * only while `studio_sessions` is absent). No step is offered: a key does not turn Studio on (setup's own_key_needed is
+ * handled when Draw live is pressed on a hive that offers it). An absent or unknown reason is never guessed.
+ */
+function hostOffReason(why: unknown): string {
+  if (why === 'not_set_up') return `Live drawing isn’t set up on this hive yet, so nothing can be drawn here. ${HOST_OFF_STEP}`
+  if (why === 'off') return `Live drawing is turned off on this hive, so nothing can be drawn here. ${HOST_OFF_STEP}`
+  return 'This hive is not offering live drawing right now, so nothing can be drawn here yet. It has not said why.'
+}
+
 /**
  * `hasAskTurn`: an Ask turn is already recorded on this page. `hasWords`: the Ask holds unsent words, which Draw live
  * asks first (studioLive/store recordDrawTurn), so the button works from typed words alone (Jon, 4 Nov).
@@ -16,7 +30,7 @@ export function drawingAvailability(client: StudioHostClient | null | undefined,
   if (client.mode !== 'sim' && !settings) return { available: false, code: 'checking', reason: 'Live drawing availability has not been read from this hive yet.' }
   if (!studioCapable(client, settings)) {
     const caps = settings?.capabilities as Record<string, unknown> | undefined
-    if (client.mode !== 'sim' && caps?.studio_sessions !== true) return { available: false, code: 'host_not_offered', reason: 'This hive is not offering live drawing right now, so nothing can be drawn here yet. It has not said why.' }
+    if (client.mode !== 'sim' && caps?.studio_sessions !== true) return { available: false, code: 'host_not_offered', reason: hostOffReason(caps?.studio_off) }
     return { available: false, code: 'client_unsupported', reason: 'This page cannot use all the drawing controls this hive requires.' }
   }
   if (!client.studioSetupProposal) return { available: false, code: 'setup_unavailable', reason: 'This page cannot prepare the drawing confirmation on this hive.' }

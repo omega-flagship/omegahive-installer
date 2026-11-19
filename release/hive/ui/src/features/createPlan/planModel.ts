@@ -257,6 +257,17 @@ const FINISHED = new Set(['deployed', 'stopped'])
 export function runningPlan(plans: PlanSummary[]): PlanSummary | null {
   return plans.find((p) => !FINISHED.has(p.status) && !FINISHED.has(p.phase)) ?? null
 }
+/** statuses a build waits in, on the person or on the hive (create_plan_engine._status) */
+const HELD_STATUS = new Set(['needs_you', 'asking_you', 'engine_error', 'assignee_unavailable'])
+/** a build held on the person or the hive. The one test for both sides: the plan screen offers Make something else
+ *  only for such a build, and the empty canvas names only such a build, so a build the person leaves is always named */
+export function isHeld(p: { status: string; phase: string }): boolean {
+  return HELD_STATUS.has(p.status) && !FINISHED.has(p.phase)
+}
+/** the one build the empty canvas offers to go back to: the newest one held (left there by Make something else) */
+export function heldPlan(plans: PlanSummary[]): PlanSummary | null {
+  return plans.find(isHeld) ?? null
+}
 
 /** GET …/preview: the verified preview files, or null when it is not that shape. */
 export function parsePreviewFiles(raw: unknown): PreviewFiles | null {
@@ -322,7 +333,12 @@ export function statusLine(view: PlanView): string {
   return (STATUS_WORDS as Record<string, string>)[st] ?? plainly(st)
 }
 
-export const openQuestions = (view: PlanView): PlanQuestion[] => view.questions.filter((q) => q.answered === null)
+/** stopped, deployed or installed: nothing more is built, so nothing waits on the person any more */
+export const planEnded = (view: PlanView): boolean => view.status === 'stopped' || view.status === 'deployed' || !!view.installed
+
+/** the questions still waiting for the person; none once the plan has ended, since no answer is acted on then (a
+ * stopped build kept its Plan question, Try again / Stop and the answer field under "Stopped": show run f6, 11-19) */
+export const openQuestions = (view: PlanView): PlanQuestion[] => planEnded(view) ? [] : view.questions.filter((q) => q.answered === null)
 
 /** pieces held by an open question: the piece it is about and every piece that depends on it, however far */
 function heldPieces(view: PlanView): Set<string> {
@@ -469,8 +485,11 @@ function assigneeWords(a: Assignee): string {
 export function pieceRows(view: PlanView): PieceRow[] {
   const byId = new Map(view.pieces.map((p) => [p.id, p]))
   const held = heldPieces(view)
+  const ended = planEnded(view)
   const lastCheck = [...view.checks].reverse().find((c) => !c.base) ?? null
   return view.pieces.map((p) => {
+    // an ended plan holds nothing by a question: a piece still marked held reads as waiting, like the rest left unbuilt
+    const waits = p.state === 'waiting' || (ended && p.state === 'held')
     const who = assigneeWords(p.assignee)
     const rn = reviewName(p.review?.kind ?? p.kind)
     let phase: PiecePhase
@@ -484,9 +503,9 @@ export function pieceRows(view: PlanView): PieceRow[] {
       phase = 'blocked'; words = 'Stuck: it needs your answer'
     } else if (p.state === 'unassignable') {
       phase = 'blocked'; words = p.assignee.detail ? `Nobody can take it right now (${p.assignee.detail})` : 'Nobody can take it right now'
-    } else if (p.state === 'held' || ((p.state === 'waiting') && held.has(p.id))) {
+    } else if ((p.state === 'held' && !ended) || ((p.state === 'waiting') && held.has(p.id))) {
       phase = 'held'; words = 'Held by your question'
-    } else if (p.state === 'waiting') {
+    } else if (waits) {
       phase = 'waiting'
       words = pendingDeps.length
         ? `Waiting for ${pendingDeps.map((d) => lowerFirst(byId.get(d)?.title ?? 'another piece')).join(' and ')}`

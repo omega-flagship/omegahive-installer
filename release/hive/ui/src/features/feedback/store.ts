@@ -1,20 +1,38 @@
 // Purpose: the feedback area's state (open or not, what the person wrote, the picture, what the hive adds) and the ways a
 // report leaves: sent to the report service the hive names, opened on the feedback board, copied for the testers' group
-// or saved as files. Each happens only on the person's press, after they have seen the whole report.
+// or saved as files; and the hive's logs, gathered, shown whole, then saved as a file or copied. Each happens only on the
+// person's press, after they have seen the whole of what goes.
 import { create } from 'zustand'
 import type { HiveClient } from '../../api/client'
-import type { FeedbackContext } from '../../api/types'
+import type { FeedbackContext, FeedbackLogs } from '../../api/types'
 import { onIdentityChange } from '../../lib/identityEpoch'
 import { copyText } from '../../lib/hooks'
 import { pageErrors, utcSecond } from '../../lib/recentErrors'
 import { downloadBlob } from '../../lib/download'
 import { capturePage, pngBlob } from './capture'
 import { loadMindDrafts, settleDraft, type Draft } from './drafts'
+import { logsFile, logsText } from './logs'
 import { deviceOf, factsOf, issueUrl, mergeErrors, payloadOf, reportId, reportText, type Report, type ReportKind } from './report'
 import { pageOf, screensVisited, stepsOf } from './trail'
 
 /** What the person did with the report last, for the words that follow it. */
 export type Done = 'none' | 'sent' | 'opened' | 'copied' | 'saved'
+
+/**
+ * The hive's logs as the area holds them: gathered on the person's press into `text`, the one text they see and the
+ * only one saved (as `file`) or copied. `scope` says whose they are (the hive's part's scope, or page when it is missing,
+ * `missing` saying why); `failed` why the last copy did not go through.
+ */
+export interface LogsState {
+  shown: boolean
+  loading: boolean
+  text: string
+  file: string
+  scope: FeedbackLogs['scope'] | 'page'
+  missing: string
+  failed: string
+  done: 'none' | 'saved' | 'copied'
+}
 
 export interface FeedbackState {
   open: boolean
@@ -40,14 +58,17 @@ export interface FeedbackState {
   failed: string
   /** the draft this report was made from (drafts.ts): settled once the report leaves */
   draft: Pick<Draft, 'id' | 'origin' | 'draftedBy'> | null
+  logs: LogsState
 }
+
+const noLogs = (): LogsState => ({ shown: false, loading: false, text: '', file: '', scope: 'page', missing: '', failed: '', done: 'none' })
 
 const closed = (): FeedbackState => ({
   open: false, id: '', kind: 'bug', words: '', expected: '', steps: '',
   page: { device: '', look: '', page: '', window: '', time: '' },
   // the picture is the person's to add (Jon on #367): a picture shows everything on the page, unredacted
   ctx: null, ctxError: '', picture: { url: null, drawing: false, failed: false, kept: false }, errorsKept: true,
-  done: 'none', copiedToo: false, reference: '', sending: false, failed: '', draft: null,
+  done: 'none', copiedToo: false, reference: '', sending: false, failed: '', draft: null, logs: noLogs(),
 })
 
 export const useFeedback = create<FeedbackState>(() => closed())
@@ -194,4 +215,49 @@ export function canSharePicture(): boolean {
   } catch {
     return false
   }
+}
+
+/**
+ * Gather the logs on the person's press: the hive's part (GET /api/feedback/logs) and the page's (its device, errors and
+ * screens visited), made into the one text the area then shows whole (logs.ts logsText). A hive that cannot give its
+ * part still gets the page's, and the text and the area say why. Nothing leaves here.
+ */
+export async function showLogs(client: HiveClient | null): Promise<void> {
+  const s = useFeedback.getState()
+  if (!s.open || s.logs.loading) return
+  const run = opened
+  useFeedback.setState({ logs: { ...s.logs, loading: true, failed: '', done: 'none' } })
+  let hive: FeedbackLogs | null = null
+  let missing = ''
+  if (!client?.feedbackLogs) missing = 'this hive does not give its logs yet'
+  else {
+    try {
+      hive = await client.feedbackLogs()
+    } catch (e) {
+      missing = e instanceof Error ? e.message : 'the hive did not answer'
+    }
+  }
+  if (run !== opened) return
+  const { page } = useFeedback.getState()
+  const time = utcSecond()
+  useFeedback.setState({ logs: {
+    shown: true, loading: false, scope: hive?.scope ?? 'page', missing, failed: '', done: 'none', file: logsFile(time),
+    text: logsText(hive, missing, { device: page.device, look: page.look, window: page.window, time }, pageErrors(), screensVisited()),
+  } })
+}
+
+/** Save the logs as shown, as omega-hive-logs-….txt where the browser keeps downloads. */
+export function saveLogs(): void {
+  const { logs } = useFeedback.getState()
+  if (!logs.shown) return
+  downloadBlob(logs.file, new Blob([logs.text + '\n'], { type: 'text/plain;charset=utf-8' }))
+  useFeedback.setState({ logs: { ...logs, done: 'saved', failed: '' } })
+}
+
+/** Copy the logs as shown, for the testers' group or a message to the team. */
+export async function copyLogs(): Promise<void> {
+  const { logs } = useFeedback.getState()
+  if (!logs.shown) return
+  const ok = await copyText(logs.text)
+  useFeedback.setState((st) => ({ logs: { ...st.logs, ...(ok ? { done: 'copied', failed: '' } : { failed: 'Your browser would not copy them. Save them as a file instead.' }) } }))
 }

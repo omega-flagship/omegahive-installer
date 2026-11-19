@@ -2,7 +2,7 @@ import type { LlmErrorCode } from '../api/types'
 
 export interface LlmErrorInfo {
   code: LlmErrorCode | 'other'
-  status: 402 | 403 | 429 | null
+  status: 401 | 402 | 403 | 429 | null
   title: string
   hint: string
 }
@@ -21,7 +21,18 @@ const KNOWN: Record<LlmErrorCode, Omit<LlmErrorInfo, 'code'>> = {
   free_model_not_offered: { status: 403, title: 'Model not offered free', hint: 'Free inference here doesn’t offer this mind’s model. Choose a model it offers, or another way to think.' },
   free_inference_invited_only: { status: 403, title: 'Free inference is for invited people', hint: 'Free inference on this hive is for the people it invited. Add a key of your own for this mind to think.' },
   free_inference_person_only: { status: 403, title: 'Free inference is for a person', hint: 'Free inference is for a person’s own use, and this call is for no one in particular.' },
+  free_inference_key_refused: { status: 401, title: 'Free inference’s key refused', hint: 'Free inference’s provider refused the hive’s key. Add a key of your own, or choose another way for this mind to think.' },
+  free_model_unreconciled: { status: 402, title: 'Model paused', hint: 'An earlier call to this model ended without a clear answer, so it isn’t called again until that is settled. Choose another model to go on now.' },
+  provider_no_credit: { status: 402, title: 'No credit at the provider', hint: 'The account behind this mind’s key has no credit left. Add credit there, or choose a free model or another key.' },
+  provider_key_refused: { status: 401, title: 'Key refused by the provider', hint: 'The provider refused the key that pays for this mind. Check the key, or use another one.' },
+  provider_busy: { status: 429, title: 'Provider busy', hint: 'The provider is taking no more calls to this model for now. It retries on its own; another model goes on sooner.' },
+  provider_unavailable: { status: null, title: 'Provider unavailable', hint: 'The provider couldn’t answer just now. It retries on its own.' },
+  provider_request_refused: { status: null, title: 'Request refused by the provider', hint: 'The provider wouldn’t take this request for this mind’s model. Choose another model.' },
 }
+
+// matched longest first, so a code that holds another (hive_budget_exhausted holds budget_exhausted) is found first, and
+// a refusal's own 429 is never read as the per-minute limit
+const ORDER = (Object.keys(KNOWN) as LlmErrorCode[]).sort((a, b) => b.length - a.length)
 
 /**
  * Reads a mind's `last_error`. The contract does not fix its format, so the gateway's error codes
@@ -29,8 +40,7 @@ const KNOWN: Record<LlmErrorCode, Omit<LlmErrorInfo, 'code'>> = {
  */
 export function describeLlmError(text: string | null | undefined): LlmErrorInfo | null {
   if (!text) return null
-  // most specific first: hive_budget_exhausted contains budget_exhausted, and a free refusal's 429 is not the per-minute limit
-  for (const code of ['free_inference_busy', 'free_inference_daily_cap', 'free_inference_hive_daily_cap', 'free_inference_off', 'free_model_not_offered', 'free_inference_invited_only', 'free_inference_person_only', 'hive_budget_exhausted', 'budget_exhausted', 'no_budget', 'unpriced_model', 'rate_limited'] as const) {
+  for (const code of ORDER) {
     if (text.includes(code)) return { code, ...KNOWN[code] }
   }
   if (/\b429\b/.test(text)) return { code: 'rate_limited', ...KNOWN.rate_limited }

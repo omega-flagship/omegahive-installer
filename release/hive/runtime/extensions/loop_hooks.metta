@@ -1,5 +1,5 @@
+; Purpose: the hive's hooks into the core loop: boot, each response's preparation with its held messages, and waits.
 !(change-state! &loopBootInitialized false)
-; Purpose: Hive feature hooks. No scheduling loop lives here.
 (= (maxNewInputLoops) (empty))
 (= (maxWakeLoops) (empty))
 (= (sleepInterval) (empty))
@@ -66,6 +66,8 @@
           (change-state! &formatRetries 0)
           (change-state! &lastResponseKind normal)
           (change-state! &restCheckDue false)
+          (change-state! &lastReplyKind normal)
+          (change-state! &lastReplyHold clear)
           (change-state! &loops 0)))
 
 (= (initRuntimeOrgans)
@@ -151,7 +153,8 @@
    (honor-chosen-wait $sexpr normal))
 
 (= (honor-chosen-wait $sexpr $retryKind)
-   (let* (($attempts (py-call (hive_helpers.next_format_retry_count $retryKind (get-state &formatRetries))))
+   (let* (($_ (change-state! &lastReplyKind $retryKind))
+          ($attempts (py-call (hive_helpers.next_format_retry_count $retryKind (get-state &formatRetries))))
           ($_ (change-state! &formatRetries $attempts))
           ($seconds (py-call (hive_helpers.chosen_wait_seconds (repr $sexpr) $retryKind $attempts
                                                                 (py-call (hive_services.last_wait_seconds))))))
@@ -183,8 +186,19 @@
 
 (= (hive-cycle $k)
    (progn (if (== (get-state &hiveJustBooted) true) _ (progn (heartbeat $k) (run-runtime-hooks cycle)))
+          (renew-held-turns)
           (change-state! &hiveJustBooted false)
           (change-state! &cycle $k)))
+
+; A mind holding a claimed goal keeps its turns: once its own reply has spent them, the cycle sets its wake to now, so
+; the core loop's wake check grants 2 + maxWakeLoops on this cycle and the calls go on from the next. A reply the
+; runtime failed (&lastReplyKind format or provider, set by honor-chosen-wait) keeps its back-off and its rest
+; (hive_helpers.renews_turns says when, and when not). py-call hands its answer back as a symbol, as it does the
+; reply kinds hive-complete reads, so it compares with renew, never "renew".
+(= (renew-held-turns)
+   (if (== (py-call (hive_helpers.renews_turns (get-state &loops) (get-state &lastReplyKind))) renew)
+       (change-state! &nextWakeAt 0)
+       _))
 
 ; Keep the original provider/gateway path, including model, reasoning and energy
 ; accounting. Adapt only its response envelope to the upstream core protocol.
@@ -192,10 +206,15 @@
 
 ; The runtime's own failure provenance (hive_services.last_response_kind: format, provider or normal) travels beside
 ; the model text, never inside it, so model-authored marker text cannot earn the runtime's short retry.
+; &lastReplyHold is held when the mind's last reply held a message (hive_helpers.hold_messages_after_commands), and
+; then this reply's messages all go out, so no message is held twice in a row.
 (= (hive-run-response $text)
-   (let* (($prepared (py-call (hive_helpers.prepare_model_response $text (py-call (hive_services.last_response_kind)))))
+   (let* (($prepared (py-call (hive_helpers.prepare_model_response $text (py-call (hive_services.last_response_kind))
+                                                                   (get-state &lastReplyHold))))
           ($response (py-call (hive_helpers.prepared_response_commands $prepared)))
           ($_ (change-state! &lastResponseKind (py-call (hive_helpers.prepared_response_kind $prepared))))
+          ($_ (change-state! &lastReplyHold (py-call (hive_helpers.prepared_response_hold $prepared
+                                                                                         (get-state &lastReplyHold)))))
           ($sexpr (catch (sread $response)))
           ($_ (hive-error MULTI_COMMAND_FAILURE_NOTHING_WAS_DONE_PLEASE_CORRECT_PARENTHESES_AND_USE_QUOTES_AND_RETRY $response $sexpr))
           ($results (RESULTS: (command-results $sexpr))))

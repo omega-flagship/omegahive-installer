@@ -66,12 +66,12 @@ def test_gates_goals_traces_and_memory_with_real_agents(tmp_path):
         assert top["result"].startswith("merged:") and "survey north" in top["result"]
         assert top["claimed_by"] not in {s["claimed_by"] for s in subs} or len({s["claimed_by"] for s in subs}) >= 1
 
-        # 3. an operator retires an atom from a dot's private memory
+        # 3. an operator retires an atom from a dot's private memory; the dot's MeTTa writing it stays in its own
+        # memory, so it runs without asking and the decision history lists it (omega-flagship/omegahive#76)
         c.post(f"/api/agents/{ada['id']}/messages",
                json={"text": 'run (metta "(add-atom &persistent (RetireMe sky green))")'})
-        approval = wait_until(lambda: [p for p in c.get("/api/approvals", params={"status": "pending"}).json()
-                                       if p["skill"] == "metta"], timeout=60)
-        c.post(f"/api/approvals/{approval[0]['id']}/approve")
+        assert wait_until(lambda: [p for p in c.get("/api/approvals", params={"status": "auto"}).json()
+                                   if p["skill"] == "metta"], timeout=60), "the run is missing from the decision history"
 
         def has_atom():
             atoms = c.get(f"/api/agents/{ada['id']}/memory/persistent", params={"q": "RetireMe"}).json()

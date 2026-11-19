@@ -1,3 +1,4 @@
+# Purpose: verify linked-folder access, confinement, writes, receipts, and unlinking without disk-file deletion.
 """Linked local folders (hive/core/folders.py): local hives only, read-only by default, write receipts, realpath
 confinement, default exclusions, the assets visibility rule, ranges, and the hard-deny list. Everything here is an
 invented folder under pytest's tmp_path, with HOME pointed at an invented home."""
@@ -163,6 +164,31 @@ def test_visibility_follows_the_owner_swarm(client, tree):
     assert client.get("/api/agent/folders", headers=agent_headers(other)).json() == []
     assert client.delete(f"/api/folders/{f['id']}").json()["unlinked"] is True
     assert client.get(f"/api/folders/{f['id']}/list", headers=ann).status_code == 404
+
+
+def test_unlink_keeps_original_and_written_files_and_their_receipts(client, tree):
+    f = link(client, tree["proj"], swarm(client)["id"]).json()
+    client.post(f"/api/folders/{f['id']}/write", json={"writable": True}).raise_for_status()
+    written = client.put(f"/api/folders/{f['id']}/file?path=notes.txt", content=b"keep these notes").json()
+    assert client.delete(f"/api/folders/{f['id']}").json()["unlinked"] is True
+    assert (tree["proj"] / "readme.txt").read_text() == "hello from an invented project\n"
+    assert (tree["proj"] / "notes.txt").read_bytes() == b"keep these notes"
+    assert client.app.state.hive.db.one("SELECT id FROM linked_folder_receipts WHERE id = ?", (written["id"],))
+    assert f["id"] not in {row["id"] for row in client.get("/api/folders").json()["folders"]}
+    assert client.get(f"/api/folders/{f['id']}/list").status_code == 404
+
+
+def test_unlink_applies_the_list_visibility_rule(client, tree, monkeypatch):
+    f = link(client, tree["proj"], swarm(client)["id"]).json()
+    hive = client.app.state.hive
+
+    def hidden(viewer, row):
+        raise hive.error(404, "not_found", "no such folder")
+
+    monkeypatch.setattr(hive.folders, "person_may_read", hidden)
+    assert client.get("/api/folders").json()["folders"] == []
+    assert client.delete(f"/api/folders/{f['id']}").status_code == 404
+    assert hive.folders.row(f["id"])
 
 
 def test_a_hive_that_is_not_local_refuses(client, tree, monkeypatch):

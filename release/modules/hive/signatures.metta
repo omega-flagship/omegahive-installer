@@ -46,6 +46,7 @@
 (SkillSignature hive-lifecycle-status (Arg text lease))
 (SkillSignature hive-goal-get (Arg text goal))
 (SkillSignature hive-goal-propose (Arg text goal) (Arg multiline proposal))
+(SkillSignature hive-goal-file (Arg text goal) (Arg filepath path) (Arg multiline text))
 (SkillSignature hive-goal-cancel-ack (Arg text goal))
 (SkillSignature hive-goal-heartbeat (Arg text goal))
 

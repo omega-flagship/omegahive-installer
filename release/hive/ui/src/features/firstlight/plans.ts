@@ -156,6 +156,16 @@ export function freeWay(providers: readonly ProviderStatus[] | null | undefined)
 export const onFreeWay = (model: string | null): boolean => model?.split('/')[0] === FREE_PROVIDER
 
 /**
+ * Whether someone who is not the hive's owner may set their own mind to `model`. Free inference is everyone's. A keyed
+ * way is theirs when the host already says it would pay for their mind (keyedWays: their own key, a grant, or the
+ * owner's key where others may use it). A subscription plan, and a key the hive pays that this person cannot, stay the
+ * owner's to choose.
+ */
+export function memberMayThinkWith(model: string, providers: readonly ProviderStatus[] | null | undefined, models: readonly ModelOption[] | null | undefined, remembered: string | null): boolean {
+  return onFreeWay(model) || keyedWays(providers, models, remembered).some((way) => way.model === model)
+}
+
+/**
  * Why a mind set to think with free inference can't now: 'off' when the host no longer offers this person the free
  * route (the deploy took its key away, allows no calls, or doesn't open it to them), 'model' when it still does but no
  * longer offers the mind's model; null when it can, when the mind isn't set to it, and before the providers are read.

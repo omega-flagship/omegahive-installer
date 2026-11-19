@@ -53,6 +53,8 @@ export function AutoWakeStatus({ op, words }: { op: string; words: string }) {
   const failed = view.phase === 'failed'
   const text = failed
     ? view.changed ? 'The answerer changed, so your request wasn’t sent. Your words are kept.'
+      // the host's own reason when it gave one (a refused start, the mind's last error), never a guess
+      : view.reason ? `Couldn’t wake ${name}. The hive says: ${view.reason}. Your request wasn’t sent. Your words are kept.`
       : `Couldn’t wake ${name}, so your request wasn’t sent. Your words are kept.`
     : spending ? `${name} has reached its spending limit, so it can’t wake for this. Your request wasn’t sent. Your words are kept.`
     : `You can’t wake ${name} with your current access. Your request wasn’t sent. Your words are kept.`

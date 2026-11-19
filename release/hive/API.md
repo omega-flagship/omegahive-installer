@@ -1,3 +1,4 @@
+<!-- Purpose: describe the hive's authenticated HTTP, event and mind interfaces. -->
 # OmegaDots Hive — API contract (Phase 1)
 
 The contract between `hive/core` (server), `hive/ui` (web app) and agents.
@@ -167,6 +168,7 @@ interface Agent {
   spent_usd: number;
   connected: boolean;    // live hub connection
   last_error: string | null;  // why status is "error"
+  refused: MindRefusal | null; // why its own model calls are refused, until one is answered (hive/core/refusals.py)
   last_active_at: string | null;
   created_at: string;
   belief_link: null | "all" | string[];  // its owner's link setting: null for its default, [] for none
@@ -301,10 +303,14 @@ Errors are `{"error": {"code", "message"}}` with a 4xx/5xx status. Every error a
 `X-Hive-Error-Id` header (`e-` and 8 hex digits), and the hive keeps the most recent ones with the person who met them
 (`GET /api/feedback`), so a bug report can name what failed. An error the hive did not expect is a 500
 `internal_error` whose id is also on the hive's log line with the whole traceback; the page never gets the insides.
+The hive also keeps each person's last 100 requests, by method, route pattern, status and how long the answer took to
+start, a run answered alike folded into one line with its count, and its own newest 100 warnings and errors, for the
+logs a person saves from the feedback area (`GET /api/feedback/logs`). A page file that loaded is not kept.
 
 | Method & path | Body → Response |
 |---|---|
-| `GET /api/feedback` | Any signed-in person → `{version, which, system, to, errors}`: the hive's version as a report quotes it (`"Mac v0.31 (build f9648d4386)"`, or the build for a hive run from git), which hive it is (`"own hive, Mac install"`, `"the hive at <host>"`), where reports go (`to`: `{kind: "board", owner, repo, url, public}` with `public` true once GitHub answers the board as public, false while private, null while not known; `{kind: "service", url, host}`; `{kind: "none"}`; `{kind: "invalid", reason}`), and this person's newest error answers (`[{id, at, method, route, status, code, message, raised?}]`, newest first, at most 10; `route` is the matched pattern, so no id is named; `message` is kept with this hive's key ids, key scopes and people taken out, whoever met it; `raised` locates an unexpected error in the hive's code). Where reports go is the one setting `HIVE_FEEDBACK_TO` (unset: the `FEEDBACK_TO` the release was built with, else the team's feedback board). |
+| `GET /api/feedback` | Any signed-in person → `{version, which, system, to, errors}`: the hive's version as a report quotes it (`"Mac v0.31 (build f9648d4386)"`, or the build for a hive run from git), which hive it is (`"own hive, Mac install"`, `"the hive at <host>"`), where reports go (`to`: `{kind: "board", owner, repo, url, public}` with `public` true once GitHub answers the board as public, false while private, null while not known; `{kind: "service", url, host}`; `{kind: "none"}`; `{kind: "invalid", reason}`), and this person's newest error answers (`[{id, at, method, route, status, code, message, raised?}]`, newest first, at most 10; `route` is the matched pattern, so no id is named; `message` is kept with this hive's key ids, key scopes and people taken out, whoever met it, then cleaned as the logs' messages are; `raised` locates an unexpected error in the hive's code). Where reports go is the one setting `HIVE_FEEDBACK_TO` (unset: the `FEEDBACK_TO` the release was built with, else the team's feedback board). |
+| `GET /api/feedback/logs` | Any signed-in person → `{version, which, system, scope, requests, errors, log}`, what the logs file they save from the feedback area holds from the hive, every list newest first. `scope` `"person"`: their own requests and error answers; `"hive"`, for an admin: the whole hive's, with `log`, the hive's own newest warnings and errors (`[{at, level, logger, message}]`, the message cleaned and cut to 300 characters and an exception named by its type), which is `[]` for a person. `requests` is `[{at, method, route, status, ms, count, who}]`, at most 100: `route` the matched pattern (the path's first two parts when no API route matched), `ms` how long the answer took to start, `count` how many alike requests in a row the line stands for (`at` the newest, `ms` the slowest), `who` `"you"`, `"another person"`, `"a mind"` or `"no session"`. `errors` are the error answers as `GET /api/feedback` gives them, all those kept (up to 100); in an admin's each also says `who` as `requests` do, and one another person or no session met is only `{id, at, method, route, status, code, who}`, never its message, which can carry words that person typed for a private space or mind. Nothing names an id, a query or a body; the hive cleans every message as it keeps it (keys, emails, home folders, the ids of people and conversations, phone numbers, OAuth codes, cookie values and network addresses), the page cleans the whole file again before showing it, and nothing leaves until the person saves or copies it. |
 | `POST /api/feedback/send` | `{schema: "omega-hive-report-1", id: "HR-xxxxxxxx", kind: "bug"\|"ux"\|"idea", title, form, fields, text, picture: "data:image/png;base64,…"\|null}`, at most 12 MB → `{sent: true, to, reference}`. Passes the report, as the person saw it, to the report service that setting names; the page sends it only on the person's press. 409 `no_report_service` when the destination is not a service, 400 `bad_report` for another shape, 502 `report_not_delivered` when the service refused it or could not be reached. |
 | `POST /api/feedback/drafts` | A mind, with its own token (the `hive-report-problem` skill): `{kind: "bug"\|"ux"\|"idea", title, words, steps?, expected?, conversation?}` → 201 `{id: "fd-xxxxxxxx", for: "<principal>"}`. The draft waits for one person: the one whose conversation with the mind it came up in (a person's chat with the mind, the operator's own chat, the asker of an Ask turn the mind answered), so what someone told a mind never reaches another person's area. A draft naming no conversation gets the one the mind is answering, worked out from its messages as a plain reply's is: the one person's conversation waiting for an answer when its message is the last the mind received, or with none waiting the last message's when a person sent it; with no person behind it (another mind's message, the hive's own, or none) it waits for the mind's owner when that is a person, else the hive's owner, but only while no one else has written to the mind, since it could then be about their chat. `conversation: "own"` names a problem from the mind's own work and waits for that same owner. A named conversation must hold a message that person sent the mind. It is sent nowhere from here; only that person's send, copy or save in the feedback area makes it a report. The same person, mind and title again replaces the open draft's words and time and keeps its id. 400 `bad_draft` with the reason (an unknown kind or field; an empty title or words; a title over 80 characters or with a line break; words, steps or expected over 4000; a conversation id over 200; a conversation that is not one of the mind's conversations with one person who wrote to it there: a room's, another mind's, or one only the mind wrote in; no conversation named while several people are waiting, or while another message came after the one waiting, unless each is the mind's owner; no conversation named with no person behind it once someone besides the mind's owner has written to it), and 400 `bad_request` for a body that is not a JSON object, as everywhere; 403 `mind_only` for a person's session; 409 `no_person` when a draft names no conversation and neither the mind nor the hive has a person as owner. |
 | `GET /api/feedback/drafts` | The session's person → `{drafts: [Draft]}`, newest first, only theirs. A Draft is `{id, kind, title, words, steps, expected, created, source: {kind: "mind", agent, name, conversation}}`. |
@@ -361,6 +367,37 @@ The server pushes `{"type", "at", ...}` frames. The client may send
   token. The gateway picks the provider and model from the agent's `model`,
   injects the key, meters the usage, and enforces `budget_usd` (402 once the
   budget is spent).
+  A call's output room (`max_tokens` or `max_completion_tokens`, 4096 when it
+  names none) is held to its OpenRouter model's own output limit. A mind
+  holding a claimed goal of a Create plan asks with that whole limit from its
+  first call, as much of it as a new reservation can hold now, and never less
+  than it asked for.
+
+  A provider's refusal comes back with the provider's status and a row of the
+  hive's one refusal table (`hive/core/refusals.py`), never the provider's own
+  words: `provider_no_credit` (402), `provider_key_refused` (401, 403),
+  `provider_busy` (429, or any answer naming a wait), `provider_unavailable`
+  (5xx, 408) or `provider_request_refused` (other 4xx), each with a sentence for
+  the person; a held $0 model is `free_model_unreconciled`. A refusal that knows
+  its wait sends it as `Retry-After`, and a provider's own asked wait counts for
+  at most 30 minutes. The hive keeps the refusal on the mind as its `refused`
+  field, `{code, say, remedy, count, since, retry_at}` with `remedy` one of
+  `wait`, `credit`, `key` or `model`, which the mind's chat shows and Health
+  counts (`refused-calls`, high; `held-calls`, medium, for a wait). Everyone who
+  can see the mind reads it, so a sentence that speaks to one person ("You've
+  used today's free model calls") is kept in words for the mind ("This mind's
+  person has used today's free model calls").
+  While a provider's refusal is kept, the mind's next calls get the same code
+  and sentence as a 429 with `Retry-After`, with nothing reserved or sent, until
+  its wait passes (the provider's own, else 60 s doubling with each refusal in a
+  row, at most 30 minutes either way), someone writes to the mind, or the mind's
+  model or the key its calls go out with changes (a new default key, or a key
+  replaced, removed or assigned to the mind); a key added for someone else leaves
+  the wait alone. The hive's own checks (a day's cap, a spending limit) answer
+  before a kept refusal. The mind's own task work (a claim, heartbeat or result)
+  never ends the wait. An answered call clears it. The hive's own refusals (a
+  held $0 model, a day's free calls used up) are kept and shown the same way but
+  never hold a call, so their `retry_at` is null.
 - **`POST /api/agent/publish`** `{statement, f, c, evidence?}` → `Assertion`. The
   stamp is minted by the hive when `evidence` is omitted. A mind acting for
   someone who controls its swarm (the swarm's owner, its person or an admin)
@@ -516,6 +553,11 @@ interface MemoryAtom { index: number; text: string }
     `[APPROVED p_x] <command>`.
 - **`POST /api/agent/trace`** `{iteration, input, response, commands}`. The
   hive fills in `llm_ms` and `tokens` from the gateway's last call.
+  The runtime adds `rested` and `failure_cause`: when `rested` is true, its
+  reply left the mind resting after its replies kept being refused, and every
+  task the mind holds and is working on ends failed with the result "Its
+  replies kept being refused; the last was <failure_cause>.", so a Create step
+  or Code repair waiting on one goes on and can say why.
 - **`GET /api/agent/control`** → `{ops: [{op: "retire", space, atom} | {op: "reset"}]}`.
   The queued memory operations, polled each loop.
 - **`POST /api/agent/create`** `{sentence, conversation_id?}` → 201 (200 for the
@@ -566,6 +608,14 @@ interface MemoryAtom { index: number; text: string }
     60) ahead;
   - `POST /api/agent/goals/{id}/heartbeat` → `Goal`. The claimer renews its
     lease; also resumes a `waiting` goal (409 if you don't hold it);
+  - `POST /api/agent/goals/{id}/files` `{path, text}` → `{goal_id, path, bytes}`
+    (hive-goal-file). Stages one whole file on a goal the mind holds and is
+    working on, for the goal's answer: a Create builder's and test author's
+    staged files are read beside the answer's own `files` map, which has the
+    last word. A path staged again keeps its last text. 409 `not_claimed`
+    unless the mind holds the goal, 400 `bad_path` unless the path is a plain
+    relative one, 413 `file_too_large` over 256 KiB, 409 `too_many_files` past
+    40 files on one goal.
   - `POST /api/agent/goals/{id}/result` `{status: "done" | "failed" | "waiting", result}`
     → `Goal`.
     - `done` needs a non-empty `result` (400 `no_result`).
@@ -626,7 +676,9 @@ interface MemoryAtom { index: number; text: string }
   times: after the wait its `retry-after-ms` or `Retry-After` asks for, when that is at most 8 s, else after a random
   wait under 1, 2, 4 and then 8 s; an answer asking for a longer wait isn't retried. Each retry passes the send
   boundary's checks again and is the same call, counted once; a call refused to the end is given back and refused with
-  `free_inference_busy`. Each of these refusals is a row of one table, `hive/core/refusals.py`: its code, one sentence
+  `free_inference_busy`, whose `Retry-After` is the wait the answer asked for, however long, else the next wait the
+  retries would have made; its sentence names the wait only when the endpoint asked for one ("Try again in about an
+  hour"), else it says "Try again in a moment". Each of these refusals is a row of one table, `hive/core/refusals.py`: its code, one sentence
   written for the person, and its remedy, what the person can do (`wait`, `credit`, `key` or `model`). An Ask turn whose
   free call is refused for any of these reasons ends with outcome `error`, the refusal's code in `done.error`, its
   remedy in `done.remedy` and its sentence as the answer, which the page then words no second time; the mind gateway
@@ -804,7 +856,8 @@ These apply when no rule matches.
 | Skills | Mode | Why |
 |---|---|---|
 | `send`, `wait`, `pin`, `hive-*`, `query`, `remember`, `episodes`, `search`, `web-search`, `web-fetch`, `read-file`, space reads | `allow` | No side effects outside the agent and the hive |
-| `shell`, `shell-confirm`, `metta`, `write-file*`, `append-file*`, `send-file*`, `codex-*`, `space-transform`, `remove-atom`, any `*-commit` | `ask` | Side effects on the machine or on durable memory |
+| `shell`, `shell-confirm`, `write-file*`, `append-file*`, `send-file*`, `codex-*`, any `*-commit` | `ask` | Side effects on the machine or on durable memory |
+| `metta`, `space-transform`, `space-merge-atoms`, `persistent-merge-atoms`, `retire-persistent-expression`, `persistent-cleanup-commit`, `add-atom`, `remove-atom`, `match`, `get-atoms`, `run-metta-file` | by what the command reaches | Runs when it touches only the mind's own memory spaces, listed in the decision history as ran without asking; asks when it reaches past them (Python, files, Prolog, evaluating an atom the gate can't see, a variable in head position, a function definition, `&self`, a space named other than the memory spaces, such as `skills`, or a function the gate hasn't reviewed). `run-metta-file` always asks. `persistent-cleanup-commit` names only a proposal, and refuses one whose atom is or could be a function definition or type declaration. Quote data, as in `(quote (Found $x))`, to keep it from running |
 | Private-data reads: `read-whatsapp-chat*`, `whatsapp-chats`, `whatsapp-inbox`, `observe-glucose`, `glucose-history`, `glucose-rings`, `glucose-watch-status`, `set-glucose-watch`, the Home Assistant reads (`observe-house*`, `observe-room`, `observe-device`, `house-action-log`), `webcam-observation-log`, `audio-observation-log`; also `persistent-expression` and `body-container-launcher` | `ask` | People's private data; an atom that can define a function; a host file outside the sandbox (omega-flagship/omegahive#299) |
 | `reboot-self` | `deny` unless the launcher sets `HIVE_EMBODIED_VM=1` | It runs `sudo reboot`, which restarts the whole computer, so only a hive that is the mind's own VM offers it, and then it asks one at a time |
 | (human-only) `change-password`, `transfer-funds`, `pay*`, `purchase*` | `deny` to agents | These always need a human to act; no rule can open them |
@@ -1164,7 +1217,8 @@ rate_limited | too_large | timed_out | operation_conflict | invalid | stopped`, 
 - `DELETE /api/ask/threads/{thread_id}` is for the thread's owner only. It returns `{deleted, turns}`, and it:
   - ends the thread, which restores the cap and stops any open turn;
   - archives and empties its room;
-  - removes the request and answer text from its turns, frames and hub messages.
+  - removes the request and answer text from its turns, frames and hub messages;
+  - resets the thread, room and bookkeeping task titles to `Ask with <mind>`.
 
   The turn rows stay, without text, for the audit. What the mind itself remembered is not erased.
   Deletion is a durable tombstone. A later reply in that turn's conversation (hub, `/api/agent/messages` or
@@ -1231,8 +1285,10 @@ The addressed mind is passed only as context (`context.addressed`). It gives the
 
 An Ask thread is a Session with `purpose: "ask"`:
 - one active thread per (person, coordinator);
-- a private room, and a goal assigned to the coordinator. The goal, the session and the room are all titled
-  "Ask thread", never the request text.
+- a private room and a bookkeeping task, named from the first request (up to 200 characters, 80 for the room).
+  A personal conversation keeps no request words: its title is "Ask with <mind>".
+- The bookkeeping task has binding kind `ask.thread`, no assignee and no claim lease. It is omitted from task
+  lists and task events. A mind cannot claim or finish it; ending the thread closes it as done.
 
 The thread's cap is the coordinator's spend at creation plus `thread_budget_usd`. The default is **$0.25**, as Jon
 decided on 2026-10-05. The person may raise it up to $5 without an admin. Session caps on one mind compose: the mind's total rule is min(the rule before any session, every
@@ -1467,6 +1523,37 @@ Ask person gate. Anything not the caller's own is 404 `not_available`.
   keeps its key and state (a commit still links). The request is never cancelled by a deletion.
 - **Startup:** the §L recovery's step 2 moves a `dispatching` intent left by a previous process to `pending`
   (`not_committed_restart`), or to `abandoned` if its thread was deleted.
+
+### Tasks from Ask (`task.create`)
+
+`POST /api/ask/{op}/intents` also accepts `{kind: "task.create", request: {title, instruction}}` from the turn's
+own named person, members included. Title is plain text up to 120 characters; instruction is plain text up to
+2000 characters. Extra fields are refused. The host derives the destination from the mind whose voice answers
+that turn, checks that the person can see and participate there, and rechecks it on admission.
+The conductor sends this kind at once. Task creation, its assignment to that mind, the operation receipt and
+the linked intent commit together. Submit returns the recorded 201 `{request_id: null, lease_id: null,
+receiving_goal, state: "accepted"}`; replay creates nothing. The normal assignment notice is sent after commit.
+Deleting the Ask thread does not cancel the created task.
+
+### Stopped tasks
+
+- `GET /api/me/task-stops` returns `{stops: [{id, goal_id, mind_id, title, status, reason, stopped_at}]}`,
+  oldest first. It returns only the caller's unacknowledged receipts, including for an admin. A stopped task
+  remains here after reopening or removal of its holding mind. `mind_id` is the holder, else the assignee,
+  when it stopped, or null if neither existed.
+- `POST /api/me/task-stops/{id}/acknowledge` returns `{ok: true}`. It is idempotent for the receipt's person.
+  A missing or another person's receipt returns the same 404. Acknowledgment hides that receipt in both Ask
+  and the holding mind's chat; a later stop gets a new receipt.
+- Every failed or stalled transition records its cause in the transition's transaction. Causes cover a mind's
+  failure reason, a person marking work stopped, a deadline, repeated expired claims, repeated reviewer returns
+  failure to start a researcher, and a mind that stopped answering after its replies kept being refused. Research
+  tasks resolve their requester through the request record.
+  A mind's failed result needs a nonempty explanation, otherwise it is 400 `no_result` and stays claimed.
+  An automatic stop also keeps its cause sentence in the task result when there is no further detail.
+  A manual status change with no explanation says explicitly that none was recorded.
+  Ordinary task creation records its authenticated creator; older tasks recorded as the local operator cannot
+  be attributed to another person retrospectively.
+- These receipts are for people. They send no mind message, wake no mind, and create no model call.
 
 ### Research requests (`research.request`, `hive/core/research.py`)
 

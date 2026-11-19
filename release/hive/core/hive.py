@@ -25,7 +25,9 @@ from functools import wraps
 from ..spaces import beliefs as linked_beliefs, sexpr
 from ..spaces.service import SpaceService
 from .config import FREE, Settings
-from .db import Database, latest_stamp, new_id, now, parse_stamp
+from .gateway import GatewayError, split_model
+from .refusals import LONGEST_WAIT_S, upstream as asks_provider
+from .db import Database, latest_stamp, new_id, now, parse_stamp, stamp_of
 from .health import HEALTH_QUESTION, HEALTH_QUESTION_TAG, HEALTH_SENDER, for_people
 from .events import EventBus
 from .goals import Goals
@@ -50,6 +52,10 @@ EDITABLE = {"name", "swarm_id", "model", "persona", "hue", "budget_usd", "idle_s
 
 
 TRACE_TEXT_MAX = 16000   # per command and per result in a trace; longer text is cut and marked (sha256 of the whole)
+
+
+# note_model_refusal's sent_with when its caller sent nothing: the key is read when the refusal is recorded
+_NOW = object()
 
 
 class HiveError(Exception):
@@ -81,6 +87,26 @@ def serialized_tools_choices(function):
         with self._tools_choices_lock:
             return function(self, *args, **kwargs)
     return wrapped
+
+
+# a file path, absolute or relative (/srv/x, ~/x, ./x, ../x), never the path of an address (http://h/a) nor a ratio
+_PATH = re.compile(r"(?<![\w.:/~-])(?:~|\.{1,2})?/(?:[\w.@+-]+/)*[\w.@+-]+")
+
+
+def start_failure(exc, limit=200, prefix="start failed"):
+    """A mind's last_error for a start that failed with an exception the hive did not type (T-START-ERROR-STATUS): the
+    first line of its message, cleaned as a shared file is (redact.clean: keys, addresses, home folders) and with every
+    file path as [path], at most `limit` characters. The traceback stays in the hive's log; the person sees why only.
+    Used by every place a failed start is recorded: _start_locked, restore (prefix "start failed at restore") and the
+    supervisor's reconcile. Example: RuntimeError("could not inspect process group 1064 in /run/x.pid\\nTraceback ...")
+    -> "start failed: could not inspect process group 1064 in [path]"."""
+    from .redact import clean
+    first = next((line.strip() for line in str(exc).splitlines() if line.strip()), "")
+    text = _PATH.sub("[path]", clean(first))
+    if not text:
+        return prefix
+    text = f"{prefix}: {text}"
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
 
 
 class Hive:
@@ -143,6 +169,7 @@ class Hive:
                 self.db.execute(f"ALTER TABLE swarms ADD COLUMN {column} TEXT")
         self.refusals = {}  # agent_id -> {count, last_at, code, message}: model calls refused for spending
         self.slowed = {}  # agent_id -> until: paid calls the spend-rate guard is pacing (spend_rate_refusal)
+        self.model_refusals = {}  # agent_id -> the refusal its own model calls last met (note_model_refusal), until one is answered
         from .visibility import Visibility
         self.visibility = Visibility(self)
         from .personal import PersonalMinds
@@ -269,6 +296,7 @@ class Hive:
             "last_active_at": row["last_active_at"], "last_input_at": row.get("last_input_at"), "created_at": row["created_at"],
             "moved_to": row.get("moved_to"), "moved_to_name": row.get("moved_to_name"), "moved_at": row.get("moved_at"),
             "throughput": self.throughput.mind_view(row["id"]) if getattr(self, "throughput", None) else None,
+            "refused": self.model_refusal_view(row),
         }
 
     def swarm_view(self, row):
@@ -1518,6 +1546,12 @@ class Hive:
             # stopped so the reconciler does not retry it blindly; starting it again after the fix tries again
             self.set_status(agent_id, "error", desired="stopped", error=f"start refused: {exc}")
             raise HiveError(409, "start_refused", str(exc))
+        except Exception as exc:
+            # any other failure (T-START-ERROR-STATUS): the row said 'starting' with no error, forever. It says error and
+            # why, briefly; desired stays awake, as a failed start at restore or reconcile leaves it, and the exception
+            # goes on, so the caller still gets its error (the API its 500 with an id, the log the traceback)
+            self.set_status(agent_id, "error", error=start_failure(exc))
+            raise
         return self.agent(agent_id)
 
     def _stop_locked(self, agent_id, row, action):
@@ -1843,6 +1877,7 @@ class Hive:
             self.db.insert("messages", message)
             if self._is_input(agent_id, sender, extra):
                 self.mark_input(agent_id, message["created_at"])
+                self.model_refusal_release(agent_id)   # someone wrote: a refused provider is asked again at once
         return message
 
     def _is_input(self, agent_id, sender, extra):
@@ -2891,6 +2926,117 @@ class Hive:
             self.db.after_commit(lambda s=str(d.get("scope", "")), l=float(d["limit_usd"]): self.limit_notices.refused(s, "month", l))
         return str(message)[:300]
 
+    # A mind's call refused again waits twice as long before its provider is asked again, from a minute up to half an hour,
+    # unless the refusal itself says how long (a Retry-After), which is held to half an hour too: OpenRouter asks callers
+    # to back off exponentially on a refusal (its API reference, "Limits"), and a free model counts each refused attempt
+    # against its day (openrouter.ai/pricing), so asking every minute spends what the person has left.
+    MODEL_RETRY_FIRST_S, MODEL_RETRY_MOST_S = 60, LONGEST_WAIT_S
+
+    def note_model_refusal(self, agent, error, sent_with=_NOW):
+        """A mind's own model call met `error`, a refusal from refusals.py's table: kept on the mind until a call of its is
+        answered (model_answered), so its view (and with it the mind's chat) and Health say why it is quiet. Its next try
+        at the provider comes after the refusal's own wait, else after MODEL_RETRY_FIRST_S doubling with each refusal in
+        a row, either way at most MODEL_RETRY_MOST_S. The view is announced each time, since its count and next try
+        change with every refusal the provider answers (a call the hold answers is no new refusal). Example: a third 402
+        in a row waits 4 minutes. The hive's own refusals (a held $0 model, a day's free calls used up) ask nothing of a
+        provider, so they keep no wait and name no time: their rule answers each call at once. Everyone who can see the
+        mind reads what is kept, so a sentence that speaks to one person is kept in the row's words for the mind
+        (refusals.Kind.mind_say). `sent_with` is the key the refused call went out with (sender_of, read just before it
+        was sent); left out, as for the hive's own refusals, which send nothing, the key is read now."""
+        sender = self.sender_of(agent)
+        if sent_with is not _NOW and sent_with != sender:
+            # the key the call went out with changed while it was out (a new default, a key replaced or removed): the
+            # key this mind's calls go out with now was never refused, so nothing is kept. Example: key A's 402 arriving
+            # after an admin made key B the default
+            logging.getLogger("hive").info("mind %s: its model call was refused (%s) on a key it no longer uses; "
+                                           "nothing kept", agent["id"], error.code)
+            return
+        prior = self.model_refusals.get(agent["id"])
+        count = prior["count"] + 1 if prior else 1
+        stamp = now()
+        kept = {"code": error.code, "say": getattr(error, "mind_say", None) or error.message, "remedy": error.remedy,
+                "count": count, "since": prior["since"] if prior else stamp, "at": stamp, "model": agent.get("model"),
+                "sender": sender, "until": time.monotonic(), "retry_at": None}
+        wait = None
+        if asks_provider(error.code):
+            wait = min(self.MODEL_RETRY_MOST_S, error.retry_after if error.retry_after is not None
+                       else self.MODEL_RETRY_FIRST_S * 2 ** (count - 1))
+            kept.update(until=time.monotonic() + wait,
+                        retry_at=stamp_of(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=wait)))
+        self.model_refusals[agent["id"]] = kept
+        logging.getLogger("hive").info("mind %s: its model call was refused (%s, %d in a row); next try %s",
+                                       agent["id"], error.code, count, f"in {wait} s" if wait is not None else "at once")
+        self.emit_agent(agent["id"])
+
+    def sender_of(self, agent):
+        """Which key a mind's calls go out with now (Gateway.sender), as its id and a digest of its secret, or None when
+        none can be worked out (an assigned key gone, a provider no longer there). A kept refusal holds only while this
+        stays the same: a new default key, a key replaced or removed, or another key for the mind changes it, and
+        another person's key never does. The digest stays in memory, never in a view. Time: a few dict reads and one
+        SHA-256 of the secret."""
+        gateway = getattr(self, "gateway", None)
+        if gateway is None:
+            return None
+        try:
+            provider_name, _model = split_model(agent["model"])
+            key_id, secret = gateway.sender(agent, provider_name, gateway.provider(provider_name))
+        except GatewayError:
+            return None
+        return key_id, hashlib.sha256(str(secret or "").encode()).hexdigest()
+
+    def model_refusal_holds(self, agent):
+        """The refusal a mind's next model call still meets without asking its provider, or None when the provider is to
+        be asked: none was kept, its wait has passed or was ended (someone wrote to the mind: model_refusal_release), or
+        the mind's model or the key its calls go out with is no longer the one refused (that refusal is then dropped).
+        The mind's own work (a task claimed, a heartbeat, a result) never ends the wait, so it cannot call the provider
+        sooner by keeping busy. Time: one dict read and one sender_of."""
+        kept = self.model_refusals.get(agent["id"])
+        if kept is None:
+            return None
+        if agent.get("model") != kept["model"] or self.sender_of(agent) != kept["sender"]:
+            self.model_answered(agent["id"])
+            return None
+        if not asks_provider(kept["code"]) or time.monotonic() >= kept["until"]:
+            return None   # the hive's own refusal asks nothing of a provider: its rule answers each call at once
+        return kept
+
+    def model_refusal_release(self, agent_id):
+        """Someone wrote to this mind (enqueue_message, for a message _is_input counts): the wait of the refusal kept on
+        it ends, so its next call asks the provider again. The refusal stays kept and shown until a call is answered;
+        its view then says it tries now. Event-driven, so a message in the same millisecond as the refusal ends it too.
+        Time: one dict read."""
+        kept, moment = getattr(self, "model_refusals", {}).get(agent_id), time.monotonic()
+        if kept is None or kept["until"] <= moment:
+            return
+        kept["until"], kept["retry_at"] = moment, now()
+        self.db.after_commit(lambda: self.emit_agent(agent_id))
+
+    def model_refusal_rekeyed(self):
+        """A key or a provider's default key changed (app.keys_changed): each refusal kept on a mind whose calls now go
+        out with another key is dropped, so its chat stops showing it and its next call asks the provider. Every other
+        mind's wait stands, so one person adding their own key never sends someone else's refused mind back to its
+        provider early. Time: one row read and one sender_of per mind with a kept refusal."""
+        for mind_id, kept in list(getattr(self, "model_refusals", {}).items()):
+            row = self.db.one("SELECT * FROM agents WHERE id = ? AND deleted = 0", (mind_id,))
+            if row is None:
+                self.model_refusals.pop(mind_id, None)   # the mind is gone: nobody reads its refusal
+            elif self.sender_of(row) != kept["sender"]:
+                self.model_answered(mind_id)
+
+    def model_answered(self, agent_id):
+        """A mind's model call was answered, or what it was refused for changed: the refusal kept on it goes."""
+        if self.model_refusals.pop(agent_id, None) is not None:
+            self.emit_agent(agent_id)
+
+    def model_refusal_view(self, row):
+        """The refusal kept on this mind as its view shows it, or None: the sentence and remedy for whoever reads the mind,
+        how many calls in a row met it, since when, and when its provider is asked next. One kept for a model the mind no
+        longer has is not shown."""
+        kept = getattr(self, "model_refusals", {}).get(row["id"])
+        if kept is None or kept["model"] != row.get("model"):
+            return None
+        return {k: kept[k] for k in ("code", "say", "remedy", "count", "since", "retry_at")}
+
     def note_admitted(self, agent):
         """A paid call admitted again, by Budgets.check and its reservation both: the mind is no longer paused for
         spending, so its refusal record goes and the next refusal is announced as the first of a new pause; the same for
@@ -2953,6 +3099,7 @@ class Hive:
                                                      f"${budget:.2f} budget",
                             {"scope": f"agent:{agent['id']}", "period": "total", "limit_usd": budget, "spent_usd": round(spent, 6)})
         if paid:
+            self.goals.check_budget(agent, estimate)   # a task it holds may allow less than its own cap (a Create step)
             self.budgets.check(agent, estimate, key_id, payer, own_key, turn_bound)
         cap = self.budgets.hard_cap() if paid else 0
         if paid and cap:
@@ -3084,11 +3231,11 @@ class Hive:
                         continue
                     log.warning("restore could not start %s: %s", row["id"], exc)
                     with contextlib.suppress(HiveError):
-                        self.set_status(row["id"], "error", error=f"start failed at restore: {exc}")
+                        self.set_status(row["id"], "error", error=start_failure(exc, prefix="start failed at restore"))
                 except Exception as exc:
                     log.warning("restore could not start %s: %s", row["id"], exc)
                     with contextlib.suppress(HiveError):
-                        self.set_status(row["id"], "error", error=f"start failed at restore: {exc}")
+                        self.set_status(row["id"], "error", error=start_failure(exc, prefix="start failed at restore"))
             elif row["status"] in ("awake", "starting"):
                 self.set_status(row["id"], "stopped")
             await asyncio.sleep(0)
@@ -3214,6 +3361,12 @@ class Hive:
         return out
 
     def record_trace(self, agent, data, pin=None):
+        if data.get("rested") is True:
+            # the runtime rested this mind after its replies kept being refused (hive_commons.trace), in its own words
+            # (hive_services.last_failure_cause): the goals it holds end with that reason instead of waiting on it
+            cause = str(data.get("failure_cause") or "").strip()[:200]
+            self.goals.stop_held(agent["id"], "replies",
+                                 "Its replies kept being refused" + (f"; the last was {cause}." if cause else "."))
         commands = []
         items = data.get("commands")
         if items is None and data.get("results"):

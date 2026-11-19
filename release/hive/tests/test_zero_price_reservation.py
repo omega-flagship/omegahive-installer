@@ -107,7 +107,7 @@ def test_a_free_call_with_an_unknown_outcome_blocks_further_calls_to_that_model(
     assert r.status_code == 200 and _reservations(client)[-1]["state"] == "unknown"
     r = client.post("/llm/v1/chat/completions", json={"messages": [], "max_tokens": 10}, headers=agent_headers(a))
     assert r.status_code == 402 and r.json()["error"]["code"] == "free_model_unreconciled", r.text
-    assert "can be used again once that call settles by itself, in about 60 minutes" in r.json()["error"]["message"]
+    assert "won't call it again until that call settles by itself, in about an hour" in r.json()["error"]["message"]
     assert len(calls) == 1                                                              # the second was never sent
     # an hour on, the expiry settles the free call at $0, its price, as an estimate, and the model is called again
     hive = client.app.state.hive

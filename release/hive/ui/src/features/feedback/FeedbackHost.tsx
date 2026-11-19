@@ -22,7 +22,7 @@ import { feedbackScreen } from './data'
 import { draftEvent, loadMindDrafts, settleDraft, useDrafts, watchHiveDrafts } from './drafts'
 import { mergeErrors } from './report'
 import { useOpenFeedback } from './open'
-import { addPicture, canSharePicture, closeFeedback, copyReport, openFeedback, openOnBoard, reportOf, saveReport, sendReport, sharePicture, useFeedback } from './store'
+import { addPicture, canSharePicture, closeFeedback, copyLogs, copyReport, openFeedback, openOnBoard, reportOf, saveLogs, saveReport, sendReport, sharePicture, showLogs, useFeedback } from './store'
 import { watchScreens } from './trail'
 import { watchAsk } from './watchAsk'
 import './feedback.css'
@@ -148,6 +148,9 @@ function FeedbackSheet({ experience }: { experience: string }) {
     else if (action === 'copy') void copyReport(client)
     else if (action === 'save') saveReport(client)
     else if (action === 'share-picture') void sharePicture()
+    else if (action === 'logs-show') void showLogs(client)
+    else if (action === 'logs-save') saveLogs()
+    else if (action === 'logs-copy') void copyLogs()
     else if (action === 'use-draft') {
       const d = drafts.find((x) => x.id === item?.id)
       if (d) openFeedback(client, s.page.look, d)

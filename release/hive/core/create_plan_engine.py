@@ -48,7 +48,7 @@ import re
 import sys
 import tempfile
 
-from .code_controller_engine import EngineError, Reducer, Str, parse, q, render, render_any
+from .code_controller_engine import GOAL_REASON_SAID, EngineError, Reducer, Str, parse, q, render, render_any
 from .db import new_id, now
 from .goals import UNFINISHED
 
@@ -194,6 +194,9 @@ REVIEW_EVIDENCE = ("none", "render")
 #: rule (create_plan_ports.ANSWER_SHAPES), and a refused plan's next packet names the rule it broke: on a fresh install's
 #: first real plans the planner, told only the fields' names, broke one rule after another and repeated itself, and
 #: told the reducer's bare code design-pieces-carry-the-design it sent the same plan four times
+# the kinds a piece can be (create_plan_ports.PLAN_SHAPE says the same: code, or design for a designed look)
+PIECE_KINDS = ("code", "design")
+
 PLAN_RULES = {
     "plan_not_an_object": "the plan is one JSON object",
     "step_count_limit": f"a plan has 1 to {MAX_PIECES} pieces",
@@ -217,6 +220,9 @@ PLAN_RULES = {
     "piece_owns_a_reserved_path": "no piece writes a path the hive reserves",
     "detect_without_a_check": f"needs.tests is detect only when the scaffold already has {CHECK_PATH} "
                               "(scaffold_has_acceptance_check in the packet); otherwise author",
+    "design_step_unstaffed": "needs.design is design only when design is in staffed_kinds: a hive with no design maker "
+                             "can't take a design step, so there the look goes in code pieces and needs.design is "
+                             "no-design",
     "design-pieces-carry-the-design": "needs.design is design only when no piece has the kind design: a piece of kind "
                                       "design carries the look itself, so a plan with one says no-design",
     "no-review-for-artifact-kind": "every kind a piece has is reviewed, by one of the hive's own reviews (hive_reviews) "
@@ -499,6 +505,13 @@ class CreatePlanEngine:
         if not last:
             return None
         return {k: last.get(k) for k in ("reason", "why", "exit_code", "output", "stderr") if last.get(k) is not None}
+
+    def staffed_kinds(self, person):
+        """The piece kinds this hive can build for `person` now: each kind whose default assignee resolves to a team or
+        mind that offers it. The planner is told them, since a Mac install has no design maker: a design piece there
+        found nobody, and R4.1 asks its person to make one available, which a tester can't. Time: one resolution per
+        kind in PIECE_KINDS."""
+        return [k for k in PIECE_KINDS if self.assignees.resolve(self.assignees.default_selector(k), person)["resolved"]]
 
     def previous_plan_refusal(self, pid):
         """Why the last plan was refused, when none was accepted since: {code, rule}, the refusal's code and the words of
@@ -988,7 +1001,7 @@ class CreatePlanEngine:
         if isinstance(qatom, list) and qatom[:1] == ["blocked"]:
             why = _plain(qatom[1])
             qid = self._next(pid, "hold")
-            about, text = "blocked", _blocked_text(why)
+            about, text = "blocked", _blocked_text(why, self._stopped(pid, why))
             choices = ["Try again", "Stop"]
         elif isinstance(qatom, list) and qatom[:1] == ["assignee-unavailable"]:
             p = str(qatom[1])
@@ -1018,6 +1031,49 @@ class CreatePlanEngine:
         return self.accepted(verdict)
 
     # ---- pieces: assignment, build, review ---------------------------------------------------------------------
+
+    def last_stop(self, pid, kind, piece=None):
+        """Why this step's previous attempt ended unanswered, when its goal gave a reason (GoalMinds.collect keeps
+        goal_ended's goal_reason with the lost step), for the next attempt's packet; else None. Only the attempt just
+        before the current one counts (same kind, same piece), so an attempt that answered is never told an older stop.
+        Time: this kind's effects and two journal reads."""
+        effects = [e for e in self._effects(pid, kind) if self._body(e).get("piece") == piece]
+        if len(effects) < 2:
+            return None
+        op = effects[-2]["op"]
+        evidence = self._evidence(pid, f"unknown:{op}") or self._evidence(pid, f"plan-failed:{op}")
+        return evidence.get("goal_reason") or None
+
+    def _stopped(self, pid, why):
+        """Who stopped and why, as sentences for the person's hold card, when the hold came from a mind whose goal ended
+        with a reason: the newest lost step (GoalMinds.collect) for lost operations, the piece's builder
+        (PerChangeBuilds.collect) for a blocked piece. The reason is goal_reason: a mind's own hive-goal-fail words, or
+        the hive's when the mind stopped after its replies kept being refused (Goals.stop_held). A builder whose
+        repairs ran out against the acceptance check has check_failure instead: what the check still says about its
+        piece (create_plan_members.check_failure). None otherwise, and the card keeps its general words.
+        Time: the plan's journal rows of that kind, newest first, and one mind read."""
+        if why == ["cap-exceeded", "lost-operations"]:
+            kind, piece = "unknown", None
+        elif isinstance(why, list) and why[:1] == ["piece-blocked"]:
+            kind, piece = "piece-blocked", str(why[1])
+        else:
+            return None
+        evidence = {}
+        for row in self.db.all("SELECT fields, evidence FROM create_plan_journal WHERE plan_id = ? AND kind = ? AND "
+                               "verdict = 'accepted' ORDER BY seq DESC", (pid, kind)):
+            if piece is None or str(parse(row["fields"])[0]) == piece:   # the hold's own piece, not the newest of any
+                evidence = json.loads(row["evidence"]) if row["evidence"] else {}
+                break
+        reason = str(evidence.get("goal_reason") or evidence.get("check_failure") or "").strip()[:GOAL_REASON_SAID]
+        if not reason:
+            return None
+        mind = self.db.one("SELECT name FROM agents WHERE id = ?", (evidence.get("by"),)) if evidence.get("by") else None
+        who = mind["name"] if mind else "The mind doing it"
+        if piece is not None:
+            who += f" stopped building “{(self._piece_spec(pid, piece) or {}).get('title') or piece}”."
+        else:
+            who += " stopped."
+        return f"{who} {reason if reason[-1] in '.!?' else reason + '.'}"
 
     def answers(self, pid):
         """The person's answers so far ({q, text}), handed to every later model call."""
@@ -1069,6 +1125,13 @@ class CreatePlanEngine:
                                              effect=("build", task, {"piece": p, "task": task, "builder": builder,
                                                                      **assignment}))
         return await self._admitted(run, verdict, effect)
+
+    def _built_summary(self, pid, cand):
+        """What the builder said about candidate `cand` (its piece-ready record's summary), or None."""
+        row = self.db.one("SELECT evidence FROM create_plan_journal WHERE plan_id = ? AND kind = 'piece-ready' AND "
+                          "verdict = 'accepted' AND json_extract(evidence, '$.candidate') = ? ORDER BY seq DESC LIMIT 1",
+                          (pid, cand))
+        return (json.loads(row["evidence"] or "{}").get("summary") or None) if row else None
 
     def _builders(self, pid):
         out = set()
@@ -1229,6 +1292,11 @@ class CreatePlanEngine:
                 # detect finds the scaffold's own check: with none there, the plan's tests step could never answer
                 return await R("failed", f"plan-failed:{op}", "plan-failed", [q(op)],
                                {"invalid": "detect_without_a_check", "by": out.get("by")})
+            if plan["needs"]["design"] == "design" and "design" not in self.staffed_kinds(run["person"]):
+                # a design step resolves the design capability as a piece does: with no maker it answers unknown,
+                # spends the retry budget and asks the person, who on a Mac install can't make a designer available
+                return await R("failed", f"plan-failed:{op}", "plan-failed", [q(op)],
+                               {"invalid": "design_step_unstaffed", "by": out.get("by")})
             owned = {f for x in plan["pieces"] for f in x["files"]}
             if owned & set(plan["reserved"]):            # the host refuses it too, before the reducer does
                 return await R("failed", f"plan-failed:{op}", "plan-failed", [q(op)],
@@ -1450,8 +1518,9 @@ class CreatePlanEngine:
                 "member": (space.get("members") or {}).get(p, {}).get("task_id"),
                 "editing": state == "started", "draft": None if cand == "none" else cand,
                 "candidate": None if cand == "none" else cand, "repairs": r[4],
+                "summary": None if cand == "none" else self._built_summary(pid, cand),
                 "unreviewed": str(r[6]) == "unreviewed", "review": rv,
-                "tests": [CHECK_PATH] if space.get("suite") else []})
+                "tests": [space["suite"]] if space.get("suite") else []})
         questions = []
         for e in self._effects(pid, "question"):
             b = self._body(e)
@@ -1520,7 +1589,12 @@ _STEP_WORDS = {"plan-failed": "planning", "fix-rounds": "fixing it", "piece-repa
                "preview-failed": "the preview"}   # plain words for the reducer's cap codes; never show the code itself
 
 
-def _blocked_text(why):
+def _blocked_text(why, stopped=None):
+    """The hold card's words for the reducer's blocked reason. `stopped` (engine._stopped) names the mind and why it
+    stopped (its ended goal's reason, or the check its last version still fails), which says more than the step's
+    general words."""
+    if stopped and (why == ["cap-exceeded", "lost-operations"] or isinstance(why, list) and why[:1] == ["piece-blocked"]):
+        return f"{stopped} Try again, or stop?"
     if why == "tests-not-red":
         return "The acceptance check already passes on the empty scaffold, so it proves nothing. Shall I write a stricter one?"
     if why == ["cap-exceeded", "broken-check"]:

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Approval } from '../api/types'
-import { approvalBound, approvalDrift, approvalSeenOf, confirmApproval, APPROVAL_SEEN_FIELDS } from './approvalDecision'
+import { approvalBound, approvalDrift, approvalSeenOf, confirmApproval, wentAhead, APPROVAL_SEEN_FIELDS } from './approvalDecision'
 import { ARM_MS } from './decisionGate'
 
 const ask = (over: Partial<Approval> = {}): Approval => ({
@@ -52,5 +52,12 @@ describe('Surface O: approval answers bind to the request as inspected (Review R
     expect(confirmApproval(seen, shownAt, ask({ command: 'x' }), { at: shownAt + ARM_MS })).toMatchObject({ ok: false, why: expect.stringMatching(/changed while it was open \(command\)/) })
     expect(confirmApproval(seen, shownAt, ask({ status: 'approved' }), { at: shownAt + ARM_MS })).toMatchObject({ ok: false })
     expect(confirmApproval(seen, shownAt, ask(), { at: shownAt + ARM_MS })).toEqual({ ok: true })
+  })
+})
+
+describe('wentAhead', () => {
+  it("counts a person's approval and MeTTa that ran without asking (#76) as going ahead, and nothing else", () => {
+    expect((['approved', 'used', 'auto'] as const).map(wentAhead)).toEqual([true, true, true])
+    expect((['pending', 'denied', 'expired'] as const).map(wentAhead)).toEqual([false, false, false])
   })
 })

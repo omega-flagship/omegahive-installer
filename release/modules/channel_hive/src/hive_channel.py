@@ -115,8 +115,16 @@ def _read_json(path, default):
 
 
 def _write_json(path, value):
+    """Replace path with value as JSON through a temp file, or write nothing when the file already holds that text: the
+    mind's loop reads its inbox every iteration, so an idle mind's unchanged admission state is not written again."""
+    text = json.dumps(value)
+    try:
+        if pathlib.Path(path).read_text(encoding="utf-8") == text:
+            return
+    except (OSError, ValueError):
+        pass
     tmp = pathlib.Path(f"{path}.tmp")
-    tmp.write_text(json.dumps(value), encoding="utf-8")
+    tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
 
 

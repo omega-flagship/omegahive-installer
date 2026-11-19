@@ -25,6 +25,7 @@
 (Provides omegaclaw.hive.commons (Skill hive-create))
 (Provides omegaclaw.hive.commons (Skill hive-goal-get))
 (Provides omegaclaw.hive.commons (Skill hive-goal-propose))
+(Provides omegaclaw.hive.commons (Skill hive-goal-file))
 (Provides omegaclaw.hive.commons (Skill hive-goal-cancel-ack))
 (Provides omegaclaw.hive.commons (Skill hive-goal-heartbeat))
 (Provides omegaclaw.hive.commons (Skill hive-shares))

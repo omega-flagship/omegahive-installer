@@ -199,8 +199,9 @@ def test_the_gateway_never_relays_a_providers_own_words():
     from hive.core.gateway import upstream_refusal
     words = json.dumps({"error": {"message": "Key \\u006b_0000b0b1 of Bob over quota", "title": "Bob's helper"}})
     exc = upstream_refusal("openrouter", httpx.Response(429, text=words))
-    assert exc.status == 429 and exc.code == "upstream_error"
-    assert exc.message == "OpenRouter refused the request (rate_limited, 429)."
+    assert exc.status == 429 and exc.code == "provider_busy"   # refusals.py's row for its category, in the hive's words
+    assert exc.message == ("OpenRouter is taking no more calls to this model for now, so this mind tries again shortly. "
+                           "Choose another model to go on sooner.")
 
 
 def test_protocol_fields_are_never_rewritten_at_any_depth_and_nothing_in_a_text_can_steer_the_pass():

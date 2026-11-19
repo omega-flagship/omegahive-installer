@@ -155,6 +155,8 @@ export interface HiveClient {
   feedbackDrafts?(): Promise<{ drafts: import('./types').FeedbackDraft[] }>
   /** Dismiss a mind's draft, or mark it used once its report left (DELETE /api/feedback/drafts/{id}). */
   dismissFeedbackDraft?(id: string): Promise<void>
+  /** What the hive puts in the logs file a person saves from the feedback area (GET /api/feedback/logs). */
+  feedbackLogs?(): Promise<import('./types').FeedbackLogs>
   /** Current principal's Calendar-only connection; safe metadata, never OAuth tokens. */
   googleConnector?(): Promise<unknown>
   startGoogleConnector?(): Promise<unknown>
@@ -390,6 +392,8 @@ export interface HiveClient {
   consentView?(artifactId: string, revision: number, reach: boolean): Promise<import('./moneyWork').ViewGrant>
   assetStores?(): Promise<import('./moneyWork').AssetStore[]>
   listAssets?(swarmId?: string): Promise<import('./moneyWork').Asset[]>
+  /** DELETE /api/assets/{sha} (admins): permanently remove a visible file that is not shared between swarms. */
+  deleteAsset?(sha: string): Promise<{ sha256: string; deleted: boolean }>
   uploadAsset?(file: Blob, opts: import('./moneyWork').UploadAssetOptions): Promise<import('./moneyWork').Asset>
   /** The file's bytes, checked against its hash by the hive. */
   assetBlob?(sha: string): Promise<Blob>
@@ -483,6 +487,8 @@ export interface HiveClient {
   createAsk?(body: { kind: PersonAsk['kind']; payload: Record<string, unknown>; note?: string }): Promise<PersonAsk>
   answerAsk?(id: string, decision: 'once' | 'for' | 'always' | 'no' | 'never', minutes?: number): Promise<PersonAsk>
   listGoals(swarmId: string): Promise<Goal[]>
+  listTaskStops?(): Promise<{ stops: import('./taskStops').TaskStop[] }>
+  acknowledgeTaskStop?(id: string): Promise<{ ok: true }>
   createGoal(swarmId: string, body: CreateGoalBody): Promise<Goal>
   patchGoal(id: string, body: PatchGoalBody): Promise<Goal>
   /** R17: a named person accepts submitted work (done) or returns it with notes. */

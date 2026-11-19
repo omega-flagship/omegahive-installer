@@ -5,7 +5,8 @@
 // For every experience, at desktop, upright-tablet, phone and landscape-phone sizes, on every page the router lists: the
 // entry is shown, named, inside the window, topmost at its own points, hiding no control. Once per experience and size,
 // pressing it opens the area, which shows the whole report (its first and last lines) and what goes with it, attaches
-// no picture until the person adds one, then draws it, and holds the ways out until the person has written something.
+// no picture until the person adds one, then draws it, and holds the ways out until the person has written something;
+// Show the logs shows the hive's logs whole, and Save the logs saves exactly the text shown.
 // Exit 1 when any check fails; results.json lists them all.
 import { createRequire } from 'node:module'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
@@ -237,6 +238,19 @@ async function run(exp, vp) {
   const fromDraft = listed ? await page.locator('[data-feedback-area] pre').innerText() : ''
   ok(`${exp} ${vp}: a mind's draft is listed, and used it starts a report naming who drafted it`, listed && /Drafted by: .+, a mind/.test(fromDraft)
     && /Started from a draft by/.test(await page.locator('[data-feedback-area]').innerText()), fromDraft.slice(0, 300))
+  // the hive's logs: gathered on a press, shown whole, and the file saved is the text shown
+  const logsPre = page.locator('[data-feedback-area] pre[aria-label="Your hive\'s logs, as they go"]')
+  await page.locator('[data-feedback-area] button', { hasText: 'Show the logs' }).first().click({ timeout: 10000 }).catch(() => {})
+  await logsPre.waitFor({ timeout: 15000 }).catch(() => {})
+  const shownLogs = (await logsPre.count()) === 1 ? await logsPre.innerText() : ''
+  ok(`${exp} ${vp}: a press on Show the logs shows them whole`, /^Omega hive logs · /.test(shownLogs) && /\nRequests to the hive, newest first:\n/.test(shownLogs), shownLogs.slice(0, 300))
+  const saving = page.waitForEvent('download', { timeout: 15000 }).catch(() => null)
+  await page.locator('[data-feedback-area] button', { hasText: 'Save the logs' }).first().click({ timeout: 10000 }).catch(() => {})
+  const download = await saving
+  const savedLogs = download ? await readFile(await download.path(), 'utf8').catch(() => '') : ''
+  ok(`${exp} ${vp}: Save the logs saves the text shown, under the time it was made`,
+    !!download && /^omega-hive-logs-\d{4}-\d\d-\d\dT\d\d-\d\d-\d\dZ\.txt$/.test(download.suggestedFilename()) && savedLogs === `${shownLogs}\n`,
+    `${download?.suggestedFilename()} ${savedLogs.length} vs ${shownLogs.length}`)
   await page.locator('button[aria-label="Close feedback"]').click()
   await sleep(600)
   ok(`${exp} ${vp}: closing it brings the entry back`, !(await entryState(page)).hidden)

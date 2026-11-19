@@ -13,6 +13,7 @@ import {
   shown, targetFor, useAskView, useHomeRequested, useAuthContext, useAdminView, useHive, useResting, useRoute, viewIsLive, type Approval, type Feature, type Goal,
 } from '../sdk'
 import { Conversation, MindControls } from './Conversation'
+import { RefusedNotice } from '../../features/dot/RefusedNotice'
 import { contextOf, current } from './binding'
 import { TOKENS } from './theme'
 import { Motivations } from '../Motivations'
@@ -242,7 +243,7 @@ function Workspace({ ctx }: { ctx: string }) {
   if (selected) content = activeMind ? <section className="pr-card pr-chat-card" data-presence-ref={presenceRef('mind', activeMind.id)}>
     <div className="pr-card-head pr-chat-head"><div><h2>{shown(activeMind.name)}</h2><p className="pr-muted">{activeMind.swarm_id ? shown(swarms[activeMind.swarm_id]?.name ?? activeMind.swarm_id) : 'No swarm'} · {activeMind.kind} · {activeMind.status}</p></div>
       <div className="pr-row-actions"><MindControls key={`${activeMind.id}:${activeMind.status}`} agent={activeMind} ctx={ctx} /><button type="button" className="pr-button" onClick={() => { const live = useHive.getState().agents[selected]; if (current(ctx) && live) navigate({ name: 'dot', id: selected, tab: live.kind === 'module' ? 'model' : 'chat' }) }}>{activeMind.kind === 'module' ? 'Open model & tools' : 'Mind panel'}</button><button type="button" className="pr-button" onClick={clearSelected}>Back to minds</button></div>
-    </div>{activeMind.kind === 'module' ? <p className="pr-muted">Modules are not chatting minds. Open this module’s native model and tools panel to inspect its controls.</p> : <Conversation key={`${ctx}:${activeMind.id}`} agent={activeMind} ctx={ctx} />}
+    </div>{activeMind.kind === 'module' ? <p className="pr-muted">Modules are not chatting minds. Open this module’s native model and tools panel to inspect its controls.</p> : <>{/* why it is quiet, if its model calls are refused: the notice MeTTa composes in every look (refused.metta) */}<RefusedNotice agent={activeMind} onChooseModel={() => { if (current(ctx) && useHive.getState().agents[activeMind.id]) navigate({ name: 'dot', id: activeMind.id, tab: 'model' }) }} /><Conversation key={`${ctx}:${activeMind.id}`} agent={activeMind} ctx={ctx} /></>}
   </section> : <section className="pr-card pr-empty"><h2>This mind is no longer in view.</h2><p>Choose another mind from the list.</p><button type="button" className="pr-button" onClick={clearSelected}>Back to minds</button></section>
   else if (view === 'overview') content = <>
     <div className="pr-welcome"><div><p className="pr-eyebrow">Your workspace</p><h2>What needs your attention?</h2><p>Work with your minds, review decisions and move your tasks forward.</p></div><button type="button" className="pr-button pr-primary" onClick={() => byId('swarms.launch')}>Start a swarm</button></div>

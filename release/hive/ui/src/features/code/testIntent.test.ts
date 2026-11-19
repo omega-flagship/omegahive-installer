@@ -85,9 +85,9 @@ it('accepts the known test kind in a mixed personal list without weakening defau
 it('still refuses an unknown intent kind instead of treating it as a code test', () => {
   expect(() => parseIntentList({ intents: [view('unknown.execute')] })).toThrow()
 })
-it('leaves out the Studio sessions and research requests other pages own, newest or not', () => {
-  // the person's own list, newest first: a research question and a Studio session asked after the Code change
-  expect(parseIntentList({ intents: [view('research.request'), view('studio.session'), view('code.request')] }).map((v) => v.kind)).toEqual(['code.request'])
+it('leaves out the Studio sessions, research requests and tasks other pages own, newest or not', () => {
+  // the person's own list, newest first: a research question, a Studio session and a task asked after the Code change
+  expect(parseIntentList({ intents: [view('research.request'), view('studio.session'), view('task.create'), view('code.request')] }).map((v) => v.kind)).toEqual(['code.request'])
   expect(parseIntentList({ intents: [view('research.request')] })).toEqual([])
   expect(() => parseIntentList({ intents: [view('research.request'), view('unknown.execute')] })).toThrow()
 })

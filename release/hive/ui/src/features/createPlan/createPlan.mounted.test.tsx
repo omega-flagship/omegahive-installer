@@ -322,6 +322,37 @@ describe('the whole bench, composed by MeTTa', () => {
     expect(host.textContent).toContain('Stopped.')
     expect(button('Make something else')).toBeTruthy()
   })
+  it('a build stopped with its question still open shows no question: no card, no answer field (show run f6, 11-19)', async () => {
+    T.reduced = true
+    let t = 0
+    const s = new SimPlans({ now: () => t, mode: () => 'normal' })
+    T.client = clientOf(s)
+    await render(<PlanCanvas />)
+    await flush()
+    const field = all((n) => n.tagName === 'INPUT')[0]
+    await act(async () => (reactProps(field).onChange as (e: unknown) => void)({ target: { value: SENTENCE } }))
+    await act(async () => press(button('Make it')))
+    await act(async () => { await Promise.resolve() })
+    t = 4000
+    await act(async () => { for (const fn of [...T.listeners]) fn({ type: 'create.plan.status', plan_id: 'plan_sim_1' }); await Promise.resolve(); await Promise.resolve() })
+    // the question is open and the piece it is about waits on it
+    expect(host.textContent).toContain('Should it look calm and minimal, or bright and playful?')
+    expect(button('Calm and minimal')).toBeTruthy()
+    // Stopped without answering it
+    await act(async () => press(button('Stop')))
+    const stops = all((n) => n.tagName === 'BUTTON' && n.textContent === 'Stop')
+    await act(async () => press(stops[stops.length - 1]))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(host.textContent).toContain('Stopped.')
+    expect(button('Make something else')).toBeTruthy()
+    // nothing will act on an answer now: no open question, nothing held by it
+    expect(host.textContent).not.toContain('Should it look calm and minimal, or bright and playful?')
+    expect(button('Calm and minimal')).toBeUndefined()
+    expect(button('Answer')).toBeUndefined()
+    expect(all((n) => n.tagName === 'INPUT' && n.getAttribute('placeholder') === 'Or say it your way')).toHaveLength(0)
+    expect(host.textContent).not.toContain('Held by your question')
+    expect(host.textContent).not.toContain('waiting for your answer')
+  })
   it('the person’s running plan is picked up again instead of the empty sentence; a finished one is not', async () => {
     T.reduced = true
     let t = 0
@@ -349,6 +380,118 @@ describe('the whole bench, composed by MeTTa', () => {
     await render(<PlanCanvas />)
     await flush()
     expect(all((n) => n.getAttribute('data-plan-screen') === 'plan-start')).toHaveLength(1)
+  })
+  // T-PLAN-HOLDS-MAKE: a build held on the person (the fix failed twice, needs_you with its hold question) took Make
+  // over: picked up on open, it left no field for a new request until it was stopped.
+  const TIP = 'a tip calculator'
+  const HOLD = 'I tried the allowed number of times (2) and it is still not right. Try again, or stop?'
+  /** the person's tip calculator, held at needs_you with its hold question open (the sim's fail mode) */
+  function heldSim() {
+    let t = 0
+    const s = new SimPlans({ now: () => t, mode: () => 'fail' })
+    const id = (s.start(TIP) as { plan_id: string }).plan_id
+    const status = () => (s.get(id) as { status?: string }).status
+    while (t < 120_000 && status() !== 'needs_you') {
+      t += 250
+      const look = parsePlanView(s.get(id))!.questions.find((q) => q.q === 'q_look' && !q.answered)
+      if (look) s.answer(id, 'q_look', 'Bright and playful')
+    }
+    expect(status()).toBe('needs_you')
+    return { s, id, status }
+  }
+  const screenIs = (name: string) => all((n) => n.getAttribute('data-plan-screen') === name).length === 1
+  it('a held build does not hold Make: Make something else opens the empty canvas, and a new sentence starts', async () => {
+    T.reduced = true
+    const { s, status } = heldSim()
+    const calls: string[] = []
+    T.client = clientOf(s, calls)
+    await render(<PlanCanvas />)
+    await flush()
+    // picked up on open, held on the person, with its question
+    expect(screenIs('plan')).toBe(true)
+    expect(host.textContent).toContain(`“${TIP}”`)
+    expect(host.textContent).toContain(HOLD)
+    expect(host.textContent).not.toContain('What would you like to make?')
+    await act(async () => press(button('Make something else')))
+    await flush()
+    expect(screenIs('plan-start')).toBe(true)
+    expect(host.textContent).toContain('What would you like to make?')
+    // the held build is left as it was: not stopped, still asking
+    expect(calls).not.toContain('stop')
+    expect(status()).toBe('needs_you')
+    const field = all((n) => n.tagName === 'INPUT')[0]
+    await act(async () => (reactProps(field).onChange as (e: unknown) => void)({ target: { value: SENTENCE } }))
+    await act(async () => press(button('Make it')))
+    await flush()
+    expect(calls).toContain('start')
+    expect(screenIs('plan')).toBe(true)
+    expect(host.textContent).toContain(`“${SENTENCE}”`)
+  })
+  it('on that empty canvas one line names the held build and opens it again, its question intact', async () => {
+    T.reduced = true
+    const { s } = heldSim()
+    const calls: string[] = []
+    T.client = clientOf(s, calls)
+    await render(<PlanCanvas />)
+    await flush()
+    await act(async () => press(button('Make something else')))
+    await flush()
+    expect(screenIs('plan-start')).toBe(true)
+    expect(host.textContent).toContain(`Waiting for you: “${TIP}”`)
+    await act(async () => press(button('Open it')))
+    await flush()
+    expect(screenIs('plan')).toBe(true)
+    expect(host.textContent).toContain(`“${TIP}”`)
+    expect(host.textContent).toContain(HOLD)
+    expect(host.textContent).not.toContain('Waiting for you:')
+    await act(async () => press(button('Try again')))
+    await flush()
+    expect(calls.some((c) => c.startsWith('answer hold-') && c.endsWith(' Try again'))).toBe(true)
+  })
+  it('no build held: the empty canvas names none', async () => {
+    T.reduced = true
+    let t = 0
+    const s = new SimPlans({ now: () => t, mode: () => 'normal' })
+    s.start('an old thing'); t = 12000
+    s.stop('plan_sim_1')
+    T.client = clientOf(s)
+    await render(<PlanCanvas />)
+    await flush()
+    expect(screenIs('plan-start')).toBe(true)
+    expect(host.textContent).not.toContain('Waiting for you:')
+    expect(button('Open it')).toBeUndefined()
+  })
+  // QA F1 on #534: Make something else was offered during the look question while the engine still planned, but the
+  // empty canvas names only a build waiting on the person; leaving there lost the way back. One status set for both.
+  it('Make something else only where the empty canvas names the build: not while it still plans; asking_you, left, then Open it returns with its question', async () => {
+    T.reduced = true
+    const LOOK = 'Should it look calm and minimal, or bright and playful?'
+    const m = sim()
+    const v = m.run(4000)
+    expect(v.status).not.toBe('asking_you')
+    expect(v.questions.some((q) => q.q === 'q_look' && !q.answered)).toBe(true)
+    const calls: string[] = []
+    T.client = clientOf(m.s, calls)
+    await render(<PlanCanvas />)
+    await flush()
+    expect(screenIs('plan')).toBe(true)
+    expect(host.textContent).toContain(LOOK)
+    expect(button('Make something else')).toBeUndefined()
+    // the rest is done and only the look question is left: the build now waits on the person
+    expect(m.run(120_000, (x) => x.status === 'asking_you').status).toBe('asking_you')
+    await act(async () => { for (const fn of [...T.listeners]) fn({ type: 'create.plan.status', plan_id: m.id }); await Promise.resolve(); await Promise.resolve() })
+    await flush()
+    await act(async () => press(button('Make something else')))
+    await flush()
+    expect(screenIs('plan-start')).toBe(true)
+    expect(host.textContent).toContain(`Waiting for you: “${SENTENCE}”`)
+    await act(async () => press(button('Open it')))
+    await flush()
+    expect(screenIs('plan')).toBe(true)
+    expect(host.textContent).toContain(LOOK)
+    await act(async () => press(button('Calm and minimal')))
+    await flush()
+    expect(calls).toContain('answer q_look Calm and minimal')
   })
   it('create.plan.preview: the page fetches the verified preview and the running page shows it', async () => {
     T.reduced = true

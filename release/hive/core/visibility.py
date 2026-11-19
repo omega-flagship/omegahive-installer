@@ -320,9 +320,9 @@ EVENT_RULES = {
     # row) follows its plan's person. Admins: the admin bypass.
     **{k: "code_run" for k in ("code.controller", "code.controller.status", "code.controller.ready",
                                "code.controller.applied")},
-    # repo maps 1.2 (assets.py): what was stored, never its bytes; as the asset is: whoever sees its owner swarm (and the
-    # mind that stored it, when a mind did); an asset with no owner swarm is operator business
-    "asset.stored": "asset",
+    # repo maps 1.2 (assets.py): what was stored or deleted, never its bytes; as the asset is: whoever sees its owner swarm
+    # (and the mind that stored it, when a mind did); an asset with no owner swarm is operator business
+    "asset.stored": "asset", "asset.deleted": "asset",
     # repo maps (repomap_sources.py, repomap_live.py): as RepoMaps reads the map itself, judged before the admin bypass:
     # an owner map reaches the hive's owner and the principals they granted, never another admin (Atlas/Truth code maps)
     "repo_maps.updated": "repo_map", "repo_maps.stale": "repo_map",
@@ -665,8 +665,9 @@ class Visibility:
         return isinstance(member, dict) and self._plan_person(member.get("plan_id")) == viewer.principal
 
     def _asset_event_visible(self, viewer, e):
-        """asset.stored: the owner swarm it was stored under must be one this person sees, and a mind that stored it
-        too; no owner swarm (an operator upload, a new-hive receipt) withholds it from members."""
+        """asset.stored and asset.deleted (the same payload: sha256, owner_swarm, by): the owner swarm must be one this
+        person sees, and a mind that stored it too; no owner swarm (an operator upload, a new-hive receipt) withholds it
+        from members."""
         swarm_id, by = e.get("owner_swarm"), e.get("by")
         if not isinstance(swarm_id, str) or not swarm_id or not viewer.sees(self._swarm(swarm_id)):
             return False

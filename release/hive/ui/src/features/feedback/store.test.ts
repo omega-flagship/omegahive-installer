@@ -1,21 +1,23 @@
 // Purpose: tests the feedback area's actions (features/feedback/store.ts) with the browser stood in for: opening makes a
 // fresh report and asks the hive what it adds; nothing leaves before the person presses a button; and each press (copy,
-// save, open on the board, send) does what it says with the report as the person saw it.
+// save, open on the board, send) does what it says with the report as the person saw it; and the hive's logs are
+// gathered only on their press and saved or copied exactly as shown.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HiveClient } from '../../api/client'
-import type { FeedbackContext } from '../../api/types'
+import type { FeedbackContext, FeedbackLogs } from '../../api/types'
 
 const copied: string[] = []
 const saved: { name: string; type: string }[] = []
+const blobs: Blob[] = []
 vi.mock('../../lib/hooks', async (orig) => ({ ...(await orig<typeof import('../../lib/hooks')>()), copyText: vi.fn(async (t: string) => (copied.push(t), true)) }))
-vi.mock('../../lib/download', () => ({ downloadBlob: vi.fn((name: string, blob: Blob) => saved.push({ name, type: blob.type })) }))
+vi.mock('../../lib/download', () => ({ downloadBlob: vi.fn((name: string, blob: Blob) => (saved.push({ name, type: blob.type }), blobs.push(blob))) }))
 vi.mock('./capture', () => ({
   LEAVE_OUT: 'data-feedback-leave-out',
   capturePage: vi.fn(async () => 'data:image/png;base64,iVBORw0KGgo='),
   pngBlob: () => new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' }),
 }))
 
-const { addPicture, closeFeedback, copyReport, openFeedback, openOnBoard, reportOf, saveReport, sendReport, useFeedback } = await import('./store')
+const { addPicture, closeFeedback, copyLogs, copyReport, openFeedback, openOnBoard, reportOf, saveLogs, saveReport, sendReport, showLogs, useFeedback } = await import('./store')
 const { capturePage } = await import('./capture')
 const { issueUrl, payloadOf, reportText } = await import('./report')
 const { noteScreen } = await import('./trail')
@@ -33,6 +35,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0))
 beforeEach(() => {
   copied.length = 0
   saved.length = 0
+  blobs.length = 0
   opened.length = 0
   vi.stubGlobal('window', { location: { hash: '#/settings' }, innerWidth: 1440, innerHeight: 900, devicePixelRatio: 2, open: (u: string) => opened.push(u) })
   vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36' })
@@ -201,5 +204,57 @@ describe('each press does what it says, with the report as the person saw it', (
     useFeedback.setState({ words: 'The Ask stopped' })
     await sendReport(c)
     expect(send).not.toHaveBeenCalled()
+  })
+})
+
+describe("the hive's logs", () => {
+  const LOGS: FeedbackLogs = {
+    version: 'Mac v0.33 (build 691e651a12)', which: 'own hive, Mac install', system: 'Mac', scope: 'hive',
+    requests: [{ at: '2026-11-17T01:23:40.000Z', method: 'POST', route: '/api/ask', status: 429, ms: 61, count: 2, who: 'you' }],
+    errors: [], log: [{ at: '2026-11-17T01:23:39.000Z', level: 'WARNING', logger: 'hive', message: 'the model provider answered 429' }],
+  }
+  const withLogs = (logs: () => Promise<FeedbackLogs>) => ({ feedback: vi.fn(async () => CTX(PUBLIC_BOARD)), feedbackLogs: vi.fn(logs) }) as unknown as HiveClient & { feedbackLogs: ReturnType<typeof vi.fn> }
+
+  it('are gathered only on their press, shown whole, and saved or copied exactly as shown', async () => {
+    const c = withLogs(async () => LOGS)
+    openFeedback(c, 'Canvas')
+    await settle()
+    expect(c.feedbackLogs).not.toHaveBeenCalled()
+    await showLogs(c)
+    const logs = useFeedback.getState().logs
+    expect(c.feedbackLogs).toHaveBeenCalledTimes(1)
+    expect(logs).toMatchObject({ shown: true, loading: false, scope: 'hive', missing: '', failed: '', done: 'none' })
+    expect(logs.file).toMatch(/^omega-hive-logs-\d{4}-\d\d-\d\dT\d\d-\d\d-\d\dZ\.txt$/)
+    expect(logs.text.split('\n').slice(1, 4)).toEqual(['Version: Mac v0.33 (build 691e651a12)', 'Hive: own hive, Mac install',
+      'Device: Chrome 131 on macOS; look Canvas; window 1440×900, pixel ratio 2'])
+    expect(logs.text).toContain('2026-11-17T01:23:40Z 429 POST /api/ask, 2 times, the slowest 61 ms')
+    expect([saved, copied, opened]).toEqual([[], [], []])   // shown, and nothing has left
+    saveLogs()
+    expect(saved).toEqual([{ name: logs.file, type: 'text/plain;charset=utf-8' }])
+    expect(await blobs[0].text()).toBe(logs.text + '\n')
+    await copyLogs()
+    expect(copied).toEqual([logs.text])
+    expect(useFeedback.getState().logs.done).toBe('copied')
+  })
+  it("without the hive's part, the page's own still shows, saying why", async () => {
+    const refused = withLogs(async () => { throw new Error('only a signed-in person can do that') })
+    openFeedback(refused, 'Canvas')
+    await showLogs(refused)
+    expect(useFeedback.getState().logs).toMatchObject({ shown: true, scope: 'page', missing: 'only a signed-in person can do that' })
+    expect(useFeedback.getState().logs.text).toContain("The hive's part is missing: only a signed-in person can do that")
+    const old = { feedback: vi.fn(async () => CTX(PUBLIC_BOARD)) } as unknown as HiveClient   // a hive from before the logs
+    openFeedback(old, 'Canvas')
+    await showLogs(old)
+    expect(useFeedback.getState().logs).toMatchObject({ shown: true, scope: 'page', missing: 'this hive does not give its logs yet' })
+  })
+  it('nothing is saved or copied before they are shown, and closing the area forgets them', async () => {
+    const c = withLogs(async () => LOGS)
+    openFeedback(c, 'Canvas')
+    saveLogs()
+    await copyLogs()
+    expect([saved, copied]).toEqual([[], []])
+    await showLogs(c)
+    closeFeedback()
+    expect(useFeedback.getState().logs).toMatchObject({ shown: false, text: '' })
   })
 })

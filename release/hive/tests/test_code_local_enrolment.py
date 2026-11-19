@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -32,15 +33,19 @@ def services_for(path):
 
 async def query(path, request):
     reader, writer = await asyncio.open_unix_connection(path)
-    try:
-        wire = json.dumps(request).encode() + b"\n" if isinstance(request, dict) else request
-        writer.write(wire)
-        await writer.drain()
-        raw = await reader.readline()
-        return json.loads(raw) if raw else None
-    finally:
-        writer.close()
-        await writer.wait_closed()
+    raw = b""
+    # A socket that refuses closes with our request unread. Linux reports that close as a reset, which the stream then
+    # raises from drain, readline and wait_closed alike; macOS reports end of file. Both mean no answer.
+    with contextlib.suppress(ConnectionResetError):
+        try:
+            wire = json.dumps(request).encode() + b"\n" if isinstance(request, dict) else request
+            writer.write(wire)
+            await writer.drain()
+            raw = await reader.readline()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+    return json.loads(raw) if raw else None
 
 
 async def status(bridge, registration=None):

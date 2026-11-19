@@ -105,9 +105,9 @@ describe('r3 live: the Code team’s offer', () => {
     const r = await vibeAvailability(live, CTX0, 'ws_w')
     expect(r).toMatchObject({ ok: true, offer })
   })
-  it('a newest intent of Studio or a research question still offers the code team', async () => {
+  it('a newest intent of Studio, a research question or an Ask task still offers the code team', async () => {
     // a person who asked a research question in the Ask saw Create's Code card stop at this first check
-    for (const kind of ['research.request', 'studio.session']) {
+    for (const kind of ['research.request', 'studio.session', 'task.create']) {
       teamHive(() => json({ to_swarm: 's_code', templates: [TEMPLATE] }), ['s_code'], [{ ...VIEW, kind }])
       const r = await vibeAvailability(new LiveClient('http://hive.invalid'), CTX0, 'ws_w')
       expect(r, kind).toMatchObject({ ok: true, offer: { to_swarm: 's_code', template_ids: ['tpl_coder'] } })

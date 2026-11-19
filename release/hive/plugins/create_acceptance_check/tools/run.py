@@ -1,9 +1,12 @@
-"""Pinned runner for a Create plan's acceptance check. Run only through the sandbox:run boundary (no network, a fresh
-job folder, CPU and size limits). Input: snapshot.json {"files": {relpath: text}, "check": relpath}. The files under test
-are written under ./build and the check under ./judge (outside build). The check runs in this same process (strict
-macOS mode may deny fork) with ./build as its working directory, and NOTHING from build is importable: neither build
-nor the working directory is on sys.path, so a piece file named like a stdlib module (re.py, json.py, html/) can never
-shadow what the check imports. Its stdout is passed through; the host reads the last CREATE-CHECK line."""
+"""Purpose: run a Create plan's acceptance check on the app it judges. Pinned; run only through the sandbox:run
+boundary (no network, a fresh job folder, CPU and size limits). Input: snapshot.json {"files": {relpath: text},
+"check": relpath}. The app's files and the check are written under ./build, the check at its own path
+(checks/acceptance_check.py), where its author put it, so the app's root is both the working directory and the
+check's own folder's parent: a check that reads index.html by a relative path or by dirname(__file__)/.. finds it.
+The check runs in this same process (strict macOS mode may deny fork) with ./build as its working directory, and
+NOTHING from build is importable: neither build, nor the check's folder, nor the working directory is on sys.path, so a
+file named like a stdlib module (re.py, json.py, html/) can never shadow what the check imports. Its stdout is passed
+through; the host reads the last CREATE-CHECK line."""
 import json
 import os
 import pathlib
@@ -32,19 +35,18 @@ def main():
     files, check = data["files"], data["check"]
     if not isinstance(files, dict) or len(files) > MAX_FILES or check not in files:
         raise ValueError("bad snapshot")
-    build, judge = job / "build", job / "judge"
+    build = job / "build"
     for rel, text in files.items():
         if rel == check:
             continue
         target = build / safe(rel)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(str(text), encoding="utf-8")
-    build.mkdir(exist_ok=True)
-    judge.mkdir()
-    script = judge / "acceptance_check.py"
+    script = build / safe(check)
+    script.parent.mkdir(parents=True, exist_ok=True)
     script.write_text(str(files[check]), encoding="utf-8")
     here = os.path.dirname(os.path.abspath(__file__))
-    blocked = {os.path.realpath(p) for p in (str(build), str(job), here, "")}
+    blocked = {os.path.realpath(p) for p in (str(build), str(script.parent), str(job), here, "")}
     sys.path[:] = [p for p in sys.path if p and os.path.realpath(p) not in blocked]
     for name in list(sys.modules):               # nothing imported from the runner's own folder stays cached
         f = getattr(sys.modules[name], "__file__", None) or ""

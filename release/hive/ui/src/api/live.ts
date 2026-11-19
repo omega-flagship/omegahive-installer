@@ -556,6 +556,8 @@ export class LiveClient implements HiveClient {
   answerAsk = (id: string, decision: 'once' | 'for' | 'always' | 'no' | 'never', minutes?: number) =>
     this.request<import('./types').PersonAsk>('POST', `/api/asks/${enc(id)}/decide`, { decision, minutes })
   listGoals = (swarmId: string) => this.request<Goal[]>('GET', `/api/swarms/${enc(swarmId)}/goals`)
+  listTaskStops = () => this.request<{ stops: import('./taskStops').TaskStop[] }>('GET', '/api/me/task-stops')
+  acknowledgeTaskStop = (id: string) => this.request<{ ok: true }>('POST', `/api/me/task-stops/${enc(id)}/acknowledge`)
   createGoal = (swarmId: string, body: CreateGoalBody) =>
     this.request<Goal>('POST', `/api/swarms/${enc(swarmId)}/goals`, body)
   patchGoal = (id: string, body: PatchGoalBody) => this.request<Goal>('PATCH', `/api/goals/${enc(id)}`, body)
@@ -803,6 +805,7 @@ export class LiveClient implements HiveClient {
   sendFeedback = (report: import('../features/feedback/report').ReportPayload) => this.request<import('./types').FeedbackSent>('POST', '/api/feedback/send', report)
   feedbackDrafts = () => this.request<{ drafts: import('./types').FeedbackDraft[] }>('GET', '/api/feedback/drafts')
   dismissFeedbackDraft = (id: string) => this.request<void>('DELETE', `/api/feedback/drafts/${enc(id)}`)
+  feedbackLogs = () => this.request<import('./types').FeedbackLogs>('GET', '/api/feedback/logs')
   googleConnector = () => this.request<unknown>('GET', '/api/connectors/google')
   startGoogleConnector = () => this.request<unknown>('POST', '/api/connectors/google/start', {})
   disconnectGoogleConnector = () => this.request<unknown>('POST', '/api/connectors/google/disconnect', {})
@@ -1142,6 +1145,7 @@ export class LiveClient implements HiveClient {
     this.request<import('./moneyWork').ViewGrant>('POST', `/api/artifacts/${enc(artifactId)}/view/grants`, { revision, reach })
   assetStores = () => this.request<import('./moneyWork').AssetStore[]>('GET', '/api/asset-stores')
   listAssets = (swarmId?: string) => this.request<import('./moneyWork').Asset[]>('GET', `/api/assets${swarmId ? `?swarm_id=${enc(swarmId)}` : ''}`)
+  deleteAsset = (sha: string) => this.request<{ sha256: string; deleted: boolean }>('DELETE', `/api/assets/${enc(sha)}`)
   uploadAsset = async (file: Blob, opts: import('./moneyWork').UploadAssetOptions) => {
     const q = new URLSearchParams()
     if (opts.swarm_id) q.set('swarm_id', opts.swarm_id)

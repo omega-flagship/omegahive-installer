@@ -325,18 +325,22 @@ def test_a_429_is_retried_and_the_call_counts_once(monkeypatch):
     assert gate.free_gate.released == []
 
 
-@pytest.mark.parametrize("plan,sent", [
-    ([(429, {})] * (FREE_RETRIES + 1), FREE_RETRIES + 1),   # every retry refused too
-    ([(429, {"retry-after": "60"})], 1),                    # asked to wait longer than a call waits: no retry
+@pytest.mark.parametrize("plan,sent,wait,when", [
+    # every retry refused too, with no wait asked (Singularity Compute's 429): the loop's next wait, said as a moment
+    ([(429, {})] * (FREE_RETRIES + 1), FREE_RETRIES + 1, 0.0, "in a moment"),
+    ([(429, {"retry-after": "60"})], 1, 60.0, "in about a minute"),   # asked longer than a call waits: no retry
+    # however long it asks, a mind holds at most half an hour (refusals.LONGEST_WAIT_S), and the sentence says that
+    ([(429, {"retry-after": "3600"})], 1, 1800.0, "in about 30 minutes"),
 ])
-def test_a_call_still_refused_after_its_retries_is_busy_in_plain_words_and_counts_nothing(monkeypatch, caplog, plan, sent):
+def test_a_call_still_refused_after_its_retries_is_busy_in_plain_words_and_counts_nothing(monkeypatch, caplog, plan, sent, wait, when):
     caplog.set_level(logging.DEBUG)
     gate, upstream, chosen = busy_gateway(monkeypatch, plan)
     with pytest.raises(GatewayError) as refusal:
         asyncio.run(gate.chat(AGENT, HI, principal=ANN))
-    assert (refusal.value.status, refusal.value.code, refusal.value.message) == (429, "free_inference_busy", KINDS["free_inference_busy"].say)
-    # what helps is waiting, as long as the wait the loop would have made next: none known when the answer asked for more
-    assert refusal.value.remedy == "wait" and refusal.value.retry_after == (None if chosen[-1] is None else 0.0)
+    said = KINDS["free_inference_busy"].say.format(when=when)
+    assert (refusal.value.status, refusal.value.code, refusal.value.message) == (429, "free_inference_busy", said)
+    # what helps is waiting: as long as the answer asked, up to half an hour, else the wait the loop would have made next
+    assert refusal.value.remedy == "wait" and refusal.value.retry_after == wait
     assert len(upstream.sent) == sent and gate.free_gate.released == [TICKET]   # nothing served: its count goes back
     assert "rate limits" not in refusal.value.message and DEPLOY_KEY not in caplog.text and TAIL not in caplog.text
 
@@ -365,7 +369,8 @@ def test_a_minds_call_on_a_busy_route_is_refused_in_plain_words_and_counts_nothi
     hive_client.upstream.plan = [(429, {"retry-after": "60"})]
     agent = free_mind(hive_client)
     response = call(hive_client, agent)
-    assert response.status_code == 429 and response.json()["error"] == {"code": "free_inference_busy", "message": KINDS["free_inference_busy"].say}
+    said = KINDS["free_inference_busy"].say.format(when="in about a minute")   # the wait the endpoint asked for
+    assert response.status_code == 429 and response.json()["error"] == {"code": "free_inference_busy", "message": said}
     assert hive_client.hive.gateway.free_gate.used(ANN) == 0 and usage_rows(hive_client, agent) == []
 
 
@@ -660,8 +665,8 @@ def test_a_failed_call_logs_and_answers_without_the_key(hive_client, caplog, ups
     with TestClient(hive_client.app, raise_server_exceptions=False) as quiet:
         response = quiet.post("/llm/v1/chat/completions", headers=agent_headers(free_mind(hive_client)),
                               json={"messages": [{"role": "user", "content": "invented question"}]})
-    if upstream == "refused":   # the provider's refusal in the hive's words, never its body
-        assert (response.status_code, response.json()["error"]["code"]) == (401, "upstream_error")
+    if upstream == "refused":   # the provider's refusal of the deploy's key, in the hive's words, never its body
+        assert (response.status_code, response.json()["error"]["code"]) == (401, "free_inference_key_refused")
     assert response.status_code >= 400
     never_shown(response.text)
     for record in caplog.records:

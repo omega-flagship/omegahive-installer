@@ -65,13 +65,17 @@ export function feedbackScreen(s: FeedbackState, report: Report, device: { share
       drafts: waiting,
       // what holds every way out: nothing written yet, or a send under way
       'report.held': empty || s.sending,
+      // the logs, gathered on the person's press and shown whole before they leave (store.ts showLogs)
+      'logs.text': s.logs.text, 'logs.file': s.logs.file, 'logs.missing': s.logs.missing, 'logs.failed': s.logs.failed,
+      'logs.loading': s.logs.loading,
     },
     facts: {
-      values: { 'report.kind': s.kind, 'to.route': routeOf(s.ctx?.to), 'report.done': s.done },
+      values: { 'report.kind': s.kind, 'to.route': routeOf(s.ctx?.to), 'report.done': s.done, 'logs.scope': s.logs.scope, 'logs.done': s.logs.done },
       flags: {
         'picture.drawing': s.picture.drawing, 'picture.kept': s.picture.kept, 'picture.failed': s.picture.failed,
         'picture.goes': pictureGoes, 'errors.kept': s.errorsKept, 'report.empty': empty, 'report.failed': s.failed !== '',
         'report.copied_too': s.copiedToo, 'device.share': device.share, 'report.drafted': s.draft !== null,
+        'logs.shown': s.logs.shown, 'logs.loading': s.logs.loading, 'logs.missing': s.logs.missing !== '', 'logs.failed': s.logs.failed !== '',
       },
       counts: { 'report.errors': errors, drafts: waiting.length },
     },

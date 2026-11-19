@@ -1,0 +1,26 @@
+; Purpose: compose confirmed uploaded-file deletion and folder unlinking with existing blocks in every look.
+(Screen assets-delete "Delete a file")
+(Part assets-delete 10 buttons ((items ((button "Delete…" remove ((aria "Delete {file.name}") (variant danger)))))))
+(When assets-delete 10 (on removal.allowed))
+(When assets-delete 10 (off removal.open))
+(Part assets-delete 20 island ((name confirmation) (label "Delete permanently") (waiting "Deleting")))
+(When assets-delete 20 (on removal.allowed))
+(When assets-delete 20 (on removal.open))
+
+(Screen assets-unlink "Unlink a folder")
+(Part assets-unlink 10 buttons ((items ((button "Unlink…" remove ((aria "Unlink {file.name}") (variant ghost)))))))
+(When assets-unlink 10 (on removal.allowed))
+(When assets-unlink 10 (off removal.open))
+(Part assets-unlink 20 island ((name confirmation) (label "Unlink") (waiting "Unlinking")))
+(When assets-unlink 20 (on removal.allowed))
+(When assets-unlink 20 (on removal.open))
+
+(Screen assets-delete-confirm "Delete this file permanently?")
+(Part assets-delete-confirm 10 facts ((label "File to delete") (rows ((row "File" (bind file.name)) (row "sha256" (bind file.sha256)) (row "Size" (bind file.size)) (row "Copies in" (bind file.stores))))))
+(Part assets-delete-confirm 20 paragraph ((text "All recorded copies of this uploaded file, its ownership registrations and its storage history will be permanently deleted. Your original file outside the hive stays.")))
+(Part assets-delete-confirm 30 paragraph ((text "Minds, saved messages, artifact revisions and programs that refer to this file will lose access to it. Their saved text and history stay, but their file links will stop opening. Generated media results that use this file also lose their downloadable file.")))
+(Part assets-delete-confirm 40 paragraph ((text "A file owned by more than one swarm, or needed for coding-tools setup, cannot be deleted here. If a store refuses deletion, the hive keeps the record and any remaining copies, shows the failure, and lets you retry.")))
+
+(Screen assets-unlink-confirm "Unlink this folder?")
+(Part assets-unlink-confirm 10 facts ((label "Folder to unlink") (rows ((row "Folder" (bind file.name)) (row "On disk" (bind folder.root)) (row "Owned by" (bind folder.swarm))))))
+(Part assets-unlink-confirm 20 paragraph ((text "Only this folder link is removed. Its files stay on disk and its saved write receipts stay. Minds lose access through this link. Other links to the same folder stay.")))

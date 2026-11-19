@@ -587,7 +587,7 @@ def test_R71_capabilities_studio_sessions_is_true_only_when_the_self_check_passe
     # the real self-check with a component missing: off, and not advertised
     monkeypatch.setattr(studio, "components", lambda: {"gateway session/execution hook": True, "something": False})
     monkeypatch.setattr(studio, "enabled", studio.self_check()[0])
-    assert studio.enabled is False and caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive)}
+    assert studio.enabled is False and caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive), "studio_off": "off"}
     # every component present: on, advertised
     monkeypatch.setattr(studio, "components", lambda: {"gateway session/execution hook": True})
     monkeypatch.setattr(studio, "enabled", studio.self_check()[0])
@@ -600,9 +600,28 @@ def test_R71_capabilities_studio_sessions_is_true_only_when_the_self_check_passe
     assert "studio_sessions" not in caps(p)
 
 
-def test_R71_pin_with_studio_off_the_capabilities_are_exactly_as_before(p, monkeypatch):
+def test_R71_pin_with_studio_off_the_capabilities_are_as_before_plus_only_its_reason(p, monkeypatch):
+    """Show run f4 (2026-11-19): the Studio-off answer is the one before plus studio_off alone (additive; nothing else moves)."""
     monkeypatch.setattr(p.hive.studio, "enabled", False)
-    assert caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive)}
+    assert caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive), "studio_off": "off"}
+
+
+def test_f4_with_studio_sessions_absent_the_capabilities_say_why_and_never_when_offered(p, monkeypatch):
+    """Show run f4 (2026-11-19): the page could only say "It has not said why". studio_off names the host's reason: "off"
+    (Studio disabled or failed its self-check), "not_set_up" (on, but members' makers can't be made: no usable template,
+    or the Studio app is not attachable). It is the host's, never the person's: a key does not change it."""
+    on = caps(p)
+    assert on["studio_sessions"] is True and "studio_off" not in on
+    monkeypatch.delenv("HIVE_STUDIO_MAKER_TEMPLATE")                       # template not ready (staging, 2026-11-19)
+    got = caps(p)
+    assert "studio_sessions" not in got and got["studio_off"] == "not_set_up"
+    put = p.client.put("/api/me/ask", headers=p.mg, json={"thread_budget_usd": 1.0})
+    assert put.status_code == 200 and put.json()["capabilities"] == got, put.text                # PUT: same answer
+    monkeypatch.setenv("HIVE_STUDIO_MAKER_TEMPLATE", p.template["id"])
+    p.entry = studio_entry(hooks=True)                                     # the Studio app not attachable
+    assert caps(p)["studio_off"] == "not_set_up"
+    monkeypatch.setattr(p.hive.studio, "enabled", False)                   # Studio off: that is the reason given
+    assert caps(p)["studio_off"] == "off"
 
 
 @pytest.mark.parametrize("operator_flag", [False, True], ids=["operator-off", "operator-on"])
@@ -646,7 +665,7 @@ def test_R71_code_test_capability_requires_operator_opt_in_and_runner_configurat
     base = {"conductor": False, "memory": False, "code_test_intents": expected}
     assert caps(p) == {**base, "studio_sessions": True, "studio_directions": True}
     monkeypatch.setattr(hive.studio, "enabled", False)
-    assert caps(p) == base
+    assert caps(p) == {**base, "studio_off": "off"}
 
 
 def test_R71_template_unset_setup_refuses_with_an_admin_facing_code_and_startup_says_so(p, monkeypatch, caplog):
@@ -839,13 +858,13 @@ def test_R73_studio_directions_is_true_together_with_studio_sessions_and_absent_
     put = p.client.put("/api/me/ask", headers=p.mg, json={"thread_budget_usd": 1.0})
     assert put.status_code == 200 and put.json()["capabilities"] == on, put.text                 # PUT: same shape
     p.entry = studio_entry(hooks=True)                                     # program not attachable
-    assert caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive)}
+    assert caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive), "studio_off": "not_set_up"}
     p.entry = studio_entry()
     monkeypatch.delenv("HIVE_STUDIO_MAKER_TEMPLATE")                       # template not ready
-    assert caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive)}
+    assert caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive), "studio_off": "not_set_up"}
     monkeypatch.setenv("HIVE_STUDIO_MAKER_TEMPLATE", p.template["id"])
     monkeypatch.setattr(p.hive.studio, "enabled", False)                   # Studio off
-    assert caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive)}
+    assert caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive), "studio_off": "off"}
 
 
 # ---- R7.3 (stand-in R7.1 P1): a personal maker's recall embeds on its person's own key, or free; never pauses ------------------

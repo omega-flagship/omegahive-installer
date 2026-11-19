@@ -12,6 +12,26 @@ import re
 CORE_ROOT = pathlib.Path(__file__).resolve().parents[3]
 OMEGACLAW_ROOT = CORE_ROOT.parents[1]
 
+# A marker-ended body, as a shell heredoc whose marker is quoted: <<'NAME' ends a command's line, and every line after
+# it is the body, word for word, up to the first line that is NAME (surrounding spaces aside). Nothing in the body is
+# read as syntax, so a whole file can be one argument: triple quotes, an unbalanced quote or bracket included, which a
+# """ block ends on or loses. Example: hive-goal-file g_1 app.js <<'EOF_app_js' ... EOF_app_js.
+_HEREDOC_OPEN = re.compile(r"<<'([A-Za-z_][A-Za-z0-9_.-]*)'[ \t]*(?:\n|$)")
+
+
+def _heredoc_end(text, start, name):
+    """Where a marker-ended body starting at `start` ends: just past its closing line, the first line that is `name`;
+    None when no line closes it. Time: one pass over the body's lines."""
+    pos = start
+    while True:
+        nl = text.find("\n", pos)
+        line = text[pos:] if nl < 0 else text[pos:nl]
+        if line.strip() == name:
+            return len(text) if nl < 0 else nl + 1
+        if nl < 0:
+            return None
+        pos = nl + 1
+
 
 def _escape_metta_string(text):
     text = str(text or "")
@@ -91,6 +111,13 @@ def _metta_expr_syntax_error(expr, *, allow_triple=False):
         elif allow_triple and text.startswith('"""', i):
             quote = "triple"
             i += 3
+            continue
+        elif allow_triple and text.startswith("<<'", i) and _HEREDOC_OPEN.match(text, i):
+            opened = _HEREDOC_OPEN.match(text, i)
+            end = _heredoc_end(text, opened.end(), opened.group(1))
+            if end is None:
+                return "unterminated heredoc " + opened.group(1)
+            i = end
             continue
         elif ch == '"':
             quote = "double"

@@ -1,5 +1,6 @@
 """Purpose: Hive's extensions to Singnet's model providers: text-only fallback, OpenRouter routing, reply checks, and
 the hive's own refusal of a call kept for the mind's wait. HTTP, retries and tool parsing stay in Singnet."""
+import json
 import logging
 import os
 import re
@@ -18,12 +19,76 @@ log = logging.getLogger('hive_provider')
 # unknown tool, so the mind lost the turn, its last results and, on a $0.25 helper, the budget to propose again.
 # The name and the text (none for a skill without arguments) are that one skill line, so the call is taken as the
 # transport call carrying it; the line then meets the hive's parser and per-command authorization like any other,
-# an unknown skill included.
+# an unknown skill included. A model may also give the skill's arguments as the tool's own parameters: on a v0.38
+# Make on 19 November, Claude Sonnet 5.5's test author called hive-goal-propose with its goal and proposal that way,
+# and every such call was refused as an unknown tool until the mind stopped. Those are written into the line too.
 _SKILL_NAME = re.compile(r'[a-z][a-z0-9]*(?:-[a-z0-9]+)*')
+_TOKEN = re.compile(r'[^\s"()]+')
+
+
+def _skill_line(name, arguments):
+    """The one skill line a tool call named after skill `name` means. No arguments, or only {"text": t}, is the line's
+    text as the model wrote it. Other arguments go in the skill's declared order (the parser's SkillSignature table): a
+    parameter named like a declared argument takes its place, and the rest fill the places left in the order given, any
+    surplus after them. A value that isn't text is written as its JSON; text is quoted where it would run into the next
+    argument, and the last one takes the rest of the line as it is. The parser then reads the line like any other, so a
+    wrong argument meets its recovery hint, never an unknown tool."""
+    if not arguments or (isinstance(arguments, dict) and set(arguments) == {'text'} and isinstance(arguments['text'], str)):
+        text = (arguments or {}).get('text', '') if isinstance(arguments, dict) else ''
+        return f"{name} {text.strip()}".rstrip()
+    try:
+        from hive.runtime.extensions.helper_command_parser import SIGNATURE_COMMANDS
+    except ImportError:
+        from helper_command_parser import SIGNATURE_COMMANDS
+    declared = [arg_name if isinstance(arg_name, str) else arg_name[0] for _kind, arg_name in SIGNATURE_COMMANDS.get(name, ())]
+    given = list(arguments.items()) if isinstance(arguments, dict) else [(None, value) for value in arguments]
+    slots = {arg_name: None for arg_name in declared}
+    rest = []
+    for key, value in given:
+        if key in slots and slots[key] is None:
+            slots[key] = (value,)
+        else:
+            rest.append(value)
+    values = []
+    for arg_name in declared:                      # declared places in order, the unnamed values filling the gaps
+        if slots[arg_name] is not None:
+            values.append(slots[arg_name][0])
+        elif rest:
+            values.append(rest.pop(0))
+    values += rest
+    parts = []
+    for n, value in enumerate(values):
+        text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+        last = n == len(values) - 1
+        parts.append(text.strip() if last or _TOKEN.fullmatch(text) else _metta_string(text))
+    return " ".join([name] + [part for part in parts if part])
+
+
+def _metta_string(text):
+    try:
+        from hive.runtime.extensions.helper_command_parser import _signature_quote
+    except ImportError:
+        from helper_command_parser import _signature_quote
+    return _signature_quote(text)
 
 
 # Reasoning efforts, highest first, as OpenRouter's reasoning.effort takes them (Claude 5: low to max).
 EFFORTS = ('max', 'xhigh', 'high', 'medium', 'low')
+
+# Why convert_response last refused a reply, taken once by hive_services.chat (take_format_cause) for the trace that
+# tells the hive why a mind stopped. None when the latest reply wasn't refused here. A reply that ended for one of
+# these reasons is always refused, whatever else it holds.
+_FORMAT_CAUSE = None
+_REFUSED_ENDINGS = {'length': 'a reply cut off at its length limit', 'max_tokens': 'a reply cut off at its length limit',
+                    'content_filter': 'a filtered reply'}
+
+
+def take_format_cause():
+    """The words for the reply convert_response refused last ('a reply cut off at its length limit', 'a filtered
+    reply', 'an incomplete batch of commands'), cleared as it is read; None when none was refused since."""
+    global _FORMAT_CAUSE
+    cause, _FORMAT_CAUSE = _FORMAT_CAUSE, None
+    return cause
 
 
 def _log_provider_call(**kwargs):
@@ -76,6 +141,64 @@ def take_refusal():
     global _REFUSAL
     refusal, _REFUSAL = _REFUSAL, None
     return refusal
+
+
+# A reply cut off at its length limit is never run half written, but the hive-goal-file commands it finished (each
+# closed by its marker line) are whole files: they're kept here for the runtime to run beside the refusal
+# (hive_helpers._model_response), so a builder's finished files survive the cut. Set by every convert_response.
+_KEPT_FILES = ''
+
+
+def kept_file_commands():
+    """The finished hive-goal-file commands of the latest reply, when it was cut off at its length limit; else ''."""
+    return _KEPT_FILES
+
+
+def _cut_json_text(arguments):
+    """The "text" value of a tool call's arguments JSON that a cut ended inside, decoded up to the cut ('' when there is
+    none): the raw string up to its closing quote or the end, less an escape the cut split and a high surrogate whose
+    low half it took, read by json. Time: one pass over the arguments."""
+    import json
+    opened = re.search(r'"text"\s*:\s*"', arguments or '')
+    if opened is None:
+        return ''
+    raw, i, end, high = arguments[opened.end():], 0, None, None
+    while i < len(raw) and raw[i] != '"':
+        if raw[i] == '\\':
+            size = 6 if raw[i + 1:i + 2] == 'u' else 2
+            if i + size > len(raw):
+                end = i                                   # an escape the cut split
+                break
+            high = i if size == 6 and raw[i + 2:i + 3] in 'dD' and raw[i + 3:i + 4] in '89abAB' else None
+            i += size
+        else:
+            high, i = None, i + 1
+    end = i if end is None else end
+    if high is not None and high + 6 == end:              # a high surrogate whose low half the cut took
+        end = high
+    try:
+        return json.loads('"' + raw[:end] + '"')
+    except ValueError:
+        return ''
+
+
+def _keep_finished_files(raw):
+    """On a reply cut off at its length limit, keep its finished hive-goal-file commands and the claims before them
+    (kept_file_commands): from its text, and from each tool call's text decoded up to the cut. Any other reply keeps
+    nothing."""
+    global _KEPT_FILES
+    _KEPT_FILES = ''
+    choices = getattr(raw, 'choices', None)
+    if not choices or getattr(choices[0], 'finish_reason', None) not in ('length', 'max_tokens'):
+        return
+    from hive.runtime.extensions.helper_command_parser import finished_file_commands
+    message = choices[0].message
+    texts = [getattr(message, 'content', None) or '']
+    texts += [_cut_json_text(getattr(getattr(call, 'function', None), 'arguments', '') or '')
+              for call in getattr(message, 'tool_calls', None) or []]
+    _KEPT_FILES = '\n'.join(kept for kept in map(finished_file_commands, texts) if kept)
+    if _KEPT_FILES:
+        log.info('a reply cut off at its length keeps %d finished file command(s)', _KEPT_FILES.count('hive-goal-file'))
 
 
 class HiveProviderFeatures:
@@ -152,9 +275,12 @@ class HiveProviderFeatures:
         return result
 
     def convert_response(self, raw):
+        _keep_finished_files(raw)
         import providers
         from hive.runtime.hive_provider import response, tools
+        global _FORMAT_CAUSE
         choices = getattr(raw, 'choices', None)
+        _FORMAT_CAUSE = _REFUSED_ENDINGS.get(getattr(choices[0], 'finish_reason', None)) if choices else None
         text = ''
         if choices:
             choice = choices[0]
@@ -182,6 +308,7 @@ class HiveProviderFeatures:
             # runnable through cleanup. hive-run-response validates the decoded batch again before repair.
             if not signature_raw_batch_complete(text):
                 log.info('format failure: a %d-character text reply is not a complete batch: %r', len(text), text[:200])
+                _FORMAT_CAUSE = 'an incomplete batch of commands'
                 return providers.LLMResponse().with_error('Incomplete provider response; no commands executed')
             return response(text)
         result = super().convert_response(raw)
@@ -192,12 +319,9 @@ class HiveProviderFeatures:
             log.info('format: %d characters of text came beside %d tool calls and are not run: %r', len(text),
                      len(choices[0].message.tool_calls), text[:200])
         for call in result.calls:
-            arguments = call.arguments if isinstance(call.arguments, dict) else {}
-            if (call.name != transport and not call.is_error() and _SKILL_NAME.fullmatch(str(call.name or ''))
-                    and set(arguments) <= {'text'} and isinstance(arguments.get('text', ''), str)):
+            if call.name != transport and not call.is_error() and _SKILL_NAME.fullmatch(str(call.name or '')):
                 log.info('a tool call named %s is taken as %s carrying that skill line', call.name, transport)
-                line = f"{call.name} {arguments.get('text', '').strip()}".rstrip()
-                call.with_arguments({'text': line}).with_name(transport)
+                call.with_arguments({'text': _skill_line(call.name, call.arguments)}).with_name(transport)
         return result
 
 

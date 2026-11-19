@@ -815,6 +815,54 @@ describe('Draw live: the page continuation after the Ask turn', () => {
   })
 })
 
+describe('show run f4: on the mounted Create page, a hive that offers no live drawing says why, with no step for the person', () => {
+  const WORDS = {
+    not_set_up: 'Live drawing isn’t set up on this hive yet, so nothing can be drawn here.',
+    off: 'Live drawing is turned off on this hive, so nothing can be drawn here.',
+  }
+  const STEP = 'That is for whoever runs this hive; there is nothing for you to do here.'
+  for (const why of ['not_set_up', 'off'] as const) {
+    it(`studio_off ${why}: the banner and the menu's refusal give the host's reason, no key step, nothing sent`, async () => {
+      const client = {
+        mode: 'live' as const,
+        studioSession: vi.fn(), studioPiece: vi.fn(), studioOutcome: vi.fn(), studioControl: vi.fn(),
+        studioMount: vi.fn(), studioMountHeartbeat: vi.fn(), studioUnmount: vi.fn(), studioMountReadback: vi.fn(),
+        studioRecordIntent: vi.fn(), askSubmitIntent: vi.fn(), askSteer: vi.fn(), studioSetupProposal: vi.fn(),
+      }
+      const useHive = await hive(client)
+      useHive.setState({ programs: [{ id: 'omegadesign', name: 'Invented Create', description: '', enabled: true, ui: { entry: 'index.html' } }] as never, programDetails: { omegadesign: { describe: null } } as never })
+      const { useAskStore } = await import('../../store/ask')
+      const before = useAskStore.getState().settings
+      // the /api/me/ask answer with studio_sessions absent: the reason is the only Studio key (hive/core/ask.py)
+      useAskStore.setState({ settings: { swarm_id: null, thread_budget_usd: 5, capabilities: { conductor: true, memory: true, studio_off: why } } } as never)
+      try {
+        const p = await mount({ id: 'omegadesign' })
+        await p.act(flush)
+        const entry = p.container.findAll((n) => n.getAttribute('data-drawing-entry') !== null)
+        expect(entry).toHaveLength(1)
+        expect(entry[0].getAttribute('data-drawing-entry')).toBe('host_not_offered')
+        const text = entry[0].textContent
+        expect(text).toContain(WORDS[why])
+        expect(text).toContain(STEP)
+        expect(text).not.toContain('It has not said why.')
+        expect(text).not.toMatch(/key|Keys|template|HIVE_STUDIO|Mac/)             // a key does not turn Studio on
+        const buttons = entry[0].findAll((n) => n.tagName === 'BUTTON')
+        expect(buttons.map((b) => b.textContent)).toEqual(['Draw live in Create'])  // no other step offered
+        expect(buttons[0].getAttribute('disabled')).not.toBeNull()
+        // the menu's Draw live: the same reason under the button, and nothing is asked of the host
+        const item = menu.sections.flatMap((s) => s.items).find((i) => i.label === 'Draw live in Create…')
+        expect(item).toBeDefined()
+        await p.act(async () => { item!.run(); await flush() })
+        expect(p.container.findAll((n) => n.getAttribute('data-drawing-note') !== null).map((n) => n.textContent)).toEqual([`${WORDS[why]} ${STEP}`])
+        for (const method of Object.values(client)) if (typeof method === 'function') expect(method).not.toHaveBeenCalled()
+        expect(navigations).toEqual([])
+      } finally {
+        useAskStore.setState({ settings: before } as never)
+      }
+    })
+  }
+})
+
 
 describe('Create shows its benches side by side (Jon 11-05: code and studio together; 10-31: Flow is a bench kind)', () => {
   it('the Create page names itself Create and shows Studio, Code and Flow at the top; each opens its bench there', async () => {

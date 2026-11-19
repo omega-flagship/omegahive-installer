@@ -1,6 +1,7 @@
 ; Purpose: the feedback and bug-report area, declared as atoms (screens/lib_screens.metta composes them): what the person
 ; writes, everything their report carries, shown whole before anything leaves, and the ways it can leave, chosen by
-; where this hive sends reports (HIVE_FEEDBACK_TO, hive/core/feedback.py).
+; where this hive sends reports (HIVE_FEEDBACK_TO, hive/core/feedback.py); and the hive's logs, a file of their own
+; for the team, also shown whole before they leave.
 ;
 ; Facts the page states each time (features/feedback/data.ts):
 ;   value report.kind   bug | ux | idea
@@ -20,6 +21,11 @@
 ;   count report.errors   the hive's and the page's recent errors
 ;   count drafts          drafts waiting: what the hive noticed going wrong, and what minds drafted (features/feedback/drafts.ts)
 ;   data  to.host         the report service's host (service); to.board the board as owner/repo (board)
+;   value logs.scope      hive | person | page   whose the logs are: an admin's whole hive, a person's own, or the page's
+;                         alone when the hive did not give its part (data logs.missing says why)
+;   value logs.done       none | saved | copied   what the person did with the logs last (data logs.file names the file)
+;   flags logs.shown logs.loading logs.missing logs.failed   gathered and shown; being gathered; the hive's part missing;
+;                         the last copy did not go through (data logs.failed)
 
 (Screen feedback "Feedback")
 (Part feedback 1 header ((title "Send feedback or report a bug")
@@ -137,3 +143,36 @@
 (When feedback 67 (is report.done sent))
 (Part feedback 68 notice ((tone bad) (text (words "Not sent: " (bind report.error) " Copy or save it instead."))))
 (When feedback 68 (on report.failed))
+
+; ---------- the hive's logs: a file of their own, for the team to read beside a report (a tester asked for an export,
+; and Jon answered the hive should have one anyway). Gathered on a press, shown whole, then saved or copied as shown.
+(Part feedback 70 section ((title "Your hive's logs")
+  (body "One file of what your hive was asked lately, what failed, its version and its newest errors, for the team to read beside a report. Keys, codes, cookies, sign-in links, addresses and ids are taken out on the hive and again here, as they are from your report, and nothing leaves until you save or copy it.")))
+(Part feedback 71 actions ((items ((action "Show the logs" logs-show logs.loading)))))
+(When feedback 71 (off logs.shown))
+(Part feedback 72 note ((text "Gathering the logs…")))
+(When feedback 72 (on logs.loading))
+(Part feedback 73 notice ((tone warn) (text (words "The hive did not give its part: " (bind logs.missing) ". What this page kept is below."))))
+(When feedback 73 (on logs.shown))
+(When feedback 73 (on logs.missing))
+(Part feedback 74 note ((text "These are the whole hive's, since you are its admin: everyone's requests, your own errors, other people's errors by route, status and code only, and the hive's own warnings.")))
+(When feedback 74 (on logs.shown))
+(When feedback 74 (is logs.scope hive))
+(Part feedback 75 note ((text "These are your own requests and errors on this hive.")))
+(When feedback 75 (on logs.shown))
+(When feedback 75 (is logs.scope person))
+(Part feedback 76 code ((label "Your hive's logs, as they go") (text (bind logs.text))))
+(When feedback 76 (on logs.shown))
+(Part feedback 77 actions ((items ((action "Save the logs" logs-save) (action "Copy the logs" logs-copy) (action "Gather them again" logs-show logs.loading)))))
+(When feedback 77 (on logs.shown))
+; the testers' group only for a person's own logs: an admin's hold other people's requests and errors, if only by route
+(Part feedback 78 notice ((tone info) (text (words "Saved " (bind logs.file) " where your browser keeps downloads. Send it to the team with your report, or in the testers' group."))))
+(When feedback 78 (is logs.done saved))
+(When feedback 78 (none-of ((is logs.scope hive))))
+(Part feedback 79 notice ((tone info) (text (words "Saved " (bind logs.file) " where your browser keeps downloads. Send it to the team with your report."))))
+(When feedback 79 (is logs.done saved))
+(When feedback 79 (is logs.scope hive))
+(Part feedback 80 notice ((tone info) (text "Copied. Paste it where you talk with the team.")))
+(When feedback 80 (is logs.done copied))
+(Part feedback 81 notice ((tone bad) (text (bind logs.failed))))
+(When feedback 81 (on logs.failed))

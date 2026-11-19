@@ -1,3 +1,4 @@
+# Purpose: verify that Ask bookkeeping never becomes work for a mind.
 """An Ask thread's goal is bookkeeping: the asked question is the mind's first and only prompt.
 
 Found in the 2026-11-11 Create end-to-end run: asking an awake Create · Code controller first sent it the session goal's
@@ -21,6 +22,16 @@ def test_the_first_delivery_to_an_awake_mind_is_the_question_not_an_empty_goal(c
         first = json.loads(json.loads(mind.receive_text())["text"])
         assert "ask" in first, f"the first delivery was not the Ask turn: {str(first)[:200]}"
         assert first["text"] == "make me a tip calculator" and first["ask"]["turn_id"] == r["turn_id"]
-    goal = hive.db.one("SELECT * FROM goals WHERE assignee = ? AND title = 'Ask thread' ORDER BY created_at DESC LIMIT 1",
-                       (w["coord"]["id"],))
+    session = hive.db.one("SELECT goal_id FROM work_sessions WHERE id = ?", (r["thread"]["id"],))
+    goal = hive.goals.get(session["goal_id"])
     assert goal is not None and goal["status"] == "open"          # the bookkeeping goal exists, unclaimed
+    assert goal["title"] == "make me a tip calculator" and goal["assignee"] is None
+    assert all(g["id"] != goal["id"] for g in hive.goals.list(w["swarm"]["id"]))
+    page = client.get("/api/tasks", headers=w["ann"], params={"swarm": w["swarm"]["id"]}).json()
+    assert page["items"] == [] and page["counts"]["total"] == 0
+    assert client.get("/api/boards/grand").json()["goals"] == []
+    assert client.post(f"/api/agent/goals/{goal['id']}/claim", headers=agent_headers(w["coord"])).status_code == 409
+    assert client.post(f"/api/agent/goals/{goal['id']}/result", headers=agent_headers(w["coord"]),
+                       json={"status": "failed", "result": "nothing to do"}).status_code == 409
+    assert client.post(f"/api/sessions/{r['thread']['id']}/end", headers=w["ann"]).status_code == 200
+    assert hive.goals.get(goal["id"])["status"] == "done"

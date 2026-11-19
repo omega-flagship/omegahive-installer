@@ -1,3 +1,4 @@
+# Purpose: project real tasks and service offers onto hive boards.
 """Read-only Hive board/service discovery candidate. No secondary task store.
 
 Route installation requires the platform's existing admin and agent auth guards.
@@ -5,6 +6,7 @@ Cross-swarm service discovery is admin-only until a directory visibility policy
 exists. Offers alone establish neither demonstrated capability nor eligibility.
 """
 from fastapi import Request
+from .goals import WORK_SQL
 
 
 class HiveBoards:
@@ -20,7 +22,7 @@ class HiveBoards:
             self.hive.agent(entity_id)
         if kind == "swarm":
             self.hive.swarm(entity_id)
-        goals = [self.hive.goals.view(row) for row in self.hive.db.all("SELECT * FROM goals ORDER BY created_at, id")]
+        goals = [self.hive.goals.view(row) for row in self.hive.db.all(f"SELECT * FROM goals WHERE {WORK_SQL} ORDER BY created_at, id")]
         requests = [self.hive.collab.request_view(row) for row in self.hive.db.all("SELECT * FROM requests ORDER BY created_at, id")]
         by_id = {g["id"]: g for g in goals}
         for req in requests:
@@ -45,7 +47,7 @@ class HiveBoards:
         candidates = []
         if kind == "mind":
             roles = {r["id"]: r for r in self.hive.roles.list()}
-            goals = [self.hive.goals.view(r) for r in self.hive.db.all("SELECT * FROM goals")]
+            goals = [self.hive.goals.view(r) for r in self.hive.db.all(f"SELECT * FROM goals WHERE {WORK_SQL}")]
             for mind in self.hive.agents():
                 role = roles.get(mind.get("role_id"))
                 if not role or role["name"].casefold() != need.casefold():

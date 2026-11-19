@@ -5,9 +5,10 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ProviderStatus } from '../../api/types'
+import type { ModelOption, ProviderStatus } from '../../api/types'
 import { Screen } from '../../screens/Screen'
 import { ScreensSpace } from '../../screens/screenSpace'
+import { useHive } from '../../store/store'
 import { BLANK_PROGRESS, liveHost, type FlClient } from './host'
 import { payerLine } from './honest'
 import { FREE_PROVIDER, freeLapse, freeRoute, freeWay, onFreeWay } from './plans'
@@ -189,5 +190,28 @@ describe('choosing it', () => {
     await flush()
     expect(patched).toEqual([`a_ann:free/${MODEL}`])
     expect(g().run?.u1?.model).toBe(`free/${MODEL}`)
+  })
+
+  it('a member moves onto the Anthropic model their own key pays for, and still cannot choose one the hive pays', async () => {
+    const patched: string[] = []
+    const anthropic: ProviderStatus = {
+      name: 'anthropic', label: 'Anthropic', local: false, needs_key: true, connected: true, configured: true,
+      readiness: 'unverified', source: 'stored', key_hint: '', key_env: '', base_url: 'https://api.anthropic.com/v1', models: ['claude-sonnet-5-5'],
+    }
+    const models: ModelOption[] = [{ id: 'anthropic/claude-sonnet-5-5', provider: 'anthropic', label: 'claude-sonnet-5-5', local: false }]
+    const before = { providers: useHive.getState().providers, models: useHive.getState().models }
+    useHive.setState({ providers: [anthropic], models })
+    try {
+      await g().start({ mode: 'live', host: liveHost(memberClient(patched), () => 0), singleScreen: true })
+      await flush()
+      await g().thinkWith('openrouter/anthropic/claude-sonnet-5.5')
+      expect(patched).toEqual([])
+      await g().thinkWith('anthropic/claude-sonnet-5-5')
+      await flush()
+      expect(patched).toEqual(['a_ann:anthropic/claude-sonnet-5-5'])
+      expect(g().run?.u1?.model).toBe('anthropic/claude-sonnet-5-5')
+    } finally {
+      useHive.setState(before)
+    }
   })
 })

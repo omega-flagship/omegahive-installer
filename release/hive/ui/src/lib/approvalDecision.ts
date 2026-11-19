@@ -1,4 +1,4 @@
-import type { Approval } from '../api/types'
+import type { Approval, ApprovalStatus } from '../api/types'
 import { useHive } from '../store/store'
 import { accepts, bindTo, boundNote, type Bound } from './decisionGate'
 
@@ -18,7 +18,13 @@ export type ApprovalSeen = Pick<Approval, (typeof APPROVAL_SEEN_FIELDS)[number]>
 
 export const approvalSeenOf = (a: Approval): ApprovalSeen => ({ id: a.id, agent_id: a.agent_id, skill: a.skill, command: a.command, reason: a.reason, risk: a.risk, created_at: a.created_at, session: useHive.getState().session })
 
-const WORD: Record<string, string> = { approved: 'approved', denied: 'denied', expired: 'expired', used: 'approved and used' }
+// every status a decided request can have, so one the host adds fails to compile until it has words here
+const WORD: Record<string, string> = {
+  approved: 'approved', denied: 'denied', expired: 'expired', used: 'approved and used', auto: 'run without asking',
+} satisfies Record<Exclude<ApprovalStatus, 'pending'>, string>
+
+/** Whether the request went ahead: a person approved it (used once it ran), or it ran without asking. */
+export const wentAhead = (status: ApprovalStatus) => status === 'approved' || status === 'used' || status === 'auto'
 
 /** Is the live request still the pending one that was inspected? */
 export function approvalBound(seen: ApprovalSeen, live: Approval | undefined): Bound {

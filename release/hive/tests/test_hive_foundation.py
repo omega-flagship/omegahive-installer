@@ -81,6 +81,31 @@ def observed_events(hive,monkeypatch):
     return events
 
 
+CONTROLLER_PERSONA_TODAY = ("Coordinate only the original person-bound request and supplied evidence. "
+                            "Preserve its grant, scope, lease, budget and retained operation keys. "
+                            "Never retry UNKNOWN, self-review, or increase limits.")
+
+
+def test_both_controller_personas_keep_todays_text_until_the_prompt_change(f):
+    from hive.core import foundation
+    assert foundation.CODE_CONTROLLER_PERSONA == foundation.REVIEW_CONTROLLER_PERSONA == CONTROLLER_PERSONA_TODAY
+    assert controller(f)["persona"] == controller(f, REVIEW)["persona"] == CONTROLLER_PERSONA_TODAY
+
+
+@pytest.fixture()
+def distinct_controller_personas(monkeypatch):
+    """Set up before hive_app (argument order), so the foundation makes its controllers with these texts."""
+    from hive.core import foundation
+    monkeypatch.setattr(foundation, "CODE_CONTROLLER_PERSONA", "Invented Code controller persona.")
+    monkeypatch.setattr(foundation, "REVIEW_CONTROLLER_PERSONA", "Invented Review controller persona.")
+
+
+def test_each_controller_gets_its_own_persona_constant(distinct_controller_personas, hive_app):
+    hive = hive_app[0]
+    assert controller(hive)["persona"] == "Invented Code controller persona."
+    assert controller(hive, REVIEW)["persona"] == "Invented Review controller persona."
+
+
 def test_fresh_start_has_two_bound_asleep_teams_without_start_or_usage(f):
     b, r = f.foundation._binding(CODE), f.foundation._binding(REVIEW)
     assert b["swarm_id"] != r["swarm_id"]

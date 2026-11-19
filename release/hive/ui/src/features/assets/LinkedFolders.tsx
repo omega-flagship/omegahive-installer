@@ -1,3 +1,4 @@
+// Purpose: link and browse local folders, manage writing, and confirm unlinking while keeping files on disk.
 import { AnimatePresence } from 'framer-motion'
 import { useState } from 'react'
 import type { FolderItem, FolderWriters, LinkedFolder } from '../../api/moneyWork'
@@ -12,6 +13,8 @@ import { DecisionDialog } from '../../ui/DecisionDialog'
 import { Icon } from '../../ui/Icon'
 import { Button } from '../../ui/primitives'
 import { ResourceView } from '../../ui/ResourceView'
+import { boundRun } from '../../lib/epochBound'
+import { RemovalControl } from './Removal'
 
 /** The folder above `path` inside a linked folder ('' is its root). Pure. */
 export function parentPath(path: string): string {
@@ -181,7 +184,8 @@ function FolderRow({ folder: f, first, live, onChange, onGone }: { folder: Linke
   const swarms = useHive((s) => s.swarms)
   const { admin } = useMe()
   const [open, setOpen] = useState(false)
-  const [deciding, setDeciding] = useState<null | { kind: 'unlink' | 'write'; seen: LinkedFolder }>(null)
+  const [deciding, setDeciding] = useState<null | { seen: LinkedFolder }>(null)
+  const current = live(f.id)
   return (
     <li className={cx('px-4 py-3', !first && 'border-t border-line')}>
       <div className="flex items-start gap-3">
@@ -214,7 +218,7 @@ function FolderRow({ folder: f, first, live, onChange, onGone }: { folder: Linke
                   } catch (e) {
                     toast(actionFailure(e, 'Could not change writing'))
                   }
-                } else setDeciding({ kind: 'write', seen: { ...f } })
+                } else setDeciding({ seen: { ...f } })
               }}
             >
               {f.writable ? 'Make read-only' : 'Allow writing…'}
@@ -241,11 +245,7 @@ function FolderRow({ folder: f, first, live, onChange, onGone }: { folder: Linke
               </select>
             </label>
           )}
-          {admin && has(client, 'unlinkFolder') && (
-            <Button variant="ghost" className="min-h-9 px-2.5 text-[12px]" onClick={() => setDeciding({ kind: 'unlink', seen: { ...f } })}>
-              Unlink…
-            </Button>
-          )}
+          <RemovalControl subject={{ kind: 'folder', value: f }} live={current && { kind: 'folder', value: current }} admin={admin} onGone={onGone} />
         </div>
       </div>
       {open && <Browser folder={f} />}
@@ -253,38 +253,31 @@ function FolderRow({ folder: f, first, live, onChange, onGone }: { folder: Linke
         {deciding && (
           <DecisionDialog
             icon="database"
-            eyebrow={deciding.kind === 'unlink' ? 'Unlink a folder' : 'Allow writing'}
-            title={deciding.kind === 'unlink' ? `Unlink ${deciding.seen.label}?` : `Let ${deciding.seen.label} be written?`}
+            eyebrow="Allow writing"
+            title={`Let ${deciding.seen.label} be written?`}
             facts={[
               ['Folder', <span className="font-mono text-[11px]">{deciding.seen.root}</span>],
               ['Owned by', shown(swarms[deciding.seen.owner_swarm]?.name ?? deciding.seen.owner_swarm)],
-              deciding.kind === 'unlink'
-                ? ['After', 'The hive stops showing it. Nothing on disk changes, and its write receipts stay.']
-                : ['After', `${deciding.seen.writers === 'swarm_members' ? 'People who see this swarm' : 'Admins'} can save files into it. Every write is recorded: who, which file, its hash before and after, and when. Hidden files and keys stay untouchable.`],
+              ['After', `${deciding.seen.writers === 'swarm_members' ? 'People who see this swarm' : 'Admins'} can save files into it. Every write is recorded: who, which file, its hash before and after, and when. Hidden files and keys stay untouchable.`],
             ]}
             bound={bindTo(deciding.seen, live(deciding.seen.id), ['id', 'root', 'writable', 'writers', 'owner_swarm'])}
             thing="This folder"
             onClose={() => setDeciding(null)}
             actions={[
               {
-                label: deciding.kind === 'unlink' ? 'Unlink' : 'Allow writing',
-                busyLabel: deciding.kind === 'unlink' ? 'Unlinking' : 'Allowing',
+                label: 'Allow writing',
+                busyLabel: 'Allowing',
                 tone: 'danger',
-                run: async () => {
+                run: boundRun(async (binding) => {
                   try {
-                    if (deciding.kind === 'unlink') {
-                      await need(client, 'unlinkFolder', 'Unlinking folders')(deciding.seen.id)
-                      onGone(deciding.seen.id)
-                      toast({ tone: 'success', title: `${deciding.seen.label} unlinked`, body: 'Nothing on disk changed.' })
-                    } else {
-                      onChange(await need(client, 'setFolderWritable', 'Folder writing')(deciding.seen.id, true))
-                      toast({ tone: 'success', title: `${deciding.seen.label} can be written`, body: 'Every write leaves a receipt.' })
-                    }
+                    const next = await need(client, 'setFolderWritable', 'Folder writing')(deciding.seen.id, true)
+                    binding.commit(() => onChange(next))
+                    binding.commit(() => toast({ tone: 'success', title: `${deciding.seen.label} can be written`, body: 'Every write leaves a receipt.' }))
                     return true
                   } catch (e) {
                     return decisionFailure(e)
                   }
-                },
+                }),
               },
             ]}
           />

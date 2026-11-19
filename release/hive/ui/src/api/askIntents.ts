@@ -210,13 +210,15 @@ export function parseIntentView(raw: unknown, expect?: { intent_id?: string; kin
 }
 
 /**
- * Each kind the hive records an Ask intent under (hive/core/ask_intents.py: KIND, TEST, STUDIO, RESEARCH) and how the
- * list is read for this page: its own two strictly, Studio's sessions and the Ask's research requests left out. Those
- * belong to their own pages, and the list is the person's own, newest first, so a research question asked before a
- * Code change made the change's first check fail ("The intent was not understood (kind)"). A kind not here is refused.
+ * Each kind the hive records an Ask intent under (hive/core/ask_intents.py: KIND, TEST, STUDIO, RESEARCH, TASK) and how
+ * the list is read for this page: its own two strictly, and Studio's sessions, the Ask's research requests and the tasks
+ * the Ask makes left out. Those belong to their own pages (Tasks reads its own), and the list is the person's own,
+ * newest first, so a research question asked before a Code change made the change's first check fail ("The intent was
+ * not understood (kind)"). A kind not here is refused.
  */
 const LIST_KINDS = new Map<unknown, 'read' | 'leave out'>([
   [INTENT_KIND, 'read'], ['code.test', 'read'], ['studio.session', 'leave out'], ['research.request', 'leave out'],
+  ['task.create', 'leave out'],
 ])
 
 /** Strictly read the list answer (GET /api/ask/intents): `{intents: [...]}`, without the kinds other pages own. */

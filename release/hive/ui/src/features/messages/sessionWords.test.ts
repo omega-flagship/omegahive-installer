@@ -24,6 +24,7 @@ describe('a request in one plain line', () => {
     expect(l).toMatchObject({ why: 'Only a person is allowed to do this.', risk: 'high risk', status: 'Waiting for you' })
     expect(approvalLine('Asha', ask('(shell "ls")', { status: 'denied', risk: 'odd' }))).toMatchObject({ status: 'Not allowed', risk: null })
     expect(approvalLine('Asha', ask('(shell "ls")', { status: 'used' })).status).toBe('Allowed')
+    expect(approvalLine('Asha', ask('(match &beliefs (B $x) $x)', { skill: 'metta', risk: 'low', status: 'auto' })).status).toBe('Ran without asking')
   })
 })
 

@@ -308,3 +308,47 @@ def test_isolation_says_a_mind_with_no_process_is_not_running(client):
     assert quiet["running"] is False and quiet["os_sandbox"] is False
     started[mind["id"]] = {"environment": "linux-bwrap", "os_sandbox": True, "profile": "mind"}
     assert client.get(f"/api/agents/{mind['id']}/isolation").json() == started[mind["id"]]
+
+
+def test_a_start_that_fails_unexpectedly_leaves_the_mind_in_error_with_a_short_reason(client, monkeypatch):
+    """T-START-ERROR-STATUS: any exception from supervisor.start, not only StartRefused, records the mind as error with
+    the exception's first line (no traceback, no path) instead of leaving it 'starting' with no error forever. The API
+    still answers its 500, and desired stays awake, as a failed start at restore or reconcile leaves it."""
+    _, (mind,) = make_swarm_and_agents(client, n=1)
+
+    def fail(agent_id):
+        raise RuntimeError("could not inspect process group 1064 under /var/lib/omegahive/minds/x1/run.pid\n"
+                           'Traceback (most recent call last):\n  File "/opt/omegahive/hive/supervisor/drivers.py"')
+    monkeypatch.setattr(client.supervisor, "start", fail)
+    quiet = TestClient(client.app, raise_server_exceptions=False)
+    quiet.headers["Authorization"] = client.headers["Authorization"]
+    out = quiet.post(f"/api/agents/{mind['id']}/start")
+    assert out.status_code == 500 and out.json()["error"]["code"] == "internal_error"
+    row = client.get(f"/api/agents/{mind['id']}").json()
+    assert row["status"] == "error"
+    assert row["last_error"] == "start failed: could not inspect process group 1064 under [path]"
+    assert client.app.state.hive.db.one("SELECT desired FROM agents WHERE id = ?", (mind["id"],))["desired"] == "awake"
+    from hive.supervisor.drivers import StartRefused   # a typed refusal keeps its own answer: 409, and left stopped
+
+    def refuse(agent_id):
+        raise StartRefused("synthetic: cannot run here")
+    monkeypatch.setattr(client.supervisor, "start", refuse)
+    assert client.post(f"/api/agents/{mind['id']}/start").json()["error"]["code"] == "start_refused"
+    row = client.get(f"/api/agents/{mind['id']}").json()
+    assert row["status"] == "error" and row["last_error"] == "start refused: synthetic: cannot run here"
+    assert client.app.state.hive.db.one("SELECT desired FROM agents WHERE id = ?", (mind["id"],))["desired"] == "stopped"
+
+
+def test_start_failure_reason_is_one_short_line_without_keys_or_paths():
+    from hive.core.hive import start_failure
+    assert start_failure(RuntimeError("")) == "start failed"
+    assert start_failure(OSError(2, "No such file or directory", "/srv/hive/x.sock")) == \
+        "start failed: [Errno 2] No such file or directory: '[path]'"
+    assert start_failure(RuntimeError("bad key sk-ant-abcdefghijklmnop in ./run/env")) == \
+        "start failed: bad key [key] in [path]"
+    long = start_failure(RuntimeError("x" * 500))
+    assert len(long) <= 200 and long.endswith("…")
+    assert start_failure(RuntimeError("see http://host:8080/a/b")) == "start failed: see http://host:8080/a/b"
+    assert start_failure(RuntimeError("no /run/x.pid\nTraceback"), prefix="start failed at restore") == \
+        "start failed at restore: no [path]"
+    assert start_failure(RuntimeError(""), prefix="start failed at restore") == "start failed at restore"

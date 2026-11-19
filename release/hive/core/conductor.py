@@ -73,9 +73,8 @@ Contract: ASK_CONDUCTOR_ACTION_VOCABULARY_v1_20261007.md, with "Platform's answe
   A personal turn controls the hive as any turn does (Jon 2026-10-09): its dispatch records an intent like any other,
   and the work it hands over is a normal work item in the receiving swarm; only its conversation stays off the host.
 - Acts naming a private app (Atlas, Truth) are dropped before any frame (defence in depth beside the page's fence).
-- dispatch goes through Conductor.dispatch, wired to linkage slice 2's Intents (hive.ask.intents): it RECORDS one pending
-  intent on the person's own turn (the in-process body of POST /api/ask/{op}/intents, with that route's named-admin gate)
-  and never submits; sending stays the person's own action. Every frame goes through Ask._frame's one shared quota.
+- dispatch records an intent through Conductor.dispatch and the kind's own authority gate. The tool sends AUTO_SEND
+  kinds at once; the others wait for the person to send them. Every frame uses Ask._frame's shared quota.
 """
 
 from __future__ import annotations
@@ -104,7 +103,7 @@ from .config import CORE_ROOT, caller_judged, is_subscription
 from .refusals import spoken
 from .gateway import SEND_GATE, GatewayError, billable, split_model
 from .ask import MAX_TEXT, refusal
-from .ask_intents import AUTO_SEND, KINDS, STUDIO, TEST, _iso_time, continued_turns
+from .ask_intents import AUTO_SEND, KINDS, STUDIO, TASK, TEST, _iso_time, continued_turns
 from .hive import HiveError
 from .sessions import own_scope, thread_scope
 from .stage import ITEM_IDS
@@ -260,6 +259,7 @@ DISPATCH_KIND_SAY = {
     "studio.session": "I couldn't start a Studio session for that here, so I didn't send anything.",
     "research.request": "I couldn't send that research request, so I didn't send anything. Here's what I can tell you "
                         "myself.",
+    "task.create": "I couldn't create a task for that here, so nothing was added.",
 }
 DISPATCH_REFUSED_NEXT = "The person has been told in plain words. Don't repeat or explain the refusal, don't name " \
                         "kinds, fields, codes or limits, and never ask the person for ids: carry on and answer from " \
@@ -268,6 +268,8 @@ DISPATCH_REFUSED_NEXT = "The person has been told in plain words. Don't repeat o
 DISPATCH_RETRIES = 1          # one corrected retry after a refused dispatch; later calls in the turn are not tried
 DISPATCH_SENT_NEXT = "It is on its way: the report will come back to this conversation when it is ready. Tell the " \
                      "person in a sentence, then carry on; don't wait for it and never ask the person for ids."
+TASK_SENT_NEXT = "The task was created and assigned to the answering mind. Tell the person in a sentence, then carry " \
+                 "on. Do not claim it is finished or promise a result that has not arrived."
 
 
 def dispatch_refused_say(code, reason=None, kind=None):
@@ -396,6 +398,7 @@ def _tool(name, description, properties, required=()):
 
 # each hand-over kind as the dispatch tool describes it to the model, in the tool's order
 KIND_HELP = {
+    "task.create": "'task.create': create a task for the answering mind, with title and instruction only",
     "research.request": "'research.request': look something up on the web and report with sources",
     "code.request": "'code.request': code work (admins), which starts from a Code task: its request needs the task, "
                     "workspace and repository ids the Code page shows, so without them offer to open Code ('#/code') "
@@ -417,7 +420,8 @@ def _dispatch_tool_schema(kinds=None):
     props, _required = request_schema()
     return _tool(
         "dispatch",
-        "Hand real work to a swarm or service. A research request is sent at once and its report comes back to this "
+        "Hand real work to a swarm or service. task.create assigns a task to the mind answering you at once. "
+        "A research request is sent at once and its report comes back to this "
         "conversation; other work is recorded for the person to send. Nothing leaves the hive from here.",
         {"kind": {"type": "string", "enum": kinds,
                   "description": "; ".join(h for k, h in KIND_HELP.items() if k in kinds) + ". Sent at once: "
@@ -1595,10 +1599,11 @@ class Conductor:
                 agent["options"] = {"key": own}
             key_id = gw.paying_key(agent, provider_name)[0] if paid else None
         except GatewayError as exc:
+            # a refusal from refusals.py's table, a held $0 model's 402 included, is said plainly in its own words
+            if spoken(exc):
+                raise _Stop("error", {"code": exc.code, "say": exc.message, "remedy": exc.remedy}) from None
             if exc.status == 402:   # unpriced_model, key_unavailable: not a spend limit (ask-limits r1)
                 raise _Stop("error", {"code": exc.code}) from None
-            if spoken(exc):   # out of free calls, or free inference not offered to them: said plainly
-                raise _Stop("error", {"code": exc.code, "say": exc.message, "remedy": exc.remedy}) from None
             raise
         try:
             if paid:   # OI-13 r1.2: never another person's key, judged for the asker (402 own_key_needed)
@@ -2061,7 +2066,7 @@ class Conductor:
         self._emit(st, "dispatched", **frame)
         result = {"ok": True, **frame, "state": out.get("state")}
         if out.get("state") == "linked":
-            result["next"] = DISPATCH_SENT_NEXT
+            result["next"] = TASK_SENT_NEXT if out.get("intent_kind") == TASK else DISPATCH_SENT_NEXT
         return result
 
     def _remember_tool(self, st, args):
@@ -2095,8 +2100,8 @@ class Conductor:
             Intents.record(viewer, operation_id, {"kind": kind, "request": request}) -> (status, intent view)
         i.e. the in-process body of POST /api/ask/{op}/intents (a.3): it RECORDS one pending intent on the person's own
         turn (its own transaction, links_rev + 1, and an `intent` frame through the turn's shared quota) and nothing
-        else. Intents.submit is never called here: sending stays an explicit person action (a.4 R2). The route's gate
-        is applied first, in process: a named, enabled admin person (r2.13), else person_required. HiveError refusals
+        else. The tool sends AUTO_SEND kinds separately after this adapter returns. The route's gate
+        is applied first: a named, enabled person, and an admin for an admin-only kind, else person_required. HiveError refusals
         (403 person_required, 409 intent_pending / intent_in_flight / operation_conflict, 400 bad_request, 404
         not_available) come back as DispatchUnavailable(code) and are said to the person; they never become frames. The
         view's `destination.to_swarm` becomes `to: {kind: "swarm", ref, name}`. Unbound (None), it raises

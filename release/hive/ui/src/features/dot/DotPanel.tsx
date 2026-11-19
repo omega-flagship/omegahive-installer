@@ -36,6 +36,7 @@ import { IsolationChip } from './IsolationChip'
 import { VisibilityControl } from '../../ui/Visibility'
 import { OWN_BUDGET_CODES } from './mindStatus'
 import { PausedPill, SpendingPause, SpendingSlowed } from './SpendingPause'
+import { RefusedNotice } from './RefusedNotice'
 import { LabGuards } from '../../shell/LabBadge'
 import { OpenIn } from '../programs/OpenIn'
 import { sessionKey } from '../../store/programSession'
@@ -255,6 +256,10 @@ function PanelHeader({ agent, onCloseX, tab, setTab, onBudget, onConnect }: { ag
       <AnimatePresence initial={false}>
         {refusal && <SpendingPause key="refused" agent={agent} refusal={refusal} onFixBudget={() => setTab('model')} />}
         {!refusal && slowed && <SpendingSlowed key="slowed" slowed={slowed} />}
+      </AnimatePresence>
+      {/* why its own model calls are refused, composed in MeTTa (refused.metta), which shows nothing while they are answered */}
+      <RefusedNotice agent={agent} onChooseModel={() => setTab('model')} />
+      <AnimatePresence initial={false}>
         {showLastError && <LastError key="err" agent={agent} onFix={() => setTab('model')} />}
       </AnimatePresence>
       <Segmented<Tab>

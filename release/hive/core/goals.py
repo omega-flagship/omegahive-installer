@@ -42,6 +42,19 @@ BINDING_KEYS = ("request_id", "base_revision", "snapshot_digest")
 # What continue_goal writes into a follow-up's binding: the completed task it continues and the result checks it
 # inherits. A binding of these keys alone ties its task to no request, snapshot, share or session.
 CONTINUATION_KEYS = frozenset({"continued_from", "review", "result_schema", "validate", "from_swarm", "review_request_id"})
+WORK_SQL = "COALESCE(json_extract(binding, '$.kind'), '') != 'ask.thread'"
+
+STOP_CAUSES = {
+    "failed": "This task could not be finished.",
+    "stalled": "This task stopped making progress and needs attention.",
+    "deadline": "The time allowed for this task ended before a result arrived.",
+    "leases": "This task was picked up repeatedly, but no result arrived before each claim expired.",
+    "review": "The reviewer returned this task repeatedly, so work stopped.",
+    "research_start": "No researcher could be started for this task.",
+    "replies": "This task's mind stopped answering.",
+    "marked_failed": "This task was marked as failed. No further reason was recorded.",
+    "marked_stalled": "This task was marked as stalled. No further reason was recorded.",
+}
 
 
 def binding_digest(binding):
@@ -83,6 +96,19 @@ REVIEWS_SCHEMA = """CREATE TABLE IF NOT EXISTS goal_reviews (id TEXT PRIMARY KEY
   by TEXT NOT NULL, action TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', result_digest TEXT)"""
 ATTEMPTS_SCHEMA = """CREATE TABLE IF NOT EXISTS goal_attempts (id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, agent_id TEXT NOT NULL,
   at TEXT NOT NULL, ok INTEGER NOT NULL, errors TEXT NOT NULL, raw TEXT NOT NULL, digest TEXT NOT NULL)"""
+FILES_SCHEMA = """CREATE TABLE IF NOT EXISTS goal_files (goal_id TEXT NOT NULL, path TEXT NOT NULL, text TEXT NOT NULL,
+  agent_id TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (goal_id, path))"""
+# A task's own budget (Goals.give_step_budget): kept beside the goal, not in its binding, which a bound task's result
+# must echo. spent_at_start is started_by's stored spend at its claim, both NULL until a mind claims the task; the
+# budget applies (check_budget), and the goal list gives it as step_budget_usd, only while started_by holds the task.
+BUDGETS_SCHEMA = """CREATE TABLE IF NOT EXISTS goal_budgets (goal_id TEXT PRIMARY KEY, budget_usd REAL NOT NULL,
+  spent_at_start REAL, started_by TEXT)"""
+# The least a Create step may spend: the most one step spent in the Make runs of 19 Nov was 0.69 USD (a test author
+# writing its check eight times), and a tenth of a fresh hive's day (0.50) or the 0.25 floor of a 2 USD test hive would
+# have held that step and others like it.
+STEP_BUDGET_FLOOR_USD = 1.0
+# The most files one goal may hold staged: twice the 20 a Create piece may own, so a piece's files and its rewrites fit.
+MAX_STAGED_FILES = 40
 
 
 class Goals:
@@ -90,8 +116,116 @@ class Goals:
         self.hive = hive
         self.db = hive.db
         self.db.execute(ATTEMPTS_SCHEMA)
+        self.db.execute(FILES_SCHEMA)
         self.db.execute(REVIEWS_SCHEMA)
+        self.db.execute(BUDGETS_SCHEMA)
         self.db.execute("CREATE INDEX IF NOT EXISTS goal_attempts_goal ON goal_attempts(goal_id, at)")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS goal_stops (
+            id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, principal TEXT NOT NULL, mind_id TEXT,
+            title TEXT NOT NULL, status TEXT NOT NULL, cause TEXT NOT NULL, reason TEXT NOT NULL,
+            stopped_at TEXT NOT NULL, acknowledged_at TEXT)""")
+        self.db.execute("CREATE INDEX IF NOT EXISTS goal_stops_person ON goal_stops(principal, acknowledged_at)")
+
+    @staticmethod
+    def is_ask_thread(goal):
+        binding = goal.get("binding")
+        if isinstance(binding, str):
+            binding = json.loads(binding)
+        return isinstance(binding, dict) and binding.get("kind") == "ask.thread"
+
+    def record_stop(self, goal_id, cause=None, detail=None):
+        """Keep the person's receipt with the transition, without sending a message to the mind."""
+        goal = self.get(goal_id)
+        if goal["status"] not in ("failed", "stalled") or self.is_ask_thread(goal):
+            return
+        principal = goal["created_by"]
+        if principal.startswith("request:"):
+            request = self.db.one("SELECT from_principal FROM requests WHERE id = ?", (principal[8:],))
+            principal = request["from_principal"] if request else ""
+        if not principal.startswith("user:"):
+            return
+        cause = cause or goal["status"]
+        reason = STOP_CAUSES[cause]
+        detail = str(goal.get("result") or "" if detail is None else detail).strip()
+        if detail:
+            reason += " " + detail[:4000]
+        self.db.execute("INSERT INTO goal_stops "
+                        "(id, goal_id, principal, mind_id, title, status, cause, reason, stopped_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (new_id("gs"), goal_id, principal, goal.get("claimed_by") or goal.get("assignee"),
+                         goal["title"], goal["status"], cause, reason, goal["updated_at"]))
+
+    def stop(self, goal_id, status, cause, detail="", *, emit=True, expected=None, **values):
+        """A host stop and its durable person receipt commit together."""
+        with self.db.transaction():
+            current = self.get(goal_id)
+            if expected is not None and any(current[key] != expected[key] for key in ("status", "updated_at")):
+                return None
+            self.db.update("goals", goal_id, {**values, "status": status, "result": detail or STOP_CAUSES[cause],
+                                             "lease_until": None, "updated_at": now()})
+            self.record_stop(goal_id, cause, detail)
+        return self._emit(goal_id) if emit else self.view(self.get(goal_id))
+
+    def stop_held(self, agent_id, cause, detail):
+        """End every work goal a mind holds and is working on (claimed) as failed, with the host's cause and words, one
+        stop each. A mind whose runtime rests after its replies kept being refused (Hive.record_trace) still holds them
+        under a lease its live loop renews, so whoever waits on one, a Create plan step or a Code repair, would wait
+        with nothing said; failed is how the hive already ends a goal it judges won't finish (a lapsed deadline, too
+        many review returns), and its result is the detail goal_ended passes on as goal_reason. A goal waiting on a
+        person and the Ask's own conversation stay as they are. Time: one select and one stop per held goal."""
+        stopped = []
+        for goal in self.db.all(f"SELECT * FROM goals WHERE claimed_by = ? AND status = 'claimed' AND {WORK_SQL}",
+                                (agent_id,)):
+            if self.stop(goal["id"], "failed", cause, detail, expected=goal) is not None:
+                stopped.append(goal["id"])
+        return stopped
+
+    # ---- a task's own budget: a step the hive hands a mind spends at most this, whatever its turns ------------------
+
+    def give_step_budget(self, goal_id, agent_id):
+        """Give a task handed to this mind (a Create plan's step) its own budget: Budgets.task_budget, what a work session
+        given none may spend, and at least STEP_BUDGET_FLOOR_USD. A mind holding a goal with its own budget gets its
+        turns back while it holds it (hive_helpers.held_goal reads step_budget_usd from list), so a builder whose tool
+        calls keep failing would otherwise spend on until a limit for the whole hive or mind stopped it. The budget
+        starts when a mind claims the task (_start_budget); the mind's own limits and the hive's still apply to every
+        call."""
+        budget = max(self.hive.budgets.task_budget(self.hive.agent(agent_id)), STEP_BUDGET_FLOOR_USD)
+        self.db.execute("INSERT INTO goal_budgets (goal_id, budget_usd) VALUES (?, ?) "
+                        "ON CONFLICT(goal_id) DO UPDATE SET budget_usd = excluded.budget_usd", (goal_id, float(budget)))
+        return budget
+
+    def _start_budget(self, agent_id, goal_id):
+        """A task's budget counts from its holder's claim: the claimer's stored spend then. The same mind claiming it
+        again (after its lease lapsed) keeps its start, so it cannot begin the budget afresh; another mind claiming it
+        (its first holder deleted, or that holder's lease lapsed) starts from its own spend, which the first holder's
+        start does not measure. Spend before the claim (another task's, the packet's reading) is not the task's."""
+        self.db.execute("UPDATE goal_budgets SET spent_at_start = (SELECT COALESCE(spent_usd, 0) FROM agents WHERE id = ?), "
+                        "started_by = ? WHERE goal_id = ? AND started_by IS NOT ?", (agent_id, agent_id, goal_id, agent_id))
+
+    def check_budget(self, agent, estimate):
+        """Refuse a paid call once a task the mind holds has spent its budget (give_step_budget, started at this mind's
+        claim): what the mind has spent since the claim, counted as a work session counts it (the mind's stored spend,
+        since calls cannot be told apart by task). The call's worst case is not added: real Create calls reserve up to 1.34
+        USD and settle near 0.15 at most, so a worst-case check held steps far below their budget; the step can pass
+        it by one call. Holding several, the first one spent refuses. The refusal names the task (scope task:<id>, as
+        agent:<id> and swarm:<id> name theirs, in the hive's word for the work, test_host_wording), so
+        note_refusal keeps the mind held for spending and a Create plan waiting on it says so. Time: one join of the
+        mind's held, started budgets per paid call. estimate stays for the refusal's words."""
+        rows = self.db.all("SELECT g.id, b.budget_usd, b.spent_at_start FROM goal_budgets b JOIN goals g ON g.id = b.goal_id "
+                           "WHERE g.claimed_by = ? AND b.started_by = g.claimed_by AND g.status IN ('claimed', 'waiting')",
+                           (agent["id"],))
+        if not rows:
+            return
+        spent_now = float(self.hive._agent_row(agent["id"])["spent_usd"] or 0)
+        for row in rows:
+            budget = float(row["budget_usd"])
+            spent = max(0.0, spent_now - float(row["spent_at_start"]))
+            if spent >= budget:
+                raise self.hive.error(402, "spend_limit",
+                                      f"{agent['name']} has spent ${spent:.2f} of the ${budget:.2f} its task allows; "
+                                      f"this call could cost up to ${estimate:.4f}",
+                                      {"scope": f"task:{row['id']}", "period": "total", "limit_usd": budget,
+                                       "spent_usd": round(spent, 6)})
 
     # ---- result schemas: the shape a result must have before the goal is done (hive/core/result_schema.py) ----
 
@@ -111,6 +245,40 @@ class Goals:
         self.get(goal_id)
         rows = self.db.all("SELECT * FROM goal_attempts WHERE goal_id = ? ORDER BY at, rowid", (goal_id,))
         return [{**r, "ok": bool(r["ok"]), "errors": json.loads(r["errors"])} for r in rows]
+
+    def stage_file(self, agent, goal_id, path, text):
+        """One whole file staged on a goal the mind holds and is working on (hive-goal-file), for whoever takes the
+        goal's answer: a Create piece's builder or test author writes each file as its own command, so a reply cut off
+        at its room keeps the files it finished, where one JSON holding them all was lost whole. A path staged again
+        keeps its last text. Refused: a goal the mind doesn't hold, a path that isn't a plain relative one, a file over
+        MAX_RESULT_DATA_BYTES (the most result data a goal keeps), more than MAX_STAGED_FILES on one goal. Nothing is
+        emitted: the goal's answer, when it comes, reads these (staged_files)."""
+        goal = self.get(goal_id)
+        self._fence(agent, goal)
+        if goal["claimed_by"] != agent["id"] or goal["status"] != "claimed":
+            raise self.hive.error(409, "not_claimed", "you do not hold this task")
+        path = str(path or "").strip()
+        if (not path or len(path) > 300 or path.startswith("/") or "\\" in path
+                or any(part in ("", ".", "..") for part in path.split("/"))):
+            raise self.hive.error(400, "bad_path", "a staged file's path is a plain relative path, such as app.js")
+        text = "" if text is None else str(text)
+        size = len(text.encode("utf-8"))
+        if size > MAX_RESULT_DATA_BYTES:
+            raise self.hive.error(413, "file_too_large", f"a staged file holds at most {MAX_RESULT_DATA_BYTES} bytes")
+        with self.db.transaction():
+            others = self.db.one("SELECT COUNT(*) AS n FROM goal_files WHERE goal_id = ? AND path != ?",
+                                 (goal_id, path))["n"]
+            if others >= MAX_STAGED_FILES:
+                raise self.hive.error(409, "too_many_files", f"a task holds at most {MAX_STAGED_FILES} staged files")
+            self.db.execute("INSERT INTO goal_files (goal_id, path, text, agent_id, at) VALUES (?, ?, ?, ?, ?) "
+                            "ON CONFLICT(goal_id, path) DO UPDATE SET text = excluded.text, "
+                            "agent_id = excluded.agent_id, at = excluded.at", (goal_id, path, text, agent["id"], now()))
+        return {"goal_id": goal_id, "path": path, "bytes": size}
+
+    def staged_files(self, goal_id):
+        """The files staged on a goal (stage_file), {path: text}, for its answer's taker to read beside the answer."""
+        return {r["path"]: r["text"] for r in self.db.all("SELECT path, text FROM goal_files WHERE goal_id = ? "
+                                                         "ORDER BY path", (goal_id,))}
 
     def _record_attempt(self, goal_id, agent_id, raw, errors):
         text = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False, sort_keys=True)
@@ -265,9 +433,11 @@ class Goals:
         returns = int(goal.get("returns") or 0) + 1
         self._record_review(goal_id, by, "return", notes, digest)
         if returns >= MAX_RETURNS:
-            self.db.update("goals", goal_id, {"status": "failed", "returns": returns, "review_notes": str(notes)[:4000], "updated_at": now(),
-                                              "result": f"returned {returns} times by its reviewer; last notes: {str(notes)[:300]}"})
-            return self._emit(goal_id)
+            stopped = self.stop(goal_id, "failed", "review", f"returned {returns} times by its reviewer; last notes: {str(notes)[:300]}",
+                                expected=goal, returns=returns, review_notes=str(notes)[:4000])
+            if stopped is None:
+                raise self.hive.error(409, "goal_changed", "this task changed while it was being reviewed; read it again")
+            return stopped
         # Back to its holder only while the holder is a live mind, judged in the write itself (stand-in r3): a holder
         # deleted between the read and this write never gets the work back; it reopens, unclaimed, for another mind.
         back = self.db.execute(
@@ -312,7 +482,12 @@ class Goals:
         return out
 
     def list(self, swarm_id, status=None):
-        sql, params = "SELECT * FROM goals WHERE swarm_id = ?", [swarm_id]
+        # step_budget_usd: the task's own budget while the mind holding it is the one that started it (give_step_budget,
+        # _start_budget), the condition check_budget applies; a mind holding such a goal gets its turns back
+        # (hive_helpers.held_goal). Time: one goal_budgets primary-key lookup per listed goal.
+        sql = ("SELECT *, (SELECT b.budget_usd FROM goal_budgets b WHERE b.goal_id = goals.id "
+               f"AND b.started_by = goals.claimed_by) AS step_budget_usd FROM goals WHERE swarm_id = ? AND {WORK_SQL}")
+        params = [swarm_id]
         if status:
             sql += " AND status = ?"
             params.append(status)
@@ -321,8 +496,9 @@ class Goals:
                 for r in self.db.all(sql + " ORDER BY priority DESC, created_at", params)]
 
     def _fence(self, agent, goal):
-        """research.py: a researcher child touches only its own research task, and a research task only its own
-        researcher (host-side, beside the researcher role's policy)."""
+        """Minds cannot work conversation bookkeeping; a research task belongs only to its own researcher."""
+        if self.is_ask_thread(goal):
+            raise self.hive.error(409, "ask_thread", "this task belongs to an Ask conversation; it is not work to claim or finish")
         research = getattr(self.hive, "research", None)
         if research is not None:
             research.fence(agent, goal)
@@ -442,7 +618,8 @@ class Goals:
     def _emit(self, goal_id):
         row = self.get(goal_id)
         goal = {**self.view(row), "review_by": self.review_spec(row)}
-        self.hive.events.publish("goal.updated", goal=goal)
+        if not self.is_ask_thread(row):
+            self.hive.events.publish("goal.updated", goal=goal)
         return goal
 
     async def create(self, swarm_id, title, detail="", priority=0.5, parent_id=None, created_by="user:operator",
@@ -480,6 +657,8 @@ class Goals:
             raise self.hive.error(403, "forbidden", "a researcher works only on its own research task")
         if parent_id:
             parent = self.get(parent_id)
+            if self.is_ask_thread(parent):
+                raise self.hive.error(409, "ask_thread", "an Ask conversation cannot be split into subtasks")
             if parent["swarm_id"] != swarm_id:
                 raise self.hive.error(400, "bad_request", "parent task is in another swarm")
             author = created_by.removeprefix("agent:")
@@ -517,15 +696,15 @@ class Goals:
         return self._emit(row["id"]) if emit else self.view(self.get(row["id"]))
 
     async def announce(self, goal):
-        """Tell the swarm's awake members (or only the assignee, awake or not), except whoever posted it. A Studio
-        session's goal is never announced (J3 plan r1.1 S6.1): its step message is the maker's only prompt."""
+        """Tell the awake swarm or the assignee, except its author. Conversation bookkeeping is never announced;
+        a Studio session gets only its maker's step prompt."""
         binding = goal.get("binding")
         if isinstance(binding, str):
             try:
                 binding = json.loads(binding)
             except ValueError:
                 binding = None
-        if isinstance(binding, dict) and binding.get("kind") == "studio.session":
+        if isinstance(binding, dict) and binding.get("kind") in ("studio.session", "ask.thread"):
             return
         author = goal["created_by"].removeprefix("agent:")
         envelope_text = (f"New goal {goal['id']} (priority {goal['priority']:.2f}): {goal['title']}"
@@ -548,27 +727,32 @@ class Goals:
                                           extra={"event": "goal", "goal_id": goal["id"]})
 
     def update(self, goal_id, changes):
-        goal = self.get(goal_id)
-        values = {}
-        if "status" in changes:
-            if goal["status"] == "submitted" and changes["status"] == "done":
-                raise self.hive.error(409, "needs_review", "this result is waiting for its reviewer: accept or return it with a review")
-            if changes["status"] not in STATUSES:
-                raise self.hive.error(400, "bad_request", f"status must be one of {sorted(STATUSES)}")
-            if changes["status"] != goal["status"] and changes["status"] not in TERMINAL_NEXT.get(goal["status"], STATUSES):
-                raise self.hive.error(409, "goal_closed", f"this task is {goal['status']}; it cannot be moved to {changes['status']}")
-            values["status"] = changes["status"]
-            if changes["status"] == "open":
-                # Re-opening (e.g. a stalled goal) is a fresh start: no holder, no lapses.
-                values.update(claimed_by=None, lease_until=None, attempts=0)
-        if "priority" in changes:
-            values["priority"] = max(0.0, min(1.0, float(changes["priority"])))
-        for key in ("title", "detail"):
-            if key in changes:
-                values[key] = str(changes[key])
-        if values:
-            values["updated_at"] = now()
-            self.db.update("goals", goal["id"], values)
+        with self.db.transaction():
+            goal = self.get(goal_id)
+            if self.is_ask_thread(goal):
+                raise self.hive.error(409, "ask_thread", "end the Ask conversation to close this task")
+            values = {}
+            if "status" in changes:
+                if goal["status"] == "submitted" and changes["status"] == "done":
+                    raise self.hive.error(409, "needs_review", "this result is waiting for its reviewer: accept or return it with a review")
+                if changes["status"] not in STATUSES:
+                    raise self.hive.error(400, "bad_request", f"status must be one of {sorted(STATUSES)}")
+                if changes["status"] != goal["status"] and changes["status"] not in TERMINAL_NEXT.get(goal["status"], STATUSES):
+                    raise self.hive.error(409, "goal_closed", f"this task is {goal['status']}; it cannot be moved to {changes['status']}")
+                values["status"] = changes["status"]
+                if changes["status"] == "open":
+                    # Re-opening (e.g. a stalled goal) is a fresh start: no holder, no lapses.
+                    values.update(claimed_by=None, lease_until=None, attempts=0)
+            if "priority" in changes:
+                values["priority"] = max(0.0, min(1.0, float(changes["priority"])))
+            for key in ("title", "detail"):
+                if key in changes:
+                    values[key] = str(changes[key])
+            if values:
+                values["updated_at"] = now()
+                self.db.update("goals", goal["id"], values)
+                if values.get("status") in ("failed", "stalled") and values["status"] != goal["status"]:
+                    self.record_stop(goal_id, "marked_" + values["status"], detail="")
         return self._emit(goal_id)
 
     async def notify_cancelled(self, goal_id):
@@ -629,6 +813,7 @@ class Goals:
                 return self.heartbeat(agent, goal_id)  # claiming a goal you already hold renews it
             raise self.hive.error(409, "not_open", f"task is {goal['status']}"
                                   + (f" by {goal['claimed_by']}" if goal["claimed_by"] else ""))
+        self._start_budget(agent["id"], goal_id)
         self.hive.mark_input(agent["id"])   # a claim is real input to the idle signal (spend never is)
         return self._emit(goal_id)
 
@@ -703,6 +888,8 @@ class Goals:
         text = str(result or "").strip()
         if status == "done" and not text:
             raise self.hive.error(400, "no_result", "say what was done: a task is not done without a result")
+        if status == "failed" and not text:
+            raise self.hive.error(400, "no_result", "say why this task could not be finished")
         submit = False
         read_guards = ()
         if status == "done" and not trusted_review:
@@ -733,7 +920,10 @@ class Goals:
         sets = ", ".join(f"{k} = ?" for k in values)
         sql = f"UPDATE goals SET {sets} WHERE id = ? AND status = ? AND claimed_by IS ? AND updated_at = ?"
         params = (*values.values(), goal_id, goal["status"], goal["claimed_by"], goal["updated_at"])
-        cur = self.db.guarded_execute(sql, params, read_guards) if read_guards else self.db.execute(sql, params)
+        with self.db.transaction():
+            cur = self.db.guarded_execute(sql, params, read_guards) if read_guards else self.db.execute(sql, params)
+            if cur is not None and cur.rowcount == 1 and status == "failed":
+                self.record_stop(goal_id)
         if cur is None:
             raise self.hive.error(409, "validation_context_changed", "the stored review context changed while this result was checked; read it again and propose again")
         if cur.rowcount != 1:
@@ -749,6 +939,14 @@ class Goals:
         self.hive.mark_input(agent["id"])   # a result is meaningful output
         return self._emit(goal_id)
 
+    def holds_create_step(self, agent_id):
+        """Whether the mind is working on a step of a Create plan (a claimed goal the plan stamped create-plan:<plan>:
+        a build, the acceptance check, the plan, a design or a review). Such an answer holds whole files or a whole plan
+        in one reply, and a reply cut off at its room is thrown away whole, so the model route gives these calls the
+        model's whole room at once. Time: one lookup."""
+        return self.db.one("SELECT 1 FROM goals WHERE claimed_by = ? AND status = 'claimed' AND created_by LIKE "
+                           "'create-plan:%' LIMIT 1", (agent_id,)) is not None
+
     def release_rows(self, agent_id, by, why):
         """A deleted mind's unfinished work, released in the caller's transaction (its soft delete); events after commit.
         open / claimed / waiting / stalled where it is assignee or holder: back to open, unassigned and unclaimed, and
@@ -758,6 +956,8 @@ class Goals:
         changed = []
         for goal in self.db.all("SELECT * FROM goals WHERE (assignee = ? OR claimed_by = ?) "
                                 "AND status IN ('open', 'claimed', 'waiting', 'stalled', 'submitted')", (agent_id, agent_id)):
+            if self.is_ask_thread(goal):
+                continue
             if goal["status"] == "submitted":
                 if goal.get("assignee") != agent_id:
                     continue   # the submitter's own record stays; a return reopens it
@@ -781,18 +981,15 @@ class Goals:
         # holder is told, whatever state it is in.
         for goal in self.db.all("SELECT * FROM goals WHERE deadline_at IS NOT NULL AND deadline_at < ? "
                                 "AND status IN ('open', 'claimed', 'waiting', 'stalled')", (moment,)):
-            self.db.update("goals", goal["id"], {"status": "failed", "lease_until": None, "updated_at": now(),
-                                                 "result": "deadline passed before a result arrived"})
+            if self.stop(goal["id"], "failed", "deadline", emit=False, expected=goal) is None:
+                continue
             await self._close_bound(goal, "GOAL-EXPIRED", "goal_expired")
             self._emit(goal["id"])
             released.append(goal["id"])
         for goal in self.db.all("SELECT * FROM goals WHERE status = 'claimed' AND lease_until IS NOT NULL "
                                 "AND lease_until < ?", (moment,)):
             if goal["attempts"] >= MAX_ATTEMPTS:
-                self.db.update("goals", goal["id"], {"status": "stalled", "lease_until": None, "updated_at": now(),
-                                                     "result": f"stalled: {goal['attempts']} claims lapsed "
-                                                               f"without a result (last {goal['claimed_by']})"})
-                self._emit(goal["id"])
+                self.stop(goal["id"], "stalled", "leases", expected=goal)
             else:
                 self.db.update("goals", goal["id"], {"status": "open", "claimed_by": None, "lease_until": None,
                                                      "updated_at": now()})

@@ -413,7 +413,8 @@ def test_T_GW6_a_provider_failure_returns_a_code_only_and_keeps_the_hold(gw):
         token = mint(client, gw["ann"])
         turn = open_turn(client, gw["ann"], "op-gw6-0001")
         r = call(client, token, turn)
-        assert (r.status_code, code(r)) == (502, "upstream_error")
+        # the provider's 500, said as refusals.py's row in the hive's words, with what stays held for it
+        assert (r.status_code, code(r)) == (500, "provider_unavailable")
         assert "SECRET" not in r.text and "sk-or" not in r.text and r.json()["error"]["held_usd"] > 0
         assert not hive_headers(r) and states(hive) == ["unknown"]
     finally:

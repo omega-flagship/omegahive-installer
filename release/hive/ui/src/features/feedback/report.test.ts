@@ -1,9 +1,11 @@
 // Purpose: tests a report's every form (features/feedback/report.ts): the text the person sees, copies and saves, which
-// the testers' group importer files whole; what is redacted before anything leaves; the board's prefilled address and
-// its fall-back to the clipboard; the errors merged by id; and properties held over many generated reports.
+// the testers' group importer files whole; what is redacted before anything leaves, case for case as the hive cleans it
+// (redact.cases.json); the board's prefilled address and its fall-back to the clipboard; the errors merged by id, another
+// person's in an admin's logs without its words; and properties held over many generated reports.
 import { describe, expect, it } from 'vitest'
 import type { HiveErrorAnswer } from '../../api/types'
 import type { PageError } from '../../lib/recentErrors'
+import shared from './redact.cases.json'
 import { deviceOf, errorsText, fieldsOf, FORMS, issueUrl, KINDS, MAX_ISSUE_URL, mergeErrors, payloadOf, redact, reportId, reportText, titleOf, type Report } from './report'
 
 const BOARD = { url: 'https://github.com/omega-flagship/omegahive-feedback' }
@@ -89,6 +91,11 @@ describe('what never leaves the hive', () => {
   ])('%s', (raw, safe) => {
     expect(redact(raw)).toBe(safe)
   })
+  // the same cases the hive's redact.shared runs (hive/tests/test_feedback.py), so the page and the hive clean alike:
+  // OAuth codes, cookie values and network addresses among them, and what looks like one but isn't (a time, a version)
+  it.each(shared.cases.map((c) => [c.in, c.out] as const))('as the hive cleans it: %s', (raw, safe) => {
+    expect(redact(raw)).toBe(safe)
+  })
   it('leaves times, versions, routes and error ids alone', () => {
     const plain = '2026-11-16T00:12:34Z Mac v0.31 (build f9648d4386) GET /api/swarms/{swarm_id} (e-1a2b3c4d) a_vega01'
     expect(redact(plain)).toBe(plain)
@@ -139,6 +146,18 @@ describe('errors, ids and devices', () => {
     expect(merged.map((e) => e.where)).toEqual(['Screen.tsx:812', 'GET /api/swarms/{swarm_id}'])
     expect(merged[1].at).toBe('2026-11-16T00:10:00Z')
     expect(errorsText(merged).split('\n')[0]).toBe('2026-11-16T00:11:00Z page Screen.tsx:812: Cannot read properties of undefined')
+  })
+  it("writes an admin's own error with its words and another person's by where and how it failed, saying whose", () => {
+    const merged = mergeErrors([
+      { ...hive[0], who: 'you' },
+      { id: 'e-0c3f9b12', at: '2026-11-16T00:09:00.000Z', method: 'GET', route: '/api/spaces/{space_id}', status: 404, code: 'not_found', who: 'another person' },
+      { id: 'e-77aa0011', at: '2026-11-16T00:08:00.000Z', method: 'POST', route: '/api/signin', status: 401, code: 'unauthorized', who: 'no session' },
+    ], [], Infinity)
+    expect(errorsText(merged).split('\n')).toEqual([
+      '2026-11-16T00:10:00Z 404 not_found GET /api/swarms/{swarm_id} (e-00000001): no such swarm',
+      '2026-11-16T00:09:00Z 404 not_found GET /api/spaces/{space_id} (e-0c3f9b12), another person',
+      '2026-11-16T00:08:00Z 401 unauthorized POST /api/signin (e-77aa0011), no session',
+    ])
   })
   it('carries at most the newest ten', () => {
     const many: PageError[] = Array.from({ length: 30 }, (_, i) => ({ at: `2026-11-16T00:${String(i).padStart(2, '0')}:00Z`, kind: 'page' as const, where: `x.ts:${i}`, message: 'm' }))

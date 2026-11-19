@@ -1,7 +1,7 @@
 // Purpose: a person's feedback or bug report as one value, and every form it leaves the hive in: the text they see
 // whole before it goes (the same text is the copy for the testers' group and the saved file), the feedback board's
 // prefilled new-issue address with its fall-back to the copy when too long, and the payload a report service takes.
-import type { FeedbackContext, HiveErrorAnswer } from '../../api/types'
+import type { FeedbackContext, HiveLogsError } from '../../api/types'
 import type { PageError } from '../../lib/recentErrors'
 
 export type ReportKind = 'bug' | 'ux' | 'idea'
@@ -57,11 +57,14 @@ export interface ReportError {
   where: string
   status?: number
   code?: string
-  message: string
+  /** none on another person's error answer in an admin's logs */
+  message?: string
   /** an error the hive did not expect: where in the hive it was raised */
   raised?: string
   /** what failed when it was no request: the page itself, a mind, a hand-over or a screen */
   source?: 'page' | 'mind' | 'handover' | 'screen'
+  /** in an admin's logs, whose it was when not theirs: "another person" or "no session" */
+  who?: string
 }
 
 export interface Report {
@@ -92,31 +95,52 @@ export const REPORT_ERRORS = 10
 
 /**
  * The hive's error answers and the page's own, as one list, newest first: a page error the hive gave an id for is the
- * hive's answer, which names the route's pattern and, for an unexpected error, where it was raised.
- * Time: (h + p) log (h + p) comparisons, h and p the two lists' lengths (at most 10 and 50).
+ * hive's answer, which names the route's pattern and, for an unexpected error, where it was raised. A report keeps the
+ * newest REPORT_ERRORS; the logs keep them all (`keep` Infinity).
+ * Time: (h + p) log (h + p) comparisons, h and p the two lists' lengths (at most 100 and 50).
  */
-export function mergeErrors(hive: readonly HiveErrorAnswer[], page: readonly PageError[]): ReportError[] {
+export function mergeErrors(hive: readonly HiveLogsError[], page: readonly PageError[], keep = REPORT_ERRORS): ReportError[] {
   const byId = new Map(hive.map((e) => [e.id, e]))
-  const out: ReportError[] = hive.map((e) => ({ at: second(e.at), id: e.id, where: `${e.method} ${e.route}`, status: e.status, code: e.code, message: e.message, ...(e.raised ? { raised: e.raised } : {}) }))
+  const out: ReportError[] = hive.map((e) => ({ at: second(e.at), id: e.id, where: `${e.method} ${e.route}`, status: e.status, code: e.code,
+    ...(e.message !== undefined ? { message: e.message } : {}), ...(e.raised ? { raised: e.raised } : {}), ...(e.who && e.who !== 'you' ? { who: e.who } : {}) }))
   for (const e of page) if (!e.id || !byId.has(e.id))
     out.push({ at: second(e.at), ...(e.id ? { id: e.id } : {}), where: e.where, status: e.status, code: e.code, message: e.message, ...(e.kind !== 'request' ? { source: e.kind } : {}) })
-  return out.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).slice(0, REPORT_ERRORS)
+  return out.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).slice(0, keep)
 }
 
 /** "2026-11-16T00:12:34.567Z" or "...+00:00" as UTC to the second: "2026-11-16T00:12:34Z". */
-function second(at: string): string {
+export function second(at: string): string {
   const t = Date.parse(at)
   return Number.isFinite(t) ? new Date(t).toISOString().replace(/\.\d{3}Z$/, 'Z') : at
 }
 
 /**
  * What must never leave the hive in a report, replaced where it stands, so the person sees exactly what goes: email
- * addresses, phone numbers, home folders (they name the person), keys and tokens, the hive's own key ids (`k_` and 8 or
+ * addresses, phone numbers, home folders (they name the person), keys and tokens, OAuth codes, cookie values, network addresses, the hive's own key ids (`k_` and 8 or
  * 32 hex digits, `env:<provider>`, either as a `key:` scope, the grammar of hive/core/keyids.py), and the ids of people
  * and conversations. The board goes public later, and the testers' group importer refuses to post any of these. Its own
  * hidden marker is taken apart too, and a line it would read as a field's start is LABEL_LINE's, so nothing a person
- * writes is read as the importer's.
+ * writes is read as the importer's. The hive cleans what it keeps with the same rules
+ * in the same order (hive/core/redact.py SHARED); redact.cases.json holds the cases both test suites run.
  */
+const IPV4 = '(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)(?:\\.(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)){3}'
+const H = '[0-9a-f]{1,4}'
+/**
+ * Every written form of an IPv6 address (the forms Sentry Relay's IPV6_REGEX lists, relay-pii/src/regexes.rs), never a
+ * bare "::" nor a time like 12:34:56, and whole: no word character or colon on either side, nor a zone or IPv4 tail left after.
+ */
+const IPV6 = `(?<![\\w:.])(?:${[
+  `(?:${H}:){7}${H}`, `(?:${H}:){1,7}:`, `(?:${H}:){1,6}:${H}`, `(?:${H}:){1,5}(?::${H}){1,2}`, `(?:${H}:){1,4}(?::${H}){1,3}`,
+  `(?:${H}:){1,3}(?::${H}){1,4}`, `(?:${H}:){1,2}(?::${H}){1,5}`, `${H}:(?::${H}){1,6}`, `:(?::${H}){1,7}`,
+  'fe80:(?::[0-9a-f]{0,4}){0,4}%[0-9a-z]+', `::(?:ffff(?::0{1,4})?:)?${IPV4}`, `(?:${H}:){1,4}:${IPV4}`,
+].join('|')})(?![\\w:%]|\\.\\d)`
+/**
+ * The session and sign-in cookies the hive sets and the common ones Relay's SENSITIVE_COOKIE_NAMES lists: the hive's
+ * COOKIES (hive/core/redact.py), whose test checks it holds every cookie the hive sets.
+ */
+const COOKIES = ['hive_signin', 'hive_oauth', 'hive_google_connector', 'omega_session', 'session', 'sessionid', '__session',
+  'user_session', 'connect.sid', 'jsessionid', 'phpsessid', 'laravel_session', 'csrf', 'xsrf', '_csrf', '_xsrf', 'csrf-token',
+  'csrf_token', 'xsrf-token', 'xsrf_token']
 const REDACTIONS: readonly (readonly [RegExp, string])[] = [
   [/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]'],
   [/(?:\/Users|\/home)\/[^/\s]+/g, '~'],
@@ -127,6 +151,18 @@ const REDACTIONS: readonly (readonly [RegExp, string])[] = [
   [/\bc_[A-Za-z0-9_.-]*~[A-Za-z0-9_:~.-]+/g, '[conversation]'],
   [/user:[A-Za-z0-9_.-]+/g, '[person]'],
   [/\+\d[\d\s().-]{6,}\d/g, '[phone]'],
+  // an OAuth flow's codes and tokens where an address carries them, and a code named as one, short ones included
+  [/([?&#](?:code|state|code_verifier|code_challenge|oauth_token|oauth_verifier|access_token|refresh_token|id_token|client_secret|token)=)[^&#\s"'<>]+/gi, '$1[code]'],
+  [/\b((?:authori[sz]ation|auth|oauth|device|user|verification|one[-_ ]?time|otp)[-_ ]?code["']?\s*[:=]\s*["']?)[^\s"',;&]+/gi, '$1[code]'],
+  // any other code given as code=, code: or "code" and then a value of 6 or more with a digit in it ("code=3b9c8a5f",
+  // "oauth code 4/0AbC1"), never a word such as an error's code (rate_limited) nor a status (code 429)
+  [/\b((?:(?:authori[sz]ation|auth|oauth|device|verification|one[-_ ]?time|otp)[-_ ]?)?code["']?(?:\s*[:=]\s*["']?|\s+))(?=[A-Za-z0-9._~+/-]*\d)[A-Za-z0-9._~+/-]{6,}/gi, '$1[code]'],
+  // cookie values: a Cookie or Set-Cookie header's whole value, and a session or sign-in cookie's wherever it is named
+  [/\b((?:set-)?cookie["']?\s*[:=]\s*["']?)[^\n"']+/gi, '$1[cookie]'],
+  [new RegExp(`\\b((?:${COOKIES.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})=)[^;\\s&"']+`, 'gi'), '$1[cookie]'],
+  // network addresses
+  [new RegExp(IPV6, 'gi'), '[address]'],
+  [new RegExp(`\\b${IPV4}\\b`, 'g'), '[address]'],
   // a long run of letters and digits with both in it: a key, a token or a secret's digest, never a word
   [/\b(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,}\b/g, '[token]'],
   // what the importer reads as its own: its hidden marker
@@ -159,7 +195,7 @@ export function titleOf(words: string): string {
 
 const errorLine = (e: ReportError) =>
   [e.at, e.status !== undefined ? String(e.status) : e.source ?? 'page', e.code, e.where, e.id ? `(${e.id})` : ''].filter(Boolean).join(' ') +
-  `: ${redact(e.message)}${e.raised ? `; raised ${e.raised}` : ''}`
+  `${e.message !== undefined ? `: ${redact(e.message)}` : ''}${e.raised ? `; raised ${e.raised}` : ''}${e.who ? `, ${e.who}` : ''}`
 
 /** The hive's recent errors as lines, newest first; "" with none. */
 export const errorsText = (errors: readonly ReportError[]) => errors.map(errorLine).join('\n')

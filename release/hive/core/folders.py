@@ -670,6 +670,7 @@ def install_routes(app, hive, operator, admin, agent_from, viewer):
     @app.delete("/api/folders/{folder_id}")
     async def unlink_folder(folder_id: str, request: Request):
         session = admin(request)
+        folders.person_may_read(viewer(session), folders.row(folder_id))
         return folders.unlink(folder_id, who(session), request)
 
     @app.post("/api/folders/{folder_id}/write")

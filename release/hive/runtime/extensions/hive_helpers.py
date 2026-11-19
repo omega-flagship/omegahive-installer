@@ -37,8 +37,7 @@ try:
         memory_file,
         protected_atom,
         evict_receipt,
-        save_begin,
-        save_commit,
+        save_atoms,
         _escape_metta_string,
         _metta_string,
         _has_unescaped_quote,
@@ -156,8 +155,7 @@ except Exception:
         memory_file,
         protected_atom,
         evict_receipt,
-        save_begin,
-        save_commit,
+        save_atoms,
         _escape_metta_string,
         _metta_string,
         _has_unescaped_quote,
@@ -308,6 +306,8 @@ def chosen_wait_seconds(sexpr_repr, retry_kind="normal", format_attempts=0, hive
         return PROVIDER_RETRY_SECONDS if seconds <= 0 else int(min(86400, max(30, seconds)))
     if _WAIT_PROVIDER.match(text):
         return PROVIDER_RETRY_SECONDS
+    if held_goal():
+        return -1   # the mind holds a claimed goal with its own budget: its wait was refused (wait_result), so its turns go on
     found = _WAIT_SECONDS.match(text)
     if not found:
         return 0
@@ -335,7 +335,78 @@ def runtime_retry_due(kind, format_attempts):
     return str(kind) == "format" and 1 <= int(format_attempts) <= MAX_FORMAT_RETRIES
 
 
-def _model_response(response, provider_failure="normal"):
+# A loop cycle asks while a mind's turns are spent, every sleepInterval (3 s), so one request per this many seconds.
+HELD_GOAL_TTL = 5
+_HELD = {"at": None, "goal": ""}
+
+
+def held_goal(now=None):
+    """'<id> <title>' of a goal this mind has claimed, still holds and that carries its own budget, or '' (none, or the
+    hive cannot say): the hive-goals reading (hive_commons.held_goals), counting only goals it claimed itself whose
+    step_budget_usd the hive's list gives (a Create step's, started at this mind's claim: Goals.list), reused for
+    HELD_GOAL_TTL s. Any other goal it holds (a person's task, a swarm goal, a sub-goal it claimed) has no budget to
+    bound renewed turns, so it keeps the turns a message or a wake buys and its waits, as before; a goal waiting on a
+    person (status waiting) is not read, since the mind waits on it by design."""
+    import time
+    t = time.monotonic() if now is None else now
+    if _HELD["at"] is not None and t - _HELD["at"] < HELD_GOAL_TTL:
+        return _HELD["goal"]
+    try:
+        import hive_commons
+        goals, error = hive_commons.held_goals(("claimed",), holder_only=True)
+    except Exception:   # the mind keeps its normal turns when the hive cannot answer
+        goals, error = None, "unavailable"
+    budgeted = [g for g in goals or [] if g.get("step_budget_usd") is not None]
+    goal = "" if error or not budgeted else f"{budgeted[0]['id']} {budgeted[0].get('title') or ''}".strip()
+    _HELD.update(at=t, goal=goal)
+    return goal
+
+
+def renews_turns(loops, reply_kind):
+    """'renew' when this cycle gives a mind back its spent turns: they are spent (loops 0 or less), its own reply
+    spent them (reply_kind normal, honor-chosen-wait's &lastReplyKind), and it holds a claimed goal with its own
+    budget (held_goal), which bounds what the renewed turns spend; else 'keep'.
+    Without this, a builder that claimed its goal got 12 model calls per message, 7 after a format retry, then no call
+    until the 900 s wake, and sat silent holding the goal. A reply the runtime failed keeps its own schedule: a
+    provider failure's PROVIDER_RETRY_SECONDS back-off (a 402 at the mind's spending cap, an outage) and a format
+    failure's FORMAT_RETRY_SECONDS, whose wake the loop grants when due, and past MAX_FORMAT_RETRIES the rest #491
+    reports, after which Goals.stop_held ends what the mind holds."""
+    if int(loops) > 0:
+        _HELD["at"] = None      # a turn ran (it may have claimed or finished a goal): read the hive afresh once spent
+        return "keep"
+    if str(reply_kind) != "normal":
+        return "keep"
+    if _HELD["at"] is not None and not _HELD["goal"]:
+        return "keep"           # it held nothing when its turns ran out, and only its own turns can claim a goal
+    return "renew" if held_goal() else "keep"
+
+
+def wait_result(reason, reply_kind="normal"):
+    """What a wait answers: WAITING, or, for a wait the mind chose itself (reply_kind normal) while it holds a claimed
+    goal with its own budget (held_goal), WAIT-REFUSED naming it, since a wait finishes nothing it holds and its turns
+    go on (chosen_wait_seconds then lets the turns run). The runtime's own wait after a format or provider failure is
+    never refused: the mind chose no wait, and the reason it carries is the retry's hint."""
+    if str(reply_kind) != "normal":
+        return f"WAITING:{reason}"
+    goal = held_goal()
+    if not goal:
+        return f"WAITING:{reason}"
+    gid = goal.split()[0]
+    return (f"WAIT-REFUSED you hold {goal}; a wait finishes nothing you hold. Go on with it, finish it with "
+            f"hive-goal-propose {gid} <result>, or give it back with hive-goal-fail {gid} <reason>.")
+
+
+def rests_after(kind, previous, message_new=False):
+    """Whether this reply leaves the mind resting with nothing due to wake it: a runtime format failure past the
+    three retries, counted as honor-chosen-wait counts it (new input starts a fresh stretch first). The trace reports
+    it (hive_commons.trace), so the hive can say which mind stopped and why rather than show it still at work."""
+    if str(kind) != "format":
+        return False
+    previous = 0 if str(message_new).lower() in ("true", "1") else previous
+    return next_format_retry_count("format", previous) > MAX_FORMAT_RETRIES
+
+
+def _model_response(response, provider_failure="normal", last_reply="clear"):
     import re
     # The host has already classified its own unavailable/exception result. Never reclassify an outage as malformed
     # model output, including when a later syntax guard is tightened. Model text cannot supply this argument.
@@ -354,9 +425,30 @@ def _model_response(response, provider_failure="normal"):
             found = re.findall(r'"((?:[^"\\]|\\.)*)"', bad[0])[:2]
             hint = re.sub(r'[\\"()]', "", " ".join(found)).strip()[:300]
         reason = "LLM-FORMAT-ERROR retry with complete skill commands" + (f"; {hint}" if hint else "")
+        kept = _kept_file_forms() if provider_failure == "format" else []
+        if kept:
+            # the cut-off reply's finished hive-goal-file commands run beside the refusal (provider_features), so the
+            # files a builder finished are staged and its retry sends only the rest
+            reason += "; your reply was cut off at its length limit and its finished files were staged, so send only the rest"
+            return "(" + " ".join(kept + [f'(wait "{reason}")']) + ")", "format"
         return f'((wait "{reason}"))', "format"
-    held = hold_messages_after_commands(commands)
+    held = hold_messages_after_commands(commands, last_reply)
     return parsed if held == commands else "(" + " ".join(held) + ")", "normal"
+
+
+def _kept_file_forms():
+    """The top-level forms of the finished hive-goal-file commands a cut-off reply kept, and of the hive-goal-claim
+    commands kept before them (provider_features.kept_file_commands), each read by the canonical parser and nothing
+    else run; [] when it kept none or the provider isn't loaded."""
+    try:
+        from hive.runtime.provider_features import kept_file_commands
+    except ImportError:
+        return []
+    kept = kept_file_commands()
+    if not kept:
+        return []
+    forms = _signature_split_top_level_forms(signature_balance_parentheses(kept)[1:-1])
+    return [form for form in forms if form.startswith(("(hive-goal-claim ", "(hive-goal-file "))]
 
 
 # Jon on omega-flagship/omegahive#334: "a mind should report a result only after it comes back. The extra turn is
@@ -366,13 +458,21 @@ def _model_response(response, provider_failure="normal"):
 # nothing and says why, and the mind sees its own words beside the results on its next turn and sends what happened,
 # as an agent's step that both acts and answers is refused until it has seen the action's result (LangChain's
 # "Parsing LLM output produced both a final answer and a parse-able action").
+# A hold comes at most once in a row: the reply right after one that held a message sends every message where it
+# stands, so a mind that pairs a command with a message on every turn keeps its person waiting one extra turn at most,
+# where before each such reply was held and each extra turn charged to the person who asked. Jon on #334: "Could a
+# message that was held once go out the next time it's written?" The loop keeps the last reply's hold in &lastReplyHold
+# (loop_hooks.metta), as it keeps its format retries.
 MESSAGE_SKILLS = frozenset({"send", "send-hive-to", "hive-room-post"})
 NO_RESULT_SKILLS = frozenset({"wait"})   # a wait has no result a message could speak of
 
 
-def hold_messages_after_commands(commands):
+def hold_messages_after_commands(commands, last_reply="clear"):
     """The reply's top-level command forms, each message that follows another command rewritten to
-    (held-message <skill> <its arguments>), the rest unchanged and in order. Time: one pass, O(total length)."""
+    (held-message <skill> <its arguments>), the rest unchanged and in order; all of them unchanged when the mind's last
+    reply held a message (last_reply "held"). Time: one pass, O(total length)."""
+    if str(last_reply) == "held":
+        return list(commands)
     out, acted = [], False
     for form in commands:
         head = form[1:].split(None, 1)[0].rstrip(")") if form.startswith("(") and len(form) > 1 else ""
@@ -400,15 +500,20 @@ def model_response_commands(response):
     return _model_response(response)[0]
 
 
-def prepare_model_response(response, provider_failure="normal"):
+def prepare_model_response(response, provider_failure="normal", last_reply="clear"):
     """Trusted runtime envelope. The loop extracts string fields without evaluating envelope data as MeTTa.
 
     provider_failure comes only from hive_services.last_response_kind (runtime result objects, never model text). The raw
     batch check runs before the canonical parser's repair/prose path. No malformed prefix or suffix is executed.
+    last_reply is the loop's &lastReplyHold, "held" when the mind's last reply held a message; "held" in the envelope
+    says whether this reply held one, read back by prepared_response_hold.
     """
     import json
-    commands, kind = _model_response(response, provider_failure)
-    return json.dumps({"commands": commands, "retry_kind": kind}, separators=(",", ":"))
+    commands, kind = _model_response(response, provider_failure, last_reply)
+    # a message was held when holding changed the reply: read with holding off (as after a hold), it differs
+    held = (kind == "normal" and str(last_reply) != "held"
+            and commands != _model_response(response, provider_failure, "held")[0])
+    return json.dumps({"commands": commands, "retry_kind": kind, "held": held}, separators=(",", ":"))
 
 
 def prepared_response_commands(envelope):
@@ -425,6 +530,17 @@ def prepared_response_kind(envelope):
     if kind not in ("normal", "format", "provider", "hive"):
         raise ValueError("invalid runtime retry kind")
     return kind
+
+
+def prepared_response_hold(envelope, previous):
+    """The loop's &lastReplyHold after a reply: "held" when it held a message, "clear" when it ran without holding one,
+    and `previous` when the runtime ran none of it (a format or provider failure), so a failed turn between two replies
+    lets no second hold in a row through."""
+    import json
+    data = json.loads(envelope)
+    if data["retry_kind"] != "normal":
+        return str(previous)
+    return "held" if data["held"] is True else "clear"
 
 
 def add_python_path(path):

@@ -44,8 +44,10 @@
 (= (reboot-self $reason)
    (py-call (hive_helpers.reboot_self $reason)))
 
+; &lastResponseKind is this reply's kind (hive-run-response sets it before the reply's commands run): only a wait the
+; mind wrote itself (normal) can be refused, never the runtime's own format or provider retry wait.
 (= (wait $reason)
-   (py-str (WAITING: $reason)))
+   (py-call (hive_helpers.wait_result $reason (get-state &lastResponseKind))))
 
 ; A message the mind wrote after another command in the same reply, held until that command's result comes back
 ; (hive_helpers.hold_messages_after_commands): it sends nothing and says why, and the mind sends after reading results.

@@ -1,3 +1,4 @@
+# Purpose: rebuild content-addressed live maps when stored files and artifact revisions change.
 """Repo maps 1.2: what the hive makes or receives is mapped as it happens.
 
 Sources beyond git (repomap_sources.py handles git refs, including private code repos):
@@ -6,7 +7,7 @@ Sources beyond git (repomap_sources.py handles git refs, including private code 
   to that team (its owner and shares, the loader's swarm rule); files with no owner team go to ``assets-host``, owner-only.
 - **Artifacts** (collaboration artifacts and their revisions): one map per team, ``artifacts-<swarm_id>``, visible to it.
 
-Updates are event-driven: the in-process EventBus listener sees ``asset.stored`` and ``artifact.revision`` (and, when those
+Updates are event-driven: the in-process EventBus listener sees ``asset.stored``, ``asset.deleted`` and ``artifact.revision`` (and, when those
 lanes publish them, ``code.controller.applied`` and ``create.plan.*``, recorded as waiting for a producer), marks the
 source dirty, and one worker rebuilds only the dirty sources into a new revision, after a short quiet period. Each
 revision is content-addressed (its sha is the digest of its nodes), so an unchanged source never makes a new revision.
@@ -92,10 +93,12 @@ class LiveMaps:
 
     def observe(self, kind, payload):
         """The EventBus listener: only enqueues."""
-        if kind == "asset.stored":
+        if kind in ("asset.stored", "asset.deleted"):
             if payload.get("by") in SELF_WRITERS:
                 return
             self.mark(("assets", payload.get("owner_swarm") or None))
+            if kind == "asset.deleted" and payload.get("owner_swarm"):
+                self.mark(("assets", None))   # an earlier ownerless upload may also have a pinned host map
         elif kind == "artifact.revision" and payload.get("swarm_id"):
             self.mark(("artifacts", payload["swarm_id"]))
         elif kind.startswith(WAITING_KINDS):
@@ -190,13 +193,13 @@ class LiveMaps:
             repo, nodes, kinds = f"artifacts-{swarm_id}", self._artifact_nodes(swarm_id), ["doc"]
         visibility = f"swarm:{swarm_id}" if self._swarm_exists(swarm_id) else "owner"   # private by default
         self._record(key, repo=repo, private=visibility == "owner", visibility=visibility, last_check=now())
-        if not nodes:
+        previous = self.db.one("SELECT sha FROM repo_maps WHERE repo = ? AND pinned = 1 AND loaded_by = ? ORDER BY rowid DESC LIMIT 1",
+                               (repo, PRINCIPAL))
+        if not nodes and previous is None:
             self._record(key, state="current", nodes=0)
             return
         envelope = envelope_for(repo, nodes, kinds)
         maps = self.hive.repo_maps
-        previous = self.db.one("SELECT sha FROM repo_maps WHERE repo = ? AND pinned = 1 AND loaded_by = ? ORDER BY rowid DESC LIMIT 1",
-                               (repo, PRINCIPAL))
         if previous is not None and previous["sha"] == envelope["sha"]:
             self._record(key, state="current", built_sha=envelope["sha"], nodes=len(nodes))
             return

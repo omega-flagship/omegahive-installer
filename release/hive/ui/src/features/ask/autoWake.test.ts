@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { askAutoWake, nativeWakePorts, type NativeWakeClient, WakeBeforeSend, type WakeAttemptPorts, type WakeInspection } from '../../store/askAutoWake'
+import { askAutoWake, hostReason, nativeWakePorts, type NativeWakeClient, WakeBeforeSend, type WakeAttemptPorts, type WakeInspection } from '../../store/askAutoWake'
 const awake: WakeInspection = { state: 'awake', canWake: true }
 const asleep: WakeInspection = { state: 'asleep', canWake: true }
 function fixture(views: WakeInspection[]) {
@@ -230,4 +230,30 @@ it('an invalid private own-choice hint fails before native reads or effects', as
   expect(f.client.agentAction).not.toHaveBeenCalled()
   expect(target).not.toHaveBeenCalled()
   expect(f.send).not.toHaveBeenCalled()
+})
+
+// T-ASK-ERROR-WAKE (staging pr-63): a mind in 'error' is woken once when allowed; the host's reason reaches the result
+describe('a mind in error', () => {
+  it('is woken once by its owner and the request is sent once', async () => {
+    const f = nativeFixture(); f.mind.status = 'error'
+    expect(await f.run()).toEqual({ kind: 'sent', value: 'admitted' })
+    expect(f.client.agentAction).toHaveBeenCalledExactlyOnceWith('a_ada', 'wake'); expect(f.send).toHaveBeenCalledTimes(1)
+  })
+  it('a start_refused answer is a refused wake carrying the host reason, after one wake', async () => {
+    const { ApiError } = await import('../../api/client')
+    const f = nativeFixture(); f.mind.status = 'error'
+    f.client.agentAction.mockRejectedValueOnce(new ApiError(409, 'start_refused', 'needs  Docker.'))
+    expect(await f.run()).toEqual({ kind: 'wake-failed', reason: 'refused', requestSent: false, detail: 'needs Docker' })
+    expect(f.client.agentAction).toHaveBeenCalledTimes(1); expect(f.send).not.toHaveBeenCalled()
+  })
+  it('is not woken without wake authority', async () => {
+    const f = nativeFixture(); Object.assign(f.mind, { status: 'error', may_sleep: false, last_error: 'boom' })
+    expect(await f.run()).toEqual({ kind: 'wake-failed', reason: 'refused', requestSent: false, detail: 'boom' })
+    expect(f.client.agentAction).not.toHaveBeenCalled(); expect(f.send).not.toHaveBeenCalled()
+  })
+})
+it('hostReason keeps the host words to one short line', () => {
+  expect(hostReason(undefined)).toBeUndefined(); expect(hostReason(' . ')).toBeUndefined()
+  expect(hostReason('a\n b.')).toBe('a b')
+  expect(hostReason('x'.repeat(300))).toHaveLength(200)
 })

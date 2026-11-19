@@ -371,6 +371,22 @@ class AdmissionTests(unittest.TestCase):
         self.assertNotIn("ONE", out)                                        # the same process consumed ONE
         self.assertEqual(self.admitted(), [(self.OWN, 1), (self.OWN, 2)])
 
+    def test_an_idle_read_leaves_the_admission_file_alone(self):
+        # The mind's loop reads its inbox every iteration; with nothing new the admission state is already on disk.
+        self.prompt(1)
+        self.assertIn("INSTRUCTION", self.channel.getLastMessage())
+        self.assertEqual(self.channel.getLastMessage(), "")                  # came back: its batch is consumed
+        path = self.folder / "admission.json"
+        before = path.stat()
+        for _ in range(3):
+            self.assertEqual(self.channel.getLastMessage(), "")
+        after = path.stat()
+        self.assertEqual((after.st_ino, after.st_mtime_ns), (before.st_ino, before.st_mtime_ns))
+        self.assertEqual(list(self.folder.glob("*.tmp")), [])
+        self.push("plain")
+        self.assertEqual(self.channel.getLastMessage(), "plain")
+        self.assertNotEqual(path.stat().st_ino, before.st_ino)               # new input still commits the cursor
+
     def test_a_consumer_that_dies_after_return_gets_the_batch_again_after_restart_once(self):
         from unittest import mock
         self.prompt(1, text="LOSTONCE")

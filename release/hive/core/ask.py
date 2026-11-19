@@ -368,6 +368,12 @@ class Ask:
         self._reads: dict[str, collections.deque] = {}
         self.conductor = None   # conductor.Conductor, attached by the app; used only while HIVE_ASK_CONDUCTOR=1
         self.retire_legacy_personal()   # r2-era personal turns: marked, and their content erased (stand-in r3 High 1)
+        hive.sessions.adopt_ask_goals()
+        for thread in hive.db.all("SELECT w.* FROM work_sessions w JOIN goals g ON g.id = w.goal_id "
+                                  "WHERE w.purpose = 'ask' AND (w.title = 'Ask thread' OR g.title = 'Ask thread')"):
+            first = hive.db.one("SELECT text, personal FROM ask_turns WHERE thread_id = ? ORDER BY created_at, rowid LIMIT 1",
+                                (thread["id"],))
+            hive.sessions.name_ask_thread(thread, first["text"] if first else "", bool(first and first["personal"]))
 
     # ---- who answers, and whether this person may ask there -----------------------------------------------------
 
@@ -723,9 +729,17 @@ class Ask:
             caps["mind_memory"] = True
         # J3 host R7.1: Surface O3 opens live Studio only on capabilities.studio_sessions === true. Published only when
         # the startup self-check passed (StudioSessions.enabled) AND members' own makers can be made (the template is
-        # set and usable); otherwise absent, so the Studio-off answer is byte-identical to before
+        # set and usable); otherwise absent, and the Studio-off answer is the one before plus studio_off alone.
+        # Show run f4 (2026-11-19): studio_off names the host's reason so the page can say it: "off" (Studio disabled or
+        # its self-check failed) or "not_set_up" (on, but members' makers can't be made). Additive: appended last, so the
+        # answer before is unchanged ahead of it; never present with studio_sessions. The hive's state, not the person's
         studio, makers = getattr(self.hive, "studio", None), getattr(self.hive, "studio_makers", None)
-        if studio is not None and getattr(studio, "enabled", False) and makers is not None and makers.template_ready():
+        studio_off = None
+        if studio is None or not getattr(studio, "enabled", False):
+            studio_off = "off"
+        elif makers is None or not makers.template_ready():
+            studio_off = "not_set_up"
+        else:
             caps["studio_sessions"] = True
             caps["studio_directions"] = True   # R7.3: steer interception (R5) exists wherever Studio sessions do
         # Protocol support, constrained by the Code execution resource gate.
@@ -747,6 +761,8 @@ class Ask:
                     and all(callable(getattr(code_test_intents, name, None)) for name in ("clean", "current", "verify", "dispatch"))
                     and callable(getattr(code_project_tests, "execution_available", None))):
                 caps["code_test_intents"] = code_project_tests.execution_available(self.hive)
+        if studio_off is not None:
+            caps["studio_off"] = studio_off
         return caps
 
     def _quota_ok(self, principal):
@@ -886,7 +902,8 @@ class Ask:
             budget = min(float(pref["thread_budget_usd"]) if pref else DEFAULT_BUDGET, MAX_BUDGET)
             try:
                 prepared_thread = await hive.sessions.create(
-                    viewer, {"mind": mind["id"], "title": "Ask thread", "budget_usd": budget}, purpose="ask",
+                    viewer, {"mind": mind["id"], "title": f"Ask with {mind['name']}" if mind.get("personal_of")
+                             else data["text"].strip()[:200], "budget_usd": budget}, purpose="ask",
                     # held by its own cap unless the mind answers it: a carried turn's thread under the mind's rule would
                     # cap the mind it never asks at the thread's budget
                     cap_scope="thread" if model is not None or browser or carried else None,
@@ -1002,6 +1019,8 @@ class Ask:
                 raise refusal(hive, "coordinator_busy")
             if self._studio_busy(mind["id"]):          # J3 R4, inside the admission transaction too
                 raise refusal(hive, "coordinator_busy")
+            if not hive.db.one("SELECT 1 FROM ask_turns WHERE thread_id = ?", (thread["id"],)):
+                hive.sessions.name_ask_thread(thread, data["text"], personal)
             # a personal turn writes nothing to its room: the person's words stay in their browser (and in this request)
             room_msg = None if personal else hive.rooms._append(thread["room_id"], viewer.principal, data["text"], [], 0)
             if queued:
@@ -1522,6 +1541,7 @@ class Ask:
                 hive.db.execute("UPDATE messages SET text = '', extra = NULL WHERE conversation_id = ?", (CONVERSATION + tid,))
             hive.db.execute("DELETE FROM room_messages WHERE room_id = ?", (s["room_id"],))
             hive.db.execute("UPDATE rooms SET archived = 1, updated_at = ? WHERE id = ?", (now(), s["room_id"]))
+            hive.sessions.name_ask_thread(s, "", True)
         hive.rooms._event(s["room_id"], "updated")
         return {"deleted": s["id"], "turns": len(turns)}
 

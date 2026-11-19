@@ -154,10 +154,17 @@ describe('the mutation sets are derived, and pinned', () => {
     // /api/ask/{op}/takeover), since the person's use of the page no longer asks the host to end the turn
     // a mind's offer to build in Create: 214 = 212 plus createOfferStart (POST /api/create/offers/{id}/start: the
     // person's Start in Create) and createOfferDismiss (POST …/{id}/dismiss: their Not now); createOffers, its GET, is a read
-    expect(client.writes.size).toBe(214)
+    // a stopped task told to its person: 215 = 214 plus acknowledgeTaskStop (POST /api/me/task-stops/{id}/acknowledge:
+    // the person's Got it); listTaskStops, its GET, is a read
+    // files: 216 = 215 plus deleteAsset (DELETE /api/assets/{sha}: an admin permanently removes a file no other swarm
+    // shares)
+    expect(client.writes.size).toBe(216)
     expect(client.writes.has('askTakeover')).toBe(false)
     for (const m of ['createOfferStart', 'createOfferDismiss']) expect(client.writes.has(m), m).toBe(true)
     expect(client.writes.has('createOffers')).toBe(false)
+    expect(client.writes.has('acknowledgeTaskStop')).toBe(true)
+    expect(client.writes.has('listTaskStops')).toBe(false)
+    expect(client.writes.has('deleteAsset')).toBe(true)
     expect(client.writes.has('consentView')).toBe(true)
     expect(client.writes.has('checkUpdates')).toBe(true)
     expect(client.writes.has('dismissFeedbackDraft')).toBe(true)
@@ -225,11 +232,17 @@ describe('the mutation sets are derived, and pinned', () => {
     // person). A GET; dismissFeedbackDraft is a write.
     // a mind's offer to build in Create: 159 = 158 plus createOffers (GET /api/me/create-offers?mind=, the person's open
     // offers from that mind). A GET; its presses, createOfferStart and createOfferDismiss, are writes.
-    expect(client.reads.size).toBe(159)
+    // a stopped task told to its person: 160 = 159 plus listTaskStops (GET /api/me/task-stops, the person's own
+    // unacknowledged stops). A GET; its Got it, acknowledgeTaskStop, is a write.
+    // feedback logs: 161 = 160 plus feedbackLogs (GET /api/feedback/logs: what the hive puts in the logs file a person
+    // saves). A GET; saving or copying the file sends nothing.
+    expect(client.reads.size).toBe(161)
     for (const r of ['artifactView', 'artifact', 'myStage', 'research']) expect(client.reads.has(r), r).toBe(true)
+    expect(client.reads.has('feedbackLogs')).toBe(true)
     expect(client.reads.has('feedbackDrafts')).toBe(true)
     expect(client.reads.has('createOffers')).toBe(true)
     expect(client.reads.has('feedback')).toBe(true)
+    expect(client.reads.has('listTaskStops')).toBe(true)
     expect(client.reads.has('hiveThroughput')).toBe(true)
     expect(client.reads.has('listEstimated')).toBe(true)
     expect(client.reads.has('creationText')).toBe(true)

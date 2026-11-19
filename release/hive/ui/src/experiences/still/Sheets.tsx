@@ -641,8 +641,16 @@ function Decided() {
                 <i />
               </span>
               <span>
-                <em>{shown(agents[a.agent_id]?.name) || 'A mind'}</em> asked to use <code>{a.skill}</code>: {word[a.status]}
-                {who(a.decided_by) && a.status !== 'expired' ? ` by ${who(a.decided_by)}` : ''}. <span className="st-when">{ago(a.decided_at ?? a.created_at, now)}</span>
+                <em>{shown(agents[a.agent_id]?.name) || 'A mind'}</em>{' '}
+                {a.status === 'auto' ? (
+                  <>ran <code>{a.skill}</code> without asking, since it stayed in its own memory</>
+                ) : (
+                  <>
+                    asked to use <code>{a.skill}</code>: {word[a.status]}
+                    {who(a.decided_by) && a.status !== 'expired' ? ` by ${who(a.decided_by)}` : ''}
+                  </>
+                )}
+                . <span className="st-when">{ago(a.decided_at ?? a.created_at, now)}</span>
               </span>
             </li>
           ))}

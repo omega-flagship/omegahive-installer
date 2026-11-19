@@ -38,6 +38,9 @@
 (= (hive-goal-propose $id $text)
    (py-call (hive_commons.goal_propose $id $text)))
 
+(= (hive-goal-file $id $path $text)
+   (py-call (hive_commons.goal_file $id $path $text)))
+
 (= (hive-goal-cancel-ack $id)
    (py-call (hive_commons.goal_cancel_ack $id)))
 
@@ -161,7 +164,11 @@
        (py-call (hive_commons.trace (get-state &cycle)
                                     (if (get-state &lastResponseMsgNew) (get-state &prevmsg) "")
                                     (get-state &lastResponseText)
-                                    (repr (get-state &lastResponseResults))))
+                                    (repr (get-state &lastResponseResults))
+                                    (py-call (hive_helpers.rests_after (get-state &lastResponseKind)
+                                                                       (get-state &formatRetries)
+                                                                       (get-state &lastResponseMsgNew)))
+                                    (py-call (hive_services.last_failure_cause))))
        hive-trace-off))
 
 (= (hive-apply-ops $ops)

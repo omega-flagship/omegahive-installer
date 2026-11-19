@@ -1,6 +1,8 @@
 # Purpose: what the hive itself adds to a person's feedback or bug report, and where reports go: the one setting that
 # names the destination, whether the feedback board is public yet, the release and kind of hive a report names, the
-# recent error answers each person met (each with the id the page was given), and the hand-off to a report service.
+# recent error answers each person met (each with the id the page was given), the hand-off to a report service, and
+# what a person's exported logs hold from the hive: their recent requests and errors, or an admin's whole hive's, with
+# other people's error answers by route, status and code only and every message cleaned on the hive first.
 """Feedback and bug reports, the hive's side (the page builds and shows the report: hive/ui/src/features/feedback).
 
 Where reports go is one setting: HIVE_FEEDBACK_TO in the hive's environment (hive.env, which the installers write),
@@ -20,10 +22,19 @@ thing and one the person may not see still answer alike.
 
 What is kept of an answer's words names no key id or person of this hive (keyview.strip_identities), whoever met it:
 GET /api/feedback answers them on a 200, which the key projection does not rewrite, and a report leaves the hive.
+The hive also keeps each person's last requests, by route pattern, status and how long the answer took to start
+(RecentRequests), and its own newest warnings and errors (LogRing), for the logs file a person can save from the
+feedback area and send the team (GET /api/feedback/logs). A person's logs hold their own requests and error answers;
+an admin's hold the whole hive's, and only theirs hold the hive's log lines, which name no one person's work. Another
+person's error answers show there by time, id, route, status and code, never their message, which can carry words they
+typed for a private space or mind (Jon on #388). Nothing kept names an id, a query or a body, every message is cleaned
+as it is kept (redact.clean: keys, emails, home folders, ids, OAuth codes, cookies, addresses), and the page cleans
+the whole file again before showing it (report.ts redact).
 """
 from __future__ import annotations
 
 import collections
+import datetime
 import json
 import logging
 import os
@@ -41,6 +52,7 @@ from urllib.parse import urlsplit
 
 from . import keyview
 from .db import now
+from .redact import clean
 
 log = logging.getLogger("hive.feedback")
 
@@ -52,6 +64,19 @@ BOARD = "https://github.com/omega-flagship/omegahive-feedback"
 KEEP_ERRORS = 100
 # How many of one person's errors a report carries.
 REPORT_ERRORS = 10
+# How many requests the hive keeps with each person, for the logs they export: Sentry's SDK keeps an event's last 100
+# breadcrumbs (DEFAULT_MAX_BREADCRUMBS, sentry_sdk/consts.py). A run of one request answered alike is one line with its
+# count, as syslog folds a repeated message, so the page's polls don't push out what just happened.
+KEEP_REQUESTS = 100
+# How many of the hive's own warnings and errors it keeps for an admin's logs, and how much of each message (an error
+# answer's message is cut to the same).
+KEEP_LOG = 100
+LOG_CHARS = 300
+# How much of a message is cleaned before it is cut to LOG_CHARS: a key or token that starts inside the part kept is
+# then seen whole, so no piece of one survives the cut (a 43-character sign-in token starting at character 290).
+CLEAN_CHARS = 4 * LOG_CHARS
+# What another person's error answer shows in an admin's logs: where and how it failed, never what it said.
+OTHERS_ERROR = ("id", "at", "method", "route", "status", "code")
 # How old an answer about the board's visibility may be before it is asked again: a board that goes public reaches
 # every hive within this long, and GitHub's unauthenticated limit (60 an hour for one address) is never near.
 BOARD_FRESH_S = 15 * 60
@@ -153,25 +178,115 @@ def _raised_at(exc: BaseException) -> str:
     return f"{name} at {os.path.relpath(here.filename, root)}:{here.lineno} in {here.name}"
 
 
-def _route_of(request) -> str:
+def route_pattern(scope) -> str:
     """The route a request matched, by its pattern ("/api/apps/{program_id}/drafts"), so no id is named; a path no route
-    matched keeps its first two parts."""
-    route = request.scope.get("route")
+    of the hive's API matched (none, or a page route such as the page's catch-all) keeps its first two parts."""
+    route = scope.get("route")
     pattern = getattr(route, "path", None)
-    if isinstance(pattern, str):
+    if isinstance(pattern, str) and getattr(route, "include_in_schema", True):
         return pattern
-    parts = [p for p in request.url.path.split("/") if p]
+    parts = [p for p in scope.get("path", "").split("/") if p]
     return "/" + "/".join(parts[:2]) + ("/…" if len(parts) > 2 else "")
 
 
+class RecentRequests:
+    """ASGI middleware: each request the hive's routes answer is kept with whoever made it (Feedback.requested), by its
+    method, its route's pattern, its status and how long the answer took to start. A page file that loaded (a route
+    outside the API schema, as the page's catch-all and the sign-in page are) is not kept; a failure there is. `who`
+    names the person a session is for (app.py _who)."""
+
+    def __init__(self, app, feedback: Feedback, who):
+        self.app, self.feedback, self.who = app, feedback, who
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        scope.setdefault("state", {})   # so the session a route finds is in this scope too, whatever passes it on
+        started, at = time.monotonic(), now()
+        answered = False
+
+        async def watched(message):
+            nonlocal answered
+            if message["type"] == "http.response.start" and not answered:
+                answered = True
+                self._keep(scope, message["status"], started, at)
+            await send(message)
+
+        try:
+            await self.app(scope, receive, watched)
+        except Exception:
+            if not answered:   # an error the hive did not expect: its 500 is made outside this middleware
+                self._keep(scope, 500, started, at)
+            raise
+
+    def _keep(self, scope, status: int, started: float, at: str) -> None:
+        route = scope.get("route")
+        if route is not None and not getattr(route, "include_in_schema", True) and status < 400:
+            return
+        state = scope.get("state") or {}
+        session = state.get("hive_session")
+        self.feedback.requested(self.who(session) if session else None, bool(state.get("answers_a_mind")), scope["method"],
+                                route_pattern(scope), status, (time.monotonic() - started) * 1000, at)
+
+
+class LogRing(logging.Handler):
+    """The hive's newest warnings and errors as its log has them, for an admin's logs: each record's time, level, logger
+    and message, the message cleaned (redact.clean) and cut to LOG_CHARS and an exception named by its type (the hive's
+    own log keeps the traceback). One per process (log_ring), on the hive's loggers.
+    Time: one clean of at most CLEAN_CHARS characters per warning or error logged."""
+
+    def __init__(self, keep: int = KEEP_LOG):
+        super().__init__(level=logging.WARNING)
+        self._lines: collections.deque = collections.deque(maxlen=keep)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            message = record.getMessage()
+        except Exception:   # a record whose arguments don't fit its format still says what it can
+            message = str(record.msg)
+        if record.exc_info and record.exc_info[0] is not None:
+            message = f"{message} ({record.exc_info[0].__name__})"
+        at = datetime.datetime.fromtimestamp(record.created, datetime.timezone.utc).isoformat(timespec="milliseconds")
+        self._lines.append({"at": at.replace("+00:00", "Z"), "level": record.levelname, "logger": record.name,
+                            "message": clean(message[:CLEAN_CHARS])[:LOG_CHARS]})
+
+    def lines(self) -> list[dict]:
+        """The lines kept, newest first, read under the lock emit runs under (logging.Handler.handle)."""
+        self.acquire()
+        try:
+            return list(reversed(self._lines))
+        finally:
+            self.release()
+
+
+_log_ring: LogRing | None = None
+_log_ring_lock = threading.Lock()
+
+
+def log_ring() -> LogRing:
+    """The process's one LogRing, put on the hive's loggers (hive, and omegahive for its MCP server) the first time a hive
+    asks for it, so every hive in the process reads the same lines and none is added twice."""
+    global _log_ring
+    with _log_ring_lock:
+        if _log_ring is None:
+            _log_ring = LogRing()
+            for name in ("hive", "omegahive"):
+                logging.getLogger(name).addHandler(_log_ring)
+        return _log_ring
+
+
 class Feedback:
-    """The hive's side of feedback: its destination, the board's visibility, and the recent error answers."""
+    """The hive's side of feedback: its destination, the board's visibility, the recent error answers and requests,
+    and the hive's own newest log lines."""
 
     def __init__(self, hive, raw_destination: str | None):
         self.hive = hive
         self.to = destination(configured(raw_destination))
         self._errors: collections.deque = collections.deque(maxlen=KEEP_ERRORS)
+        # each person's last requests, by the principal of their session; None for requests no person's session made
+        self._requests: dict[str | None, collections.deque] = {}
         self._lock = threading.Lock()
+        self.log = log_ring()
         # the board's visibility: True, False, or None while not known (never asked, or GitHub could not be reached)
         self._board_public: bool | None = None
         self._board_checked = 0.0
@@ -183,10 +298,10 @@ class Feedback:
         """Keep one error answer with the person who met it and return its id, which the answer carries. An answer to
         a request no session was found for (principal None, as for a 401) is kept with nobody, so no report names it.
         Its words are kept as a report may carry them: "key:k_0000b0b1 has spent its month" as "key has spent its
-        month", each of this hive's key ids and people taken out before the cut, so no id is left half cut."""
+        month", each of this hive's key ids and people taken out before the cut, so no id is left half cut, then cleaned (redact.clean) and cut to LOG_CHARS."""
         error_id = "e-" + secrets.token_hex(4)
-        entry = {"id": error_id, "at": now(), "method": request.method, "route": _route_of(request), "status": status,
-                 "code": code, "message": keyview.strip_identities(str(message))[:300], "principal": principal}
+        entry = {"id": error_id, "at": now(), "method": request.method, "route": route_pattern(request.scope), "status": status,
+                 "code": code, "message": clean(keyview.strip_identities(str(message))[:CLEAN_CHARS])[:LOG_CHARS], "principal": principal}
         if exc is not None:
             entry["raised"] = _raised_at(exc)
         with self._lock:
@@ -194,10 +309,54 @@ class Feedback:
         return error_id
 
     def errors_for(self, principal: str) -> list[dict]:
-        """One person's most recent error answers, newest first. Time: one pass over the KEEP_ERRORS kept."""
+        """One person's REPORT_ERRORS most recent error answers, newest first."""
+        return self.errors_of(principal, False)[:REPORT_ERRORS]
+
+    def errors_of(self, principal: str, everyone: bool) -> list[dict]:
+        """Every error answer kept that this person met, newest first, or for an admin (`everyone`) every one, each then
+        saying whose it is: the admin's own whole, and every other one (another person's, or one no session met) by
+        OTHERS_ERROR only, without the message or where it was raised. Time: one pass over the KEEP_ERRORS kept."""
         with self._lock:
-            mine = [e for e in self._errors if e["principal"] == principal]
-        return [{k: v for k, v in e.items() if k != "principal"} for e in reversed(mine[-REPORT_ERRORS:])]
+            kept = [e for e in self._errors if everyone or e["principal"] == principal]
+        out = []
+        for e in reversed(kept):
+            who = e["principal"]
+            own = who == principal
+            line = {k: v for k, v in e.items() if k != "principal"} if own else {k: e[k] for k in OTHERS_ERROR}
+            if everyone:
+                line["who"] = "you" if own else "no session" if who is None else "another person"
+            out.append(line)
+        return out
+
+    # ---- requests ---------------------------------------------------------------------------------------------------
+
+    def requested(self, principal: str | None, mind: bool, method: str, route: str, status: int, ms: float, at: str) -> None:
+        """Keep one request with whoever made it: a person's session's principal, or None (a mind on its gateway, or a
+        request no session came with). One like the request before it (method, route, status, a mind's or not) folds
+        into that line: its count grows, its time is the newest and its ms the slowest. Time: O(1)."""
+        ms = round(ms)
+        with self._lock:
+            ring = self._requests.get(principal)
+            if ring is None:
+                ring = self._requests[principal] = collections.deque(maxlen=KEEP_REQUESTS)
+            last = ring[-1] if ring else None
+            if last is not None and (last["method"], last["route"], last["status"], last["mind"]) == (method, route, status, mind):
+                last.update(at=at, count=last["count"] + 1, ms=max(last["ms"], ms))
+            else:
+                ring.append({"at": at, "method": method, "route": route, "status": status, "ms": ms, "count": 1, "mind": mind})
+
+    def requests_for(self, principal: str, everyone: bool) -> list[dict]:
+        """The newest KEEP_REQUESTS requests, newest first: this person's own, or for an admin (`everyone`) the whole
+        hive's, each saying who made it. Time: r log r comparisons, r the requests kept (KEEP_REQUESTS a person)."""
+        with self._lock:
+            kept = [(who, dict(e)) for who, ring in self._requests.items() if everyone or who == principal for e in ring]
+        lines = []
+        for who, e in kept:
+            mind = e.pop("mind")
+            e["who"] = "you" if who == principal else "a mind" if mind else "no session" if who is None else "another person"
+            lines.append(e)
+        lines.sort(key=lambda e: e["at"], reverse=True)
+        return lines[:KEEP_REQUESTS]
 
     # ---- the board --------------------------------------------------------------------------------------------------
 
@@ -240,14 +399,25 @@ class Feedback:
     def context(self, principal: str) -> dict:
         """What the page adds to a person's report from the hive: its version, which hive it is, where reports go, and
         that person's recent error answers."""
-        updates = self.hive.updates
-        release = getattr(updates, "running_release", None)
-        system = system_name()
         to = dict(self.to)
         if to["kind"] == "board":
             to["public"] = self.board_public()
-        return {"version": version_line(system, release, updates.running_build), "which": which_hive(system, release, self.hive.settings.public_url),
-                "system": system, "to": to, "errors": self.errors_for(principal)}
+        return {**self._about(), "to": to, "errors": self.errors_for(principal)}
+
+    def logs(self, principal: str, everyone: bool) -> dict:
+        """What a person's logs file holds from the hive (GET /api/feedback/logs): its version, which hive it is, and the
+        recent requests and error answers, the person's own or for an admin (`everyone`) the whole hive's, with the
+        hive's own newest warnings and errors, which only an admin's carry since they name no one person's work."""
+        return {**self._about(), "scope": "hive" if everyone else "person", "requests": self.requests_for(principal, everyone),
+                "errors": self.errors_of(principal, everyone), "log": self.log.lines() if everyone else []}
+
+    def _about(self) -> dict:
+        """The hive's version, which hive it is and the system it runs on, as a report and the logs name them."""
+        updates = self.hive.updates
+        release = getattr(updates, "running_release", None)
+        system = system_name()
+        return {"version": version_line(system, release, updates.running_build),
+                "which": which_hive(system, release, self.hive.settings.public_url), "system": system}
 
     # ---- handing a report to a report service -----------------------------------------------------------------------
 

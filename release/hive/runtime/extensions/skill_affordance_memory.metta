@@ -1,4 +1,4 @@
-; Memory and symbolic-space affordance cards.
+; Purpose: the memory and symbolic-space affordance cards a mind reads to choose a memory skill.
 
 !(add-atom &skills (Skill "persistent-note"))
 !(add-atom &skills (SkillTopic "persistent-note" "memory"))
@@ -97,7 +97,7 @@
 !(add-atom &skills (PreferredWhen "persistent-cleanup-commit" "commit-reviewed-cleanup-proposal" 0.82 "commit an exact pending cleanup proposal by id after review"))
 !(add-atom &skills (Risk "persistent-cleanup-commit" "persistent-memory-mutation"))
 !(add-atom &skills (Effect "persistent-cleanup-commit" "cleanup-proposal-committed"))
-!(add-atom &skills (SkillCardLine "persistent-cleanup-commit" "persistent-cleanup-commit proposal-id - commit a pending reviewed proposal; fails closed on unknown/stale ids"))
+!(add-atom &skills (SkillCardLine "persistent-cleanup-commit" "persistent-cleanup-commit proposal-id - commit a pending reviewed proposal; fails closed on unknown/stale ids and on a function definition or type declaration"))
 
 !(add-atom &skills (Skill "cleanup-proposals"))
 !(add-atom &skills (SkillTopic "cleanup-proposals" "memory"))

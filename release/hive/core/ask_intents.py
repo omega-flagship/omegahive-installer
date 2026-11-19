@@ -3,11 +3,11 @@ is handed over twice.
 
 Linkage slice 2, §(a) of PLATFORM_ASK_R2_13_LINKAGE_SPEC r3.6: an Ask turn's host-owned intents and links.
 
-An intent is the host's custody of one exact r2.13 body for one Ask turn. It adds custody, never authority: the
-authority is still r2.13 (a named, signed-in admin person submits an exact body through Minds.instruct).
+An intent is the host's custody of one exact request for one Ask turn. Each kind keeps its own authority gate:
+code requests require an admin; task creation and research requests require the turn's own named person.
 - Record keeps the body with a host-derived key, "ask." + intent id, which binds the destination (R1).
-- Submit claims the intent (pending/refused -> dispatching, a new dispatch_id), then calls Minds.instruct with a bind
-  that moves dispatching -> linked inside instruct's own transaction. The request is committed if and only if the intent
+- Submit claims the intent (pending/refused -> dispatching, a new dispatch_id), then calls the kind's admission with a bind
+  that moves dispatching -> linked inside that admission transaction. The work is committed if and only if the intent
   is linked (R0). The outcome is settled from the row's state afterwards, never from a status code (S3). A linked
   intent answers its recorded 201 byte for byte (S4).
 - Nothing in a running process moves a dispatching intent except its own submit; the §L startup recovery moves what a
@@ -49,11 +49,12 @@ KIND = "code.request"
 TEST = "code.test"
 STUDIO = "studio.session"   # J3 host R2 (G1): studio_sessions.py; named people, members included, may record and send it
 RESEARCH = "research.request"   # research route (a): research.py; any named person's mind asks, the host fills in the rest
+TASK = "task.create"
 # each kind's own gate (plan §3.2): code.request stays the r2.13 named-admin path; studio.session is any named person's
 KINDS = {KIND: {"admin_only": True}, STUDIO: {"admin_only": False}, TEST: {"admin_only": False},
-         RESEARCH: {"admin_only": False}}
+         RESEARCH: {"admin_only": False}, TASK: {"admin_only": False}}
 # kinds a mind's dispatch also sends at once (asking is intent: Jon 11-01); every other kind waits for the person's send
-AUTO_SEND = frozenset({RESEARCH})
+AUTO_SEND = frozenset({RESEARCH, TASK})
 KEY_PREFIX = "ask."
 STATES = ("pending", "dispatching", "linked", "refused", "abandoned")
 TURN_MAX_AGE = datetime.timedelta(hours=24)
@@ -147,7 +148,7 @@ class Intents:
         body = json.loads(row["body"] or "{}")
         if row["kind"] == STUDIO:
             return self._studio_view(row, body, links_rev)
-        if row["kind"] == RESEARCH:
+        if row["kind"] in (RESEARCH, TASK):
             request = body.get("request") if isinstance(body.get("request"), dict) else {}
             result = self._studio_view(row, {"request": request}, links_rev)
             result.update(instruction=request.get("instruction"))   # the owner's own words; the reads are owner-only
@@ -300,7 +301,9 @@ class Intents:
         if data["kind"] == STUDIO:
             return self._record_studio(viewer, t, created, data["request"])
         if data["kind"] == RESEARCH:
-            return self._record_research(viewer, t, created, data["request"])
+            return self._record_work(viewer, t, created, data["request"])
+        if data["kind"] == TASK:
+            return self._record_work(viewer, t, created, data["request"], kind=TASK)
         request = data["request"]
         if not isinstance(request, dict):
             raise self._bad("request is the r2.13 body without operation_id")
@@ -481,19 +484,22 @@ class Intents:
         self.ask._publish(frames)
         return 201, self.view(self._row(intent_id))
 
-    def _record_research(self, viewer, t, created, request):
-        """Record one research.request intent (research.py): only the fields of research.REQUEST_FIELDS, cleaned, and
-        the swarm the host resolved; the intent's window ends with its turn's 24 hours. One research per turn."""
+    def _record_work(self, viewer, t, created, request, kind=RESEARCH):
+        """Keep a task or research request and its host-resolved destination in the turn's authority window."""
         hive = self.hive
         research = getattr(hive, "research", None)
-        if research is None:
+        if kind == RESEARCH and research is None:
             raise self._not_available()
-        cleaned = research.clean_request(viewer, request)
-        if research.turn_used(t["id"]):
+        if kind == TASK:
+            from .ask_tasks import clean
+            cleaned = clean(hive, viewer, t, request)
+        else:
+            cleaned = research.clean_request(viewer, request)
+        if kind == RESEARCH and research.turn_used(t["id"]):
             raise self._err(409, "research_turn_used", "That turn already sent one research request.",
                             reason="research_turn_used")
         intent_id = "ai_" + secrets.token_hex(12)
-        body = {"kind": RESEARCH, "request": cleaned}
+        body = {"kind": kind, "request": cleaned}
         same = canonical(body)
         destination = canonical({"to_swarm": cleaned["swarm_id"]})
         frames = []
@@ -508,7 +514,7 @@ class Intents:
                     raise self._err(409, "intent_in_flight", "That turn's intent is being sent; wait for it to settle.",
                                     intent_id=live["id"], dispatch_id=live["dispatch_id"],
                                     dispatch_started_at=live["dispatch_started_at"])
-                if live["kind"] == RESEARCH and live["body"] == same:
+                if live["kind"] == kind and live["body"] == same:
                     self._audit(live)
                     return 200, self.view(live)
                 raise self._err(409, "intent_pending", "That turn already has an intent waiting to be sent.", intent_id=live["id"])
@@ -522,9 +528,9 @@ class Intents:
                 self._bump(t["id"])
                 frames.append(self._frame(t["id"], refused["id"], "abandoned"))
             hive.db.insert("ask_intents", {
-                "id": intent_id, "turn_id": t["id"], "principal": viewer.principal, "kind": RESEARCH,
+                "id": intent_id, "turn_id": t["id"], "principal": viewer.principal, "kind": kind,
                 "request_operation_id": KEY_PREFIX + intent_id, "body": same,
-                "request_digest": sha(canonical({"route": RESEARCH, "body": body})),
+                "request_digest": sha(canonical({"route": kind, "body": body})),
                 "destination": destination, "instruction_digest": sha(cleaned["instruction"]), "state": "pending",
                 "dispatch_id": None, "dispatch_started_at": None, "last_dispatch": None, "last_refusal": None,
                 "request_id": None, "lease_id": None, "receiving_goal": None, "deleted_at": None,
@@ -568,7 +574,7 @@ class Intents:
         admin = viewer.admin if admin is None else admin
         if not admin:                                      # a member: their own studio.session, code.test or research intent, else 403
             found = self._row(intent_id)
-            if found is None or found["principal"] != viewer.principal or found["kind"] not in (STUDIO, TEST, RESEARCH):
+            if found is None or found["principal"] != viewer.principal or found["kind"] not in (STUDIO, TEST, RESEARCH, TASK):
                 self._gate(KIND, False)
         row = self._own(viewer, intent_id)
         if row["kind"] == STUDIO:
@@ -607,6 +613,11 @@ class Intents:
             elif stored["kind"] == TEST:
                 from .code_test_intents import dispatch
                 await dispatch(self, viewer, stored, bind=lambda recorded: self._link(row["id"], dispatch_id, recorded))
+            elif stored["kind"] == TASK:
+                from .ask_tasks import admit
+                goal = admit(hive, viewer, stored, bind=lambda recorded: self._link(row["id"], dispatch_id, recorded))
+                hive.goals._emit(goal["id"])
+                await hive.goals.announce(goal)
             elif stored["kind"] == RESEARCH:               # research.py: one admission transaction, then the brief
                 admitted = hive.research.admit(viewer, stored, bind=lambda recorded: self._link(row["id"], dispatch_id, recorded))
                 await hive.research.start(admitted)

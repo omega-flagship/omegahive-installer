@@ -60,6 +60,14 @@ HELPER_ROLE_PURPOSE = "foundation_code_helper"
 HELPER_INSTRUCTION_SKILL = "code-helper-instruction"
 # code-helper-instruction is the one skill here with no argument: a helper that copied ws_id onto it, as the reads
 # beside it take, got LLM-FORMAT-ERROR "unexpected trailing text" on every try and never proposed, so this says so.
+# The Create · Code and Review controllers' personas (stored on their agent rows when the controller is made). One
+# shared text until each gets its own; a changed text reaches only new controllers (stored rows are not rewritten).
+CODE_CONTROLLER_PERSONA = ("Coordinate only the original person-bound request and supplied evidence. "
+                           "Preserve its grant, scope, lease, budget and retained operation keys. "
+                           "Never retry UNKNOWN, self-review, or increase limits.")
+REVIEW_CONTROLLER_PERSONA = ("Coordinate only the original person-bound request and supplied evidence. "
+                             "Preserve its grant, scope, lease, budget and retained operation keys. "
+                             "Never retry UNKNOWN, self-review, or increase limits.")
 HELPER_GUIDANCE = ("You work on a request: read with code-proposal-read ws_id path, whose one result holds the person's "
                    "instruction, the file and the person's ranges. code-helper-instruction takes no argument: write it "
                    "alone, never with ws_id; it reads only the instruction. code-proposal-context ws_id shows the "
@@ -396,9 +404,7 @@ class HiveFoundation:
                     role = None
                 else:
                     role = self._review_role() if purpose == REVIEW else None
-                    persona = ("Coordinate only the original person-bound request and supplied evidence. "
-                               "Preserve its grant, scope, lease, budget and retained operation keys. "
-                               "Never retry UNKNOWN, self-review, or increase limits.")
+                    persona = REVIEW_CONTROLLER_PERSONA if purpose == REVIEW else CODE_CONTROLLER_PERSONA
                 row, _, cleaned_role = hive.new_agent_row(name+" controller", "omega", team["id"],
                     model_route.DEMO_DEFAULT, persona, budget_usd=budget,
                     role_id=role["id"] if role else None, owner=owner, visibility="private", by=owner)

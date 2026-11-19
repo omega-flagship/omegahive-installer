@@ -7,7 +7,9 @@ import re
 try:
     from .helper_metta_syntax import (
         CORE_ROOT,
+        _HEREDOC_OPEN,
         _has_unescaped_quote,
+        _heredoc_end,
         _metta_expr_syntax_error,
         _metta_string,
         test_metta_expression,
@@ -15,7 +17,9 @@ try:
 except Exception:
     from helper_metta_syntax import (
         CORE_ROOT,
+        _HEREDOC_OPEN,
         _has_unescaped_quote,
+        _heredoc_end,
         _metta_expr_syntax_error,
         _metta_string,
         test_metta_expression,
@@ -823,7 +827,14 @@ def _signature_split_commands(raw):
     in_block = False
     in_quote = False
     escaped = False
+    heredoc = None   # the marker a marker-ended body's closing line is, while inside one
     for line in str(raw or "").replace("_quote_", '"').replace("_newline_", "\n").strip("\n").splitlines():
+        if heredoc is not None:
+            current.append(line)
+            if line.strip() == heredoc:
+                logical.append("\n".join(current))
+                current, heredoc = [], None
+            continue
         continuing = in_block or in_quote
         stripped = line.strip()
         if not stripped and not in_block and not in_quote:
@@ -832,6 +843,10 @@ def _signature_split_commands(raw):
         buffered = line if continuing else stripped
         current.append(buffered)
         scan = buffered
+        opened = None if continuing else _HEREDOC_OPEN.search(scan)
+        if opened and '"' not in scan[:opened.start()]:
+            heredoc = opened.group(1)   # the body's lines join this command, read as text, up to its marker
+            continue
         if '"""' in scan:
             if scan.count('"""') % 2 == 1:
                 in_block = not in_block
@@ -953,6 +968,54 @@ def _signature_extract_block(rest):
     else:
         content, tail = after, ""
     return before.strip(), content.strip("\n"), tail.strip()
+
+
+def _signature_extract_heredoc(rest):
+    """A command's marker-ended body (helper_metta_syntax._HEREDOC_OPEN) as (before, body, after), the body word for
+    word and, as a shell heredoc's, with each line ended by its newline (a file's last line included); None when the
+    command has none or it is unclosed. Only an opener after unquoted arguments counts, so a quoted argument that merely
+    mentions one stays text."""
+    opened = _HEREDOC_OPEN.search(rest)
+    if opened is None or '"' in rest[:opened.start()]:
+        return None
+    end = _heredoc_end(rest, opened.end(), opened.group(1))
+    if end is None:
+        return None
+    body = rest[opened.end():end].split("\n")
+    body = body[:-2] if body[-1] == "" else body[:-1]   # without the closing marker's line
+    return rest[:opened.start()].strip(), "".join(line + "\n" for line in body), rest[end:].strip()
+
+
+def _signature_block_call(cmd, signature, rest, content):
+    """A command whose last argument came as a block (a marker-ended body or a triple-quoted one) and that no lowering
+    rewrites: the arguments before it parsed as usual, and the block's text that argument, word for word (one line for
+    rest-text, as every rest-text value). Before, the block's text was dropped and such a command ran with an empty
+    last argument: hive-goal-propose g_1 \"\"\"{...}\"\"\" proposed nothing."""
+    args, extra = _signature_parse_prefix_args(signature, rest)
+    if extra:
+        raise SignatureParseError("unexpected text outside multiline body")
+    if len(args) != len(signature) - 1:
+        raise SignatureParseError("a multiline body is the command's last argument")
+    arg_type = signature[-1][0]
+    value = _signature_one_line(content) if arg_type == "rest-text" else content
+    return f"({cmd} {' '.join(args + [_signature_quote(value)])})"
+
+
+def finished_file_commands(text):
+    """A reply's hive-goal-file commands that are finished, each closed by its own marker line, and the hive-goal-claim
+    commands among them that the cut didn't end inside, in order and as the text the parser reads back; a command the
+    reply was cut off inside is left out. A reply cut off at its room keeps these (provider_features._keep_finished_files),
+    so a builder keeps the files it finished, and a claim written in that same reply comes first, without which every
+    staged file would be refused as not claimed. Time: one split."""
+    kept = []
+    commands = list(_signature_split_commands(text))
+    for n, line in enumerate(commands):
+        head, rest = _signature_consume_token(str(line or "").strip())
+        if head == "hive-goal-file" and _signature_extract_heredoc(rest) is not None:
+            kept.append(line)
+        elif head == "hive-goal-claim" and n < len(commands) - 1:   # the last command is the one the cut may end inside
+            kept.append(line)
+    return "\n".join(kept)
 
 
 def _signature_outer_parens_wrap_whole(text):
@@ -1240,13 +1303,14 @@ def _signature_parse_one(line):
             f"(wait {_signature_quote(_signature_unknown_head_message(cmd))})"
         )
     signature = SIGNATURE_COMMANDS[cmd]
-    block = _signature_extract_block(rest)
+    block = _signature_extract_heredoc(rest) or _signature_extract_block(rest)
     if block and any(arg_type in {"multiline", "rest-text", "shell-command"} for arg_type, _ in signature):
         before, content, tail = block
         rest = (before + " " + tail).strip()
         lowered = SIGNATURE_MULTILINE_LOWERING.get(cmd)
         if lowered:
             return _signature_lowered_multiline_call(lowered, signature, rest, content)
+        return _signature_block_call(cmd, signature, rest, content)
     shorthand_args = _signature_parse_shorthand(cmd, rest)
     if shorthand_args is not None:
         return f"({cmd} {' '.join(shorthand_args)})"

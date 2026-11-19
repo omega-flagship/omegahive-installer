@@ -2,6 +2,7 @@
 
 import asyncio
 
+from hive.core.goals import STOP_CAUSES
 from hive.tests.test_core_api import agent_headers, client, make_swarm_and_agents  # noqa: F401  (fixture)
 
 
@@ -104,7 +105,8 @@ def test_lapsed_claim_goes_back_to_the_swarm_then_stalls(client):
         assert claim(client, agent, g).status_code == 200
         expire_now(client, g)
     stalled = client.get(f"/api/swarms/{swarm['id']}/goals").json()[0]
-    assert stalled["status"] == "stalled" and stalled["attempts"] == 3 and "stalled" in stalled["result"]
+    # its result says why work stopped, in the words a person reads for lapsed claims
+    assert stalled["status"] == "stalled" and stalled["attempts"] == 3 and stalled["result"] == STOP_CAUSES["leases"]
     assert claim(client, b, g).status_code == 409
 
 

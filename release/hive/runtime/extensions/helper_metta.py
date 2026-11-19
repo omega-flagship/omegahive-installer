@@ -474,23 +474,40 @@ def evict_receipt(text):
     return True
 
 
-def save_begin(path):
-    """Start an atomic save: an empty temp file next to ``path``."""
-    tmp = f"{path}.saving"
-    with open(tmp, "w", encoding="utf-8"):
-        pass
-    return tmp
+def save_atoms(path, texts):
+    """Save a space to ``path`` as its atoms' texts, one per line, and write only when that differs from the file.
 
+    The loop saves every memory space at the end of each iteration, so writing every time made an idle mind rewrite
+    and fsync each space file every few seconds. Text equal to the file writes nothing (Sphinx's FileAvoidWrite
+    rule). Other text goes to a temp file that is fsynced and renamed over ``path``, then the folder is fsynced, so a
+    crash leaves the previous save or the new one, never a partial file, and a failed write leaves the previous save
+    and no temp file, as the hive's other atomic writers do. The bytes are the ones appending each atom
+    with append-file wrote: its text and a newline. Returns True when the file was written.
 
-def save_commit(tmp, path):
-    """Finish an atomic save: flush the temp file to disk, then rename it over ``path``.
-
-    A crash before the rename leaves the previous file intact, so a failed
-    export can no longer leave a space empty on disk.
+    Time: one read of the file when its size matches, plus one write of len(data) bytes and two fsyncs only when the
+    text changed.
     """
-    with open(tmp, "rb+") as handle:
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    data = "".join(f"{text}\n" for text in texts).encode("utf-8")
+    try:
+        if os.stat(path).st_size == len(data):
+            with open(path, "rb") as handle:
+                if handle.read() == data:
+                    return False
+    except FileNotFoundError:
+        pass
+    tmp = f"{path}.saving"
+    try:
+        with open(tmp, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     try:
         directory = os.open(os.path.dirname(os.path.abspath(path)) or ".", os.O_RDONLY)
         try:

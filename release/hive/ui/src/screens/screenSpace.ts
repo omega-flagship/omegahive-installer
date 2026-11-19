@@ -1,3 +1,4 @@
+// Purpose: compose screens from feature atoms and each look's block preferences.
 /**
  * Purpose: screens composed by MeTTa (screens/lib_screens.metta): one MeTTaScript AtomSpace holds the block vocabulary, each
  * look's preferences and every screen declared as atoms (`<feature>/<name>.metta`, and the Ask's own, screens/ask.metta,
@@ -38,8 +39,10 @@ import explore from '../features/explore/explore.metta?raw'
 import flow from '../features/flow/flow.metta?raw'
 import conversations from '../features/dot/conversations.metta?raw'
 import createOffer from '../features/dot/createOffer.metta?raw'
+import refused from '../features/dot/refused.metta?raw'
 import setup from '../features/setup/setup.metta?raw'
 import firstLightFree from '../features/firstlight/free.metta?raw'
+import assetRemoval from '../features/assets/removal.metta?raw'
 import mind from '../features/mind/mind.metta?raw'
 import plan from '../features/createPlan/plan.metta?raw'
 import frame from './frame.metta?raw'
@@ -50,6 +53,7 @@ import saidWords from '../features/views/words.metta?raw'
 import beliefLink from '../features/minds/beliefLink.metta?raw'
 import askScreen from './ask.metta?raw'
 import askThread from '../features/ask/thread.metta?raw'
+import stopped from '../features/tasks/stopped.metta?raw'
 
 export { readProps, ScreensError }
 export type { Bound, DrawnPart, Depth, How, Place, PropValue, Props, ScreenPlan } from './plan'
@@ -79,8 +83,10 @@ export const SCREEN_SOURCES: readonly (readonly [string, string])[] = [
   ['flow', flow],
   ['conversations', conversations],
   ['create-offer', createOffer],
+  ['refused', refused],
   ['setup', setup],
   ['first-light-free', firstLightFree],
+  ['asset-removal', assetRemoval],
   ['mind', mind],
   ['plan', plan],
   ['frame', frame],
@@ -91,6 +97,7 @@ export const SCREEN_SOURCES: readonly (readonly [string, string])[] = [
   ['belief-link', beliefLink],
   ['ask', askScreen],
   ['ask-thread', askThread],
+  ['stopped', stopped],
 ]
 
 /** This moment's facts: counts per source and flags. Values are numbers or booleans only. */

@@ -6,6 +6,7 @@
 import { useId, useState } from 'react'
 import { guardComposing } from '../ask/keys'
 import { plural } from '../../lib/plural'
+import { openQuestions } from './planModel'
 import type { PlanQuestion, PlanView } from './contract'
 
 function aboutWords(q: PlanQuestion, view: PlanView): string {
@@ -50,7 +51,7 @@ function Open({ q, view, busy, onAnswer }: { q: PlanQuestion; view: PlanView; bu
 }
 
 export function QuestionCards({ view, answering, onAnswer }: { view: PlanView; answering: string | null; onAnswer: (q: string, text: string) => void }) {
-  const open = view.questions.filter((q) => !q.answered)
+  const open = openQuestions(view)
   const settled = view.questions.filter((q) => q.answered)
   return (
     <section className="pq" aria-label={open.length ? (open.length === 1 ? 'A question for you' : `${plural(open.length, 'question')} for you`) : 'Your answers'}>

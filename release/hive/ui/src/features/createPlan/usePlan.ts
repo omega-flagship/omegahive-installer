@@ -1,6 +1,6 @@
 /**
  * Purpose: the reads and the person's acts behind the Make bench: start from a sentence (or pick up the person's running plan:
- * GET /api/create/plans), read the plan again on each create.plan.status / .piece / .question event for it (a slow
+ * GET /api/create/plans; back on the empty canvas, offer the newest held build to go back to), read the plan again on each create.plan.status / .piece / .question event for it (a slow
  * timer only as a fallback), fetch the verified preview (GET …/preview) when a create.plan.preview event arrives or the
  * view names a new preview, read the file the code pane shows through the files route (cached per path and
  * checkpoint), answer a question, the one go to deploy, and the one Stop. Every write after an await belongs to the
@@ -11,7 +11,7 @@ import { hiveBus, useHive } from '../../store/store'
 import { bindEpoch, currentEpoch, onIdentityChange } from '../../lib/identityEpoch'
 import type { PlanClient, PlanView, PreviewFiles } from './contract'
 import {
-  currentFile, fileKey, fileWant, parseFileText, parsePlanList, parsePlanView, parsePreviewFiles, runningPlan,
+  currentFile, fileKey, fileWant, heldPlan, parseFileText, parsePlanList, parsePlanView, parsePreviewFiles, runningPlan,
   type CurrentFile, type FileTexts, type MindLookup, type Recent,
 } from './planModel'
 
@@ -81,8 +81,12 @@ export interface PlanState {
   answer: (q: string, text: string) => void
   deploy: () => void
   stop: () => void
-  /** begin again from an empty canvas (after a stop or an install) */
+  /** begin again from an empty canvas (after a stop or an install, or while the plan is held: it stays as it is) */
   fresh: () => void
+  /** on the empty canvas: the newest build held on the person or the hive, which this bench does not show */
+  held: { plan_id: string; sentence: string } | null
+  /** go back to that held build (its question with it) */
+  openHeld: () => void
 }
 
 export function usePlan(): PlanState {
@@ -104,6 +108,7 @@ export function usePlan(): PlanState {
   const [alert, setAlert] = useState<string | null>(null)
   const [stale, setStale] = useState(false)
   const [nudge, setNudge] = useState(0)
+  const [held, setHeld] = useState<{ plan_id: string; sentence: string } | null>(null)
   const status = useRef<string | null>(null)
   const minds = useRef<MindLookup>(() => null)
   useEffect(() => {
@@ -125,13 +130,25 @@ export function usePlan(): PlanState {
     return true
   }, [binding])
 
-  // the person's running plan, picked up again when the bench opens with none followed
+  // the person's running plan, picked up again when the bench opens with none followed. Only then: back on the empty
+  // canvas later (Make something else), a fresh start never resumes the old plan; the newest build still held is
+  // offered instead, one line the person may press (T-PLAN-HOLDS-MAKE: a held plan took Make over).
+  const opened = useRef(false)
   useEffect(() => {
-    if (id || !client?.createPlans) return
+    if (id) { opened.current = true; return }
+    if (!client?.createPlans) return
+    const first = !opened.current
     let alive = true
     void client.createPlans().then((raw) => {
       if (!alive) return
-      const run = runningPlan(parsePlanList(raw))
+      const plans = parsePlanList(raw)
+      if (!first) {
+        const h = heldPlan(plans)
+        binding.commit(() => setHeld(h ? { plan_id: h.plan_id, sentence: h.sentence } : null))
+        return
+      }
+      opened.current = true
+      const run = runningPlan(plans)
       if (!run) return
       binding.commit(() => {
         if (following && following.epoch === binding.epoch) return
@@ -140,9 +157,9 @@ export function usePlan(): PlanState {
       })
     }, () => undefined)
     return () => { alive = false }
-    // once, when the bench opens (a later fresh start never resumes the old plan)
+    // when the bench opens, and each time it is back on the empty canvas
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client])
+  }, [client, id])
 
   useEffect(() => {
     if (!id || !client?.createPlan) return
@@ -284,7 +301,14 @@ export function usePlan(): PlanState {
     setPreviewNudge(0)
     setAlert(null)
     setStartError(null)
+    setHeld(null)
   }, [])
+  const openHeld = useCallback(() => {
+    if (!held) return
+    following = { epoch: binding.epoch, id: held.plan_id }
+    setHeld(null)
+    setId(held.plan_id)
+  }, [binding, held])
 
   // a plan started elsewhere (followPlan): this bench lets go of the one it shows and reads that one
   useEffect(() => {
@@ -300,5 +324,6 @@ export function usePlan(): PlanState {
   return {
     can, following: !!id, view: id ? view : null, file: id ? file : null, frame: id ? frame : null,
     starting, startError, answering, deploying, stopping, alert, stale, start, answer, deploy, stop, fresh,
+    held: id ? null : held, openHeld,
   }
 }

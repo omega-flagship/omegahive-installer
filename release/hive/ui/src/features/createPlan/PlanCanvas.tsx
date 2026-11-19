@@ -82,8 +82,8 @@ function BoundPlanCanvas() {
   const [stopAsking, setStopAsking] = useState(false)
   const { view } = plan
   const showing = !!plan.frame || !!plan.file
-  const page = useMemo(() => planFacts(view, { can: plan.can, starting: plan.starting, startError: plan.startError, stopAsking: stopAsking && !plan.stopping, opening: !view && plan.following, showing }),
-    [view, plan.can, plan.starting, plan.startError, stopAsking, plan.stopping, plan.following, showing])
+  const page = useMemo(() => planFacts(view, { can: plan.can, starting: plan.starting, startError: plan.startError, stopAsking: stopAsking && !plan.stopping, opening: !view && plan.following, showing, held: plan.held }),
+    [view, plan.can, plan.starting, plan.startError, stopAsking, plan.stopping, plan.following, showing, plan.held])
   const composed = useMemo(() => compose(page.screen, page.facts), [compose, page])
   const islands = {
     'plan-say': <PlanSay busy={plan.starting} onStart={plan.start} />,
@@ -110,6 +110,7 @@ function BoundPlanCanvas() {
       void useHive.getState().loadPrograms().catch(() => undefined).finally(() => navigate({ name: 'program', id }))
     }
     else if (action === 'fresh') { setStopAsking(false); plan.fresh() }
+    else if (action === 'open-held') plan.openHeld()
   }
   return (
     <div className="pc" data-plan-screen={page.screen} data-reduced={reduced || undefined}>

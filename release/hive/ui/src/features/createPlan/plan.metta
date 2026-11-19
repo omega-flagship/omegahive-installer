@@ -7,6 +7,8 @@
 ; The page states one set of facts for all three screens (features/createPlan/planFacts.ts):
 ;   flags  can.plan (this hive makes things from a sentence) start.busy plan.stopped plan.blocked plan.installed
 ;          plan.live (a file is being written or the page has run) can.stop stop.asking plan.unreviewed
+;          plan.held (a build held on the person or the hive that the empty canvas does not show)
+;          plan.leavable (this build is held on the person or the hive, so the empty canvas would name it: planModel.isHeld)
 ;   counts pieces questions.open questions.answered
 ;   values start (idle or failed)
 
@@ -14,6 +16,13 @@
 (Screen plan-start "Make something")
 (Part plan-start 10 island ((name plan-say)))
 (When plan-start 10 (on can.plan))
+; a build left held (Make something else while it waited): one way back to the newest one, its question intact
+(Part plan-start 15 note ((text (words "Waiting for you: “" (bind held.sentence) "”"))))
+(Row plan-start 15 held)
+(When plan-start 15 (on plan.held))
+(Part plan-start 16 buttons ((items ((button "Open it" open-held ((variant ghost) (aria (words "Open “" (bind held.sentence) "”"))))))))
+(Row plan-start 16 held)
+(When plan-start 16 (on plan.held))
 (Part plan-start 20 notice ((tone bad) (text (words "That didn't start: " (bind start.error)))))
 (When plan-start 20 (is start failed))
 (Part plan-start 30 note ((text "It plans who makes each piece, builds it with you watching, checks it, asks you when something needs you, and tells you when it's ready to deploy.")))
@@ -43,6 +52,15 @@
 (When plan 23 (on plan.waiting))
 (Part plan 24 buttons ((items ((button "See limits" open-limits ((variant ghost) (icon gauge) (aria "See the spending limits")))))))
 (When plan 24 (on plan.waiting))
+; held (it waits on the person or the hive): it never holds Make; the person may make something else meanwhile, and
+; this build stays as it is, its question with it. Offered only where the empty canvas names the build again (the same
+; test, plan.leavable): a question asked while the build still works is answered here, not left.
+(Part plan 25 note ((text "You can make something else meanwhile. This build stays here as it is, with its question.")))
+(Row plan 25 leave)
+(When plan 25 (on plan.leavable))
+(Part plan 26 buttons ((items ((button "Make something else" fresh ((variant ghost) (aria "Make something else; this build stays here with its question")))))))
+(Row plan 26 leave)
+(When plan 26 (on plan.leavable))
 (When plan 22 (on plan.stopped))
 ; questions never hold the rest: they sit above the board and settle once answered
 (Part plan 30 island ((name plan-questions)))

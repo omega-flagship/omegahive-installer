@@ -2,7 +2,8 @@
 code, capture a device, restart or change the hive or the mind, send outward, write to the web or outside the sandbox,
 or spend money), and the other names for a head that asks, ask a person by default; omega-flagship/omegahive#232 tracks
 them. A person can still let one mind run such a head, one approval lets one paid image through both of its gates, and
-an act approved one at a time stays so under every name it has."""
+an act approved one at a time stays so under every name it has. The MeTTa memory heads are decided by what their command
+reaches instead (Jon's call on omega-flagship/omegahive#76, test_metta_reach)."""
 import fnmatch
 import json
 import pathlib
@@ -43,19 +44,20 @@ RUNS_UNASKED_ANYWAY = {
 
 # The heads #82 kept from 6606 that ask each time under Jon's rule (omega-flagship/omegahive#230,
 # issuecomment-6827848975), which omega-flagship/omegahive#232 tracks. reboot-self left it: outside the mind's own VM it
-# is refused (omega-flagship/omegahive#299, test_policy_review_299).
+# is refused (omega-flagship/omegahive#299, test_policy_review_299). space-merge-atoms, persistent-merge-atoms and
+# retire-persistent-expression left it for the reach rule: on the mind's own atoms they run without asking (#76).
 ASK_EACH_TIME = (
     "agentverse-ask", "agentverse-call", "agentverse-listener-start", "agentverse-listener-stop", "capture-webcam",
     "code-exec", "code-proof-check", "code-test-run", "delete-whatsapp-message", "edit-whatsapp-message",
     "edit-whatsapp-message-base64", "generate-image", "generate-image-quality", "generate-video", "initChannels",
     "inspect-image", "inspect-webcam", "mark-whatsapp-read", "mark-whatsapp-unread", "observe", "observe-image",
-    "persistent-merge-atoms", "publish-artifact", "react-whatsapp-message",
+    "publish-artifact", "react-whatsapp-message",
     "reply-whatsapp-file-caption-to", "reply-whatsapp-file-to", "reply-whatsapp-to", "reply-whatsapp-to-base64",
-    "reply-whatsapp-to-message", "reply-whatsapp-to-message-base64", "restart-self", "retire-persistent-expression",
+    "reply-whatsapp-to-message", "reply-whatsapp-to-message-base64", "restart-self",
     "run-metta-file", "send-family", "send-family-file", "send-whatsapp", "send-whatsapp-base64", "send-whatsapp-file",
     "send-whatsapp-file-caption", "send-whatsapp-file-caption-to", "send-whatsapp-file-to", "send-whatsapp-mention",
     "send-whatsapp-mention-to", "send-whatsapp-to", "send-whatsapp-to-base64", "set-whatsapp-primary",
-    "space-merge-atoms", "unpublish-artifact", "unreact-whatsapp-message", "use-house-affordance", "vm-boot",
+    "unpublish-artifact", "unreact-whatsapp-message", "use-house-affordance", "vm-boot",
     "vm-shell", "write-web-page",
 )
 

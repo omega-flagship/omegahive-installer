@@ -23,9 +23,11 @@ import tempfile
 import pytest
 
 from hive.core import create_plan_engine as cpe
+from hive.core import create_plan_ports as cpp
 from hive.core.create_plan_members import PerChangeBuilds
-from hive.core.create_plan_ports import AppReleases, GoalMinds, Ports, frame_document, parse_check_output
-from hive.tests.test_core_api import client  # noqa: F401  (fixture)
+from hive.core.create_plan_ports import PROBE_PATH, AppReleases, GoalMinds, Ports, frame_document, parse_check_output
+from hive.core.goals import STEP_BUDGET_FLOOR_USD
+from hive.tests.test_core_api import agent_headers, client  # noqa: F401  (fixture)
 from hive.tests.test_result_schema import STORED_AS
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -162,21 +164,27 @@ class MemorySpace:
 
 class SubprocessChecks:
     """TEST ONLY: the authored check in a child process, isolated like the sandbox runner: the files under test in
-    build/ (the working directory), the check in judge/, python -I so neither is importable. Production: SandboxChecks."""
+    build/ (the working directory), the check at its own path among them (build/checks/acceptance_check.py), python -I
+    so nothing in build is importable. Production: SandboxChecks."""
 
     async def run(self, files, suite):
         with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as d:
-            build, judge = pathlib.Path(d, "build"), pathlib.Path(d, "judge")
-            build.mkdir(); judge.mkdir()
+            build = pathlib.Path(d, "build")
+            build.mkdir()
             for path, content in files.items():
-                if path == suite:
-                    continue
                 f = build / path
                 f.parent.mkdir(parents=True, exist_ok=True)
                 f.write_text(content)
-            (judge / "acceptance_check.py").write_text(files[suite])
-            proc = subprocess.run([sys.executable, "-I", str(judge / "acceptance_check.py")], cwd=build,
+            proc = subprocess.run([sys.executable, "-I", str(build / suite)], cwd=build,
                                   capture_output=True, text=True, timeout=30)
+        return parse_check_output(proc.stdout, proc.returncode, proc.stderr)
+
+    async def run_probe(self, document, probe, owned):
+        """TEST ONLY: the play check's runner (tools/probe.mjs) by Node in a fresh folder. Production: SandboxChecks."""
+        from hive.tests.test_create_probe import NODE, RUNNER
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as d:
+            pathlib.Path(d, "snapshot.json").write_text(json.dumps({"document": document, "probe": probe, "owned": owned}))
+            proc = subprocess.run([NODE, str(RUNNER)], cwd=d, capture_output=True, text=True, timeout=120)
         return parse_check_output(proc.stdout, proc.returncode, proc.stderr)
 
 
@@ -193,7 +201,11 @@ class FakePerChangeEngine:
         self.runs, self.calls, self.held = {}, [], {}
         self.plant = {}                 # piece -> {path: text} someone else writes onto that piece's fork
         self.fail_delivery = set()      # pieces whose first member_integrated is lost (a crash)
+        self.refused = {}               # task_id -> its last refusal's evidence (last_refused: goal_status, goal_reason)
+        self.failing = {}               # task_id -> its newest failing since its last version (_failing_output)
         self.refusals = {}              # task_id -> the member's last refusal in words (last_refusal)
+        self.summaries = {}             # (task_id, cand) -> the builder's own summary (member_summary)
+        self.checks = {}                # piece -> its member's finished test evidence (member_check); none: not run
 
     def _run(self, task_id):
         return self.runs.get(task_id)
@@ -224,6 +236,7 @@ class FakePerChangeEngine:
         answer = self.minds._answer("build", {"piece": m["piece"], "failing": failing}, packet, m["assignee"])
         assert set(answer["files"]) <= set(m["paths"])
         ck = self.space.member_write(m["piece"], {**answer["files"], **self.plant.get(m["piece"], {})})
+        self.summaries[(tid, ck)] = answer.get("summary")
         r.update(phase="ready", status="ready_for_you", candidate=ck, next_action=f"(tell member-ready {ck})")
 
     def finish(self, tid):
@@ -236,8 +249,20 @@ class FakePerChangeEngine:
         return {"type": "code.controller.member_ready", "plan_id": m["plan_id"], "piece": m["piece"],
                 "cand": self.runs[tid]["candidate"], "task_id": tid}
 
+    def last_refused(self, task_id):
+        return self.refused.get(task_id)
+
+    def _failing_output(self, task_id):
+        return self.failing.get(task_id)
+
     def last_refusal(self, task_id):
         return self.refusals.get(task_id)
+
+    def member_summary(self, task_id, cand):
+        return self.summaries.get((task_id, cand))
+
+    def member_check(self, task_id, cand):
+        return self.checks.get(json.loads(self.runs[task_id]["member"])["piece"])
 
     async def member_refix(self, task_id, op, cand, failing_ref, failing=None):
         assert self.runs[task_id]["candidate"] == cand
@@ -270,6 +295,7 @@ class FakeMinds:
         self.extra = {}                 # piece -> {path: text}: more files that piece owns and builds (assets)
         self.authored = []              # check sources the test author writes first, in order; then CHECK
         self.always = None              # a check source the test author always writes (a permanently broken author)
+        self.probe = None               # a probe the test author writes instead of a Python check (the play check)
 
     def _who(self, run, kind, body):
         from hive.core.create_plan_ports import GoalMinds
@@ -316,6 +342,8 @@ class FakeMinds:
                 "questions": questions, "needs": {"design": "no-design", "tests": "author"}}}
         if kind == "author-tests":
             assert "index.html" in packet["scaffold"]
+            if self.probe is not None:
+                return {"by": agent, "files": {PROBE_PATH: self.probe}}
             src = self.always or (self.authored.pop(0) if self.authored else CHECK)
             return {"by": agent, "files": {cpe.CHECK_PATH: src}}
         if kind == "build":
@@ -516,6 +544,114 @@ def test_slice1_end_to_end_plan_test_first_red_build_review_fix_green_preview_go
     assert again.status_code == 409
 
 
+def _to_ready(w):
+    pid = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()["plan_id"]
+    view = w.client.post(f"/api/create/plans/{pid}/answers", json={"q": "q-emoji", "text": "words only"},
+                         headers=w.jon).json()
+    assert view["phase"] == "ready-to-deploy", (view["phase"], view["last_error"])
+    return view
+
+
+def test_the_builders_summary_reaches_the_plans_record_its_reviewer_and_the_person(world):
+    """A builder's summary ("say so in your summary" when a check looks wrong) stayed in the member's journal; the plan
+    recorded "built by per-change member ...". It is now the piece-ready record's summary, in the review packet and in
+    the piece the person sees."""
+    w = world
+    view = _to_ready(w)
+    ready = [r["evidence"] for r in view["journal"] if r["kind"] == "piece-ready"]
+    said = {"page": "heading + list", "style": "night sky", "app": "all eight phases"}
+    assert {e["summary"] for e in ready} == {"heading + list", "night sky", "phases", "all eight phases"}
+    assert not [e for e in ready if e["summary"].startswith("built by per-change member")]
+    reviews = [c[2] for c in w.minds.calls if c[0] == "review"]
+    by_piece = {}
+    for r in reviews:
+        by_piece.setdefault(r["piece"]["id"], []).append(r["builder_summary"])
+    assert by_piece == {"page": ["heading + list"], "style": ["night sky"], "app": ["phases", "all eight phases"]}
+    assert {p["id"]: p["summary"] for p in view["pieces"]} == said        # the person sees the latest candidate's
+
+
+def test_every_review_packet_says_whether_the_check_passed_failed_or_was_not_run(world):
+    """A reviewer could not tell a passing build from an unchecked one: a code review's evidence is none. Each review
+    packet now carries the acceptance check's outcome on that candidate (from the member's own test run)."""
+    w = world
+    w.code.checks = {
+        "page": {"passed": True, "outcome": "fail", "exit_code": 1,          # failed only on other pieces' files
+                 "logs": {"stdout": {"text": 'CREATE-CHECK {"passed": false, "failing": ["app.js"]}'}}},
+        "style": {"passed": False, "outcome": "fail", "exit_code": 1, "logs": {"stdout": {"text": "style.css empty"}}},
+        "app": {"passed": None, "outcome": "unknown", "logs": {}}}            # ran, no verdict: not run
+    view = _to_ready(w)
+    reviews = {c[2]["piece"]["id"]: c[2] for c in w.minds.calls if c[0] == "review"}
+    assert {p: r["check"] for p, r in reviews.items()} == {"page": "passed", "style": "failed", "app": "not run"}
+    assert reviews["page"]["check_detail"] == {"outcome": "fail", "exit_code": 1,
+                                               "output": 'CREATE-CHECK {"passed": false, "failing": ["app.js"]}'}
+    assert reviews["style"]["check_detail"]["output"] == "style.css empty" and "check_detail" not in reviews["app"]
+    assert reviews["app"]["rule"]["evidence"] == "none" and reviews["app"]["evidence"] is None   # a code review
+    w.code.checks = {}                                                    # no finished run at all: not run
+    assert w.engine.ports.members.check_for(w.engine._run(view["plan_id"]), "app", "cp_none") == {"check": "not run"}
+
+
+# the play check for the moon page: one case for each acceptance criterion, each naming the owned files it exercises
+MOON_PROBE = {"cases": [
+    {"name": "The heading names the moon", "files": ["index.html"], "steps": [],
+     "assertions": [{"kind": "contains", "selector": "h1", "expected": "Moon"}]},
+    {"name": "All eight phases are listed", "files": ["app.js"], "steps": [],
+     "assertions": [{"kind": "count", "selector": "#phases li", "expected": 8},
+                    {"kind": "text", "selector": "#phases li:last-child", "expected": "Waning Crescent"}]},
+    {"name": "It loads in the app frame", "files": ["index.html"], "steps": [],
+     "assertions": [{"kind": "visible", "selector": "#phases", "expected": True}]},
+]}
+
+
+def test_slice1_with_the_play_check_red_on_the_scaffold_red_on_the_bug_then_green(world):
+    """The same plan, its check a probe the test author wrote (checks/probe.json) and the runner played on the page:
+    red on the scaffold, red on the build missing a phase (routed to app.js's piece), green on the fix, then deployed."""
+    w = world
+    w.minds.probe = MOON_PROBE
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    pid = view["plan_id"]
+    view = w.client.post(f"/api/create/plans/{pid}/answers", json={"q": "q-emoji", "text": "No emoji, words only"},
+                         headers=w.jon).json()
+    # the test author was asked for a probe, told the plan's own files, and its probe is the base the check runs from
+    author = next(c for c in w.minds.calls if c[0] == "author-tests")[2]
+    assert author["check_path"] == PROBE_PATH and author["owned_files"] == ["app.js", "index.html", "style.css"]
+    assert "the check that plays the app" in author["contract"]
+    checks = view["checks"]
+    assert view["phase"] == "ready-to-deploy", (view["phase"], view["last_error"], [c["state"] for c in checks])
+    assert [c["state"] for c in checks] == ["fail", "fail", "pass"]
+    assert checks[0]["base"] is True and set(checks[0]["failing"]) == {"index.html", "app.js"}
+    assert checks[1]["failing"] == ["app.js"] and "All eight phases are listed" in checks[1]["output"]
+    assert all(p["tests"] == [PROBE_PATH] for p in view["pieces"])
+    # every builder was given the probe it is played by, so it builds to its selectors
+    builds = [c for c in w.minds.calls if c[0] == "build"]
+    assert builds and all("#phases li" in json.dumps(c[2]["brief"]["probe"]) for c in builds)
+    deployed = w.client.post(f"/api/create/plans/{pid}/deploy", headers=w.jon).json()
+    assert deployed["phase"] == "deployed", deployed["last_error"]
+    assert w.hive.programs.ui_bundle(deployed["installed"]["program_id"])["files"]["app.js"] == APP_FIXED
+
+
+def test_a_piece_built_before_the_script_a_case_needs_is_not_blamed_for_that_case(world):
+    """A probe case names every file it exercises. On a Make run of a tic-tac-toe each gameplay case named app.js and
+    index.html, the board was built before the game logic, and the board's own check blamed it for every such case
+    until its repairs ran out. Now a case naming a piece not built yet waits: the page passes while the phase list,
+    which needs app.js, waits on it, and once app.js's piece is integrated the same case counts against the page too."""
+    w = world
+    w.minds.question = False
+    w.code.defer = True
+    listed = dict(MOON_PROBE["cases"][1], files=["app.js", "index.html"])
+    w.minds.probe = {"cases": [MOON_PROBE["cases"][0], listed, MOON_PROBE["cases"][2]]}
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    run = w.engine._run(view["plan_id"])
+    _tid, mrun = next((t, r) for t, r in w.code.runs.items() if json.loads(r["member"])["piece"] == "page")
+    cand = w.space.member_write("page", {"index.html": PAGE})
+    out = w.client.portal.call(w.engine.ports.members.run_test, {"member": mrun["member"]}, cand)
+    assert out["passed"] is True and out["failing"] == [] and not out["notes"], out
+    assert out["waits"] == ["All eight phases are listed waits on app.js"], out
+    members = w.engine.ports.members
+    members._remember(run, "app", dict(members._members(run).get("app") or {}, integrated=True))
+    out = w.client.portal.call(w.engine.ports.members.run_test, {"member": mrun["member"]}, cand)
+    assert out["passed"] is False and out["failing"] == ["app.js", "index.html"] and not out["waits"], out
+
+
 def test_a_design_review_fail_goes_back_to_the_studio_piece(world):
     w = world
     w.minds.question = False
@@ -699,8 +835,9 @@ def test_the_render_reads_the_app_interface_however_its_tags_are_written():
     doc = frame_document(files)
     assert '<style nonce="' in doc and "p { color: red }" in doc and "textContent = 'hi'" in doc
     assert "./style.css" not in doc and "./app.js" not in doc
-    with pytest.raises(ValueError):   # a classic script would run differently inlined as a module
-        frame_document({**files, "index.html": files["index.html"].replace("type='module' ", "")})
+    # a classic script would run differently inlined as a module, so it is inlined as a classic script instead
+    classic = frame_document({**files, "index.html": files["index.html"].replace("type='module' ", "")})
+    assert '<script nonce="' in classic and 'type="module"' not in classic and "./app.js" not in classic
 
 
 def test_check_output_parsing_never_guesses_a_pass():
@@ -739,6 +876,49 @@ def test_the_authored_check_runs_in_the_hive_sandbox(monkeypatch):
     out = asyncio.run(checks.run({**SCAFFOLD, "json.py": shadow, "html/__init__.py": shadow, "re.py": shadow,
                                   cpe.CHECK_PATH: CHECK}, cpe.CHECK_PATH))
     assert out["outcome"] == "fail", out
+
+
+RUNNER = ROOT / "hive/plugins/create_acceptance_check/tools/run.py"
+# Two ways a test author reads the app: by the check's own path (dirname(__file__)/..) and by the working directory.
+# Each passes on an app whose index.html says it is ready, and names index.html on the scaffold or when it isn't there.
+ROOT_CHECK = '''import html, json, os
+here = %s
+try:
+    with open(os.path.join(here, "index.html"), encoding="utf-8") as f:
+        ok = html.escape("<h1>Ready</h1>") in html.escape(f.read())
+except OSError:
+    ok = False
+print("CREATE-CHECK " + json.dumps({"passed": ok, "failing": [] if ok else ["index.html"]}))
+'''
+BY_FILE = ROOT_CHECK % 'os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")'
+BY_CWD = ROOT_CHECK % '"."'
+READY = {**SCAFFOLD, "index.html": SCAFFOLD["index.html"].replace("<body>", "<body><h1>Ready</h1>")}
+
+
+def _run_runner(files, check, tmp):
+    """The pinned runner as the sandbox starts it (python -I tools/run.py in a fresh job folder), without the OS
+    sandbox, so its layout is checked on every host; the sandbox test above checks the boundary."""
+    job = pathlib.Path(tempfile.mkdtemp(dir=tmp))
+    (job / "snapshot.json").write_text(json.dumps({"files": files, "check": check}))
+    proc = subprocess.run([sys.executable, "-I", str(RUNNER)], cwd=job, capture_output=True, text=True, timeout=60)
+    return parse_check_output(proc.stdout, proc.returncode, proc.stderr)
+
+
+@pytest.mark.parametrize("check", [BY_FILE, BY_CWD], ids=["by-file", "by-cwd"])
+def test_the_runner_lays_the_check_at_the_apps_root(check, tmp_path):
+    """The check sits at its own path among the app's files (build/checks/acceptance_check.py) with the app's root as
+    its working directory, so it finds the app either way: on 19 Nov a check reading dirname(__file__)/.. failed every
+    candidate with index.html missing, since the runner had put it in a folder beside the app."""
+    assert _run_runner({**READY, cpe.CHECK_PATH: check}, cpe.CHECK_PATH, tmp_path)["outcome"] == "pass"
+    red = _run_runner({**SCAFFOLD, cpe.CHECK_PATH: check}, cpe.CHECK_PATH, tmp_path)
+    assert red["outcome"] == "fail" and red["failing"] == ["index.html"], red
+    # nothing in build is importable, its checks/ folder included: a file named like a stdlib module the check imports
+    # (html, which the runner itself never imports, so only sys.path decides) never runs in its place
+    shadow = 'print("CREATE-CHECK " + %r)\nraise SystemExit(0)\n' % json.dumps({"passed": True, "failing": []})
+    shadowed = {**SCAFFOLD, "html.py": shadow, "html/__init__.py": shadow, "checks/html.py": shadow,
+                cpe.CHECK_PATH: check}
+    out = _run_runner(shadowed, cpe.CHECK_PATH, tmp_path)
+    assert out["outcome"] == "fail" and out["failing"] == ["index.html"], out
 
 
 def test_lost_operations_spend_the_retry_budget_then_ask_the_person(world):
@@ -827,6 +1007,253 @@ def test_a_plan_waiting_on_a_mind_refused_for_spending_says_which_and_why(world)
     assert w.engine.view(pid)["waiting"] is None
 
 
+def test_a_held_builder_whose_calls_keep_failing_stops_at_its_steps_budget(world):
+    """A mind holding its step's goal gets its turns back while it holds it, so a builder whose tool calls keep failing
+    (on a Make run of a game, every workspace it opened) would spend on until a limit for the whole hive stopped it.
+    Each step the plan hands a mind carries its own budget, the larger of what a work session given no budget gets
+    (Budgets.task_budget) and a dollar: calls past it are refused, the plan says which mind is held for spending,
+    other minds go on, and once the plan withdraws the step the mind's calls are admitted again."""
+    from hive.core.hive import HiveError
+    w = world
+    # a small hive limit: a work session given no budget gets a tenth of the mind's room, and with no automatic mind
+    # limits a mind's room is the hive's, so 5 dollars leave it 0.50 and the step gets the dollar floor
+    w.hive.budgets.set("hive", "month", 5.0)
+    team = w.client.post("/api/swarms", json={"name": "Builders"}).json()
+    builder, other = (w.client.post("/api/agents", json={"name": name, "swarm_id": team["id"]}).json()
+                      for name in ("Builder", "Other"))
+    w.minds.question = False
+    w.minds.pending = {"plan"}
+    pid = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()["plan_id"]
+    effect = next(e for e in w.engine.view(pid)["effects"] if e["state"] == "waiting")
+    w.hive.goals._create_record(team["id"], f"Create plan {pid}: plan", "Finish with result data", 0.6,
+                                created_by=f"create-plan:{pid}", assignee=builder["id"], goal_id=effect["goal_id"])
+    budget = w.hive.goals.give_step_budget(effect["goal_id"], builder["id"])
+    assert w.hive.budgets.task_budget(w.hive.agent(builder["id"])) <= 0.5 < budget == 1.0   # at least a dollar a step
+    w.hive.record_usage(w.hive.agent(builder["id"]), "x", {"prompt_tokens": 1, "completion_tokens": 1, "cost_usd": 0.3})
+    w.hive.goals.claim(w.hive.agent(builder["id"]), effect["goal_id"])
+    row = w.hive.db.one("SELECT budget_usd, spent_at_start FROM goal_budgets WHERE goal_id = ?", (effect["goal_id"],))
+    assert (row["budget_usd"], row["spent_at_start"]) == (budget, 0.3)   # counted from the claim, not before it
+    assert w.hive.goals.get(effect["goal_id"])["binding"] is None       # not a bound task: its answer echoes nothing
+    # real calls reserve up to 1.34 USD worst case and settle near 0.06: the step counts what was spent, not the reserve
+    w.hive.check_budget(w.hive.agent(builder["id"]), paid=True, estimate=1.34)
+    call, spent = 0.06, 0.0
+    with pytest.raises(HiveError) as refused:
+        for _ in range(100):                      # each call's tool command fails, and the held mind calls again
+            w.hive.check_budget(w.hive.agent(builder["id"]), paid=True, estimate=0.17)
+            w.hive.record_usage(w.hive.agent(builder["id"]), "x", {"prompt_tokens": 1, "completion_tokens": 1,
+                                                                   "cost_usd": call})
+            spent += call
+    assert (refused.value.status, refused.value.code) == (402, "spend_limit")
+    assert refused.value.details["scope"] == f"task:{effect['goal_id']}"
+    assert spent - call < budget <= spent + 1e-9                     # it spent its budget, passing it by one call at most
+    assert w.engine.view(pid)["waiting"] == {"mind": builder["id"], "name": "Builder", "code": "spend_limit",
+                                             "message": "A spending limit has no room for this call."}
+    w.hive.check_budget(w.hive.agent(other["id"]), paid=True, estimate=call)      # the step held its mind, not the hive
+    w.client.portal.call(GoalMinds(w.engine).withdraw, {"plan_id": pid}, effect["goal_id"])   # the plan withdrew it
+    assert w.hive.goals.get(effect["goal_id"])["status"] == "cancelled"
+    w.hive.check_budget(w.hive.agent(builder["id"]), paid=True, estimate=call)    # the step ended: admitted again
+
+
+def test_each_step_the_plan_hands_a_mind_carries_its_own_budget(world):
+    """GoalMinds.call gives the step's goal its own budget (Goals.give_step_budget): the larger of Budgets.task_budget
+    and STEP_BUDGET_FLOOR_USD, started at the claim, in goal_budgets rather than the goal's binding, which a bound
+    task's answer would have to echo."""
+    w = world
+    team = w.client.post("/api/swarms", json={"name": "Reviewers"}).json()
+    mind = w.client.post("/api/agents", json={"name": "Reviewer", "swarm_id": team["id"]}).json()
+    who = w.engine.assignees.resolve(["mind", mind["id"]], "user:operator")
+    out = w.client.portal.call(GoalMinds(w.engine).call, {"plan_id": "pl_budget", "person": "user:operator"}, "review",
+                               {"reviewer": who}, {"instruction": "review it"})
+    row = w.hive.db.one("SELECT budget_usd, spent_at_start FROM goal_budgets WHERE goal_id = ?", (out["pending"],))
+    budget = max(w.hive.budgets.task_budget(w.hive.agent(mind["id"])), STEP_BUDGET_FLOOR_USD)
+    assert (row["budget_usd"], row["spent_at_start"]) == (budget, None)
+    assert w.hive.goals.get(out["pending"])["binding"] is None
+
+
+def test_only_a_step_its_holder_claimed_lists_a_budget(world):
+    """The runtime gives a mind back its turns only for a goal whose step_budget_usd the goal list gives
+    (hive_helpers.held_goal): a Create step once its mind has claimed it. A person's task and a sub-goal the mind made
+    have no budget of their own, so a mind holding one keeps the turns a message or a wake buys, as before."""
+    w = world
+    team = w.client.post("/api/swarms", json={"name": "Builders"}).json()
+    mind = w.client.post("/api/agents", json={"name": "Builder", "swarm_id": team["id"]}).json()
+    step = w.hive.goals._create_record(team["id"], "Create plan p1: build board", "Finish with result data", 0.6,
+                                       created_by="create-plan:p1", assignee=mind["id"])["id"]
+    budget = w.hive.goals.give_step_budget(step, mind["id"])
+    task = w.hive.goals._create_record(team["id"], "Sort the inbox", assignee=mind["id"])["id"]   # a person's task
+    sub = w.client.post("/api/agent/goals", headers=agent_headers(mind), json={"title": "Read the inbox"}).json()["id"]
+
+    def listed(status):
+        goals = w.client.get(f"/api/agent/goals?status={status}", headers=agent_headers(mind)).json()
+        return {g["id"]: g["step_budget_usd"] for g in goals}
+
+    assert listed("open")[step] is None                       # given, but no mind has started it
+    for goal_id in (step, task, sub):
+        w.hive.goals.claim(w.hive.agent(mind["id"]), goal_id)
+    assert listed("claimed") == {step: budget, task: None, sub: None}
+
+
+def test_a_mind_claiming_a_step_after_another_starts_its_budget_from_its_own_spend(world):
+    """A step's budget counts from its holder's own claim: the same mind claiming it again after its lease lapsed keeps
+    its start, so it cannot begin its budget afresh, and a mind claiming it after the first was deleted starts from
+    its own spend, so the first mind's start neither hides that mind's spending nor counts against it."""
+    from hive.core.hive import HiveError
+    w = world
+    w.hive.budgets.set("hive", "month", 50.0)                    # a fresh hive's starting limit
+    team = w.client.post("/api/swarms", json={"name": "Builders"}).json()
+    first, second = (w.client.post("/api/agents", json={"name": name, "swarm_id": team["id"]}).json()
+                     for name in ("First", "Second"))
+    step = w.hive.goals._create_record(team["id"], "Create plan p1: build board", "Finish with result data", 0.6,
+                                       created_by="create-plan:p1", assignee=first["id"])["id"]
+    budget = w.hive.goals.give_step_budget(step, first["id"])
+    mind = lambda m: w.hive.agent(m["id"])
+    pay = lambda m, usd: w.hive.record_usage(mind(m), "x", {"prompt_tokens": 1, "completion_tokens": 1, "cost_usd": usd})
+
+    def start():
+        row = w.hive.db.one("SELECT spent_at_start, started_by FROM goal_budgets WHERE goal_id = ?", (step,))
+        return row["spent_at_start"], row["started_by"]
+
+    pay(first, 0.3)
+    w.hive.goals.claim(mind(first), step)
+    assert start() == (pytest.approx(0.3), first["id"])
+    pay(first, 0.2)
+    w.client.portal.call(w.hive.goals.expire, "9999-12-31T00:00:00+00:00")      # its lease lapsed
+    assert w.hive.goals.get(step)["status"] == "open"
+    w.hive.goals.claim(mind(first), step)
+    assert start() == (pytest.approx(0.3), first["id"])                         # the same mind's start stands
+    assert w.client.delete(f"/api/agents/{first['id']}").status_code == 200     # its delete releases the step
+    assert w.hive.goals.get(step)["claimed_by"] is None
+    pay(second, 0.05)
+    w.hive.goals.claim(mind(second), step)
+    assert start() == (pytest.approx(0.05), second["id"])
+    w.hive.check_budget(mind(second), paid=True, estimate=0.17)
+    pay(second, budget)
+    with pytest.raises(HiveError) as refused:    # counted from its own 0.05: the first mind's 0.3 would admit it
+        w.hive.check_budget(mind(second), paid=True, estimate=0.17)
+    assert refused.value.details["scope"] == f"task:{step}"
+
+
+def test_a_stopped_plan_withdraws_the_goals_its_steps_still_wait_on(world):
+    """A mind holding a goal keeps its turns until the goal ends, so a plan the person stops withdraws the goal its
+    planner (or test author, designer, reviewer) still holds, as it ends its builders; the mind then rests."""
+    w = world
+    w.minds.question = False
+    w.minds.pending = {"plan"}
+    pid = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()["plan_id"]
+    effect = next(e for e in w.engine.view(pid)["effects"] if e["state"] == "waiting")
+    assert effect["goal_id"] in w.minds.held
+    assert w.client.post(f"/api/create/plans/{pid}/stop", headers=w.jon).status_code == 200
+    assert w.engine.view(pid)["phase"] == "stopped"
+    assert effect["goal_id"] not in w.minds.held                     # withdrawn: the mind no longer holds it
+
+
+def test_a_step_whose_mind_stopped_after_refused_replies_is_tried_again_told_why_then_named(world):
+    """A v0.38 Make plan showed "writing tests" for seven minutes while its test author rested after its replies kept
+    being cut off, its goal still claimed. The mind's trace now ends that goal with the hive's reason (Goals.stop_held):
+    the step is lost and tried again within the plan's retries, the next attempt is told why, and past the retries the
+    hold card says which mind stopped and why, beside Try again and Stop."""
+    w = world
+    w.minds.question = False
+    w.minds.pending = {"author-tests"}
+    w.minds.collect = GoalMinds(w.engine).collect         # the goal rows below answer, as a real mind's goal does
+    w.engine.set_setting("retries", 1)
+    pid = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()["plan_id"]
+    mind = w.hive.agent(w.maker["id"])
+    why = "Its replies kept being refused; the last was a reply cut off at its length limit."
+    for attempt in range(2):
+        gid = next(e["goal_id"] for e in w.engine.view(pid)["effects"]
+                   if e["kind"] == "author-tests" and e["state"] == "waiting")
+        w.hive.goals._create_record(w.make["id"], f"Create plan {pid}: test-author", "Finish with result data", 0.6,
+                                    created_by=f"create-plan:{pid}", assignee=mind["id"], goal_id=gid)
+        w.hive.goals.claim(mind, gid)
+        r = w.client.post("/api/agent/trace", headers=agent_headers(w.maker), json={
+            "iteration": 3 + attempt, "response": "", "rested": True, "failure_cause": "a reply cut off at its length limit"})
+        assert r.status_code == 200, r.text
+        assert (w.hive.goals.get(gid)["status"], w.hive.goals.get(gid)["result"]) == ("failed", why)
+        w.client.portal.call(w.engine.goal_changed, gid)   # the goal.updated handler, in the hive's own loop
+    packets = [p for k, _a, p in w.minds.calls if k == "author-tests"]
+    assert len(packets) == 2 and "your_last_attempt_stopped" not in packets[0]
+    assert packets[1]["your_last_attempt_stopped"] == why
+    view = w.engine.view(pid)
+    assert view["phase"] == "blocked" and view["status"] == "needs_you", (view["phase"], view["last_error"])
+    lost = [j["evidence"] for j in view["journal"] if j["kind"] == "unknown"]
+    assert lost == [{"unknown": "goal failed", "goal_status": "failed", "goal_reason": why, "by": mind["id"]}] * 2
+    hold = next(qq for qq in view["questions"] if qq["about"] == "blocked" and not qq["answered"])
+    assert hold["text"] == f"{mind['name']} stopped. {why} Try again, or stop?"
+    assert hold["choices"] == ["Try again", "Stop"]
+    w.minds.pending = set()            # the person says try again: that attempt hears why the last one stopped
+    view = w.client.post(f"/api/create/plans/{pid}/answers", json={"q": hold["q"], "text": "Try again"},
+                         headers=w.jon).json()
+    assert [p for k, _a, p in w.minds.calls if k == "author-tests"][-1]["your_last_attempt_stopped"] == why
+    assert view["phase"] == "ready-to-deploy", (view["phase"], view["last_error"])
+
+
+def test_a_builder_that_stopped_with_a_reason_is_named_on_the_hold_card(world):
+    """A member blocked after its repairs, its builder's goal having ended with a reason (goal_reason: its own
+    hive-goal-fail words, or the hive's when it stopped after refused replies). The hold card names the builder, its
+    piece and that reason, where it said only that the piece's builder could not finish."""
+    w = world
+    w.minds.question = False
+    w.code.defer = True
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    pid, tid = view["plan_id"], next(iter(w.code.held))
+    why = "Its replies kept being refused; the last was a reply cut off at its length limit."
+    member = json.loads(w.code.runs[tid]["member"])
+    w.code.held.pop(tid)
+    w.code.runs[tid].update(phase="blocked", status="needs_you")
+    w.code.refusals[tid] = f"The last attempt's goal ended failed. Its reason, UNTRUSTED_DATA: {json.dumps(why)}"
+    w.code.refused[tid] = {"goal_status": "failed", "goal_reason": why}
+    w.client.portal.call(w.engine.on_event, {"type": "code.controller.status", "request_id": tid, "status": "needs_you",
+                                             "phase": "blocked", "candidate": None})
+    view = w.engine.view(pid)
+    assert view["phase"] == "blocked", (view["phase"], view["last_error"])
+    hold = next(qq for qq in view["questions"] if qq["about"] == "blocked" and not qq["answered"])
+    title = next(p["title"] for p in view["pieces"] if p["id"] == member["piece"])
+    name = w.hive.agent(member["assignee"])["name"]
+    assert hold["text"] == f"{name} stopped building “{title}”. {why} Try again, or stop?"
+
+
+@pytest.mark.parametrize("refused_after", [False, True])
+def test_a_builder_whose_repairs_ran_out_against_the_check_is_named_with_what_the_check_says(world, refused_after):
+    """A member blocked after its repairs ran out against the acceptance check, with no reason of its own. The hold card
+    names the builder, its piece and what the check still says about that piece: its first note naming one of the
+    piece's files, never one about a piece not built yet. Before, the block's why was "it needs the plan" and the card
+    said only that the builder could not finish. A refused attempt after the check is the newer cause, so the card
+    names that instead, and an older refusal never stands in for the check."""
+    w = world
+    w.minds.question = False
+    w.code.defer = True
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    pid, tid = view["plan_id"], next(iter(w.code.held))
+    member = json.loads(w.code.runs[tid]["member"])
+    own = member["paths"][0]
+    assert "app.js" not in member["paths"]          # a later piece's file, which the check also fails
+    w.code.held.pop(tid)
+    w.code.runs[tid].update(phase="blocked", status="needs_you")
+    older = "An earlier try gave up."
+    w.code.refusals[tid] = f"The last attempt's goal ended failed. Its reason, UNTRUSTED_DATA: {json.dumps(older)}"
+    w.code.refused[tid] = {"goal_status": "failed", "goal_reason": older}
+    w.code.failing[tid] = {"kind": "tests-fail", "failing": sorted({"app.js", *member["paths"]}),
+                           "notes": ["app.js is missing", f"{own} is missing"]}
+    if refused_after:
+        w.code.failing[tid]["refused"] = w.code.refusals[tid]
+    w.client.portal.call(w.engine.on_event, {"type": "code.controller.status", "request_id": tid, "status": "needs_you",
+                                             "phase": "blocked", "candidate": None})
+    view = w.engine.view(pid)
+    assert view["phase"] == "blocked", (view["phase"], view["last_error"])
+    hold = next(qq for qq in view["questions"] if qq["about"] == "blocked" and not qq["answered"])
+    title = next(p["title"] for p in view["pieces"] if p["id"] == member["piece"])
+    name = w.hive.agent(member["assignee"])["name"]
+    blocked = next(j["evidence"] for j in view["journal"] if j["kind"] == "piece-blocked")
+    if refused_after:
+        assert hold["text"] == f"{name} stopped building “{title}”. {older} Try again, or stop?"
+        assert "check_failure" not in blocked
+    else:
+        said = f"Its last version still fails the acceptance check, which says “{own} is missing”."
+        assert hold["text"] == f"{name} stopped building “{title}”. {said} Try again, or stop?"
+        assert blocked["blocked"] == f"the piece's builder stopped: {said}" and "goal_reason" not in blocked
+
+
 def test_a_finished_goal_missed_while_the_hive_was_down_is_collected_on_resume(world):
     """Review F4: a waiting effect whose goal finished with no event (a restart) resumes from the goal row."""
     w = world
@@ -857,6 +1284,22 @@ def test_a_minds_answer_is_collected_from_the_result_the_hive_judged(world, shap
     assert out == {"plan": answer["plan"], "by": w.maker["id"]}
 
 
+def test_a_test_author_that_sends_its_check_as_its_own_command_is_read_with_its_answer(world):
+    """The test author's check, sent as its own command (hive-goal-file) so a reply cut off at its length keeps it, is
+    read beside an answer that leaves it out, as if its files map held it."""
+    w, gid = world, "g_staged_check"
+    w.hive.goals._create_record(w.make["id"], "Create plan pl_x: test-author", "Finish with result data", 0.6,
+                                created_by="create-plan:pl_x", assignee=w.maker["id"], goal_id=gid)
+    agent = w.hive.agent(w.maker["id"])
+    w.hive.goals.claim(agent, gid)
+    check = 'print("CREATE-CHECK {\\"passed\\": false, \\"failing\\": [\\"app.js\\"], \\"notes\\": []}")\n'
+    w.hive.goals.stage_file(agent, gid, cpe.CHECK_PATH, check)
+    w.client.portal.call(w.hive.goals.result, agent, gid, "done", "check written",
+                         {"binding_digest": None, "proposal": {"notes": "staged"}})
+    out = w.client.portal.call(GoalMinds(w.engine).collect, {"plan_id": "pl_x"}, "author-tests", {}, gid)
+    assert out == {"notes": "staged", "files": {cpe.CHECK_PATH: check}, "by": w.maker["id"]}
+
+
 def test_a_builder_cannot_own_or_replace_the_check(world):
     """Review F2: no piece may own the check or a reserved/stdlib-shadowing path (host and R4.3 both refuse); and the
     check that runs is always the base checkpoint's, whatever a candidate holds."""
@@ -885,6 +1328,42 @@ def test_a_builder_cannot_own_or_replace_the_check(world):
     cheat = space._ck({**space.ckpts[good], cpe.CHECK_PATH: 'print("CREATE-CHECK " + %r)\n' % json.dumps({"passed": True, "failing": []})})
     out = asyncio.run(w.engine.ports.run_check(run, cheat, cpe.CHECK_PATH, good))
     assert out["outcome"] == "fail", out
+
+
+def test_a_page_the_app_frame_cant_show_fails_the_check_naming_index_html(world):
+    """A built page the app frame can't show (no stylesheet link, or no script for ./app.js) fails the acceptance
+    check naming index.html and what it lacks, however the authored check judges it, so the plan routes it to the
+    page's builder; at the preview it was refused until the plan blocked. The scaffold holding the check is judged
+    as before."""
+    import re
+    from hive.core.create_plan_ports import page_problem
+    w = world
+    w.minds.question = False
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    space, run = w.engine.ports.space, w.engine._run(view["plan_id"])
+    asyncio.run(space.open(run))
+    base = asyncio.run(space.write(run, {cpe.CHECK_PATH: CHECK}, "base"))
+    page = {"index.html": PAGE, "style.css": STYLE, "app.js": APP_FIXED}
+    check = lambda ck, b=base: asyncio.run(w.engine.ports.run_check(run, ck, cpe.CHECK_PATH, b))   # noqa: E731
+    assert check(space._ck({**space.ckpts[base], **page}))["outcome"] == "pass"
+    for gone, named in ((r'<link[^>]*>', '<link rel="stylesheet" href="./style.css">'),
+                        (r'<script[^>]*></script>', '<script type="module" src="./app.js"></script>')):
+        broken = space._ck({**space.ckpts[base], **page, "index.html": re.sub(gone, "", PAGE)})
+        out = check(broken)
+        assert out["outcome"] == "fail" and "index.html" in out["failing"], out
+        assert out["notes"][0].startswith("the app frame can't show this page") and named in out["notes"][0], out
+    # a page loading app.js with a plain script tag frames, and one missing only its stylesheet is told only that
+    classic = PAGE.replace('<script type="module" src="./app.js"></script>', "<script src='./app.js'></script>")
+    framed = check(space._ck({**space.ckpts[base], **page, "index.html": classic}))   # this world's check judges its tags
+    assert not any("app frame" in n for n in framed.get("notes") or []), framed
+    note = check(space._ck({**space.ckpts[base], **page, "index.html": re.sub(r'<link[^>]*>', "", classic)}))["notes"][0]
+    assert 'href="./style.css"' in note and "<script" not in note, note
+    # the scaffold the check is written on is judged by the check alone, whatever its page
+    bare = asyncio.run(space.write(run, {cpe.CHECK_PATH: CHECK, "index.html": "<p>no tags</p>"}, "base"))
+    assert not any("app frame" in n for n in check(bare, bare).get("notes") or [])
+    # an app without a page has no page verdict; a page missing a file names it
+    assert page_problem({"main.py": "print(1)"}) is None and page_problem(page) is None
+    assert page_problem({"index.html": PAGE, "style.css": STYLE}) == "the app frame can't show this page: app.js is missing"
 
 
 def test_the_planner_is_told_every_rule_the_plan_check_refuses_for():
@@ -920,6 +1399,63 @@ def test_a_refused_plan_tells_the_planner_the_rule_it_broke_and_its_corrected_pl
     assert {(r["artifact_kind"], r["review_kind"], r["evidence"]) for r in plans[0]["hive_reviews"]} == \
         {("code", "review", "none"), ("design", "design-review", "render")}
     assert any(r["kind"] == "planned" for r in view["journal"])   # the corrected plan is the plan
+
+
+def test_the_planner_is_told_the_kinds_the_hive_staffs(world):
+    """On a Mac install nobody offers design (Studio's design maker is off there), and a real plan's "Visual design"
+    piece found nobody, so R4.1 asked its person again and again to make one available, which a tester can't. The
+    planner is told the kinds this hive staffs, and a plan that keeps to them builds without a designer."""
+    w = world
+    w.minds.question = False
+    assert w.engine.staffed_kinds("user:u_jon") == ["code", "design"]
+    w.hive.db.execute("DELETE FROM person_minds WHERE purpose = 'studio_maker'")
+    w.hive.db.execute("DELETE FROM swarm_services")
+    assert w.engine.staffed_kinds("user:u_jon") == ["code"], w.engine.assignees.resolve(["capability", "design"], "user:u_jon")
+    real = w.minds._answer
+
+    def keeps_to_staffed_kinds(kind, body, packet, agent):
+        answer = real(kind, body, packet, agent)
+        if kind == "plan":
+            for piece in answer["plan"]["pieces"]:
+                piece["kinds"] = [k for k in piece["kinds"] if k in packet["staffed_kinds"]] or ["code"]
+        return answer
+    w.minds._answer = keeps_to_staffed_kinds
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    plans = [packet for kind, _, packet in w.minds.calls if kind == "plan"]
+    assert plans[0]["staffed_kinds"] == ["code"]
+    assert "kinds in staffed_kinds" in cpp.ANSWER_SHAPES["plan"]
+    assert view["phase"] == "ready-to-deploy", (view["phase"], view["status"], view["last_error"])
+    assert all(p["assignee"]["resolved"] for p in view["pieces"]) and not view["questions"]
+
+
+def test_a_design_step_on_a_hive_with_no_design_maker_comes_back_to_the_planner(world):
+    """A planner told only code can still keep the look as needs.design: design on code pieces, and that design step
+    finds nobody, spends the retry budget and asks the person. The plan check refuses it with the rule, the planner
+    answers no-design, and the plan builds without asking anyone."""
+    w = world
+    w.minds.question = False
+    w.hive.db.execute("DELETE FROM person_minds WHERE purpose = 'studio_maker'")
+    w.hive.db.execute("DELETE FROM swarm_services")
+    real = w.minds._answer
+
+    def a_design_step_first(kind, body, packet, agent):
+        answer = real(kind, body, packet, agent)
+        if kind == "plan":
+            for piece in answer["plan"]["pieces"]:
+                piece["kinds"] = [k for k in piece["kinds"] if k in packet["staffed_kinds"]] or ["code"]
+            if "last_plan_refused" not in packet:
+                answer["plan"]["needs"] = {**answer["plan"]["needs"], "design": "design"}
+        return answer
+    w.minds._answer = a_design_step_first
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    plans = [packet for kind, _, packet in w.minds.calls if kind == "plan"]
+    assert len(plans) == 2
+    rule = cpe.PLAN_RULES["design_step_unstaffed"]
+    assert plans[1]["last_plan_refused"] == {"code": "design_step_unstaffed", "rule": rule}
+    assert rule in cpp.ANSWER_SHAPES["plan"]
+    assert not any(r["kind"] == "dispatched" and " design " in r["fields"] for r in view["journal"])
+    assert view["phase"] == "ready-to-deploy", (view["phase"], view["status"], view["last_error"])
+    assert not view["questions"]
 
 
 # the planner can never cause these: the host writes the Plan atom as revision 1 with no parent, and reports planned
@@ -1093,6 +1629,10 @@ def test_the_preview_serves_every_file_the_pieces_built(world):
     assert deployed["phase"] == "deployed", deployed["last_error"]
     app = w.tmp / "create" / "apps" / deployed["installed"]["program_id"] / "ui"
     assert (app / "icon.svg").read_text() == ICON
+    # the plan's checkpoints hold its check, but the installed app is the app alone: no checks/ folder, none locked
+    assert cpe.CHECK_PATH in w.client.get(f"/api/create/plans/{pid}/files", headers=w.jon).json()["files"]
+    assert not (app / "checks").exists() and not (app.parent / "checks").exists()
+    assert not any(p.startswith("checks/") for p in json.loads((app / "bundle.lock.json").read_text())["files"])
     # the installed app serves its assets too (lock "assets"), for appDocument to inline as it does in the preview
     ui = w.hive.programs.ui_bundle(deployed["installed"]["program_id"])["files"]
     assert ui["icon.svg"] == ICON and ui == pv["files"]
@@ -1284,17 +1824,22 @@ def test_a_plan_proposed_through_the_goal_record_is_read_as_the_plan():
 @pytest.mark.parametrize("status", ["failed", "cancelled", "stalled"])
 def test_a_mind_call_whose_goal_gets_no_answer_ends_at_once(status):
     """A goal the hive stalled (its claims lapsed with no result) gets no answer, as a failed or cancelled one: the plan's
-    wait ends there, its plan failing and any other call read back as unknown, never waiting on an update."""
+    wait ends there, its plan failing and any other call read back as unknown, never waiting on an update. The answer
+    keeps how the goal ended (goal_ended: its status, and a failed goal's reason) and the mind that held it."""
     import asyncio
     from hive.core.create_plan_ports import GoalMinds
 
     class DB:
         def one(self, sql, args):
-            return {"id": "g_x", "status": status, "assignee": "a_p", "claimed_by": "a_p", "result_data": None}
+            return {"id": "g_x", "status": status, "assignee": "a_p", "claimed_by": "a_p", "result_data": None,
+                    "result": "The page asks for a server the hive can't run."}
     ports = GoalMinds.__new__(GoalMinds)
     ports.hive = type("H", (), {"db": DB()})()
-    assert asyncio.run(ports.collect({"plan_id": "p"}, "plan", {}, "g_x")) == {"failed": "goal ended"}
-    assert asyncio.run(ports.collect({"plan_id": "p"}, "review", {}, "g_x")) == {"unknown": f"goal {status}"}
+    ended = {"goal_status": status, "by": "a_p"}
+    if status == "failed":
+        ended["goal_reason"] = "The page asks for a server the hive can't run."
+    assert asyncio.run(ports.collect({"plan_id": "p"}, "plan", {}, "g_x")) == {"failed": "goal ended", **ended}
+    assert asyncio.run(ports.collect({"plan_id": "p"}, "review", {}, "g_x")) == {"unknown": f"goal {status}", **ended}
 
 
 # ---- a broken authored check goes back to its author (R4.4) -------------------------------------------------------
@@ -1365,9 +1910,12 @@ def test_a_broken_check_goes_back_to_its_author_and_the_plan_recovers_without_as
     prev = briefs[1]["previous_attempt"]
     assert prev["reason"] == "crashed" and prev["exit_code"] != 0 and "FAILED" in prev["stderr"], prev
     assert prev["check"] == UNITTEST_CHECK
-    for brief in briefs:
-        assert "LAST line it prints to stdout must be exactly: CREATE-CHECK" in brief["contract"]
-        assert "unittest" in brief["contract"]
+    # asked for a probe first; told the Python check's verdict rules on the repair, since it wrote Python
+    assert "Write checks/probe.json" in briefs[0]["contract"] and "CREATE-CHECK" not in briefs[0]["contract"]
+    assert "LAST line it prints to stdout must be exactly: CREATE-CHECK" in briefs[1]["contract"]
+    assert "unittest" in briefs[1]["contract"]
+    # the check sits among the files it judges, so a walk that skipped nothing would read its own source
+    assert "skip checks/, where this check itself sits, when you walk the app's files" in briefs[1]["contract"]
     broken = next(c for c in view["checks"] if c["state"] == "unknown")
     assert broken["reason"] == "crashed"
 
@@ -1392,11 +1940,41 @@ def test_a_check_that_stops_before_its_verdict_is_told_so_and_the_plan_recovers(
     view = w.engine.view(view["plan_id"])
     assert view["phase"] == "ready-to-deploy", (view["phase"], view["status"], view["last_error"])
     briefs = [pk for k, _a, pk in w.minds.calls if k == "author-tests"]
-    assert len(briefs) == 2 and "never stop early" in briefs[0]["contract"]
+    assert len(briefs) == 2 and "never stop early" in briefs[1]["contract"]   # the Python rules, on its repair
     prev = briefs[1]["previous_attempt"]
     assert (prev["reason"], prev["why"]) == ("crashed", "no CREATE-CHECK line") and "FAIL: index.html has no moon" in prev["output"]
     assert "It printed its findings and stopped (exit 1) before its CREATE-CHECK line" in briefs[1]["contract"]
     assert "stopped (exit" not in briefs[0]["contract"]
+
+
+# two checks test authors wrote in our Make runs of a v0.39.1 test build (19 Nov), each with a bug of its own that it
+# caught into a finding, so its verdict failed app files on every tree and the builders of those files blocked; here
+# with that catch-all removed, as the contract now asks
+CRASH_CHECKS = {"format_crash.py": "unsupported format character", "type_crash.py": "must be real number, not str"}
+
+
+@pytest.mark.parametrize("name", sorted(CRASH_CHECKS))
+def test_a_check_whose_own_code_fails_goes_back_to_its_author(world, name):
+    """The contract tells failures from errors as unittest does: a check whose own code raises gives no verdict on
+    the scaffold, so it comes back to its author with the error before any builder starts, and the plan builds on the
+    author's next check."""
+    w = world
+    w.minds.question = False
+    w.minds.authored = [(ROOT / "hive/tests/fixtures/create_checks" / name).read_text()]
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    view = w.engine.view(view["plan_id"])
+    assert view["phase"] == "ready-to-deploy", (view["phase"], view["status"], view["last_error"])
+    briefs = [pk for k, _a, pk in w.minds.calls if k == "author-tests"]
+    # asked for a probe first; the author wrote Python, so its repair carries the Python check's rules
+    assert len(briefs) == 2 and "Write checks/probe.json" in briefs[0]["contract"]
+    assert all(words in briefs[1]["contract"] for words in (
+        "Tell failures from errors", "never stop early", "let it raise, and the hive sends the check back to you"))
+    prev = briefs[1]["previous_attempt"]
+    said = (prev.get("stderr") or "") + (prev.get("output") or "")
+    assert prev["reason"] == "crashed" and CRASH_CHECKS[name] in said, prev
+    broken = [r for r in view["journal"] if r["kind"] == "check-broken"]
+    started = [r for r in view["journal"] if r["kind"] == "piece-started"]
+    assert broken and started and broken[0]["seq"] < started[0]["seq"]
 
 
 def test_a_permanently_broken_author_spends_the_budget_then_asks_in_plain_words(world):
@@ -1452,3 +2030,74 @@ def test_later_steps_get_each_answer_with_its_question_and_what_omega_is(world):
     assert pkt["answers"][0]["question"] == q["text"] and pkt["answers"][0]["text"] == "Yes please"
     assert any(q["text"] in line and "Yes please" in line for line in pkt["the_person_already_answered"])
     assert "OmegaHive" in pkt["what_omega_is"]
+
+# frame_document's output for a module page as v0.39 rc7 framed it, which the classic-script rule must not change
+MODULE_FRAME_RC7 = '<!doctype html><html data-app-host-origin="https://hive.invalid" data-app-channel="render"><head><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'nonce-00000000-0000-0000-0000-000000000000\'; style-src \'nonce-00000000-0000-0000-0000-000000000000\'; style-src-attr \'unsafe-inline\'; connect-src \'none\'; img-src data: blob:; font-src data:; base-uri \'none\'; form-action \'none\'"><!doctype html>\n<html lang="en">\n<head>\n  <style nonce="00000000-0000-0000-0000-000000000000">main{color:red}</style>\n</head>\n<body>\n  <main id="app"></main>\n  <script type="module" nonce="00000000-0000-0000-0000-000000000000">document.getElementById("app").textContent="hi"</script>\n</body>\n</html>\n'
+
+
+def test_the_frame_runs_a_classic_app_script_where_a_browser_would():
+    """A page builder on the published v0.39 rewrote the scaffold's module tag as <script src='./app.js'>, which a
+    browser runs and the preview refused ("Unexpected app interface format"), so the plan blocked. The frame takes a
+    classic script as one, nonce'd where the browser would run it: in place, in head, or at the end of body when it is
+    deferred. A module page frames byte for byte as before, and a page that loads ./app.js neither way is refused."""
+    files = {"style.css": "main{color:red}", "app.js": 'document.getElementById("app").textContent="hi"'}
+    page = ('<!doctype html>\n<html lang="en">\n<head>\n  <link rel="stylesheet" href="./style.css">\n</head>\n<body>\n'
+            '  <main id="app"></main>\n  <script type="module" src="./app.js"></script>\n</body>\n</html>\n')
+    assert frame_document({**files, "index.html": page}) == MODULE_FRAME_RC7
+    tag = '<script nonce="00000000-0000-0000-0000-000000000000">'
+    end = frame_document({**files, "index.html": page.replace('<script type="module" src="./app.js">', "<script src='./app.js'>")})
+    assert tag in end and 'type="module"' not in end and end.index(tag) > end.index("<main")
+    module_line = '  <script type="module" src="./app.js"></script>\n'
+    head_page = page.replace("</head>", "  <script src='./app.js'></script>\n</head>").replace(module_line, "")
+    head = frame_document({**files, "index.html": head_page})
+    assert head.index(tag) < head.index("</head>")
+    deferred = frame_document({**files, "index.html": head_page.replace("<script src", "<script defer src")})
+    assert deferred.index("<main") < deferred.index(tag) < deferred.index("</body>")
+    with pytest.raises(ValueError):
+        frame_document({**files, "index.html": page.replace(module_line, "")})
+
+
+def test_a_page_builder_is_told_to_keep_the_frame_tags():
+    """The builder that writes index.html is told, in its own trusted instructions, to keep the stylesheet link and the
+    module script the frame loads; a builder of other files is not."""
+    from hive.core.code_controller_member import _packet
+    page = {"member": json.dumps({"plan_id": "plan_x", "piece": "page", "paths": ["index.html", "style.css"]})}
+    head = _packet(None, page, {}, "build", None, "g_1").split("UNTRUSTED_DATA")[0]
+    assert '<script type="module" src="./app.js"></script>' in head and 'href="./style.css"' in head
+    logic = {"member": json.dumps({"plan_id": "plan_x", "piece": "logic", "paths": ["app.js"]})}
+    assert 'type="module"' not in _packet(None, logic, {}, "build", None, "g_1").split("UNTRUSTED_DATA")[0]
+
+
+def _activations(w, app_id):
+    return {r["swarm"]: r["active"] for r in w.hive.db.all("SELECT swarm, active FROM app_activations WHERE program = ?",
+                                                             (app_id,))}
+
+
+def test_a_deploy_settled_by_read_back_turns_the_app_on(world, monkeypatch):
+    # a deploy that answered "unknown" settles through deploy_readback; found deployed, the app goes where Create is,
+    # as a definite deploy's would, or it sits installed but on in no swarm (QA #405 N1)
+    import asyncio
+    w = world
+    ports = w.engine.ports
+    monkeypatch.setattr(ports.apps, "readback", lambda run, body, plan: {"deployed": True, "program_id": "app_rb"})
+    run = {"person": "user:u_jon", "plan_id": "plan_rb"}
+    out = asyncio.run(ports.deploy_readback(run, {}, {}))
+    assert out["deployed"] is True
+    assert _activations(w, "app_rb") == {w.make["id"]: 1}
+    # not found deployed: nothing is turned on
+    monkeypatch.setattr(ports.apps, "readback", lambda run, body, plan: {"deployed": None, "app_id": "app_nr"})
+    asyncio.run(ports.deploy_readback(run, {}, {}))
+    assert _activations(w, "app_nr") == {}
+
+
+def test_a_redeploy_keeps_an_admins_off(world):
+    # the first deploy turns the app on where Create is; an admin turns it off there; a redeploy leaves it off and
+    # publishes no activation for it (QA #405 N3)
+    w = world
+    apps = w.engine.ports.apps
+    assert apps.turn_on("user:u_jon", "app_rd") == [w.make["id"]]
+    w.hive.db.execute("UPDATE app_activations SET active = 0 WHERE program = ? AND swarm = ?", ("app_rd", w.make["id"]))
+    w.events.clear()
+    assert apps.turn_on("user:u_jon", "app_rd") == []
+    assert _activations(w, "app_rd") == {w.make["id"]: 0}
+    assert not [kw for k, kw in w.events if k == "program.activation" and kw.get("program") == "app_rd"]

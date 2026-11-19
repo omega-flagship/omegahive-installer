@@ -321,10 +321,12 @@ def test_reconcile_start_failure_is_recorded_as_error(client):
     sup, driver = real_supervisor(hive)
     mid = awake_mind(client, hive, driver)
     driver.running.discard(mid)
-    driver.start = lambda agent, env: (_ for _ in ()).throw(RuntimeError("spawn failed"))
+    driver.start = lambda agent, env: (_ for _ in ()).throw(
+        RuntimeError("spawn failed in /srv/hive/minds/x\nTraceback (most recent call last):\n  ..."))
     sup.check()
     row = hive._agent_row(mid)
-    assert row["status"] == "error" and "start failed" in row["last_error"]
+    # T-START-ERROR-STATUS: the reconcile records the same short reason as a direct start (start_failure)
+    assert row["status"] == "error" and row["last_error"] == "start failed: spawn failed in [path]"
     assert not sup.in_transition(mid)
 
 
@@ -525,12 +527,14 @@ def test_restore_records_a_start_failure_and_restores_the_rest(client):
     real_start = driver.start
     def start(agent, env):
         if agent["id"] == bad:
-            raise RuntimeError("docker run failed")
+            raise RuntimeError("docker run failed for /srv/hive/minds/x\nTraceback (most recent call last):\n  ...")
         real_start(agent, env)
     driver.start = start
     asyncio.run(hive.restore())
     row = hive._agent_row(bad)
-    assert row["status"] == "error" and "docker run failed" in row["last_error"] and row["desired"] == "awake"
+    # T-START-ERROR-STATUS: restore keeps its own prefix but records the short reason (start_failure), not str(exc)
+    assert row["status"] == "error" and row["desired"] == "awake"
+    assert row["last_error"] == "start failed at restore: docker run failed for [path]"
     assert good in driver.running and not sup.in_transition(bad)
 
 

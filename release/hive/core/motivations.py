@@ -1,3 +1,4 @@
+# Purpose: manage motivations and query the real tasks they explain.
 """Motivations: the why above tasks (goals). Phase 1 of MOTIVATIONS_TASKS_HOST_DESIGN_20261005.md (r3
 plus Jon's Q1-Q7).
 
@@ -29,7 +30,7 @@ import tempfile
 from fastapi import Request
 
 from .db import new_id, now
-from .goals import STATUSES
+from .goals import STATUSES, WORK_SQL
 from .visibility import clean
 
 SCHEMA = """
@@ -522,7 +523,7 @@ class Motivations:
         return p, get("cursor"), self._limit(get("limit"))
 
     def _task_filter(self, viewer, p, readable, cache):
-        where, args = [], []
+        where, args = [WORK_SQL], []
         if not viewer.admin:
             seen = [s["id"] for s in self.db.all("SELECT id, owner, visibility, shared_with FROM swarms") if viewer.sees(s)]
             where.append("g.swarm_id IN (SELECT value FROM json_each(?))")
@@ -668,7 +669,7 @@ class Motivations:
         return row
 
     def _goal_visible(self, viewer, gid, cache):
-        goal = self.db.one("SELECT id, swarm_id, parent_id FROM goals WHERE id = ?", (gid,))
+        goal = self.db.one(f"SELECT id, swarm_id, parent_id FROM goals WHERE id = ? AND {WORK_SQL}", (gid,))
         return goal if goal is not None and (viewer.admin or self._sees_swarm(viewer, goal["swarm_id"], cache)) else None
 
     def link(self, viewer, mid, data):

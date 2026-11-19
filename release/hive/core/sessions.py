@@ -2,7 +2,7 @@
 """Sessions: a focused working thread with one mind, like a Claude Code or Codex session, built on rooms (R15).
 
 A session is a room of kind ``session`` (you and one mind; the mind hears every message) bound to:
-- a goal, assigned to that mind, so the work has a purpose, can be reviewed and is marked done like any goal;
+- a task assigned to that mind for ordinary work, or unassigned conversation bookkeeping for Ask;
 - an optional code workspace (OmegaCode), whose changes keep their exact-approval gates;
 - a spend cap: from the mind's spend when the session starts. The cap is enforced with the mind's hard total budget
   rule, which a session only ever tightens (never raises); ending the session puts the previous rule back.
@@ -81,11 +81,31 @@ class Sessions:
         if "carried_usd" not in columns:   # a thread moved to its own scope: what it had spent by the mind's measure then
             hive.db.execute("ALTER TABLE work_sessions ADD COLUMN carried_usd REAL NOT NULL DEFAULT 0")
 
+    def adopt_ask_goals(self):
+        """At Ask startup, retire earlier work assignments on conversation bookkeeping."""
+        hive = self.hive
+        hive.db.execute("UPDATE goals SET binding = json_set(COALESCE(binding, '{}'), '$.kind', 'ask.thread'), "
+                        "assignee = NULL, claimed_by = NULL, lease_until = NULL, status = CASE WHEN id IN "
+                        "(SELECT goal_id FROM work_sessions WHERE purpose = 'ask' AND status = 'ended') "
+                        "THEN 'done' ELSE 'open' END WHERE id IN "
+                        "(SELECT goal_id FROM work_sessions WHERE purpose = 'ask') "
+                        "AND COALESCE(json_extract(binding, '$.kind'), '') != 'ask.thread'")
+
     def _row(self, viewer, session_id):
         s = self.hive.db.one("SELECT * FROM work_sessions WHERE id = ?", (session_id,))
         if s is None or not (viewer.admin or s["owner"] == viewer.principal):
             raise self.hive.error(404, "not_found", "no such session")
         return s
+
+    def name_ask_thread(self, session, text, personal=False):
+        """Name the conversation and its bookkeeping together; personal request words never enter either."""
+        mind = self.hive.db.one("SELECT name FROM agents WHERE id = ?", (session["agent_id"],))
+        title = str(text or "").strip()[:200] if not personal else ""
+        title = title or f"Ask with {mind['name'] if mind else 'a removed mind'}"
+        with self.hive.db.transaction():
+            self.hive.db.update("work_sessions", session["id"], {"title": title})
+            self.hive.db.update("goals", session["goal_id"], {"title": title, "updated_at": now()})
+            self.hive.db.update("rooms", session["room_id"], {"name": title[:80], "updated_at": now()})
 
     def view(self, s):
         # A session outlives its mind and goal: a deleted or missing mind shows as removed, a missing goal as null; neither fails the list
@@ -150,7 +170,8 @@ class Sessions:
             # admitted Ask delivery is the mind's one prompt. Never the assignment note (send_to_agent): on a mind that
             # is not running it would wake it, and on an awake one (the Create · Code controller, 2026-11-11 run) the
             # note arrived first as an empty task titled "Ask thread", which the mind claimed and gave up on.
-            goal = self.hive.goals._create_record(*goal_args, created_by=viewer.principal, assignee=agent["id"])
+            goal = self.hive.goals._create_record(*goal_args, created_by=viewer.principal,
+                                                 binding={"kind": "ask.thread"})
         else:
             goal = await self.hive.goals.create(*goal_args, created_by=viewer.principal, assignee=agent["id"])
         return self._install(viewer, data, agent, title, budget, purpose, cap_scope, goal)
@@ -172,7 +193,7 @@ class Sessions:
         self.payer_free(agent["id"], viewer.principal, "ask")
         goal = self.hive.goals._create_record(agent["swarm_id"], prepared.title,
                     str(prepared.data.get("detail") or "")[:4000], created_by=viewer.principal,
-                    assignee=agent["id"], emit=False)
+                    binding={"kind": "ask.thread"}, emit=False)
         self.hive.db.after_commit(lambda: self.hive.goals._emit(goal["id"]))
         return self._install(viewer, prepared.data, agent, prepared.title, prepared.budget,
                              "ask", prepared.cap_scope, goal)
@@ -238,6 +259,10 @@ class Sessions:
                 raise self.hive.error(409, "mind_running", "stop or sleep the mind before ending its session: a running "
                                       "mind could start a call under the restored cap")
             self.hive.db.execute("UPDATE work_sessions SET status = 'ended', ended_at = ? WHERE id = ?", (now(), s["id"]))
+            if s.get("purpose") == "ask" and s.get("goal_id"):
+                self.hive.db.update("goals", s["goal_id"], {"status": "done", "claimed_by": None, "lease_until": None,
+                                                        "result": "The Ask conversation ended.", "updated_at": now()})
+                self.hive.db.after_commit(lambda: self.hive.goals._emit(s["goal_id"]))
             self._compose(s["agent_id"], legacy=s)
         ask = getattr(self.hive, "ask", None)
         if ask is not None:   # an Ask turn still open on this thread stops with it: the thread's cap no longer holds

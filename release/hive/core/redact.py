@@ -1,3 +1,5 @@
+# Purpose: the hive's one redactor: provider keys scrubbed from a local-owner hive's logs and errors, and what may leave
+# any hive in a file a person shares cleaned of keys, ids, emails, home folders, OAuth codes, cookies and addresses.
 """One redactor for provider keys (J1 design r2 F, r3 N): what it scrubs never reaches a log line or an error.
 
 - register(value): a key is registered the moment the hive holds it: loaded from the keyring or the environment, or
@@ -15,6 +17,11 @@
   a repeated install refuses if their identity has changed. Non-logging access to caller objects is out of scope.
 
 A key held in memory is out of scope (J1 design r2 F).
+
+- clean(text): what may leave the hive in a file a person shares, on every hive, enable() or not: the keys registered
+  here and the key shapes above, then the page's report rules (shared(): emails, home folders, keys and tokens, the
+  ids of people and conversations, phone numbers, OAuth codes, cookie values and network addresses), so the hive's own
+  log lines and error messages are clean before the logs a person exports carry them (GET /api/feedback/logs).
 """
 
 from __future__ import annotations
@@ -97,6 +104,81 @@ def unregister(value):
 
 def scrub(text):
     return REDACTOR.scrub(text)
+
+
+# ---- what may leave the hive in a file a person shares ---------------------------------------------------------------
+# The page's report rules (hive/ui/src/features/feedback/report.ts REDACTIONS), in its order and with its words, so the
+# hive and the page clean a line alike: hive/ui/src/features/feedback/redact.cases.json holds the cases both test suites
+# run. ASCII classes and word edges, as JavaScript's are without its u flag.
+_IPV4 = r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?:\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)){3}"
+_H = "[0-9a-f]{1,4}"
+# every written form of an IPv6 address (the forms Sentry Relay's IPV6_REGEX lists, relay-pii/src/regexes.rs), never a
+# bare "::" nor a time like 12:34:56, and whole: no word character or colon on either side, nor a zone or IPv4 tail
+# left after
+_IPV6 = (r"(?<![\w:.])(?:" + "|".join([
+    rf"(?:{_H}:){{7}}{_H}", rf"(?:{_H}:){{1,7}}:", rf"(?:{_H}:){{1,6}}:{_H}", rf"(?:{_H}:){{1,5}}(?::{_H}){{1,2}}",
+    rf"(?:{_H}:){{1,4}}(?::{_H}){{1,3}}", rf"(?:{_H}:){{1,3}}(?::{_H}){{1,4}}", rf"(?:{_H}:){{1,2}}(?::{_H}){{1,5}}",
+    rf"{_H}:(?::{_H}){{1,6}}", rf":(?::{_H}){{1,7}}", r"fe80:(?::[0-9a-f]{0,4}){0,4}%[0-9a-z]+",
+    rf"::(?:ffff(?::0{{1,4}})?:)?{_IPV4}", rf"(?:{_H}:){{1,4}}:{_IPV4}"]) + r")(?![\w:%]|\.\d)")
+# the session and sign-in cookies the hive sets (people.SIGNIN_COOKIE and OAUTH_COOKIE, sso.SESSION_COOKIE,
+# app.GOOGLE_CONNECTOR_COOKIE) and the common ones Relay's SENSITIVE_COOKIE_NAMES lists
+COOKIES = ("hive_signin", "hive_oauth", "hive_google_connector", "omega_session", "session", "sessionid",
+           "__session", "user_session", "connect.sid", "jsessionid", "phpsessid", "laravel_session", "csrf", "xsrf",
+           "_csrf", "_xsrf", "csrf-token", "csrf_token", "xsrf-token", "xsrf_token")
+_I = re.IGNORECASE | re.ASCII
+SHARED = (
+    (re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", _I), "[email]"),
+    (re.compile(r"(?:/Users|/home)/[^/\s]+", re.ASCII), "~"),
+    (re.compile(r"\b[A-Z]:\\Users\\[^\\\s]+", _I), "~"),
+    (re.compile(r"\bBearer\s+\S+", re.ASCII), "Bearer [token]"),
+    (re.compile(r"\b(?:sk|pk|rk|ghp|gho|ghs|xox[abp])[-_][A-Za-z0-9_-]{8,}", re.ASCII), "[key]"),
+    (re.compile(r"\bc_[A-Za-z0-9_.-]*~[A-Za-z0-9_:~.-]+", re.ASCII), "[conversation]"),
+    (re.compile(r"user:[A-Za-z0-9_.-]+", re.ASCII), "[person]"),
+    (re.compile(r"\+\d[\d\s().-]{6,}\d", re.ASCII), "[phone]"),
+    # an OAuth flow's codes and tokens where an address carries them, and a code named as one, short ones included
+    (re.compile(r"([?&#](?:code|state|code_verifier|code_challenge|oauth_token|oauth_verifier|access_token"
+                r"|refresh_token|id_token|client_secret|token)=)[^&#\s\"'<>]+", _I), r"\1[code]"),
+    (re.compile(r"\b((?:authori[sz]ation|auth|oauth|device|user|verification|one[-_ ]?time|otp)[-_ ]?code[\"']?"
+                r"\s*[:=]\s*[\"']?)[^\s\"',;&]+", _I), r"\1[code]"),
+    # any other code given as code=, code: or "code" and then a value of 6 or more with a digit in it ("code=3b9c8a5f",
+    # "oauth code 4/0AbC1"), never a word such as an error's code (rate_limited) nor a status (code 429)
+    (re.compile(r"\b((?:(?:authori[sz]ation|auth|oauth|device|verification|one[-_ ]?time|otp)[-_ ]?)?code[\"']?"
+                r"(?:\s*[:=]\s*[\"']?|\s+))(?=[A-Za-z0-9._~+/-]*\d)[A-Za-z0-9._~+/-]{6,}", _I), r"\1[code]"),
+    # cookie values: a Cookie or Set-Cookie header's whole value, and a session or sign-in cookie's wherever it is named
+    (re.compile(r"\b((?:set-)?cookie[\"']?\s*[:=]\s*[\"']?)[^\n\"']+", _I), r"\1[cookie]"),
+    (re.compile(r"\b((?:" + "|".join(re.escape(c) for c in COOKIES) + r")=)[^;\s&\"']+", _I), r"\1[cookie]"),
+    # network addresses
+    (re.compile(_IPV6, _I), "[address]"),
+    (re.compile(rf"\b{_IPV4}\b", re.ASCII), "[address]"),
+    # a long run of letters and digits with both in it: a key, a token or a secret's digest, never a word
+    (re.compile(r"\b(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,}\b", re.ASCII), "[token]"),
+    # what the report importer reads as its own: its hidden marker
+    (re.compile(r"<!--|-->"), ""),
+)
+
+
+def shared(text: str) -> str:
+    """`text` through SHARED, the page's report rules, exactly as the page's redact() cleans it (but for its label rule,
+    which only a report's fields need). Time: one pass over the text per rule."""
+    for pattern, put in SHARED:
+        text = pattern.sub(put, text)
+    return text
+
+
+def clean(text: str) -> str:
+    """`text` as it may leave the hive in a file a person shares (a report, the logs they export): the keys this hive
+    holds (register) and the shapes of provider keys (PATTERNS) as [key], then the page's report rules (shared). Always
+    applied, whatever enable() did, since a shared file leaves every kind of hive.
+    Example: "sign-in for ana@example.org from 203.0.113.9 with code=4f2a91" -> "sign-in for [email] from [address] with
+    code=[code]". Time: r + p + s passes over the text, r the keys held, p and s the two pattern tables' lengths."""
+    with REDACTOR._lock:
+        values = REDACTOR._ordered_values   # the cached longest-first snapshot scrub() reads
+    for value in values:
+        if value in text:
+            text = text.replace(value, "[key]")
+    for pattern in PATTERNS:
+        text = pattern.sub(lambda m: (m.group(1) if m.groups() and m.group(1) else "") + "[key]", text)
+    return shared(text)
 
 
 _installed = False

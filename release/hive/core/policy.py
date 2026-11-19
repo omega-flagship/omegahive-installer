@@ -19,6 +19,7 @@ import json
 import time
 
 from ..spaces import sexpr
+from . import metta_reach
 from .db import new_id, now
 from .services import CODE_MUTATING, parse_binding
 
@@ -35,7 +36,7 @@ REVIEWED_HIVE_SKILLS = frozenset({
     "hive-finding-disposition", "hive-finding-response", "hive-findings-read", "hive-flow-cancel", "hive-flow-draft",
     "hive-flow-drafts", "hive-flow-read", "hive-flow-retire", "hive-flow-revise", "hive-flow-run",
     "hive-flow-run-get", "hive-flows", "hive-goal-cancel-ack", "hive-goal-claim", "hive-goal-create",
-    "hive-goal-done", "hive-goal-fail", "hive-goal-get", "hive-goal-heartbeat", "hive-goal-propose",
+    "hive-goal-done", "hive-goal-fail", "hive-goal-file", "hive-goal-get", "hive-goal-heartbeat", "hive-goal-propose",
     "hive-goal-history", "hive-goal-continue", "hive-goal-output",
     "hive-goal-review", "hive-goal-wait", "hive-goals", "hive-health", "hive-inventory-boot", "hive-lifecycle-start",
     "hive-lifecycle-status", "hive-lifecycle-stop", "hive-mode", "hive-motivation-create", "hive-motivations",
@@ -76,6 +77,9 @@ STUDIO_MEDIA_SKILLS = frozenset({"generate-image", "generate-image-quality"})
 # always read how to use the skills it is allowed and see what it could ask for. Only a rule naming one exactly can.
 DISCOVERY_SKILLS = frozenset({"skill-help", "skill-card", "skill-aliases", "explain-skill", "query-skill-space"})
 
+# The defaults below decide on a command's head, the name at the front of a skill call a mind makes, the shell in
+# (shell "ls"). 6606 is commit 6606a84c, a dev/latest release #82 brought in, where a head no list named ran without
+# asking; hive/tests/fixtures/policy_defaults_6606.json lists the default each head had there.
 HUMAN_ONLY = ["change-password", "transfer-funds", "pay*", "purchase*", "code-network", "code-publish"]
 
 # Only the separately bounded hive-* family is open here. Other default allows name reviewed heads exactly.
@@ -89,10 +93,10 @@ DEFAULT_ALLOW = ["send", "wait", "pin", "hive-*", "query", "remember", "episodes
                  "code-read", "code-search", "code-diff", "code-events", "code-artifact", "code-cancel",
                  # The host selects only this mind's waiting reviews; the packet grants no authority.
                  "code-review-packet",
-                 # Existing6606 parser/module export heads that previously fell through to allow. Keep this finite:
-                 # new names require review; all explicit rules and the earlier deny/ask boundaries still decide.
-                 # The 6606 heads that ask each time under Jon's rule, or are another name for a head that asks,
-                 # are in DEFAULT_ASK instead.
+                 # Parser and module export heads 6606 already had, which ran there without asking because no list
+                 # named them. Keep this finite: new names require review; all explicit rules and the earlier deny/ask
+                 # boundaries still decide. The 6606 heads that ask each time under Jon's rule, or are another name for
+                 # a head that asks, are in DEFAULT_ASK instead.
                  "activity-traces", "add-skill-alias", "add-skill-trigger",
                  "agentverse-discover", "agentverse-inbox",
                  "agentverse-listener-status", "agentverse-register-agent",
@@ -162,22 +166,20 @@ DEFAULT_ALLOW = ["send", "wait", "pin", "hive-*", "query", "remember", "episodes
                  "vm-policy-status", "vm-status", "wake-for",
                  "webcam-status", "webhost-status", "whatsapp-status",
                  "world-fact", "world-person", "world-room"]
-DEFAULT_ASK = ["shell", "shell-confirm", "metta", "write-file*", "append-file*", "send-file*", "codex-*",
-               "space-transform", "remove-atom", "*-commit", "restart-omega",
+DEFAULT_ASK = ["shell", "shell-confirm", "write-file*", "append-file*", "send-file*", "codex-*",
+               "*-commit", "restart-omega",
                # OmegaCode changes: each one approved for its exact binding, redeemed once by the service
                "code-workspace", "code-edit", "code-run", "code-verify", "code-checkpoint", "code-select", "code-git-export", "code-git-original-export", "code-merge-apply",
-               # Existing6606 heads that ran without asking, most only because 6606 let every unlisted head run, and
+               # Heads 6606 had that ran without asking, most only because 6606 let every unlisted head run, and
                # that ask each time under Jon's rule (omega-flagship/omegahive#230, issuecomment-6827848975): "Anything
                # that runs code or a shell (code-exec, vm-shell), captures devices (webcam, mic, screen), restarts or
                # changes the hive or itself (restart-self), sends outward messages (send-whatsapp*, email, social),
                # writes to the web or outside the sandbox (write-web-page), or spends money should ask each time.
                # Read-only and in-sandbox skills can stay allowed by default." omega-flagship/omegahive#232 tracks
                # them. First, other names for a head above:
-               # restart-omega's restart (reboot-self reboots the computer when sudo needs no password), metta's MeTTa,
-               # space-transform's rewrite within one space, a persistent atom's removal as by
-               # persistent-cleanup-commit, a shell in the VM, and send-file's file sends.
-               "restart-self", "reboot-self", "run-metta-file", "space-merge-atoms", "persistent-merge-atoms",
-               "retire-persistent-expression", "vm-shell", "send-family-file", "send-whatsapp-file",
+               # restart-omega's restart (reboot-self reboots the computer when sudo needs no password), a shell in the
+               # VM, and send-file's file sends. The MeTTa heads are decided by what they reach (REACH_DECIDED below).
+               "restart-self", "reboot-self", "vm-shell", "send-family-file", "send-whatsapp-file",
                "send-whatsapp-file-caption", "send-whatsapp-file-to", "send-whatsapp-file-caption-to",
                "reply-whatsapp-file-to", "reply-whatsapp-file-caption-to",
                # Then effects outside the hive. WhatsApp messages to a chat the mind names or a group other people
@@ -203,13 +205,14 @@ DEFAULT_ASK = ["shell", "shell-confirm", "metta", "write-file*", "append-file*",
                "code-exec", "code-proof-check", "code-test-run",
                # Jon's second review (omega-flagship/omegahive#299, item 1): reads of people's private data, the
                # operator's WhatsApp chats, a person's glucose (a watch also sends it to a channel), the house through
-               # Home Assistant, and the logs of what the camera and microphone took in; a persistent expression, which
-               # can be any atom and so a function definition, and the host launcher descriptor, outside the sandbox.
+               # Home Assistant, and the logs of what the camera and microphone took in; and the host launcher
+               # descriptor, outside the sandbox. persistent-expression, whose atom can be a function definition, is
+               # decided by what it writes (REACH_DECIDED).
                "read-whatsapp-chat", "read-whatsapp-chat-full", "read-whatsapp-chat-recent", "whatsapp-chats",
                "whatsapp-inbox", "observe-glucose", "glucose-history", "glucose-rings", "glucose-watch-status",
                "set-glucose-watch", "observe-house",
                "observe-house-full", "observe-house-affordances", "observe-room", "observe-device", "house-action-log",
-               "webcam-observation-log", "audio-observation-log", "persistent-expression", "body-container-launcher"]
+               "webcam-observation-log", "audio-observation-log", "body-container-launcher"]
 
 # Skills that take a path on this computer, each with the 0-based position of its path argument (their SkillArg atoms
 # type it "filepath"; test_policy_review_299 checks every such skill is here). run-metta-file keeps its own path rule,
@@ -225,7 +228,25 @@ HIGH_RISK = {"shell-confirm", "metta", "space-transform", "remove-atom", "restar
              "restart-self", "reboot-self", "run-metta-file", "space-merge-atoms", "persistent-merge-atoms",
              "shell", "vm-shell", "code-exec", "code-test-run", "code-proof-check",
              "codex-code", "codex-code-start", "codex-code-readonly", "codex-code-readonly-start"}
+# MeTTa heads decided by what their command reaches, not by name (Jon's call on omega-flagship/omegahive#76,
+# issuecomment-6832781011: MeTTa a mind runs on its own spaces needs no person's permission, a grounded call that
+# reaches outside the sandbox still asks, and a person can tighten it). When no person's rule, app ceiling or carve-out
+# decides first, one runs if metta_reach finds it touches only the mind's memory spaces and asks otherwise, so
+# run-metta-file, which runs a file from disk, always asks. Without its command, as in a prompt's skill list, one asks.
+REACH_DECIDED = frozenset({"metta", "run-metta-file", "add-atom", "remove-atom", "match", "get-atoms"}
+                          | {name for name, _ in metta_reach.MEMORY_SKILLS} | {metta_reach.SPEC_SKILL[0]})
+RAN_WITHOUT_ASKING = "ran without asking: it reaches only the mind's own memory spaces"
 SCOPE_RANK = {"agent": 0, "swarm": 1, "hive": 2}
+
+
+def _reach_default(command):
+    """The default for a REACH_DECIDED head no rule decided."""
+    if command is None:
+        return "ask", "decided by what its command reaches"
+    found = metta_reach.reach(command)
+    if found.own:
+        return "allow", RAN_WITHOUT_ASKING
+    return "ask", "it reaches past the mind's own memory spaces: " + "; ".join(found.asks)
 
 
 def _plain_argument(tokens, index):
@@ -553,9 +574,10 @@ class Policy:
             logging.getLogger("hive").warning("app template ceiling read failed (%s); denying", type(exc).__name__)
             return "deny"
 
-    def decide(self, agent, skill, extra=()):
+    def decide(self, agent, skill, command=None, extra=()):
         """(mode, reason) without approvals. Calendar consent is a prerequisite. App platform P2's template ceiling
         precedes normal policy and its discovery/Studio carve-outs; subsequent rules can only tighten these bounds.
+        With the command, a REACH_DECIDED head no rule decides is decided by what the command reaches.
         extra: rule rows decided as if they were in force (grantable asks what one more rule would change)."""
         if skill == "calendar-read":
             connector = getattr(self.hive, "google_connector", None)
@@ -568,7 +590,7 @@ class Policy:
         cap = self._ceiling(agent.get("id"), skill)
         if cap == "deny":
             return "deny", "the app that set up this mind does not allow this"
-        mode, reason = self._decide(agent, skill, extra)
+        mode, reason = self._decide(agent, skill, command, extra)
         if cap == "ask" and mode == "allow":
             return "ask", "the app that set up this mind asks a person first"
         return mode, reason
@@ -582,7 +604,7 @@ class Policy:
         it bare): then there is no Research swarm, so neither research rule applies."""
         return getattr(getattr(self, "hive", None), "research", None)
 
-    def _decide(self, agent, skill, extra=()):
+    def _decide(self, agent, skill, command=None, extra=()):
         research = self._research()
         if research is not None and research.is_coordinator(agent.get("id")):
             # research.py: the Research coordinator owns the swarm and is the spawn controller for host code only; it
@@ -640,6 +662,8 @@ class Policy:
             candidates.sort(key=lambda c: (c[0], c[1], restrictiveness(c[2]["mode"]), -_ts(c[2]["created_at"])))
             rule = candidates[0][2]
             return rule["mode"], rule["note"] or f"rule {rule['skill']} ({rule['scope']})"
+        if skill in REACH_DECIDED:
+            return _reach_default(command)
         if unreviewed:
             return "ask", "a hive skill not yet reviewed: a person decides until it is listed"
         if any(_matches(p, skill) for p in DEFAULT_ALLOW):
@@ -708,7 +732,7 @@ class Policy:
         if skill == "syntax-error" and _only_text_arguments(command):
             # the mind's own parser reporting a malformed command back to the mind: no effect, never a human's job
             return {"decision": "allow"}
-        mode, reason = self.decide(agent, skill)
+        mode, reason = self.decide(agent, skill, command)
         decision = None
         if mode == "deny" and self.grantable(agent, skill):
             decision = self._grant_request(agent, skill, command, reason)
@@ -716,6 +740,8 @@ class Policy:
             decision = {"decision": "deny", "message": f"HIVE-DENIED {skill}: {reason}"}
         elif mode == "allow":
             decision = {"decision": "allow"}
+            if reason == RAN_WITHOUT_ASKING:
+                self._ran_without_asking(agent, skill, command)
         elif skill in CODE_MUTATING:
             # Exact coding operations are never consumed here: the service redeems the approval for its
             # exact binding (services.redeem).  Report the approval, filing one if none is open.
@@ -744,8 +770,10 @@ class Policy:
                     "SELECT * FROM approvals WHERE agent_id = ? AND command = ? AND status = 'pending'",
                     (agent["id"], command))
                 approval = pending or self._file(agent, skill, command, reason)
+                # A MeTTa head says why it asks, so the mind can quote data or keep to its memory spaces next time.
+                why = f" ({reason})" if skill in REACH_DECIDED else ""
                 decision = {"decision": "pending", "approval_id": approval["id"],
-                            "message": f"HIVE-APPROVAL-PENDING {approval['id']}: a human must approve {command}. "
+                            "message": f"HIVE-APPROVAL-PENDING {approval['id']}: a human must approve {command}{why}. "
                                        "You will get a message when it is approved; then issue the same command again."}
         self.recent.setdefault(agent["id"], {})[command] = (
             "ask" if decision["decision"] == "pending" else decision["decision"])
@@ -825,6 +853,23 @@ class Policy:
             {"binding": binding} if binding else {}))
         return row
 
+    def _ran_without_asking(self, agent, skill, command):
+        """#76's acceptance: a run the reach default allowed shows in the decision history, so nothing a mind does that
+        way is invisible. One row per mind and command, moved up each time it runs, so a repeated query adds no rows."""
+        stamp = now()
+        row = self.db.one("SELECT * FROM approvals WHERE agent_id = ? AND command = ? AND status = 'auto'",
+                          (agent["id"], command))
+        if row is None:
+            row = {"id": new_id("p"), "agent_id": agent["id"], "skill": skill, "command": command,
+                   "reason": RAN_WITHOUT_ASKING, "risk": "low", "status": "auto", "decided_by": "policy",
+                   "created_at": stamp, "decided_at": stamp}
+            self.db.insert("approvals", row)
+            event = "approval.created"
+        else:
+            self.db.execute("UPDATE approvals SET created_at = ?, decided_at = ? WHERE id = ?", (stamp, stamp, row["id"]))
+            event = "approval.updated"
+        self.hive.events.publish(event, approval=self.approval(row["id"]))
+
     # ---- approvals ------------------------------------------------------------------------
 
     def approval(self, approval_id):
@@ -836,7 +881,10 @@ class Policy:
     def approvals(self, status=None):
         if status:
             return self.db.all("SELECT * FROM approvals WHERE status = ? ORDER BY created_at DESC", (status,))
-        return self.db.all("SELECT * FROM approvals ORDER BY created_at DESC LIMIT 500")
+        # Runs that went ahead without asking (status auto) have a window of their own beside the decisions', so a mind's
+        # busy MeTTa never pushes a person's decisions out of the history.
+        return (self.db.all("SELECT * FROM approvals WHERE status != 'auto' ORDER BY created_at DESC LIMIT 500")
+                + self.db.all("SELECT * FROM approvals WHERE status = 'auto' ORDER BY created_at DESC LIMIT 500"))
 
     DECISIONS = ("once", "for", "always", "no", "never")
 

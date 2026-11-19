@@ -1,5 +1,8 @@
+# Purpose: check on the real runtime that a mind's chosen waits, format retries and held messages behave as promised,
+# and that a mind holding a claimed goal with its own budget keeps its turns and cannot rest on it.
 from hive.runtime.native_core import effective_source
-"""A mind that has chosen to wait makes no model calls until new input arrives or its wait expires.
+"""A mind that has chosen to wait makes no model calls until new input arrives or its wait expires, and an idle mind
+changes no file in its memory or vector store.
 
 The real runtime and loop (Singnet src/loop.metta with the hive hooks) run against a fake agent hub and a fake model that answers every turn with
 "wait <seconds>" and counts the calls. Before the fix a single message bought maxNewInputLoops (12) model calls, one
@@ -40,12 +43,13 @@ class FakeModel:
     """An OpenAI-compatible model and agent API: every chat turn is answered with `answer`, or with the turn's entry
     when `answer` is a list (its last entry for every later turn), an int entry refusing that turn with that HTTP
     status, a (status, error) entry refusing it with that error object as the hive's gateway does; each chat request
-    body is kept; other calls get {}, and each other POST is kept as (time, path, body)."""
+    body is kept; GET /api/agent/goals?status=<s> answers goals(s) when `goals` is given, and the done page hive-goals
+    reads after them is empty; other calls get {}, and each other POST is kept as (time, path, body)."""
 
-    def __init__(self, answer, malformed=False):
+    def __init__(self, answer, malformed=False, goals=None):
         self.answer, self.calls, self.bodies, self.lock = answer, [], [], threading.Lock()
         self.posts = []
-        self.malformed = malformed
+        self.malformed, self.goals = malformed, goals
         model = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -61,6 +65,12 @@ class FakeModel:
                 self.wfile.write(raw)
 
             def do_GET(self):
+                if model.goals is not None and self.path.startswith("/api/agent/goals?status="):
+                    self._reply(model.goals(self.path.split("status=", 1)[1]))
+                    return
+                if self.path == "/api/agent/goals/history":
+                    self._reply({"goals": []})
+                    return
                 self._reply({"ops": []} if self.path.endswith("/control") else {})
 
             def do_POST(self):
@@ -149,7 +159,11 @@ class ChosenWaitShapeTests(unittest.TestCase):
         source = 'send "(syntax-error invented)"'
         self.assertEqual(helper.model_response_commands(source), helper.signature_balance_parentheses(source))
         hooks = (ROOT / 'hive/runtime/extensions/loop_hooks.metta').read_text()
-        self.assertIn('(hive_helpers.prepare_model_response $text (py-call (hive_services.last_response_kind)))', hooks)
+        flat = " ".join(hooks.split())
+        self.assertIn('(hive_helpers.prepare_model_response $text (py-call (hive_services.last_response_kind)) '
+                      '(get-state &lastReplyHold))))', flat)
+        self.assertIn('(change-state! &lastReplyHold (py-call (hive_helpers.prepared_response_hold $prepared '
+                      '(get-state &lastReplyHold)))))', flat)
 
     def test_only_a_pure_wait_ends_the_turns(self):
         sys.path.insert(0, str(ROOT / "src"))
@@ -343,6 +357,37 @@ class WaitQuietRuntimeTests(unittest.TestCase):
         self.assertGreaterEqual(after - before, 4, self._tail("the loop did not keep iterating during the soak"))
         self.assertEqual((model.count(), shapes), (0, []), self._tail("no call and no response with no input"))
 
+    def _durable_files(self):
+        """(inode, size, mtime) of every file and folder in the mind's memory and vector store. SQLite's -shm wal-index
+        is left out: readers update it in place and SQLite never syncs or keeps it (https://sqlite.org/walformat.html)."""
+        files = {}
+        for top in (self.tmp / "memory", self.tmp / "chroma_db"):
+            for path in [top, *top.rglob("*")]:
+                if path.name.endswith("-shm"):
+                    continue
+                try:
+                    st = path.lstat()
+                except FileNotFoundError:                                  # a temp file renamed away while listed
+                    files[str(path.relative_to(self.tmp))] = "gone"
+                    continue
+                files[str(path.relative_to(self.tmp))] = (st.st_ino, st.st_size, st.st_mtime_ns)
+        return files
+
+    def test_an_idle_mind_changes_no_file_in_its_memory_or_vector_store(self):
+        """A disk audit found idle minds committing their memory several times a second: the loop saved every memory
+        space at the end of each iteration (a temp file, two fsyncs and a rename each) and the channel rewrote its
+        admission state on every read. With no input, a mind leaves every file it keeps as it was."""
+        model = FakeModel("wait 30 nothing owed")
+        self.addCleanup(model.shutdown)
+        self._boot(model)
+        self._await_runtime(lambda: self._response_shapes()[1] >= 2, "the loop never finished its first iteration", 120)
+        before, start = self._durable_files(), self._response_shapes()[1]
+        self._await_runtime(lambda: self._response_shapes()[1] >= start + 4, "the loop stopped iterating", 120)
+        after = self._durable_files()
+        self.assertEqual(model.count(), 0, self._tail("a call with no input"))
+        changed = sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
+        self.assertEqual(changed, [], self._tail(f"an idle mind changed {changed}"))
+
     def test_a_malformed_response_retries_soon_without_executing_its_valid_prefix(self):
         model = FakeModel('send "INVENTED_PREFIX_MUST_NOT_RUN"\nread-file')
         self.addCleanup(model.shutdown)
@@ -444,6 +489,35 @@ class WaitQuietRuntimeTests(unittest.TestCase):
         self.assertTrue(wait_for(lambda: model.count() >= 4, timeout=60), self._tail("no turn after the refusal"))
         self.assertLess(time.monotonic() - first, 55, self._tail("waited the provider error's 60 s, not retry_after"))
 
+    def test_a_message_goes_out_on_the_turn_after_a_hold(self):
+        # Jon on omega-flagship/omegahive#334: "Could a message that was held once go out the next time it's written?
+        # Or could a test show a mind getting a message through on the turn after a hold?" Three replies each pair a
+        # command with a message: the first is held, the second goes out though it follows a command, and the third is
+        # held again, so the person waits one extra turn at most and holding still works after.
+        model = FakeModel(['remember "LESSON_ONE"\nsend "HELD_ONCE"',
+                           'remember "LESSON_TWO"\nsend "SENT_THE_TURN_AFTER"',
+                           'remember "LESSON_THREE"\nsend "HELD_AGAIN"', 'wait 900 done'])
+        self.addCleanup(model.shutdown)
+        self._boot(model)
+        self._message(1, 'remember these and tell me')
+        self.assertTrue(wait_for(lambda: model.count() >= 4, timeout=240), self._tail('no fourth turn'))
+        with model.lock:
+            fourth = model.bodies[3]
+        system = next(m["content"] for m in fourth["messages"] if m["role"] == "system")
+        last = system.split("LAST_SKILL_USE_RESULTS: ", 1)[1].split(" CURRENT_INPUT:", 1)[0]
+        for seen in ("held-message", "HELD_AGAIN", "NOT SENT"):
+            self.assertIn(seen, last, self._tail(f"{seen} missing from the turn after the third reply"))
+        sent = []
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            try:
+                frame = self.hub.next_frame(timeout=1)
+            except Exception:
+                continue
+            if frame.get("type") == "agent_message":
+                sent.append(frame.get("text"))
+        self.assertEqual(sent, ["SENT_THE_TURN_AFTER"], self._tail("the person got a held message, or not the one after"))
+
     def test_a_provider_error_wait_retries_after_a_short_back_off(self):
         """Kimi r1 K8: with no usable provider the runtime answers its own wait "LLM-PROVIDER-..."; that is not the
         mind's choice, so it is tried again after 60 s, not after the full wake interval (900 s), and not every 3 s."""
@@ -520,6 +594,67 @@ class WaitQuietRuntimeTests(unittest.TestCase):
         time.sleep(max(0.0, first + 20 - time.monotonic()))
         self.assertEqual(model.count(), 1, self._tail(f"calls during the quoted wait: {model.count()}"))
         self._pin_shape('((wait "30"))', 30)
+
+    # a Create step's goal as the hive lists it to the mind holding it: its own budget, started at this mind's claim
+    UI_GOAL = {"id": "g_ui", "status": "claimed", "title": "Create plan p1: build ui", "claimed_by": "a_wait",
+               "assignee": "a_wait", "priority": 0.6, "step_budget_usd": 1.0}
+
+    @staticmethod
+    def _results_before(model, turn):
+        """LAST_SKILL_USE_RESULTS in the prompt of the model's turn-th call (1-based): the turn before's results."""
+        with model.lock:
+            body = model.bodies[turn - 1]
+        system = next(m["content"] for m in body["messages"] if m["role"] == "system")
+        return system.split("LAST_SKILL_USE_RESULTS: ", 1)[1].split(" CURRENT_INPUT:", 1)[0]
+
+    def test_a_mind_holding_a_goal_keeps_its_turns_and_cannot_rest_on_it(self):
+        """19 Nov: a Create builder claimed its piece's goal, spent the turns its input bought on other commands and
+        sat silent holding it until the 900 s wake. Now a mind holding a claimed goal with its own budget (a Create
+        step's) gets its spent turns back, and a wait it chooses then is refused, naming the goal; once the goal is no
+        longer its own, the wait rests it."""
+        held = threading.Event()
+        held.set()
+        model = FakeModel(["hive-goals"] * 12 + ["wait 1800 nothing left to do"],
+                          goals=lambda status: [self.UI_GOAL] if status == "claimed" and held.is_set() else [])
+        self.addCleanup(model.shutdown)
+        self._boot(model)
+        self._message(1, "build the ui piece")
+        # The message buys 12 turns, each spent on hive-goals; the 13th comes from the renewal and chooses to wait.
+        self.assertTrue(wait_for(lambda: model.count() >= 14, timeout=180),
+                        self._tail(f"the turns stopped at {model.count()} while the goal was held"))
+        self.assertIn("HIVE-GOALS yours: g_ui claimed", self._results_before(model, 2), self._tail("not its own view"))
+        with model.lock:
+            after_wait = model.calls[13] - model.calls[12]
+        self.assertLess(after_wait, 15, self._tail(f"the refused wait still rested the mind {after_wait:.0f} s"))
+        self.assertIn("WAIT-REFUSED you hold g_ui Create plan p1: build ui", self._results_before(model, 14),
+                      self._tail("the wait was not refused"))
+        # The goal is no longer its own (proposed, given back or ended by the hive): its next wait rests it.
+        held.clear()
+        released = model.count()
+        self.assertTrue(wait_for(lambda: time.monotonic() - model.calls[-1] > 12, timeout=60),
+                        self._tail("the mind kept calling after the goal went"))
+        self.assertLessEqual(model.count() - released, 2, self._tail(f"{model.count() - released} calls after the goal went"))
+        self.assertIn("WAITING:1800 nothing left to do", (self.tmp / "agent.log").read_text(errors="replace"),
+                      self._tail("the last wait was not taken"))
+
+    def test_a_provider_failure_while_holding_a_goal_keeps_its_back_off(self):
+        """A refused model call (a 402, as at a mind's spending cap) ran nothing: while the mind holds a goal, its
+        retry still waits out the runtime's 60 s back-off instead of being renewed into a call every few seconds."""
+        model = FakeModel(["hive-goals", 402, "hive-goals"],
+                          goals=lambda status: [self.UI_GOAL] if status == "claimed" else [])
+        self.addCleanup(model.shutdown)
+        self._boot(model)
+        self._message(1, "build the ui piece")
+        self.assertTrue(wait_for(lambda: model.count() >= 3, timeout=150), self._tail("no retry after the refusal"))
+        with model.lock:
+            back_off = model.calls[2] - model.calls[1]
+        self.assertGreaterEqual(back_off, 55, self._tail(f"the retry came {back_off:.0f} s after the refusal"))
+        self.assertTrue(any(row.startswith('((wait "LLM-PROVIDER-') for row in self._response_shapes()[0]),
+                        self._tail("no provider wait"))
+        # the mind chose no wait, so the runtime's own wait is not refused: it answers WAITING with its reason
+        log = (self.tmp / "agent.log").read_text(errors="replace")
+        self.assertIn("WAITING:LLM-PROVIDER-", log, self._tail("the runtime's wait did not answer WAITING"))
+        self.assertNotIn("WAIT-REFUSED", log, self._tail("the runtime's own wait was refused"))
 
 
 if __name__ == "__main__":

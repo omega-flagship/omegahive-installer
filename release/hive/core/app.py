@@ -31,12 +31,13 @@ from ..supervisor.drivers import Supervisor
 from .ask import TRACE_ENTRY
 from .config import FREE, Settings, is_free, load_settings
 from .db import now
-from .feedback import ERROR_ID_HEADER, SEND_MAX_BYTES as FEEDBACK_MAX_BYTES
+from .feedback import ERROR_ID_HEADER, SEND_MAX_BYTES as FEEDBACK_MAX_BYTES, RecentRequests
 from . import session_launch
 from . import assets as assets_mod
 from . import views as views_mod
 from .collab import artifact_command
 from .gateway import Gateway, GatewayError, billable as gateway_billable, reported_cost, split_model
+from .refusals import again as refused_again, spoken
 from .hive import Hive, HiveError, token_hash
 from .health import people_frame
 from .providers import ProviderError, ProviderStore
@@ -199,7 +200,8 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         supervisor.attach(hive)
     gateway = Gateway(settings.providers)
     gateway.authorize_agent = hive.person_apps.authorize_agent   # P2's require_current, then P14's own-key context rule
-    from .cost_reservations import BudgetExhausted, Reservations, SpendRateLimited, exhausted_limit, host_budget_snapshot, host_subjects, host_use_check
+    from .cost_reservations import (BudgetExhausted, Reservations, SpendRateLimited, exhausted_limit, host_budget_snapshot,
+                                    host_subjects, host_use_check, reservable_micros)
     cost_reservations = Reservations(hive.db)
     gateway.free_unreconciled = cost_reservations.free_unknown   # sol R2 P1: no further $0 call past an unknown one
 
@@ -683,6 +685,8 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
     # each answer says where in the live stream it was read, so the page can tell what to read again (events.py)
     from .events import StreamPositionHeader
     app.add_middleware(StreamPositionHeader, bus=hive.events)
+    # each request the hive's routes answer is kept with whoever made it, for the logs a person exports (feedback.py)
+    app.add_middleware(RecentRequests, feedback=hive.feedback, who=lambda session: _who(session))
 
     def error_answer(request: Request, status: int, error: dict, exc: BaseException | None = None, headers: dict | None = None):
         """Every error answer carries an id in its X-Hive-Error-Id header, which the hive keeps with the person who met
@@ -711,7 +715,10 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         return error_answer(request, exc.status, error, headers=headers)
 
     async def domain_error(request: Request, exc):
-        return error_answer(request, exc.status, {"code": exc.code, "message": exc.message})
+        # a refusal that knows its wait says it as RFC 9110's Retry-After, in whole seconds, as providers do to the hive
+        wait = getattr(exc, "retry_after", None)
+        headers = {"Retry-After": str(max(1, math.ceil(wait)))} if wait is not None else None
+        return error_answer(request, exc.status, {"code": exc.code, "message": exc.message}, headers=headers)
 
     # the other errors the hive raises on purpose each carry a status, a code and a message
     for kind in (GatewayError, ProviderError, McpError, RoleError, CodeError, ServiceError, SignInError, GoogleConnectorError):
@@ -2434,6 +2441,13 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         session = operator(request)
         return await run_in_threadpool(hive.feedback.context, _who(session))
 
+    @app.get("/api/feedback/logs")
+    async def feedback_logs(request: Request):
+        """For any signed-in person: what the hive puts in the logs file they save from the feedback area (feedback.py
+        logs), their own recent requests and error answers, or for an admin the whole hive's with its own log lines."""
+        session = operator(request)
+        return await run_in_threadpool(hive.feedback.logs, _who(session), role_of(session) == "admin")
+
     @app.post("/api/feedback/send")
     async def feedback_send(request: Request):
         """Hand a report to the report service HIVE_FEEDBACK_TO names. The page sends it only after the person has
@@ -2508,8 +2522,7 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         admin(request)
         data = await body(request)
         status = await providers.set_key(name, data.get("key", ""))
-        hive.events.publish("providers.updated", providers=providers.list())
-        offer_refresh.schedule()   # a key may fund (or stop funding) Create · Code
+        keys_changed()   # the one place a key change is announced: providers, Create · Code's offer, held refusals
         return status
 
     @app.delete("/api/providers/{name}/key")
@@ -2580,6 +2593,7 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
     def keys_changed():
         hive.events.publish("providers.updated", providers=providers.list())
         offer_refresh.schedule()   # a key may fund or stop funding Create · Code
+        hive.model_refusal_rekeyed()   # a mind whose calls now go out with another key asks its provider again; no other
 
     async def remove_stored_key(key_id, session, force=0):
         me = session.get("principal") or "user:operator"
@@ -2643,6 +2657,10 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         gw = gateway_enabled()
         month = data.get("month_usd") if gw and "month_usd" in data else None
         make_default = data["default"] if isinstance(data.get("default"), bool) else None
+        if role_of(session) != "admin":
+            # a member's key is never the hive default, not even the first key of a provider: a missing `default`
+            # would otherwise make it the default, and every mind without a key would pay with it (Dot on #459)
+            make_default = False
         provider_name = str(data.get("provider", ""))
         existing = providers.own_key(provider_name, data.get("key", ""), owner) if gw else None
         written = applied = False
@@ -4470,14 +4488,36 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         for key in ("max_tokens", "max_completion_tokens"):
             if limit and isinstance(data.get(key), int) and data[key] > limit:
                 data[key] = limit
-        paid, estimate = gateway.estimate(agent, data, settings.allow_unpriced)
+        try:
+            paid, estimate = gateway.estimate(agent, data, settings.allow_unpriced)
+        except GatewayError as exc:
+            if spoken(exc):   # a held $0 model, or the free route refusing it before anything is sent
+                hive.note_model_refusal(agent, exc)
+            raise
         provider_name = str(agent["model"]).partition("/")[0]
         key_id = gateway.paying_key(agent, provider_name)[0] if paid else None
         key_owner = ((gateway.keyring.ring.get("keys") or {}).get(key_id) or {}).get("owner") if (key_id and gateway.keyring) else None
         payer, own_key = hive.payer_for(agent, key_owner)
         # J3 R4: a live Studio session's maker is bound to the step admitted now (None for every other mind, and off)
         studio_call = hive.studio.gateway_call(agent) if paid else None
+        if limit and studio_call is None and hive.goals.holds_create_step(agent["id"]):
+            # a Create step's answer is whole files (a build, the acceptance check) or a whole plan in one reply, and a
+            # reply cut off at its room is thrown away whole: a Make run of a tester's tic-tac-toe had eleven replies stop
+            # at their 6000-token room. So its first call asks with the model's whole room, as much of it as a new
+            # reservation can hold now (cost_reservations.reservable_micros), never less than the mind asked for.
+            key = "max_completion_tokens" if data.get("max_completion_tokens") else "max_tokens"
+            room = gateway.affordable_room(agent, data, limit,
+                                           reservable_micros(hive, agent["id"], key_id, payer, own_key) if paid else None)
+            if isinstance(data.get(key), int) and room > data[key]:
+                data[key] = room
+                paid, estimate = gateway.estimate(agent, data, settings.allow_unpriced)
         studio_check(studio_call, hive.check_budget, agent, paid, estimate, key_id, payer, own_key)
+        # after the hive's own checks (a day's cap, a spending limit), which answer first: a refusal kept on this mind still
+        # holds, so its provider isn't asked again, and nothing is reserved or sent, until its wait has passed, someone
+        # wrote to the mind, or its model or the key its calls go out with changed (Hive.model_refusal_holds)
+        kept = hive.model_refusal_holds(agent)
+        if kept is not None:
+            raise refused_again(kept, kept["until"] - time.monotonic())
         reservation = None
         if paid:
             def current_budgets():
@@ -4514,6 +4554,9 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         hive.thinking(agent["id"], "llm", payer)   # the payer names the Ask turn this call is attributed to, if any
         started = time.monotonic()
         gate_token = SEND_GATE.set(studio_call.gate) if (studio_call is not None and reservation) else None
+        # the key this call goes out with (gateway.chat picks the same one before it first awaits): a refusal that comes
+        # back after that key changed is the old key's, and holds nothing (Hive.note_model_refusal)
+        sent_with = hive.sender_of(agent)
         try:
             response, usage = await gateway.chat(agent, data)
         except StudioRefused as exc:
@@ -4523,11 +4566,14 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
             if studio_call is not None and studio_call.unsent():
                 raise                       # r4.1: never reached the send boundary: released, not held unknown
             if reservation: hold_unknown(reservation, exc)   # a refusal with a charge settles; one its provider documents as unbilled is released
+            if spoken(exc):   # the provider's refusal, or the free route's: kept on the mind for its chat, Health and its next tries
+                hive.note_model_refusal(agent, exc, sent_with=sent_with)
             raise
         finally:
             if gate_token is not None:
                 SEND_GATE.reset(gate_token)
             hive.thinking(agent["id"], "idle", payer)
+        hive.model_answered(agent["id"])   # an answer ends any refusal kept on the mind
         if web_tools is not None:
             web_tools.new_turn(agent["id"])   # only a model call that returned starts a new web turn
         if studio_call is not None and reservation:
@@ -5218,12 +5264,13 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
 
     @app.post("/api/swarms/{swarm_id}/goals")
     async def create_goal(swarm_id: str, request: Request):
-        operator(request)
+        session = operator(request)
         data = await body(request)
         return await hive.goals.create(swarm_id, data.get("title", ""), data.get("detail", ""),
                                        data.get("priority", 0.5), data.get("parent_id"),
                                        assignee=data.get("assignee"), binding=data.get("binding"),
-                                       deadline_minutes=data.get("deadline_minutes"))
+                                       deadline_minutes=data.get("deadline_minutes"),
+                                       created_by=session.get("principal") or "user:operator")
 
     @app.get("/api/goals/{goal_id}")
     async def get_goal(goal_id: str, request: Request):
@@ -5638,6 +5685,12 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
     @app.post("/api/agent/goals/{goal_id}/heartbeat")
     async def agent_goal_heartbeat(goal_id: str, request: Request):
         return hive.goals.heartbeat(agent_from(request), goal_id)
+
+    @app.post("/api/agent/goals/{goal_id}/files")
+    async def agent_goal_file(goal_id: str, request: Request):
+        """hive-goal-file: one whole file staged on a goal the mind holds, for the goal's answer (Goals.stage_file)."""
+        data = await body(request)
+        return hive.goals.stage_file(agent_from(request), goal_id, data.get("path"), data.get("text"))
 
     @app.post("/api/agent/goals/{goal_id}/result")
     async def agent_result(goal_id: str, request: Request):
@@ -6250,6 +6303,11 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         session = admin(request)
         return await asyncio.to_thread(hive.assets.cleanup, sha, session.get("principal") or "user:operator")
 
+    @app.delete("/api/assets/{sha}")
+    async def delete_asset(sha: str, request: Request):
+        session = admin(request)
+        return await asyncio.to_thread(hive.assets.delete, sha, session.get("principal") or "user:operator", viewer(session))
+
     @app.post("/api/agent/assets")
     async def agent_upload_asset(request: Request, name: str = "", local_only: bool = False):
         agent = agent_from(request)
@@ -6711,6 +6769,8 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
     install_folders(app, hive, operator, admin, agent_from, viewer)   # linked local folders (local hives only)
     from .mind_files import install_routes as install_mind_files
     install_mind_files(app, hive, agent_from, role_of)   # GET /api/agent/assets and file notices to a swarm's minds
+    from .task_stops import install_routes as install_task_stops
+    install_task_stops(app, hive, operator, viewer)
 
     # Host-owned factory installs the confidential boundary before UI catch-all routes.
     # No factory means no private monitoring or report channel is enabled.
@@ -6750,7 +6810,9 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
             return Response(html, media_type="text/html", headers={"Cache-Control": "no-cache, no-store, must-revalidate",
                                                                    "Content-Security-Policy": page_csp(nonce)})
 
-        @app.get("/{path:path}")
+        # the page and its files, outside the API schema like the page's other routes, so the logs a person exports
+        # keep a file that loaded out of the hive's requests (feedback.py RecentRequests)
+        @app.get("/{path:path}", include_in_schema=False)
         async def ui(path: str, request: Request):
             if path.split("/", 1)[0] in ("api", "llm", "agent-hub"):
                 raise HiveError(404, "not_found", "no route /" + scrub_logged(path))

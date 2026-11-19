@@ -11,12 +11,15 @@ export interface WakeInspection {
   canWake: boolean
   /** Only current native facts may supply a gate; never a text guess. */
   gate?: WakeGate
+  /** The host's own words for why the mind is in 'error' (its last_error), shown when the wake fails. */
+  error?: string
 }
 export type WakePhase = 'inspecting' | 'waking' | 'sending'
 export type WakeAttemptResult<T> =
   | { kind: 'sent'; value: T }
   | { kind: 'gated'; gate: WakeGate }
-  | { kind: 'wake-failed'; reason: 'refused' | 'unconfirmed'; requestSent: false }
+  /** detail: the host's reason, when it gave one (a start_refused answer, or the mind's last_error). */
+  | { kind: 'wake-failed'; reason: 'refused' | 'unconfirmed'; requestSent: false; detail?: string }
   | { kind: 'send-error'; error: unknown }
   | { kind: 'stale' }
 
@@ -36,6 +39,13 @@ class WakeBlocked extends Error {
 }
 class Stopped extends Error {
   constructor(readonly causeKind: 'stale' | 'timeout') { super(causeKind) }
+}
+/** The host's words as one short line for the wake card; nothing when it gave none. */
+export function hostReason(text: unknown): string | undefined {
+  if (typeof text !== 'string') return undefined
+  const line = text.replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, '')
+  if (!line) return undefined
+  return line.length > 200 ? `${line.slice(0, 199)}…` : line
 }
 
 /** Duplicate run calls share the same promise and never repeat effects.
@@ -82,12 +92,15 @@ export class WakeBeforeSend<T> {
   private async perform(): Promise<WakeAttemptResult<T>> {
     const deadline = setTimeout(() => { this.stopped = 'timeout'; this.stop.abort() }, this.timeoutMs)
     let sending = false
+    // The last inspected reason (set only for a mind in 'error': its last_error), for an untyped wake failure.
+    let inspected: string | undefined
+    const inspect = async () => { const v = await this.scoped(() => this.ports.inspect()); inspected = v.error; return v }
     try {
       this.assertCurrent()
       this.ports.phase('inspecting')
-      let view = await this.scoped(() => this.ports.inspect())
+      let view = await inspect()
       if (view.state !== 'awake' && view.gate) return { kind: 'gated', gate: view.gate }
-      if (view.state === 'unavailable') return { kind: 'wake-failed', reason: 'refused', requestSent: false }
+      if (view.state === 'unavailable') return { kind: 'wake-failed', reason: 'refused', requestSent: false, detail: view.error }
       if (view.state === 'asleep') {
         if (!view.canWake) return { kind: 'gated', gate: 'authority' }
         this.assertCurrent()
@@ -96,16 +109,17 @@ export class WakeBeforeSend<T> {
         await this.scoped(() => this.ports.wake(() => {
           try { this.assertCurrent(); return true } catch { return false }
         }))
-        view = await this.scoped(() => this.ports.inspect())
+        view = await inspect()
       } else if (view.state === 'starting') {
         // Someone has already asked for this start. Do not issue another wake.
         this.ports.phase('waking')
       }
       while (view.state !== 'awake') {
         if (view.gate) return { kind: 'gated', gate: view.gate }
-        if (view.state === 'unavailable' || view.state === 'asleep') return { kind: 'wake-failed', reason: 'unconfirmed', requestSent: false }
+        // A mind back in 'error' after the wake (its start failed after the host took it) says why.
+        if (view.state === 'unavailable' || view.state === 'asleep') return { kind: 'wake-failed', reason: 'unconfirmed', requestSent: false, detail: view.error }
         await this.scoped(() => this.pause())
-        view = await this.scoped(() => this.ports.inspect())
+        view = await inspect()
       }
       this.assertCurrent()
       // The wake deadline never labels an already dispatched Ask as not sent.
@@ -120,7 +134,11 @@ export class WakeBeforeSend<T> {
       if (error instanceof WakeBlocked) return { kind: 'gated', gate: error.gate }
       if (error instanceof Stopped) return error.causeKind === 'stale'
         ? { kind: 'stale' } : { kind: 'wake-failed', reason: 'unconfirmed', requestSent: false }
-      return this.ports.current() ? { kind: 'wake-failed', reason: 'refused', requestSent: false } : { kind: 'stale' }
+      if (!this.ports.current()) return { kind: 'stale' }
+      // The host's typed refusal of the start (core/hive.py _start_locked: 409 start_refused) says why; any other
+      // failure (a 500, say) falls back to the mind's inspected last_error. An arbitrary error's text is never shown.
+      const detail = error instanceof ApiError && error.code === 'start_refused' ? hostReason(error.message) : inspected
+      return { kind: 'wake-failed', reason: 'refused', requestSent: false, ...(detail ? { detail } : {}) }
     } finally { clearTimeout(deadline) }
   }
 }
@@ -217,13 +235,18 @@ export function nativeWakePorts<T>(o: NativeWakeOptions<T>): WakeAttemptPorts<T>
     // A stopped mind wakes exactly like an asleep one (the host's wake/start lifecycle runs from either; Jon 11-01:
     // asking is the intent, no wake click wall). Most resting minds are 'stopped', so treating it as unavailable left
     // the Ask unable to send at all (Jon 11-04: "Couldn't wake Design creative-director").
+    // A mind in 'error' (a start the host refused earlier stays there, desired 'stopped', across redeploys) is woken
+    // once too, by whoever may wake it: the host's start runs from 'error' as from 'stopped', and its refusal says why.
+    // Mapped to 'unavailable' it showed a bare "Couldn't wake" forever and the host never heard of it (T-ASK-ERROR-WAKE).
     const state = mind.status === 'awake' || mind.status === 'starting' ? mind.status
-      : mind.status === 'asleep' || mind.status === 'stopped' ? 'asleep' : 'unavailable'
+      : mind.status === 'asleep' || mind.status === 'stopped' || (mind.status === 'error' && allowed) ? 'asleep'
+      : 'unavailable'
+    const error = mind.status === 'error' ? hostReason(mind.last_error) : undefined
     if (state === 'asleep' && !allowed && o.client.myMind && !('private' in o.context)) {
       const own = readMyMind(await fresh(() => o.client.myMind!()))
       if (own?.swarm_id) o.fallback?.(own)
     }
-    return { state, canWake: allowed }
+    return { state, canWake: allowed, ...(error ? { error } : {}) }
   }
   return {
     current, inspect,
@@ -258,6 +281,8 @@ export interface WakeView {
   own?: MyMind
   privateRequest?: boolean
   mindId?: string
+  /** The host's reason a failed wake failed (start_refused, or the mind's last_error), when it gave one. */
+  reason?: string
 }
 interface DeliveryOptions<T> extends NativeWakeOptions<T> {
   /** the hive's conductor answers this turn (its capabilities, and no browser answer): nothing is woken first */
@@ -377,7 +402,8 @@ export const askAutoWake = {
     if (deliveries.get(op) !== d) return ASK_NOT_SENT
     if (d.view.phase !== 'stopped') update(result.kind === 'gated'
       ? { phase: 'gated', gate: result.gate }
-      : { phase: 'failed', failures: d.view.failures + 1, changed: result.kind === 'stale' })
+      : { phase: 'failed', failures: d.view.failures + 1, changed: result.kind === 'stale',
+        reason: result.kind === 'wake-failed' ? result.detail : undefined })
     return ASK_NOT_SENT
   },
 }

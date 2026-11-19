@@ -58,6 +58,10 @@ def people_frame(text):
 KINDS = {
     "crash": ("high", "the mind's process stopped with an error", "Open the mind and read its last log; restart it after fixing the cause."),
     "budget": ("high", "a paid call was refused by a spending limit or a missing key", "Raise or reset the limit in Usage, or assign a working key in the mind's settings."),
+    # a refusal of the mind's model calls from refusals.py's table, kept on the mind (Hive.note_model_refusal): its example
+    # is the sentence written for the person, which says what to do
+    "refused-calls": ("high", "the mind's model calls are refused until someone acts", "Read the example: it says what to do (credit, a key or another model)."),
+    "held-calls": ("medium", "the mind's model calls are held back for a while and tried again by themselves", "Nothing to do unless it lasts; the example says why. Another model goes on at once."),
     "loop": ("high", "the mind keeps getting the same failure", "Read the repeated result; tell the mind what to do differently, or fix the skill it is calling."),
     "unconnected": ("high", "the mind was started but never connected to the hive",
                     "Its process cannot reach the hive (address, port or sandbox): read its last log, fix the cause, then stop and start it."),
@@ -156,6 +160,11 @@ class Health:
             for sig, hits in counts.items():
                 if len(hits) >= self.REPEAT and ("loop", sig) not in issues:
                     self._add(issues, "loop", hits[0][1], hits[0][2], key=("loop", sig), count=len(hits))
+        kept = (getattr(self.hive, "model_refusals", None) or {}).get(agent["id"])
+        if kept and kept.get("model") == agent.get("model"):
+            kind = "held-calls" if kept["remedy"] == "wait" else "refused-calls"
+            issues[(kind, "model-call")] = self._issue(kind, {"command": "(model call)", "result": f"{kept['code']}: {kept['say']}"},
+                                                      {"created_at": kept["at"], "iteration": None}, kept["count"])
         refused = self.hive.refusals.get(agent["id"])
         if refused and refused.get("count"):
             issues[("budget", "model-call")] = self._issue("budget", {"command": "(model call)", "result": f"{refused['code']}: {refused['message']}"},

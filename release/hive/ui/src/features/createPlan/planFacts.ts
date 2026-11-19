@@ -1,6 +1,6 @@
 import type { ScreenFacts } from '../../screens/screenSpace'
 import type { PlanView } from './contract'
-import { codeTarget, openQuestions } from './planModel'
+import { codeTarget, isHeld, openQuestions, planEnded } from './planModel'
 
 /**
  * What the Make bench is told (plan.metta): which of its three screens is drawn, this moment's facts (counts, flags and
@@ -21,6 +21,8 @@ export interface PlanUi {
   opening?: boolean
   /** the page already holds something to run or read (a verified preview, a file's text), whatever the view says */
   showing?: boolean
+  /** the newest build held on the person or the hive that this page does not show (left by Make something else) */
+  held?: { sentence: string } | null
 }
 export interface PlanComposed { screen: PlanScreen; data: Record<string, unknown>; facts: ScreenFacts }
 
@@ -38,7 +40,7 @@ export function planFacts(view: PlanView | null, ui: PlanUi): PlanComposed {
   const open = view ? openQuestions(view).length : 0
   const answered = view ? view.questions.filter((q) => q.answered).length : 0
   const stop = view?.actions.find((a) => a.name === 'stop')
-  const ended = !!view && (view.status === 'stopped' || view.status === 'deployed' || !!view.installed)
+  const ended = !!view && planEnded(view)
   const live = !!view && (!!ui.showing || !!view.checkpoint || !!view.preview || !!codeTarget(view))
   const flags = {
     'can.plan': ui.can,
@@ -51,6 +53,8 @@ export function planFacts(view: PlanView | null, ui: PlanUi): PlanComposed {
     'plan.unreviewed': !!view?.unreviewed,
     'can.stop': !!stop?.available && !ended,
     'stop.asking': ui.stopAsking,
+    'plan.leavable': !!view && isHeld(view) && !ended,
+    'plan.held': !view && !!ui.held,
   }
   return {
     screen: planScreen(view, !!ui.opening),
@@ -64,6 +68,7 @@ export function planFacts(view: PlanView | null, ui: PlanUi): PlanComposed {
       'plan.sentence': view?.sentence ?? '',
       'plan.status': view?.status_line ?? '',
       'start.error': ui.startError ?? '',
+      'held.sentence': ui.held?.sentence ?? '',
       'installed.name': view?.installed?.name ?? '',
       'waiting.name': view?.waiting?.name ?? '',
       'waiting.message': view?.waiting?.message ?? '',

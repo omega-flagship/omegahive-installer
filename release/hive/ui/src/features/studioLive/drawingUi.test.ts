@@ -28,6 +28,27 @@ describe('Create drawing entry explains its actual availability', () => {
     }
   })
 
+  it('says the reason the host gave for not offering drawing, and offers the person no step they cannot take (show run f4)', () => {
+    const off = (why: unknown): AskSettings => ({ swarm_id: null, thread_budget_usd: 5, capabilities: { conductor: false, memory: false, studio_off: why } } as AskSettings)
+    const words = (why: unknown) => {
+      const availability = drawingAvailability(client, off(why), true, true, true)
+      expect(availability.code).toBe('host_not_offered')
+      return render(createElement(DrawingEntry, { availability, start: () => { throw new Error('Must not start') } }))
+    }
+    const notSetUp = words('not_set_up')
+    expect(notSetUp).toContain('Live drawing isn’t set up on this hive yet, so nothing can be drawn here.')
+    expect(notSetUp).toContain('That is for whoever runs this hive; there is nothing for you to do here.')
+    const turnedOff = words('off')
+    expect(turnedOff).toContain('Live drawing is turned off on this hive, so nothing can be drawn here.')
+    expect(turnedOff).toContain('That is for whoever runs this hive; there is nothing for you to do here.')
+    for (const html of [notSetUp, turnedOff]) {
+      expect(html).not.toContain('It has not said why.')
+      expect(html).not.toMatch(/key|Keys|template|HIVE_STUDIO|Mac/)      // a key does not turn it on: no key step
+      expect(html.match(/<button/g)).toHaveLength(1)                       // only the disabled Draw live
+    }
+    for (const why of [undefined, 'something_new', 1]) expect(words(why)).toContain('It has not said why.')   // never a guessed reason
+  })
+
   it('distinguishes unknown host data, missing client, space, interface and setup method', () => {
     expect(drawingAvailability(client, null, true, true, true).code).toBe('checking')
     expect(drawingAvailability(null, settings(true), true, true, true).code).toBe('client_unavailable')

@@ -1,3 +1,5 @@
+; Purpose: the mind's memory skills: persistent facts, notes, rules and expressions, proposal-first cleanup of
+; persistent memory that never changes code, world facts, beliefs, agenda goals and events.
 !(import_prolog_function string_length)
 
 (= (persistent-fact $spec)
@@ -91,36 +93,53 @@
           (save-runtime-space "cleanup")
           (PersistentCleanupProposalCommitted $proposal_id $action)))
 
+; A cleanup changes the mind's memory, never its code. PeTTa makes an (= ...) atom in any space a function and erases
+; the function when an identical atom is removed from any space, and a (: ...) atom changes how calls compile, so an
+; atom that is one of these, or is a variable or has a variable head and so could match one, is code here, as the
+; policy gate judges it (hive/core/metta_reach.py _code_change; test_metta_reach checks the two agree in PeTTa). The
+; gate lets a cleanup commit run without asking because such an atom is refused here, and only here can it be: a
+; proposal can be written into &cleanup or come back from cleanup.metta, so the check is on the atom about to be
+; committed. car-atom would bind a variable, so is-var looks first.
+(= (cleanup-code-atom? $atom)
+   (if (is-var $atom)
+       True
+       (if (is-expr $atom)
+           (let $head (car-atom $atom)
+                (or (is-var $head) (or (== $head =) (== $head :))))
+           False)))
+
 (= (persistent-cleanup-commit-proposal $proposal_id $candidate_id $action $expr $replacement $reason $risk $confidence)
    (let $atom (catch (sread $expr))
-        (if (== (car-atom $atom) Error)
-            (CleanupCommitError "bad stored cleanup expression" $proposal_id $atom)
-            (if (== $action "keep")
-                (persistent-cleanup-mark-committed $proposal_id $candidate_id $action $expr $replacement $reason $risk $confidence)
-                (if (== $action "merge-duplicate")
-                    (let $count (match-count &persistent $atom)
-                         (if (> $count 1)
-                             (progn (collapse (match &persistent $atom
-                                                      (remove-atom &persistent $atom)))
-                                    (add-atom &persistent $atom)
-                                    (trace-atom "merge-remove" "persistent" $atom $reason)
-                                    (trace-atom "merge-write" "persistent" $atom $reason)
-                                    (add-atom &events (Event "omega" "persistent-cleanup-merge-duplicate" $reason "0.9"))
-                                    (save-runtime-space "persistent")
-                                    (persistent-cleanup-mark-committed $proposal_id $candidate_id $action $expr $replacement $reason $risk $confidence)
-                                    (PersistentCleanupCommitted $proposal_id $action $count $atom))
-                             (CleanupCommitError "merge-duplicate requires at least two exact matching persistent atoms" $proposal_id $count)))
-                    (if (== $action "retire")
+        (if (cleanup-code-atom? $atom)
+            (CleanupCommitError "a cleanup changes memory, never code: this atom is or could be a function definition or type declaration, which retire-persistent-expression retires once a person approves" $proposal_id $expr)
+            (if (== (car-atom $atom) Error)
+                (CleanupCommitError "bad stored cleanup expression" $proposal_id $atom)
+                (if (== $action "keep")
+                    (persistent-cleanup-mark-committed $proposal_id $candidate_id $action $expr $replacement $reason $risk $confidence)
+                    (if (== $action "merge-duplicate")
                         (let $count (match-count &persistent $atom)
-                             (if (== $count 1)
-                                 (progn (remove-atom &persistent $atom)
-                                        (trace-atom "remove" "persistent" $atom $reason)
-                                        (add-atom &events (Event "omega" "persistent-cleanup-retire" $reason "0.9"))
+                             (if (> $count 1)
+                                 (progn (collapse (match &persistent $atom
+                                                          (remove-atom &persistent $atom)))
+                                        (add-atom &persistent $atom)
+                                        (trace-atom "merge-remove" "persistent" $atom $reason)
+                                        (trace-atom "merge-write" "persistent" $atom $reason)
+                                        (add-atom &events (Event "omega" "persistent-cleanup-merge-duplicate" $reason "0.9"))
                                         (save-runtime-space "persistent")
                                         (persistent-cleanup-mark-committed $proposal_id $candidate_id $action $expr $replacement $reason $risk $confidence)
                                         (PersistentCleanupCommitted $proposal_id $action $count $atom))
-                                 (CleanupCommitError "retire requires exactly one matching persistent atom; use merge-duplicate for duplicates" $proposal_id $count)))
-                        (CleanupCommitError "unsupported cleanup action; safe actions are keep, retire, merge-duplicate" $proposal_id $action)))))))
+                                 (CleanupCommitError "merge-duplicate requires at least two exact matching persistent atoms" $proposal_id $count)))
+                        (if (== $action "retire")
+                            (let $count (match-count &persistent $atom)
+                                 (if (== $count 1)
+                                     (progn (remove-atom &persistent $atom)
+                                            (trace-atom "remove" "persistent" $atom $reason)
+                                            (add-atom &events (Event "omega" "persistent-cleanup-retire" $reason "0.9"))
+                                            (save-runtime-space "persistent")
+                                            (persistent-cleanup-mark-committed $proposal_id $candidate_id $action $expr $replacement $reason $risk $confidence)
+                                            (PersistentCleanupCommitted $proposal_id $action $count $atom))
+                                     (CleanupCommitError "retire requires exactly one matching persistent atom; use merge-duplicate for duplicates" $proposal_id $count)))
+                            (CleanupCommitError "unsupported cleanup action; safe actions are keep, retire, merge-duplicate" $proposal_id $action))))))))
 
 (= (world-fact $spec)
    (let* (($atom (py-call (hive_helpers.world_fact_atom $spec)))

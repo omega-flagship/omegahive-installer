@@ -4,7 +4,7 @@ import { isUnsorted, loadMotivations, loadTaskLinks } from '../../lib/motivation
 import { featuresByGroup, findFeature, NATIVE_CMD, pageOpensClassic, reachLine } from './features'
 import { ago, clock, goalList, orderedMinds, orderedSwarms, pad, pendingList, recentDecided, resolveMind, resolveSwarm, slug, bar, shortModel, statusTone, beliefRow, bySureness } from './model'
 import { bus, pulse } from './rain'
-import { approvalDrift, approvalSeenOf, askedAt } from '../../lib/approvalDecision'
+import { approvalDrift, approvalSeenOf, askedAt, wentAhead } from '../../lib/approvalDecision'
 import { accepts } from '../../lib/decisionGate'
 import { makeMind } from '../../lib/makeMind'
 import { useAskStore } from '../../store/ask'
@@ -518,7 +518,7 @@ export const COMMANDS: Cmd[] = [
           [...(wide ? [{ t: 'when', c: 'dim' as const, w: 10 }] : []), { t: 'outcome', c: 'dim', w: 10 }, { t: 'mind', c: 'dim', w: 13 }, { t: 'skill', c: 'dim', w: 18 }, ...(wide ? [{ t: 'by', c: 'dim' as const }] : [])],
           ...list.map((ap) => {
             const a = h.agents[ap.agent_id]
-            const ok = ap.status === 'approved' || ap.status === 'used'
+            const ok = wentAhead(ap.status)
             const row: Seg[] = [
               { t: clock(ap.decided_at ?? ap.created_at), c: 'dim' as const, w: 10 },
               { t: ap.status, c: (ok ? 'hi' : ap.status === 'expired' ? 'dim' : 'amber') as Seg['c'], w: 10 },

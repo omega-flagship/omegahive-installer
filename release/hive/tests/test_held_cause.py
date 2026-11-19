@@ -27,7 +27,8 @@ def _cause(client):
 
 @pytest.mark.parametrize("exc,cause", [
     (_refusal(429, b'{"error":{"message":"Rate limit reached","type":"requests","code":"rate_limit_exceeded"}}', "openai"),
-     "OpenAI refused the request (rate_limited, 429)."),
+     "OpenAI is taking no more calls to this model for now, so this mind tries again shortly. "
+     "Choose another model to go on sooner."),
     (httpx.ReadTimeout("t"), "No answer from Anthropic before the hive stopped waiting. A provider can still charge a call it finished."),
     (httpx.RemoteProtocolError("drop"), "The connection to Anthropic broke before its answer arrived."),
     (RuntimeError("parse"), "The hive could not read the call's answer."),

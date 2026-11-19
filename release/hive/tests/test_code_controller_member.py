@@ -11,6 +11,7 @@ import json
 import pytest
 
 from hive.core import code_controller_engine as cce
+from hive.core.goals import STEP_BUDGET_FLOOR_USD
 from hive.tests.test_core_api import client  # noqa: F401  (fixture)
 from hive.tests.test_mind_control import enabled, w  # noqa: F401  (fixture)
 from hive.tests.test_result_schema import STORED_AS
@@ -162,6 +163,24 @@ def test_a_plan_reviewed_member_reaches_member_ready_and_only_integrated_deliver
     assert again["verdict"].startswith("(rejected")                    # delivered stays delivered
 
 
+def test_a_builders_goal_carries_its_steps_own_budget(m):
+    """The build goal a plan member hands its builder has its own budget (Goals.give_step_budget), the larger of what a
+    work session given no budget may spend (Budgets.task_budget) and STEP_BUDGET_FLOOR_USD, started when the builder
+    claims it, so a builder that holds it and keeps failing its tool calls stops there; the goal stays unbound, so the
+    builder's answer echoes nothing."""
+    adopt(m)
+    run(m.engine.step(m.tid))
+    body = json.loads(m.engine._effects(m.tid, "helper")[-1]["body"])
+    helper = m.hive.agent(m.helper["id"])
+    budget = lambda: m.hive.db.one("SELECT budget_usd, spent_at_start FROM goal_budgets WHERE goal_id = ?",
+                                   (body["goal_id"],))
+    given = max(m.hive.budgets.task_budget(helper), STEP_BUDGET_FLOOR_USD)
+    assert (budget()["budget_usd"], budget()["spent_at_start"]) == (given, None)
+    assert m.hive.goals.get(body["goal_id"])["binding"] is None
+    m.hive.goals.claim(helper, body["goal_id"])
+    assert budget()["spent_at_start"] == float(m.hive._agent_row(helper["id"])["spent_usd"] or 0)
+
+
 @pytest.mark.parametrize("shape", ["native", "mcp"])
 def test_an_assignee_that_finishes_with_its_own_tool_has_its_files_written(m, shape):
     """A real assignee finishes with its own hive-goal-propose or the MCP hive-goal-done, which keep its answer under
@@ -173,6 +192,12 @@ def test_an_assignee_that_finishes_with_its_own_tool_has_its_files_written(m, sh
     assert kinds(m) == ["opened", "read", "think-started", "changed", "dispatched", "tests-pass"]
     assert m.fork.checkpoints[view["candidate"]]["calculator.py"] == FIXED
     assert next(r for r in view["journal"] if r["kind"] == "changed")["evidence"]["summary"] == "fixed add"
+    # the summary the plan records with the piece (create_plan_members.collect): this candidate's, no other's
+    assert m.engine.member_summary(m.tid, view["candidate"]) == "fixed add"
+    assert m.engine.member_summary(m.tid, "cp_9999") is None
+    # and the plan's check on it, which the plan puts in the piece's review packet (create_plan_members.check_for)
+    assert m.engine.member_check(m.tid, view["candidate"])["passed"] is True
+    assert m.engine.member_check(m.tid, "cp_9999") is None
 
 
 def test_a_review_required_member_gets_an_independent_second_opinion_first(m):
@@ -193,6 +218,15 @@ def test_a_review_required_member_gets_an_independent_second_opinion_first(m):
     forged = run(m.engine.observe(m.engine._run(m.tid), "forged", "review-pass",
                                   [cce.q(view["candidate"]), cce.q(m.helper["id"]), cce.q("review-1")]))
     assert forged[0] == "rejected"
+
+
+def test_member_check_is_the_plans_check_on_that_candidate(m):
+    adopt(m)
+    run(m.engine.step(m.tid))
+    assignee_finishes(m, {"calculator.py": CALCULATOR + "\n"})            # still a - b: the plan's check fails
+    failed = next(r for r in m.engine.view(m.tid)["journal"] if r["kind"] == "changed")["fields"].split('"')[1]
+    got = m.engine.member_check(m.tid, failed)
+    assert got["passed"] is False and got["exit_code"] == 1 and "AssertionError" in got["logs"]["stderr"]["text"]
 
 
 def test_member_refix_is_one_repair_with_the_plans_failing_output_then_a_new_candidate(m):
@@ -235,6 +269,24 @@ def test_the_assignee_reads_the_forks_other_files_and_writes_only_its_own(m):
     assignee_finishes(m, {"calculator.py": FIXED, "index.html": "<p>mine now</p>\n"})
     assert "changed" not in kinds(m) and m.fork.patches == []
     assert packets(m)[-1]["read_only"]["index.html"] == '<input id="bill">\n'
+
+
+def test_a_builders_packet_never_carries_the_acceptance_check(m):
+    """The plan's check (checks/) is on the piece fork, but a builder is never sent it, first try or repair: it has the
+    criteria in its brief, and seeing the check's source would let it special-case the check's inputs."""
+    m.fork.files["checks/acceptance_check.py"] = "assert add(2, 3) == 5  # the check\n"
+    m.fork.files["checks/fixtures.json"] = "{}\n"
+    m.fork.files["index.html"] = "<main></main>\n"
+    adopt(m)
+    run(m.engine.step(m.tid))
+    assignee_finishes(m, {"calculator.py": CALCULATOR + "\n"})        # still failing: the repair packet is sent too
+    sent = packets(m)
+    assert len(sent) >= 2
+    for data in sent:
+        shown = set(data["files"]) | set(data.get("read_only") or {}) | set(data.get("read_only_left_out") or [])
+        assert not [p for p in shown if p.startswith("checks/")], shown
+        assert "index.html" in data["read_only"]
+    assert "the check" not in json.dumps(sent)
 
 
 def test_other_files_too_big_for_the_packet_leave_the_largest_out_by_name(m):
@@ -296,6 +348,29 @@ def test_an_out_of_piece_edit_from_the_helper_is_never_written(m):
     assert failed["evidence"]["paths"] == ["test_calculator.py"] and m.fork.patches == []
 
 
+def test_a_builder_that_sends_each_file_as_its_own_command_has_them_written(m):
+    """A builder's files packed into one JSON were lost whole when its reply was cut off at its length. Its packet now
+    says it may send each file as its own command (hive-goal-file), and the files it staged are written with an
+    answer that names none of them, the answer's own files map having the last word."""
+    adopt(m)
+    run(m.engine.step(m.tid))
+    body = json.loads(m.engine._effects(m.tid, "helper")[-1]["body"])
+    agent = m.hive.agent(m.helper["id"])
+    told = m.hive.db.one("SELECT text FROM messages WHERE agent_id = ? AND sender = 'hive:code-controller' ORDER BY "
+                         "created_at", (m.helper["id"],))["text"]
+    assert f"hive-goal-file {body['goal_id']} <path> <<'EOF_name'" in told
+    paths = json.loads(m.engine._run(m.tid)["member"])["paths"]
+    m.hive.goals.claim(agent, body["goal_id"])
+    for path in paths:
+        m.hive.goals.stage_file(agent, body["goal_id"], path, "first draft")
+        m.hive.goals.stage_file(agent, body["goal_id"], path, f'// {path}: "quoted" (and bracketed)\n')
+    run(m.hive.goals.result(agent, body["goal_id"], "done", "each file staged",
+                            {"binding_digest": None, "proposal": {"summary": "each file staged"}}))
+    run(m.engine.on_event({"type": "goal.updated", "goal": {"id": body["goal_id"]}}))
+    changed = next(r for r in m.engine.view(m.tid)["journal"] if r["kind"] == "changed")
+    assert changed["evidence"]["files_text"] == {p: f'// {p}: "quoted" (and bracketed)\n' for p in paths}
+
+
 def test_a_refused_answer_is_said_to_the_next_attempt(m):
     """On a fresh install a builder put summary inside files; each retry was told only that it had failed, and it made
     the same answer three times. The next packet says why the last one was refused."""
@@ -309,6 +384,67 @@ def test_a_refused_answer_is_said_to_the_next_attempt(m):
     assert "The last attempt was refused: it wrote summary outside this piece's files" in retry
     assert "the summary goes beside files, never inside it" in retry and "The last version failed" not in retry
     assert m.engine.last_refusal(m.tid).startswith("The last attempt was refused: it wrote summary")
+
+
+def test_a_builders_hive_goal_fail_reason_reaches_its_repair_and_the_plan(m):
+    """A builder that says why it cannot build the piece (hive-goal-fail <why>) is heard: the reason is journalled
+    beside goal_status, the repair packet says it, and last_refusal (what the plan shows when the member blocks) has it."""
+    adopt(m)
+    run(m.engine.step(m.tid))
+    body = json.loads(m.engine._effects(m.tid, "helper")[-1]["body"])
+    agent = m.hive.agent(m.helper["id"])
+    m.hive.goals.claim(agent, body["goal_id"])
+    run(m.hive.goals.result(agent, body["goal_id"], "failed", "the brief asks for subtraction in add"))
+    run(m.engine.on_event({"type": "goal.updated", "goal": {"id": body["goal_id"]}}))
+    failed = next(r for r in m.engine.view(m.tid)["journal"] if r["kind"] == "think-failed")
+    assert failed["evidence"] == {"goal_status": "failed", "goal_reason": "the brief asks for subtraction in add"}
+    rows = m.hive.db.all("SELECT text FROM messages WHERE agent_id = ? AND sender = 'hive:code-controller' ORDER BY "
+                         "created_at", (m.helper["id"],))
+    assert len(rows) == 2 and "the brief asks for subtraction in add" in rows[-1]["text"]
+    assert "the brief asks for subtraction in add" not in rows[0]["text"]
+    assert "the brief asks for subtraction in add" in m.engine.last_refusal(m.tid)
+
+
+def test_a_builder_whose_mind_stopped_after_refused_replies_hears_why_on_its_repair(m):
+    """A builder's mind rested after its replies kept being cut off, its goal still claimed under a lease its loop
+    renews, so the member kept writing with nothing said. Its trace ends that goal with the hive's reason
+    (Goals.stop_held), goal_reason carries it to the repair packet, and last_refused gives it to the plan."""
+    adopt(m)
+    run(m.engine.step(m.tid))
+    body = json.loads(m.engine._effects(m.tid, "helper")[-1]["body"])
+    agent = m.hive.agent(m.helper["id"])
+    m.hive.goals.claim(agent, body["goal_id"])
+    m.hive.record_trace(agent, {"iteration": 4, "response": "", "rested": True,
+                                "failure_cause": "a reply cut off at its length limit"})
+    run(m.engine.on_event({"type": "goal.updated", "goal": {"id": body["goal_id"]}}))
+    why = "Its replies kept being refused; the last was a reply cut off at its length limit."
+    failed = next(r for r in m.engine.view(m.tid)["journal"] if r["kind"] == "think-failed")
+    assert failed["evidence"] == {"goal_status": "failed", "goal_reason": why}
+    rows = m.hive.db.all("SELECT text FROM messages WHERE agent_id = ? AND sender = 'hive:code-controller' ORDER BY "
+                         "created_at", (m.helper["id"],))
+    assert len(rows) == 2 and why in rows[-1]["text"] and why not in rows[0]["text"]
+    assert m.engine.last_refused(m.tid) == {"goal_status": "failed", "goal_reason": why}
+
+
+def test_a_failing_check_keeps_its_verdict_for_the_repair_and_the_plan(m):
+    """The plan's check answers its verdict beside its output: the files it fails and its own notes. The member keeps
+    both in its tests-fail evidence, since the output it keeps can end before the verdict line, so the repair is shown
+    the check's words and a member that blocks on them can name them (create_plan_members.check_failure)."""
+    async def plan_check(run_row, cand):
+        passed = "a + b" in m.fork.checkpoints[cand]["calculator.py"]
+        return {"passed": passed, "exit_code": 0, "argv": ["create-acceptance-check"], "stdout": "FAIL: add\n" * 400,
+                "stderr": "",
+                **({} if passed else {"failing": ["calculator.py"], "notes": ["add(2, 3) gave -1, not 5"]})}
+    m.engine.member_ports.run_test = plan_check
+    adopt(m)
+    run(m.engine.step(m.tid))
+    assignee_finishes(m, {"calculator.py": CALCULATOR + "# still subtracts\n"})
+    failing = m.engine._failing_output(m.tid)
+    assert failing["kind"] == "tests-fail" and failing["failing"] == ["calculator.py"]
+    assert failing["notes"] == ["add(2, 3) gave -1, not 5"] and len(failing["logs"]["stdout"]["text"]) == 2000
+    repair = m.hive.db.all("SELECT text FROM messages WHERE agent_id = ? AND sender = 'hive:code-controller' ORDER BY "
+                           "created_at", (m.helper["id"],))[-1]["text"]
+    assert "The last version failed" in repair and "add(2, 3) gave -1, not 5" in repair
 
 
 def test_an_out_of_piece_proposal_is_scope_refused_at_selection_and_an_in_piece_one_is_executed(m):

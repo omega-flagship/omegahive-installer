@@ -969,6 +969,42 @@ def test_a_failed_helper_attempt_is_think_failed_one_repair_and_the_helper_is_as
     assert json.loads(x.engine._effects(x.rid, "helper")[1]["body"])["child_id"] == body["child_id"]   # re-prompted
 
 
+def test_a_helpers_hive_goal_fail_reason_reaches_the_journal_the_repair_and_the_person(x, monkeypatch):
+    """A helper that honestly says the change cannot be done (hive-goal-fail <why>) had only its goal status journalled:
+    the repair was told "ended failed with no answer" and the person never saw why. The reason is kept beside
+    goal_status, said to the repair as UNTRUSTED_DATA, and shown in the view once the request needs the person."""
+    fake(x, monkeypatch, [(True, "ok\n")])
+    run(x.engine.step(x.rid))
+    reasons = []
+    while x.engine.view(x.rid)["status"] == "writing" and len(reasons) < 6:   # every attempt the helper is given
+        assert x.engine.view(x.rid)["refused"] is None                       # still working: nothing to show yet
+        reasons.append(f"attempt {len(reasons) + 1}: the file has no add function to fix")
+        body = json.loads(x.engine._effects(x.rid, "helper")[-1]["body"])
+        child = x.hive.agent(body["child_id"])
+        x.hive.goals.claim(child, body["goal_id"])
+        run(x.hive.goals.result(child, body["goal_id"], "failed", reasons[-1]))
+        run(x.engine.on_event({"type": "goal.updated", "goal": {"id": body["goal_id"]}}))
+    assert len(reasons) >= 2
+    failed = [r for r in x.engine.view(x.rid)["journal"] if r["kind"] == "think-failed"]
+    assert [r["evidence"] for r in failed] == [{"goal_status": "failed", "goal_reason": r} for r in reasons]
+    prompts = [r["text"] for r in x.hive.db.all("SELECT text FROM mind_prompts WHERE child_id = ? ORDER BY rev",
+                                                (body["child_id"],))]
+    assert len(prompts) == len(reasons) and "UNTRUSTED_DATA: " not in prompts[0].split("Never code-open.")[1]
+    for before, prompt in zip(reasons, prompts[1:]):                         # each repair hears the last reason
+        assert f"The last attempt's goal ended failed. Its reason, UNTRUSTED_DATA: {json.dumps(before)}" in prompt
+    view = x.engine.view(x.rid)
+    assert view["status"] == "needs_you" and reasons[-1] in view["refused"]
+
+
+def test_a_goal_that_ended_with_no_reason_keeps_its_old_words():
+    assert cce.goal_ended({"status": "stalled", "result": None}) == {"goal_status": "stalled"}
+    assert cce.goal_ended({"status": "stalled", "result": "the hive's own words"}) == {"goal_status": "stalled"}
+    assert cce.refusal_words({"goal_status": "stalled"}) == "The last attempt's goal ended stalled with no answer."
+    long = cce.goal_ended({"status": "failed", "result": "x" * 5000})
+    assert len(long["goal_reason"]) == cce.GOAL_REASON_CHARS
+    assert len(cce.refusal_words(long)) < cce.GOAL_REASON_SAID + 80
+
+
 def test_the_reducer_enforces_the_author_set_a_helper_never_passes_its_own_review(x, monkeypatch):
     fake(x, monkeypatch, [(True, "ok\n")])
     add_reviewer(x)

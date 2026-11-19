@@ -4,6 +4,11 @@ import type { MemoryThemes } from '../lib/memoryTheme'
 export type AgentKind = 'omega' | 'iter' | 'module'
 export type AgentStatus = 'created' | 'starting' | 'awake' | 'asleep' | 'stopped' | 'error'
 
+/** A refusal of a mind's own model calls as the hive shows it (Hive.model_refusal_view): its code, the hive's sentence for
+ *  the person, what the person can do about it, how many calls in a row met it, since when, and the next try's time. */
+/** retry_at: when the mind's provider is asked next; null for the hive's own refusals, which hold no call */
+export interface MindRefusal { code: string; say: string; remedy: 'wait' | 'credit' | 'key' | 'model'; count: number; since: string; retry_at: string | null }
+
 export interface Agent {
   /** A person's personal mind: that person's principal (hive/core/personal.py agents.personal_of); else null/absent. */
   personal_of?: string | null
@@ -41,6 +46,9 @@ export interface Agent {
   connected: boolean
   /** Why status is "error" (server sets it; absent in older servers). */
   last_error?: string | null
+  /** The refusal the mind's own model calls last met (hive/core/refusals.py, kept by Hive.note_model_refusal), until one is
+   *  answered: drawn by the mind-refused screen (features/dot/refused.metta). Absent or null while its calls are answered. */
+  refused?: MindRefusal | null
   last_active_at: string | null
   created_at: string
   /** Phase 2: minutes of idleness before the hive puts the mind to sleep (0 = never). Absent on Phase 1 servers. */
@@ -439,7 +447,9 @@ export type AgentAction = 'start' | 'stop' | 'sleep' | 'wake'
 /** Gateway refusals before an LLM call (API.md "LLM spend is checked before the call"). */
 export type LlmErrorCode = 'no_budget' | 'unpriced_model' | 'budget_exhausted' | 'hive_budget_exhausted' | 'rate_limited'
   | 'free_inference_busy' | 'free_inference_daily_cap' | 'free_inference_hive_daily_cap' | 'free_inference_off'
-  | 'free_model_not_offered' | 'free_inference_invited_only' | 'free_inference_person_only'
+  | 'free_model_not_offered' | 'free_inference_invited_only' | 'free_inference_person_only' | 'free_inference_key_refused'
+  | 'free_model_unreconciled' | 'provider_no_credit' | 'provider_key_refused' | 'provider_busy' | 'provider_unavailable'
+  | 'provider_request_refused'
 
 export interface ApiErrorBody {
   error: { code: string; message: string }
@@ -461,7 +471,8 @@ export interface PolicyRule {
   created_at: string
 }
 
-export type ApprovalStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'used'
+/** auto: a mind's MeTTa that stayed in its own memory spaces ran without asking (omega-flagship/omegahive#76). */
+export type ApprovalStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'used' | 'auto'
 export type Risk = 'low' | 'medium' | 'high'
 
 export interface Approval {
@@ -1507,6 +1518,41 @@ export interface HiveErrorAnswer {
   /** an error the hive did not expect: where it was raised, "KeyError at hive/core/ask.py:1130 in _close" */
   raised?: string
 }
+/**
+ * An error answer in the logs: a person's own whole; in an admin's, each says whose it is, and one another person or no
+ * session met is only where and how it failed, with no message or raised (hive/core/feedback.py OTHERS_ERROR), since
+ * its words can be ones that person typed for a private space or mind.
+ */
+export type HiveLogsError = Omit<HiveErrorAnswer, 'message'> & { message?: string; who?: 'you' | 'another person' | 'no session' }
+/**
+ * GET /api/feedback/logs (hive/core/feedback.py logs): what the hive puts in the logs file a person saves from the
+ * feedback area. `scope` person: their own requests and error answers; hive: an admin's, the whole hive's, with the
+ * hive's own newest warnings and errors in `log`, which is empty for a person. Every list is newest first.
+ */
+export interface FeedbackLogs {
+  version: string
+  which: string
+  system: string
+  scope: 'person' | 'hive'
+  requests: HiveRequestLine[]
+  errors: HiveLogsError[]
+  log: HiveLogLine[]
+}
+/** A request the hive answered, or a run of ones answered alike folded into it. */
+export interface HiveRequestLine {
+  /** the run's newest */
+  at: string
+  method: string
+  /** the route's pattern, so no id is named ("/api/swarms/{swarm_id}"); with no route, the path's first two parts */
+  route: string
+  status: number
+  /** how long the answer took to start, the run's slowest */
+  ms: number
+  count: number
+  who: 'you' | 'another person' | 'a mind' | 'no session'
+}
+/** One of the hive's own warnings or errors: its message cut short, an exception named by its type only. */
+export interface HiveLogLine { at: string; level: string; logger: string; message: string }
 /** POST /api/feedback/send: the report service took the report; `reference` is its id there, when it gave one. */
 export interface FeedbackSent { sent: true; to: string; reference: string | null }
 /**

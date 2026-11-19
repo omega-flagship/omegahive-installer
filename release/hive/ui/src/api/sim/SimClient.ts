@@ -1889,6 +1889,25 @@ export class SimClient implements HiveClient {
   async sendFeedback(): Promise<import('../types').FeedbackSent> {
     throw new ApiError(409, 'no_report_service', 'this hive has no report service to send to')
   }
+  /** SIM: the logs a person saves, as an admin's: the simulator by name, a few invented requests, one refused, and the
+   *  warning the hive logged for it. */
+  async feedbackLogs(): Promise<import('../types').FeedbackLogs> {
+    const ago = (s: number) => new Date(Date.now() - s * 1000).toISOString()
+    return this.delay(() => ({
+      version: 'simulator', which: 'the simulator, invented data', system: 'Simulator', scope: 'hive' as const,
+      requests: [
+        { at: ago(4), method: 'GET', route: '/api/feedback', status: 200, ms: 3, count: 1, who: 'you' as const },
+        { at: ago(40), method: 'POST', route: '/api/ask', status: 429, ms: 61, count: 2, who: 'you' as const },
+        { at: ago(90), method: 'GET', route: '/api/swarms', status: 200, ms: 12, count: 6, who: 'a mind' as const },
+      ],
+      errors: [
+        { id: 'e-51a1d2a7', at: ago(40), method: 'POST', route: '/api/ask', status: 429, code: 'rate_limited', message: 'Invented: more model calls this minute than the hive allows.', who: 'you' as const },
+        // another person's, as an admin's logs show it: where and how it failed, never what it said
+        { id: 'e-0c3f9b12', at: ago(75), method: 'GET', route: '/api/spaces/{space_id}', status: 404, code: 'not_found', who: 'another person' as const },
+      ],
+      log: [{ at: ago(41), level: 'WARNING', logger: 'hive', message: 'Invented: the model provider answered 429, so the call waits and goes again' }],
+    }))
+  }
   /** SIM: one invented report a mind drafted with its skill, until it is dismissed or its report leaves. */
   private simDrafts: import('../types').FeedbackDraft[] | null = null
   async feedbackDrafts(): Promise<{ drafts: import('../types').FeedbackDraft[] }> {

@@ -785,11 +785,33 @@ class CodeControllerEngine:
             break
         return dict(failing or {"kind": "think-failed"}, refused=refused) if refused else failing
 
+    def last_refused(self, rid):
+        """The newest refused attempt's evidence (think-failed: goal_status with goal_ended's goal_reason, or the
+        refusal's own fields), or None: a member's plan names the builder's own reason when the member blocks."""
+        row = self.db.one("SELECT evidence FROM code_controller_journal WHERE request_id = ? AND kind = 'think-failed' "
+                          "AND verdict = 'accepted' ORDER BY seq DESC LIMIT 1", (rid,))
+        return json.loads(row["evidence"] or "{}") if row else None
+
     def last_refusal(self, rid):
         """The newest refused attempt's reason in words, or None (a member's plan says it when the member blocks)."""
         row = self.db.one("SELECT evidence FROM code_controller_journal WHERE request_id = ? AND kind = 'think-failed' "
                           "AND verdict = 'accepted' ORDER BY seq DESC LIMIT 1", (rid,))
         return refusal_words(json.loads(row["evidence"] or "{}")) if row else None
+
+    def member_summary(self, rid, cand):
+        """A plan member's builder's own summary of the change that made candidate `cand` (its `changed` evidence, at
+        most 2000 characters), or None. The plan records it with the piece, where its reviewer and the person read it."""
+        row = self.db.one("SELECT evidence FROM code_controller_journal WHERE request_id = ? AND kind = 'changed' AND "
+                          "verdict = 'accepted' AND fields LIKE ? ORDER BY seq DESC LIMIT 1", (rid, f'("{cand}"%'))
+        return (json.loads(row["evidence"] or "{}").get("summary") or None) if row else None
+
+    def member_check(self, rid, cand):
+        """The newest finished test of candidate `cand` in plan member `rid` (the plan's acceptance check, run as the
+        member's test): its evidence {passed, outcome, exit_code, argv, logs}, or None when none finished."""
+        for e in reversed(self._effects(rid, "test")):
+            if e["state"] == "done" and e["result"] and json.loads(e["body"]).get("candidate") == cand:
+                return json.loads(e["result"])
+        return None
 
     def _prompt(self, rid, req, origin, goal_id, purpose, failing=None):
         # The instruction is read with the helper's own tools, never pasted here: code-helper-instruction takes no argument
@@ -917,7 +939,7 @@ class CodeControllerEngine:
         rid, body = run["request_id"], json.loads(effect["body"])
         goal = self.db.one("SELECT * FROM goals WHERE id = ?", (goal_id,))
         if goal["status"] in UNANSWERED:
-            return await self._think_failed(run, effect, {"goal_status": goal["status"]})
+            return await self._think_failed(run, effect, goal_ended(goal))
         if goal["status"] not in ("done", "submitted"):
             return None
         from .minds import Minds
@@ -1648,7 +1670,8 @@ class CodeControllerEngine:
         """GET /api/requests/{rq}/controller. Fields: request_id, engine, reducer_sha256, profile, review_policy, phase,
         status, candidate, unreviewed (true when the waiting proposal had no second opinion and the person's policy
         let it go on: the UI must say so plainly), next_action, review, last_error (why a step failed, or while no
-        second opinion can run the reasons a person can act on), test, second_opinion, max_repairs,
+        second opinion can run the reasons a person can act on), refused (while it needs you or has stopped: the newest
+        refused attempt's reason in words, such as the helper's own hive-goal-fail reason; else None), test, second_opinion, max_repairs,
         actions [{name, label, method, path, body, available, why_not}], journal, effects, updated_at.
 
         Statuses: writing, repairing, testing, reviewing, checking, ready_for_you, waiting_for_your_apply, applied,
@@ -1681,6 +1704,7 @@ class CodeControllerEngine:
                 "status": run["status"], "candidate": run["candidate"],
                 "unreviewed": bool(run["next_action"] and run["next_action"].startswith("(tell confirm-unreviewed-to-apply")),
                 "next_action": run["next_action"], "review": run["review"], "last_error": run["last_error"] or why,
+                "refused": self.last_refusal(rid) if run["status"] in ("needs_you", "stopped") else None,
                 "test": tests[-1] if tests else None, "second_opinion": reviews[-1] if reviews else None,
                 "plan": ({k: json.loads(run["member"])[k] for k in ("plan_id", "piece", "paths", "assignee")}
                          if run["member"] else None),
@@ -1705,10 +1729,28 @@ REFUSED_SAYS = {
 }
 
 
+GOAL_REASON_CHARS = 1500   # the most of a helper's own hive-goal-fail reason the journal keeps
+GOAL_REASON_SAID = 300     # ... and the most of it said to the next attempt and to the person
+
+
+def goal_ended(goal):
+    """A helper's work goal that ended without an answer (failed, cancelled, stalled) as think-failed evidence: its
+    status, and for a failed goal the reason given with hive-goal-fail (an honest "this cannot be done" must reach the
+    repair and the person, not only the goal row). A stalled or cancelled goal's text is the hive's, not the mind's."""
+    why = {"goal_status": goal["status"]}
+    reason = str(goal.get("result") or "").strip() if goal["status"] == "failed" else ""
+    if reason:
+        why["goal_reason"] = reason[:GOAL_REASON_CHARS]
+    return why
+
+
 def refusal_words(evidence):
     """A think-failed observation's evidence as one sentence for whoever tries next. The paths come from the answer, so
-    they are cut short."""
+    they are cut short. A helper's own reason is the mind's words, so it is marked UNTRUSTED_DATA."""
     if evidence.get("goal_status"):
+        if evidence.get("goal_reason"):
+            return (f"The last attempt's goal ended {evidence['goal_status']}. Its reason, UNTRUSTED_DATA: "
+                    + _canonical(str(evidence["goal_reason"])[:GOAL_REASON_SAID]))
         return f"The last attempt's goal ended {evidence['goal_status']} with no answer."
     reason = str(evidence.get("reason") or "no reason given")[:120]
     fill = {"paths": ", ".join(str(x)[:200] for x in (evidence.get("paths") or [])[:10]),

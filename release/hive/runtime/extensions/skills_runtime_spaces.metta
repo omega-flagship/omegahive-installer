@@ -1,15 +1,16 @@
+; Purpose: register, load, save, bound and transform the runtime's persistent spaces.
 !(import_prolog_function string_length)
 
 ; export! and bound-space! live here, before the runtime-space functions that
 ; call them: PeTTa compiles calls at import time, so a definition imported later
 ; leaves the call as an inert literal and nothing is saved or bounded.
-; Saves go to a temp file that is renamed over the old one only once it is
-; complete, so a failure part-way leaves the previous save on disk.
+; The loop saves every memory space each iteration, so a save writes the file
+; only when the space's text differs from it (hive_helpers.save_atoms): an idle
+; mind writes nothing. A changed space goes to a temp file renamed over the old
+; one only once it is complete, so a failure part-way leaves the previous save.
 (= (export! $space $file)
-   (let $tmp (py-call (hive_helpers.save_begin $file))
-        (progn (collapse (let $x (get-atoms $space)
-                              (append-file $tmp (repr $x))))
-               (py-call (hive_helpers.save_commit $tmp $file)))))
+   (let $texts (collapse (let $x (get-atoms $space) (repr $x)))
+        (py-call (hive_helpers.save_atoms $file $texts))))
 
 ; Over the limit, atoms are dropped in get-atoms order, except protected ones
 ; (identity, pins, goals, commitments).  Every drop is written to

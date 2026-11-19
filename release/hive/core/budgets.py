@@ -547,6 +547,14 @@ class Budgets:
             return None
         return dollars(session_default_micros(self.headroom_micros(agent) or 0))
 
+    def task_budget(self, agent):
+        """What a task given no budget of its own may spend: session_default once the hive has a total, $1 without one
+        (plan H5), 0 when the mind has nothing left under its limits, the default a work session given none starts with
+        (sessions.py). Each step a Create plan hands a mind gets it or STEP_BUDGET_FLOOR_USD, whichever is more
+        (Goals.give_step_budget)."""
+        auto = self.session_default(agent)
+        return 1.0 if auto is None else auto
+
     # what each scope's row bounds, as a refusal's limit.kind names it (the turn-bound refusal's "member_allowance" too)
     ROW_KINDS = {"person": "member_allowance", "hive": "hive_cap", "swarm": "swarm_cap", "agent": "mind_cap"}
 

@@ -287,6 +287,8 @@ describe('the rules point at real things', () => {
       'artifact-reader': 'features/artifacts/CreationReader.tsx',
       plan: 'features/createPlan/PlanCanvas.tsx',
       'plan-ready': 'features/createPlan/PlanCanvas.tsx',
+      'assets-delete': 'features/assets/Removal.tsx',
+      'assets-unlink': 'features/assets/Removal.tsx',
     }
     const placed = ScreensSpace.open().islands()
     expect(placed.length).toBeGreaterThan(0)

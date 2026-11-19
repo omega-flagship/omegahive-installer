@@ -2,6 +2,7 @@
 // the Ask: above its room, and the centred one in what the Ask's half column leaves.
 import { healthCheck } from '../../lib/healthQuestion'
 import { HealthCheckLabel } from '../../ui/HealthCheckLabel'
+import { wentAhead } from '../../lib/approvalDecision'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { useDraft } from '../drafts'
 import { AnimatePresence, m } from 'framer-motion'
@@ -203,7 +204,7 @@ export function DecisionCard({ a, compact }: { a: Approval; compact?: boolean })
           </button>
         </div>
       ) : (
-        <p className="mt-2 cx-mono text-[11px]" style={{ color: a.status === 'approved' || a.status === 'used' ? hsl(150, 70, 70) : hsl(2, 80, 75) }}>
+        <p className="mt-2 cx-mono text-[11px]" style={{ color: wentAhead(a.status) ? hsl(150, 70, 70) : hsl(2, 80, 75) }}>
           {a.status.toUpperCase()}
           {a.decided_by ? ` · ${a.decided_by}` : ''}
         </p>

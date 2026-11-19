@@ -9,7 +9,7 @@ import { BeliefSentence, beliefText, closeToHome, compareSureness, countPending,
 import { makeMind } from '../../lib/makeMind'
 import { atLeast, creatorLine, LINK_MEANS, ownerLine, PARTIAL_WORDS, progressOf, sortMotivations, STATUS_WORDS, tasksOf, useCountsPartial, useMotivationData, WORDS, type Progress } from '../../lib/motivations'
 import { useMe } from '../../lib/useAdmin'
-import type { Motivation, MotivationRef } from '../../api/types'
+import type { ApprovalStatus, Motivation, MotivationRef } from '../../api/types'
 import { INK, INK2, INK3, statusLine, useFlux, type SheetState } from './ctx'
 import { Chip, GlassButton, Glyph, LiquidPanel, MotivationChip, Orb } from './kit'
 import { clip, countByMotivation, serves } from './motivations'
@@ -620,11 +620,14 @@ function Decisions({ tab }: { tab: 'history' | 'rules' }) {
 }
 
 function History() {
+  type Decided = Exclude<ApprovalStatus, 'pending'>
   const approvals = useHive((s) => s.approvals)
   const agents = useHive((s) => s.agents)
   const { openMind, openSheet, desktop } = useFlux()
   const list = useMemo(() => Object.values(approvals).filter((a) => a.status !== 'pending').sort((a, b) => (b.decided_at ?? b.created_at).localeCompare(a.decided_at ?? a.created_at)).slice(0, 120), [approvals])
-  const tone: Record<string, string> = { approved: '#8ff0c9', used: '#8ff0c9', denied: '#ffb3c0', expired: INK3 }
+  // every status a decided request can have, so one the host adds fails to compile until it has a word and a tone here
+  const tone = { approved: '#8ff0c9', used: '#8ff0c9', denied: '#ffb3c0', expired: INK3, auto: INK3 } satisfies Record<Decided, string>
+  const word = { approved: 'Approved', used: 'Used', denied: 'Denied', expired: 'Expired', auto: 'Ran without asking' } satisfies Record<Decided, string>
   return (
     <Scroll>
       {list.length === 0 && <p className="py-6 text-[15px]" style={{ color: INK2 }}>No decisions yet.</p>}
@@ -634,7 +637,7 @@ function History() {
           return (
             <li key={a.id} className="rounded-[22px] px-4 py-3" style={{ background: 'rgb(255 255 255 / 0.05)' }}>
               <div className="flex items-center gap-2 text-[13px]">
-                <span className="font-semibold capitalize" style={{ color: tone[a.status] ?? INK2 }}>{a.status}</span>
+                <span className="font-semibold" style={{ color: tone[a.status as Decided] ?? INK2 }}>{word[a.status as Decided] ?? a.status}</span>
                 <span style={{ color: INK2 }}>· {when(a.decided_at ?? a.created_at)}</span>
               </div>
               <div className="mt-0.5 text-[15px] leading-snug">

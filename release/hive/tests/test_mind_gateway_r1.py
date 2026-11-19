@@ -558,11 +558,12 @@ def test_r1ab3_a_raise_write_that_fails_after_the_switch_leaves_the_old_cap_gove
 
 @pytest.mark.parametrize("fail", ["limit", "switch"])
 def test_r1ab2_kimi_first_key_auto_default_follows_the_same_rule(money_gw, monkeypatch, fail):
-    """Kimi r1ab.1: the first key of a provider (no stored default, no env key, `default` absent) is stored as a
+    """Kimi r1ab.1: an admin's first key of a provider (no stored default, no env key, `default` absent) is stored as a
     non-default and becomes the default only after it is stored, like an explicit default. A first total is a raise
     (with none, turn-bound calls are refused), so it is written last. A failed switch: no key, no default, no total. A
-    failed total: the key and its default stand, with no total (turn-bound refused)."""
-    client, hive, pat, P = money_gw["client"], money_gw["hive"], money_gw["pat"], money_gw["P"]
+    failed total: the key and its default stand, with no total (turn-bound refused). A member's key never becomes the
+    hive's default (test_key_entitlement.py), so the owner adds it."""
+    client, hive, owner, O = money_gw["client"], money_gw["hive"], money_gw["owner"], money_gw["O"]
     _verify_stub(hive, [])
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     hive.keyring.ring["defaults"].pop("openrouter", None)
@@ -574,9 +575,9 @@ def test_r1ab2_kimi_first_key_auto_default_follows_the_same_rule(money_gw, monke
                         boom)
     if fail == "switch":
         with pytest.raises(RuntimeError):
-            client.post("/api/keys", headers=pat, json={"provider": "openrouter", "key": "sk-or-first", "month_usd": 5})
+            client.post("/api/keys", headers=owner, json={"provider": "openrouter", "key": "sk-or-first", "month_usd": 5})
     else:   # r1ab.4: the failed raise is the retryable 503
-        r = client.post("/api/keys", headers=pat, json={"provider": "openrouter", "key": "sk-or-first", "month_usd": 5})
+        r = client.post("/api/keys", headers=owner, json={"provider": "openrouter", "key": "sk-or-first", "month_usd": 5})
         assert (r.status_code, r.json()["error"]["code"]) == (503, "limit_not_raised")
     stored = [k for k, r in hive.keyring.ring["keys"].items() if r["secret"] == "sk-or-first"]
     disk = json.loads(hive.keyring.path.read_text())["defaults"]
@@ -584,20 +585,20 @@ def test_r1ab2_kimi_first_key_auto_default_follows_the_same_rule(money_gw, monke
         assert stored == [] and "openrouter" not in hive.keyring.ring["defaults"] and "openrouter" not in disk
     else:
         assert hive.keyring.ring["defaults"]["openrouter"] == stored[0] == disk["openrouter"]
-    assert _total(hive, P) is None
+    assert _total(hive, O) is None
 
 
 def test_r1ab2_first_key_auto_default_control_becomes_the_default_on_success(money_gw, monkeypatch):
-    client, hive, pat, P = money_gw["client"], money_gw["hive"], money_gw["pat"], money_gw["P"]
+    client, hive, owner, O = money_gw["client"], money_gw["hive"], money_gw["owner"], money_gw["O"]
     _verify_stub(hive, [])
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     hive.keyring.ring["defaults"].pop("openrouter", None)
-    r = client.post("/api/keys", headers=pat, json={"provider": "openrouter", "key": "sk-or-first-ok", "month_usd": 5})
+    r = client.post("/api/keys", headers=owner, json={"provider": "openrouter", "key": "sk-or-first-ok", "month_usd": 5})
     assert r.status_code == 200 and r.json()["default"] is True
-    assert hive.keyring.ring["defaults"]["openrouter"] == r.json()["id"] and hive.ownhive.total_row(P)["month_usd"] == 5
+    assert hive.keyring.ring["defaults"]["openrouter"] == r.json()["id"] and hive.ownhive.total_row(O)["month_usd"] == 5
     # a second key with month_usd and no `default` does not take the default
-    r2 = client.post("/api/keys", headers=pat, json={"provider": "openrouter", "key": "sk-or-second", "month_usd": 6})
-    assert r2.status_code == 200 and r2.json()["default"] is False and hive.ownhive.total_row(P)["month_usd"] == 6
+    r2 = client.post("/api/keys", headers=owner, json={"provider": "openrouter", "key": "sk-or-second", "month_usd": 6})
+    assert r2.status_code == 200 and r2.json()["default"] is False and hive.ownhive.total_row(O)["month_usd"] == 6
 
 
 def test_r1ab3_kimi_3_a_failed_removal_keeps_the_original_error_as_its_cause(money_gw, monkeypatch):
@@ -879,8 +880,9 @@ def test_r1ab5_kimi_5_a_refusal_in_the_last_write_is_not_retryable_and_the_503_t
 
 
 def test_r1ab2_flag_unset_month_usd_is_ignored_as_on_live(money, monkeypatch):
-    """Control (passes on 56b2dbfc): with HIVE_MIND_GATEWAY unset POST /api/keys ignores month_usd. No limit is written,
-    an existing lower total is untouched, and the first key of a provider still becomes its default inside add_key."""
+    """Control (passes on 56b2dbfc): with HIVE_MIND_GATEWAY unset POST /api/keys ignores month_usd. No limit is written
+    and an existing lower total is untouched. A member's key never becomes the hive's default, not even a provider's
+    first (test_key_entitlement.py)."""
     client, hive, pat, P = money["client"], money["hive"], money["pat"], money["P"]
     monkeypatch.delenv("HIVE_MIND_GATEWAY", raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
@@ -888,7 +890,7 @@ def test_r1ab2_flag_unset_month_usd_is_ignored_as_on_live(money, monkeypatch):
     hive.keyring.ring["defaults"].pop("openrouter", None)
     total(hive, P, 5.0)
     r = client.post("/api/keys", headers=pat, json={"provider": "openrouter", "key": "sk-or-flag-off", "month_usd": 50})
-    assert r.status_code == 200 and r.json()["default"] is True
+    assert r.status_code == 200 and r.json()["default"] is False and "openrouter" not in hive.keyring.ring["defaults"]
     assert hive.ownhive.total_row(P)["month_usd"] == 5.0
     assert hive.db.one("SELECT COUNT(*) AS n FROM key_limits")["n"] == 1
 

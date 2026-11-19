@@ -1,0 +1,10 @@
+{
+  "name": "create-probe-happy-dom",
+  "private": true,
+  "description": "The pinned inputs of hive/plugins/create_acceptance_check/tools/vendor/happy-dom.mjs; scripts/dev/vendor_happy_dom.sh builds it.",
+  "type": "module",
+  "dependencies": {
+    "esbuild": "0.25.12",
+    "happy-dom": "21.0.4"
+  }
+}

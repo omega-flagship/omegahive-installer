@@ -215,6 +215,12 @@ def _ok_chat(gateway):
     gateway.chat = chat
 
 
+def _someone_writes(client, a):
+    """Someone writes to the mind after its call was refused: the refusal kept on it (Hive.model_refusal_release) no
+    longer answers its next call, so the money rules are what answer it."""
+    assert client.post(f"/api/agents/{a['id']}/messages", json={"text": "go on"}).status_code == 200
+
+
 def _post(client, a):
     try:
         return client.post("/llm/v1/chat/completions", json=BODY, headers=agent_headers(a)).status_code
@@ -235,9 +241,12 @@ def test_a_402_releases_its_hold_and_the_next_call_is_admitted(client):
     assert client.get("/api/budgets/reservations").json() == []
     assert hive.agent(a["id"])["spent_usd"] == 0
     _failing_chat(gw_, _refusal(402))           # a run of refusals never accumulates holds
+    _someone_writes(client, a)
     _post(client, a)
+    _someone_writes(client, a)
     _post(client, a)
     _ok_chat(gw_)
+    _someone_writes(client, a)
     assert _post(client, a) == 200
 
 
@@ -252,6 +261,7 @@ def test_a_timeout_an_undocumented_provider_or_unpriceable_usage_stays_unknown(c
     held = client.get("/api/budgets/reservations").json()
     assert len(held) == 1 and held[0]["state"] == "unknown"
     _ok_chat(gw_)
+    _someone_writes(client, a)
     assert _post(client, a) == 402              # still held: the cap cannot be overrun
 
 
@@ -327,6 +337,7 @@ def test_a_refusal_reporting_a_cost_is_settled_at_it_and_never_released(client, 
     assert hive.db.one("SELECT COALESCE(SUM(cost_usd),0) AS c FROM usage WHERE agent_id = ?", (a["id"],))["c"] == 0.06
     assert client.get("/api/budgets/reservations").json() == []
     _ok_chat(gw_)
+    _someone_writes(client, a)
     assert _post(client, a) == 402              # $0.06 spent + a ~$0.0527 hold exceeds the $0.10 cap
 
 
@@ -372,6 +383,7 @@ def test_an_unknown_row_from_an_earlier_402_settles_by_itself_and_corrects_to_no
                     json={"action": "release", "reason": "OpenRouter answered 402 (billing); nothing was billed"})
     assert r.status_code == 200 and r.json()["actual"] == 0
     _ok_chat(gw_)
+    _someone_writes(client, a)
     assert _post(client, a) == 200
 
 
@@ -420,7 +432,9 @@ def test_the_personal_mind_gateway_through_the_real_transport(gw, monkeypatch, s
         token = mint(client, gw["ann"])
         turn = open_turn(client, gw["ann"], f"op-unbilled-{status}")
         r = call(client, token, turn)
-        assert (r.status_code, code(r)) == (502, "upstream_error")
+        # the provider's refusal, said as refusals.py's row for its status in the hive's words
+        assert (r.status_code, code(r)) == (status, {402: "provider_no_credit", 500: "provider_unavailable",
+                                                    429: "provider_busy"}[status])
         assert states(hive) == expected
         assert ("held_usd" in (r.json()["error"] or {})) == (expected == ["unknown"])
         if expected == ["settled"]:   # 1000 prompt tokens at $1 per million, recorded for the mind

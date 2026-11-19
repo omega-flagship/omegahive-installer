@@ -410,7 +410,7 @@ function CommandRow({ c, agentId, delay }: { c: TraceCommand; agentId: string; d
 function AskResult({ approval, raw }: { approval: Approval | undefined; raw: string }) {
   if (!approval) return <>{raw}</>
   const label =
-    approval.status === 'pending' ? 'awaiting approval' : approval.status === 'used' ? 'approved and ran' : approval.status === 'approved' ? 'approved' : approval.status === 'denied' ? 'denied by operator' : 'expired'
+    approval.status === 'pending' ? 'awaiting approval' : approval.status === 'used' ? 'approved and ran' : approval.status === 'approved' ? 'approved' : approval.status === 'denied' ? 'denied by operator' : approval.status === 'auto' ? 'ran without asking' : 'expired'
   const color = approval.status === 'pending' ? '#fbbf24' : approval.status === 'denied' ? '#fb7185' : approval.status === 'expired' ? '#8a89b3' : '#4ade80'
   return (
     <span className="inline-flex flex-wrap items-center gap-x-1.5">

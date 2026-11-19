@@ -451,11 +451,13 @@ class MindGateway:
             paid, estimate = gw.estimate(agent, body, hive.settings.allow_unpriced, **who)
             key_id = gw.paying_key(agent, provider_name)[0] if paid else None
         except GatewayError as exc:
-            if exc.status == 402:   # unpriced_model, key_unavailable: not a spend limit; the turn ends in error
+            if exc.status == 402:   # unpriced_model, key_unavailable, a held $0 model: not a spend limit; the turn ends
                 hive.ask._close(t["id"], "refused", "failed", error=exc.code)
+            if spoken(exc):   # a refusal from refusals.py's table is written for the person
+                raise _err(exc.status, exc.code, exc.message) from None
+            if exc.status == 402:
                 raise _err(402, exc.code, "this call cannot be priced or paid for") from None
-            # a refusal from refusals.py's table is written for the person; any other stays generic
-            raise _err(exc.status, exc.code, exc.message if spoken(exc) else "this request was refused") from None
+            raise _err(exc.status, exc.code, "this request was refused") from None
         # the shape and the price are checked first (estimate is pure, plus the egress rule), so a malformed or refused
         # request spends neither the token's nor the turn's call ceiling; the counts still come before any payer,
         # budget, reservation or send
@@ -585,8 +587,9 @@ class MindGateway:
             else:
                 gated.release()
             if spoken(exc):
-                # busy after the gateway's retries, or the person's free calls ran out meanwhile: said plainly, as above
-                raise _err(exc.status, exc.code, exc.message) from None
+                # the provider refused it, or the free route did (busy after its retries, or the day's calls ran out
+                # meanwhile): said plainly, as above, with what is still held for it
+                raise _err(exc.status, exc.code, exc.message, {"held_usd": round(held, 6)} if held else None) from None
             timeout = isinstance(exc, (asyncio.TimeoutError, TimeoutError, httpx.TimeoutException))
             raise _err(504 if timeout else 502, "upstream_error", "the model's provider did not answer",
                        {"held_usd": round(held, 6)} if held else None) from None

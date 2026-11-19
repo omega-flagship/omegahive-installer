@@ -1,5 +1,5 @@
 ; Purpose: teach Omega minds how to discover, perform and recover hive collaboration and task work.
-(SkillContextHint "hive" "Hive tasks: hive-goals (yours, open, recent done) | hive-goal-history query 0 (find earlier work by words or artifact id) | hive-goal-get g_id (detail, result, result rules) | hive-goal-output g_id 0 (all output, paged) | hive-goal-continue g_id instruction (linked follow-up) | hive-goal-claim g_id | hive-goal-propose g_id {json} (checked result) | hive-goal-done g_id text | hive-goal-fail g_id reason | hive-goal-create parent_g_id title (split held work) | hive-goal-cancel-ack g_id. Reviews: hive-goal-review, hive-review-complete. Sharing: hive-exhibit, hive-share-*.")
+(SkillContextHint "hive" "Hive tasks: hive-goals (yours, open, recent done) | hive-goal-history query 0 (find earlier work by words or artifact id) | hive-goal-get g_id (detail, result, result rules) | hive-goal-output g_id 0 (all output, paged) | hive-goal-continue g_id instruction (linked follow-up) | hive-goal-claim g_id | hive-goal-propose g_id {json} (checked result) | hive-goal-file g_id path <<'EOF_name' (one whole file for that result, its lines up to a line EOF_name) | hive-goal-done g_id text | hive-goal-fail g_id reason | hive-goal-create parent_g_id title (split held work) | hive-goal-cancel-ack g_id. Reviews: hive-goal-review, hive-review-complete. Sharing: hive-exhibit, hive-share-*.")
 (SkillContextHint "rooms" "Rooms: hive-rooms (yours, your swarm team room marked) | hive-room-post r_id text. To reach a swarm-mate, post in your swarm's team room and @Name them. send only replies to whoever addressed you.")
 ; The hive's file and share notices tell a mind to run these ("read it with hive-asset-get <sha> -"), so they are on the
 ; SKILLS line: unlisted, a mind told to use only listed skills answered that hive-asset-get wasn't available to it
@@ -63,6 +63,7 @@
 (SkillHelp "hive-shared-page" "hive-shared-page sh_id 120 * - continue a share that was too long to show at once, from that atom")
 (SkillHelp "hive-goal-get" "hive-goal-get g_id - read a goal, its assignee and the request it is bound to")
 (SkillHelp "hive-goal-propose" "hive-goal-propose g_id {json} - finish a goal you claimed with a proposal bound to its request")
+(SkillHelp "hive-goal-file" "hive-goal-file g_id path <<'EOF_name' - put one whole file into the answer of a goal you claimed: the file's lines follow, word for word, then a line that is just EOF_name (a marker none of its lines is). Staging a path again replaces it. Finish with hive-goal-propose as usual; its files map can leave these out")
 (SkillHelp "hive-goal-cancel-ack" "hive-goal-cancel-ack g_id - acknowledge that a cancelled goal has stopped")
 
 (SkillHelp "hive-plan-return" "hive-plan-return rq_id ar_id n - holding planner: submit that stored revision with canonical findings and review receipts; preserves dissent, requires host validation and requester judgment")

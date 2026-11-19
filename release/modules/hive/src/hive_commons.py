@@ -182,6 +182,15 @@ def goal_propose(goal_id, text):
     return error or f"HIVE-GOAL-PROPOSED {result['id']}"
 
 
+def goal_file(goal_id, path, text):
+    """Stage one whole file on a goal you claimed (hive-goal-file): its text is the command's marker-ended body, word
+    for word, so it is neither trimmed nor unquoted as other arguments are: PeTTa has already read the string literal and
+    hands over its text, so a file that starts and ends with a quote mark (a quoted CSV, a JSON string) keeps them. The
+    goal's answer takes it beside its own files map."""
+    result, error = _call("POST", f"/api/agent/goals/{_text(goal_id)}/files", {"path": _text(path), "text": str(text)})
+    return error or f"HIVE-GOAL-FILE-STAGED {result['path']} ({result['bytes']} bytes)"
+
+
 def plan_return(request_id, artifact_id, revision):
     """Submit canonical review rows without asking a mind to copy or shorten them."""
     from urllib.parse import urlencode
@@ -1369,10 +1378,14 @@ def skill_hints(lines_repr):
 
 # ---- traces and control ------------------------------------------------------------------
 
-def trace(iteration, message, response, results):
-    """Report one loop iteration to the hive's thinking timeline."""
+def trace(iteration, message, response, results, rested=False, cause=""):
+    """Report one loop iteration to the hive's thinking timeline, with the runtime's own account of it: rested says
+    this reply leaves the mind resting after refused replies (hive_helpers.rests_after), and cause says why the runtime
+    refused it (hive_services.last_failure_cause). Neither is read from the reply's text, so the hive can end the work
+    goals a stopped mind holds with that reason (Goals.stop_held) instead of leaving them claimed under a lease."""
     payload = {"iteration": int(iteration or 0), "input": _text(message) or None,
-               "response": _text(response), "results": str(results)}
+               "response": _text(response), "results": str(results),
+               "rested": str(rested).lower() in ("true", "1"), "failure_cause": str(cause or "")}
     _call("POST", "/api/agent/trace", payload)
     return "HIVE-TRACED"
 
@@ -1520,15 +1533,26 @@ def post_inventory(provides_text="()", modules_text="()", wait_seconds=None, sle
 
 # ---- goals ---------------------------------------------------------------------------------
 
+def held_goals(statuses=("claimed", "waiting"), holder_only=False):
+    """The goals in these statuses this mind holds (claimed_by) or, unless holder_only, is assigned: (goals, None), or
+    (None, error). One reading of what a mind holds, for hive-goals' list and the loop's turns (hive_helpers.held_goal),
+    which counts only what it claimed itself, since a goal assigned to it but claimed by another mind is not its work."""
+    me = os.environ.get("HIVE_AGENT_ID", "")
+    mine = []
+    for status in statuses:
+        held, error = _call("GET", f"/api/agent/goals?status={status}")
+        if error:
+            return None, error
+        mine += [g for g in held or [] if me and (g.get("claimed_by") == me or (not holder_only and g.get("assignee") == me))]
+    return mine, None
+
+
 def goals():
     """Current held or assigned tasks, open swarm tasks, and recent completed work."""
     me = os.environ.get("HIVE_AGENT_ID", "")
-    mine = []
-    for status in ("claimed", "waiting"):
-        held, error = _call("GET", f"/api/agent/goals?status={status}")
-        if error:
-            return error
-        mine += [g for g in held or [] if me and me in (g.get("claimed_by"), g.get("assignee"))]
+    mine, error = held_goals()
+    if error:
+        return error
     result, error = _call("GET", "/api/agent/goals?status=open")
     if error:
         return error
@@ -1683,7 +1707,7 @@ def _membrane(fn):
 
 RAW = {"trace", "take_control", "post_inventory"}
 SKILLS = ["repo_query", "flow_drafts", "flow_publish", "flow_run", "flow_retire", "flow_run_get", "flow_cancel", "flows", "flow_draft", "flow_revise", "flow_read", "findings_read", "plan_review_context", "finding_response", "finding_disposition", "plan_return", "review_receipts", "asset_put", "asset_get", "asset_list", "goal_review", "rooms", "room_post", "coffee_note", "request", "artifact_create", "revision", "revision_part", "revision_read", "finding", "review_complete", "lifecycle_start", "lifecycle_stop", "lifecycle_status", "health", "shared_body", "belief", "exhibit", "exhibit_space", "stage_show", "stage_recall", "stage_compare", "goal_cancel_ack", "goal_heartbeat", "goal_claim", "goal_create", "goal_finish", "goal_get", "create",
-          "goal_propose", "goals", "goal_history", "goal_continue", "goal_output", "publish", "query", "share_deny", "share_grant", "share_offer", "share_request", "shared",
+          "goal_propose", "goal_file", "goals", "goal_history", "goal_continue", "goal_output", "publish", "query", "share_deny", "share_grant", "share_offer", "share_request", "shared",
           "shared_page", "shares", "calendar_read", "report_problem"]
 for _name in SKILLS:
     globals()[_name] = _membrane(globals()[_name])

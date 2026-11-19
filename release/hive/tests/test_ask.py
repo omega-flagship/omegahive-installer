@@ -1,3 +1,4 @@
+# Purpose: verify Ask admission, routing, history and spend boundaries.
 """Universal Ask, phase 1 (hive/core/ask.py): admission, coordinator routing, reply binding, frames, caps and audit."""
 import asyncio
 import contextlib
@@ -384,7 +385,7 @@ def test_an_ask_turns_conversation_is_not_found_to_anyone_but_its_asker(client):
         assert client.get(f"{link}/messages", headers=who).status_code == 404
 
 
-def test_titles_stay_neutral(client):
+def test_thread_bookkeeping_is_named_from_the_first_request(client):
     w = world(client)
     r = ask(client, w["ann"], "op-title-001", text="my private worry about money", context={"swarm_id": w["swarm"]["id"]}).json()
     hive = w["hive"]
@@ -392,8 +393,9 @@ def test_titles_stay_neutral(client):
     goal = hive.db.one("SELECT * FROM goals WHERE id = ?", (s["goal_id"],))
     room = hive.db.one("SELECT * FROM rooms WHERE id = ?", (s["room_id"],))
     rule = hive.db.one("SELECT note FROM budgets WHERE scope = ?", (f"agent:{w['coord']['id']}",))
-    assert goal["title"] == "Ask thread" and goal["detail"] == "" and s["title"] == "Ask thread" and room["name"] == "Ask thread"
-    assert "money" not in json.dumps([goal, room, rule, s])
+    assert goal["title"] == "my private worry about money" and goal["detail"] == ""
+    assert s["title"] == goal["title"] and room["name"] == goal["title"][:80]
+    assert "money" not in json.dumps(rule)
 
 
 def test_hidden_refs_are_dropped_silently_and_page_prose_never_reaches_the_mind(client):

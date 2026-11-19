@@ -467,6 +467,7 @@ const STATUS: Record<Exclude<ApprovalStatus, 'pending'>, { label: string; color:
   used: { label: 'Used', color: '#5eead4', icon: 'bolt' },
   denied: { label: 'Denied', color: 'var(--color-bad)', icon: 'x' },
   expired: { label: 'Expired', color: 'var(--color-ink-3)', icon: 'clock' },
+  auto: { label: 'Ran without asking', color: 'var(--color-ink-3)', icon: 'bolt' },
 }
 
 function dayLabel(iso: string, now: number) {
@@ -482,13 +483,13 @@ function History() {
   const approvals = useHive((s) => s.approvals)
   const agents = useHive((s) => s.agents)
   const now = useNow(30_000)
-  const [filter, setFilter] = useState<'all' | 'approved' | 'denied'>('all')
+  const [filter, setFilter] = useState<'all' | 'approved' | 'denied' | 'auto'>('all')
   const [open, setOpen] = useState<string | null>(null)
   const list = useMemo(
     () =>
       Object.values(approvals)
         .filter((a) => a.status !== 'pending')
-        .filter((a) => filter === 'all' || (filter === 'approved' ? a.status === 'approved' || a.status === 'used' : a.status === 'denied'))
+        .filter((a) => filter === 'all' || (filter === 'approved' ? a.status === 'approved' || a.status === 'used' : a.status === filter))
         .sort((a, b) => (b.decided_at ?? b.created_at).localeCompare(a.decided_at ?? a.created_at)),
     [approvals, filter],
   )
@@ -514,10 +515,11 @@ function History() {
             { value: 'all', label: 'All' },
             { value: 'approved', label: 'Approved' },
             { value: 'denied', label: 'Denied' },
+            { value: 'auto', label: 'Without asking' },
           ]}
         />
       </div>
-      {groups.length === 0 && <EmptyState icon="history" title="No decisions yet" body="Approved, denied and expired requests collect here." />}
+      {groups.length === 0 && <EmptyState icon="history" title="No decisions yet" body="Approved, denied and expired requests collect here, with the MeTTa a mind ran without asking." />}
       {groups.map((g) => (
         <section key={g.day} className="mb-5" aria-label={g.day}>
           <h2 className="eyebrow mb-2 px-1">{g.day}</h2>
@@ -567,7 +569,7 @@ function History() {
                               </span>
                             )}
                             <span>
-                              <span className="text-ink-4">Asked </span>
+                              <span className="text-ink-4">{a.status === 'auto' ? 'Ran ' : 'Asked '}</span>
                               {new Date(a.created_at).toLocaleString([], { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })}
                             </span>
                           </div>

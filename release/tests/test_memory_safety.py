@@ -1,4 +1,4 @@
-"""Space bounding keeps protected atoms and leaves receipts; saves are atomic.
+"""Space bounding keeps protected atoms and leaves receipts; saves are atomic and write only a changed space.
 
 Boots the real runtime through PeTTa, so it is skipped unless a PeTTa checkout
 is available (see scripts/dev/setup_petta_env.sh):
@@ -26,20 +26,53 @@ sys.path.insert(0, str(ROOT / "src"))
 
 
 class SaveHelperTests(unittest.TestCase):
-    def test_commit_replaces_only_when_complete(self):
-        from hive.runtime.extensions import helper_metta as helper
+    def setUp(self):
+        from hive.runtime.extensions import helper_metta
+        self.helper = helper_metta
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="hive-save-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.target = self.tmp / "world.metta"
 
-        tmp = pathlib.Path(tempfile.mkdtemp(prefix="hive-save-"))
-        target = tmp / "world.metta"
-        target.write_text("(Old atom)\n")
-        saving = helper.save_begin(str(target))
-        # Until the commit, the previous save is untouched.
-        self.assertEqual(target.read_text(), "(Old atom)\n")
-        pathlib.Path(saving).write_text("(New atom)\n")
-        self.assertIs(helper.save_commit(saving, str(target)), True)
-        self.assertEqual(target.read_text(), "(New atom)\n")
-        self.assertFalse(pathlib.Path(saving).exists())
-        shutil.rmtree(tmp, ignore_errors=True)
+    def _save(self, texts):
+        """save_atoms with every fsync counted: a sync is the disk commit an idle mind must not make."""
+        from unittest import mock
+        with mock.patch.object(self.helper.os, "fsync", wraps=os.fsync) as fsync:
+            wrote = self.helper.save_atoms(str(self.target), texts)
+        return wrote, fsync.call_count
+
+    def test_a_changed_space_replaces_the_file_whole(self):
+        self.target.write_text("(Old atom)\n")
+        before = self.target.stat().st_ino
+        # one line per atom, as appending each with append-file wrote them; a text with a newline stays one atom's text
+        self.assertEqual(self._save(["(New atom)", '(Note "two\nlines é")']), (True, 2))
+        self.assertEqual(self.target.read_bytes(), '(New atom)\n(Note "two\nlines é")\n'.encode("utf-8"))
+        self.assertNotEqual(self.target.stat().st_ino, before)        # renamed over the old file, never rewritten in place
+        self.assertEqual(list(self.tmp.glob("*.saving")), [])
+
+    def test_an_unchanged_space_writes_and_syncs_nothing(self):
+        # A disk audit found idle minds committing their memory several times a second: the loop saves every memory
+        # space each iteration, and each save rewrote and fsynced the file whether or not the space had changed.
+        for texts in ([], ["(Pin core-fact kept)", "(Filler one)"]):
+            with self.subTest(atoms=len(texts)):
+                self.assertTrue(self._save(texts)[0])
+                st = self.target.stat()
+                self.assertEqual(self._save(texts), (False, 0))
+                after = self.target.stat()
+                self.assertEqual((after.st_ino, after.st_size, after.st_mtime_ns), (st.st_ino, st.st_size, st.st_mtime_ns))
+                self.assertEqual(list(self.tmp.glob("*.saving")), [])
+
+    def test_a_missing_file_is_written_even_for_an_empty_space(self):
+        self.assertEqual(self._save([]), (True, 2))
+        self.assertEqual(self.target.read_bytes(), b"")
+
+    def test_a_failed_save_leaves_the_previous_file(self):
+        from unittest import mock
+        self.target.write_text("(Old atom)\n")
+        with mock.patch.object(self.helper.os, "fsync", side_effect=OSError("disk full (invented)")):
+            with self.assertRaises(OSError):
+                self.helper.save_atoms(str(self.target), ["(New atom)"])
+        self.assertEqual(self.target.read_text(), "(Old atom)\n")
+        self.assertEqual(list(self.tmp.glob("*.saving")), [])
 
     def test_protected_heads(self):
         from hive.runtime.extensions import helper_metta as helper

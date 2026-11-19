@@ -230,4 +230,4 @@ def test_a_conductor_turn_on_an_asleep_coordinator_leaves_it_asleep(client, monk
     wait(hive, "op-p2-wake-001", closed)
     assert hive.agent(w["coord"]["id"])["status"] == "asleep" and client.supervisor.calls == starts
     goal = hive.db.one("SELECT g.* FROM goals g JOIN work_sessions s ON s.goal_id = g.id WHERE s.agent_id = ?", (w["coord"]["id"],))
-    assert goal and goal["assignee"] == w["coord"]["id"]                    # the thread's goal is still recorded
+    assert goal and goal["assignee"] is None and json.loads(goal["binding"]) == {"kind": "ask.thread"}

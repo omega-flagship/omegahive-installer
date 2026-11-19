@@ -150,6 +150,24 @@ describe('pieceRows', () => {
     expect(lanes[0].pieces.map((p) => p.id)).toEqual(['layout', 'look', 'grid'])
     expect(edges).toEqual([{ from: 'layout', to: 'look' }, { from: 'layout', to: 'grid' }])
   })
+  it('an ended plan (stopped, deployed, installed) has no open question and holds no piece by one (show run f6)', () => {
+    const ended = [
+      view({ phase: 'stopped', questions: v.questions }),
+      view({ phase: 'deployed', questions: v.questions }),
+      view({ phase: 'ready-to-deploy', installed: { app_id: 'app_1', name: 'Weather' }, questions: v.questions }),
+    ]
+    for (const e of ended) expect(openQuestions(e)).toEqual([])
+    const stopped = view({
+      phase: 'stopped', questions: v.questions,
+      pieces: [piece('layout', { state: 'integrated' }), piece('grid', { deps: ['layout'], state: 'waiting' }), piece('icon', { state: 'held' })],
+    })
+    expect(stopped.status).toBe('stopped')
+    const rows = pieceRows(stopped)
+    expect(rows.find((r) => r.id === 'grid')).toMatchObject({ phase: 'waiting' })
+    expect(rows.find((r) => r.id === 'icon')).toMatchObject({ phase: 'waiting' })
+    expect(rows.filter((r) => r.phase === 'held')).toEqual([])
+    expect(planStages(stopped).filter((s) => /answer/.test(s.detail ?? ''))).toEqual([])
+  })
   it('a dependency cycle never loops', () => {
     const c = view({ pieces: [piece('a', { deps: ['b'] }), piece('b', { deps: ['a'] })] })
     expect(assigneeLanes(c).lanes[0].pieces).toHaveLength(2)

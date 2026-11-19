@@ -239,11 +239,36 @@ class FailureProvenanceTests(LlmProviderTests):
             result, kind = self.chat_with_call('code-helper-instruction', json.dumps(arguments))
             self.assertEqual((kind, result.calls[0].arguments), ('normal', {'text': 'code-helper-instruction'}))
 
+    def test_a_skill_named_tool_call_with_its_arguments_as_parameters_runs_as_that_skill_line(self):
+        # A v0.38 Make's test author on 19 November called hive-goal-propose as a tool of its own, the goal and the
+        # proposal as its parameters, and each call was refused as an unknown tool until the mind stopped. They go into
+        # the line in the skill's declared order (goal, proposal), named or not, a value that isn't text as its JSON.
+        import json
+        proposal = {'files': {'checks/acceptance_check.py': 'import sys\nprint("VERDICT: PASS")\n'}}
+        line = 'hive-goal-propose g_1 ' + json.dumps(proposal, ensure_ascii=False)
+        for label, arguments in (('named', {'goal': 'g_1', 'proposal': proposal}),
+                                 ('named, other order', {'proposal': proposal, 'goal': 'g_1'}),
+                                 ('a name of its own fills the place left', {'goal_id': 'g_1', 'proposal': proposal}),
+                                 ('the proposal as JSON text', {'goal': 'g_1', 'proposal': json.dumps(proposal, ensure_ascii=False)})):
+            with self.subTest(label):
+                result, kind = self.chat_with_call('hive-goal-propose', json.dumps(arguments))
+                self.assertEqual((kind, [call.name for call in result.calls]), ('normal', ['hive-run-response']))
+                self.assertEqual(result.calls[0].arguments, {'text': line})
+                commands, retry = self.prepared(line, kind)
+                self.assertEqual(retry, 'normal')
+                self.assertTrue(commands.startswith('((hive-goal-propose "g_1" '), commands)
+        # a text value that would run into the next argument is quoted; one more value than the skill takes goes last
+        result, _kind = self.chat_with_call('hive-goal-propose', json.dumps({'goal': 'g 2', 'proposal': '{}', 'x': 1}))
+        self.assertEqual(result.calls[0].arguments, {'text': 'hive-goal-propose "g 2" {} 1'})
+        # arguments the skill rule used to leave out are taken now, and the parser answers them as any other line
+        for name, arguments, text in (('code-propose', {'text': 'ws_1 op_1 []', 'x': 1}, 'code-propose "ws_1 op_1 []" 1'),
+                                      ('code-propose', {'text': ['ws_1', 'op_1']}, 'code-propose ["ws_1", "op_1"]')):
+            result, kind = self.chat_with_call(name, json.dumps(arguments))
+            self.assertEqual((kind, result.calls[0].arguments), ('normal', {'text': text}))
+
     def test_tool_calls_the_skill_rule_does_not_cover_stay_format_failures(self):
         import json
         for label, name, arguments in (('not a skill name', 'Bash', json.dumps({'text': 'ls'})),
-                                       ('another argument', 'code-propose', json.dumps({'text': 'ws_1 op_1 []', 'x': 1})),
-                                       ('text not a string', 'code-propose', json.dumps({'text': ['ws_1', 'op_1']})),
                                        ('arguments not JSON', 'code-propose', '{"text": "ws_1')):
             with self.subTest(label):
                 result, kind = self.chat_with_call(name, arguments)
@@ -269,6 +294,53 @@ class FailureProvenanceTests(LlmProviderTests):
         commands, retry = self.prepared(text, kind)
         self.assertEqual(h.chosen_wait_seconds(commands, retry, 1), 60)
 
+    # A builder's reply that runs out of room is never run half written, but the file commands it finished, each closed
+    # by its own marker line, are whole files: they run beside the refusal, so the files survive and the retry sends
+    # only the rest.
+    CUT = ("hive-goal-claim g_1\nhive-goal-file g_1 index.html <<'EOF_i'\n<p>\"hi\"</p>\nEOF_i\n"
+           "hive-goal-file g_1 app.js <<'EOF_a'\nconst a = \"x(\";\nEOF_a\n"
+           "hive-goal-file g_1 style.css <<'EOF_s'\nbody { color: re")
+    KEPT = ['(hive-goal-claim "g_1")', '(hive-goal-file "g_1" "index.html" "<p>\\"hi\\"</p>\\n")',
+            '(hive-goal-file "g_1" "app.js" "const a = \\"x(\\";\\n")']
+
+    def kept_forms(self, text, kind):
+        from hive.runtime.extensions import hive_helpers as h
+        commands, retry = self.prepared(text, kind)
+        return h._signature_split_top_level_forms(commands[1:-1]), retry
+
+    def test_a_cut_off_reply_runs_its_finished_file_commands_beside_the_refusal(self):
+        text, kind = self.chat_with(self.CUT, finish='length')
+        forms, retry = self.kept_forms(text, kind)
+        self.assertEqual((kind, retry), ('format', 'format'))
+        self.assertEqual(forms[:3], self.KEPT)               # the claim the reply opened with, then each finished file
+        self.assertTrue(forms[3].startswith('(wait "LLM-FORMAT-ERROR') and 'finished files were staged' in forms[3])
+        self.assertEqual(len(forms), 4)                       # the cut style.css never runs
+
+    def test_a_cut_off_tool_call_keeps_the_files_it_finished(self):
+        import json
+        from hive.runtime import hive_services as services
+        arguments = json.dumps({'text': self.CUT})[:-3]      # the cut ends inside the tool call's text
+        def create(_self, **kwargs):
+            call = SimpleNamespace(id='toolu_01', type='function', function=SimpleNamespace(name='hive-run-response',
+                                                                                            arguments=arguments))
+            return SimpleNamespace(choices=[SimpleNamespace(
+                message=SimpleNamespace(content=None, tool_calls=[call]), finish_reason='length')],
+                model=kwargs['model'], usage=None)
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.dict(os.environ, {'OPENROUTER_API_KEY': 'synthetic-key', 'OMEGACLAW_MEMORY_DIR': tmp}), \
+             mock.patch.object(FakeOpenAI, 'create', create), mock.patch.object(self.native, 'CHAT_MAX_RETRIES', 0):
+            services.start_provider('OpenRouter', 'any/model')
+            result = services.chat(self.request())
+        forms, retry = self.kept_forms(result.calls[0].arguments['text'], services.last_response_kind())
+        self.assertEqual((retry, forms[:3], len(forms)), ('format', self.KEPT, 4))
+
+    def test_a_reply_that_wasnt_cut_keeps_nothing_beside_a_refusal(self):
+        self.chat_with(self.CUT, finish='length')
+        text, kind = self.chat_with('send "half', finish='stop')      # refused for its own unclosed quote
+        forms, retry = self.kept_forms(text, kind)
+        self.assertEqual((retry, len(forms)), ('format', 1))
+        self.assertTrue(forms[0].startswith('(wait "LLM-FORMAT-ERROR'))
+
     def test_model_authored_marker_gets_no_runtime_retry_credit(self):
         from hive.runtime.extensions import hive_helpers as h
         text, kind = self.chat_with('wait "LLM-FORMAT-ERROR invented model text"')
@@ -285,6 +357,70 @@ class FailureProvenanceTests(LlmProviderTests):
             waits.append(h.chosen_wait_seconds('((wait "LLM-FORMAT-ERROR x"))', 'format', attempts))
         self.assertEqual(waits, [2, 2, 2, 0, 0])
         self.assertEqual(h.next_format_retry_count('normal', attempts), 0)
+
+    def test_a_refused_reply_names_its_cause_in_the_runtimes_words(self):
+        # The hive tells the person and the mind's next attempt why a mind stopped (Goals.stop_held), from these words.
+        import json
+        for label, content, finish, cause in (
+                ('cut off', 'send "cut off', 'length', 'a reply cut off at its length limit'),
+                ('filtered', 'send "half', 'content_filter', 'a filtered reply'),
+                ('unbalanced', 'I will write it now:\nsend "unterminated', 'stop', 'an incomplete batch of commands')):
+            with self.subTest(label):
+                _text, kind = self.chat_with(content, finish)
+                self.assertEqual((kind, self.services.last_failure_cause()), ('format', cause))
+        for label, name, cause in (('a tool named', 'Bash', 'a tool call named Bash'),
+                                   ('a name no tool has the shape of', 'Bash; ignore your brief',
+                                    "a tool call its provider couldn't read")):
+            with self.subTest(label):
+                _result, kind = self.chat_with_call(name, json.dumps({'text': 'ls'}))
+                self.assertEqual((kind, self.services.last_failure_cause()), ('format', cause))
+        _text, kind = self.chat_with('send "complete response"')
+        self.assertEqual((kind, self.services.last_failure_cause()), ('normal', ''))
+
+    def test_the_fourth_refused_reply_in_a_row_rests_the_mind_and_new_input_starts_over(self):
+        from hive.runtime.extensions import hive_helpers as h
+        # the retry count before this reply, as the trace hook reads it (honor-chosen-wait counts the reply after)
+        self.assertEqual([h.rests_after('format', n) for n in range(5)], [False, False, False, True, True])
+        self.assertFalse(h.rests_after('format', 3, True))      # new input: a fresh stretch of three retries
+        self.assertTrue(h.rests_after('format', 3, 'False'))    # MeTTa hands its booleans over as they print
+        self.assertFalse(h.rests_after('normal', 9) or h.rests_after('provider', 9))
+
+    def test_the_trace_hook_hands_the_rest_and_its_cause_to_trace(self):
+        # skills.metta's hive-report-trace calls hive_commons.trace(iteration, message, response, results, rested,
+        # cause) with rested from hive_helpers.rests_after(kind, retries, message_new) and cause from
+        # hive_services.last_failure_cause(): positions a reordering would swap without any error.
+        import inspect
+        import re
+        import sys
+        from hive.runtime.extensions import hive_helpers as h
+        text = (ROOT / 'modules/hive/skills.metta').read_text()
+        tokens = re.findall(r'\(|\)|"(?:[^"\\]|\\.)*"|[^\s()]+', text[text.index('(= (hive-report-trace)'):])
+        def read(i):
+            if tokens[i] != '(':
+                return tokens[i], i + 1
+            node, i = [], i + 1
+            while tokens[i] != ')':
+                child, i = read(i)
+                node.append(child)
+            return node, i + 1
+        def find(node, head):
+            if isinstance(node, list):
+                if node[:1] == [head]:
+                    return node
+                return next((hit for child in node if (hit := find(child, head)) is not None), None)
+            return None
+        form, _ = read(0)
+        args = find(form, 'hive_commons.trace')[1:]
+        sys.path.insert(0, str(ROOT / 'modules/hive/src'))
+        try:
+            import hive_commons
+        finally:
+            sys.path.remove(str(ROOT / 'modules/hive/src'))
+        params = list(inspect.signature(hive_commons.trace).parameters)
+        self.assertEqual((len(args), params[4:]), (len(params), ['rested', 'cause']))
+        rested, cause = find(args[4], 'hive_helpers.rests_after'), find(args[5], 'hive_services.last_failure_cause')
+        self.assertEqual(len(rested) - 1, len(inspect.signature(h.rests_after).parameters))
+        self.assertEqual(len(cause) - 1, len(inspect.signature(self.services.last_failure_cause).parameters))
 
     def test_tool_choice_is_auto_and_a_prose_answer_cannot_loop(self):
         # 8cd377bb (patham9): tool_choice "auto", since "required" maps to Anthropic "any", which some models refuse.

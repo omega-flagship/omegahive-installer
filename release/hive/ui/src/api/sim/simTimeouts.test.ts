@@ -25,6 +25,9 @@ import viteConfig from '../../../vite.config.ts?raw'
  * askCustody's presence test is the first to load the Ask's echo into the console (5018 ms; the file's others took at
  * most 3199). On the Mac mini beside the same six heavy sim files, two workers at load 3 to 4, their slowest tests took
  * at most 1805 and 316 ms over two runs.
+ * The feedback area's mounted logs test (features/feedback/logs.mounted.test.ts) composes the whole area cold in its
+ * first look: the whole file took 1708 ms on the CI runner, and of two passes on a PC at load 203-211 its first test
+ * took 2222 ms and then 13492 ms, past the screen cap's floor, so it keeps its own cap here.
  */
 const MEASURED: Record<string, { worst: number; hookWorst?: number }> = {
   'agreements.test.ts': { worst: 14189 },
@@ -45,6 +48,7 @@ const MEASURED: Record<string, { worst: number; hookWorst?: number }> = {
   'features/dot/reasoning/askViewEpoch.test.ts': { worst: 5201 },
   'features/code/canvas/vibeIdentity.test.ts': { worst: 5018 },
   'experiences/construct/askCustody.test.ts': { worst: 5018 },
+  'features/feedback/logs.mounted.test.ts': { worst: 13492 },
 }
 /**
  * r1.5: the screen and feature tests that share the standard 20 s cap (`vi.setConfig({ testTimeout: 20_000 })`). The
@@ -62,6 +66,7 @@ const SCREEN_CAPPED: Record<string, number> = {
   'features/createPlan/plan.screen.test.ts': 619, // r1.6: the Create plan view, measured two passes at load 4-7
   'features/dot/conversations.screen.test.ts': 1011,
   'features/dot/createOffer.mounted.test.ts': 3205, // a mind's Create offer in every look (its guards test), two passes, 3 workers (Linux, 12 threads)
+  'features/dot/refused.mounted.test.ts': 5785, // a mind's refusal notice in every look (its guards test), two passes (Linux, 12 threads)
   'features/explore/explore.screen.test.ts': 2333,
   'features/feedback/feedback.screen.test.ts': 2027, // the feedback area, measured two passes at load 136-149 (16 Nov)
   'features/firstlight/free.test.ts': 3048, // First Light's free inference (its guards test), two passes at load 40 (Linux, 32 threads)

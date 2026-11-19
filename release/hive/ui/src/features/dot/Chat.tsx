@@ -1,4 +1,5 @@
-// Purpose: render a mind conversation, its composer, the action for newer messages and what the mind offers to build in Create.
+// Purpose: render a mind conversation, its composer, the action for newer messages, the person's task stops and what the
+// mind offers to build in Create.
 import { healthCheck } from '../../lib/healthQuestion'
 import { CreateOffers } from './CreateOffers'
 import { HealthCheckLabel } from '../../ui/HealthCheckLabel'
@@ -31,6 +32,7 @@ import { MessageViews } from '../views/MessageViews'
 import { Words } from '../views/Words'
 import { useMindInUse } from '../ask/mindInUse'
 import { useAbout, withAbout } from './chatAbout'
+import { StoppedTasks } from '../tasks/StoppedTasks'
 
 const SUGGESTIONS = ['What do you believe most?', 'What are you working on?', 'Why did the commons change?']
 
@@ -118,6 +120,7 @@ export function Chat({ agent, focus, connectAsked = 0 }: { agent: Agent; focus?:
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <MeNotice show={meFailed && messages.some((x) => x.direction === 'in' && x.sender.startsWith('user:'))} />
+      <StoppedTasks mind={id} />
       <div className="relative flex min-h-0 flex-1 flex-col">
       <div ref={logBox} {...logHandlers} tabIndex={-1} data-mind-chat-log="" className="thin-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3 outline-none" aria-live="polite" aria-label={`Conversation with ${shown(agent.name)}`}>
         <div ref={logContent}>

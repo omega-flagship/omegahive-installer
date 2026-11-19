@@ -1,4 +1,5 @@
 import { healthCheck } from '../../lib/healthQuestion'
+import { wentAhead } from '../../lib/approvalDecision'
 import { m } from 'framer-motion'
 import { useDraft } from '../drafts'
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
@@ -724,7 +725,7 @@ function Approvals({ list, approvals }: { list: Approval[]; approvals: Record<st
           <div className="cx-c-dim cx-rule">── decided ──</div>
           {recent.map((ap) => {
             const a = agents[ap.agent_id]
-            const ok = ap.status === 'approved' || ap.status === 'used'
+            const ok = wentAhead(ap.status)
             return (
               <div key={ap.id} className="cx-recent-row">
                 <span className={ok ? 'cx-c-hi' : ap.status === 'expired' ? 'cx-c-dim' : 'cx-c-amber'}>{ok ? '✓' : ap.status === 'expired' ? '…' : '✗'}</span>{' '}
@@ -831,7 +832,7 @@ function History({ approvals }: { approvals: Record<string, Approval> }) {
       ) : (
         decided.map((ap) => {
           const a = agents[ap.agent_id]
-          const ok = ap.status === 'approved' || ap.status === 'used'
+          const ok = wentAhead(ap.status)
           return (
             <div key={ap.id} className="cx-hrow">
               <span className={ok ? 'cx-c-hi' : ap.status === 'expired' ? 'cx-c-dim' : 'cx-c-amber'}>{ok ? '✓' : ap.status === 'expired' ? '…' : '✗'}</span>

@@ -73,10 +73,73 @@ describe('Ask store wake-before-send integration', () => {
     expect(askAutoWake.view(op)).toBeNull()
   })
   it('an unknown status still never wakes or sends', async () => {
-    const f = fixture('error')
+    const f = fixture('invented-status')
     await useAskStore.getState().send('Read my note', { route: 'hive', experience: 'classic' })
     expect(f.client.agentAction).not.toHaveBeenCalled()
     expect(f.client.ask).not.toHaveBeenCalled()
+  })
+  // T-ASK-ERROR-WAKE (staging pr-63): a mind left in 'error' by a refused start got "Couldn't wake" forever, unwoken
+  it('a mind in error is woken once and the request delivered once, like a stopped one', async () => {
+    const f = fixture('error')
+    const sent = useAskStore.getState().send('Read my note', { route: 'hive', experience: 'classic' })
+    const op = useAskStore.getState().open!
+    await vi.waitFor(() => expect(f.client.agentAction).toHaveBeenCalledExactlyOnceWith('a_ada', 'wake'))
+    expect(f.client.ask).not.toHaveBeenCalled()
+    f.wakeRelease(); await sent
+    expect(f.client.agentAction).toHaveBeenCalledTimes(1)
+    expect(f.client.ask).toHaveBeenCalledTimes(1)
+    expect(askAutoWake.view(op)).toBeNull()
+  })
+  it('a start the host refuses shows its reason, after one wake, and sends nothing', async () => {
+    const f = fixture('error')
+    f.client.agentAction.mockRejectedValueOnce(new ApiError(409, 'start_refused', 'an Iter mind needs Docker on this host.'))
+    await useAskStore.getState().send('Read my note', { route: 'hive', experience: 'classic' })
+    const op = Object.keys(useAskStore.getState().turns)[0]
+    expect(f.client.agentAction).toHaveBeenCalledExactlyOnceWith('a_ada', 'wake')
+    expect(f.client.ask).not.toHaveBeenCalled()
+    expect(askAutoWake.view(op)).toMatchObject({ phase: 'failed', reason: 'an Iter mind needs Docker on this host' })
+  })
+  it('an untyped wake failure of a mind in error shows its inspected last error, never the failure text', async () => {
+    // staging (#520 F1): status error, last_error from a failed restore, then POST start answers 500
+    const f = fixture('error')
+    f.client.getAgent.mockImplementation(async () => ({ id: 'a_ada', name: 'Ada', status: 'error', kind: 'omega', swarm_id: 's_home',
+      may_sleep: true, is_mine: true, last_error: 'start failed at restore: could not inspect process group 1064' }))
+    f.client.agentAction.mockRejectedValueOnce(new ApiError(500, 'internal', 'Traceback: secret detail'))
+    await useAskStore.getState().send('Read my note', { route: 'hive', experience: 'classic' })
+    const op = Object.keys(useAskStore.getState().turns)[0]
+    expect(f.client.agentAction).toHaveBeenCalledExactlyOnceWith('a_ada', 'wake')
+    expect(f.client.ask).not.toHaveBeenCalled()
+    expect(askAutoWake.view(op)).toMatchObject({ phase: 'failed', reason: 'start failed at restore: could not inspect process group 1064' })
+    expect(askAutoWake.view(op)?.reason).not.toContain('Traceback')
+  })
+  it('a mind back in error after its wake shows its last error, and no other error text is shown', async () => {
+    const f = fixture('error')
+    f.client.getAgent.mockImplementation(async () => ({ id: 'a_ada', name: 'Ada', status: 'error', kind: 'omega', swarm_id: 's_home',
+      may_sleep: true, is_mine: true, last_error: 'start refused: no image\n for this driver' }))
+    f.client.agentAction.mockResolvedValueOnce({})
+    await useAskStore.getState().send('Read my note', { route: 'hive', experience: 'classic' })
+    const op = Object.keys(useAskStore.getState().turns)[0]
+    expect(f.client.agentAction).toHaveBeenCalledTimes(1)
+    expect(f.client.ask).not.toHaveBeenCalled()
+    expect(askAutoWake.view(op)).toMatchObject({ phase: 'failed', reason: 'start refused: no image for this driver' })
+    // an untyped wake failure keeps the generic words: no arbitrary error text reaches the card
+    useAskStore.getState().reset()
+    const g = fixture('asleep')
+    g.client.agentAction.mockRejectedValueOnce(new ApiError(500, 'internal', 'Traceback: secret detail'))
+    await useAskStore.getState().send('Read my note', { route: 'hive', experience: 'classic' })
+    const op2 = Object.keys(useAskStore.getState().turns)[0]
+    expect(askAutoWake.view(op2)?.phase).toBe('failed')
+    expect(askAutoWake.view(op2)?.reason).toBeUndefined()
+  })
+  it('a mind in error that this person may not wake is still never woken, and its reason is shown', async () => {
+    const f = fixture('error')
+    f.client.getAgent.mockImplementation(async () => ({ id: 'a_ada', name: 'Ada', status: 'error', kind: 'omega', swarm_id: 's_home',
+      may_sleep: false, is_mine: true, last_error: 'start refused: no Docker' }))
+    await useAskStore.getState().send('Read my note', { route: 'hive', experience: 'classic' })
+    const op = Object.keys(useAskStore.getState().turns)[0]
+    expect(f.client.agentAction).not.toHaveBeenCalled()
+    expect(f.client.ask).not.toHaveBeenCalled()
+    expect(askAutoWake.view(op)).toMatchObject({ phase: 'failed', reason: 'start refused: no Docker' })
   })
   it('retries only a known not-sent request with the same operation and no second admission callback', async () => {
     const f = fixture()

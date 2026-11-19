@@ -1,4 +1,5 @@
-"""Raw completeness, trusted retry provenance and a finite retry allowance independent of parser repair."""
+"""Purpose: check raw completeness, trusted retry provenance and a finite retry allowance independent of parser
+repair."""
 import json
 
 import pytest
@@ -9,7 +10,8 @@ from hive.runtime.extensions import hive_helpers as helper
 def prepared(source, failure='normal'):
     envelope = helper.prepare_model_response(source, failure)
     value = json.loads(envelope)
-    assert set(value) == {'commands', 'retry_kind'}
+    # every field is the runtime's own: the commands as parsed, their retry kind, and whether a message was held
+    assert set(value) == {'commands', 'retry_kind', 'held'} and isinstance(value['held'], bool)
     return helper.prepared_response_commands(envelope), helper.prepared_response_kind(envelope)
 
 

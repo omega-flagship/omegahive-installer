@@ -40,6 +40,7 @@ from .db import new_id, now
 
 PROFILE = "plan-member"
 POLICIES = ("plan-reviewed", "review-required")
+CHECK_DIR = "checks/"       # the plan's acceptance check (create_plan_engine.CHECK_DIR): never in a builder's packet
 
 
 def _canonical(value):
@@ -54,7 +55,9 @@ class MemberPorts:
 
     def __init__(self, engine):
         self.engine, self.hive = engine, engine.hive
-        self.run_test = None            # async (run, cand) -> {"passed": bool, "exit_code", "stdout", "stderr", "argv"}
+        # async (run, cand) -> {"passed": bool, "exit_code", "stdout", "stderr", "argv", and the check's verdict when it
+        # gave one: "failing" (its failing files) and "notes" (its own words)}
+        self.run_test = None
 
     def _origin(self, run):
         return member_of(run)["origin"]
@@ -89,7 +92,9 @@ class MemberPorts:
     async def read_only(self, run):
         """{path: text | None} for every other file on the piece fork (None when it isn't text): what the piece builds
         on, such as the index.html an app.js piece fills in. Reading is the host's (a member's read proposals are
-        refused, and a mind may hold no Code client at all), so the packet is all the mind sees of the app.
+        refused, and a mind may hold no Code client at all), so the packet is all the mind sees of the app. The
+        acceptance check (checks/) is never sent: the builder has the criteria in its brief, and showing it the check's
+        source would let it special-case the check's inputs.
         Time: one tree read + one file read per other file."""
         o, own = self._origin(run), set(member_of(run)["paths"])
         status, tree = await self._call(run, "GET", f"/v1/workspaces/{o['workspace_id']}/tree")
@@ -98,7 +103,7 @@ class MemberPorts:
         out = {}
         for entry in tree.get("files") or []:
             path = entry.get("path") if isinstance(entry, dict) else None
-            if not isinstance(path, str) or path in own:
+            if not isinstance(path, str) or path in own or path.startswith(CHECK_DIR):
                 continue
             status, row = await self._call(run, "GET", f"/v1/workspaces/{o['workspace_id']}/files", query={"path": path})
             if status != 200 or not isinstance(row, dict):
@@ -330,10 +335,16 @@ def _packet(engine, run, files, purpose, failing, goal_id, read_only=None):
     text = (f"Create plan {m['plan_id']}, piece {m['piece']}. Your work goal is {goal_id}: claim it with hive-goal-claim "
             f"{goal_id}, then finish with hive-goal-propose {goal_id} {{\"summary\": \"<what you changed>\", \"files\": "
             f"{{\"<path>\": \"<full new text>\"}}}}. files holds only these paths: {', '.join(m['paths'])}. "
-            f"Anything else in files is refused.")
+            f"Anything else in files is refused. A file can come first as its own command instead: hive-goal-file "
+            f"{goal_id} <path> <<'EOF_name' on one line, then the file's whole text, then a line that is just EOF_name "
+            f"(a marker none of its lines is); a file sent that way needn't be in files. A reply cut off at its length "
+            f"keeps every such file it finished.")
     if read_only:
         text += (" The app's other files, as they stand on your copy, are under read_only: read them and build on them "
                  "(their names, ids and functions), and never write them.")
+    if "index.html" in m["paths"]:   # the app frame loads these two tags (ui_parts.frame_tags and frame_script)
+        text += (' index.html loads ./style.css with <link rel="stylesheet" href="./style.css"> and ./app.js with '
+                 '<script type="module" src="./app.js"></script>: keep both tags when you write it.')
     if failing and failing.get("refused"):
         text += "\n" + failing["refused"]              # the host's words for why the last answer was refused
     shown = {k: failing.get(k) for k in ("failing", "failing_ref", "notes", "logs", "exit_code", "by")
@@ -366,6 +377,8 @@ async def _helper_effect(engine, run, effect):
                                              f"Write the piece's files; the packet is in your messages.", 0.6,
                                              created_by=goal_creator(m['plan_id']), assignee=agent["id"],
                                              goal_id=body["goal_id"])
+            # the step's own budget: a builder holding its goal keeps its turns until it ends it
+            engine.hive.goals.give_step_budget(body["goal_id"], agent["id"])
         files = await engine.member_ports.read(run)
         read_only = await engine.member_ports.read_only(run)
         await engine.hive.send_to_agent(agent["id"], _packet(engine, run, files, body["purpose"], body.get("failing"),
@@ -380,12 +393,12 @@ async def _helper_effect(engine, run, effect):
 
 async def helper_result(engine, run, effect, goal_id):
     """The assignee's goal changed: only in-piece files are written; then `changed (ckpt ())`."""
-    from .code_controller_engine import q, render_any
+    from .code_controller_engine import goal_ended, q, render_any
     from .goals import UNANSWERED
     m = member_of(run)
     goal = engine.db.one("SELECT * FROM goals WHERE id = ?", (goal_id,))
     if goal["status"] in UNANSWERED:
-        return await engine._think_failed(run, effect, {"goal_status": goal["status"]})
+        return await engine._think_failed(run, effect, goal_ended(goal))
     if goal["status"] not in ("done", "submitted"):
         return None
     if goal.get("claimed_by") != m["assignee"]:
@@ -393,6 +406,9 @@ async def helper_result(engine, run, effect, goal_id):
     from .goals import stored_proposal
     data = stored_proposal(goal)            # the answer the hive judged: a mind's own tool keeps it under proposal
     files = data.get("files")
+    staged = engine.hive.goals.staged_files(goal_id)   # the files it sent one command each (hive-goal-file)
+    if staged and (files is None or isinstance(files, dict)):
+        files = {**staged, **(files or {})}             # the answer's own files map has the last word
     if not isinstance(files, dict) or not files or not all(isinstance(k, str) and isinstance(v, str) for k, v in files.items()):
         return await engine._think_failed(run, effect, {"reason": "no_files"})
     outside = sorted(set(files) - set(m["paths"]))
@@ -483,7 +499,12 @@ async def _test_effect(engine, run, effect):
         engine._effect_set(effect["id"], "refused", {"reason": str(result["refused"])[:300]})
         return engine.accepted(await engine.observe(run, f"refused-{run_id}", "refused", [],
                                                     {"reason": str(result["refused"])[:500]}))
+    # the check's verdict is kept beside its output, whose kept text can end before the verdict line: the repair's
+    # packet shows it (_packet), and a member that blocks on it is named with it (create_plan_members.check_failure);
+    # the cases that wait on a piece not built yet (create_plan_members.counted_check) are kept beside it, never shown
+    # to the repair
     evidence = {k: result.get(k) for k in ("passed", "exit_code", "argv", "outcome")} | {
+        k: result[k] for k in ("failing", "notes", "waits") if result.get(k)} | {
         "logs": {s: {"text": str(result.get(s) or "")[:2000]} for s in ("stdout", "stderr")}}
     engine._effect_set(effect["id"], "done", evidence)
     if result.get("passed") is True:

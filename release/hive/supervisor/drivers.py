@@ -767,4 +767,5 @@ class Supervisor:
         try:
             self.start(agent["id"])
         except Exception as exc:
-            self.hive.set_status(agent["id"], "error", error=f"start failed: {exc}")
+            from ..core.hive import start_failure   # lazy, as hive.py imports the supervisor: no import cycle
+            self.hive.set_status(agent["id"], "error", error=start_failure(exc))
