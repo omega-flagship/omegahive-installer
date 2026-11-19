@@ -163,20 +163,18 @@ class MemorySpace:
 
 class SubprocessChecks:
     """TEST ONLY: the authored check in a child process, isolated like the sandbox runner: the files under test in
-    build/ (the working directory), the check in judge/, python -I so neither is importable. Production: SandboxChecks."""
+    build/ (the working directory), the check at its own path among them (build/checks/acceptance_check.py), python -I
+    so nothing in build is importable. Production: SandboxChecks."""
 
     async def run(self, files, suite):
         with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as d:
-            build, judge = pathlib.Path(d, "build"), pathlib.Path(d, "judge")
-            build.mkdir(); judge.mkdir()
+            build = pathlib.Path(d, "build")
+            build.mkdir()
             for path, content in files.items():
-                if path == suite:
-                    continue
                 f = build / path
                 f.parent.mkdir(parents=True, exist_ok=True)
                 f.write_text(content)
-            (judge / "acceptance_check.py").write_text(files[suite])
-            proc = subprocess.run([sys.executable, "-I", str(judge / "acceptance_check.py")], cwd=build,
+            proc = subprocess.run([sys.executable, "-I", str(build / suite)], cwd=build,
                                   capture_output=True, text=True, timeout=30)
         return parse_check_output(proc.stdout, proc.returncode, proc.stderr)
 
@@ -743,6 +741,49 @@ def test_the_authored_check_runs_in_the_hive_sandbox(monkeypatch):
     assert out["outcome"] == "fail", out
 
 
+RUNNER = ROOT / "hive/plugins/create_acceptance_check/tools/run.py"
+# Two ways a test author reads the app: by the check's own path (dirname(__file__)/..) and by the working directory.
+# Each passes on an app whose index.html says it is ready, and names index.html on the scaffold or when it isn't there.
+ROOT_CHECK = '''import html, json, os
+here = %s
+try:
+    with open(os.path.join(here, "index.html"), encoding="utf-8") as f:
+        ok = html.escape("<h1>Ready</h1>") in html.escape(f.read())
+except OSError:
+    ok = False
+print("CREATE-CHECK " + json.dumps({"passed": ok, "failing": [] if ok else ["index.html"]}))
+'''
+BY_FILE = ROOT_CHECK % 'os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")'
+BY_CWD = ROOT_CHECK % '"."'
+READY = {**SCAFFOLD, "index.html": SCAFFOLD["index.html"].replace("<body>", "<body><h1>Ready</h1>")}
+
+
+def _run_runner(files, check, tmp):
+    """The pinned runner as the sandbox starts it (python -I tools/run.py in a fresh job folder), without the OS
+    sandbox, so its layout is checked on every host; the sandbox test above checks the boundary."""
+    job = pathlib.Path(tempfile.mkdtemp(dir=tmp))
+    (job / "snapshot.json").write_text(json.dumps({"files": files, "check": check}))
+    proc = subprocess.run([sys.executable, "-I", str(RUNNER)], cwd=job, capture_output=True, text=True, timeout=60)
+    return parse_check_output(proc.stdout, proc.returncode, proc.stderr)
+
+
+@pytest.mark.parametrize("check", [BY_FILE, BY_CWD], ids=["by-file", "by-cwd"])
+def test_the_runner_lays_the_check_at_the_apps_root(check, tmp_path):
+    """The check sits at its own path among the app's files (build/checks/acceptance_check.py) with the app's root as
+    its working directory, so it finds the app either way: on 19 Nov a check reading dirname(__file__)/.. failed every
+    candidate with index.html missing, since the runner had put it in a folder beside the app."""
+    assert _run_runner({**READY, cpe.CHECK_PATH: check}, cpe.CHECK_PATH, tmp_path)["outcome"] == "pass"
+    red = _run_runner({**SCAFFOLD, cpe.CHECK_PATH: check}, cpe.CHECK_PATH, tmp_path)
+    assert red["outcome"] == "fail" and red["failing"] == ["index.html"], red
+    # nothing in build is importable, its checks/ folder included: a file named like a stdlib module the check imports
+    # (html, which the runner itself never imports, so only sys.path decides) never runs in its place
+    shadow = 'print("CREATE-CHECK " + %r)\nraise SystemExit(0)\n' % json.dumps({"passed": True, "failing": []})
+    shadowed = {**SCAFFOLD, "html.py": shadow, "html/__init__.py": shadow, "checks/html.py": shadow,
+                cpe.CHECK_PATH: check}
+    out = _run_runner(shadowed, cpe.CHECK_PATH, tmp_path)
+    assert out["outcome"] == "fail" and out["failing"] == ["index.html"], out
+
+
 def test_lost_operations_spend_the_retry_budget_then_ask_the_person(world):
     """R4.2: every lost operation spends one retry (the budget is a data row, fixed into the plan's Ctx); past it the
     plan blocks with (cap-exceeded lost-operations) and asks; the person's answer resumes with a fresh budget."""
@@ -1122,6 +1163,10 @@ def test_the_preview_serves_every_file_the_pieces_built(world):
     assert deployed["phase"] == "deployed", deployed["last_error"]
     app = w.tmp / "create" / "apps" / deployed["installed"]["program_id"] / "ui"
     assert (app / "icon.svg").read_text() == ICON
+    # the plan's checkpoints hold its check, but the installed app is the app alone: no checks/ folder, none locked
+    assert cpe.CHECK_PATH in w.client.get(f"/api/create/plans/{pid}/files", headers=w.jon).json()["files"]
+    assert not (app / "checks").exists() and not (app.parent / "checks").exists()
+    assert not any(p.startswith("checks/") for p in json.loads((app / "bundle.lock.json").read_text())["files"])
     # the installed app serves its assets too (lock "assets"), for appDocument to inline as it does in the preview
     ui = w.hive.programs.ui_bundle(deployed["installed"]["program_id"])["files"]
     assert ui["icon.svg"] == ICON and ui == pv["files"]

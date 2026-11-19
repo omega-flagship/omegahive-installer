@@ -16,7 +16,8 @@ The engine decides nothing here; it calls one port per journalled effect. Ports 
           a hive app under the Create apps folder and loaded with programs.reload_one.
 
 The check contract (what the test author writes and the runner reads): checks/acceptance_check.py, Python stdlib only,
-run with the checkpoint's files as its working directory; its LAST stdout line is
+run at that path among the checkpoint's files, with their root as its working directory, so a relative path or
+dirname(__file__)/.. reaches the app; its LAST stdout line is
     CREATE-CHECK {"passed": true|false, "failing": ["<owned file>", ...], "notes": ["...", ...]}
 `failing` names the files whose content made it fail (so the reducer routes the fix to their owners).
 Any other result is unknown (never a pass), with a reason class: crashed (non-zero exit, no CREATE-CHECK line; the
@@ -290,7 +291,8 @@ class Ports:
         scaffold = await self.space.files(run, space["scaffold"])
         packet = {
             "sentence": run["sentence"], "plan": plan, "check_path": CHECK_PATH, "scaffold": scaffold,
-            "contract": "Python stdlib only. Run with the build's files as the working directory. Verify every "
+            "contract": "Python stdlib only. It runs with the working directory at the app's root, so read every "
+                        "app file by a path relative to it (open('index.html')). Verify every "
                         "acceptance criterion and the appFrame contract (index.html loads ./style.css and ./app.js). "
                         "Compute each number the check expects from the example's inputs, in the check's own code, "
                         "never by copying a result written in a sentence, which can be wrong. "
@@ -318,7 +320,7 @@ class Ports:
             if previous.get("reason") == "crashed" and previous.get("why") == "no CREATE-CHECK line" \
                     and previous.get("output"):
                 # it printed findings, then exited before its verdict: on 18 Nov four checks in a row printed
-                # "FAIL: missing file index.html" and exited 1 on the scaffold, which is exactly where files are missing
+                # "FAIL: missing file index.html" and exited 1 on the scaffold, before their CREATE-CHECK line
                 packet["contract"] += (" It printed its findings and stopped (exit " + str(previous.get("exit_code")) +
                                        ") before its CREATE-CHECK line: record each finding in failing and keep "
                                        "going, then print the CREATE-CHECK line last.")
