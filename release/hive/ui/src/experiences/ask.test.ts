@@ -477,7 +477,7 @@ describe('keep-clear: inside an experience the Ask never covers the chrome it as
     // the measures themselves live in askMeasure.ts, their one owner (3 Nov); AskHost uses them
     const measure = read('features/ask/askMeasure.ts')
     expect(measure).toMatch(/document\.querySelectorAll\('\[data-xc-keep-clear\]'\)/)
-    expect(measure).toMatch(/el\.closest\('\.ask-root, \[data-omega-button\]'\)/)
+    expect(measure).toMatch(/el\.closest\('\.ask-root, \[data-omega-row\]'\)/)
     // every size is lifted clear of the same measured chrome: the bubble's row, the mark and the half column
     expect(host).toMatch(/clockLeft, pageAxis: route\.name === 'hive', axisShift: [^}]*\}\)[\s\S]*?placeInExperience\(placeIn, keep\.boxes, keep\.sab\)/)
     expect(host).toContain('collapsed ? placeMark(placeIn, keep.boxes, keep.sab) : half ? placeHalf(placeIn, keep.boxes, keep.sab) : bubblePlace')
@@ -486,6 +486,14 @@ describe('keep-clear: inside an experience the Ask never covers the chrome it as
     expect(measure).toMatch(/document\.elementsFromPoint\?\.\(cx, cy\)/)
     expect(host).toMatch(/useKeepClear\(experience !== 'classic' && skin !== 'phase-2', still\)/)
     expect(read('features/ask/ClassicAsk.tsx')).toMatch(/className="ask-dock"[^>]*data-xc-keep-clear=""/)
+  })
+  it('every layer that keeps clear of Ω measures its whole row, an app\'s Leave beside the mark included, never the mark alone', () => {
+    // the collapsed Ask's mark sat on Leave's first word when the Ask's row started after the mark alone (20 Nov)
+    const all = (fs.readdirSync(SRC, { recursive: true }) as string[]).filter((f) => /\.(ts|tsx)$/.test(f) && !/\.test\.tsx?$/.test(f))
+    expect(all.filter((f) => read(f).includes('[data-omega-button]'))).toEqual([])
+    for (const f of ['features/ask/askMeasure.ts', 'shell/experienceStage.ts', 'features/guided/GuideLayer.tsx', 'forms/designCanvas/Stage.tsx', 'features/programs/useStageFit.ts']) {
+      expect(read(f), f).toContain('[data-omega-row]')
+    }
   })
 })
 

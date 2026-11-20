@@ -40,9 +40,9 @@ export function useNoticeRow(): boolean {
   return reservesNoticeRow(notices, useAppStage())
 }
 
-/** The boxes to keep clear right now: every visible `data-xc-keep-clear` element, and Ω's hit area. */
+/** The boxes to keep clear right now: every visible `data-xc-keep-clear` element, and Ω's row (its mark and an app's Leave beside it). */
 function keepClearBoxes(): Box[] {
-  return [...document.querySelectorAll(`[${KEEP_CLEAR}], [data-omega-button]`)].map(visibleBox).filter((b): b is Box => !!b)
+  return [...document.querySelectorAll(`[${KEEP_CLEAR}], [data-omega-row]`)].map(visibleBox).filter((b): b is Box => !!b)
 }
 
 /** The experience's reserved notice row, when one is visible. */
@@ -62,7 +62,7 @@ function shownPillHeight(): number | null {
 function controlBoxes(): Box[] {
   const out: Box[] = []
   for (const el of document.querySelectorAll('button, a[href], input, select, textarea, [role=tab]')) {
-    if (el.closest(`[${KEEP_CLEAR}], [data-omega-button], [data-toast-place], .toast-stack`)) continue
+    if (el.closest(`[${KEEP_CLEAR}], [data-omega-row], [data-toast-place], .toast-stack`)) continue
     const b = visibleBox(el)
     if (b) out.push(b)
   }

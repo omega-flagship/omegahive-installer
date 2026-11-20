@@ -79,13 +79,13 @@ export function Stage(p: StageProps) {
     if (!el) return
     const measure = () => {
       setSize({ width: el.clientWidth, height: el.clientHeight })
-      // what the ring must never cover, in the stage's px: Ω's corner and the drawer pill
+      // what the ring must never cover, in the stage's px: Ω's row (its corner and an app's Leave) and the drawer pill
       const at = el.getBoundingClientRect()
       const rect = (q: Element | null | undefined): Rect | null => {
         const r = q?.getBoundingClientRect()
         return r && r.width ? { x: r.left - at.left - 6, y: r.top - at.top - 6, width: r.width + 12, height: r.height + 12 } : null
       }
-      setAvoid([rect(document.querySelector('[data-omega-button]')), rect(el.closest('.dc')?.querySelector('.dc-drawer-handle'))].filter((r): r is Rect => !!r))
+      setAvoid([rect(document.querySelector('[data-omega-row]')), rect(el.closest('.dc')?.querySelector('.dc-drawer-handle'))].filter((r): r is Rect => !!r))
     }
     measure()
     const ro = new ResizeObserver(measure)

@@ -226,10 +226,10 @@ function useTargetBox(run: GuideRun | null): TargetMeasure {
 }
 const NONE: TargetMeasure = { box: null, el: null, full: null, band: null }
 
-/** Everything the experience keeps clear (its bars, docks, Ω, the clock, the Ask): the caption avoids them. */
+/** Everything the experience keeps clear (its bars, docks, Ω's row, the clock, the Ask): the caption avoids them. */
 function keepClear(): HintBox[] {
   const out: HintBox[] = []
-  for (const el of document.querySelectorAll('[data-xc-keep-clear], [data-omega-button], .os-clock, #ask .ask-dock, #ask .ask-panel, #ask .ask-still-line, .toast-stack > *')) {
+  for (const el of document.querySelectorAll('[data-xc-keep-clear], [data-omega-row], .os-clock, #ask .ask-dock, #ask .ask-panel, #ask .ask-still-line, .toast-stack > *')) {
     const r = el.getBoundingClientRect()
     if (r.width >= 1 && r.height >= 1) out.push({ left: r.left, top: r.top, width: r.width, height: r.height })
   }

@@ -23,12 +23,16 @@ export function useAskStill(routeName: string): boolean {
   return !visible || (resting && routeName === 'hive')
 }
 
-/** `still`: the shell rests and nothing moves, so it is measured once (and on resize), with no poll. */
+/**
+ * The right edge of Ω's row: the mark and any entry beside it, as an app's Leave (OmegaMenu `data-omega-row`), so the
+ * Ask's row starts after Leave. `still`: the shell rests and nothing moves, so it is measured once (and on resize), with
+ * no poll.
+ */
 export function useOmegaRight(dep: unknown, still: boolean): number | null {
   const [right, setRight] = useState<number | null>(null)
   useEffect(() => {
     const measure = () => {
-      const o = document.querySelector('[data-omega-button]')?.getBoundingClientRect()
+      const o = document.querySelector('[data-omega-row]')?.getBoundingClientRect()
       setRight(o && o.width ? o.right : null)
     }
     measure()
@@ -64,7 +68,7 @@ export function useKeepClear(active: boolean, still: boolean): { boxes: ClearBox
     const measure = () => {
       const boxes: ClearBox[] = []
       for (const el of document.querySelectorAll('[data-xc-keep-clear]')) {
-        if (el.closest('.ask-root, [data-omega-button]')) continue
+        if (el.closest('.ask-root, [data-omega-row]')) continue
         if (el.closest('[inert],[aria-hidden="true"]')) continue
         const r = el.getBoundingClientRect()
         if (r.width < 1 || r.height < 1) continue

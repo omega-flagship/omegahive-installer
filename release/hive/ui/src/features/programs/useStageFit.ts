@@ -52,8 +52,8 @@ export function useStageFit(frame: RefObject<HTMLIFrameElement | null>, layout: 
       const el = frame.current
       const viewport = { width: window.innerWidth, height: window.innerHeight }
       const device = readDeviceInsets(probe)
-      // Ω of THIS app stage (the section the frame is in), never another experience's
-      const omegaEl = el?.closest('section')?.querySelector('[data-omega-button]') ?? null
+      // Ω's row of THIS app stage (the section the frame is in: the mark and the app's Leave), never another experience's
+      const omegaEl = el?.closest('section')?.querySelector('[data-omega-row]') ?? null
       if (omegaEl !== watchedOmega) {
         if (watchedOmega) ro?.unobserve(watchedOmega)
         if (omegaEl) ro?.observe(omegaEl)

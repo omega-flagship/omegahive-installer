@@ -112,7 +112,9 @@ export function OmegaMenu({ heading, context, mark, sections = [], footer = [] }
         </div>
       )}
       {directory && <HiveDirectory experience={context} onClose={() => setDirectory(false)} restoreTo={() => button.current} />}
-      <div className="flex items-center gap-2">
+      {/* Ω's row: the mark and any entry beside it (an app's Leave). Every layer that keeps clear of Ω measures this row,
+          not the mark alone, so the Ask's mark and field start after Leave instead of covering it. */}
+      <div className="flex items-center gap-2" data-omega-row="">
       <button
         ref={button}
         data-omega-button=""
@@ -128,8 +130,11 @@ export function OmegaMenu({ heading, context, mark, sections = [], footer = [] }
         </span>
       </button>
       {sections.flatMap((s) => s.items).filter((it) => it.beside).map((it, i) => (
-        <button key={`${it.label}-${i}`} type="button" data-omega-beside="" onClick={() => { close(false); it.run() }}
-          className="xc-menu min-h-9 px-3 py-1.5 text-[13px] pointer-coarse:min-h-11">
+        // An app's name can be long ("Leave Tip calculator with quick tip buttons and bill splitting"), so the entry ends
+        // in an ellipsis past 320px, and on a phone early enough that the Ask's mark and the clock still fit after it;
+        // its title and its text keep the whole name.
+        <button key={`${it.label}-${i}`} type="button" data-omega-beside="" title={it.label} onClick={() => { close(false); it.run() }}
+          className="xc-menu min-h-9 max-w-[min(320px,calc(100vw-224px))] truncate px-3 py-1.5 text-[13px] pointer-coarse:min-h-11">
           {it.label}
         </button>
       ))}
