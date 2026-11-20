@@ -352,6 +352,41 @@ def page_before_design(pieces):
     return []
 
 
+def own_the_app(pieces):
+    """In a change round, give each of the app's UI files no piece writes (index.html, style.css, app.js) to the piece
+    best placed for it, within a piece's file limit: style.css to a design piece first, the others to a code piece
+    first, a piece already writing a UI file before one that writes none, then the plan's order, taking the first of
+    those whose new file keeps page_before_design accepting the plan. The round changes an app whose look lives in
+    style.css and whose behaviour lives in app.js, and a piece barred from one of them can't make a change that needs
+    it: on v0.41's Mac check (20 Nov) a change round planned one piece writing index.html alone for a Quick 20% button,
+    app.js, which no piece could write, marked both 20% buttons active where the change's probe wanted one, and the
+    plan held after 0.70 USD with only Try again or Stop. A piece may write a file it is given without having to, and
+    the probe's cases for what the app already does keep the rest as it was. Giving index.html to a code piece that
+    waits on a look would make page_before_design refuse a plan it accepted (a look writing style.css, a code piece
+    writing app.js after it: a probe of 20 Nov found 120 of 3,299 small plans turned so), so a piece
+    placed lower that keeps the plan, such as a piece with no deps, is taken first; only when none does is the
+    best-placed piece taken anyway, and the plan comes back to its planner as page_before_design's rule.
+    Time: per file, a sort of p pieces and at most p trial runs of page_before_design, each p * (p + e)."""
+    from .create_plan_ports import UI_FILES          # the frame's files; imported here as _render does
+    owned = {f for x in pieces for f in x["files"]}
+    for f in UI_FILES:
+        if f in owned:
+            continue
+        design = f == "style.css"
+        ranked = sorted(pieces, key=lambda x: (("design" in x["kinds"]) != design,
+                                               not set(x["files"]) & set(UI_FILES), pieces.index(x)))
+        room = [x for x in ranked if len(x["files"]) < MAX_FILES_PER_PIECE]
+
+        def keeps(x):   # the plan with f given to x, as page_before_design reads it, on copies
+            trial = [{**p, "files": [*p["files"], f] if p is x else list(p["files"]), "deps": list(p["deps"])}
+                     for p in pieces]
+            return not page_before_design(trial)
+        to = next((x for x in room if keeps(x)), room[0] if room else None)
+        if to is not None:
+            to["files"] = [*to["files"], f]
+            owned.add(f)
+
+
 RESERVED = {"none", "True", "False", "Empty", "base", "blocked", "plan", "deploy"}   # reducer symbols, never data
 
 
@@ -1541,6 +1576,8 @@ class CreatePlanEngine:
                 return await R("failed", f"plan-failed:{op}", "plan-failed", [q(op)],
                                {"invalid": "piece_owns_a_reserved_path", "paths": sorted(owned & set(plan["reserved"])),
                                 "by": out.get("by")})
+            if self._space(run).get("app_plan"):   # a change round: every UI file of the app has a piece that may write it
+                own_the_app(plan["pieces"])
             late = page_before_design(plan["pieces"])
             if late:   # the page's piece waits on a design piece whose review renders that page
                 return await R("failed", f"plan-failed:{op}", "plan-failed", [q(op)],

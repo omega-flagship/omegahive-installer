@@ -1736,6 +1736,90 @@ def test_a_design_piece_builds_after_the_piece_that_writes_its_page():
     assert cpe.page_before_design(chain) == ["look"] and [x["deps"] for x in chain] == [[], ["look"], ["via"]]
 
 
+def test_a_change_round_gives_every_ui_file_a_piece_that_may_write_it():
+    # v0.41's Mac check (20 Nov): a change round's one piece wrote index.html alone, app.js stayed read-only, and the
+    # change's probe, one active button, could never pass
+    piece = lambda id, kind, files: {"id": id, "kinds": [kind], "deps": [], "files": list(files)}
+    one = [piece("quick20", "code", ["index.html"])]
+    cpe.own_the_app(one)
+    assert one[0]["files"] == ["index.html", "style.css", "app.js"]
+    # style.css to the design piece; app.js to the code piece already writing the page, not one writing no UI file
+    three = [piece("data", "code", ["data.json"]), piece("look", "design", ["banner.svg"]), piece("calc", "code", ["index.html"])]
+    cpe.own_the_app(three)
+    assert [x["files"] for x in three] == [["data.json"], ["banner.svg", "style.css"], ["index.html", "app.js"]]
+    # a plan that already gives every UI file a piece is left as it came
+    whole = [piece("page", "design", ["index.html", "style.css"]), piece("app", "code", ["app.js"])]
+    cpe.own_the_app(whole)
+    assert [x["files"] for x in whole] == [["index.html", "style.css"], ["app.js"]]
+    # a piece at its file limit passes the file on to the next one placed for it
+    full = [piece("big", "code", ["index.html", *(f"part{i}.js" for i in range(cpe.MAX_FILES_PER_PIECE - 1))]),
+            piece("small", "code", ["helper.js"])]
+    cpe.own_the_app(full)
+    assert len(full[0]["files"]) == cpe.MAX_FILES_PER_PIECE and full[1]["files"] == ["helper.js", "style.css", "app.js"]
+    # a code piece writing app.js after a look writing style.css: index.html goes to the look, the piece with no deps,
+    # since on the code piece it would make page_before_design refuse a plan it accepts
+    ordered = [piece("look", "design", ["style.css"]), {**piece("code", "code", ["app.js"]), "deps": ["look"]}]
+    cpe.own_the_app(ordered)
+    assert [x["files"] for x in ordered] == [["style.css", "index.html"], ["app.js"]]
+    assert cpe.page_before_design(ordered) == []
+
+
+def test_the_change_round_file_rule_keeps_every_plan_the_design_order_accepts():
+    # a probe of 20 Nov: over every change-round plan of up to three pieces, each piece's kind, one or two
+    # of the UI files and data.json, and deps on earlier pieces, own_the_app then page_before_design refuses none that
+    # page_before_design accepts alone, and every UI file then has a piece that may write it
+    import copy
+    import itertools
+    from hive.core.create_plan_ports import UI_FILES
+    filesets = [list(c) for r in (1, 2) for c in itertools.combinations((*UI_FILES, "data.json"), r)]
+
+    def plans(n):
+        for kinds, files in itertools.product(itertools.product(("design", "code"), repeat=n),
+                                              itertools.product(filesets, repeat=n)):
+            flat = [f for fs in files for f in fs]
+            if len(flat) != len(set(flat)):
+                continue
+            for bits in itertools.product((0, 1), repeat=n * (n - 1) // 2):
+                it = iter(bits)
+                yield [{"id": f"p{i}", "kinds": [kinds[i]], "files": list(files[i]),
+                        "deps": [f"p{j}" for j in range(i) if next(it)]} for i in range(n)]
+    accepted = 0
+    for n in (1, 2, 3):
+        for plan in plans(n):
+            if cpe.page_before_design(copy.deepcopy(plan)):
+                continue
+            accepted += 1
+            owned = copy.deepcopy(plan)
+            cpe.own_the_app(owned)
+            assert set(UI_FILES) <= {f for x in owned for f in x["files"]}, plan
+            assert cpe.page_before_design(owned) == [], plan
+    assert accepted > 3000      # the probe's 3,299, so the space was walked whole
+
+
+def test_a_change_round_planned_into_index_html_alone_may_still_change_app_js(world):
+    # the round's planner gives its one piece index.html only; the planned graph lets that piece write the app's other
+    # UI files too, and the round still reaches ready-to-deploy
+    w = world
+    w.minds.question = False
+    real = w.minds._answer
+
+    def one_piece_change(kind, body, packet, agent):
+        answer = real(kind, body, packet, agent)
+        if kind == "plan" and packet.get("change"):
+            page = next(x for x in answer["plan"]["pieces"] if x["id"] == "page")
+            answer["plan"]["pieces"] = [{**page, "kinds": ["code"], "files": ["index.html"], "deps": []}]
+        return answer
+    w.minds._answer = one_piece_change
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    pid = view["plan_id"]
+    w.client.post(f"/api/create/plans/{pid}/deploy", headers=w.jon)
+    changed = w.client.post(f"/api/create/plans/{pid}/revise", json={"words": "Call the heading Moon phases tonight"},
+                            headers=w.jon).json()
+    planned = [r for r in changed["journal"] if r["kind"] == "planned"][-1]
+    assert [(x["id"], x["files"]) for x in planned["evidence"]["plan"]["pieces"]] == [("page", ["index.html", "style.css", "app.js"])]
+    assert changed["phase"] == "ready-to-deploy", (changed["phase"], changed["status"], changed["last_error"])
+
+
 def test_a_plan_whose_page_waits_on_its_look_comes_back_to_the_planner_as_its_rule(world):
     # the planned graph builds the page before any design piece that styles it: a plan ordering the page after its
     # look is refused with the rule, and the corrected plan's look is made to wait on the page
