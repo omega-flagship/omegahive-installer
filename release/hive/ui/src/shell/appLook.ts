@@ -1,5 +1,9 @@
-import type { CSSProperties } from 'react'
+// Purpose: each app's identity inside the look a person wears: its colours blended into that look's, or inside an
+// experience into the chrome the dress applies, with the text kept readable on the blend, its type pairing and its motif.
+import { useSyncExternalStore, type CSSProperties } from 'react'
 import type { Program } from '../api/types'
+import { appliedChrome, watchAppliedChrome, type ExperienceChrome } from '../experiences/chrome'
+import { parseColor } from '../forms/readabilityKit'
 import pack from './appIdentities.json'
 import { blockedReason, DEFAULT_VARIANT, useLook, type UiVariant } from './uiVariant'
 
@@ -104,11 +108,13 @@ export function appVars(theme: AppTheme, look: UiVariant): Record<string, string
 /**
  * The app's identity as it is actually shown in this look, as data an app frame may read (bridge `context`): the
  * same blended surface and contrast-guarded accents as appVars, and the ink the app gets (its own when it reaches
- * 7:1 on that surface, else the look's). Strings and enums only.
+ * 7:1 on that surface, else the look's). Strings and enums only. The surface is appVars' own blend, appWeight's share
+ * of the app's colour: a fixed 60/40 told a frame on Canvas's white chrome a mid-grey surface under its near-black ink.
  */
 export function appIdentityTokens(theme: AppTheme, look: UiVariant) {
   const vars = appVars(theme, look)
-  const surface = mix(HEX.test(theme.surface) ? theme.surface : look.colors.abyss, look.colors.abyss, 0.6)
+  const surfaceHex = HEX.test(theme.surface) ? theme.surface : look.colors.abyss
+  const surface = mix(surfaceHex, look.colors.abyss, appWeight(surfaceHex, look.colors))
   const lookInk = HEX.test(look.colors.ink) ? look.colors.ink : '#eceaff'
   return {
     accent: vars['--app-accent'],
@@ -127,20 +133,38 @@ export interface AppLook {
   identity: AppIdentity | null
 }
 
-/** Everything a page needs to wear an app's identity in the current look. */
-export function useAppLook(program: Pick<Program, 'id' | 'app'> | undefined): AppLook | null {
-  return appLookIn(program, useLook())
+/** The chrome the dress puts on classic pages now (null in the Classic hive), re-read whenever it changes. */
+export const useWornChrome = (): ExperienceChrome | null => useSyncExternalStore(watchAppliedChrome, appliedChrome, () => null)
+
+// a chrome colour as #rrggbb with its alpha dropped: Cosmos and Flux give rgb(r g b / a) windows over their own backdrop
+const opaque = (c: string) => toHex(parseColor(c).slice(0, 3))
+
+/**
+ * The look an app's identity is blended against (appVars): the one the person wears, or, inside an experience, that
+ * look with the chrome the dress puts on classic pages (index.css .xc-dress) for its surfaces, inks and accent, since
+ * the page's text takes the chrome's ink there. Blended against the worn look instead, Create's Make page stayed dark
+ * under Canvas's near-black ink (the v0.40 Mac kit, 20 Nov): Canvas, Still and Professional bring no companion look.
+ */
+export function blendBase(look: Pick<ReturnType<typeof useLook>, 'worn'>, chrome: ExperienceChrome | null): UiVariant {
+  const chosen = look.worn
+  const variant = chosen && !blockedReason(chosen) ? chosen : DEFAULT_VARIANT
+  if (!chrome) return variant
+  const surface = opaque(chrome.surface), accent = opaque(chrome.accent)
+  return { ...variant, colors: { ...variant.colors, abyss: surface, void: surface, ink: opaque(chrome.ink), 'ink-3': opaque(chrome.ink3), accent, 'accent-2': accent } }
 }
 
-/** The same, for many apps at once (a list of cards): the look already read, no hook per app. */
-export function appLookIn(program: Pick<Program, 'id' | 'app'> | undefined, look: ReturnType<typeof useLook>): AppLook | null {
+/** Everything a page needs to wear an app's identity in the current look, or inside an experience on its chrome. */
+export function useAppLook(program: Pick<Program, 'id' | 'app'> | undefined): AppLook | null {
+  return appLookIn(program, useLook(), useWornChrome())
+}
+
+/** The same, for many apps at once (a list of cards): the look and the worn chrome already read, no hook per app. */
+export function appLookIn(program: Pick<Program, 'id' | 'app'> | undefined, look: ReturnType<typeof useLook>, chrome: ExperienceChrome | null): AppLook | null {
   const source: AppIdentitySource = look.current?.apps ?? 'owner'
   const theme = appTheme(program, source)
   if (!theme || !program) return null
-  const chosen = look.worn
-  const variant = chosen && !blockedReason(chosen) ? chosen : DEFAULT_VARIANT
   return {
-    style: appVars(theme, variant) as CSSProperties,
+    style: appVars(theme, blendBase(look, chrome)) as CSSProperties,
     motif: theme.motif,
     type: theme.type,
     identity: source === 'designed' ? DESIGNED_APPS[program.id] ?? null : null,

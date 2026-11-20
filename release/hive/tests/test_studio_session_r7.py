@@ -586,8 +586,10 @@ def test_R71_capabilities_studio_sessions_is_true_only_when_the_self_check_passe
     monkeypatch.setenv("HIVE_STUDIO_SESSIONS", "on")
     # the real self-check with a component missing: off, and not advertised
     monkeypatch.setattr(studio, "components", lambda: {"gateway session/execution hook": True, "something": False})
-    monkeypatch.setattr(studio, "enabled", studio.self_check()[0])
-    assert studio.enabled is False and caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive), "studio_off": "off"}
+    enabled, missing = studio.self_check()
+    monkeypatch.setattr(studio, "enabled", enabled)
+    monkeypatch.setattr(studio, "missing", missing)
+    assert studio.enabled is False and caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive), "studio_off": "self_check", "studio_missing": ["something"]}
     # every component present: on, advertised
     monkeypatch.setattr(studio, "components", lambda: {"gateway session/execution hook": True})
     monkeypatch.setattr(studio, "enabled", studio.self_check()[0])
@@ -608,8 +610,9 @@ def test_R71_pin_with_studio_off_the_capabilities_are_as_before_plus_only_its_re
 
 def test_f4_with_studio_sessions_absent_the_capabilities_say_why_and_never_when_offered(p, monkeypatch):
     """Show run f4 (2026-11-19): the page could only say "It has not said why". studio_off names the host's reason: "off"
-    (Studio disabled or failed its self-check), "not_set_up" (on, but members' makers can't be made: no usable template,
-    or the Studio app is not attachable). It is the host's, never the person's: a key does not change it."""
+    (Studio switched off), "self_check" (switched on, but its self-check keeps it off; the next test), "not_set_up" (on,
+    but members' makers can't be made: no usable template, or the Studio app is not attachable). It is the host's, never
+    the person's: a key does not change it."""
     on = caps(p)
     assert on["studio_sessions"] is True and "studio_off" not in on
     monkeypatch.delenv("HIVE_STUDIO_MAKER_TEMPLATE")                       # template not ready (staging, 2026-11-19)
@@ -622,6 +625,34 @@ def test_f4_with_studio_sessions_absent_the_capabilities_say_why_and_never_when_
     assert caps(p)["studio_off"] == "not_set_up"
     monkeypatch.setattr(p.hive.studio, "enabled", False)                   # Studio off: that is the reason given
     assert caps(p)["studio_off"] == "off"
+
+
+def test_self_check_names_what_it_found_missing_only_while_the_switch_asks_for_studio(p, monkeypatch):
+    """A tester's Mac hive (20 Nov) had the switch on and its self-check missing a part, and the page could only say
+    "turned off". With the switch on, a failed self-check is "self_check" and studio_missing names the parts in the
+    self-check's order; switched off, missing parts are not the reason, so it is "off" with none named; studio_missing
+    never rides with studio_sessions."""
+    studio = p.hive.studio
+
+    def check(parts):
+        monkeypatch.setattr(studio, "components", lambda: parts)
+        enabled, missing = studio.self_check()
+        monkeypatch.setattr(studio, "enabled", enabled)
+        monkeypatch.setattr(studio, "missing", missing)
+
+    monkeypatch.setenv("HIVE_STUDIO_SESSIONS", "on")
+    check({"gateway session/execution hook": True, "mac safe-restart exact-commit override": False, "studio_steps table": False})
+    got = caps(p)
+    assert got["studio_off"] == "self_check" and got["studio_missing"] == ["mac safe-restart exact-commit override", "studio_steps table"]
+    assert "studio_sessions" not in got and list(got)[-2:] == ["studio_off", "studio_missing"]       # appended last
+    monkeypatch.setenv("HIVE_STUDIO_SESSIONS", "off")
+    check({"gateway session/execution hook": True, "mac safe-restart exact-commit override": False})
+    off = caps(p)
+    assert off["studio_off"] == "off" and "studio_missing" not in off
+    monkeypatch.setenv("HIVE_STUDIO_SESSIONS", "on")
+    check({"gateway session/execution hook": True})
+    on = caps(p)
+    assert on["studio_sessions"] is True and "studio_off" not in on and "studio_missing" not in on
 
 
 @pytest.mark.parametrize("operator_flag", [False, True], ids=["operator-off", "operator-on"])

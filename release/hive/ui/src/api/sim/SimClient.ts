@@ -3318,6 +3318,8 @@ export class SimClient implements HiveClient {
   createPlanAnswer(planId: string, q: string, text: string) { return this.delay(() => { const v = this.plansSim.answer(planId, q, text); this.planTick(); return v }) }
   createPlanDeploy(planId: string) { return this.delay(() => { const v = this.plansSim.deploy(planId); this.planTick(); return v }) }
   createPlanStop(planId: string) { return this.delay(() => this.plansSim.stop(planId)) }
+  createPlanRevise(planId: string, words: string) { return this.delay(() => { const v = this.plansSim.revise(planId, words); this.planTick(); return v }) }
+  createPlanRevert(planId: string, round: number) { return this.delay(() => this.plansSim.revert(planId, round)) }
   createPlanFile(planId: string, path: string, ckpt: string) { return this.delay(() => this.plansSim.file(planId, path, ckpt)) }
   /** GET /api/teams/{swarm_id}/children (the invented Code team's children; a named person reads it, as any viewer). */
   teamChildren(swarmId: string) {

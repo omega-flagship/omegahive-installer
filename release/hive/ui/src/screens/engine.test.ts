@@ -123,6 +123,9 @@ describe('conditions and layout', () => {
     expect(bad.guards().badRegions).toEqual(['(c 20 sidebar)'])
     const odd = ScreensSpace.open([...SCREEN_SOURCES, ['c', src + '\n(When c 40 (not (on a)))\n(When c 30 (hass x))']])
     expect(odd.guards().badConditions.sort()).toEqual(['(c 30)', '(c 40)'])
+    // inside any or none-of too: an unknown condition there never holds, so its part would stay shown or hidden for good
+    const inner = ScreensSpace.open([...SCREEN_SOURCES, ['c', src + '\n(When c 40 (none-of ((on a) (belov x 2))))\n(When c 30 (any ((hass x))))']])
+    expect(inner.guards().badConditions.sort()).toEqual(['(c 30)', '(c 40)'])
   })
 })
 

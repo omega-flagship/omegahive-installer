@@ -184,6 +184,11 @@ export interface World {
   minds: Named[]
   swarms: Named[]
   pending: number
+  /**
+   * The id of the mind the field's own Ask row names now (useAskField's answererVoiceId): a line led by its name is a
+   * line to that mind, so it goes as that row's request whoever else carries the name. Absent: no row names a mind.
+   */
+  answeringMind?: string | null
 }
 
 export function understand(input: string, w: World): Suggestion[] {
@@ -222,6 +227,20 @@ export function understand(input: string, w: World): Suggestion[] {
         tag: 'Which',
         choice: true,
         parts: [{ t: `${what} ` }, { t: x.name, em: true }, kind === 'mind' ? whoMind(x) : whoSwarm(x)],
+        fill: `${prefix}${x.name}${tail(x)}${after || ' '}`,
+      })
+  }
+  /**
+   * The other things carrying the name of a mind the line was taken to address: a row each, filling the field with that
+   * one's name and id tail (as a choice does), so the person can still mean it. They run nothing, so Enter keeps the line's
+   * own meaning. Example: a swarm Taiga beside the mind Taiga a line went to: "Or the swarm Taiga (swarm · #e61391)".
+   */
+  const also = (prefix: string, hits: { x: Named; kind: 'mind' | 'swarm' }[], after: string) => {
+    for (const { x, kind } of hits)
+      out.push({
+        key: `also-${kind}-${x.id}`,
+        tag: kind === 'mind' ? 'Mind' : 'Swarm',
+        parts: [{ t: kind === 'mind' ? 'Or the mind ' : 'Or the swarm ' }, { t: x.name, em: true }, kind === 'mind' ? whoMind(x) : whoSwarm(x)],
         fill: `${prefix}${x.name}${tail(x)}${after || ' '}`,
       })
   }
@@ -379,7 +398,20 @@ export function understand(input: string, w: World): Suggestion[] {
     }
     const SHOULD = /^(should|needs to|must|could)\s+(.+)$/i
     named = !!(mh || sh)
-    if ((mh?.hits.length ?? 0) + (sh?.hits.length ?? 0) > 1) {
+    // words after a mind's name, and not "X should …" (a swarm's task): the line speaks to a mind, as "Mira, …" does
+    const spoken = mh && mh.rest && !SHOULD.test(mh.rest) ? mh : null
+    // the mind the Ask row names (World.answeringMind) carries the name: the line is to it and goes as that row's request,
+    // whoever else shares the name, since the Ask routes to the mind the person is with (Jon, 16 Nov). A tester's swarm
+    // Taiga, named like their mind Taiga, had stopped every "Taiga, …" in that conversation at a pick list (20 Nov).
+    const answered = spoken && w.answeringMind ? spoken.hits.find((m) => m.id === w.answeringMind) : undefined
+    const besides = (m: Named) => [
+      ...(mh?.hits ?? []).filter((x) => x.id !== m.id).map((x) => ({ x, kind: 'mind' as const })),
+      ...(sh?.hits ?? []).map((x) => ({ x, kind: 'swarm' as const })),
+    ]
+    if (answered) {
+      // nothing to offer but the namesakes: the policy hands the words, name and all, to the row's mind
+      also(at, besides(answered), spoken!.after)
+    } else if ((mh?.hits.length ?? 0) + (sh?.hits.length ?? 0) > 1) {
       choose(at, [
         ...(mh?.hits ?? []).map((x) => ({ x, kind: 'mind' as const, what: mh!.rest ? 'Send to the mind' : 'Open the mind' })),
         ...(sh?.hits ?? []).map((x) => ({ x, kind: 'swarm' as const, what: SHOULD.test(sh!.rest) ? 'A task for the swarm' : 'Open the swarm' })),

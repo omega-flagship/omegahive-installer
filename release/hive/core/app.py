@@ -6661,6 +6661,16 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
     async def create_plan_stop(plan_id: str, request: Request):
         return await _plan_person_action(request, lambda e, who, data: e.stop(plan_id, who))
 
+    @app.post("/api/create/plans/{plan_id}/revise")
+    async def create_plan_revise(plan_id: str, request: Request):
+        # a change to an app the plan made: a new round from the app as it runs now (create_plan_engine, rounds)
+        return await _plan_person_action(request, lambda e, who, data: e.revise(who, plan_id, data.get("words")), optional=False)
+
+    @app.post("/api/create/plans/{plan_id}/revert")
+    async def create_plan_revert(plan_id: str, request: Request):
+        # the app put back to one of its revisions (undo: the one the current revision was built from)
+        return await _plan_person_action(request, lambda e, who, data: e.revert(who, plan_id, data.get("round")), optional=False)
+
     @app.get("/api/me/code-controller")
     async def my_code_controller_prefs(request: Request):
         """The signed-in person's own Code controller setting: review_policy (review-required, the default, or

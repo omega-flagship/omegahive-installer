@@ -8,6 +8,7 @@ import sys
 
 import pytest
 
+from hive.core.create_offers import OFFERED_NEXT
 from hive.core import policy
 from hive.runtime.extensions import helper_command_parser as parser
 from hive.tests.test_core_api import agent_headers, client, make_swarm_and_agents  # noqa: F401  (client: fixture)
@@ -15,9 +16,8 @@ from hive.tests.test_create_offers import SENTENCE, _own, world  # noqa: F401  (
 from hive.tests.test_phase2_api import authorize
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-OFFER = {"id": "cof_" + "a1" * 12, "state": "offered"}
-ANSWER = (f"HIVE-CREATE-OFFERED {OFFER['id']}: your person can start it in Create from your chat, and nothing is "
-          "built until they do.")
+OFFER = {"id": "cof_" + "a1" * 12, "state": "offered", "next": OFFERED_NEXT}
+ANSWER = f"HIVE-CREATE-OFFERED {OFFER['id']}: {OFFERED_NEXT}"
 
 
 def load(relative, name):
@@ -108,4 +108,12 @@ def test_a_minds_hive_create_puts_an_offer_in_front_of_its_person(world, monkeyp
     answer = commons.create(SENTENCE)
     offers = world.client.get("/api/me/create-offers", headers=world.jon).json()
     assert [(o["sentence"], o["mind"]["id"], o["state"]) for o in offers] == [(SENTENCE, world.mind["id"], "offered")]
-    assert answer.startswith(f"HIVE-CREATE-OFFERED {offers[0]['id']}: ") and world.started == []
+    assert answer == f"HIVE-CREATE-OFFERED {offers[0]['id']}: {OFFERED_NEXT}" and world.started == []
+
+
+def test_the_mind_is_told_nothing_is_built_before_the_start_and_where_the_card_is():
+    """A tester's mind said it "built the blue tip calculator" after the softer "your person can start it in Create
+    from your chat": the line now opens with not built, names where the card is and rules out calling it built."""
+    assert OFFERED_NEXT.startswith("offered, not built. Nothing is built until your person presses Start in Create")
+    for words in ("on the offer card", "in their Ask", "in your chat with them", "never say it is built or being built"):
+        assert words in OFFERED_NEXT

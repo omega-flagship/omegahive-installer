@@ -242,7 +242,9 @@ export interface HiveClient {
    * Create's plan (features/createPlan/contract.ts; the host's plan engine, create_plan_engine.py): POST
    * /api/create/plans {sentence}, GET /api/create/plans (the person's plans), GET …/{id}, GET …/{id}/preview (the
    * current preview's verified files {ref, ckpt, files}), POST …/{id}/answers {q, text}, POST …/{id}/deploy {}, POST
-   * …/{id}/stop {}, GET …/{id}/files?path=&ckpt= ({ckpt, path, content}). The acts answer the PlanView.
+   * …/{id}/stop {}, POST …/{id}/revise {words} (a later round changes the deployed app in place), POST …/{id}/revert
+   * {round} (the app put back to one of its versions), GET …/{id}/files?path=&ckpt= ({ckpt, path, content}). The acts
+   * answer the PlanView.
    * Untrusted: features/createPlan/planModel parses it. A hive without them never shows the plan view.
    */
   createPlanStart?(sentence: string): Promise<unknown>
@@ -252,14 +254,17 @@ export interface HiveClient {
   createPlanAnswer?(planId: string, q: string, text: string): Promise<unknown>
   createPlanDeploy?(planId: string): Promise<unknown>
   createPlanStop?(planId: string): Promise<unknown>
+  createPlanRevise?(planId: string, words: string): Promise<unknown>
+  createPlanRevert?(planId: string, round: number): Promise<unknown>
   createPlanFile?(planId: string, path: string, ckpt: string): Promise<unknown>
   /**
-   * A mind's offers to build something in Create (create_offers.py): GET /api/me/create-offers?mind= (this person's
-   * open offers from that mind, newest first), POST /api/create/offers/{id}/start (the person's press: Create starts the
-   * plan with the offer's words; answers {offer, plan}, pressed again the same plan) and POST …/{id}/dismiss (Not now;
-   * answers the offer). Untrusted: features/dot/createOffer parses them. A hive without them never shows an offer.
+   * Minds' offers to build something in Create (create_offers.py): GET /api/me/create-offers?mind= (this person's open
+   * offers, newest first: that mind's, or every mind's with no mind named), POST /api/create/offers/{id}/start (the
+   * person's press: Create starts the plan with the offer's words; answers {offer, plan}, pressed again the same plan)
+   * and POST …/{id}/dismiss (Not now; answers the offer). Untrusted: features/dot/createOffer parses them. A hive
+   * without them never shows an offer.
    */
-  createOffers?(mind: string): Promise<unknown>
+  createOffers?(mind?: string): Promise<unknown>
   createOfferStart?(offerId: string): Promise<unknown>
   createOfferDismiss?(offerId: string): Promise<unknown>
   codeTargets?(): Promise<import('../features/code/CodePage').Target[]>

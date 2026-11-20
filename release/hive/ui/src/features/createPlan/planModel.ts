@@ -1,24 +1,27 @@
 /**
- * Create's plan view as the page draws it (pure; no React, no reads). The host's plan engine (create_plan_engine.py,
+ * Purpose: Create's plan view as the page draws it (pure; no React, no reads). The host's plan engine (create_plan_engine.py,
  * reducer R4.1) serves a PlanView (./contract.ts); this module parses it strictly and tolerantly, then words it: the
  * engine's status in one plain line, the plan-level timeline (Plan → Tests first → Build → Check → Review → Ready →
  * Deployed), one row per piece, the open questions, the person's deploy go, which file the code pane shows (and at
- * which checkpoint the files route reads it) and the board's assignee lanes.
+ * which checkpoint the files route reads it), the board's assignee lanes, and the app's revisions (each deployed round).
  *
  * Parsing: a field of the wrong type falls back to its empty value; a malformed sub-item (piece, question, check,
- * action) is dropped alone, never the whole view; unknown fields are ignored; an unknown phase, status or state is kept
- * as a string and worded plainly. Only a view without a plan id is refused (null). Older provisional and sim shapes
- * (assignee.name, inline draft text, checkpoint files, summary lines, answered objects) are still read.
+ * action, revision) is dropped alone, never the whole view; unknown fields are ignored; an unknown phase, status or
+ * state is kept as a string and worded plainly. Only a view without a plan id is refused (null). Older provisional and
+ * sim shapes (assignee.name, inline draft text, checkpoint files, summary lines, answered objects) are still read, and
+ * a view from before rounds reads as round 1 with no revisions.
  *
  * Words: plain, no ids, digests or internal codes.
  */
-import type { ArtifactKind, Assignee, PieceReview, PlanAction, PlanCheck, PlanCheckpoint, PlanPiece, PlanPreview, PlanQuestion, PlanStatus, PlanSummary, PlanView, PreviewFiles } from './contract'
+import type { ArtifactKind, Assignee, PieceReview, PlanAction, PlanCheck, PlanCheckpoint, PlanPiece, PlanPreview, PlanQuestion, PlanRevision, PlanStatus, PlanSummary, PlanView, PreviewFiles } from './contract'
 
 type Obj = Record<string, unknown>
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
 const str = (v: unknown): string | null => (typeof v === 'string' ? v : null)
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
 const num = (v: unknown, d = 0): number => (typeof v === 'number' && Number.isFinite(v) ? v : d)
+/** a round number: a whole number from 1, else null */
+const roundOf = (v: unknown): number | null => (typeof v === 'number' && Number.isInteger(v) && v >= 1 ? v : null)
 const list = <T>(v: unknown, f: (x: unknown) => T | null): T[] => (Array.isArray(v) ? v.map(f).filter((x): x is T => x !== null) : [])
 
 /** a stable hue for an id (a builder the hive's minds do not name) */
@@ -186,11 +189,35 @@ function parsePreview(v: unknown): PlanPreview | null {
   return { ckpt: v.ckpt, ref: str(v.ref), digest: str(v.digest) }
 }
 
+const ACTIONS = new Set<string>(['deploy', 'answer', 'stop', 'revise', 'undo', 'revert'] satisfies PlanAction['name'][])
 function parseAction(v: unknown): PlanAction | null {
-  if (!isObj(v)) return null
-  if (v.name !== 'deploy' && v.name !== 'answer' && v.name !== 'stop') return null
+  if (!isObj(v) || typeof v.name !== 'string' || !ACTIONS.has(v.name)) return null
   if (typeof v.available !== 'boolean') return null
-  return { name: v.name, available: v.available, why_not: str(v.why_not) }
+  const action: PlanAction = { name: v.name as PlanAction['name'], available: v.available, why_not: str(v.why_not) }
+  // undo names the round it puts back in its body; an undo that names none puts back nothing
+  if (v.name === 'undo') {
+    const round = isObj(v.body) ? roundOf(v.body.round) : null
+    if (round === null) return { ...action, available: false, why_not: action.why_not ?? 'there is no earlier version to put back' }
+    action.round = round
+  }
+  return action
+}
+
+function parseRevision(v: unknown): PlanRevision | null {
+  if (!isObj(v)) return null
+  const round = roundOf(v.round)
+  if (round === null) return null
+  return { round, words: str(v.words) ?? '', deployed_at: str(v.deployed_at) ?? '', current: v.current === true, from: roundOf(v.from) }
+}
+
+/** The revisions by round, one per round (the first of a repeated round kept), and at most one current: the newest
+ * that says so. Round 1's words are the plan's sentence when the view left them out. */
+function parseRevisions(v: unknown, sentence: string): PlanRevision[] {
+  const byRound = new Map<number, PlanRevision>()
+  for (const r of list(v, parseRevision)) if (!byRound.has(r.round)) byRound.set(r.round, r)
+  const revs = [...byRound.values()].sort((a, b) => a.round - b.round)
+  const current = revs.reduce<number | null>((c, r) => (r.current ? r.round : c), null)
+  return revs.map((r) => ({ ...r, current: r.round === current, words: r.words || (r.round === 1 ? sentence : '') }))
 }
 
 /** the phase as a status, for a view without one (the engine's own mapping, create_plan_engine._status) */
@@ -211,9 +238,12 @@ export function parsePlanView(raw: unknown, minds?: MindLookup): PlanView | null
   const title = str(raw.title)
   const ins = raw.installed
   const insId = isObj(ins) ? str(ins.program_id) ?? str(ins.app_id) : null
+  const sentence = str(raw.sentence) ?? ''
+  const revisions = parseRevisions(raw.revisions, sentence)
+  const round = roundOf(raw.round) ?? revisions[revisions.length - 1]?.round ?? 1
   const view: PlanView = {
     plan_id,
-    sentence: str(raw.sentence) ?? '',
+    sentence,
     title,
     acceptance: strs(raw.acceptance),
     phase,
@@ -233,6 +263,9 @@ export function parsePlanView(raw: unknown, minds?: MindLookup): PlanView | null
     unreviewed: raw.unreviewed === true,
     actions: list(raw.actions, parseAction),
     installed: isObj(ins) && insId ? { app_id: insId, name: str(ins.name) ?? title ?? 'your app' } : null,
+    round,
+    round_words: str(raw.round_words) ?? revisions.find((r) => r.round === round)?.words ?? (round === 1 ? sentence : ''),
+    revisions,
     journal: list(raw.journal, (j) => (isObj(j) && typeof j.kind === 'string'
       ? { seq: num(j.seq), id: str(j.id) ?? '', kind: j.kind, verdict: str(j.verdict) ?? '', at: str(j.at) ?? '' } : null)),
     effects: list(raw.effects, (e) => (isObj(e) && typeof e.kind === 'string' ? { kind: e.kind, op: str(e.op) ?? '', state: str(e.state) ?? '' } : null)),
@@ -248,7 +281,10 @@ export function parsePlanList(raw: unknown): PlanSummary[] {
   return list(rows, (r) => {
     if (!isObj(r) || typeof r.plan_id !== 'string') return null
     const phase = str(r.phase) ?? ''
-    return { plan_id: r.plan_id, sentence: str(r.sentence) ?? '', phase, status: str(r.status) ?? statusOfPhase(phase), updated_at: str(r.updated_at) ?? '' }
+    return {
+      plan_id: r.plan_id, sentence: str(r.sentence) ?? '', title: str(r.title) || null, phase,
+      status: str(r.status) ?? statusOfPhase(phase), round: roundOf(r.round), updated_at: str(r.updated_at) ?? '',
+    }
   })
 }
 
@@ -267,6 +303,13 @@ export function isHeld(p: { status: string; phase: string }): boolean {
 /** the one build the empty canvas offers to go back to: the newest one held (left there by Make something else) */
 export function heldPlan(plans: PlanSummary[]): PlanSummary | null {
   return plans.find(isHeld) ?? null
+}
+
+/** The person's made apps, newest first: a plan that deployed, or one whose later round (a change, which needs a
+ * deployed version first) is under way or was stopped. A first build that never deployed is not one, and a hive before
+ * rounds (its rows name no round) changes no app in place, so it offers none. */
+export function madeApps(plans: PlanSummary[]): PlanSummary[] {
+  return plans.filter((p) => p.round !== null && (p.status === 'deployed' || p.phase === 'deployed' || p.round > 1))
 }
 
 /** GET …/preview: the verified preview files, or null when it is not that shape. */
@@ -334,7 +377,8 @@ export function statusLine(view: PlanView): string {
 }
 
 /** stopped, deployed or installed: nothing more is built, so nothing waits on the person any more */
-export const planEnded = (view: PlanView): boolean => view.status === 'stopped' || view.status === 'deployed' || !!view.installed
+// a later round changing the installed app in place (round 2 on) is at work until it is deployed or stopped
+export const planEnded = (view: PlanView): boolean => view.status === 'stopped' || view.status === 'deployed' || (!!view.installed && view.round <= 1)
 
 /** the questions still waiting for the person; none once the plan has ended, since no answer is acted on then (a
  * stopped build kept its Plan question, Try again / Stop and the answer field under "Stopped": show run f6, 11-19) */

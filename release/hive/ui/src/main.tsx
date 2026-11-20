@@ -12,13 +12,16 @@ import { installPower, type PowerHooks } from './features/power/store'
 import { shown } from './lib/displayName'
 import { askMemory } from './lib/askMemory'
 import { bindEpoch, onIdentityChange } from './lib/identityEpoch'
-import { installChunkRecovery } from './lib/chunkReload'
+import { followOnReconnect, installChunkRecovery } from './lib/chunkReload'
 import { installEditTracking, unsavedWork } from './shell/unsavedWork'
 
 // a tab left open across a deploy asks for chunks the new release no longer has: reload toward the new build once
-// (only with nothing unsaved), else say so; a failed load that is not a deploy offers Retry (no reload, no loop)
+// (only with nothing unsaved), else say so; a failed load that is not a deploy offers Retry (no reload, no loop). The
+// same happens when the live connection comes back after a drop, as a hive restarting for an update drops it, so the
+// views the page had already loaded don't keep running the old build.
 installEditTracking()
-installChunkRecovery({ unsaved: unsavedWork })
+const recovery = installChunkRecovery({ unsaved: unsavedWork })
+followOnReconnect((listener) => useHive.subscribe((s, before) => listener(s.connection, before.connection)), () => void recovery.follow())
 
 // the Ask's own memory follows the identity epoch: nothing of one person's outlives a change of person
 askMemory.connectIdentity({ bind: bindEpoch, onIdentityChange })

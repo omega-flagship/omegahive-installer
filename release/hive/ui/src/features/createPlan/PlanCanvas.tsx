@@ -1,8 +1,10 @@
 /**
- * Create's Make bench: "What would you like to make?" on an empty canvas, then the plan at work, then ready to deploy.
- * MeTTa composes the page (plan.metta: plan-start, plan, plan-ready) from the facts planFacts.ts states; this file only
- * offers the islands it places (the sentence field, the plan's head, its questions, the board, the stream, the code
- * beside the running page, the finished page and the go) and carries out the presses.
+ * Purpose: Create's Make bench: "What would you like to make?" on an empty canvas, then the plan at work, then ready to
+ * deploy, and once deployed the app changed in place, version by version, with the apps the person made offered again
+ * on the empty canvas. MeTTa composes the page (plan.metta: plan-start, plan, plan-ready, plan-revision, plan-made) from
+ * the facts planFacts.ts states; this file only offers the islands it places (the sentence field, the plan's head, its
+ * questions, the board, the stream, the code beside the running page, the finished page and the go), holds the change
+ * box's words, and carries out the presses.
  */
 import { useMemo, useState } from 'react'
 import { navigate } from '../../lib/router'
@@ -11,6 +13,7 @@ import { useIdentityEpoch } from '../../lib/epochBound'
 import { experienceById } from '../../experiences/registry'
 import { useLook } from '../../shell/uiVariant'
 import { Screen } from '../../screens/Screen'
+import type { ScreenItem } from '../../screens/Screen'
 import { useCompose } from '../../screens/useCompose'
 import { guardComposing } from '../ask/keys'
 import { cx } from '../../lib/cx'
@@ -80,10 +83,13 @@ function BoundPlanCanvas() {
   const look = experienceById(useLook().current?.experience).id
   const compose = useCompose(look)
   const [stopAsking, setStopAsking] = useState(false)
+  const [words, setWords] = useState('')
   const { view } = plan
   const showing = !!plan.frame || !!plan.file
-  const page = useMemo(() => planFacts(view, { can: plan.can, starting: plan.starting, startError: plan.startError, stopAsking: stopAsking && !plan.stopping, opening: !view && plan.following, showing, held: plan.held }),
-    [view, plan.can, plan.starting, plan.startError, stopAsking, plan.stopping, plan.following, showing, plan.held])
+  const page = useMemo(() => planFacts(view, {
+    can: plan.can, starting: plan.starting, startError: plan.startError, stopAsking: stopAsking && !plan.stopping,
+    opening: !view && plan.following, showing, held: plan.held, words, revising: plan.revising, made: plan.made,
+  }, compose), [view, plan.can, plan.starting, plan.startError, stopAsking, plan.stopping, plan.following, showing, plan.held, words, plan.revising, plan.made, compose])
   const composed = useMemo(() => compose(page.screen, page.facts), [compose, page])
   const islands = {
     'plan-say': <PlanSay busy={plan.starting} onStart={plan.start} />,
@@ -98,7 +104,7 @@ function BoundPlanCanvas() {
       'deploy-go': <DeployGo view={view} busy={plan.deploying} alert={plan.alert} onDeploy={plan.deploy} />,
     } : {}),
   }
-  const onAction = (action: string) => {
+  const onAction = (action: string, item: ScreenItem) => {
     if (action === 'stop-ask') setStopAsking(true)
     else if (action === 'open-limits') navigate({ name: 'usage' })
     else if (action === 'stop-no') setStopAsking(false)
@@ -111,10 +117,27 @@ function BoundPlanCanvas() {
     }
     else if (action === 'fresh') { setStopAsking(false); plan.fresh() }
     else if (action === 'open-held') plan.openHeld()
+    else if (action === 'revise-send') plan.revise(words, () => setWords(''))
+    else if (action === 'undo') {
+      const round = view?.actions.find((a) => a.name === 'undo')?.round
+      if (round !== undefined) plan.revert(round)
+    }
+    else if (action === 'revert-to') {
+      // pressed inside a version's row: the stack hands back that row's id ("r2") first in its scope
+      const row = Array.isArray(item.scope) ? String(item.scope[0]) : ''
+      const rev = view?.revisions.find((r) => `r${r.round}` === row)
+      if (rev) plan.revert(rev.round)
+    }
+    else if (action === 'open-made') {
+      // pressed inside a made app's row: its id is the app's plan
+      const planId = Array.isArray(item.scope) ? String(item.scope[0]) : ''
+      if (plan.made.some((p) => p.plan_id === planId)) { setWords(''); plan.openPlan(planId) }
+    }
   }
+  const onInput = (bind: string, value: string) => { if (bind === 'revise.words') setWords(value) }
   return (
     <div className="pc" data-plan-screen={page.screen} data-reduced={reduced || undefined}>
-      <Screen plan={composed} className="pc-col" host={{ data: page.data, islands, onAction }} />
+      <Screen plan={composed} className="pc-col" host={{ data: page.data, islands, onAction, onInput }} />
     </div>
   )
 }

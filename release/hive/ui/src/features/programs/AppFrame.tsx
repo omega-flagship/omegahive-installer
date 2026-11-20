@@ -1,3 +1,5 @@
+// Purpose: an app in its own sandboxed frame: its document, the bridge to the hive, its context (experience, chrome,
+// identity, motion, fit) and its links, reads and drafts.
 import { ApiError } from '../../api/client'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { appDocument, frameNonce, isFrameSender, revisionFrame, subscriptionTarget, type FrameDocument } from '../../lib/appFrame'
@@ -13,10 +15,9 @@ import { memoryHostCurrent, memoryNotice, memoryOpenBudget, memoryReasonTokens, 
 import { AppMemoryHost, type AppMemoryHostState } from './AppMemory'
 import { useReducedMotion } from '../../lib/hooks'
 import { type CreationReference } from '../../lib/router'
-import { chromeFor, experienceById } from '../../experiences/registry'
-import type { ExperienceChrome } from '../../experiences/chrome'
-import { appIdentityTokens, appTheme } from '../../shell/appLook'
-import { blockedReason, DEFAULT_VARIANT, useLook } from '../../shell/uiVariant'
+import { experienceById } from '../../experiences/registry'
+import { appIdentityTokens, appTheme, blendBase, useWornChrome } from '../../shell/appLook'
+import { useLook } from '../../shell/uiVariant'
 import { useHive } from '../../store/store'
 import { ErrorState } from '../../ui/primitives'
 import { AppPicker } from './AppPicker'
@@ -58,16 +59,11 @@ function useFrameContext(programId: string, insets: Insets, reserved: Reserved, 
   const client = useHive((s) => s.client)
   const prefersReduced = useReducedMotion()
   const experience = experienceById(look.current?.experience).id
-  const [chrome, setChrome] = useState<{ id: string; c: ExperienceChrome | null } | null>(null)
-  useEffect(() => {
-    let live = true
-    void chromeFor(experience).then((c) => live && setChrome({ id: experience, c }), () => live && setChrome({ id: experience, c: null }))
-    return () => {
-      live = false
-    }
-  }, [experience])
-  const chosen = look.worn
-  const variant = chosen && !blockedReason(chosen) ? chosen : DEFAULT_VARIANT
+  // the chrome the dress applies, also after Canvas swaps light and dark, and the identity blended against it, so the
+  // frame is told the colours its page actually shows
+  const chromeNow = useWornChrome()
+  const worn = look.worn
+  const variant = useMemo(() => blendBase({ worn }, chromeNow), [worn, chromeNow])
   const theme = appTheme(program, look.current?.apps ?? 'owner')
   const appIdentity = useMemo(() => (theme ? appIdentityTokens(theme, variant) : null), [theme, variant])
   const reducedMotion = prefersReduced || look.motion === 'none'
@@ -87,7 +83,6 @@ function useFrameContext(programId: string, insets: Insets, reserved: Reserved, 
     }
   }, [client, identity])
   const personNow = person?.client === client && person.epoch === identity ? person.p : null
-  const chromeNow = chrome?.id === experience ? chrome.c : null
   // frame ops (§9c): reads need the route and at least one read the app declares (describe().reads)
   const describe = useHive((s) => s.programDetails[programId]?.describe ?? null)
   const reads = !!client?.programRead && (declaredReads(describe)?.size ?? 0) > 0

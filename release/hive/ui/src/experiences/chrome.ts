@@ -1,3 +1,5 @@
+// Purpose: each experience's window chrome, written to <html> as the variables every shared window and dressed classic
+// page reads, and the chrome last written, for what draws on those pages in colours of its own.
 /**
  * Window chrome per experience. Every shared window (Ω menu, Everything directory, decision dialogs, confirms, sheets,
  * toasts, the command palette, Change UI, classic pages opened inside an experience) dresses in the chrome of the
@@ -108,6 +110,18 @@ export const CLASSIC_FOLLOWS_LOOK: ExperienceChrome = {
   display: 'var(--font-display)',
 }
 
+// The chrome applyChrome last wrote (null: the Classic hive), and who to tell when it changes. Classic pages inside an
+// experience wear it (index.css .xc-dress), so whatever is drawn on them in colours of its own, an app's identity
+// (shell/appLook.ts), is blended against this one, never against a copy resolved on its own (Canvas's light and dark
+// swap it in place: experiences/canvas/index.tsx).
+let applied: ExperienceChrome | null = null
+const watchers = new Set<() => void>()
+export const appliedChrome = (): ExperienceChrome | null => applied
+export function watchAppliedChrome(on: () => void): () => void {
+  watchers.add(on)
+  return () => void watchers.delete(on)
+}
+
 export function applyChrome(c: ExperienceChrome | null): void {
   if (typeof document === 'undefined') return
   const chrome = c ?? CLASSIC_FOLLOWS_LOOK
@@ -117,6 +131,8 @@ export function applyChrome(c: ExperienceChrome | null): void {
   root.dataset.xcScheme = c ? chrome.scheme : root.dataset.uiScheme ?? chrome.scheme   // Classic: the worn look's scheme
   if (c) root.dataset.xcActive = ''
   else delete root.dataset.xcActive
+  applied = c
+  for (const on of watchers) on()
 }
 
 /** What `experiences/<id>/chrome.ts` exports. `currentChrome` (optional) answers for an experience with modes (Canvas light/dark). */

@@ -34,6 +34,9 @@ export type ScopedFeatures = Record<string, 'mind' | 'swarm'>
 
 const FEATURE_CONF: Record<number, number> = { 4: 0.95, 3: 0.86, 2: 0.62 }
 
+/** Kinds of hive things the command palette never lists (it holds pages, minds, swarms, apps and actions). */
+const PALETTE_LACKS = /\b(artifacts?|tasks?|goals?|files?|documents?|beliefs?|memor(?:y|ies)|messages?|notes?|plans?)\b/i
+
 /** How a Still act changes the world, for the policy. */
 export function effectOf(act: IntentAct | undefined): Effect | undefined {
   if (!act) return undefined
@@ -172,9 +175,12 @@ export function resolve(text: string, scope: IntentScope, world: World, scoped: 
     }
   }
 
-  // ---- an explicit search: "search for X", "find X"
+  // ---- an explicit search: "search for X", "find X". The palette it opens lists pages, minds, swarms, apps and actions
+  // (CommandPalette's Cmd groups), so words naming another kind of hive thing can't be found there: a tester's "Find
+  // artifact of Marsupial List" opened it empty (20 Nov). Such a row stays listed but no longer runs on Enter, and the
+  // words go where the policy sends them, usually the mind, which holds the hive's skills for finding them.
   const search = raw.match(/^(?:search(?: for| everything for)?|find|look for)\s+(.{2,})$/i)
-  if (search) out.push({ key: 'search-explicit', tag: 'Search', parts: [{ t: 'Search everything for ' }, { t: search[1], q: true }], act: { do: 'search', text: search[1] }, effect: 'view', confidence: 0.9 })
+  if (search) out.push({ key: 'search-explicit', tag: 'Search', parts: [{ t: 'Search everything for ' }, { t: search[1], q: true }], act: { do: 'search', text: search[1] }, effect: 'view', confidence: PALETTE_LACKS.test(search[1]) ? 0.3 : 0.9 })
 
   // ---- what the feature list understood well but Still's verbs did not reach (any feature, any wording it scores)
   for (const [id, s] of scores) {

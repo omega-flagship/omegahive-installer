@@ -20,5 +20,5 @@ def run(sentence):
     if conversation:
         payload["conversation_id"] = conversation
     result, error = _hive.call("POST", "/api/agent/create", payload)
-    return error or (f"HIVE-CREATE-OFFERED {result['id']}: your person can start it in Create from your chat, and "
-                     "nothing is built until they do.")
+    # the hive's own line for what to tell the person (create_offers.OFFERED_NEXT), as an Omega mind reads it
+    return error or f"HIVE-CREATE-OFFERED {result['id']}: {result['next']}"

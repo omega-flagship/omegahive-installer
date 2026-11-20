@@ -7,6 +7,7 @@ import {
   isChunkLoadError,
   bustUrl,
   failedStylesheet,
+  followOnReconnect,
   onChunkRetry,
   onChunkRetryMounted,
   retryChunks,
@@ -403,5 +404,83 @@ describe('boot fallback (index.html) defers to the recovery', () => {
     b.fire('error', uncaught)
     b.runTimers()
     expect(b.shown).toEqual([])
+  })
+})
+
+describe('chunk recovery: following the hive across an update (its connection comes back after a drop)', () => {
+  it('a new build, nothing unsaved: reloads toward it once before any part fails, guarded as a deploy is', async () => {
+    const s = session('index-B.js')
+    const p = s.page('index-A.js')
+    expect(await p.r.follow()).toBe('updating')
+    expect(p.notices).toEqual(['updating'])
+    expect(p.reloads()).toBe(1)
+    expect(JSON.parse(s.store.get(GUARD_KEY)!).target).toBe('index-B.js')
+  })
+
+  it('the same build, or no answer: nothing shown, reloaded or guarded, and a later reconnect asks again', async () => {
+    const s = session('index-A.js')
+    const p = s.page('index-A.js')
+    expect(await p.r.follow()).toBe('idle')
+    s.server.fails = true
+    expect(await p.r.follow()).toBe('idle')
+    s.server.fails = false
+    s.server.build = null
+    expect(await p.r.follow()).toBe('idle')
+    expect(p.notices).toEqual([])
+    expect(p.reloads()).toBe(0)
+    expect(s.store.has(GUARD_KEY)).toBe(false)
+    expect(s.server.fetches).toBe(3)
+    s.server.build = 'index-B.js'                                  // the update lands later: the next reconnect follows it
+    expect(await p.r.follow()).toBe('updating')
+  })
+
+  it('a new build with something unsaved: asks to save first, never reloads by itself, and says it once', async () => {
+    const s = session('index-B.js')
+    const p = s.page('index-A.js', { unsaved: () => true })
+    expect(await p.r.follow()).toBe('unsaved')
+    expect(await p.r.follow()).toBe('unsaved')
+    expect(p.notices).toEqual(['unsaved'])
+    expect(p.reloads()).toBe(0)
+  })
+
+  it('a tab that already reloaded toward that build and still runs another is not reloaded again', async () => {
+    const s = session('index-B.js')
+    s.store.set(GUARD_KEY, JSON.stringify({ target: 'index-B.js', at: 1 }))
+    const p = s.page('index-A.js')
+    expect(await p.r.follow()).toBe('updated')
+    expect(p.reloads()).toBe(0)
+  })
+
+  it('a reconnect while a chunk failure is being decided joins that decision', async () => {
+    const s = session('index-B.js')
+    const p = s.page('index-A.js')
+    const failing = p.r.handle(chunkErr())
+    expect(p.r.follow()).toBe(failing)
+    expect(await failing).toBe('updating')
+    expect(p.reloads()).toBe(1)
+    expect(s.server.fetches).toBe(1)
+  })
+
+  it('follows only a connection that comes back after a drop, never its first open, until unsubscribed', () => {
+    const listeners: ((now: string, before: string) => void)[] = []
+    let follows = 0
+    const stop = followOnReconnect((l) => {
+      listeners.push(l)
+      return () => void listeners.splice(listeners.indexOf(l), 1)
+    }, () => void follows++)
+    const say = (now: string, before: string) => listeners.forEach((l) => l(now, before))
+    say('connecting', 'idle')
+    say('open', 'connecting')
+    expect(follows).toBe(0)
+    say('reconnecting', 'open')
+    say('open', 'reconnecting')
+    expect(follows).toBe(1)
+    say('unauthorized', 'reconnecting')
+    say('open', 'open')
+    expect(follows).toBe(1)
+    stop()
+    say('reconnecting', 'open')
+    say('open', 'reconnecting')
+    expect(follows).toBe(1)
   })
 })

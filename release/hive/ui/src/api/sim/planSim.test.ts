@@ -1,3 +1,5 @@
+// Purpose: test that the sim's plan engine serves the host's plan view, its timeline, its acts and their refusals,
+// later rounds (a change, its versions, undo and put back) included; invented data only.
 import { describe, expect, it } from 'vitest'
 import { SimPlans, SIM_PLAN_MINDS, type PlanSimEvent, type PlanSimMode } from './planSim'
 import { codeTarget, currentFile, deployGo, fileKey, fileWant, frameFiles, parsePlanList, parsePlanView, parsePreviewFiles, pieceRows, planStages, assigneeLanes, runningPlan, type FileTexts } from '../../features/createPlan/planModel'
@@ -45,7 +47,9 @@ describe('plan sim: the engine’s own shape', () => {
     expect(p.builder === null || typeof p.builder === 'string').toBe(true)
     expect((r.actions as { name: string; method: string; path: string }[]).map((a) => [a.name, a.method, a.path])).toEqual([
       ['answer', 'POST', `/api/create/plans/${m.id}/answers`], ['deploy', 'POST', `/api/create/plans/${m.id}/deploy`], ['stop', 'POST', `/api/create/plans/${m.id}/stop`],
+      ['revise', 'POST', `/api/create/plans/${m.id}/revise`], ['undo', 'POST', `/api/create/plans/${m.id}/revert`], ['revert', 'POST', `/api/create/plans/${m.id}/revert`],
     ])
+    expect(r0).toMatchObject({ round: 1, round_words: SENTENCE, revisions: [] })
   })
 
   it('plans for ~4 s, then 4 pieces with assignees and one question holding only look; tests are written first', () => {
@@ -247,5 +251,117 @@ describe('plan sim: the engine’s own shape', () => {
     s.answer(id, 'q_look', 'Calm and minimal')
     expect(parsePlanView(s.get(id))!.status).toBe('ready_to_deploy')
     expect(parsePreviewFiles(s.preview(id))).not.toBeNull()
+  })
+})
+
+describe('plan sim: changing the deployed app in place', () => {
+  /** a plan deployed once, and a change asked, built to its go and deployed */
+  const deployed = () => {
+    const m = make()
+    m.run(5000)
+    m.s.answer(m.id, 'q_look', 'Calm and minimal')
+    m.run(200000, (v) => v.status === 'ready_to_deploy')
+    m.s.deploy(m.id)
+    m.run(400000, (v) => v.status === 'deployed')
+    const change = (words: string) => {
+      m.s.revise(m.id, words)
+      m.run(m.at() + 200000, (v) => v.status === 'ready_to_deploy')
+      m.s.deploy(m.id)
+      return m.run(m.at() + 200000, (v) => v.status === 'deployed')
+    }
+    const action = (name: string) => (raw(m).actions as { name: string; available: boolean; why_not: string | null; body: Record<string, unknown> }[]).find((a) => a.name === name)!
+    return { ...m, change, action }
+  }
+
+  it('deployed once: one version, the current one; a change can be asked; nothing to undo or put back', () => {
+    const m = deployed()
+    const v = m.view()
+    expect(v.revisions).toEqual([{ round: 1, words: SENTENCE, deployed_at: expect.any(String), current: true, from: null }])
+    expect(m.action('revise')).toMatchObject({ available: true, why_not: null, body: { words: 'string, 1-2000 characters' } })
+    expect(m.action('undo')).toMatchObject({ available: false, body: { round: null } })
+    expect(m.action('revert')).toMatchObject({ available: false, why_not: 'there is only one version' })
+  })
+
+  it('a change is a later round on the same plan: from the app as it is, red first, then the go, deployed over the same app', () => {
+    const m = deployed()
+    const first = m.view()
+    const started = parsePlanView(m.s.revise(m.id, '  make it blue '), minds)!
+    expect(started).toMatchObject({ round: 2, round_words: 'make it blue', phase: 'planning', status: 'planning', pieces: [], checks: [], checkpoint: null, preview: null })
+    expect(started.installed).toEqual(first.installed)
+    expect(m.events.some((e) => e.type === 'create.plan.status' && e.status === 'planning')).toBe(true)
+    // while it runs it takes no other change and puts nothing back
+    expect(() => m.s.revise(m.id, 'and bigger')).toThrow(/still being made/)
+    expect(() => m.s.revert(m.id, 1)).toThrow(/still being made/)
+    const planned = m.run(m.at() + 3000)
+    expect(planned.pieces.map((p) => [p.id, p.assignee.display, p.files[0]])).toEqual([['change', 'Code', 'style.css']])
+    const red = m.run(m.at() + 60000, (v) => v.checks.some((c) => c.base && c.state === 'failed'))
+    expect(red.checks[0].line).toBe('1 failed: make it blue')
+    // the round's scaffold is the deployed version's files, so the change is made from what the app is
+    const scaffold = m.s.files(m.id, null, red.checks[0].ckpt) as { files: Record<string, string> }
+    expect(scaffold.files['app.js']).toBe((m.s.files(m.id, null, first.preview!.ckpt) as { files: Record<string, string> }).files['app.js'])
+    const ready = m.run(m.at() + 200000, (v) => v.status === 'ready_to_deploy')
+    expect(ready.checks[ready.checks.length - 1].state).toBe('passed')
+    const css = parsePreviewFiles(m.s.preview(m.id))!.files['style.css']
+    expect(css).toContain('/* Version 2: make it blue */')
+    expect(css.startsWith('/* Calm and minimal */')).toBe(true)
+    m.s.deploy(m.id)
+    const done = m.run(m.at() + 10000, (v) => v.status === 'deployed')
+    expect(done.revisions.map((r) => [r.round, r.words, r.current, r.from])).toEqual([[1, SENTENCE, false, null], [2, 'make it blue', true, 1]])
+    expect(done.installed!.app_id).toBe(first.installed!.app_id)
+    expect(m.action('undo')).toMatchObject({ available: true, body: { round: 1 } })
+    expect(m.action('revert').available).toBe(true)
+  })
+
+  it('undo puts back the version the current one was made from; put back any version; the running page follows', () => {
+    const m = deployed()
+    const v1 = m.view()
+    const v2 = m.change('make it blue')
+    const back = parsePlanView(m.s.revert(m.id, 1), minds)!
+    expect(back.revisions.map((r) => [r.round, r.current])).toEqual([[1, true], [2, false]])
+    // nothing is appended, and the running page is version 1's again
+    expect(back.round).toBe(2)
+    expect(back.preview).toEqual(v1.preview)
+    expect(m.action('undo')).toMatchObject({ available: false, body: { round: null } })
+    // a change made after the undo is made from version 1, so Undo puts back version 1, not the undone version 2
+    const v3 = m.change('make the cells bigger')
+    expect(v3.revisions.map((r) => [r.round, r.current, r.from])).toEqual([[1, false, null], [2, false, 1], [3, true, 1]])
+    expect(m.action('undo')).toMatchObject({ available: true, body: { round: 1 } })
+    const css3 = parsePreviewFiles(m.s.preview(m.id))!.files['style.css']
+    expect(css3).toContain('/* Version 3: make the cells bigger */')
+    expect(css3).not.toContain('Version 2')
+    // version 2 put back explicitly
+    const two = parsePlanView(m.s.revert(m.id, 2), minds)!
+    expect(two.revisions.find((r) => r.current)!.round).toBe(2)
+    expect(two.preview).toEqual(v2.preview)
+    expect(two.installed).toMatchObject({ app_id: 'london-weather' })
+  })
+
+  it('a change stopped: the app stays at its version, the running page is that version, and another change can be asked', () => {
+    const m = deployed()
+    const v1 = m.view()
+    m.s.revise(m.id, 'make it blue')
+    m.run(m.at() + 200000, (v) => v.status === 'ready_to_deploy')
+    const stopped = parsePlanView(m.s.stop(m.id), minds)!
+    expect(stopped).toMatchObject({ status: 'stopped', round: 2, round_words: 'make it blue' })
+    expect(stopped.revisions.map((r) => [r.round, r.current])).toEqual([[1, true]])
+    expect(stopped.preview).toEqual(v1.preview)
+    expect(stopped.installed).toEqual(v1.installed)
+    expect(m.action('revise').available).toBe(true)
+    expect(parsePlanView(m.s.revise(m.id, 'make it green'), minds)).toMatchObject({ round: 3, status: 'planning' })
+  })
+
+  it('refuses a change or a put-back before anything is deployed, bad words, a bad round, and unknown versions', () => {
+    const running = make()
+    running.run(4000)
+    expect(() => running.s.revise(running.id, 'make it blue')).toThrow(/still being made/)
+    running.s.stop(running.id)
+    expect(() => running.s.revise(running.id, 'make it blue')).toThrow(/nothing is deployed yet/)
+    expect(() => running.s.revert(running.id, 1)).toThrow(/nothing is deployed yet/)
+    const m = deployed()
+    expect(() => m.s.revise(m.id, '   ')).toThrow(/1-2000/)
+    expect(() => m.s.revise(m.id, 'x'.repeat(2001))).toThrow(/1-2000/)
+    expect(() => m.s.revise('plan_nope', 'make it blue')).toThrow(/no plan/)
+    expect(() => m.s.revert(m.id, '1' as unknown as number)).toThrow(/which version/)
+    expect(() => m.s.revert(m.id, 7)).toThrow(/no such version/)
   })
 })

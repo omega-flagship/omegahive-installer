@@ -31,6 +31,7 @@ feature/<name>.metta  ──►  screens/lib_screens.metta (MeTTa)  ──►  S
 | `(on flag)` | the flag is true |
 | `(off flag)` | the flag is false, or wasn't stated |
 | `(is key value)` | the value matches, as a known symbol (compared as data, so words like `member` are safe) |
+| `(below src n)` | the fact `(count src)` is stated and under n (unstated, it does not hold), so a threshold such as "under a fifth left" is MeTTa's, not the page's |
 | `(any (c1 c2 …))` | at least one of the conditions holds |
 | `(none-of (c1 c2 …))` | none of the conditions holds (there is no `not`: MeTTa's own `not` would run, not match) |
 

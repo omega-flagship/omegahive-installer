@@ -3,15 +3,17 @@
  * GET /api/create/plans; back on the empty canvas, offer the newest held build to go back to), read the plan again on each create.plan.status / .piece / .question event for it (a slow
  * timer only as a fallback), fetch the verified preview (GET …/preview) when a create.plan.preview event arrives or the
  * view names a new preview, read the file the code pane shows through the files route (cached per path and
- * checkpoint), answer a question, the one go to deploy, and the one Stop. Every write after an await belongs to the
- * identity it started under (lib/identityEpoch): a change of person drops the plan, its reads and its pending acts.
+ * checkpoint), answer a question, the one go to deploy, the one Stop, and, once the app is deployed, a change asked in
+ * the person's words (a later round), Undo and putting back any version. Back on the empty canvas it offers the apps the
+ * person made, so any of them can be opened and changed again. Every write after an await belongs to the identity it
+ * started under (lib/identityEpoch): a change of person drops the plan, its reads and its pending acts.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { hiveBus, useHive } from '../../store/store'
 import { bindEpoch, currentEpoch, onIdentityChange } from '../../lib/identityEpoch'
-import type { PlanClient, PlanView, PreviewFiles } from './contract'
+import type { PlanClient, PlanSummary, PlanView, PreviewFiles } from './contract'
 import {
-  currentFile, fileKey, fileWant, heldPlan, parseFileText, parsePlanList, parsePlanView, parsePreviewFiles, runningPlan,
+  currentFile, fileKey, fileWant, heldPlan, madeApps, parseFileText, parsePlanList, parsePlanView, parsePreviewFiles, runningPlan,
   type CurrentFile, type FileTexts, type MindLookup, type Recent,
 } from './planModel'
 
@@ -73,20 +75,30 @@ export interface PlanState {
   answering: string | null
   deploying: boolean
   stopping: boolean
+  /** a change, an undo or a put-back on its way */
+  revising: boolean
   /** an act that did not go through, in plain words */
   alert: string | null
   /** the last read failed; the last view stays */
   stale: boolean
+  /** the apps the person made, newest first (read whenever the bench is on its empty canvas) */
+  made: PlanSummary[]
   start: (sentence: string) => void
   answer: (q: string, text: string) => void
   deploy: () => void
   stop: () => void
+  /** change the deployed app in place, from its current version; `taken` runs once the hive has taken the change */
+  revise: (words: string, taken?: () => void) => void
+  /** put the app back to one of its versions (Undo is this, with the round the plan's undo names) */
+  revert: (round: number) => void
   /** begin again from an empty canvas (after a stop or an install, or while the plan is held: it stays as it is) */
   fresh: () => void
   /** on the empty canvas: the newest build held on the person or the hive, which this bench does not show */
   held: { plan_id: string; sentence: string } | null
   /** go back to that held build (its question with it) */
   openHeld: () => void
+  /** show one of the person's plans on this bench (an app they made, to change it) */
+  openPlan: (planId: string) => void
 }
 
 export function usePlan(): PlanState {
@@ -105,10 +117,14 @@ export function usePlan(): PlanState {
   const [answering, setAnswering] = useState<string | null>(null)
   const [deploying, setDeploying] = useState(false)
   const [stopping, setStopping] = useState(false)
+  const [revising, setRevising] = useState(false)
   const [alert, setAlert] = useState<string | null>(null)
   const [stale, setStale] = useState(false)
   const [nudge, setNudge] = useState(0)
   const [held, setHeld] = useState<{ plan_id: string; sentence: string } | null>(null)
+  const [plans, setPlans] = useState<PlanSummary[]>([])
+  /** the bench has opened: its one pick-up of a running plan is behind it (a later fresh start never resumes one) */
+  const opened = useRef(false)
   const status = useRef<string | null>(null)
   const minds = useRef<MindLookup>(() => null)
   useEffect(() => {
@@ -130,25 +146,26 @@ export function usePlan(): PlanState {
     return true
   }, [binding])
 
-  // the person's running plan, picked up again when the bench opens with none followed. Only then: back on the empty
-  // canvas later (Make something else), a fresh start never resumes the old plan; the newest build still held is
-  // offered instead, one line the person may press (T-PLAN-HOLDS-MAKE: a held plan took Make over).
-  const opened = useRef(false)
+  // The person's plans, read when the bench opens with none followed and again each time it is back on its empty
+  // canvas: the apps they made are offered there, and so is the newest build still held, one line the person may press
+  // (T-PLAN-HOLDS-MAKE: a held plan took Make over). Only the first read picks up a plan still running: back on the
+  // empty canvas later (Make something else), a fresh start never resumes the old plan.
   useEffect(() => {
     if (id) { opened.current = true; return }
     if (!client?.createPlans) return
     const first = !opened.current
+    opened.current = true
     let alive = true
     void client.createPlans().then((raw) => {
       if (!alive) return
-      const plans = parsePlanList(raw)
+      const list = parsePlanList(raw)
+      binding.commit(() => setPlans(list))
       if (!first) {
-        const h = heldPlan(plans)
+        const h = heldPlan(list)
         binding.commit(() => setHeld(h ? { plan_id: h.plan_id, sentence: h.sentence } : null))
         return
       }
-      opened.current = true
-      const run = runningPlan(plans)
+      const run = runningPlan(list)
       if (!run) return
       binding.commit(() => {
         if (following && following.epoch === binding.epoch) return
@@ -158,8 +175,7 @@ export function usePlan(): PlanState {
     }, () => undefined)
     return () => { alive = false }
     // when the bench opens, and each time it is back on the empty canvas
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, id])
+  }, [client, id, binding])
 
   useEffect(() => {
     if (!id || !client?.createPlan) return
@@ -267,11 +283,15 @@ export function usePlan(): PlanState {
     )
   }, [client, binding, starting])
 
-  const act = useCallback((run: () => Promise<unknown>, set: (on: boolean) => void, planId: string) => {
+  const act = useCallback((run: () => Promise<unknown>, set: (on: boolean) => void, planId: string, after?: () => void) => {
     set(true)
     setAlert(null)
     void run().then(
-      (raw) => binding.commit(() => { set(false); if (!take(raw, planId)) setNudge((n) => n + 1) }),
+      (raw) => binding.commit(() => {
+        set(false)
+        if (!take(raw, planId)) setNudge((n) => n + 1)
+        after?.()
+      }),
       (e: unknown) => binding.commit(() => { set(false); setAlert(errText(e)) }),
     )
   }, [binding, take])
@@ -289,6 +309,18 @@ export function usePlan(): PlanState {
     if (!id || stopping || !client?.createPlanStop) return
     act(() => client.createPlanStop!(id), setStopping, id)
   }, [id, client, stopping, act])
+  // A deployed or stopped plan is read no more (SETTLED); a change starts a new round on it, so reading starts again
+  // at once, whether or not the hive's events about it arrive. A put-back leaves the plan deployed: one read, then rest.
+  const readAgain = useCallback(() => setNudge((n) => n + 1), [])
+  const revise = useCallback((words: string, taken?: () => void) => {
+    const w = words.trim()
+    if (!id || !w || revising || !client?.createPlanRevise) return
+    act(() => client.createPlanRevise!(id, w), setRevising, id, () => { readAgain(); taken?.() })
+  }, [id, client, revising, act, readAgain])
+  const revert = useCallback((round: number) => {
+    if (!id || revising || !client?.createPlanRevert) return
+    act(() => client.createPlanRevert!(id, round), setRevising, id, readAgain)
+  }, [id, client, revising, act, readAgain])
   const fresh = useCallback(() => {
     following = null
     status.current = null
@@ -310,20 +342,23 @@ export function usePlan(): PlanState {
     setId(held.plan_id)
   }, [binding, held])
 
-  // a plan started elsewhere (followPlan): this bench lets go of the one it shows and reads that one
+  // a plan opened from the empty canvas, or started elsewhere (followPlan): this bench lets go of the one it shows and
+  // reads that one
+  const openPlan = useCallback((planId: string) => binding.commit(() => {
+    fresh()
+    following = { epoch: binding.epoch, id: planId }
+    setId(planId)
+  }), [binding, fresh])
   useEffect(() => {
-    const switchTo = (planId: string) => binding.commit(() => {
-      fresh()
-      following = { epoch: binding.epoch, id: planId }
-      setId(planId)
-    })
-    followers.add(switchTo)
-    return () => { followers.delete(switchTo) }
-  }, [binding, fresh])
+    followers.add(openPlan)
+    return () => { followers.delete(openPlan) }
+  }, [openPlan])
+  const made = useMemo(() => madeApps(plans), [plans])
 
   return {
     can, following: !!id, view: id ? view : null, file: id ? file : null, frame: id ? frame : null,
-    starting, startError, answering, deploying, stopping, alert, stale, start, answer, deploy, stop, fresh,
+    starting, startError, answering, deploying, stopping, revising, alert, stale, made, start, answer, deploy, stop, revise,
+    revert, fresh, openPlan,
     held: id ? null : held, openHeld,
   }
 }

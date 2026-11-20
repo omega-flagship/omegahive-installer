@@ -1,5 +1,7 @@
+// Purpose: test that the plan view parser reads the host's view strictly and tolerantly and words it plainly: stages,
+// pieces, the deploy go, the code pane's file, the list, the preview, and the app's rounds and versions.
 import { describe, expect, it } from 'vitest'
-import { assigneeLanes, checkWords, codeTarget, currentFile, deployGo, fileKey, fileWant, frameFiles, openQuestions, parsePlanList, parsePlanView, parsePreviewFiles, pieceRows, planStages, reviewName, runningPlan, STATUS_WORDS, statusLine } from './planModel'
+import { assigneeLanes, checkWords, codeTarget, currentFile, deployGo, fileKey, fileWant, frameFiles, madeApps, openQuestions, parsePlanList, parsePlanView, parsePreviewFiles, pieceRows, planStages, reviewName, runningPlan, STATUS_WORDS, statusLine } from './planModel'
 import type { PlanView } from './contract'
 
 const STUDIO = { selector: ['team', 'studio'], kind: 'team', ref: 'studio', resolved: true, display: 'Studio', detail: null, taken_by: null }
@@ -361,12 +363,13 @@ describe('the code pane: which file, read through the files route', () => {
 describe('the list and the preview route', () => {
   it('parsePlanList / runningPlan: the newest plan still going', () => {
     const rows = parsePlanList([
-      { plan_id: 'p3', sentence: 'c', phase: 'stopped', status: 'stopped', updated_at: 't3' },
+      { plan_id: 'p3', sentence: 'c', title: 'Tic Tac Toe', phase: 'stopped', status: 'stopped', updated_at: 't3' },
       { plan_id: 'p2', sentence: 'b', phase: 'blocked', status: 'needs_you', updated_at: 't2' },
       { plan_id: 'p1', sentence: 'a', phase: 'building', status: 'building', updated_at: 't1' },
       { nope: true },
     ])
     expect(rows.map((r) => r.plan_id)).toEqual(['p3', 'p2', 'p1'])
+    expect(rows.map((r) => r.title)).toEqual(['Tic Tac Toe', null, null])   // the app's name, none when not sent
     expect(runningPlan(rows)?.plan_id).toBe('p2')
     expect(runningPlan(parsePlanList([{ plan_id: 'd', phase: 'deployed', status: 'deployed' }]))).toBeNull()
     expect(parsePlanList({})).toEqual([])
@@ -374,5 +377,69 @@ describe('the list and the preview route', () => {
   it('parsePreviewFiles: {ref, ckpt, files} or nothing', () => {
     expect(parsePreviewFiles({ ref: 'preview-a', ckpt: 'c1', files: { 'index.html': 'x', bad: 1 } })).toEqual({ ref: 'preview-a', ckpt: 'c1', files: { 'index.html': 'x' } })
     expect(parsePreviewFiles({ ckpt: 'c1', files: {} })).toBeNull()
+  })
+})
+
+describe('rounds and versions: a deployed app changed in place', () => {
+  const deployed = { program_id: 'tic-tac-toe', digest: 'sha256:aa', installed_at: '2026-11-19T00:10:00.000Z' }
+  it('a view from before rounds reads as round 1 with no versions; round 1’s words are the sentence', () => {
+    const v = view()
+    expect(v).toMatchObject({ round: 1, round_words: 'make a page', revisions: [] })
+  })
+  it('reads the round, its words and the versions by round, one current, round 1 named by the sentence when unnamed', () => {
+    const v = view({
+      phase: 'deployed', status: 'deployed', installed: deployed, round: 3, round_words: 'bigger cells',
+      revisions: [
+        { round: 3, words: 'bigger cells', deployed_at: '2026-11-19T00:30:00.000Z', current: true, from: 1 },
+        { round: 1, words: '', deployed_at: '2026-11-19T00:10:00.000Z', current: false, from: null },
+        { round: 2, words: 'blue board', deployed_at: '2026-11-19T00:20:00.000Z', current: false, from: 1 },
+      ],
+    })
+    expect(v.round).toBe(3)
+    expect(v.round_words).toBe('bigger cells')
+    expect(v.revisions.map((r) => [r.round, r.words, r.current, r.from])).toEqual([[1, 'make a page', false, null], [2, 'blue board', false, 1], [3, 'bigger cells', true, 1]])
+    expect(v.installed).toEqual({ app_id: 'tic-tac-toe', name: 'your app' })
+  })
+  it('drops a malformed version alone, keeps the first of a repeated round, and lets at most one be current', () => {
+    const v = view({
+      revisions: [
+        { round: 2, words: 'blue', current: true }, { round: 2, words: 'again', current: false }, { round: 0, words: 'zero' },
+        { round: 1.5 }, { words: 'no round' }, 'x', { round: 3, words: 'green', current: true, from: 'two' },
+      ],
+    })
+    expect(v.revisions.map((r) => [r.round, r.words, r.current, r.from])).toEqual([[2, 'blue', false, null], [3, 'green', true, null]])
+    // no round named: the newest version's, else 1; no words: the version of that round
+    expect(v.round).toBe(3)
+    expect(v.round_words).toBe('green')
+  })
+  it('reads revise, undo with the round it puts back, and revert; an undo naming no round puts back nothing', () => {
+    const v = view({
+      actions: [
+        { name: 'revise', available: true, why_not: null, body: { words: 'string, 1-2000 characters' } },
+        { name: 'undo', available: true, why_not: null, body: { round: 2 } },
+        { name: 'revert', available: true, why_not: null, body: { round: 'a version’s round' } },
+        { name: 'redo', available: true, why_not: null },
+      ],
+    })
+    expect(v.actions).toEqual([
+      { name: 'revise', available: true, why_not: null },
+      { name: 'undo', available: true, why_not: null, round: 2 },
+      { name: 'revert', available: true, why_not: null },
+    ])
+    const odd = view({ actions: [{ name: 'undo', available: true, why_not: null, body: { round: null } }, { name: 'undo', available: true, why_not: null }] })
+    expect(odd.actions.map((a) => [a.available, a.round, a.why_not])).toEqual([[false, undefined, 'there is no earlier version to put back'], [false, undefined, 'there is no earlier version to put back']])
+  })
+  it('the made apps: deployed, or with a later round under way or stopped; never a first build that did not deploy, nor a hive before rounds', () => {
+    const rows = parsePlanList([
+      { plan_id: 'a', sentence: 'a', phase: 'deployed', status: 'deployed', round: 1 },
+      { plan_id: 'b', sentence: 'b', phase: 'planning', status: 'planning', round: 2 },
+      { plan_id: 'c', sentence: 'c', phase: 'stopped', status: 'stopped', round: 3 },
+      { plan_id: 'd', sentence: 'd', phase: 'stopped', status: 'stopped', round: 1 },
+      { plan_id: 'e', sentence: 'e', phase: 'building', status: 'building', round: 1 },
+      { plan_id: 'f', sentence: 'f', phase: 'deployed', status: 'deployed' },
+      { plan_id: 'g', sentence: 'g', phase: 'deployed', status: 'deployed', round: 0 },
+    ])
+    expect(rows.map((r) => [r.plan_id, r.round])).toEqual([['a', 1], ['b', 2], ['c', 3], ['d', 1], ['e', 1], ['f', null], ['g', null]])
+    expect(madeApps(rows).map((r) => r.plan_id)).toEqual(['a', 'b', 'c'])
   })
 })

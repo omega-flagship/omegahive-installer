@@ -147,10 +147,12 @@ def is_member(run):
 # ---- adoption and the plan's callbacks ----------------------------------------------------------------------------
 
 def adopt_member(engine, plan_id, piece, origin, paths, assignee, budget_ref, review_policy, person,
-                 controller_id=None, task=None, brief=None):
+                 controller_id=None, task=None, brief=None, contract=None):
     """A member run with no minds request. Idempotent for (plan_id, piece, task). Returns {"task_id": ...}.
     `brief` is what the plan asks of the piece (the person's sentence, the piece's title and brief, the acceptance
-    criteria, the person's answers, a fix's failing output): data the helper's packet carries, never a decision."""
+    criteria, the person's answers, a fix's failing output): data the helper's packet carries, never a decision.
+    `contract` is the plan's own rule for the piece (a round's keep-what-the-change-doesn't-touch), which the packet
+    puts in the helper's trusted instructions."""
     from .code_controller_engine import EngineError, MAX_REPAIRS, REDUCER_SHA256, q
     if review_policy not in POLICIES:
         raise EngineError(f"a member's review policy is one of {list(POLICIES)}", 400, "bad_request")
@@ -172,6 +174,10 @@ def adopt_member(engine, plan_id, piece, origin, paths, assignee, budget_ref, re
         if not isinstance(brief, dict) or len(_canonical(brief)) > 40000:
             raise EngineError("brief is a JSON object of at most 40000 characters", 400, "bad_request")
         member["brief"] = brief
+    if contract is not None:
+        if not isinstance(contract, str) or not contract.strip() or len(contract) > 2000:
+            raise EngineError("contract is a sentence of at most 2000 characters", 400, "bad_request")
+        member["contract"] = contract
     at = now()
     engine.db.execute("INSERT OR IGNORE INTO code_controller_runs (request_id, lease_id, controller_id, person, profile, "
                       "max_repairs, reducer_sha256, phase, status, candidate, next_action, review, last_error, created_at, "
@@ -345,6 +351,8 @@ def _packet(engine, run, files, purpose, failing, goal_id, read_only=None):
     if "index.html" in m["paths"]:   # the app frame loads these two tags (ui_parts.frame_tags and frame_script)
         text += (' index.html loads ./style.css with <link rel="stylesheet" href="./style.css"> and ./app.js with '
                  '<script type="module" src="./app.js"></script>: keep both tags when you write it.')
+    if m.get("contract"):
+        text += " " + m["contract"]                   # the plan's rule for this piece, trusted like the lines above
     if failing and failing.get("refused"):
         text += "\n" + failing["refused"]              # the host's words for why the last answer was refused
     shown = {k: failing.get(k) for k in ("failing", "failing_ref", "notes", "logs", "exit_code", "by")

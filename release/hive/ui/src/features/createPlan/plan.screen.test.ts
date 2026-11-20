@@ -1,8 +1,10 @@
+// Purpose: test that MeTTa composes the Make bench's screens (plan.metta) right for the facts that matter, from the
+// empty canvas through the plan at work, its deploy, and every later change, version and undo; invented data only.
 import { describe, expect, it, vi } from 'vitest'
-import { ScreensSpace, type ScreenFacts } from '../../screens/screenSpace'
+import { ScreensSpace, type ScreenFacts, type ScreenPlan } from '../../screens/screenSpace'
 import { SimPlans } from '../../api/sim/planSim'
-import { isHeld, openQuestions, parsePlanView } from './planModel'
-import { planFacts, planScreen, type PlanUi } from './planFacts'
+import { isHeld, madeApps, openQuestions, parsePlanList, parsePlanView } from './planModel'
+import { planFacts as factsFor, planScreen, type PlanUi } from './planFacts'
 import type { PlanView } from './contract'
 
 vi.setConfig({ testTimeout: 20_000 })
@@ -17,7 +19,9 @@ const compose = (screen: string, facts: ScreenFacts) => {
   seen.set(screen, orders)
   return plan
 }
-const shown = (screen: string, facts: ScreenFacts) => compose(screen, facts).parts.map((p) => (p.block === 'island' ? String(p.props.name) : `${p.block}:${p.order}`))
+const planFacts = (view: PlanView | null, ui: PlanUi) => factsFor(view, ui, compose)
+const names = (plan: ScreenPlan) => plan.parts.map((p) => (p.block === 'island' ? String(p.props.name) : `${p.block}:${p.order}`))
+const shown = (screen: string, facts: ScreenFacts) => names(compose(screen, facts))
 const openQuestionsOf = (v: PlanView) => openQuestions(v).length
 const UI: PlanUi = { can: true, starting: false, startError: null, stopAsking: false }
 const SENTENCE = 'make me a small web page that shows the weather in London'
@@ -29,6 +33,30 @@ function simAt(ms: number, until?: (v: PlanView) => boolean, mode: 'normal' | 'h
   while (t < ms) { t += 250; v = parsePlanView(s.get(id))!; if (until?.(v)) break }
   return { s, id, v, step: (to: number, u?: (x: PlanView) => boolean) => { while (t < to) { t += 250; v = parsePlanView(s.get(id))!; if (u?.(v)) break } return v } }
 }
+/** a sim plan deployed once (its look question answered), with a clock to drive its later rounds to a status */
+function deployedSim() {
+  let t = 0
+  const s = new SimPlans({ now: () => t })
+  const id = (s.start(SENTENCE) as { plan_id: string }).plan_id
+  const view = () => parsePlanView(s.get(id))!
+  const until = (ok: (v: PlanView) => boolean) => { let v = view(); while (!ok(v)) { if (t > 600_000) throw new Error(`never reached: ${v.status}`); t += 250; v = view() } return v }
+  until((v) => v.questions.length > 0)
+  s.answer(id, 'q_look', 'Calm and minimal')
+  until((v) => v.status === 'ready_to_deploy')
+  s.deploy(id)
+  const deployed = until((v) => v.status === 'deployed')
+  /** a change asked, built to its go, and deployed */
+  const change = (words: string) => {
+    s.revise(id, words)
+    until((v) => v.status === 'ready_to_deploy')
+    s.deploy(id)
+    return until((v) => v.status === 'deployed')
+  }
+  return { s, id, view, until, deployed, change }
+}
+/** each version row as MeTTa composed it: its parts, and the data it draws */
+const rowsOf = (page: ReturnType<typeof planFacts>) =>
+  (page.data['revisions.rows'] as { id: string; plan: ScreenPlan; data: Record<string, unknown> }[]).map((r) => ({ id: r.id, parts: names(r.plan), data: r.data }))
 
 describe('the empty canvas: one sentence', () => {
   it('the field and its line when the hive plans; a plain absence when it does not; a failed start says why', () => {
@@ -129,23 +157,147 @@ describe('the plan at work', () => {
 })
 
 describe('ready to deploy', () => {
-  it('the page large, the go, and how it was made beside it; installed: its name, Open, and a fresh start', () => {
+  it('the page large, the go with where a change goes after it, and how it was made beside it; installed: its name, Open, and a fresh start', () => {
     const { v } = simAt(4000)
     const ready: PlanView = { ...v, phase: 'ready-to-deploy', status: 'ready_to_deploy', questions: [] }
     const page = planFacts(ready, UI)
     expect(page.screen).toBe('plan-ready')
-    expect(shown('plan-ready', page.facts)).toEqual(['plan-head', 'ready-preview', 'deploy-go', 'plan-stream'])
+    expect(shown('plan-ready', page.facts)).toEqual(['plan-head', 'ready-preview', 'deploy-go', 'note:31', 'plan-stream'])
     expect(shown('plan-ready', planFacts({ ...ready, questions: v.questions }, UI).facts)).toContain('plan-questions')
-    const done: PlanView = { ...ready, phase: 'deployed', status: 'deployed', installed: { app_id: 'app_sim_weather', name: 'London weather' } }
+    // a hive from before rounds says nothing of changes beside its go
+    const noRounds: PlanView = { ...ready, actions: ready.actions.filter((a) => !['revise', 'undo', 'revert'].includes(a.name)) }
+    expect(shown('plan-ready', planFacts(noRounds, UI).facts)).toEqual(['plan-head', 'ready-preview', 'deploy-go', 'plan-stream'])
+    // a hive from before rounds (no revise, undo or revert action): the installed row alone, no change box
+    const done: PlanView = {
+      ...ready, phase: 'deployed', status: 'deployed', installed: { app_id: 'app_sim_weather', name: 'London weather' },
+      actions: ready.actions.filter((a) => !['revise', 'undo', 'revert'].includes(a.name)),
+    }
     const after = planFacts(done, UI)
     expect(shown('plan-ready', after.facts)).toEqual(['plan-head', 'ready-preview', 'notice:40', 'buttons:41', 'buttons:42', 'plan-stream'])
     expect(after.data['installed.name']).toBe('London weather')
   })
 })
 
+describe('changing it in place: a later round on the same plan', () => {
+  it('deployed once: the change box under the installed app, its button held until there are words; no versions yet', () => {
+    const { deployed } = deployedSim()
+    const page = planFacts(deployed, UI)
+    expect(page.screen).toBe('plan-ready')
+    expect(shown('plan-ready', page.facts)).toEqual(['plan-head', 'ready-preview', 'notice:40', 'buttons:41', 'buttons:42', 'plan-stream', 'section:60', 'fields:61', 'actions:62'])
+    expect(page.data['revise.held']).toBe(true)
+    const typed = planFacts(deployed, { ...UI, words: 'make it blue' })
+    expect(typed.data['revise.words']).toBe('make it blue')
+    expect(typed.data['revise.held']).toBe(false)
+    // on its way: the button and the field wait
+    const sent = planFacts(deployed, { ...UI, words: 'make it blue', revising: true })
+    expect(sent.data['revise.held']).toBe(true)
+    expect(sent.data['revise.busy']).toBe(true)
+    expect(rowsOf(page)).toHaveLength(1)
+  })
+  it('a change at work: the plan screen with its Stop, saying which change, while the app stays as it was', () => {
+    const { s, id } = deployedSim()
+    const v = parsePlanView(s.revise(id, 'make it blue'))!
+    expect(v).toMatchObject({ round: 2, round_words: 'make it blue', status: 'planning' })
+    expect(v.installed).not.toBeNull()
+    const page = planFacts(v, UI)
+    expect(page.screen).toBe('plan')
+    expect(page.facts.flags!['plan.changing']).toBe(true)
+    expect(page.facts.flags!['can.stop']).toBe(true)
+    // nothing of this round built yet and no page in hand: the place its running page will be
+    expect(shown('plan', page.facts)).toEqual(['plan-head', 'buttons:11', 'notice:13', 'note:14', 'plan-forming', 'plan-stream', 'empty:61'])
+    // the bench still holding the app's page from before: it runs beside the work
+    expect(shown('plan', planFacts(v, { ...UI, showing: true }).facts)).toContain('live-pair')
+    expect(page.data['round.words']).toBe('“make it blue”')
+  })
+  it('a change ready for its go: the go and what it changes, not the installed row or the change box', () => {
+    const { s, id, until } = deployedSim()
+    s.revise(id, 'make it blue')
+    const ready = until((v) => v.status === 'ready_to_deploy')
+    const page = planFacts(ready, UI)
+    expect(page.screen).toBe('plan-ready')
+    expect(shown('plan-ready', page.facts)).toEqual(['plan-head', 'ready-preview', 'notice:25', 'deploy-go', 'plan-stream'])
+  })
+  it('two versions: the list with the one in the person’s Apps marked, Undo to the one it was made from, Put back on the other', () => {
+    const { change } = deployedSim()
+    const v = change('make it blue')
+    expect(v.revisions.map((r) => [r.round, r.words, r.current, r.from])).toEqual([[1, SENTENCE, false, null], [2, 'make it blue', true, 1]])
+    const page = planFacts(v, UI)
+    expect(shown('plan-ready', page.facts)).toEqual(['plan-head', 'ready-preview', 'notice:40', 'buttons:41', 'buttons:42', 'plan-stream', 'section:60', 'fields:61', 'actions:62', 'section:70', 'buttons:71', 'stack:72'])
+    expect(page.data['revisions.current']).toBe('r2')
+    expect(page.data['undo.round']).toBe(1)
+    const rows = rowsOf(page)
+    expect(rows.map((r) => [r.id, r.parts])).toEqual([['r1', ['line:11', 'buttons:20']], ['r2', ['line:10']]])
+    expect(rows[1].data['rev.title']).toBe('“make it blue”')
+    expect(String(rows[1].data['rev.meta'])).toMatch(/^Version 2 · deployed (\d{1,2} \w+|\w+ \d{1,2}), \S/)
+    const undo = JSON.stringify(compose('plan-ready', page.facts).parts.find((p) => p.order === 71)?.props)
+    expect(undo).toContain('Undo the last change')
+  })
+  it('undone: the first version is the app again, nothing earlier to undo to, and the change can be put back', () => {
+    const { s, id, change } = deployedSim()
+    change('make it blue')
+    const v = parsePlanView(s.revert(id, 1))!
+    const page = planFacts(v, UI)
+    expect(page.data['revisions.current']).toBe('r1')
+    expect(page.facts.flags!['can.undo']).toBe(false)
+    expect(shown('plan-ready', page.facts)).toEqual(expect.arrayContaining(['section:70', 'stack:72']))
+    expect(shown('plan-ready', page.facts)).not.toContain('buttons:71')
+    expect(rowsOf(page).map((r) => [r.id, r.parts])).toEqual([['r1', ['line:10']], ['r2', ['line:11', 'buttons:20']]])
+  })
+  it('a change made after an undo: Undo goes back to what it was made from, not to the change undone before', () => {
+    const { s, id, change } = deployedSim()
+    change('make it blue')
+    s.revert(id, 1)
+    const v = change('make the cells bigger')
+    expect(v.revisions.map((r) => [r.round, r.current, r.from])).toEqual([[1, false, null], [2, false, 1], [3, true, 1]])
+    const page = planFacts(v, UI)
+    expect(page.data['undo.round']).toBe(1)
+    expect(rowsOf(page)[2].data['rev.meta']).toMatch(/· made from version 1$/)
+  })
+  it('a change stopped: the installed app at its version, saying the change stopped, ready for another', () => {
+    const { s, id } = deployedSim()
+    s.revise(id, 'make it blue')
+    const v = parsePlanView(s.stop(id))!
+    const page = planFacts(v, UI)
+    expect(page.screen).toBe('plan-ready')
+    expect(page.facts.flags!['plan.changing']).toBe(false)
+    expect(shown('plan-ready', page.facts)).toEqual(['plan-head', 'ready-preview', 'notice:26', 'notice:40', 'buttons:41', 'buttons:42', 'plan-stream', 'section:60', 'fields:61', 'actions:62'])
+  })
+  it('a change the hive can’t take now: the box stays, its button held, with the hive’s reason', () => {
+    const { deployed } = deployedSim()
+    const held: PlanView = { ...deployed, actions: deployed.actions.map((a) => (a.name === 'revise' ? { ...a, available: false, why_not: 'Changing apps is off on this hive.' } : a)) }
+    const page = planFacts(held, { ...UI, words: 'make it blue' })
+    expect(shown('plan-ready', page.facts)).toEqual(expect.arrayContaining(['actions:62', 'note:63']))
+    expect(page.data['revise.held']).toBe(true)
+    expect(page.data['revise.why_not']).toBe('Changing apps is off on this hive.')
+    // a hive from before rounds: no revise action, no change box
+    const older = planFacts({ ...deployed, actions: deployed.actions.filter((a) => !['revise', 'undo', 'revert'].includes(a.name)) }, UI)
+    expect(shown('plan-ready', older.facts)).not.toContain('section:60')
+  })
+  it('back on the empty canvas: the apps the person made, newest first, each one opened to change it', () => {
+    const { s, id } = deployedSim()
+    s.start('a second thing')
+    const made = madeApps(parsePlanList(s.list()))
+    expect(made.map((p) => p.plan_id)).toEqual([id])
+    const page = planFacts(null, { ...UI, made })
+    expect(shown('plan-start', page.facts)).toEqual(['plan-say', 'note:30', 'section:50', 'stack:51'])
+    const rows = (page.data['made.rows'] as { id: string; plan: ScreenPlan; data: Record<string, unknown> }[])
+    expect(rows.map((r) => [r.id, names(r.plan)])).toEqual([[id, ['line:10', 'buttons:20']]])
+    expect(rows[0].data['made.title']).toBe('London weather')                 // the app's name, as its view gives it
+    expect(String(rows[0].data['made.meta'])).toMatch(/^Last changed (\d{1,2} \w+|\w+ \d{1,2}), \S/)
+    // a hive that sends no name: the sentence the app began from, quoted
+    const unnamed = planFacts(null, { ...UI, made: [{ ...made[0], title: null }] }).data['made.rows'] as { data: Record<string, unknown> }[]
+    expect(unnamed[0].data['made.title']).toBe(`“${SENTENCE}”`)
+    // none made, or a hive that doesn't plan: no list
+    expect(shown('plan-start', planFacts(null, UI).facts)).toEqual(['plan-say', 'note:30'])
+    expect(shown('plan-start', planFacts(null, { ...UI, can: false, made }).facts)).toEqual(['empty:40'])
+    // a plan on the bench: the list is the empty canvas's alone
+    expect(planFacts(parsePlanView(s.get(id))!, { ...UI, made }).data['made.rows']).toEqual([])
+  })
+})
+
 describe('the plan screens', () => {
   it('every part of each can be reached', () => {
-    for (const screen of ['plan-start', 'plan', 'plan-ready']) {
+    for (const screen of ['plan-start', 'plan', 'plan-ready', 'plan-revision', 'plan-made']) {
       const missing = space.orders(screen).filter((o) => !seen.get(screen)?.has(o))
       expect(missing, screen).toEqual([])
     }
@@ -160,5 +312,8 @@ describe('the plan screens', () => {
     const { facts } = planFacts(v, { ...UI, startError: 'a person’s words' })
     expect(JSON.stringify(facts)).not.toContain(SENTENCE)
     expect(JSON.stringify(facts)).not.toContain('person’s')
+    const { s, id } = deployedSim()
+    const changing = planFacts(parsePlanView(s.revise(id, 'make it blue'))!, { ...UI, words: 'and bigger' })
+    expect(JSON.stringify(changing.facts)).not.toMatch(/make it blue|and bigger/)
   })
 })

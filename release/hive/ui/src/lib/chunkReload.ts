@@ -8,6 +8,11 @@
  *    it asks the person to save or copy first, then Reload.
  *  - The automatic reload is guarded per target build in sessionStorage: a tab reloads toward a given build at most once.
  *    Time alone never releases the guard; a lazy view revealed by the build the guard named does (proof of health).
+ *  - A part the page has already loaded never fails to load, so a tab kept across an update ran the old build's code
+ *    for every view it had opened until a new one failed: a tester's Canvas kept a bug their updated hive had fixed
+ *    (20 Nov). So the page also asks when its live connection to the hive comes back after a drop (follow,
+ *    followOnReconnect), as a hive restarting for an update drops it: a new build is then followed exactly as a
+ *    deploy's chunk failure is, and the same build, or no answer, changes nothing, since nothing failed.
  * Errors that are not chunk loads are never handled here: they are left to whatever handled them before (the boot
  * fallback in index.html, React's own reporting).
  */
@@ -94,6 +99,11 @@ export interface ChunkRecovery {
   healthy(): void
   /** On Retry: back to idle, so a failure of the next attempt is decided afresh. */
   rearm(): void
+  /**
+   * The live connection came back after a drop: if the hive now serves another build, move to it as a deploy's chunk
+   * failure does (reload once with nothing unsaved, else ask to save first). The same build, or no answer, does nothing.
+   */
+  follow(): Promise<ChunkState>
   readonly state: ChunkState
 }
 
@@ -147,6 +157,14 @@ export function createChunkRecovery(env: ChunkEnv): ChunkRecovery {
   /** the failure Retry was pressed for: failing the same way again means Retry cannot load it in this page */
   let retriedFor: string | null = null
 
+  /** A build the server serves that this page did not boot from: reload toward it once, or ask first when work is unsaved. */
+  function toNewBuild(server: string): UpdateNotice {
+    // this tab already reloaded toward that build and still runs another one: do not try again
+    if (readGuard(env)?.target === server) return 'updated'
+    if (probe(env.unsaved)) return 'unsaved'
+    return writeGuard(env, server) ? 'updating' : 'updated'
+  }
+
   async function decide(key: string): Promise<UpdateNotice> {
     const server = await Promise.resolve().then(() => env.fetchBuild()).catch(() => null)
     // no proof of a new build: a load problem, not a deploy. Offer Retry once per failure; after that, Reload by hand.
@@ -154,10 +172,7 @@ export function createChunkRecovery(env: ChunkEnv): ChunkRecovery {
       if (key !== retriedFor) return 'retry'
       return probe(env.unsaved) ? 'reload-unsaved' : 'reload'
     }
-    // this tab already reloaded toward that build and still runs another one: do not try again
-    if (readGuard(env)?.target === server) return 'updated'
-    if (probe(env.unsaved)) return 'unsaved'
-    return writeGuard(env, server) ? 'updating' : 'updated'
+    return toNewBuild(server)
   }
 
   return {
@@ -202,7 +217,33 @@ export function createChunkRecovery(env: ChunkEnv): ChunkRecovery {
       retriedFor = decidedFor
       decidedFor = null
     },
+    follow() {
+      // a decision under way, or one standing (a notice is up, or the page is reloading), is not asked again
+      if (pending) return pending
+      if (state !== 'idle') return Promise.resolve(state)
+      state = 'checking'
+      pending = Promise.resolve().then(() => env.fetchBuild()).catch(() => null).then((server): ChunkState => {
+        const notice: ChunkState = !server || !env.pageBuild || server === env.pageBuild ? 'idle' : toNewBuild(server)
+        state = notice
+        pending = null
+        if (notice !== 'idle') env.show(notice)
+        if (notice === 'updating') env.reload()
+        return notice
+      })
+      return pending
+    },
   }
+}
+
+/**
+ * Calls `follow` each time a connection comes back after a drop: the client's state going from reconnecting to open
+ * (api/live.ts), as it does when the hive restarts for an update. Its first open, from connecting, is the build the page
+ * booted with. `subscribe` hands each change as (now, before) and returns its unsubscribe, which this returns.
+ */
+export function followOnReconnect(subscribe: (listener: (now: string, before: string) => void) => () => void, follow: () => void): () => void {
+  return subscribe((now, before) => {
+    if (before === 'reconnecting' && now === 'open') follow()
+  })
 }
 
 // ---- retry: re-run failed lazy imports ----

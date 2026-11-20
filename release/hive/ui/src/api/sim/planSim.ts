@@ -1,5 +1,5 @@
 /**
- * SIM: Create's plan engine for the plan view, in the host engine's own shape (hive/core/create_plan_engine.py view(),
+ * Purpose: SIM: Create's plan engine for the plan view, in the host engine's own shape (hive/core/create_plan_engine.py view(),
  * list_for(), files(), the preview route; reducer R4.1). The page reads the sim and the live hive through the SAME
  * code path: checkpoint {ckpt, workspace} with no files, file text through the files route (a checkpoint or a piece's
  * candidate), the running page through the preview route's files. Deterministic and clock-driven, like
@@ -19,6 +19,11 @@
  *   all in   check (2.5 s) red on app.js: '1 failed: shows "°C" after the temperature' → `logic` fixing (repairs 1)
  *            → review → re-integrates → check green → previewing 2 s (a verified preview, create.plan.preview) →
  *            ready_to_deploy (deploy available) → the person's go → deploying 1.5 s → deployed.
+ *   changes  once deployed, POST …/revise {words} starts a later round on the same plan: planning 3 s, one piece
+ *            (`change`, Code) writes style.css from the current version (planSimFiles changedCss), the check on that
+ *            round's scaffold is red first, then green, previewing, the person's go, deployed over the same app. Every
+ *            deployed round is a version; POST …/revert {round} puts the app back to one (current moves, nothing is
+ *            appended); Undo puts back the version the current one was made from.
  *
  * Flags (read when a plan starts): ?simplan=unreviewed (no reviewer can run: every review unavailable, pieces go on
  * unreviewed, `unreviewed`); ?simplan=fail (the fix fails twice → blocked (needs_you) with a hold question: "Try again"
@@ -26,13 +31,13 @@
  * 3 s after the plan is made).
  */
 import { ApiError } from '../client'
-import { appJs, CHECK_PATH, CHECK_PY, ICON_SVG, INDEX_HTML, paletteFor, SCAFFOLD, styleCss } from './planSimFiles'
+import { appJs, changedCss, CHECK_PATH, CHECK_PY, ICON_SVG, INDEX_HTML, paletteFor, SCAFFOLD, styleCss } from './planSimFiles'
 
 export type PlanSimMode = 'normal' | 'unreviewed' | 'fail' | 'hive'
 
 const MS = {
   plan: 4000, author: 2500, think: 1500, tick: 250, selfTest: 800, review: 2500, integrate: 600, check: 2500,
-  preview: 2000, deploy: 1500, hiveResolve: 3000,
+  preview: 2000, deploy: 1500, hiveResolve: 3000, replan: 3000,
 }
 const LINES_PER_TICK = 2
 const FIX_LINES_PER_TICK = 4
@@ -73,19 +78,32 @@ interface Piece {
   /** the finished text of each file as this round writes it */
   out: Record<string, string>
 }
+const mkPiece = (id: string, title: string, assignee: Assignee, kind: string, files: string[], deps: string[], mind: Mind): Piece => ({
+  id, title, assignee: { ...assignee }, kind, deps, files, state: 'waiting', builder: null, mind, candidate: null, repairs: 0,
+  unreviewed: false, passed: [], review: null, out: {},
+})
 interface Question { q: string; about: string | { piece: string }; text: string; choices: string[]; answer: string | null }
 interface Check { run: string; ckpt: string; base: boolean; state: string; failing: string[]; line: string | null; output: string | null }
 interface Step { at: number; seq: number; fn: () => void }
+type Preview = { ref: string; digest: string; app_id: string; source_digest: string; ckpt: string }
+/** a deployed round: what it was asked, when it went in, its files (its preview's checkpoint) and the round it was made from */
+interface Revision { round: number; words: string; deployed_at: string; preview: Preview; from: number | null }
 
 interface Plan {
   id: string; sentence: string; mode: PlanSimMode; started: number; t: number; created: number
   phase: string; pieces: Piece[]; questions: Question[]; checks: Check[]
   /** integrated checkpoints in order, and every snapshot (checkpoints and candidates) by id */
   ckpts: string[]; snaps: Map<string, Record<string, string>>; cands: number
-  preview: { ref: string; digest: string; app_id: string; source_digest: string; ckpt: string } | null
+  preview: Preview | null
   unreviewed: boolean; installed: { program_id: string; digest: string; installed_at: string } | null
   deploying: boolean; baseRed: boolean; suite: boolean
   fixRounds: number; fixAttempts: number; queue: Step[]; seq: number
+  /** the round in flight or the last one, its words, where its checkpoints begin in `ckpts`, and the version current
+   * when it began (its base: what it changes) */
+  round: number; roundWords: string; roundStart: number; base: number | null
+  revisions: Revision[]
+  /** the version the installed app runs */
+  current: number | null
 }
 
 export interface PlanSimEvent { type: 'create.plan.status' | 'create.plan.piece' | 'create.plan.question' | 'create.plan.preview'; plan_id: string; [k: string]: unknown }
@@ -124,16 +142,22 @@ export class SimPlans {
       id: `plan_sim_${++this.n}`, sentence: sentence.trim(), mode, started: now, t: now, created: this.n, phase: 'planning', pieces: [],
       questions: [], checks: [], ckpts: [], snaps: new Map(), cands: 0, preview: null, unreviewed: false, installed: null,
       deploying: false, baseRed: false, suite: false, fixRounds: 0, fixAttempts: 0, queue: [], seq: 0,
+      round: 1, roundWords: sentence.trim(), roundStart: 0, base: null, revisions: [], current: null,
     }
     this.plans.set(p.id, p)
     this.at(p, MS.plan, () => this.planned(p))
     this.o.emit?.({ type: 'create.plan.status', plan_id: p.id, phase: p.phase, status: this.status(p), next_action: this.nextAction(p) })
     return this.view(p)
   }
-  /** GET /api/create/plans: the person's plans, newest first */
+  /** GET /api/create/plans: the person's plans, newest first, each named as its view names it, with its newest round's
+   * phase and status */
   list(): Record<string, unknown>[] {
     return [...this.plans.keys()].map((id) => this.tick(id)).sort((a, b) => b.created - a.created)
-      .map((p) => ({ plan_id: p.id, sentence: p.sentence, phase: p.phase, status: this.status(p), updated_at: iso(p.t) }))
+      .map((p) => ({ plan_id: p.id, sentence: p.sentence, title: this.appTitle(p), phase: p.phase, status: this.status(p), round: p.round, updated_at: iso(p.t) }))
+  }
+  /** the app's name, as the engine's view and list give it: its first plan's title once planned, none before */
+  private appTitle(p: Plan): string | null {
+    return p.pieces.length > 0 || p.round > 1 ? 'London weather' : null
   }
   /** GET /api/create/plans/{id} */
   get(id: string): Record<string, unknown> { return this.view(this.tick(id)) }
@@ -171,6 +195,9 @@ export class SimPlans {
         p.deploying = false
         p.phase = 'deployed'
         p.installed = { program_id: 'london-weather', digest: p.preview?.digest ?? '', installed_at: iso(p.t) }
+        // the deployed round is a version, and the one the app runs now
+        if (p.preview) p.revisions.push({ round: p.round, words: p.roundWords, deployed_at: iso(p.t), preview: { ...p.preview }, from: p.base })
+        p.current = p.round
       })
     })
     return this.view(p)
@@ -179,6 +206,42 @@ export class SimPlans {
   stop(id: string): Record<string, unknown> {
     const p = this.tick(id)
     if (!TERMINAL.has(p.phase)) this.changed(p, () => this.stopNow(p))
+    return this.view(p)
+  }
+  /** POST /api/create/plans/{id}/revise {words}: a later round changes the deployed app in place, from its current version */
+  revise(id: string, words: unknown): Record<string, unknown> {
+    const p = this.tick(id)
+    if (typeof words !== 'string' || !words.trim() || words.trim().length > 2000) throw new ApiError(400, 'bad_request', 'say what should change in 1-2000 characters')
+    const why = this.notRevisable(p)
+    if (why) throw new ApiError(409, 'not_revisable', why)
+    this.changed(p, () => {
+      p.round++
+      p.roundWords = words.trim()
+      p.base = p.current
+      p.roundStart = p.ckpts.length
+      p.phase = 'planning'
+      p.pieces = []; p.questions = []; p.checks = []; p.preview = null; p.unreviewed = false
+      p.baseRed = false; p.suite = false; p.fixRounds = 0; p.fixAttempts = 0; p.queue = []
+      this.at(p, MS.replan, () => this.plannedChange(p))
+    })
+    return this.view(p)
+  }
+  /** POST /api/create/plans/{id}/revert {round}: the app put back to that version, which becomes the current one */
+  revert(id: string, round: unknown): Record<string, unknown> {
+    const p = this.tick(id)
+    if (typeof round !== 'number' || !Number.isInteger(round)) throw new ApiError(400, 'bad_request', 'say which version by its round')
+    const why = this.notRevisable(p)
+    if (why) throw new ApiError(409, 'not_revisable', why)
+    const rev = p.revisions.find((r) => r.round === round)
+    if (!rev) throw new ApiError(409, 'not_revisable', 'there is no such version')
+    this.changed(p, () => {
+      p.current = rev.round
+      // the build space is reset to that version's files, and the running page is that version's
+      p.roundStart = p.ckpts.length
+      this.checkpoint(p, { ...p.snaps.get(rev.preview.ckpt)! })
+      p.preview = { ...rev.preview }
+      p.installed = { program_id: 'london-weather', digest: rev.preview.digest, installed_at: iso(p.t) }
+    })
     return this.view(p)
   }
   /** GET /api/create/plans/{id}/files?path=&ckpt= ({ckpt, path, content}; without a path {ckpt, files}) */
@@ -256,10 +319,7 @@ export class SimPlans {
 
   private planned(p: Plan) {
     const hive = p.mode === 'hive'
-    const mk = (id: string, title: string, assignee: Assignee, kind: string, files: string[], deps: string[], mind: Mind): Piece => ({
-      id, title, assignee: { ...assignee }, kind, deps, files, state: 'waiting', builder: null, mind, candidate: null, repairs: 0,
-      unreviewed: false, passed: [], review: null, out: {},
-    })
+    const mk = mkPiece
     p.pieces = [
       mk('layout', 'The page and its layout', STUDIO, 'design', ['index.html'], [], WREN),
       mk('look', 'Colours and type', STUDIO, 'design', ['style.css'], ['layout'], WREN),
@@ -282,6 +342,30 @@ export class SimPlans {
       this.runCheck(p, true)
     })
   }
+  /** a later round's plan: one piece makes the change, on a scaffold that is the app as its base version left it */
+  private plannedChange(p: Plan) {
+    if (p.phase === 'stopped') return
+    p.pieces = [mkPiece('change', 'The change you asked for', CODE, 'design', ['style.css'], [], ANVIL)]
+    p.phase = 'planned'
+    this.at(p, MS.author, () => {
+      if (p.phase === 'stopped') return
+      p.suite = true
+      this.checkpoint(p, { ...this.baseFiles(p), [CHECK_PATH]: CHECK_PY })
+      p.phase = 'testing-authored'
+      this.runCheck(p, true)
+    })
+  }
+  /** the files of the version this round changes (round 1: the empty scaffold) */
+  private baseFiles(p: Plan): Record<string, string> {
+    const rev = p.revisions.find((r) => r.round === p.base)
+    return rev ? { ...p.snaps.get(rev.preview.ckpt)! } : { ...SCAFFOLD }
+  }
+  /** why the plan can't take a change or a put-back now, or null when it can */
+  private notRevisable(p: Plan): string | null {
+    if (!TERMINAL.has(p.phase) || p.deploying) return 'it is still being made'
+    if (p.current === null) return 'nothing is deployed yet'
+    return null
+  }
 
   private checkpoint(p: Plan, files: Record<string, string>): string {
     const ck = `ckpt_${p.ckpts.length}`
@@ -290,6 +374,8 @@ export class SimPlans {
     return ck
   }
   private latest(p: Plan): Record<string, string> { return p.snaps.get(p.ckpts[p.ckpts.length - 1]) ?? SCAFFOLD }
+  /** the latest checkpoint of the round in the view (a later round shows only its own), or null before its first */
+  private roundCkpt(p: Plan): string | null { return p.ckpts.length > p.roundStart ? p.ckpts[p.ckpts.length - 1] : null }
 
   private piece(p: Plan, id: string) { return p.pieces.find((x) => x.id === id)! }
   private openQs(p: Plan) { return p.questions.filter((q) => q.answer === null) }
@@ -329,6 +415,7 @@ export class SimPlans {
   }
 
   private contentFor(p: Plan, path: string): string {
+    if (p.round > 1 && path === 'style.css') return changedCss(this.baseFiles(p)['style.css'] ?? '', p.round, p.roundWords)
     if (path === 'index.html') return INDEX_HTML
     if (path === 'style.css') return styleCss(paletteFor(p.questions.find((q) => q.q === LOOK_Q)?.answer ?? null))
     if (path === 'icon.svg') return ICON_SVG
@@ -421,13 +508,15 @@ export class SimPlans {
         Object.assign(c, { state: passed ? 'pass' : 'fail', failing, line, output: line })
       }
       if (base) {
-        say(false, ['app.js'], ['1 failed: shows the temperature for London'])
+        if (p.round > 1) say(false, ['style.css'], [`1 failed: ${p.roundWords}`])
+        else say(false, ['app.js'], ['1 failed: shows the temperature for London'])
         p.baseRed = true
         p.phase = 'building'
         this.tryStart(p)
         return
       }
-      if (this.logicFixed(p)) {
+      // a later round's change passes once it is in (the sim scripts its fix loop for the first build only)
+      if (p.round > 1 || this.logicFixed(p)) {
         say(true, [], ['2 passed'])
         p.phase = 'previewing'
         this.at(p, MS.preview, () => this.ready(p))
@@ -469,6 +558,9 @@ export class SimPlans {
     p.queue = []
     p.deploying = false
     for (const pc of p.pieces) pc.builder = null
+    // a later round stopped: the running page is the version the app still runs, not the change that was stopped
+    const current = p.revisions.find((r) => r.round === p.current)
+    if (current) p.preview = { ...current.preview }
   }
 
   // ---------------------------------------------------------------- the view
@@ -497,11 +589,15 @@ export class SimPlans {
     const terminal = TERMINAL.has(p.phase)
     const ready = this.deployReady(p)
     const base = `/api/create/plans/${p.id}`
-    const latest = p.ckpts[p.ckpts.length - 1] ?? null
+    const latest = this.roundCkpt(p)
+    const title = this.appTitle(p)
+    const why = this.notRevisable(p)
+    // Undo puts back the version the current one was made from; none to put back once that is the first
+    const undoTo = why ? null : p.revisions.find((r) => r.round === p.current)?.from ?? null
     return {
       plan_id: p.id, engine: 'metta-plan-controller/R4.1', reducer_sha256: 'sim', sentence: p.sentence,
-      title: p.pieces.length ? 'London weather' : null, summary: p.pieces.length ? 'London weather' : p.sentence,
-      acceptance: p.pieces.length ? ['Shows London’s weather now and for the next three days', 'Shows the temperature with its unit (°C)', 'Uses the look you choose'] : [],
+      title, summary: title ?? p.sentence,
+      acceptance: title ? ['Shows London’s weather now and for the next three days', 'Shows the temperature with its unit (°C)', 'Uses the look you choose'] : [],
       phase: p.phase, status: this.status(p), review_policy: p.mode === 'unreviewed' ? 'review-waivable' : 'review-required',
       unreviewed: p.unreviewed && ready, next_action: this.nextAction(p), last_error: null,
       pieces: p.pieces.map((x) => ({
@@ -516,10 +612,15 @@ export class SimPlans {
       checkpoint: { ckpt: latest, workspace: latest ? `ws_sim_${p.id}` : null },
       preview: p.preview ? { ...p.preview } : null,
       installed: p.installed ? { ...p.installed } : null,
+      round: p.round, round_words: p.roundWords,
+      revisions: p.revisions.map((r) => ({ round: r.round, words: r.words, deployed_at: r.deployed_at, current: r.round === p.current, from: r.from })),
       actions: [
         { name: 'answer', label: 'Answer', method: 'POST', path: `${base}/answers`, body: { q: 'question id', text: 'string, 1-4000 characters' }, available: open > 0 && !terminal, why_not: open > 0 && !terminal ? null : 'no question is waiting for you' },
         { name: 'deploy', label: 'Deploy', method: 'POST', path: `${base}/deploy`, body: {}, available: ready, why_not: ready ? null : 'nothing is ready to deploy yet' },
         { name: 'stop', label: 'Stop', method: 'POST', path: `${base}/stop`, body: {}, available: !terminal, why_not: terminal ? 'this plan is finished' : null },
+        { name: 'revise', label: 'Change it', method: 'POST', path: `${base}/revise`, body: { words: 'string, 1-2000 characters' }, available: !why, why_not: why },
+        { name: 'undo', label: 'Undo', method: 'POST', path: `${base}/revert`, body: { round: undoTo }, available: undoTo !== null, why_not: undoTo !== null ? null : why ?? 'there is no earlier version to put back' },
+        { name: 'revert', label: 'Put back', method: 'POST', path: `${base}/revert`, body: { round: 'a version’s round' }, available: !why && p.revisions.length > 1, why_not: why ?? (p.revisions.length > 1 ? null : 'there is only one version') },
       ],
       journal: [], effects: [],
       updated_at: iso(p.t),

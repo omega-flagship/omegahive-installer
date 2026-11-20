@@ -26,7 +26,7 @@
 (SkillHelp "hive-goal-done" "hive-goal-done g_id result - finish a goal you claimed and report what you did")
 (SkillHelp "hive-goal-fail" "hive-goal-fail g_id reason - give up a goal you claimed and say why")
 (SkillHelp "hive-goal-create" "hive-goal-create parent_or_none title - post a goal; use a parent id to split work into subgoals")
-(SkillHelp "hive-create" "hive-create a tip calculator that splits the bill - ask Create to build what was asked for, in the asker's words; your person sees Start in Create in your chat, and nothing is built until they press it")
+(SkillHelp "hive-create" "hive-create a tip calculator that splits the bill - ask Create to build what was asked for, in the asker's words; your person sees Start in Create in their Ask and your chat, and nothing is built until they press it, so never say it is built")
 (SkillHelp "hive-shares" "hive-shares - list shares you own or can read, with when they expire")
 (SkillHelp "hive-share-request" "hive-share-request Lyra world 30 checking your orbit notes - ask a dot to let you read one of its spaces for a while")
 (SkillHelp "hive-share-grant" "hive-share-grant sh_id - grant a share request; access ends by itself when the time is up")

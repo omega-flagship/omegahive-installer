@@ -14,6 +14,8 @@ export interface OmegaItem {
   run: () => void
   /** Shown as selected (e.g. the swarm an app works in). */
   checked?: boolean
+  /** Also shown beside the Ω mark, always visible (an app's Leave: the way out of a page that is only the app and Ω). */
+  beside?: boolean
 }
 export interface OmegaSection {
   title?: string
@@ -110,6 +112,7 @@ export function OmegaMenu({ heading, context, mark, sections = [], footer = [] }
         </div>
       )}
       {directory && <HiveDirectory experience={context} onClose={() => setDirectory(false)} restoreTo={() => button.current} />}
+      <div className="flex items-center gap-2">
       <button
         ref={button}
         data-omega-button=""
@@ -124,6 +127,13 @@ export function OmegaMenu({ heading, context, mark, sections = [], footer = [] }
           <LiveOmega look={mark ?? context} size="corner" className="size-[30px]" fallback={<span className="grid size-full place-items-center"><OmegaGlyph className="h-[19px] w-[21px]" /></span>} />
         </span>
       </button>
+      {sections.flatMap((s) => s.items).filter((it) => it.beside).map((it, i) => (
+        <button key={`${it.label}-${i}`} type="button" data-omega-beside="" onClick={() => { close(false); it.run() }}
+          className="xc-menu min-h-9 px-3 py-1.5 text-[13px] pointer-coarse:min-h-11">
+          {it.label}
+        </button>
+      ))}
+      </div>
     </div>
   )
 }

@@ -14,6 +14,7 @@ import { useReducedMotion } from '../../lib/hooks'
 import { href, navigate, useRoute } from '../../lib/router'
 import { useAdminView } from '../../lib/useAdmin'
 import { focusCoordinatorPicker } from '../swarm/coordinatorPicker'
+import { CreateOffers } from '../dot/CreateOffers'
 import type { AskWho, ResearchCitation } from '../../api/ask'
 import { askRetryContext, threadRows, useAskStore, type AskRow } from '../../store/ask'
 import { useHive } from '../../store/store'
@@ -695,11 +696,14 @@ export function ThreadHead({ variant, onClose, pinnable, sizes }: { variant: Thr
 
 export function Thread({ variant, words = [] }: { variant: ThreadVariant; words?: string[] }) {
   // J3 r4.3 O3: while a live Studio session runs (or its setup card is open), Directing Studio sits under the thread in
-  // every look: receipt cards from host records, the Steer | Queue switch, the cost readout and the one Stop
+  // every look: receipt cards from host records, the Steer | Queue switch, the cost readout and the one Stop. Above it,
+  // what waits on the person: the tasks minds stopped, and every mind's open offers to build in Create with Start, so a
+  // person told to press Start finds it where they talk (createOffer.metta; nothing while none is open)
   return (
     <>
       <ThreadLog rows={useThreadRows()} variant={variant} words={words} />
       <StoppedTasks />
+      <CreateOffers />
       <DirectingStudio />
     </>
   )

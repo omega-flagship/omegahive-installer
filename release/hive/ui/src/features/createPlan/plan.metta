@@ -1,15 +1,23 @@
+; Purpose: compose Create's Make bench, from one sentence to the deployed app and every change made to it after.
+;
 ; Create's Make bench (#/program/omegadesign, bench Make): one sentence becomes a plan, the plan's pieces go to whoever
 ; takes them (any number of teams, specialist minds, capabilities or whole hives), the work shows as it happens with the
 ; code beside the running page, and at the end the person's one go deploys it. Declared as atoms; screens/lib_screens.metta
 ; composes them. The board, the questions, the stream, the code beside the running page and the deploy go are islands
 ; the page draws (features/createPlan/PlanCanvas.tsx); every one of them shows or hides here.
 ;
+; Once deployed, the app is changed in place: the person asks for a change, a later round on the same plan builds it from
+; what the app is now, checks it and asks the go again; every deployed round is a version they can put back, and Undo
+; puts back the version the current one was made from.
+;
 ; The page states one set of facts for all three screens (features/createPlan/planFacts.ts):
 ;   flags  can.plan (this hive makes things from a sentence) start.busy plan.stopped plan.blocked plan.installed
 ;          plan.live (a file is being written or the page has run) can.stop stop.asking plan.unreviewed
 ;          plan.held (a build held on the person or the hive that the empty canvas does not show)
 ;          plan.leavable (this build is held on the person or the hive, so the empty canvas would name it: planModel.isHeld)
-;   counts pieces questions.open questions.answered
+;          plan.changing (a later round is at work on the installed app) can.revise (the hive changes a made app in
+;          place) revise.refused (it can't take a change just now) can.undo
+;   counts pieces questions.open questions.answered revisions made (the apps the person made, on the empty canvas)
 ;   values start (idle or failed)
 
 ; ---------- the empty canvas: one sentence
@@ -30,6 +38,20 @@
 (Part plan-start 40 empty ((icon sparkles) (title "Making from one sentence isn't on this hive yet")
   (body "This hive doesn't plan and build from a sentence. Studio, Code and Flow still work as before.")))
 (When plan-start 40 (off can.plan))
+; the apps the person made: any of them opens here to be changed from what it is now, its versions and Undo with it
+(Part plan-start 50 section ((title "Or change something you made") (body "Open one to ask for a change, see its versions or undo its last change.")))
+(When plan-start 50 (on can.plan))
+(When plan-start 50 (has made))
+(Part plan-start 51 stack ((source made.rows) (frame inset) (label "Apps you made")))
+(When plan-start 51 (on can.plan))
+(When plan-start 51 (has made))
+
+; ---------- one app the person made, opened on the bench to change it
+(Screen plan-made "An app you made")
+(Part plan-made 10 line ((title (bind made.title)) (meta (bind made.meta))))
+(Row plan-made 10 made)
+(Part plan-made 20 buttons ((items ((button "Change it" open-made ((variant ghost) (icon edit) (aria "Change {made.title}")))))))
+(Row plan-made 20 made)
 
 ; ---------- the plan at work: the sentence and its one Stop, the questions, who takes what, the work, and the live pair
 (Screen plan "Making it")
@@ -42,6 +64,11 @@
 (Part plan 12 confirm ((text "Stop making this? What's made so far stays here; nothing more is built.") (yes "Stop") (yes_action stop-yes) (no "Keep going") (no_action stop-no)))
 (When plan 12 (on can.stop))
 (When plan 12 (on stop.asking))
+; a later round: which change is being made, and that the app the person has stays as it is until its go
+(Part plan 13 notice ((tone info) (text (words "Changing it: " (bind round.words)))))
+(When plan 13 (on plan.changing))
+(Part plan 14 note ((text "Your app stays as it is until this change is checked and you deploy it.")))
+(When plan 14 (on plan.changing))
 (Part plan 20 notice ((tone warn) (text "Stopped. Nothing more is being built; what was made so far stays here.")))
 (When plan 20 (on plan.stopped))
 (Part plan 21 notice ((tone warn) (text (words "Waiting on something: " (bind plan.status)))))
@@ -86,17 +113,72 @@
 (Part plan-ready 15 island ((name plan-questions)))
 (When plan-ready 15 (has questions.open))
 (Part plan-ready 20 island ((name ready-preview)))
+; a later round ready for its go: the change it makes; a later round stopped: the app is as it was
+(Part plan-ready 25 notice ((tone info) (text (words "The change: " (bind round.words)))))
+(When plan-ready 25 (on plan.changing))
+(Part plan-ready 26 notice ((tone warn) (text (words "Stopped making the change " (bind round.words) ". Your app is as it was."))))
+(When plan-ready 26 (on plan.stopped))
 (Part plan-ready 30 island ((name deploy-go)))
-(When plan-ready 30 (off plan.installed))
+(When plan-ready 30 (any ((off plan.installed) (on plan.changing))))
+; before the first deploy, beside the go: where a change is asked for, since the change box comes only once the app is
+; deployed and a person who has just seen Deploy looks for it there
+(Part plan-ready 31 note ((text "After you deploy it, you can ask for changes here. Each change is kept, and Undo puts it back.")))
+(When plan-ready 31 (on can.revise))
+(When plan-ready 31 (off plan.installed))
 (Part plan-ready 40 notice ((tone info) (text (words "Installed as " (bind installed.name) ". It's in your Apps now."))))
 (Row plan-ready 40 installed)
 (When plan-ready 40 (on plan.installed))
+(When plan-ready 40 (off plan.changing))
 (Part plan-ready 41 buttons ((items ((button "Open" open-app ((variant primary) (icon external) (aria (words "Open " (bind installed.name)))))))))
 (Row plan-ready 41 installed)
 (When plan-ready 41 (on plan.installed))
+(When plan-ready 41 (off plan.changing))
 (Part plan-ready 42 buttons ((items ((button "Make something else" fresh ((variant ghost)))))))
 (Row plan-ready 42 installed)
 (When plan-ready 42 (on plan.installed))
+(When plan-ready 42 (off plan.changing))
 ; how it was made, beside the page
 (Part plan-ready 50 island ((name plan-stream) (region_label "How it was made")))
 (Region plan-ready 50 aside)
+
+; ---------- changing it: the installed app at rest takes a change in the person's words, keeps every version, and undoes
+(Part plan-ready 60 section ((title "Change it") (body "Say what should be different. It's changed from what it is now, checked again, and put in your Apps when you say so.")))
+(When plan-ready 60 (on can.revise))
+(When plan-ready 60 (on plan.installed))
+(When plan-ready 60 (off plan.changing))
+(Part plan-ready 61 fields ((items ((field long "What should change?" revise.words ((rows 2) (placeholder "e.g. make the board blue") (waits revise.busy)))))))
+(When plan-ready 61 (on can.revise))
+(When plan-ready 61 (on plan.installed))
+(When plan-ready 61 (off plan.changing))
+(Part plan-ready 62 actions ((items ((action "Change it" revise-send revise.held))) (tone primary)))
+(When plan-ready 62 (on can.revise))
+(When plan-ready 62 (on plan.installed))
+(When plan-ready 62 (off plan.changing))
+; why it can't take a change just now, in the hive's words
+(Part plan-ready 63 note ((text (bind revise.why_not))))
+(When plan-ready 63 (on revise.refused))
+(When plan-ready 63 (on plan.installed))
+(When plan-ready 63 (off plan.changing))
+; every deployed version once there is more than one, the one in the person's Apps marked
+(Part plan-ready 70 section ((title "Versions") (body "Each change you deploy is kept. Undo puts back the version this one was made from, or put back any of them.")))
+(When plan-ready 70 (none-of ((below revisions 2))))
+(When plan-ready 70 (off plan.changing))
+(Part plan-ready 71 buttons ((items ((button "Undo the last change" undo ((variant ghost) (icon back) (aria (words "Undo the last change: put back version " (bind undo.round)))))))))
+(When plan-ready 71 (on can.undo))
+(When plan-ready 71 (off plan.changing))
+(Part plan-ready 72 stack ((source revisions.rows) (frame inset) (label "Versions of this app") (current (bind revisions.current))))
+(When plan-ready 72 (none-of ((below revisions 2))))
+(When plan-ready 72 (off plan.changing))
+
+; ---------- one version of the app: the change it made, when it went in, and putting it back
+(Screen plan-revision "One version of the app")
+(Part plan-revision 10 line ((title (bind rev.title)) (meta (bind rev.meta)) (badge "In your Apps") (tone good)))
+(Row plan-revision 10 version)
+(When plan-revision 10 (on rev.current))
+(Part plan-revision 11 line ((title (bind rev.title)) (meta (bind rev.meta))))
+(Row plan-revision 11 version)
+(When plan-revision 11 (off rev.current))
+(Part plan-revision 20 buttons ((items ((button "Put back" revert-to ((variant ghost) (icon history) (aria "Put back {rev.title}")))))))
+(Row plan-revision 20 version)
+(When plan-revision 20 (off rev.current))
+(When plan-revision 20 (on can.revert))

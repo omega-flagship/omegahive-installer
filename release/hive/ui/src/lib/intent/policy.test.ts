@@ -122,3 +122,40 @@ describe('the look pack: the person’s own words are the acceptance, applied at
     expect(applyLookPatch(null, { kind: 'experience', id: 'still' }, DEFAULT_VARIANT, SEED_VARIANTS).experience).toBe('still')
   })
 })
+
+describe('a line led by a name: the mind the Ask row names takes it, whoever else carries the name', () => {
+  // a tester's swarm Taiga and their mind Taiga share the name; the Ask answered in their conversation with the mind, and
+  // every "Taiga, …" there stopped at "Two things are called Taiga" with nothing sent (Hive Rapid Feedback Loop, 20 Nov)
+  const taiga = { id: 'a_taiga01', name: 'Taiga', awake: true, swarm: 'Taiga' }
+  const shared: World = { ...world, minds: [taiga, ...world.minds], swarms: [{ id: 's_taiga', name: 'Taiga' }, ...world.swarms] }
+  const line = 'Taiga, why are you asking such a silly question?'
+
+  it('in a conversation with the mind, the line goes as the Ask row’s request, and the swarm stays a row to pick', () => {
+    const cands = resolve(line, scope, { ...shared, answeringMind: taiga.id })
+    expect(cands.some((x) => x.choice)).toBe(false)
+    expect(decide(cands, { orchestrator: true }).kind).toBe('mind')
+    const swarm = cands.find((x) => x.key === 'also-swarm-s_taiga')
+    expect(swarm?.act).toBeUndefined()
+    expect(swarm?.fill).toMatch(/^Taiga#\w+, why are you asking such a silly question\?$/)
+  })
+
+
+  it('two minds carry the name: the one the Ask row names takes the line; with neither named it is still which one', () => {
+    const atlas = 'ag_92be44c8e0'
+    const cands = resolve('Mira, how are you getting on?', scope, { ...world, answeringMind: atlas })
+    expect(decide(cands, { orchestrator: true }).kind).toBe('mind')
+    expect(cands.some((x) => x.key === 'also-mind-ag_7d1c0a11f3')).toBe(true)
+    expect(decide(resolve('Mira, how are you getting on?', scope, world), { orchestrator: true }).kind).toBe('which')
+  })
+
+  it('a name alone, and a swarm’s task, still ask which one, the row’s mind among them or not', () => {
+    for (const text of ['Taiga', 'Taiga should water the plants'])
+      expect(decide(resolve(text, scope, { ...shared, answeringMind: taiga.id }), { orchestrator: true }).kind, text).toBe('which')
+  })
+
+  it('a name only the row’s mind carries continues that conversation; a mind the row does not name is still sent to', () => {
+    expect(decide(resolve('Vega, what did you find?', scope, { ...world, answeringMind: 'a_vega01' }), { orchestrator: true }).kind).toBe('mind')
+    expect(decide(resolve('Vega, what did you find?', scope, { ...world, answeringMind: 'a_altr03' }), { orchestrator: true }).kind).toBe('own')
+    expect(decide(resolve('Vega, what did you find?', scope, world), { orchestrator: true }).kind).toBe('own')
+  })
+})

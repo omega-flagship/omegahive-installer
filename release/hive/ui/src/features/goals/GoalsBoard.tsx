@@ -54,6 +54,12 @@ const priorityColor = (p: number) => (p >= 0.75 ? '#fb7185' : p >= 0.5 ? '#fbbf2
 const priorityLabel = (p: number) => (p >= 0.75 ? 'High' : p >= 0.5 ? 'Normal' : 'Low')
 
 const EMPTY: Goal[] = []
+/**
+ * The status columns at desktop widths: each keeps a readable 13rem and the board scrolls sideways when its window holds
+ * fewer, as kanban boards do, where five equal columns in a narrow window wrapped a card's title a word per line.
+ */
+export const COLUMNS_WIDE = 'grid auto-cols-[minmax(13rem,1fr)] grid-flow-col gap-3 overflow-x-auto'
+
 /** Last `updated_at` each card showed, so a card that moved columns can flash on arrival. */
 const seenAt = new Map<string, string>()
 
@@ -242,7 +248,7 @@ export function GoalsBoard({
               ref={scroller}
               className={cx(
                 'min-h-0 flex-1',
-                desktop ? 'grid grid-cols-5 gap-3' : 'no-scrollbar -mx-3 flex snap-x snap-mandatory items-start gap-2.5 overflow-x-auto scroll-px-3 px-3 pb-2',
+                desktop ? COLUMNS_WIDE : 'no-scrollbar -mx-3 flex snap-x snap-mandatory items-start gap-2.5 overflow-x-auto scroll-px-3 px-3 pb-2',
               )}
             >
               {COLS.map((c) => (
@@ -483,7 +489,7 @@ function GoalCard({ goal: g, subgoals, agents, swarmHue, team, focused = false, 
       data-tour={`goal-${g.status}`}
       data-goal={g.id}
       aria-current={focused ? 'true' : undefined}
-      className={cx('relative overflow-hidden rounded-2xl border bg-[#12122e]/80', col === 'done' && 'opacity-85', open ? 'border-line-2' : 'border-line', focused && 'ring-2 ring-accent/70')}
+      className={cx('relative overflow-hidden rounded-2xl border bg-glass', col === 'done' && 'opacity-85', open ? 'border-line-2' : 'border-line', focused && 'ring-2 ring-accent/70')}
       style={stalled ? { borderColor: `${STALLED}66`, boxShadow: `0 0 22px -8px ${STALLED}` } : waiting ? { borderColor: `${WAITING}4d` } : undefined}
     >
       {submitted && (

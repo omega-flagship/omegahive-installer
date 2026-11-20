@@ -49,6 +49,23 @@ describe('Create drawing entry explains its actual availability', () => {
     for (const why of [undefined, 'something_new', 1]) expect(words(why)).toContain('It has not said why.')   // never a guessed reason
   })
 
+  it('names the parts the startup check found missing when the switch is on but the check keeps drawing off', () => {
+    const checked = (missing: unknown): string => {
+      const caps = { conductor: false, memory: false, studio_off: 'self_check', studio_missing: missing }
+      const availability = drawingAvailability(client, { swarm_id: null, thread_budget_usd: 5, capabilities: caps } as AskSettings, true, true, true)
+      expect(availability.code).toBe('host_not_offered')
+      return availability.reason ?? ''
+    }
+    const step = 'That is for whoever runs this hive; there is nothing for you to do here.'
+    expect(checked(['mac safe-restart exact-commit override'])).toBe(`Live drawing is switched on, but this hive’s startup check found parts missing (mac safe-restart exact-commit override), so nothing can be drawn here. ${step}`)
+    expect(checked(['a', 'b'])).toContain('(a and b)')
+    expect(checked(['a', 'b', 'c'])).toContain('(a, b and c)')
+    // a list that is absent, empty or not names never invents a part, and still says the check keeps drawing off
+    for (const missing of [undefined, [], [3, ' '], 'one part']) {
+      expect(checked(missing)).toBe(`Live drawing is switched on, but this hive’s startup check keeps it off, so nothing can be drawn here. ${step}`)
+    }
+  })
+
   it('distinguishes unknown host data, missing client, space, interface and setup method', () => {
     expect(drawingAvailability(client, null, true, true, true).code).toBe('checking')
     expect(drawingAvailability(null, settings(true), true, true, true).code).toBe('client_unavailable')

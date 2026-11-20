@@ -120,14 +120,14 @@ function words(p: PropValue | undefined, data: Record<string, unknown>): string 
 }
 
 /** One of the app's Ω entries: its words, whether it is marked, and the press it sends (with the item it names). */
-export interface MenuEntry { label: string; checked?: boolean; action: string; item: Record<string, unknown> }
+export interface MenuEntry { label: string; checked?: boolean; beside?: boolean; action: string; item: Record<string, unknown> }
 export interface MenuSection { title?: string; items: MenuEntry[] }
 
 /**
  * The menu MeTTa composed (program-menu) as the Ω menu's sections, in order: a part's (section "…") names its section
  * (none: the app's own, first); a buttons part gives one entry per button, marked when it names a (checked flag); a
- * list part gives one entry per item, marked when it is the (current …) one. The page turns each entry's press into
- * its own act.
+ * button with (beside yes) is also shown beside the Ω mark; a list part gives one entry per item, marked when it is the
+ * (current …) one. The page turns each entry's press into its own act.
  */
 export function menuSections(plan: ScreenPlan, data: Record<string, unknown>): MenuSection[] {
   const sections: MenuSection[] = []
@@ -146,6 +146,7 @@ export function menuSections(plan: ScreenPlan, data: Record<string, unknown>): M
         for (const o of Array.isArray(b[3]) ? b[3] : []) if (Array.isArray(o) && o.length === 2 && typeof o[0] === 'string') opts[o[0]] = o[1]
         const entry: MenuEntry = { label: words(b[1], data), action: sym(b[2]), item: {} }
         if (opts.checked !== undefined) entry.checked = data[sym(opts.checked)] === true
+        if (sym(opts.beside) === 'yes') entry.beside = true
         items.push(entry)
       }
     } else if (part.block === 'list') {

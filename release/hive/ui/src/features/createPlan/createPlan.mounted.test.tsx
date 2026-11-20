@@ -1,11 +1,11 @@
 // @vitest-environment node
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles for the store, the client and the look */
 /**
- * The Make bench mounted on the MiniDOM: the board draws any number of assignee lanes (one specialist, teams, five mixed,
+ * Purpose: the Make bench mounted on the MiniDOM: the board draws any number of assignee lanes (one specialist, teams, five mixed,
  * a whole hive still being found that resolves to a mind), a question is answered inline and settles, the running page
  * re-renders at each checkpoint with its receipt, the deploy go (available, held with its reason, unreviewed), reduced
- * motion, and the whole page from one sentence through MeTTa's screens. Driven by the plan sim on a manual clock;
- * invented data only.
+ * motion, the whole page from one sentence through MeTTa's screens, and the deployed app changed in place (a change,
+ * its go, its versions, Undo and Put back). Driven by the plan sim on a manual clock; invented data only.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
@@ -90,6 +90,8 @@ function clientOf(s: SimPlans, calls: string[] = []) {
     createPlanAnswer: async (id: string, q: string, text: string) => { calls.push(`answer ${q} ${text}`); return s.answer(id, q, text) },
     createPlanDeploy: async (id: string) => s.deploy(id),
     createPlanStop: async (id: string) => { calls.push('stop'); return s.stop(id) },
+    createPlanRevise: async (id: string, words: string) => { calls.push(`revise ${words}`); return s.revise(id, words) },
+    createPlanRevert: async (id: string, round: number) => { calls.push(`revert ${round}`); return s.revert(id, round) },
   }
 }
 afterEach(async () => {
@@ -529,5 +531,83 @@ describe('the whole bench, composed by MeTTa', () => {
     await render(<PlanCanvas />)
     expect(host.textContent).toContain("Making from one sentence isn't on this hive yet")
     expect(all((n) => n.tagName === 'INPUT')).toHaveLength(0)
+  })
+  it('a deployed app changed in place: a change in the person’s words, its go, two versions, Undo and Put back', async () => {
+    T.reduced = true
+    let t = 0
+    const s = new SimPlans({ now: () => t, mode: () => 'normal' })
+    const calls: string[] = []
+    T.client = clientOf(s, calls)
+    const id = 'plan_sim_1'
+    const screen = () => all((n) => n.hasAttribute('data-plan-screen'))[0].getAttribute('data-plan-screen')
+    /** the sim's clock on to a status; then an event about the plan, which the bench reads again on */
+    const to = (status: string) => { while ((s.get(id) as { status: string }).status !== status) { if (t > 900000) throw new Error(`never ${status}`); t += 500 } }
+    const heard = async () => { await act(async () => { for (const fn of [...T.listeners]) fn({ type: 'create.plan.status', plan_id: id }) }); await flush() }
+    const box = () => all((n) => n.tagName === 'TEXTAREA')[0]
+    const currentRow = () => all((n) => n.tagName === 'LI' && n.getAttribute('aria-current') === 'true').map((n) => n.textContent)
+    await render(<PlanCanvas />)
+    await flush()
+    await act(async () => (reactProps(all((n) => n.tagName === 'INPUT')[0]).onChange as (e: unknown) => void)({ target: { value: SENTENCE } }))
+    await act(async () => press(button('Make it')))
+    await flush()
+    t = 5000
+    s.answer(id, 'q_look', 'Calm and minimal')
+    to('ready_to_deploy')
+    s.deploy(id)
+    to('deployed')
+    await heard()
+    // installed: the change box under it, its button held until there are words
+    expect(screen()).toBe('plan-ready')
+    expect(host.textContent).toContain('Installed as')
+    expect(button('Change it').getAttribute('disabled')).not.toBeNull()
+    await act(async () => (reactProps(box()).onChange as (e: unknown) => void)({ target: { value: 'make it blue' } }))
+    expect(button('Change it').getAttribute('disabled')).toBeNull()
+    await act(async () => press(button('Change it')))
+    await flush()
+    expect(calls).toContain('revise make it blue')
+    // a later round at work on the same plan, saying which change, with its Stop; the app stays as it was
+    expect(screen()).toBe('plan')
+    expect(host.textContent).toContain('Changing it: “make it blue”')
+    expect(host.textContent).toContain('Your app stays as it is until this change is checked and you deploy it.')
+    expect(button('Stop')).toBeTruthy()
+    // its go
+    to('ready_to_deploy')
+    await heard()
+    expect(screen()).toBe('plan-ready')
+    expect(host.textContent).toContain('The change: “make it blue”')
+    expect(host.textContent).not.toContain('Installed as')
+    await act(async () => press(button('Deploy')))
+    await flush()
+    to('deployed')
+    await heard()
+    // two versions, the change in the person's Apps; the box is empty again
+    expect(host.textContent).toContain('Installed as')
+    expect(host.textContent).toContain('Versions')
+    expect(currentRow()).toEqual([expect.stringContaining('“make it blue”')])
+    expect(currentRow()[0]).toContain('In your Apps')
+    expect(reactProps(box()).value).toBe('')
+    // Undo puts back the version it was made from
+    await act(async () => press(button('Undo the last change')))
+    await flush()
+    expect(calls).toContain('revert 1')
+    expect(currentRow()).toEqual([expect.stringContaining(`“${SENTENCE}”`)])
+    expect(all((n) => n.tagName === 'BUTTON' && n.textContent === 'Undo the last change')).toHaveLength(0)
+    // and the change can be put back
+    await act(async () => press(button('Put back')))
+    await flush()
+    expect(calls).toContain('revert 2')
+    expect(currentRow()).toEqual([expect.stringContaining('“make it blue”')])
+    expect(host.textContent).not.toMatch(/plan_sim_|r[12]\b/)
+    // the bench lets go of it (Make something else); the empty canvas offers it again, and Change it opens it there
+    await act(async () => press(button('Make something else')))
+    await flush()
+    expect(screen()).toBe('plan-start')
+    expect(host.textContent).toContain('Or change something you made')
+    expect(host.textContent).toContain((s.get(id) as { title: string }).title)   // the made apps go by their own name
+    await act(async () => press(button('Change it')))
+    await flush()
+    expect(screen()).toBe('plan-ready')
+    expect(currentRow()).toEqual([expect.stringContaining('“make it blue”')])
+    expect(all((n) => n.tagName === 'TEXTAREA')).toHaveLength(1)
   })
 })

@@ -1653,17 +1653,17 @@ def goal_create(parent_id, title):
 
 
 def create(sentence):
-    """Ask Create to build software: the hive offers what to build, in the asker's words, to this mind's person in
-    Create, and Create's code minds build it once they press Start in the mind's chat (POST /api/agent/create). The
-    offer goes to the person of the conversation the mind is answering (_reply_conversation); with none, the hive
-    offers it to the mind's own person or else whoever last wrote to it."""
+    """Ask Create to build software: the hive offers what to build, in the asker's words, to this mind's person, and
+    Create's code minds build it once they press Start in Create on the offer card, in their Ask or the mind's chat (POST
+    /api/agent/create). The offer goes to the person of the conversation the mind is answering (_reply_conversation);
+    with none, the hive offers it to the mind's own person or else whoever last wrote to it. What the mind may tell
+    them is the hive's own line (the answer's next, create_offers.OFFERED_NEXT)."""
     payload = {"sentence": _text(sentence)}
     conversation = _reply_conversation()
     if conversation:
         payload["conversation_id"] = conversation
     result, error = _call("POST", "/api/agent/create", payload)
-    return error or (f"HIVE-CREATE-OFFERED {result['id']}: your person can start it in Create from your chat, and "
-                     "nothing is built until they do.")
+    return error or f"HIVE-CREATE-OFFERED {result['id']}: {result['next']}"
 
 
 def _reply_conversation():

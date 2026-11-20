@@ -120,6 +120,8 @@
 (= (scr-holds (on $flag)) (== (scr-fact $flag) yes))
 (= (scr-holds (off $flag)) (if (== (scr-fact $flag) yes) False True))
 (= (scr-holds (is $k $v)) (== (scr-fact $k) (Val $v)))
+; (below src n): the count is stated and under n (a share left, a time to go); unstated, it does not hold
+(= (scr-holds (below $src $n)) (let $v (scr-fact (count $src)) (if (== $v none) False (< $v $n))))
 ; (any (c …)) holds when one of its conditions holds; (none-of (c …)) when none does. (Not `not`: that is a standard
 ; library function, so a condition headed by it would be run, not matched.)
 (= (scr-holds (any $cs)) (scr-any $cs))
@@ -425,15 +427,21 @@
 ; a depth naming a layer that does not exist
 (= (scr-bad-depths)
    (collapse (match &self (Depth $s $o $l) (if (== (collapse (match &self (Layer $l $n) $n)) ()) ($s $o $l) (empty)))))
-; a condition the rules do not know (a typo, or a library word such as not, which would run instead of match)
+; a condition the rules do not know (a typo, or a library word such as not, which would run instead of match), at the
+; top of a When or inside its any or none-of: an unknown one in there never holds, so it would leave its part shown or
+; hidden for good while the guards passed (refine's (none-of ((below revisions 2))) on an engine without below)
 (: scr-known-cond (-> Expression Bool))
 (= (scr-known-cond (has $x)) True)
 (= (scr-known-cond (none $x)) True)
 (= (scr-known-cond (on $x)) True)
 (= (scr-known-cond (off $x)) True)
 (= (scr-known-cond (is $k $v)) True)
-(= (scr-known-cond (any $cs)) True)
-(= (scr-known-cond (none-of $cs)) True)
+(= (scr-known-cond (below $x $n)) True)
+(= (scr-known-cond (any $cs)) (scr-all-known $cs))
+(= (scr-known-cond (none-of $cs)) (scr-all-known $cs))
+(= (scr-all-known $cs)
+   (if (== $cs ()) True
+       (let* (($h (car-atom $cs)) ($t (cdr-atom $cs))) (if (== (scr-known-cond $h) True) (scr-all-known $t) False))))
 (= (scr-bad-conditions)
    (collapse (match &self (When $s $o $c) (if (== (scr-known-cond $c) True) (empty) ($s $o)))))
 ; a When written with two or three conditions: the composer reads (When screen order condition) and no other shape, so

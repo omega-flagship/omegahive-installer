@@ -1,5 +1,5 @@
 /**
- * Create's plan view: the contract between the host's plan engine and the page. Source of truth: the host's plan engine
+ * Purpose: Create's plan view, the contract between the host's plan engine and the page. Source of truth: the host's plan engine
  * (hive/core/create_plan_engine.py view(), list_for(), files(); the routes in hive/core/app.py; reducer R4.1,
  * modules/create/controller/create_plan_controller_r4_1.metta).
  *
@@ -14,6 +14,12 @@
  *   POST /api/create/plans/{id}/answers {q, text}    → PlanView (the person answers a question)
  *   POST /api/create/plans/{id}/deploy {}            → PlanView (the person's go; available only when actions say so)
  *   POST /api/create/plans/{id}/stop {}              → PlanView (the person stops the plan)
+ *   POST /api/create/plans/{id}/revise {words}       → PlanView (a new round changes the installed app in place, built
+ *                                                       from its current revision; words are 1-2000 characters)
+ *   POST /api/create/plans/{id}/revert {round}       → PlanView (the app put back to that revision, which becomes the
+ *                                                       current one; nothing new is built)
+ * revise and revert refuse 404 not_found, 409 not_revisable (a round still running, nothing deployed yet, no such
+ * revision) and 400 bad_request.
  * There is no route to withdraw a question.
  * Events (hive event stream): create.plan.status {plan_id, phase, status, next_action}; create.plan.piece {plan_id,
  * piece, state, candidate, repairs}; create.plan.question {plan_id, q, about, text, choices, answered};
@@ -142,13 +148,32 @@ export interface PlanPreview { ckpt: string; ref: string | null; digest: string 
 export interface PreviewFiles { ref: string; ckpt: string; files: Record<string, string> }
 
 export interface PlanAction {
-  name: 'deploy' | 'answer' | 'stop'
+  /** undo is a revert to the revision the current one was built from; revert puts back any revision */
+  name: 'deploy' | 'answer' | 'stop' | 'revise' | 'undo' | 'revert'
   available: boolean
   why_not: string | null
+  /** undo only: the round it puts back (its body's round) */
+  round?: number
 }
 
-/** GET /api/create/plans: one row per plan of the person's. */
-export interface PlanSummary { plan_id: string; sentence: string; phase: string; status: string; updated_at: string }
+/**
+ * One deployed round of the plan's app (a revision): the change asked for (round 1: the plan's sentence), when it went
+ * in, whether the app runs it now, and the round it was built from (round 1: none). A round stopped before its deploy
+ * is not a revision.
+ */
+export interface PlanRevision {
+  round: number
+  words: string
+  deployed_at: string
+  current: boolean
+  from: number | null
+}
+
+/** GET /api/create/plans: one row per plan of the person's (an app's later rounds are inside its row: round is its
+ * newest round, 1 for the first build, and phase and status are that round's; null from a hive before rounds). title is
+ * the app's name as its view gives it (a saved creation's title for a plan begun from one, else its first plan's
+ * title), null before its plan names it or from a hive that does not send it. */
+export interface PlanSummary { plan_id: string; sentence: string; title: string | null; phase: string; status: string; round: number | null; updated_at: string }
 
 export interface PlanView {
   plan_id: string
@@ -180,6 +205,12 @@ export interface PlanView {
   actions: PlanAction[]
   /** once deployed: the hive app it became */
   installed: { app_id: string; name: string } | null
+  /** the round in flight, or the last one (1 for the first build); a later round changes the installed app in place */
+  round: number
+  /** the words that round was asked with (round 1: the sentence) */
+  round_words: string
+  /** the deployed rounds by round; the current one is what the installed app runs */
+  revisions: PlanRevision[]
   journal: { seq: number; id: string; kind: string; verdict: string; at: string }[]
   effects: { kind: string; op: string; state: string }[]
   updated_at: string
@@ -194,5 +225,7 @@ export interface PlanClient {
   createPlanAnswer?(planId: string, q: string, text: string): Promise<unknown>
   createPlanDeploy?(planId: string): Promise<unknown>
   createPlanStop?(planId: string): Promise<unknown>
+  createPlanRevise?(planId: string, words: string): Promise<unknown>
+  createPlanRevert?(planId: string, round: number): Promise<unknown>
   createPlanFile?(planId: string, path: string, ckpt: string): Promise<unknown>
 }

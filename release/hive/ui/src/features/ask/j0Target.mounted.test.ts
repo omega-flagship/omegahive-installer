@@ -544,3 +544,39 @@ it.each(['submit', 'take', 'run'] as const)('a retained %s closure loses authori
   expect(posts, 'reactivation never revives an earlier closure; the unmounted fallback remains disarmed').toEqual([])
   expect((native.tree as ReturnType<typeof useAskField>).value).toBe(value)
 })
+
+describe('a line led by the name of the mind the Ask row names goes to that mind, though a swarm carries the name too', () => {
+  // the tester's case (Hive Rapid Feedback Loop, 20 Nov): their swarm and their mind share a name, and "Taiga, …" in their
+  // conversation with the mind stopped at a pick list with nothing sent. Here the person's own mind Ember and a swarm Ember.
+  const line = 'Ember, why are you asking such a silly question?'
+  beforeEach(() => {
+    useHive.setState((s) => ({ swarms: { ...s.swarms, s_ember: { id: 's_ember', name: 'Ember', description: '', hue: 0, member_ids: [], created_at: '', coordinator_id: null } } }) as never)
+  })
+
+  it('in the open conversation with the mind: no pick list, and the whole line continues it', async () => {
+    await useAskStore.getState().send('hello', { route: '', experience: 'classic' })
+    await flush()
+    useAskStore.setState({ open: null })
+    const m = mount(() => useAskField({ experience: 'classic' }))
+    const f = () => m.tree as ReturnType<typeof useAskField>
+    // the conversation is with the person's own mind, so the chip names it as theirs
+    expect(f().chip).toMatchObject({ kind: 'personal', name: 'Ember' })
+    f().change(line); m.settle()
+    expect(f().list.some((c) => c.choice)).toBe(false)
+    expect(f().list.some((c) => c.key === 'also-swarm-s_ember')).toBe(true)
+    f().change(''); m.settle()
+    const row = await typeAndSend(m, line)
+    expect(row).toBe(`Ask Ember: ${line}`)
+    expect(posts.map((p) => p.text)).toEqual(['hello', line])
+    expect(posts[1].context).not.toMatchObject({ swarm_id: 's_ember' })
+  })
+
+  it('with no conversation open, the person’s own mind the row names takes it the same way', async () => {
+    const m = mount(() => useAskField({ experience: 'classic' }))
+    expect((m.tree as ReturnType<typeof useAskField>).chip).toMatchObject({ kind: 'personal', name: 'Ember' })
+    const row = await typeAndSend(m, line)
+    expect(row).toBe(`Ask Ember: ${line}`)
+    expect(posts.map((p) => p.text)).toEqual([line])
+    expect(posts[0].context).not.toMatchObject({ swarm_id: 's_ember' })
+  })
+})

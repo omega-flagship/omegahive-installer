@@ -214,6 +214,13 @@ describe('the app’s Ω entries, composed', () => {
   it('a person app has no Works in; before a swarm opens, no views', () => {
     expect(labels(st({ person: true, swarm: null }))).toEqual([['', ['Leave Seed Ledger', 'Where it runs…']]])
   })
+  it('Leave is also shown beside the Ω mark, the one control a page that is only the app keeps, and nothing else is', () => {
+    for (const s of [st(), st({ create: true, name: 'Create', form: 'design-canvas' }), st({ person: true, swarm: null })]) {
+      const besides = menu(s).flatMap((x) => x.items.filter((i) => i.beside).map((i) => [i.label, i.action]))
+      expect(besides).toEqual([[menu(s)[0].items[0].label, 'leave']])
+      expect(besides[0][0]).toMatch(/^Leave /)
+    }
+  })
   it('each entry sends its own press, with the swarm it names', () => {
     const got = menu(st()).flatMap((x) => x.items.map((i) => [i.action, i.item.id ?? null]))
     expect(got).toEqual([['leave', null], ['access', null], ['view-own', null], ['view-graph', null], ['works-in', 's_meadow'], ['works-in', 's_orchard']])

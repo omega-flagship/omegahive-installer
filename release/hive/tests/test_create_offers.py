@@ -6,6 +6,7 @@ A scripted plan engine: start() records the person and sentence it is given, so 
 """
 import pytest
 
+from hive.core.create_offers import OFFERED_NEXT
 from hive.core.db import now
 from hive.core.hive import token_hash
 from hive.tests.test_core_api import agent_headers, client, make_swarm_and_agents  # noqa: F401  (fixture)
@@ -54,8 +55,10 @@ def test_a_minds_build_request_is_offered_to_its_person_and_nothing_is_built(wor
     _own(w)
     r = _offer(w)
     assert r.status_code == 201 and r.json()["state"] == "offered" and r.json()["id"].startswith("cof_")
+    assert r.json()["next"] == OFFERED_NEXT   # the mind is told it waits for the person's Start, and where
     listed = w.client.get("/api/me/create-offers", headers=w.jon).json()
     assert [(o["id"], o["sentence"], o["mind"]["id"]) for o in listed] == [(r.json()["id"], SENTENCE, w.mind["id"])]
+    assert "next" not in listed[0]   # the person's list is the offers alone
     assert w.client.get(f"/api/me/create-offers?mind={w.mind['id']}", headers=w.jon).json() == listed
     assert w.client.get("/api/me/create-offers", headers=w.ann).json() == []   # nobody else's
     assert w.started == []   # an offer builds nothing
@@ -68,6 +71,7 @@ def test_the_same_call_again_answers_the_same_offer(world):
     _own(w)
     first, again = _offer(w), _offer(w)
     assert (first.status_code, again.status_code) == (201, 200) and again.json()["id"] == first.json()["id"]
+    assert again.json()["next"] == first.json()["next"] == OFFERED_NEXT
     assert len(w.client.get("/api/me/create-offers", headers=w.jon).json()) == 1
 
 

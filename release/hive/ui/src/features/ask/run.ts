@@ -38,6 +38,12 @@ export interface RunCtx {
   you: string
   /** "on Goals" */
   where?: string
+  /**
+   * The swarm of the mind the Ask is with. An app the Ask opens without a swarm of its own opens there, as that mind's
+   * own Open in… opens it: the app page alone may find no swarm it can use where the mind's panel opens the app (a
+   * tester's Open Commons Explorer, 20 Nov).
+   */
+  swarm?: string
 }
 
 export const WAIT_MS = 15_000
@@ -160,9 +166,11 @@ export async function runIntent(act: IntentAct, ctx: RunCtx, origin: AskOrigin =
   const say = (text: string) => ask.addLocal(ctx.you, text, { where: ctx.where, origin })
   const offline = (what: string) => say(`Not connected to the hive, so ${what}.`)
   switch (act.do) {
-    case 'route':
-      go(href(act.route), act.label, ctx, origin)
+    case 'route': {
+      const route = act.route.name === 'program' && !act.route.swarm && ctx.swarm ? { ...act.route, swarm: ctx.swarm } : act.route
+      go(href(route), act.label, ctx, origin)
       return true
+    }
     case 'feature':
     case 'scoped': {
       const f = featureById(act.id)
@@ -358,7 +366,7 @@ export async function performAct(act: IntentAct, ctx: RunCtx & { experience: str
   const own = ctx.onAct ?? actHandlerFor(ctx.experience)
   const handled = own ? await own(act, ctx.you) : false
   if (!origin.ok()) return 'stale'
-  if (!handled) await runIntent(act, { you: ctx.you, where: ctx.where }, origin)
+  if (!handled) await runIntent(act, { you: ctx.you, where: ctx.where, swarm: ctx.swarm }, origin)
   if (!origin.ok()) return 'stale'
   return handled
 }

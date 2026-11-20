@@ -33,13 +33,14 @@ import json
 import logging
 import re
 
-from .create_plan_ports import CHECK_PATH, ScopeError
+from .create_plan_ports import CHECK_PATH, ROUND_CONTRACT, ScopeError
 
 log = logging.getLogger(__name__)
 
 TERMINAL = ("delivered", "stopped")
 RESTING = ("blocked", "stopped", "deployed")             # plan phases in which no member should keep working
-BRIEF_TEXT, BRIEF_ANSWERS, BRIEF_FAILING, BRIEF_PROBE = 3000, 12000, 16000, 6000   # characters; the member's brief limit is 40000
+BRIEF_TEXT, BRIEF_ANSWERS, BRIEF_FAILING, BRIEF_PROBE = 3000, 12000, 16000, 6000   # characters
+BRIEF_LIMIT = 40000                     # the member's brief limit, characters of its JSON
 CHECK_SAID = 200                                         # characters of the check's own note a hold card quotes
 
 
@@ -136,7 +137,7 @@ class PerChangeBuilds:
 
     def _brief(self, run, spec, failing):
         plan = self.engine._plan(run["plan_id"]) or {}
-        return {"sentence": _bounded(run["sentence"], BRIEF_TEXT), "title": _bounded(spec.get("title"), 400),
+        brief = {"sentence": _bounded(run["sentence"], BRIEF_TEXT), "title": _bounded(spec.get("title"), 400),
                 "brief": _bounded(spec.get("brief"), BRIEF_TEXT),
                 "acceptance": _bounded(plan.get("acceptance") or [], BRIEF_TEXT),
                 "answers": _bounded(self.engine.answers(run["plan_id"]), BRIEF_ANSWERS),
@@ -144,6 +145,13 @@ class PerChangeBuilds:
                 # the probe the candidate is played by (create_plan_ports.PROBE_PATH): its selectors are the elements
                 # to build, so a builder that sees it builds to them on its first try instead of in a fix round
                 "probe": _bounded(self._space(run).get("probe"), BRIEF_PROBE)}
+        # a change to a made app: what is asked, and this piece's files as the app runs them now, so the builder edits
+        # them instead of writing the app again from the scaffold; it gets the room the brief has left under its limit
+        change = self.ports.change_context(run, spec.get("files"))
+        if change:
+            used = len(json.dumps(brief, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+            brief["change"] = _bounded(change, max(2000, BRIEF_LIMIT - used - 200))
+        return brief
 
     def _task_key(self, run, op):
         """The member key for this build: the op, or op~n after n members for it were ended (a blocked or stopped plan
@@ -178,7 +186,8 @@ class PerChangeBuilds:
                   "workspace_id": fork}
         out = self.code.adopt_member(run["plan_id"], piece, origin, list(spec["files"]), assignee,
                                      run["plan_id"], "plan-reviewed", run["person"], task=self._task_key(run, op),
-                                     brief=self._brief(run, spec, failing))
+                                     brief=self._brief(run, spec, failing),
+                                     contract=ROUND_CONTRACT if s.get("app_plan") else None)
         self._remember(run, piece, {"task_id": out["task_id"], "op": op, "fork": fork, "cand": None, "integrated": False})
         return await self._now_or_later(run, body, out["task_id"])
 

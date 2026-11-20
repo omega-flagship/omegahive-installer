@@ -313,7 +313,6 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
   const canAsk = useHive((s) => !!s.client?.ask)
 
   const scope = useMemo(() => ({ experience, swarm: routeSwarm(route) }), [experience, route])
-  const cands = useMemo(() => resolve(value, scope, world, SCOPED), [value, scope, world])
   // "delete the Forge swarm": read the archived swarms once, so an archived one (cleanup pending) can be named too
   const deleteWords = DELETE_WORDS.test(value)
   useEffect(() => {
@@ -375,6 +374,9 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
   // the id of the mind answererName names (the voice, which can differ from answererId on a conductor turn): what the
   // skins name it by (words.shownMind), so an own mind called Omega is never "the orchestrator" on another's thread
   const answererVoiceId: string | null = voice.id
+  // what the words can mean, knowing the mind the Ask row names: a line led by its name is a line to it (understand.ts
+  // World.answeringMind). Nothing above reads the candidates, so they come after the one recipient decision.
+  const cands = useMemo(() => resolve(value, scope, { ...world, answeringMind: answererVoiceId }, SCOPED), [value, scope, world, answererVoiceId])
   const answeringYou = !!answererId && !!personal?.id && answererId === personal.id
   // a skin's explicit "ask a mind" command: its words are the request, and the policy's answer is the mind (r2.2)
   const forced = forcedAsk ? forcedAsk(value) : null
@@ -574,7 +576,10 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
         setPanel(null)
       }
       try {
-        const handled = await performAct(act, { you, where, experience, onAct }, origin)
+        // an app it opens opens in the swarm of the mind it is with (run.ts RunCtx.swarm), as that mind's Open in… does
+        const withMind = answererVoiceId ?? answererId
+        const swarm = withMind ? agents[withMind]?.swarm_id ?? undefined : undefined
+        const handled = await performAct(act, { you, where, experience, onAct, swarm }, origin)
         if (handled === 'stale') return stale()
         if (handled !== 'keep') done(you)
         setPanel(null)
@@ -582,7 +587,7 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
         setBusy(false)
       }
     },
-    [done, route, experience, where, to, toChosen, onAct, world, canAsk, addressCurrent, onDispatch, fieldCurrent],
+    [done, route, experience, where, to, toChosen, onAct, world, canAsk, addressCurrent, onDispatch, fieldCurrent, answererVoiceId, answererId, agents],
   )
 
   /** A candidate the person chose (or the policy picked). Person-typed hive actions wait out the arming window. */

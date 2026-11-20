@@ -543,9 +543,24 @@ class Programs:
         succeeded."""
         entry = self._ready(program_id)
         out, seen = [], set()
-        def add(swarm_id, why, own=False):
+        owners = {}
+
+        def owned(swarm_id):
+            # "own": the asker owns this space, so the page may open it by itself though it is private (pickSwarm.ts),
+            # whatever made it a home: an activation or an earlier open in a person's own private swarm is as much
+            # theirs as the host's own setup (a tester's own swarm read as unusable, 20 Nov). An admin who can see
+            # someone else's private space gets the home, never the mark.
+            if not principal:
+                return False
+            if swarm_id not in owners:
+                row = self.hive.db.one("SELECT owner FROM swarms WHERE id = ?", (swarm_id,))
+                owners[swarm_id] = bool(row and row.get("owner") == principal)
+            return owners[swarm_id]
+
+        def add(swarm_id, why):
             if swarm_id in visible and swarm_id not in seen:
-                seen.add(swarm_id); out.append({"swarm_id": swarm_id, "why": why, **({"own": True} if own else {})})
+                seen.add(swarm_id)
+                out.append({"swarm_id": swarm_id, "why": why, **({"own": True} if owned(swarm_id) else {})})
         # The host's own homes first: a swarm where the host itself makes the app active for its person (Create in
         # that person's Studio, a person app in its context; ProgramAttachments.host_studio_active / host_person_active).
         # Without this, Create had a working home that its page could not find (Jon 11-09).
@@ -553,10 +568,7 @@ class Programs:
         if attachments is not None:
             for sid in sorted(visible):
                 if attachments.host_studio_active(program_id, sid) or attachments.host_person_active(program_id, sid):
-                    # "own": the asker owns this space, so the page may open it by itself though it is private (an
-                    # admin who can see someone else's private space gets the home, never the "own" mark)
-                    row = self.hive.db.one("SELECT owner FROM swarms WHERE id = ?", (sid,)) if principal else None
-                    add(sid, "your own space", own=bool(row and row.get("owner") == principal))
+                    add(sid, "your own space")
         hook = getattr(entry["module"], "home_swarms", None)
         if callable(hook):
             try:

@@ -25,7 +25,8 @@ import pytest
 from hive.core import create_plan_engine as cpe
 from hive.core import create_plan_ports as cpp
 from hive.core.create_plan_members import PerChangeBuilds
-from hive.core.create_plan_ports import PROBE_PATH, AppReleases, GoalMinds, Ports, frame_document, parse_check_output
+from hive.core.create_plan_ports import (PROBE_PATH, ROUND_CONTRACT, AppReleases, GoalMinds, Ports, frame_document,
+                                         parse_check_output)
 from hive.core.goals import STEP_BUDGET_FLOOR_USD
 from hive.tests.test_core_api import agent_headers, client  # noqa: F401  (fixture)
 from hive.tests.test_result_schema import STORED_AS
@@ -211,7 +212,7 @@ class FakePerChangeEngine:
         return self.runs.get(task_id)
 
     def adopt_member(self, plan_id, piece, origin, paths, assignee, budget_ref, review_policy, person,
-                     controller_id=None, task=None, brief=None):
+                     controller_id=None, task=None, brief=None, contract=None):
         import hashlib
         assert review_policy == "plan-reviewed" and origin["workspace_id"] == f"ws_{piece}"
         tid = "mt_" + hashlib.sha256(f"{plan_id}|{piece}|{task}".encode()).hexdigest()[:32]
@@ -221,7 +222,7 @@ class FakePerChangeEngine:
             self.runs[tid] = {"request_id": tid, "profile": "plan-member", "phase": "claimed", "status": "accepted",
                               "next_action": None, "candidate": None, "last_error": None, "member": json.dumps(
                                   {"plan_id": plan_id, "piece": piece, "paths": sorted(paths), "assignee": assignee,
-                                   "brief": brief})}
+                                   "brief": brief, **({"contract": contract} if contract else {})})}
             self._helper(tid, (brief or {}).get("failing"))
         return {"task_id": tid, "plan_id": plan_id, "piece": piece}
 
@@ -331,7 +332,9 @@ class FakeMinds:
             questions = [{"q": "q-emoji", "about": "plan", "text": "Show a moon emoji beside each phase?",
                           "choices": ["Yes", "No"]}] if self.question else []
             return {"by": agent, "plan": {
-                "title": "Moon phases", "pieces": [
+                # a planner titles a later round by its change, as a real model does ("Tip choice of 15, 18 or 20
+                # percent" for a tip calculator's second round)
+                "title": "Tonight's heading" if packet.get("change") else "Moon phases", "pieces": [
                     {"id": "page", "kinds": ["design"], "title": "Page layout",
                      "files": ["index.html", *sorted(set(self.extra.get("page", {})) - {"index.html"})],
                      "brief": "Heading and an empty list #phases."},
@@ -342,6 +345,8 @@ class FakeMinds:
                 "questions": questions, "needs": {"design": "no-design", "tests": "author"}}}
         if kind == "author-tests":
             assert "index.html" in packet["scaffold"]
+            if packet.get("change"):           # a later round: a probe for what the change asks, red on the app now
+                return {"by": agent, "files": {PROBE_PATH: ROUND_PROBE}}
             if self.probe is not None:
                 return {"by": agent, "files": {PROBE_PATH: self.probe}}
             src = self.always or (self.authored.pop(0) if self.authored else CHECK)
@@ -350,6 +355,10 @@ class FakeMinds:
             p = body["piece"]
             if p == "page":
                 page = self.extra.get("page", {}).get("index.html", PAGE)
+                # a later round's change: its context names the change, where a first build begun from a saved
+                # creation has only what the person has now
+                if ((body.get("brief") or packet.get("brief") or {}).get("change") or {}).get("change"):
+                    page = PAGE.replace("Phases of the Moon", "Moon phases tonight")
                 return {"by": agent, "files": {**self.extra.get("page", {}), "index.html": page},
                         "summary": "heading + list"}
             if p == "style":
@@ -650,6 +659,235 @@ def test_a_piece_built_before_the_script_a_case_needs_is_not_blamed_for_that_cas
     members._remember(run, "app", dict(members._members(run).get("app") or {}, integrated=True))
     out = w.client.portal.call(w.engine.ports.members.run_test, {"member": mrun["member"]}, cand)
     assert out["passed"] is False and out["failing"] == ["app.js", "index.html"] and not out["waits"], out
+
+
+# a later round's probe: the change it asks for (red on the app as it runs) and what the app already does (kept)
+ROUND_PROBE = {"cases": [
+    {"name": "The heading says tonight", "files": ["index.html"], "steps": [],
+     "assertions": [{"kind": "contains", "selector": "h1", "expected": "tonight"}]},
+    {"name": "All eight phases are still listed", "files": ["app.js"], "steps": [],
+     "assertions": [{"kind": "count", "selector": "#phases li", "expected": 8}]},
+]}
+
+
+def test_a_made_app_is_changed_in_place_by_a_round_and_put_back_by_undo(world):
+    """A change asked about an app Create made is a round on the same plan: planned, checked and built from the app as
+    it runs now, deployed over the same app, kept as a revision; undo puts the app back to the revision it was built
+    from. A round is its own run inside; the person sees one plan id throughout."""
+    w = world
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    pid = view["plan_id"]
+    w.client.post(f"/api/create/plans/{pid}/answers", json={"q": "q-emoji", "text": "No emoji, words only"}, headers=w.jon)
+    first = w.client.post(f"/api/create/plans/{pid}/deploy", headers=w.jon).json()
+    app_id = first["installed"]["program_id"]
+    assert first["round"] == 1 and [r["round"] for r in first["revisions"]] == [1] and first["revisions"][0]["current"]
+    assert next(a for a in first["actions"] if a["name"] == "undo")["available"] is False
+
+    # refusals: no words, someone else, a revision that isn't there
+    assert w.client.post(f"/api/create/plans/{pid}/revise", json={"words": " "}, headers=w.jon).status_code == 400
+    missing = w.client.post(f"/api/create/plans/{pid}/revert", json={"round": 7}, headers=w.jon)
+    assert missing.status_code == 409, missing.text
+
+    w.minds.question = False
+    w.events.clear()
+    changed = w.client.post(f"/api/create/plans/{pid}/revise", json={"words": "Call the heading Moon phases tonight"},
+                            headers=w.jon)
+    assert changed.status_code == 200, changed.text
+    view = changed.json()
+    assert view["plan_id"] == pid and view["round"] == 2 and view["round_words"] == "Call the heading Moon phases tonight"
+    assert view["phase"] == "ready-to-deploy", (view["phase"], view["last_error"], [c["state"] for c in view["checks"]])
+    # the round's check was written for the change, red on the app as it ran, then green on the change
+    assert [c["state"] for c in view["checks"]][0] == "fail" and view["checks"][-1]["state"] == "pass"
+    assert view["checks"][0]["failing"] == ["index.html"]
+    # the planner, the test author and the builders were given the change and the app as it runs now
+    planner = [c[2] for c in w.minds.calls if c[0] == "plan"][-1]
+    assert planner["change"] == "Call the heading Moon phases tonight" and planner["the_app_now"]["app.js"] == APP_FIXED
+    page_build = [c[2] for c in w.minds.calls if c[0] == "build" and c[2]["piece"] == "page"][-1]
+    assert page_build["brief"]["change"]["the_app_now"] == {"index.html": PAGE}
+    # the round's rule is the planner's contract and each builder's trusted contract, never part of the change's data
+    first_plan = [c[2] for c in w.minds.calls if c[0] == "plan"][0]
+    assert planner["contract"] == ROUND_CONTRACT and "contract" not in first_plan
+    assert "rule" not in planner and "rule" not in page_build["brief"]["change"]
+    contracts = {(json.loads(r["member"])["brief"]["sentence"], json.loads(r["member"]).get("contract"))
+                 for r in w.code.runs.values()}
+    assert contracts == {(SENTENCE, None), ("Call the heading Moon phases tonight", ROUND_CONTRACT)}, contracts
+    # while the round runs, the app stays as it was, and the round's events speak as the plan the person sees
+    assert view["installed"]["program_id"] == app_id
+    assert w.client.post(f"/api/create/plans/{pid}/revise", json={"words": "again"}, headers=w.jon).status_code == 409
+    assert {kw["plan_id"] for k, kw in w.events if k.startswith("create.plan.")} == {pid}
+
+    second = w.client.post(f"/api/create/plans/{pid}/deploy", headers=w.jon).json()
+    assert second["phase"] == "deployed" and second["installed"]["program_id"] == app_id     # in place, one app
+    assert "tonight" in w.hive.programs.ui_bundle(app_id)["files"]["index.html"]
+    assert [(r["round"], r["from"], r["current"]) for r in second["revisions"]] == [(1, None, False), (2, 1, True)]
+    # the app keeps its own name through a round titled by its change, and runs exactly its current revision's preview
+    assert (second["title"], second["summary"]) == ("Moon phases", "Moon phases")
+    assert second["round_title"] == "Tonight's heading"
+    assert installed_name(w, app_id) == "Moon phases"
+    assert second["installed"]["digest"] == w.engine._current_revision(pid)["preview"]["source_digest"]
+    undo = next(a for a in second["actions"] if a["name"] == "undo")
+    assert undo["available"] is True and undo["body"] == {"round": 1}
+    listed = w.client.get("/api/create/plans", headers=w.jon).json()
+    assert [(p["plan_id"], p["title"]) for p in listed] == [(pid, "Moon phases")]   # listed by the app's name too
+
+    back = w.client.post(f"/api/create/plans/{pid}/revert", json=undo["body"], headers=w.jon)
+    assert back.status_code == 200, back.text
+    back = back.json()
+    assert w.hive.programs.ui_bundle(app_id)["files"]["index.html"] == PAGE
+    assert [(r["round"], r["current"]) for r in back["revisions"]] == [(1, True), (2, False)]
+    assert "tonight" not in back["preview"]["files"]["index.html"] if "files" in (back["preview"] or {}) else True
+    # undo installs revision 1's own package again, under the app's name
+    assert back["installed"]["digest"] == w.engine._current_revision(pid)["preview"]["source_digest"]
+    assert installed_name(w, app_id) == "Moon phases" and back["title"] == "Moon phases"
+
+    # and putting revision 2 back installs its package again
+    again = w.client.post(f"/api/create/plans/{pid}/revert", json={"round": 2}, headers=w.jon)
+    assert again.status_code == 200, again.text
+    again = again.json()
+    assert [(r["round"], r["current"]) for r in again["revisions"]] == [(1, False), (2, True)]
+    assert "tonight" in w.hive.programs.ui_bundle(app_id)["files"]["index.html"]
+    assert again["installed"]["digest"] == w.engine._current_revision(pid)["preview"]["source_digest"]
+    assert installed_name(w, app_id) == "Moon phases"
+
+
+def test_a_builders_contract_is_in_its_trusted_instructions():
+    """The plan's rule for a piece (a round's keep-what-the-change-doesn't-touch) reaches its builder before the
+    UNTRUSTED_DATA its brief and files are in, where a real run's builder read the brief's own rules out of view."""
+    from hive.core.code_controller_member import _packet
+    member = {"plan_id": "plan_x", "piece": "page", "paths": ["index.html"], "brief": {"change": {"change": "x"}}}
+    head = _packet(None, {"member": json.dumps(dict(member, contract=ROUND_CONTRACT))}, {}, "build", None, "g_1")
+    assert ROUND_CONTRACT in head.split("UNTRUSTED_DATA")[0]
+    assert ROUND_CONTRACT not in _packet(None, {"member": json.dumps(member)}, {}, "build", None, "g_1")
+
+
+def installed_name(w, app_id):
+    """The name an installed Create app shows: its plugin.json's, under the apps folder AppReleases deploys to."""
+    return json.loads((w.engine.ports.apps.root / "apps" / app_id / "plugin.json").read_text())["name"]
+
+
+def test_two_apps_with_the_same_files_each_get_their_own_release(world):
+    """A preview release is addressed by its files and by the app it is, since its plugin.json names the app: two plans
+    whose builds come out byte for byte the same each get a release under their own id, so neither previews or reverts
+    to the other's."""
+    w = world
+    w.minds.question = False
+    a = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    assert a["phase"] == "ready-to-deploy", (a["phase"], a["last_error"])
+    w.minds.pending = {"plan"}          # a second plan, still planning, previews exactly a's files
+    b = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    apps = w.engine.ports.apps
+    same = apps.preview(w.engine._run(b["plan_id"]), apps.preview_files(a["preview"]["ref"]), None)
+    assert same["digest"] == a["preview"]["digest"] and same["ref"] != a["preview"]["ref"]
+    for ref, pid in ((a["preview"]["ref"], a["plan_id"]), (same["ref"], b["plan_id"])):
+        folder = apps.root / "previews" / ref[len("preview-"):]
+        assert json.loads((folder / "plugin.json").read_text())["id"] == "create-" + pid[len("plan_"):]
+    w.minds.pending = set()
+
+
+def test_a_stopped_change_leaves_the_app_as_it_was(world):
+    """A change the person stops is no version: the app keeps running the version it ran, the view's preview is that
+    version's again, and the plan takes the next change, which is a round of its own."""
+    w = world
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    pid = view["plan_id"]
+    w.client.post(f"/api/create/plans/{pid}/answers", json={"q": "q-emoji", "text": "No emoji, words only"}, headers=w.jon)
+    first = w.client.post(f"/api/create/plans/{pid}/deploy", headers=w.jon).json()
+    w.minds.question = False
+    w.minds.pending = {"plan"}          # the round's planner is still thinking when the person stops it
+    words = "Call the heading Moon phases tonight"
+    changed = w.client.post(f"/api/create/plans/{pid}/revise", json={"words": words}, headers=w.jon).json()
+    assert changed["round"] == 2 and changed["phase"] == "planning", (changed["phase"], changed["last_error"])
+    assert next(a for a in changed["actions"] if a["name"] == "revise")["available"] is False
+    stopped = w.client.post(f"/api/create/plans/{pid}/stop", headers=w.jon)
+    assert stopped.status_code == 200, stopped.text
+    view = w.client.get(f"/api/create/plans/{pid}", headers=w.jon).json()
+    assert view["plan_id"] == pid and view["round"] == 2 and view["phase"] == "stopped"
+    assert [(r["round"], r["current"]) for r in view["revisions"]] == [(1, True)]
+    assert view["preview"] == first["preview"] and view["installed"] == first["installed"]
+    assert next(a for a in view["actions"] if a["name"] == "revise")["available"] is True
+    w.minds.pending = set()
+    again = w.client.post(f"/api/create/plans/{pid}/revise", json={"words": words}, headers=w.jon).json()
+    assert again["round"] == 3 and again["phase"] == "ready-to-deploy", (again["phase"], again["last_error"])
+
+
+BASE_PAGE = ('<!doctype html>\n<html><head><title>Moon</title></head>\n<body>\n<h1>My moon page</h1>\n'
+             '<p>Tonight the moon is full.</p>\n</body></html>\n')
+BASE_VIEW = '(Screen moon "Moon")\n(Part moon 10 header ((title "Moon") (body "Tonight the moon is full.")))\n'
+
+
+def test_a_first_build_from_a_saved_creation_starts_from_what_the_person_has(world):
+    """A plan started from a saved creation the person may read (plan_for's artifact, which a mind's change offer
+    passes) gives the planner that creation as what they have now. An HTML view's page is the page the build starts
+    from; a MeTTa view's source goes to the planner as words, and the build starts from the scaffold. A creation the
+    person can't read, or one that isn't there, is refused as not found, as an unknown plan is."""
+    w = world
+    w.minds.question = False
+    maker = w.hive.db.one("SELECT * FROM agents WHERE id = ?", (w.maker["id"],))
+    page = w.hive.collab.create_artifact(maker, {"kind": "view", "title": "Moon page", "body": BASE_PAGE})
+    assert w.engine.plan_for("user:u_jon", page["id"]) == {"artifact_id": page["id"], "revision": 1}
+    view = w.client.portal.call(w.engine.start, "user:u_jon", SENTENCE, page["id"])
+    assert view["phase"] == "ready-to-deploy", (view["phase"], view["last_error"])
+    planner = next(c[2] for c in w.minds.calls if c[0] == "plan")
+    assert planner["what_they_have_now"] == {"artifact_id": page["id"], "revision": 1, "title": "Moon page",
+                                             "kind": "view", "body": BASE_PAGE}
+    assert "change" not in planner and "the_app_now" not in planner     # a first build: no app of theirs to keep
+    space = w.engine._space(w.engine._run(view["plan_id"]))
+    assert w.space.ckpts[space["scaffold"]]["index.html"] == BASE_PAGE
+    # the check was red on the page they had, and green once the build made the page the sentence asks for
+    assert view["checks"][0]["state"] == "fail" and view["checks"][-1]["state"] == "pass"
+
+    before = len(w.minds.calls)
+    drawn = w.hive.collab.create_artifact(maker, {"kind": "view", "title": "Moon", "body": BASE_VIEW})
+    view = w.client.portal.call(w.engine.start, "user:u_jon", SENTENCE, drawn["id"])
+    assert next(c[2] for c in w.minds.calls[before:] if c[0] == "plan")["what_they_have_now"]["body"] == BASE_VIEW
+    space = w.engine._space(w.engine._run(view["plan_id"]))
+    assert "seed_files" not in space and w.space.ckpts[space["scaffold"]] == SCAFFOLD
+
+    # one that isn't there, and one in a private team of someone else's, as Ada sees it
+    notes = w.client.post("/api/swarms", json={"name": "Jon's notes"}).json()
+    w.hive.db.execute("UPDATE swarms SET owner = 'user:u_jon', visibility = 'private' WHERE id = ?", (notes["id"],))
+    scribe = w.client.post("/api/agents", json={"name": "Scribe", "swarm_id": notes["id"]}).json()
+    private = w.hive.collab.create_artifact(w.hive.db.one("SELECT * FROM agents WHERE id = ?", (scribe["id"],)),
+                                            {"kind": "view", "title": "Notes", "body": BASE_PAGE})
+    assert w.engine.plan_for("user:u_jon", private["id"]) and w.engine.plan_for("user:u_ada", private["id"]) is None
+    for who, ref in (("user:u_ada", private["id"]), ("user:u_jon", "ar_nothing")):
+        with pytest.raises(cpe.EngineError) as refused:
+            w.client.portal.call(w.engine.start, who, SENTENCE, ref)
+        assert (refused.value.status, refused.value.code) == (404, "not_found")
+
+
+def test_a_plan_begun_from_a_saved_creation_keeps_its_name_through_deploys_rounds_and_reverts(world):
+    """A plan begun from a saved creation is that creation changed, so the app keeps the creation's title: the view's
+    title and summary and the name it is installed under, through its first deploy, a round and a revert, while
+    round_title gives the planner's own title for each change. Named by the planner's title instead, a change offer
+    naming such a plan read 'Your mind can change make the board bigger and say whose turn it is above it in Create'
+    (a dry run of 19 Nov)."""
+    w = world
+    w.minds.question = False
+    maker = w.hive.db.one("SELECT * FROM agents WHERE id = ?", (w.maker["id"],))
+    page = w.hive.collab.create_artifact(maker, {"kind": "view", "title": "Moon page", "body": BASE_PAGE})
+    view = w.client.portal.call(w.engine.start, "user:u_jon", SENTENCE, page["id"])
+    pid = view["plan_id"]
+    assert view["phase"] == "ready-to-deploy", (view["phase"], view["last_error"])
+    assert (view["title"], view["summary"], view["round_title"]) == ("Moon page", "Moon page", "Moon phases")
+    first = w.client.post(f"/api/create/plans/{pid}/deploy", headers=w.jon).json()
+    app_id = first["installed"]["program_id"]
+    assert first["title"] == "Moon page" and installed_name(w, app_id) == "Moon page"
+
+    changed = w.client.post(f"/api/create/plans/{pid}/revise", json={"words": "Call the heading Moon phases tonight"},
+                            headers=w.jon).json()
+    assert changed["phase"] == "ready-to-deploy", (changed["phase"], changed["last_error"])
+    second = w.client.post(f"/api/create/plans/{pid}/deploy", headers=w.jon).json()
+    assert (second["title"], second["summary"], second["round_title"]) == ("Moon page", "Moon page", "Tonight's heading")
+    assert installed_name(w, app_id) == "Moon page"
+    listed = w.client.get("/api/create/plans", headers=w.jon).json()
+    assert [(p["plan_id"], p["title"]) for p in listed] == [(pid, "Moon page")]   # the made list names it so too
+
+    undo = next(a for a in second["actions"] if a["name"] == "undo")
+    back = w.client.post(f"/api/create/plans/{pid}/revert", json=undo["body"], headers=w.jon).json()
+    assert back["title"] == "Moon page" and installed_name(w, app_id) == "Moon page"
+    # the revert installs revision 1's own release, addressed by the same name it was previewed under
+    assert back["installed"]["digest"] == w.engine._current_revision(pid)["preview"]["source_digest"]
 
 
 def test_a_design_review_fail_goes_back_to_the_studio_piece(world):

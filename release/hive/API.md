@@ -562,7 +562,7 @@ interface MemoryAtom { index: number; text: string }
   The queued memory operations, polled each loop.
 - **`POST /api/agent/create`** `{sentence, conversation_id?}` → 201 (200 for the
   same open offer again) `{id, mind, sentence, state: "offered", plan_id: null,
-  created_at}`. A mind's hive-create: what to build (an app, a page, a game, a
+  created_at, next}`. A mind's hive-create: what to build (an app, a page, a game, a
   tool, a script, a change to code) offered to its person, never a plan, since
   a Create plan starts only on a person's word in their own session. The offer
   is for the person of the conversation the mind is answering when
@@ -570,8 +570,12 @@ interface MemoryAtom { index: number; text: string }
   wrote there), else the person whose own mind it is, else the last person who
   wrote to it. 400 `bad_request` with no sentence or one over 2000 characters,
   403 `person_required` with no person to offer it to, 409 `not_available`
-  while Create plans are off. The person reads it with
-  `GET /api/me/create-offers?mind=` (their open offers, newest first) and
+  while Create plans are off. `next` is what the mind is told, in words it can
+  pass on: nothing is built until the person presses Start in Create on the
+  offer card in their Ask or the mind's chat, so it never says it is built. The
+  person reads it with `GET /api/me/create-offers?mind=` (their open offers,
+  newest first: one mind's when `mind` names it, as its chat shows them, every
+  mind's without it, as the Ask's thread shows them) and
   presses `POST /api/create/offers/{id}/start`, which starts the plan with the
   offer's words as `POST /api/create/plans` would, behind the same person gate,
   and answers `{offer, plan}` (the same plan when pressed again; 409

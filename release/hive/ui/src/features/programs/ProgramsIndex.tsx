@@ -1,3 +1,4 @@
+// Purpose: All apps: every app in this hive as a card wearing its identity, turned on or off, its access and activity.
 import { AnimatePresence } from 'framer-motion'
 import { useEffect, useMemo, useState } from 'react'
 import { experienceById } from '../../experiences/registry'
@@ -7,7 +8,7 @@ import { has } from '../../lib/useResource'
 import { useAdminView } from '../../lib/useAdmin'
 import { Screen, type ScreenItem } from '../../screens/Screen'
 import { useCompose } from '../../screens/useCompose'
-import { appLookIn, DESIGNED_APPS } from '../../shell/appLook'
+import { appLookIn, DESIGNED_APPS, useWornChrome } from '../../shell/appLook'
 import { useLook } from '../../shell/uiVariant'
 import type { Program } from '../../api/types'
 import { useHive } from '../../store/store'
@@ -33,6 +34,7 @@ export default function ProgramsIndex() {
   const reload = useHive((s) => s.reloadPrograms)
   const setEnabled = useHive((s) => s.setProgramEnabled)
   const lookState = useLook()
+  const chrome = useWornChrome()
   const prefs = lookState.current
   const look = experienceById(prefs?.experience).id
   const designed = prefs?.apps === 'designed'
@@ -47,11 +49,11 @@ export default function ProgramsIndex() {
   const compose = useCompose(look)
   const { plan, data } = useMemo(() => {
     const identityOf: IdentityOf = (p) => (designed ? DESIGNED_APPS[p.id]?.title ?? null : null)
-    // each card wears its app's identity in the current look (colour variables, type, motif)
-    const lookOf = (p: Program) => appLookIn(p, lookState)
+    // each card wears its app's identity in the current look, or on the worn experience's chrome (colour variables, type, motif)
+    const lookOf = (p: Program) => appLookIn(p, lookState, chrome)
     const { data, facts } = programsScreen(programs, err, { activity: canActivity, access: canAccess, admin: adminView }, identityOf, compose, lookOf)
     return { plan: compose('programs', facts), data }
-  }, [programs, err, canActivity, canAccess, adminView, designed, compose, lookState])
+  }, [programs, err, canActivity, canAccess, adminView, designed, compose, lookState, chrome])
 
   const onAction = (action: string, item: ScreenItem, value?: boolean) => {
     const press = pressed(action, item, value)

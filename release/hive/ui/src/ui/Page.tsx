@@ -3,6 +3,7 @@ import { useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { useEscape, useReducedMotion } from '../lib/hooks'
 import { UsageRegion } from '../shell/UsageRegion'
 import { IconButton } from './primitives'
+import { ViewArea } from './ViewArea'
 import { cx } from '../lib/cx'
 import { closePage, closeToHome } from '../lib/router'
 import { ViewInfo } from '../tour/ViewInfo'
@@ -105,7 +106,8 @@ export function Page({
         <UsageRegion covering className="w-[96px] shrink-0 px-1" />
         <IconButton icon="x" label="Close" onClick={closeToHome} />
       </header>
-      <div className="xc-omega-pad thin-scroll relative min-h-0 flex-1 overflow-y-auto overscroll-contain">{children}</div>
+      {/* the views lay out for the width this window gives them (ViewArea), not the screen's */}
+      <ViewArea className="xc-omega-pad thin-scroll relative min-h-0 flex-1 overflow-y-auto overscroll-contain">{children}</ViewArea>
     </m.section>
   )
 }

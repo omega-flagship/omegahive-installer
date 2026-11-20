@@ -6,6 +6,8 @@ import { shown } from '../../lib/displayName'
 
 const STATES = new Set<CreateOffer['state']>(['offered', 'started', 'dismissed'])
 const text = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v : null)
+/** How a card names a mind the hive no longer names (its row is gone) when no mind's chat it sits in names one. */
+const UNNAMED_MIND = 'A mind'
 
 /** One offer as the host's view gives it (create_offers.py CreateOffers.view), or null for any other shape. */
 export function parseOffer(raw: unknown): CreateOffer | null {
@@ -34,14 +36,15 @@ export function startedPlan(raw: unknown): string | null {
  * The mind-create-offers screen's facts and data: each open offer composed as its own card (its id, so a press comes
  * back scoped to it, and the words it draws: the mind's name and the sentence in quotes), and the line saying why a
  * press didn't go through. Pure. Example: one offer from Dot to build "a tip calculator" gives one card that reads
- * "Dot can build this in Create: “a tip calculator”".
+ * "Dot can build this in Create: “a tip calculator”". Each card names its own offer's mind (the Ask's thread holds
+ * every mind's); `mindName`, the chat's own mind, only stands in for a mind the hive no longer names.
  */
-export function offersScreen(offers: CreateOffer[], mindName: string, alert: string | null, compose: Compose):
+export function offersScreen(offers: CreateOffer[], mindName: string | null, alert: string | null, compose: Compose):
   { data: Record<string, unknown>; facts: ScreenFacts } {
   const rows = offers.map((o) => ({
     id: o.id,
     plan: compose('mind-create-offer', {}),
-    data: { 'offer.mind': shown(o.mind?.name ?? mindName), 'offer.sentence': `“${o.sentence}”` },
+    data: { 'offer.mind': shown(o.mind?.name || mindName || UNNAMED_MIND), 'offer.sentence': `“${o.sentence}”` },
   }))
   return {
     data: { 'offers.rows': rows, 'offers.alert': alert ?? '' },

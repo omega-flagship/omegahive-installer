@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
 
 export function useMediaQuery(query: string): boolean {
   return useSyncExternalStore(
@@ -12,7 +12,37 @@ export function useMediaQuery(query: string): boolean {
   )
 }
 
-export const useIsDesktop = () => useMediaQuery('(min-width: 768px)')
+/**
+ * An element's content width from each ResizeObserver report (delivered once on observe and again on every change), null
+ * until the first report or where the browser has no ResizeObserver. features/lab/useWidth.ts, forms/commons/hooks.ts and
+ * programs/ProgramHost.tsx each keep their own copy of this, reading 0 before measuring.
+ */
+export function useElementWidth(ref: RefObject<Element | null>): number | null {
+  const [width, setWidth] = useState<number | null>(null)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width
+      if (typeof w === 'number') setWidth(Math.round(w))
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [ref])
+  return width
+}
+
+/** The width a page window gives the views inside it (ui/ViewArea measures it), or null outside one. */
+export const ViewWidth = createContext<number | null>(null)
+/** The width at and above which the hive lays a view out for a desktop. */
+export const DESKTOP_MIN = 768
+/**
+ * Whether a view lays out for a desktop: by the width its page window gives it inside one, else by the screen. The Ask's
+ * half size leaves a page about 600 px of a 1440 px screen, where the Tasks board's five desktop columns wrapped a word
+ * per line (a tester's report, 20 Nov). Examples: viewIsDesktop(true, 614) is false; viewIsDesktop(true, null) is true.
+ */
+export const viewIsDesktop = (screen: boolean, width: number | null): boolean => (width === null ? screen : width >= DESKTOP_MIN)
+export const useIsDesktop = () => viewIsDesktop(useMediaQuery(`(min-width: ${DESKTOP_MIN}px)`), useContext(ViewWidth))
 export const useReducedMotion = () => useMediaQuery('(prefers-reduced-motion: reduce)')
 export const useFinePointer = () => useMediaQuery('(hover: hover) and (pointer: fine)')
 

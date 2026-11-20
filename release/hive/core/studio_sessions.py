@@ -76,6 +76,12 @@ MAC_SAFE_RESTART_OVERRIDE_HASHES = ('de8c80c4cb7240a6b83f9657145c059461c0bcf95c3
 SAFE_RESTART_PATH = "HIVE_SAFE_RESTART_PATH"
 
 
+def switched_on():
+    """Whether HIVE_STUDIO_SESSIONS asks for Studio sessions (1, true, on or yes), whatever the self-check then finds."""
+    import os
+    return os.environ.get(SETTING, "").strip().lower() in ("1", "true", "on", "yes")
+
+
 def host_platform():
     import sys
     return sys.platform
@@ -244,8 +250,7 @@ class StudioSessions(StudioSteps):
         """The startup self-check (F4.2): Studio sessions are enabled only when HIVE_STUDIO_SESSIONS is on AND every
         component exists; otherwise off, logging what is missing. Returns (enabled, missing)."""
         import logging
-        import os
-        wanted = os.environ.get(SETTING, "").strip().lower() in ("1", "true", "on", "yes")
+        wanted = switched_on()
         missing = [name for name, ok in self.components().items() if not ok]
         if wanted and missing:
             logging.getLogger("hive").warning("%s is on but this build lacks: %s; Studio sessions stay off",

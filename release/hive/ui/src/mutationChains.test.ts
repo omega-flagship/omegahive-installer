@@ -158,7 +158,10 @@ describe('the mutation sets are derived, and pinned', () => {
     // the person's Got it); listTaskStops, its GET, is a read
     // files: 216 = 215 plus deleteAsset (DELETE /api/assets/{sha}: an admin permanently removes a file no other swarm
     // shares)
-    expect(client.writes.size).toBe(216)
+    // a made app changed in place: 218 = 216 plus createPlanRevise (POST /api/create/plans/{id}/revise: the person's
+    // change) and createPlanRevert (POST …/{id}/revert: their Undo, or Put back on a version)
+    expect(client.writes.size).toBe(218)
+    for (const m of ['createPlanRevise', 'createPlanRevert']) expect(client.writes.has(m), m).toBe(true)
     expect(client.writes.has('askTakeover')).toBe(false)
     for (const m of ['createOfferStart', 'createOfferDismiss']) expect(client.writes.has(m), m).toBe(true)
     expect(client.writes.has('createOffers')).toBe(false)

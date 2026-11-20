@@ -693,13 +693,36 @@ class CreatePlanEngine:
         except Exception:
             return "review-required"
 
-    async def start(self, principal, sentence):
-        """POST /api/create/plans {sentence}: the Create bench. The person's own words start one plan."""
+    async def start(self, principal, sentence, base=None, conversation_id=None, exchanges=None):
+        """POST /api/create/plans {sentence}: the Create bench. The person's own words start one plan. `base`, a saved
+        creation the person may read (plan_for's artifact), is what they have now: its source goes to the planner and
+        the builders, so the app keeps what it does; an HTML view's body is the page the build starts from."""
         sentence = str(sentence or "").strip()
         if not sentence or len(sentence) > MAX_SENTENCE:
             raise EngineError(f"say what to make in 1-{MAX_SENTENCE} characters", 400, "bad_request")
         if not str(principal).startswith("user:"):
             raise EngineError("a plan is started by a person", 403, "person_required")
+        space = {}
+        if base is not None:
+            found = self.plan_for(principal, base)
+            if not found or "artifact_id" not in found:
+                raise EngineError("no saved creation of yours by that id", 404, "not_found")
+            art = self.hive.collab.artifact(found["artifact_id"])
+            rev = self.db.one("SELECT n, body FROM artifact_revisions WHERE artifact_id = ? AND n = ?",
+                              (found["artifact_id"], found["revision"]))
+            body = (rev or {}).get("body") or ""
+            space["base_creation"] = {"artifact_id": found["artifact_id"], "revision": found["revision"],
+                                      "title": art["title"], "kind": art["kind"], "body": body[:20000]}
+            if body.lstrip()[:1] == "<":
+                space["seed_files"] = {"index.html": body}
+        if conversation_id or exchanges:
+            space["exchanges"] = self._exchanges(principal, conversation_id, exchanges)
+        pid = self._insert_run(principal, sentence, space or None)
+        self.ensure_watch()
+        return await self.step(pid)
+
+    def _insert_run(self, principal, sentence, space=None):
+        """One new plan run in its first phase; a later round's run carries its app plan and seed in `space`."""
         pid = "plan_" + new_id("x")[2:]
         at = now()
         policy = self.review_policy(principal)
@@ -709,12 +732,166 @@ class CreatePlanEngine:
                                             "review_policy": policy if policy in REVIEW_POLICIES else "review-required",
                                             "lease": BUDGET, "piece_cap": PIECE_REPAIRS, "fix_cap": FIX_ROUNDS,
                                             "phase": "claimed", "status": "planning", "next_action": None,
-                                            "last_error": None, "space": None, "installed": None, "state": None,
+                                            "last_error": None, "space": _canonical(space) if space else None,
+                                            "installed": None, "state": None,
                                             "created_at": at, "updated_at": at})
+        return pid
+
+    # ---- rounds: a made app changed in place ---------------------------------------------------------------------
+    # A plan's first run builds the app; each change the person asks for later is a round, its own plan run (its own
+    # journal, epoch and effects, so every rule above holds per run), whose space names the app plan, whose build
+    # space starts from the app's current files, and whose deploy lands on the app plan's app. The app plan's id is
+    # the one the person sees: it answers for the newest round in the view, the routes and the events, and its space
+    # keeps the rounds, the revisions (every deployed round) and which revision the app runs now.
+
+    def app_plan(self, pid):
+        """The app plan a run belongs to: its own id for an app's first build, its app plan's for a later round."""
+        run = self._run(pid)
+        return (self._space(run).get("app_plan") or pid) if run else pid
+
+    def app_name(self, app):
+        """The app's name, kept by every round and revert: the title of the saved creation its first build began from
+        (start's base), since that plan is the creation changed, else its first round's plan title. Named by the
+        planner's title for the change, a plan begun from a saved Tic Tac Toe was called "make the board bigger and
+        say whose turn it is above it" in a change offer naming it (a dry run of 19 Nov), and was installed so."""
+        run = self._run(app)
+        base = (self._space(run).get("base_creation") or {}).get("title") if run else None
+        return base or (self._plan(app) or {}).get("title")
+
+    def _rounds(self, app):
+        """Every round of an app plan, oldest first: the app plan itself, then each later round's run id."""
+        run = self._run(app)
+        return [app, *(self._space(run).get("rounds") or [])] if run else []
+
+    def _newest(self, pid):
+        """The run a route on an app plan acts on: its newest round."""
+        return self._rounds(self.app_plan(pid))[-1]
+
+    def _revisions(self, app):
+        return list(self._space(self._run(app)).get("revisions") or [])
+
+    def _current_revision(self, app):
+        space = self._space(self._run(app))
+        return next((r for r in space.get("revisions") or [] if r["round"] == space.get("current")), None)
+
+    def _record_revision(self, pid, installed):
+        """A round's deploy landed: it is a revision of its app, and the one the app runs now."""
+        run = self._run(pid)
+        space, app = self._space(run), self.app_plan(pid)
+        n = space.get("round") or 1
+        preview = self._last_preview(pid)
+        rev = {"round": n, "words": run["sentence"], "from": space.get("from"), "preview": preview,
+               "deployed_at": (installed or {}).get("installed_at") or now()}
+        revs = sorted([r for r in self._revisions(app) if r["round"] != n] + [rev], key=lambda r: r["round"])
+        self._space_set(app, revisions=revs, current=n)
+        if app != pid:   # the app plan's installed is the app as it runs now, whichever round put it there
+            self.db.execute("UPDATE create_plan_runs SET installed = ? WHERE plan_id = ?", (_canonical(installed), app))
+
+    def _last_preview(self, pid):
+        done = [e for e in self._effects(pid, "preview") if e["state"] == "done"]
+        return (json.loads(done[-1]["result"]) | {"ckpt": self._body(done[-1])["ckpt"]}) if done else None
+
+    def plan_for(self, principal, ref):
+        """What a change to `ref` changes, for this person: {"plan_id": app plan} for a plan, a round of one or its
+        installed app (create-<hex>), {"artifact_id", "revision"} for a saved creation they may read, else None."""
+        ref = str(ref or "").strip()
+        if ref.startswith("create-"):
+            ref = "plan_" + ref[len("create-"):]
+        if ref.startswith("plan_"):
+            run = self._run(ref)
+            if run is None or run["person"] != principal:
+                return None
+            return {"plan_id": self.app_plan(ref)}
+        if ref.startswith("ar_"):
+            try:
+                art = self.hive.collab.artifact(ref)
+            except Exception:
+                return None
+            if not self._may_read(principal, art):
+                return None
+            last = self.db.one("SELECT MAX(n) AS n FROM artifact_revisions WHERE artifact_id = ?", (ref,))
+            return {"artifact_id": ref, "revision": last["n"] if last else None}
+        return None
+
+    def _may_read(self, principal, art):
+        """Whether the person may read a saved creation: the hive's own visibility rule for its owning swarm."""
+        from .visibility import Viewer
+        swarm = self.db.one("SELECT * FROM swarms WHERE id = ?", (art["owner_swarm"],))
+        person = self.db.one("SELECT role FROM people WHERE id = ?", (str(principal)[5:],)) \
+            if str(principal).startswith("user:") else None
+        return bool(swarm) and Viewer(principal, bool(person and person["role"] == "admin"), audit=False).sees(swarm)
+
+    def _exchanges(self, principal, conversation_id=None, exchanges=None):
+        """The recent conversation a change came from, at most 12 exchanges and 12,000 characters, the newest kept:
+        what the caller passes (the Ask's make passes what its turn carries), else the hive's own copy of that chat."""
+        rows = []
+        if exchanges:
+            rows = [{"who": str(x.get("who") or "")[:60], "text": str(x.get("text") or "")} for x in exchanges
+                    if isinstance(x, dict) and x.get("text")]
+        elif conversation_id:
+            rows = [{"who": "person" if r["direction"] == "in" else "mind", "text": r["text"]} for r in reversed(
+                self.db.all("SELECT direction, text FROM messages WHERE conversation_id = ? ORDER BY hub_seq DESC "
+                            "LIMIT 12", (str(conversation_id),)))]
+        rows, total, kept = rows[-12:], 0, []
+        for x in reversed(rows):
+            total += len(x["text"])
+            if total > 12000:
+                break
+            kept.append(x)
+        return list(reversed(kept))
+
+    async def revise(self, principal, pid, words, conversation_id=None, exchanges=None):
+        """POST /api/create/plans/{id}/revise {words}: a change to a made app, a new round from its current revision."""
+        words = str(words or "").strip()
+        if not words or len(words) > MAX_SENTENCE:
+            raise EngineError(f"say what to change in 1-{MAX_SENTENCE} characters", 400, "bad_request")
+        app = self.app_plan(pid)
+        app_run = self._run(app)
+        self._person(app_run, principal)
+        async with self._lock(app):
+            rounds = self._rounds(app)
+            if self._run(rounds[-1])["phase"] not in TERMINAL:
+                raise EngineError("a change to this app is still being made", 409, "not_revisable")
+            current = self._current_revision(app)
+            if current is None or not current.get("preview"):
+                raise EngineError("nothing of this app has been deployed yet", 409, "not_revisable")
+            files = self.ports.apps.preview_files(current["preview"]["ref"])
+            space = {"app_plan": app, "round": len(rounds) + 1, "from": current["round"], "seed_files": files,
+                     "app_so_far": [r["words"] for r in self._revisions(app)],
+                     "exchanges": self._exchanges(principal, conversation_id, exchanges)}
+            child = self._insert_run(principal, words, space)
+            self._space_set(app, rounds=[*rounds[1:], child])
         self.ensure_watch()
-        return await self.step(pid)
+        await self.step(child)
+        return self.view(app)
+
+    async def revert(self, principal, pid, round_n):
+        """POST /api/create/plans/{id}/revert {round}: the app put back to one of its revisions, which becomes the one
+        it runs now (undo is the revert to the revision the current one was built from)."""
+        if isinstance(round_n, bool) or not isinstance(round_n, int):
+            raise EngineError("round is a revision's round number", 400, "bad_request")
+        app = self.app_plan(pid)
+        app_run = self._run(app)
+        self._person(app_run, principal)
+        async with self._lock(app):
+            if self._run(self._rounds(app)[-1])["phase"] not in TERMINAL:
+                raise EngineError("a change to this app is still being made", 409, "not_revisable")
+            rev = next((r for r in self._revisions(app) if r["round"] == round_n), None)
+            if rev is None or not rev.get("preview"):
+                raise EngineError(f"this app has no revision {round_n}", 409, "not_revisable")
+            out = self.ports.apps.deploy(app_run, {"preview": ["preview", rev["preview"]["ref"]]}, self._plan(app))
+            if not isinstance(out, dict) or not out.get("program_id"):
+                raise EngineError(f"the app could not be put back: {(out or {}).get('refused') or (out or {}).get('unknown')}",
+                                  409, "revert_refused")
+            self.db.execute("UPDATE create_plan_runs SET installed = ?, updated_at = ? WHERE plan_id = ?",
+                            (_canonical(out), now(), app))
+            self._space_set(app, current=round_n)
+            self.hive.events.publish("create.plan.status", plan_id=app, phase=self._run(self._rounds(app)[-1])["phase"],
+                                     status="reverted", next_action=None)
+        return self.view(app)
 
     async def answer(self, pid, principal, qid, text):
+        pid = self._newest(pid)                  # an app plan's id answers for its newest round
         run = self._run(pid)
         self._person(run, principal)
         text = str(text or "").strip()
@@ -730,12 +907,13 @@ class CreatePlanEngine:
                                          {"text": text, "by": principal})
             if not self.accepted(verdict):
                 raise EngineError(f"that answer was not taken: {render_any(verdict)}", 409, "answer_refused")
-            self.hive.events.publish("create.plan.question", plan_id=pid, q=str(qid), answered=True)
+            self.hive.events.publish("create.plan.question", plan_id=self.app_plan(pid), q=str(qid), answered=True)
             await self._step(pid)
         return self.view(pid)
 
     async def deploy(self, pid, principal):
         """The person's go: journals deploy-approved (op person); the deploy effect follows only if it is accepted."""
+        pid = self._newest(pid)
         run = self._run(pid)
         self._person(run, principal)
         async with self._lock(pid):
@@ -750,6 +928,7 @@ class CreatePlanEngine:
         return self.view(pid)
 
     async def stop(self, pid, principal):
+        pid = self._newest(pid)
         self._person(self._run(pid), principal)
         async with self._lock(pid):
             run = self._run(pid)                     # read under the lock: a step may have just finished the plan
@@ -759,6 +938,7 @@ class CreatePlanEngine:
         return self.view(pid)
 
     async def files(self, pid, principal, path=None, ckpt=None):
+        pid = self._newest(pid)
         run = self._run(pid)
         self._person(run, principal)
         ckpt = ckpt or self._latest_ckpt(run)
@@ -851,8 +1031,8 @@ class CreatePlanEngine:
         self.db.execute(f"UPDATE create_plan_runs SET {sets} WHERE plan_id = ?", (*changes.values(), pid))
         after = self._run(pid)
         if before is None or any(before[k] != after[k] for k in ("status", "phase", "next_action")):
-            self.hive.events.publish("create.plan.status", plan_id=pid, phase=after["phase"], status=after["status"],
-                                     next_action=after["next_action"])
+            self.hive.events.publish("create.plan.status", plan_id=self.app_plan(pid), phase=after["phase"],
+                                     status=after["status"], next_action=after["next_action"])
         if state is not None:
             self._piece_events(pid, state)
 
@@ -864,7 +1044,7 @@ class CreatePlanEngine:
             key = (status, cand, reps)
             if seen.get(p) != key:
                 seen[p] = key
-                self.hive.events.publish("create.plan.piece", plan_id=pid, piece=p, state=status,
+                self.hive.events.publish("create.plan.piece", plan_id=self.app_plan(pid), piece=p, state=status,
                                          candidate=None if cand == "none" else cand, repairs=reps)
 
     @staticmethod
@@ -1024,7 +1204,7 @@ class CreatePlanEngine:
                 "id": f"cpe_{new_id('e')[2:]}", "plan_id": pid, "kind": "question", "op": qid, "state": "shown",
                 "body": _canonical({"q": qid, "about": about_json(about), "text": text, "choices": choices}),
                 "result": None, "goal_id": None, "created_at": now(), "updated_at": now()})
-            self.hive.events.publish("create.plan.question", plan_id=pid, q=qid, about=about_json(about), text=text,
+            self.hive.events.publish("create.plan.question", plan_id=self.app_plan(pid), q=qid, about=about_json(about), text=text,
                                      choices=choices, answered=False)
         verdict = await self.observe(run, f"question-asked:{qid}", "question-asked", [q(qid), about],
                                      {"text": text, "choices": choices})
@@ -1220,6 +1400,13 @@ class CreatePlanEngine:
         if not self._space(run).get("integration"):
             space = await self.ports.open_space(run)
             self._space_set(run["plan_id"], **space)
+            fresh = self._run(run["plan_id"])
+            seed = self._space(fresh).get("seed_files")
+            if seed:   # a later round builds on the app as it runs now: those files are its scaffold
+                n = self._space(fresh).get("round")
+                ckpt = await self.ports.space.write(fresh, seed, f"the app as it runs now, before change {n}" if n
+                                                    else "the creation this app starts from")
+                self._space_set(run["plan_id"], scaffold=ckpt)
 
     async def _review_prepare(self, run, body):
         pid, p, c, rule = run["plan_id"], body["piece"], body["candidate"], body["rule"]
@@ -1387,14 +1574,14 @@ class CreatePlanEngine:
             if not out.get("ref"):
                 return await self._unknown(run, effect, {"unknown": "the preview answered no reference"})
             return await R("done", f"preview-deployed:{op}", "preview-deployed", [q(op), q(body["ckpt"]), q(out["ref"])],
-                           out, lambda: self.hive.events.publish("create.plan.preview", plan_id=pid, ckpt=body["ckpt"],
-                                                                 preview=out["ref"]))
+                           out, lambda: self.hive.events.publish("create.plan.preview", plan_id=self.app_plan(pid),
+                                                                 ckpt=body["ckpt"], preview=out["ref"]))
         if kind == "deploy":
             if out.get("refused"):
                 return await R("refused", f"deploy-refused:{op}", "deploy-refused", [q(op)])
             return await R("done", f"deployed:{op}", "deployed", [q(op)], out,
-                           lambda: self.db.execute("UPDATE create_plan_runs SET installed = ? WHERE plan_id = ?",
-                                                   (_canonical(out), pid)))
+                           lambda: (self.db.execute("UPDATE create_plan_runs SET installed = ? WHERE plan_id = ?",
+                                                    (_canonical(out), pid)), self._record_revision(pid, out)))
         raise EngineError(f"no result mapping for effect {kind}")
 
     def _has_result(self, pid, op, admitting):
@@ -1426,6 +1613,7 @@ class CreatePlanEngine:
                                              [q(op), q(rb["receipt"])], rb)
                 if self.accepted(verdict):
                     self.db.execute("UPDATE create_plan_runs SET installed = ? WHERE plan_id = ?", (_canonical(rb), pid))
+                    self._record_revision(pid, rb)
                 return self.accepted(verdict)
             if rb.get("deployed") is False:
                 self._effect_set(effect["id"], "reconciled", rb)
@@ -1475,7 +1663,46 @@ class CreatePlanEngine:
         return False
 
     def view(self, pid):
-        """GET /api/create/plans/{id}: see PLAN_VIEW_FIELDS in the module docs of create_plan_ports (Surface contract)."""
+        """GET /api/create/plans/{id}: see PLAN_VIEW_FIELDS in the module docs of create_plan_ports (Surface contract).
+        An app plan's view is its newest round's, under the app plan's id, with the app's rounds: round, its words,
+        the revisions and the one the app runs now, the app as installed, and the actions that change it."""
+        app = self.app_plan(pid)
+        rounds = self._rounds(app)
+        if not rounds:
+            return None
+        v = self._run_view(rounds[-1])
+        app_run, newest = self._run(app), self._run(rounds[-1])
+        settled = newest["phase"] in TERMINAL
+        revisions = self._revisions(app)
+        current = self._current_revision(app)
+        v["plan_id"], v["round"], v["round_words"] = app, len(rounds), newest["sentence"]
+        v["sentence"] = app_run["sentence"]
+        # the app keeps its own name (app_name): a round's plan is titled by its change, which the view gives as
+        # round_title
+        app_title = self.app_name(app)
+        v["round_title"], v["title"], v["summary"] = v["title"], app_title, app_title or app_run["sentence"]
+        v["revisions"] = [{"round": r["round"], "words": r["words"], "from": r.get("from"),
+                           "deployed_at": r.get("deployed_at"), "current": current is not None and r["round"] == current["round"]}
+                          for r in revisions]
+        v["installed"] = json.loads(app_run["installed"]) if app_run["installed"] else None
+        if settled and current is not None and current.get("preview"):
+            v["preview"] = current["preview"]          # with no change in flight, the app as it runs now
+        base = f"/api/create/plans/{app}"
+        undo_to = current.get("from") if current else None
+        why_busy = None if settled else "a change to this app is still being made"
+        v["actions"] = v["actions"] + [
+            {"name": "revise", "label": "Change it", "method": "POST", "path": base + "/revise",
+             "body": {"words": f"string, 1-{MAX_SENTENCE} characters"}, "available": settled and current is not None,
+             "why_not": why_busy or (None if current is not None else "nothing of this app has been deployed yet")},
+            {"name": "undo", "label": "Undo", "method": "POST", "path": base + "/revert", "body": {"round": undo_to},
+             "available": settled and undo_to is not None,
+             "why_not": why_busy or (None if undo_to is not None else "this is the app's first version")},
+            {"name": "revert", "label": "Put back", "method": "POST", "path": base + "/revert",
+             "body": {"round": "a revision's round"}, "available": settled and len(revisions) > 1,
+             "why_not": why_busy or (None if len(revisions) > 1 else "the app has one version")}]
+        return v
+
+    def _run_view(self, pid):
         run = self._run(pid)
         if run is None:
             return None
@@ -1579,10 +1806,18 @@ class CreatePlanEngine:
         return json.loads(run["state"]) if run["state"] else {}
 
     def list_for(self, principal):
-        return [{"plan_id": r["plan_id"], "sentence": r["sentence"], "phase": r["phase"], "status": r["status"],
-                 "updated_at": r["updated_at"]}
-                for r in self.db.all("SELECT * FROM create_plan_runs WHERE person = ? ORDER BY created_at DESC LIMIT 100",
-                                     (principal,))]
+        """The person's plans, newest first: an app plan once, its later rounds inside its view, never as plans."""
+        rows = self.db.all("SELECT * FROM create_plan_runs WHERE person = ? ORDER BY created_at DESC LIMIT 100", (principal,))
+        out = []
+        for r in rows:
+            if self._space(r).get("app_plan"):
+                continue
+            newest = self._run(self._rounds(r["plan_id"])[-1])
+            out.append({"plan_id": r["plan_id"], "sentence": r["sentence"], "title": self.app_name(r["plan_id"]),
+                        "phase": newest["phase"],
+                        "status": newest["status"], "round": len(self._rounds(r["plan_id"])),
+                        "updated_at": max(r["updated_at"], newest["updated_at"])})
+        return out
 
 
 _STEP_WORDS = {"plan-failed": "planning", "fix-rounds": "fixing it", "piece-repairs": "repairing a piece",

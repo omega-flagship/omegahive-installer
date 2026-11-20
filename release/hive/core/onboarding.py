@@ -31,10 +31,13 @@ from __future__ import annotations
 import contextlib
 import datetime
 import json
+import logging
 import secrets
 
 from .config import FREE
 from .db import now
+
+log = logging.getLogger("hive")
 
 SCHEMA = [
     """CREATE TABLE IF NOT EXISTS onboarding_progress (principal TEXT PRIMARY KEY, current_beat TEXT,
@@ -351,12 +354,25 @@ class Onboarding:
         return None
 
     def _apps_on(self):
+        """The apps the everyday menus offer, named as people see them: switched on and not a test app (the UI's
+        navItems.ts menuApps), the very list a mind's own Open in... shows and opens in that mind's swarm, so what the
+        greeting suggests opens from the chat it arrives in. Listing every app the hive had on also named test fixtures
+        and Create by its release's name, Studio; a tester's fresh hive suggested Studio, whose canvas said the hive
+        offers no live drawing (20 Nov). Create stays listed without live drawing, since Make works without it, and the
+        note says drawing is off so the mind suggests something that works.
+        Time: one pass over the loaded apps (programs.list), at most 12 named."""
         programs = getattr(self.hive, "programs", None)
         if programs is None:
             return []
         try:
-            return [p["name"] for p in programs.list() if p.get("enabled")][:12]
-        except Exception:   # noqa: BLE001  (an app that fails to list never stops a hello)
+            from .my_apps import CREATE, CREATE_NAME
+            makers = getattr(self.hive, "studio_makers", None)
+            # live drawing is offered on the two conditions the Ask's capabilities publish studio_sessions on (ask.py)
+            drawing = bool(makers is not None and makers.enabled() and makers.template_ready())
+            return [(CREATE_NAME + ("" if drawing else " (its live drawing is off on this hive)")) if p["id"] == CREATE else p["name"]
+                    for p in programs.list() if p.get("enabled") and not p.get("test")][:12]
+        except Exception:   # noqa: BLE001  (an app that fails to list never stops a hello; the log says why)
+            log.exception("First Light: the hive's apps could not be listed for the greeting")
             return []
 
     def note(self, name, role_path, apps):
@@ -366,7 +382,7 @@ class Onboarding:
         if role_path in ROLE_WORDS:
             lines.append(f"They told the hive they will mostly {ROLE_WORDS[role_path]}.")
         if apps:
-            lines.append("Apps switched on in this hive: " + ", ".join(apps) + ".")
+            lines.append("Apps they can use now: " + ", ".join(apps) + ".")
         lines.append("Offer them one useful first thing to do together, in one line, based on that.")
         return "\n".join(lines)
 

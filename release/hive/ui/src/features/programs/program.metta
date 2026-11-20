@@ -220,8 +220,10 @@
 (When program-stage 99 (none-of ((is person.helpers key) (is person.helpers declined))))
 
 ; ---------- the app's own entries in Ω (the page hands them to the menu: features/programs/appPage.ts)
+; Leave is also shown beside the Ω mark (beside yes): an app takes the whole screen with only Ω remaining (ProgramPage),
+; and a tester on Create found no way out but the Ask (20 Nov), so the one control says it is the way out.
 (Screen program-menu "The app's menu")
-(Part program-menu 10 buttons ((items ((button (words "Leave " (bind app.name)) leave ())))))
+(Part program-menu 10 buttons ((items ((button (words "Leave " (bind app.name)) leave ((beside yes)))))))
 (Part program-menu 11 buttons ((items ((button "Code" bench-code ((checked bench.code)))))))
 (When program-menu 11 (on app.create))
 (When program-menu 11 (on app.current))

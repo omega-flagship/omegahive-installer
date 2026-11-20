@@ -730,13 +730,17 @@ class Ask:
         # J3 host R7.1: Surface O3 opens live Studio only on capabilities.studio_sessions === true. Published only when
         # the startup self-check passed (StudioSessions.enabled) AND members' own makers can be made (the template is
         # set and usable); otherwise absent, and the Studio-off answer is the one before plus studio_off alone.
-        # Show run f4 (2026-11-19): studio_off names the host's reason so the page can say it: "off" (Studio disabled or
-        # its self-check failed) or "not_set_up" (on, but members' makers can't be made). Additive: appended last, so the
-        # answer before is unchanged ahead of it; never present with studio_sessions. The hive's state, not the person's
+        # Show run f4 (2026-11-19): studio_off names the host's reason so the page can say it: "off" (Studio switched
+        # off), "self_check" (switched on, but the startup self-check keeps it off; studio_missing then names the parts
+        # it found missing, as the hive's log line does, since a tester's Mac hive on 20 Nov could only be told "turned
+        # off") or "not_set_up" (on, but members' makers can't be made). Additive: appended last, so the answer before
+        # is unchanged ahead of it; never present with studio_sessions. The hive's state, not the person's
         studio, makers = getattr(self.hive, "studio", None), getattr(self.hive, "studio_makers", None)
-        studio_off = None
+        studio_off, studio_missing = None, []
         if studio is None or not getattr(studio, "enabled", False):
-            studio_off = "off"
+            from .studio_sessions import switched_on
+            studio_missing = list(getattr(studio, "missing", None) or []) if studio is not None and switched_on() else []
+            studio_off = "self_check" if studio_missing else "off"
         elif makers is None or not makers.template_ready():
             studio_off = "not_set_up"
         else:
@@ -763,6 +767,8 @@ class Ask:
                 caps["code_test_intents"] = code_project_tests.execution_available(self.hive)
         if studio_off is not None:
             caps["studio_off"] = studio_off
+        if studio_missing:
+            caps["studio_missing"] = studio_missing
         return caps
 
     def _quota_ok(self, principal):

@@ -1,7 +1,8 @@
 /**
- * SIM: the files the invented plan writes for "a small web page that shows the weather in London" (planSim.ts). Real,
+ * Purpose: SIM: the files the invented plan writes for "a small web page that shows the weather in London" (planSim.ts). Real,
  * working code: index.html links ./style.css, ./app.js and ./icon.svg in the exact form the app frame inlines
  * (lib/appFrame appDocument); app.js fills the card from an inline invented forecast, with no network. Invented data.
+ * A later round (a change asked in the person's words) writes the style it had plus one rule of its own (changedCss).
  */
 
 /** the empty app the plan starts from (each file a placeholder until its piece is integrated) */
@@ -104,6 +105,20 @@ body {
 }
 .day .lo { color: var(--soft); margin-left: 8px; }
 `
+}
+
+/**
+ * A later round's style.css (a sim liberty: every change the person asks for is made as a style rule): the style the
+ * app had, then one rule naming the change in a comment and giving the page an accent of its own, its hue derived from
+ * the words, so each version looks different. Example: round 2, "make it blue" appends
+ * "/* Version 2: make it blue *\/" and a :root rule setting --accent to one hsl() colour.
+ */
+export function changedCss(css: string, round: number, words: string): string {
+  let h = 0
+  for (let i = 0; i < words.length; i++) h = (h * 31 + words.charCodeAt(i)) >>> 0
+  // the words go in a comment: "*/" in them would end it early
+  const said = words.replace(/\*\//g, '* /').replace(/\s+/g, ' ').trim()
+  return `${css.endsWith('\n') ? css : `${css}\n`}/* Version ${round}: ${said} */\n:root { --accent: hsl(${h % 360} 70% 42%); }\n`
 }
 
 /** app.js: `fixed` adds the "°C" the units check asks for (the first draft leaves it out) */

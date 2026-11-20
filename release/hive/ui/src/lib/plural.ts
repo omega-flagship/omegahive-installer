@@ -9,3 +9,7 @@ export const plural = (n: number, one: string, many = `${one}s`): string => `${n
  * "2 tasks", "1+ tasks" (a floor of one may be more, so it takes the plural).
  */
 export const pluralAtLeast = (n: number, partial: boolean, one: string, many = `${one}s`): string => `${partial ? `${n}+` : n} ${n === 1 && !partial ? one : many}`
+
+/** Items as a sentence lists them: "a", "a and b", "a, b and c" (no comma before "and", as the UI's lists read). */
+export const andList = (items: readonly string[]): string =>
+  items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`

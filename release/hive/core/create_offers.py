@@ -6,8 +6,9 @@ create", "They're bypassing safeguards").
 A mind asked to build software (an app, a page, a game, a tool, a script, a change to code) calls hive-create with what
 to build (POST /api/agent/create). Create's plans start only on a person's word in their own session (POST
 /api/create/plans, the §G person gate: never a mind), so the mind's call makes an offer, not a plan. The person reads it
-in the mind's chat and presses Start in Create, which starts the plan with the offer's words exactly as if they had typed
-them into Create (CreatePlanEngine.start), or Not now. Nothing is built before that press.
+in their Ask or the mind's chat and presses Start in Create, which starts the plan with the offer's words exactly as if
+they had typed them into Create (CreatePlanEngine.start), or Not now. Nothing is built before that press, and the mind is
+told so in words it can pass on (OFFERED_NEXT).
 
 Who an offer is for (person_for): the person of the conversation the mind is answering, when it names one (an Ask turn's
 asker, else the last person who wrote in that conversation); else the last person who wrote to the mind (Jon on #395:
@@ -37,6 +38,11 @@ STATES = ("offered", "started", "dismissed")
 LIST_LIMIT = 20
 # a person's own message to a mind: the sender is a named person's principal (program_actions.named_person's shape)
 PERSON_SENDER = "sender LIKE 'user:u\\_%' ESCAPE '\\'"
+# what the mind reads after its offer (POST /api/agent/create's next), in words it can pass on: nothing is built before
+# the person's Start, where the card is (the Ask's thread shows every mind's open offers, a mind's chat its own), and
+# never to call it built, as a tester's mind did from the softer "your person can start it in Create" (20 Nov)
+OFFERED_NEXT = ("offered, not built. Nothing is built until your person presses Start in Create on the offer card, which "
+                "shows in their Ask and in your chat with them. Tell them that, and never say it is built or being built.")
 
 
 class CreateOffers:
@@ -92,8 +98,8 @@ class CreateOffers:
             "create.offer", principal=row["principal"], offer_id=row["id"], agent_id=row["agent_id"], state=row["state"]))
 
     def offer(self, agent, data):
-        """POST /api/agent/create {sentence, conversation_id?}: the mind's offer for its person. Returns (status, view):
-        201 for a new offer, 200 for the same open offer again. Nothing is built here."""
+        """POST /api/agent/create {sentence, conversation_id?}: the mind's offer for its person. Returns (status, view
+        and next, what the mind is told): 201 for a new offer, 200 for the same open offer again. Nothing is built here."""
         data = data if isinstance(data, dict) else {}
         sentence = str(data.get("sentence") or "").strip()
         if not sentence or len(sentence) > MAX_SENTENCE:
@@ -108,14 +114,14 @@ class CreateOffers:
             same = self.db.one("SELECT * FROM create_offers WHERE agent_id = ? AND principal = ? AND sentence = ? "
                                "AND state = 'offered'", (agent["id"], person, sentence))
             if same is not None:
-                return 200, self.view(same)
+                return 200, {**self.view(same), "next": OFFERED_NEXT}
             stamp = now()
             row = {"id": "cof_" + secrets.token_hex(12), "agent_id": agent["id"], "principal": person,
                    "sentence": sentence, "conversation_id": conversation, "state": "offered", "plan_id": None,
                    "created_at": stamp, "updated_at": stamp}
             self.db.insert("create_offers", row)
             self._publish(row)
-        return 201, self.view(row)
+        return 201, {**self.view(row), "next": OFFERED_NEXT}
 
     def list_for(self, principal, mind=None):
         """GET /api/me/create-offers?mind=: this person's open offers, newest first, one mind's when named."""

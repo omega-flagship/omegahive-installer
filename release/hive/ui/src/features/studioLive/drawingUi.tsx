@@ -1,5 +1,6 @@
 /** Create UI projections only. These labels never grant drawing or maker authority. */
 import type { AskSettings } from '../../api/ask'
+import { andList } from '../../lib/plural'
 import { studioCapable, type StudioHostClient } from './api'
 
 export type DrawingMode = 'steer' | 'queue'
@@ -10,10 +11,16 @@ const HOST_OFF_STEP = 'That is for whoever runs this hive; there is nothing for 
 
 /**
  * Show run f4 (2026-11-19): the host's own reason for not offering drawing (/api/me/ask `capabilities.studio_off`, set
- * only while `studio_sessions` is absent). No step is offered: a key does not turn Studio on (setup's own_key_needed is
- * handled when Draw live is pressed on a hive that offers it). An absent or unknown reason is never guessed.
+ * only while `studio_sessions` is absent, and with "self_check" the parts its startup check found missing,
+ * `capabilities.studio_missing`, named as the hive's log names them). No step is offered: a key does not turn Studio on
+ * (setup's own_key_needed is handled when Draw live is pressed on a hive that offers it). An absent or unknown reason is
+ * never guessed.
  */
-function hostOffReason(why: unknown): string {
+function hostOffReason(why: unknown, missing?: unknown): string {
+  if (why === 'self_check') {
+    const parts = Array.isArray(missing) ? missing.filter((m): m is string => typeof m === 'string' && m.trim() !== '') : []
+    return `Live drawing is switched on, but this hive’s startup check ${parts.length ? `found parts missing (${andList(parts)})` : 'keeps it off'}, so nothing can be drawn here. ${HOST_OFF_STEP}`
+  }
   if (why === 'not_set_up') return `Live drawing isn’t set up on this hive yet, so nothing can be drawn here. ${HOST_OFF_STEP}`
   if (why === 'off') return `Live drawing is turned off on this hive, so nothing can be drawn here. ${HOST_OFF_STEP}`
   return 'This hive is not offering live drawing right now, so nothing can be drawn here yet. It has not said why.'
@@ -30,7 +37,7 @@ export function drawingAvailability(client: StudioHostClient | null | undefined,
   if (client.mode !== 'sim' && !settings) return { available: false, code: 'checking', reason: 'Live drawing availability has not been read from this hive yet.' }
   if (!studioCapable(client, settings)) {
     const caps = settings?.capabilities as Record<string, unknown> | undefined
-    if (client.mode !== 'sim' && caps?.studio_sessions !== true) return { available: false, code: 'host_not_offered', reason: hostOffReason(caps?.studio_off) }
+    if (client.mode !== 'sim' && caps?.studio_sessions !== true) return { available: false, code: 'host_not_offered', reason: hostOffReason(caps?.studio_off, caps?.studio_missing) }
     return { available: false, code: 'client_unsupported', reason: 'This page cannot use all the drawing controls this hive requires.' }
   }
   if (!client.studioSetupProposal) return { available: false, code: 'setup_unavailable', reason: 'This page cannot prepare the drawing confirmation on this hive.' }

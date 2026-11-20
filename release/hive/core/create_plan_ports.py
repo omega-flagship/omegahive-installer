@@ -39,9 +39,28 @@ PLAN_VIEW_FIELDS (GET /api/create/plans/{id}; Surface's provisional contract 202
           repairs, unreviewed, review {kind, state, decision, reviewer, notes, evidence, candidate} | null, tests}],
   questions[{q, about, text, choices, answered, answer}], checks[{run, ckpt, base, state, reason, failing, line, output}],
   checkpoint {ckpt, workspace}, preview {ref, ckpt, digest, files} | null, installed {program_id, digest} | null,
+  round, round_words, round_title, revisions[{round, words, from, deployed_at, current}],
   actions[{name, label, method, path, body, available, why_not}], journal[], effects[], updated_at.
 Events: create.plan.status {plan_id, phase, status, next_action}; create.plan.piece {plan_id, piece, state, candidate,
   repairs}; create.plan.question {plan_id, q, about, text, choices, answered}; create.plan.preview {plan_id, ckpt, preview}.
+
+Changing a made app (rounds): a plan's app is changed in place by further rounds on the same plan. round is 1 for the
+first build; each round is planned, checked and built from the app's current files, and deploys over the same app.
+Every deployed round is a revision; current marks the one the app runs now; words are the change asked for (the
+plan's sentence for round 1).
+title and summary stay the app's name through every round and revert, and the app is installed under it: the title
+of the saved creation a plan began from (start's base), else its first round's plan title; round_title is the newest
+round's own plan title, which a planner gives the change (on a real model a tip calculator's second round was titled
+"Tip choice of 15, 18 or 20 percent").
+  GET  /api/create/plans               -> [{plan_id, sentence, title, phase, status, round, updated_at}], the
+                                          person's app plans newest first, each named by its app's title as above
+  POST /api/create/plans/{id}/revise {words}   -> PlanView, a new round from the current revision; the action "revise"
+  POST /api/create/plans/{id}/revert {round}   -> PlanView, the app put back to that revision's files, which become the
+                                                  current revision; the action "undo" is revert to the revision before
+                                                  the current one
+Both refuse 404 not_found (no such plan, or not the caller's), 409 not_revisable (a round is still running, or nothing
+was deployed yet, or no such revision) and 400 bad_request (words outside 1-2000 characters, a round not a number);
+revert also refuses 409 revert_refused when the app can't be put back (its deploy refused or wasn't known).
 """
 from __future__ import annotations
 
@@ -59,6 +78,12 @@ from .create_plan_engine import PLAN_RULES, TERMINAL, goal_creator
 from .db import new_id, now
 from .goals import UNANSWERED, stored_proposal
 from .ui_parts import ascii_lower, frame_script, frame_tags
+
+# A later round of a made app's plan changes an app the person already uses. The host gives this rule to the round's
+# planner as its contract and to each of the round's builders in its trusted instructions, while the change's words,
+# the app so far and its files stay data: rules inside UNTRUSTED_DATA sat out of a model's view in a real run.
+ROUND_CONTRACT = ("This is a change to an app the person already uses: keep everything it does that the change doesn't "
+                  "touch, and change only what the change asks.")
 
 log = logging.getLogger(__name__)
 
@@ -404,10 +429,29 @@ class Ports:
                   # the kinds someone in this hive builds: a Mac install offers no design, and a design piece asked
                   # its person forever for a builder they couldn't make available
                   "staffed_kinds": self.engine.staffed_kinds(run["person"])}
+        packet.update(self.change_context(run))
+        if self.engine._space(run).get("app_plan"):
+            packet["contract"] = ROUND_CONTRACT
         refused = self.engine.previous_plan_refusal(run["plan_id"])
         if refused:   # the last plan was refused: what it broke, so the planner fixes that instead of answering it again
             packet["last_plan_refused"] = refused
         return await self._call(run, "plan", body, packet)
+
+    def change_context(self, run, files=None):
+        """What a change to a made app is planned, checked and built from (a later round of its app plan): the change
+        asked for, what the app was asked to be before, its current files (all of them, or `files` of them), and the
+        recent conversation the change came from; for a first build from a saved creation, that creation. {} else."""
+        space = self.engine._space(run)
+        out = {}
+        if space.get("app_plan"):
+            seed = space.get("seed_files") or {}
+            out = {"change": run["sentence"], "app_so_far": space.get("app_so_far") or [],
+                   "the_app_now": {k: v for k, v in seed.items() if files is None or k in files}}
+        if space.get("exchanges"):
+            out["recent_conversation"] = space["exchanges"]
+        if space.get("base_creation"):
+            out["what_they_have_now"] = space["base_creation"]
+        return out
 
     async def scaffold_has_check(self, run):
         """Whether the scaffold the plan builds on already has the acceptance check, which tests "detect" would use;
@@ -434,6 +478,11 @@ class Ports:
                         "out from the example's inputs. A case fails when an assertion doesn't hold, a step can't be "
                         "taken or the page throws, and its failure goes to the builders of the owned files it names "
                         "in files (all the page's files when it names none). It must FAIL on the scaffold."}
+        if space.get("app_plan"):
+            packet["change"] = run["sentence"]
+            packet["contract"] += (" The scaffold is the app as it runs now: write cases for what the change asks, "
+                                   "so they fail on it, and keep a case for each thing it already does that the "
+                                   "change must not break.")
         refused = space.get("author_refusal")
         if refused:   # the host refused the last answer: say why, so the author fixes that instead of resending it
             packet["your_last_answer_was_refused"] = refused
@@ -1101,11 +1150,20 @@ class AppReleases:
 
     def _app_id(self, run, plan):
         """One app per plan, named by the plan's full id (never a short suffix that two plans could share). Program ids
-        are at most 41 characters (programs.py), so the title goes in the app's name, not its id."""
-        app_id = f"create-{run['plan_id'][5:]}"
+        are at most 41 characters (programs.py), so the title goes in the app's name, not its id. A later round of an
+        app is its app plan's: its deploy replaces the app in place."""
+        app_id = f"create-{self.engine.app_plan(run['plan_id'])[5:]}"
         if not APP_ID.fullmatch(app_id):
             raise ValueError("not an app id")
         return app_id
+
+    def _app_title(self, run):
+        """The app's name (engine.app_name: the saved creation's title for a plan begun from one, else its app plan's
+        title), kept by every later round and every revert. A round's own plan is titled by its change, so a release
+        named by it renamed the app after each change ("Total to pay under the tip" for a tip calculator, real-model
+        run of 19 Nov), and a revert, released under the first round's title, installed a revision's files under a
+        package other than that revision's preview."""
+        return self.engine.app_name(self.engine.app_plan(run["plan_id"]))
 
     def _release(self, folder, files, app_id, title):
         ui = folder / "ui"
@@ -1133,15 +1191,19 @@ class AppReleases:
             frame_document(ui)
         except ValueError as exc:
             return {"failed": str(exc)}
-        app_id = self._app_id(run, plan)
+        app_id, title = self._app_id(run, plan), self._app_title(run)
         digest = hashlib.sha256(json.dumps(ui, sort_keys=True).encode()).hexdigest()
-        folder = self.root / "previews" / digest[:32]
+        # The folder holds the whole release, its plugin.json naming the app, so its address covers which app it is:
+        # two apps whose files match byte for byte get a release each, and a revert's deploy of this preview writes
+        # exactly what it holds.
+        key = hashlib.sha256(json.dumps([digest, app_id, title]).encode()).hexdigest()[:32]
+        folder = self.root / "previews" / key
         if not folder.exists():
-            tmp = self.root / "previews" / f".{digest[:32]}.{new_id('x')[2:8]}"
-            self._release(tmp, ui, app_id, (plan or {}).get("title"))
+            tmp = self.root / "previews" / f".{key}.{new_id('x')[2:8]}"
+            self._release(tmp, ui, app_id, title)
             tmp.rename(folder)
         from .programs import Programs
-        return {"ref": f"preview-{digest[:32]}", "digest": "sha256:" + digest, "app_id": app_id,
+        return {"ref": f"preview-{key}", "digest": "sha256:" + digest, "app_id": app_id,
                 "source_digest": Programs.source_digest(folder)}
 
     def _verified(self, ref):
@@ -1221,7 +1283,7 @@ class AppReleases:
         app_id = self._app_id(run, plan)
         folder = apps / app_id
         tmp = apps / f".{app_id}.{new_id('x')[2:8]}"
-        self._release(tmp, files, app_id, (plan or {}).get("title"))
+        self._release(tmp, files, app_id, self._app_title(run))
         if folder.exists():                          # only this plan's own earlier install has this id
             old = apps / f".{app_id}.old.{new_id('x')[2:8]}"
             folder.rename(old)

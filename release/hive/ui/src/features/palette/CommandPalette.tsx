@@ -19,6 +19,7 @@ import { goTo } from '../../shell/navGo'
 import { useAdminView } from '../../lib/useAdmin'
 import { mayStart } from '../lab/labUtil'
 import { useAskFillable } from '../ask/fields'
+import { askInstead } from './askInstead'
 import { plural } from '../../lib/plural'
 import { guardComposing } from '../../features/ask/keys'
 
@@ -179,7 +180,10 @@ export default function CommandPalette() {
       setSel((s) => Math.max(0, s - 1))
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      results[sel]?.run()
+      // nothing listed: the words go to the Ask's mind (askInstead), so a search for what only a mind can find, an
+      // artifact by what it holds, still gets an answer (a tester's artifact searches opened this empty, 20 Nov)
+      if (results.length) results[sel]?.run()
+      else void askInstead(q, close)
     }
   }
 
@@ -223,7 +227,7 @@ export default function CommandPalette() {
           {desktop ? <Kbd>esc</Kbd> : <button onClick={close} className="min-h-11 px-1 text-sm text-ink-3">Cancel</button>}
         </div>
         <div ref={listRef} id="palette-list" role="listbox" aria-label="Results" data-unsaved-ignore="" className="thin-scroll min-h-0 flex-1 overflow-y-auto p-2">
-          {results.length === 0 && <div className="px-3 py-10 text-center text-sm text-ink-3">Nothing matches “{q}”.</div>}
+          {results.length === 0 && <div className="px-3 py-10 text-center text-sm text-ink-3">Nothing matches “{q}”.{q.trim() && ' Enter asks your mind instead.'}</div>}
           {results.map((c, i) => {
             const header = c.group !== lastGroup ? c.group : null
             lastGroup = c.group

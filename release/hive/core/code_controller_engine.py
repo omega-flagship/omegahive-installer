@@ -285,10 +285,10 @@ class CodeControllerEngine:
     # ---- Create plan members (R3.14 plan-member; code_controller_member.py) ---------------------------------------
 
     def adopt_member(self, plan_id, piece, origin, paths, assignee, budget_ref, review_policy, person,
-                     controller_id=None, task=None, brief=None):
+                     controller_id=None, task=None, brief=None, contract=None):
         from . import code_controller_member as member
         return member.adopt_member(self, plan_id, piece, origin, paths, assignee, budget_ref, review_policy, person,
-                                   controller_id=controller_id, task=task, brief=brief)
+                                   controller_id=controller_id, task=task, brief=brief, contract=contract)
 
     async def member_integrated(self, task_id, op, cand, ckpt):
         from . import code_controller_member as member
