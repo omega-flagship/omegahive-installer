@@ -41,6 +41,37 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 const norm = s => String(s ?? '').replace(/\s+/g, ' ').trim()
 const shown = v => (typeof v === 'string' ? JSON.stringify(v.length > 80 ? v.slice(0, 77) + '...' : v) : String(v))
 
+// The pseudo-classes happy-dom (vendor/happy-dom.mjs) matches: the cases of its matchPseudoItem. Every other name, CSS's
+// own :enabled or :hover as much as Playwright's :has-text or :text-is, falls to its `default: return null` and matches
+// nothing where a browser refuses the selector, and a pseudo-element never matches an element, so a probe naming one
+// could never pass whatever the app does: base12's Quick 20% round held twice on "#tip-presets button:has-text('Quick
+// 20%')" with the button there (20 November). test_create_probe.py checks this list against the bundle's own matcher.
+const PSEUDO_CLASSES = new Set(['first-child', 'last-child', 'only-child', 'first-of-type', 'last-of-type', 'only-of-type',
+  'checked', 'disabled', 'empty', 'root', 'host', 'host-context', 'not', 'nth-child', 'nth-of-type', 'nth-last-child',
+  'nth-last-of-type', 'target', 'is', 'where', 'has', 'focus', 'focus-visible', 'scope'])
+
+// The pseudo-classes and pseudo-elements a selector names outside its quoted strings and attribute brackets, as ':name'
+// or '::name' ("a[title='x:y']:has-text('b:c')" names only :has-text). Time: one pass over the selector's characters.
+function pseudos(selector) {
+  const out = []
+  let quote = null
+  let bracket = false
+  for (let i = 0; i < selector.length; i++) {
+    const c = selector[i]
+    if (c === '\\') { i++; continue }
+    if (quote) { if (c === quote) quote = null; continue }
+    if (c === '"' || c === "'") { quote = c; continue }
+    if (c === '[' || c === ']') { bracket = c === '['; continue }
+    if (bracket || c !== ':') continue
+    const element = selector[i + 1] === ':'
+    const name = /^[a-zA-Z-]+/.exec(selector.slice(i + (element ? 2 : 1)))?.[0]
+    if (!name) continue
+    out.push((element ? '::' : ':') + name.toLowerCase())
+    i += name.length + (element ? 1 : 0)
+  }
+  return out
+}
+
 function verdict(passed, failing, notes, cases = []) {
   const line = { passed, failing, notes: notes.slice(0, NOTES) }
   if (cases.length) line.cases = cases.slice(0, MAX_CASES + 2)   // the probe's cases, and the frame's own first, one per file
@@ -461,8 +492,9 @@ async function play(page, kase, frame) {
 }
 
 // What makes a probe unplayable, its author's fault and never the app's: its shape, a selector that is no CSS
-// selector, a pattern that is no regular expression. The host checks the same shape when the author answers
-// (create_plan_ports.probe_problem); this is the runner's own guard, so a bad probe never fails an app.
+// selector or names a pseudo-class the page's browser never matches (PSEUDO_CLASSES), a pattern that is no regular
+// expression. The host checks the same shape when the author answers (create_plan_ports.probe_problem); this is the
+// runner's own guard, so a bad probe never fails an app.
 function shaped(probe) {
   const cases = probe?.cases
   if (!Array.isArray(cases) || !cases.length || cases.length > MAX_CASES) return `a probe has 1-${MAX_CASES} cases`
@@ -477,6 +509,12 @@ function shaped(probe) {
             scratch.document.querySelector(item.selector)
           } catch (err) {
             return `${shown(item.selector)} in ${shown(c.name)} is not a CSS selector`
+          }
+          const unmatched = pseudos(item.selector).filter(p => !PSEUDO_CLASSES.has(p.slice(1)))
+          if (unmatched.length) {
+            return `${shown(item.selector)} in ${shown(c.name)} uses ${unmatched.join(' and ')}, which the page's browser never ` +
+              'matches: select by id, class or attribute, and check words with a text or contains assertion, a state ' +
+              'with an enabled, checked or visible one'
           }
         }
         if (item?.kind === 'matches') {

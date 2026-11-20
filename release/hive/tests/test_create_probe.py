@@ -14,6 +14,7 @@ subprocess."""
 import asyncio
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -354,6 +355,44 @@ def test_a_probe_the_runner_cannot_play_is_its_authors_fault_never_the_apps(job)
     out = play(WORKING, probe=probe, tmp=job)
     assert out["outcome"] == "unknown" and out["reason"] == "no-verdict", out    # back to the author, not to a builder
     assert "is not a CSS selector" in out["output"]
+
+
+@pytest.mark.parametrize("selector, names", [
+    ("#tip-presets button:has-text('Quick 20%')", ":has-text"),   # base12's Quick 20% probe, held twice on a right build
+    ("#status:text-is('X to play')", ":text-is"),                  # Playwright's
+    ("#reset:visible", ":visible"),
+    ("#board .cell:contains('X')", ":contains"),                   # jQuery's
+    ("#reset:enabled", ":enabled"),                                # CSS's own, which happy-dom leaves unmatched
+    ("#status::before", "::before"),
+    ("#board .cell:hover:nth-match(.cell, 2)", ":hover and :nth-match"),
+])
+def test_a_selector_the_pages_browser_never_matches_is_its_authors_fault_never_the_apps(job, selector, names):
+    # happy-dom answers these with no match where a browser refuses them, so the case would fail the app's files
+    probe = {"cases": [{"name": "unmatched pseudo", "steps": [], "assertions": [{"kind": "count", "selector": selector, "expected": 1}]}]}
+    out = play(WORKING, probe=probe, tmp=job)
+    assert out["outcome"] == "unknown" and out["reason"] == "no-verdict", out    # back to the author, not to a builder
+    assert f"uses {names}, which the page's browser never matches" in out["output"], out["output"]
+
+
+@pytest.mark.parametrize("selector", ["#board .cell:first-child", "#board .cell:nth-child(5)", "#board:has(> .cell)",
+                                      "button:not(:disabled):is(#reset)", "#c0:not([data-x='a:has-text(b)'])",
+                                      "h1:first-of-type", "#board button:where(.cell):last-child"])
+def test_selectors_naming_only_pseudo_classes_the_page_matches_are_played(job, selector):
+    probe = {"cases": [{"name": "matched pseudo", "steps": [], "assertions": [{"kind": "count", "selector": selector, "expected": 1}]}]}
+    out = play(WORKING, probe=probe, tmp=job)
+    assert out["outcome"] == "pass", out
+
+
+def test_the_runners_pseudo_classes_are_exactly_those_its_happy_dom_matches():
+    # An upgrade of the vendored happy-dom that adds or drops a pseudo-class fails here, not in a tester's round: the
+    # list is read from probe.mjs and the cases from the bundle's own matcher, up to its silent `default:return null`.
+    bundle = (RUNNER.parent / "vendor/happy-dom.mjs").read_text()
+    start = re.search(r"matchPseudoItem\([a-zA-Z,]*\)\{", bundle)
+    assert start, "happy-dom's matchPseudoItem is gone: read its selector matcher again"
+    body = bundle[start.end():bundle.index("default:return null}", start.end())]
+    engine = set(re.findall(r'case"([a-z-]+)":', body))
+    listed = RUNNER.read_text().split("const PSEUDO_CLASSES = new Set([", 1)[1].split("])", 1)[0]
+    assert engine and set(re.findall(r"'([a-z-]+)'", listed)) == engine
 
 
 def test_an_app_with_no_page_to_compose_fails_on_its_page_files(job):
