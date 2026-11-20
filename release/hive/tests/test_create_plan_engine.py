@@ -500,10 +500,11 @@ def test_slice1_end_to_end_plan_test_first_red_build_review_fix_green_preview_go
     # the plan's integration; the post-integration fix is a NEW member for app carrying the failing check output
     assert w.code.member_ports.run_test == w.engine.ports.members.run_test        # the plan's check is each member's test
     adopts = [c for c in w.code.calls if c[0] == "adopt"]
-    assert [c[1] for c in adopts] == ["page", "style", "app", "app"] and adopts[-1][2].startswith("fix-for-")
-    assert adopts[2][3] == adopts[3][3] == code_ctl
+    # the look's design review renders the page, so style is built after page and app (page_before_design)
+    assert [c[1] for c in adopts] == ["page", "app", "style", "app"] and adopts[-1][2].startswith("fix-for-")
+    assert adopts[1][3] == adopts[3][3] == code_ctl
     assert fix_call[0][2]["brief"]["title"] == "Fill the list" and fix_call[0][2]["brief"]["failing"]["failing"] == ["app.js"]
-    assert [c[1] for c in w.code.calls if c[0] == "integrated"] == ["page", "style", "app", "app"]
+    assert [c[1] for c in w.code.calls if c[0] == "integrated"] == ["page", "app", "style", "app"]
     assert all(r["phase"] == "delivered" for r in w.code.runs.values())
     assert all(p["member"] in w.code.runs for p in pieces.values())
     # the order the reducer chose (journal before every effect)
@@ -1007,7 +1008,8 @@ def test_assignee_unavailable_holds_the_piece_and_asks_the_person(world):
     w.hive.db.execute("DELETE FROM person_minds WHERE purpose = 'studio_maker'")
     view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
     pid = view["plan_id"]
-    assert kinds(view).count("assignee-unavailable") == 2 and "piece-started" not in kinds(view)  # app waits on page
+    # app and style wait on page, the only piece the plan can start
+    assert kinds(view).count("assignee-unavailable") == 1 and "piece-started" not in kinds(view)
     assert view["status"] == "asking_you", (view["status"], view["last_error"])
     page = next(p for p in view["pieces"] if p["id"] == "page")
     assert page["state"] == "unassignable" and page["assignee"]["resolved"] is False
@@ -1699,6 +1701,66 @@ def test_a_design_step_on_a_hive_with_no_design_maker_comes_back_to_the_planner(
     assert not view["questions"]
 
 
+def test_a_design_piece_builds_after_the_piece_that_writes_its_page():
+    # v0.41's Linux check (20 Nov): a tip calculator's look piece had no deps, was built before the piece writing
+    # index.html and app.js, and its design review failed six times on the scaffold's placeholder page
+    piece = lambda id, kind, files, deps=(): {"id": id, "kinds": [kind], "deps": list(deps), "files": files}
+    look = lambda deps=(): piece("look", "design", ["style.css"], deps)
+    calc = lambda deps=(): piece("calc", "code", ["index.html", "app.js"], deps)
+    pieces = [look(), calc()]
+    assert cpe.page_before_design(pieces) == [] and (pieces[0]["deps"], pieces[1]["deps"]) == (["calc"], [])
+    # the page split over two code pieces: the look waits for both, in either order of the list
+    split = [look(), piece("markup", "code", ["index.html"]), piece("logic", "code", ["app.js"])]
+    assert cpe.page_before_design(split) == [] and split[0]["deps"] == ["markup", "logic"]
+    turned = [piece("logic", "code", ["app.js"]), piece("markup", "code", ["index.html"]), look()]
+    assert cpe.page_before_design(turned) == [] and turned[2]["deps"] == ["logic", "markup"]
+    # a design piece writing index.html is the page, which a code piece filling it follows; a look writing style.css
+    # waits for both, and one the plan already puts after them keeps the deps it has
+    page, app = piece("page", "design", ["index.html"]), piece("app", "code", ["app.js"], ["page"])
+    style = piece("style", "design", ["style.css"])
+    assert cpe.page_before_design([page, style, app]) == []
+    assert (page["deps"], style["deps"], app["deps"]) == ([], ["page", "app"], ["page"])
+    after = [piece("page", "design", ["index.html"]), piece("app", "code", ["app.js"], ["page"]),
+             piece("style", "design", ["style.css"], ["app"])]
+    assert cpe.page_before_design(after) == [] and [x["deps"] for x in after] == [[], ["page"], ["app"]]
+    # a piece writing no page file is no part of what the review renders
+    other = [look(), piece("data", "code", ["data.json"])]
+    assert cpe.page_before_design(other) == [] and other[0]["deps"] == []
+    # a code piece the plan builds after the look keeps that order, since the look's review still sees the page's markup
+    kept = [look(), piece("calc", "code", ["index.html"]), piece("logic", "code", ["app.js"], ["look"])]
+    assert cpe.page_before_design(kept) == [] and [x["deps"] for x in kept] == [["calc"], [], ["look"]]
+    # the index.html writer waiting on the look, directly or through another piece, is an order no dependency fixes,
+    # and the plan is left as it came
+    assert cpe.page_before_design([look(), calc(["look"])]) == ["look"]
+    chain = [look(), piece("via", "code", ["data.js"], ["look"]), calc(["via"])]
+    assert cpe.page_before_design(chain) == ["look"] and [x["deps"] for x in chain] == [[], ["look"], ["via"]]
+
+
+def test_a_plan_whose_page_waits_on_its_look_comes_back_to_the_planner_as_its_rule(world):
+    # the planned graph builds the page before any design piece that styles it: a plan ordering the page after its
+    # look is refused with the rule, and the corrected plan's look is made to wait on the page
+    w = world
+    w.minds.question = False
+    real = w.minds._answer
+
+    def first_with_the_page_after_its_look(kind, body, packet, agent):
+        answer = real(kind, body, packet, agent)
+        if kind == "plan" and "last_plan_refused" not in packet:
+            next(x for x in answer["plan"]["pieces"] if x["id"] == "page")["deps"] = ["style"]
+        return answer
+    w.minds._answer = first_with_the_page_after_its_look
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    plans = [packet for kind, _, packet in w.minds.calls if kind == "plan"]
+    assert len(plans) == 2
+    rule = cpe.PLAN_RULES["design_piece_before_its_page"]
+    assert plans[1]["last_plan_refused"] == {"code": "design_piece_before_its_page", "rule": rule}
+    assert rule in cpp.ANSWER_SHAPES["plan"]
+    planned = next(r for r in view["journal"] if r["kind"] == "planned")
+    assert {x["id"]: x["deps"] for x in planned["evidence"]["plan"]["pieces"]} == {"page": [], "style": ["page", "app"],
+                                                                                    "app": ["page"]}
+    assert view["phase"] == "ready-to-deploy", (view["phase"], view["status"], view["last_error"])
+
+
 # the planner can never cause these: the host writes the Plan atom as revision 1 with no parent, and reports planned
 # only for the open plan
 HOST_INTERNAL_PLAN_CODES = {"stale_revision", "not-the-open-plan"}
@@ -1957,8 +2019,8 @@ def test_a_member_delivery_lost_to_a_crash_is_made_again_from_the_journal(world)
     view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
     assert view["phase"] == "ready-to-deploy", (view["phase"], view["last_error"])
     assert not [c for c in w.code.calls if c[0] == "refix"]
-    assert [c[1] for c in w.code.calls if c[0] == "adopt"] == ["page", "style", "app", "app"]
-    assert [c[1] for c in w.code.calls if c[0] == "integrated"] == ["page", "style", "app", "app"]
+    assert [c[1] for c in w.code.calls if c[0] == "adopt"] == ["page", "app", "style", "app"]
+    assert [c[1] for c in w.code.calls if c[0] == "integrated"] == ["page", "app", "style", "app"]
     assert all(r["phase"] == "delivered" for r in w.code.runs.values())
 
 

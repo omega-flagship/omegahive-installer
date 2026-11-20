@@ -101,7 +101,8 @@ export interface ChunkRecovery {
   rearm(): void
   /**
    * The live connection came back after a drop: if the hive now serves another build, move to it as a deploy's chunk
-   * failure does (reload once with nothing unsaved, else ask to save first). The same build, or no answer, does nothing.
+   * failure does (reload once with nothing unsaved, else ask to save first). The same build, or no answer, does nothing,
+   * and a notice already up for a build stays as it is; a further build is followed again (Jon on #560).
    */
   follow(): Promise<ChunkState>
   readonly state: ChunkState
@@ -156,9 +157,12 @@ export function createChunkRecovery(env: ChunkEnv): ChunkRecovery {
   let decidedFor: string | null = null
   /** the failure Retry was pressed for: failing the same way again means Retry cannot load it in this page */
   let retriedFor: string | null = null
+  /** the build the standing update notice is about, so a reconnect to that same build leaves the notice as it is */
+  let noticeFor: string | null = null
 
   /** A build the server serves that this page did not boot from: reload toward it once, or ask first when work is unsaved. */
   function toNewBuild(server: string): UpdateNotice {
+    noticeFor = server
     // this tab already reloaded toward that build and still runs another one: do not try again
     if (readGuard(env)?.target === server) return 'updated'
     if (probe(env.unsaved)) return 'unsaved'
@@ -218,15 +222,22 @@ export function createChunkRecovery(env: ChunkEnv): ChunkRecovery {
       decidedFor = null
     },
     follow() {
-      // a decision under way, or one standing (a notice is up, or the page is reloading), is not asked again
+      // a decision under way, or a reload under way, is not asked again. A notice that is up is: the hive may have
+      // moved on again since, and a page that asked to save first, or already moved toward one build, follows the next
       if (pending) return pending
-      if (state !== 'idle') return Promise.resolve(state)
+      if (state === 'updating') return Promise.resolve(state)
+      const standing = state
       state = 'checking'
       pending = Promise.resolve().then(() => env.fetchBuild()).catch(() => null).then((server): ChunkState => {
-        const notice: ChunkState = !server || !env.pageBuild || server === env.pageBuild ? 'idle' : toNewBuild(server)
-        state = notice
         pending = null
-        if (notice !== 'idle') env.show(notice)
+        // no answer, the build this page booted from, or the build the notice up is already about: nothing new to say
+        if (!server || !env.pageBuild || server === env.pageBuild || (standing !== 'idle' && server === noticeFor)) {
+          state = standing
+          return state
+        }
+        const notice = toNewBuild(server)
+        state = notice
+        env.show(notice)
         if (notice === 'updating') env.reload()
         return notice
       })

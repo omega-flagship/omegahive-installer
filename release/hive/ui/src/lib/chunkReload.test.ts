@@ -461,6 +461,43 @@ describe('chunk recovery: following the hive across an update (its connection co
     expect(s.server.fetches).toBe(1)
   })
 
+  it('a page that asked to save first for one build still follows a further one (Jon on #560)', async () => {
+    const s = session('index-B.js')
+    let unsaved = true
+    const p = s.page('index-A.js', { unsaved: () => unsaved })
+    expect(await p.r.follow()).toBe('unsaved')
+    expect(await p.r.follow()).toBe('unsaved')                     // the same build again: the notice stands, said once
+    expect(p.notices).toEqual(['unsaved'])
+    unsaved = false
+    s.server.build = 'index-C.js'                                  // the hive updated again, and the work is saved now
+    expect(await p.r.follow()).toBe('updating')
+    expect(p.notices).toEqual(['unsaved', 'updating'])
+    expect(p.reloads()).toBe(1)
+    expect(JSON.parse(s.store.get(GUARD_KEY)!).target).toBe('index-C.js')
+  })
+
+  it('a tab already moved toward one build that then sees a further one reloads toward that one, once', async () => {
+    const s = session('index-B.js')
+    s.store.set(GUARD_KEY, JSON.stringify({ target: 'index-B.js', at: 1 }))
+    const p = s.page('index-A.js')
+    expect(await p.r.follow()).toBe('updated')
+    expect(await p.r.follow()).toBe('updated')
+    expect(p.reloads()).toBe(0)
+    s.server.build = 'index-C.js'
+    expect(await p.r.follow()).toBe('updating')
+    expect(p.reloads()).toBe(1)
+  })
+
+  it('a page already reloading does not ask again', async () => {
+    const s = session('index-B.js')
+    const p = s.page('index-A.js')
+    expect(await p.r.follow()).toBe('updating')
+    s.server.build = 'index-C.js'
+    expect(await p.r.follow()).toBe('updating')
+    expect(s.server.fetches).toBe(1)
+    expect(p.reloads()).toBe(1)
+  })
+
   it('follows only a connection that comes back after a drop, never its first open, until unsubscribed', () => {
     const listeners: ((now: string, before: string) => void)[] = []
     let follows = 0

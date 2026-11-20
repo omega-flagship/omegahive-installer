@@ -82,6 +82,16 @@ describe('an app’s graph view by link (the tour)', () => {
   })
 })
 
+describe('an app the Ask opens carries the swarm it prefers, never as the route’s swarm (Jon on #574)', () => {
+  it('round-trips prefer without a swarm, and a named swarm drops it', () => {
+    expect(href({ name: 'program', id: 'commons-explorer', prefer: 's_taiga' })).toBe('#/program/commons-explorer?prefer=s_taiga')
+    expect(parse('#/program/commons-explorer?prefer=s_taiga')).toEqual({ name: 'program', id: 'commons-explorer', prefer: 's_taiga' })
+    expect(href({ name: 'program', id: 'commons-explorer', swarm: 's_team', prefer: 's_taiga' })).toBe('#/program/commons-explorer/s_team')
+    expect(parse('#/program/commons-explorer/s_team?prefer=s_taiga')).not.toHaveProperty('prefer')
+    expect(parse(href({ name: 'program', id: 'omegadesign', prefer: 's_a b', view: 'graph' }))).toEqual({ name: 'program', id: 'omegadesign', prefer: 's_a b', view: 'graph' })
+  })
+})
+
 describe('an artifact by link (a mind names it by id, shown as its title)', () => {
   it('round-trips the artifact it opens, and the plain page without one', () => {
     const route = { name: 'artifacts' as const, open: `ar_${'a'.repeat(32)}` }

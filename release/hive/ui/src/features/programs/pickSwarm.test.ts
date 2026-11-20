@@ -176,3 +176,37 @@ describe("the person's own home opens by itself, private or not", () => {
     expect(r).toEqual({ pick: 's_mine', choices: [] })
   })
 })
+
+/**
+ * Jon on #574 (20 Nov): the swarm of the mind the Ask is with goes to the chooser as a preference, used only when it is
+ * one of the app's homes and never when it is a private swarm the asker doesn't own. INVENTED swarms.
+ */
+describe('the swarm of the mind the Ask is with is a preference, under the same fence', () => {
+  const mine = sw('s_mine', 'My room', null, { visibility: 'private' })
+  const theirs = sw('s_theirs', 'Their room', null, { visibility: 'private' })
+  const all = { ...swarms, s_mine: mine, s_theirs: theirs }
+  const usable = new Set([...ALL, 's_mine', 's_theirs'])
+  const pick = (preferred: string, homes: { swarm_id: string; own?: boolean }[] | null, remembered: string | null = null) =>
+    pickProgramSwarm({ swarms: all, agents, homes, usable, remembered, defaultSwarm: 's_b', preferred })
+
+  it('a home wins over the remembered swarm, the default swarm and an awake coordinator', () => {
+    expect(pick('s_a', [{ swarm_id: 's_b' }, { swarm_id: 's_a' }], 's_b')).toBe('s_a')
+  })
+  it('a swarm the app does not work in changes nothing', () => {
+    expect(pick('s_c', [{ swarm_id: 's_a' }, { swarm_id: 's_b' }])).toBe('s_b')
+  })
+  it('a private home the asker owns is taken; one they do not own changes nothing', () => {
+    expect(pick('s_mine', [{ swarm_id: 's_a' }, { swarm_id: 's_mine', own: true }])).toBe('s_mine')
+    expect(pick('s_theirs', [{ swarm_id: 's_a' }, { swarm_id: 's_theirs' }])).toBe('s_a')
+  })
+  it('an archived or unknown swarm changes nothing, and with the homes not known it is not used at all', () => {
+    expect(pick('s_old', [{ swarm_id: 's_old' }, { swarm_id: 's_b' }])).toBe('s_b')
+    expect(pick('gone', [{ swarm_id: 's_b' }])).toBe('s_b')
+    expect(pick('s_a', null)).toBe('s_b')   // homes null: the default s_b, which the person may use; s_a's being a home can't be told
+  })
+  it('the page’s routing passes it to the chooser', () => {
+    const homesState = { kind: 'known' as const, homes: [{ swarm_id: 's_b' }, { swarm_id: 's_a' }] }
+    expect(appRouting({ swarms: all, agents, homesState, remembered: null, defaultSwarm: null, preferred: 's_a' })).toEqual({ pick: 's_a', choices: [] })
+    expect(appRouting({ swarms: all, agents, homesState, remembered: null, defaultSwarm: null }).pick).toBe('s_b')
+  })
+})

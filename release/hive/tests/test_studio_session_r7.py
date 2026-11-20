@@ -589,7 +589,8 @@ def test_R71_capabilities_studio_sessions_is_true_only_when_the_self_check_passe
     enabled, missing = studio.self_check()
     monkeypatch.setattr(studio, "enabled", enabled)
     monkeypatch.setattr(studio, "missing", missing)
-    assert studio.enabled is False and caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive), "studio_off": "self_check", "studio_missing": ["something"]}
+    assert studio.enabled is False and caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive), "studio_off": "self_check"}
+    assert caps(p, p.jg)["studio_missing"] == ["something"]          # an admin is told the part; one without plain words keeps its name
     # every component present: on, advertised
     monkeypatch.setattr(studio, "components", lambda: {"gateway session/execution hook": True})
     monkeypatch.setattr(studio, "enabled", studio.self_check()[0])
@@ -629,9 +630,10 @@ def test_f4_with_studio_sessions_absent_the_capabilities_say_why_and_never_when_
 
 def test_self_check_names_what_it_found_missing_only_while_the_switch_asks_for_studio(p, monkeypatch):
     """A tester's Mac hive (20 Nov) had the switch on and its self-check missing a part, and the page could only say
-    "turned off". With the switch on, a failed self-check is "self_check" and studio_missing names the parts in the
-    self-check's order; switched off, missing parts are not the reason, so it is "off" with none named; studio_missing
-    never rides with studio_sessions."""
+    "turned off". With the switch on, a failed self-check is "self_check" for everyone, and studio_missing names the
+    parts in plain words and in the self-check's order to an admin only, whoever runs the hive, never to a member (Jon
+    on #559); switched off, missing parts are not the reason, so it is "off" with none named; studio_missing never rides
+    with studio_sessions."""
     studio = p.hive.studio
 
     def check(parts):
@@ -642,17 +644,25 @@ def test_self_check_names_what_it_found_missing_only_while_the_switch_asks_for_s
 
     monkeypatch.setenv("HIVE_STUDIO_SESSIONS", "on")
     check({"gateway session/execution hook": True, "mac safe-restart exact-commit override": False, "studio_steps table": False})
-    got = caps(p)
-    assert got["studio_off"] == "self_check" and got["studio_missing"] == ["mac safe-restart exact-commit override", "studio_steps table"]
+    member = caps(p)
+    assert member["studio_off"] == "self_check" and "studio_missing" not in member
+    got = caps(p, p.jg)
+    assert got["studio_off"] == "self_check" and got["studio_missing"] == ["the reviewed safe restart for Macs", "the drawing steps store"]
     assert "studio_sessions" not in got and list(got)[-2:] == ["studio_off", "studio_missing"]       # appended last
     monkeypatch.setenv("HIVE_STUDIO_SESSIONS", "off")
     check({"gateway session/execution hook": True, "mac safe-restart exact-commit override": False})
-    off = caps(p)
+    off = caps(p, p.jg)
     assert off["studio_off"] == "off" and "studio_missing" not in off
     monkeypatch.setenv("HIVE_STUDIO_SESSIONS", "on")
     check({"gateway session/execution hook": True})
-    on = caps(p)
+    on = caps(p, p.jg)
     assert on["studio_sessions"] is True and "studio_off" not in on and "studio_missing" not in on
+
+
+def test_every_part_the_self_check_names_has_plain_words(p):
+    """A part added to the self-check without plain words would reach whoever runs the hive under its internal name."""
+    from hive.core.studio_sessions import PLAIN_PARTS
+    assert set(p.hive.studio.components()) <= set(PLAIN_PARTS)
 
 
 @pytest.mark.parametrize("operator_flag", [False, True], ids=["operator-off", "operator-on"])

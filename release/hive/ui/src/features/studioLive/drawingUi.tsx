@@ -12,14 +12,17 @@ const HOST_OFF_STEP = 'That is for whoever runs this hive; there is nothing for 
 /**
  * Show run f4 (2026-11-19): the host's own reason for not offering drawing (/api/me/ask `capabilities.studio_off`, set
  * only while `studio_sessions` is absent, and with "self_check" the parts its startup check found missing,
- * `capabilities.studio_missing`, named as the hive's log names them). No step is offered: a key does not turn Studio on
+ * `capabilities.studio_missing`, in plain words and sent only to whoever runs the hive). No step is offered: a key does not turn Studio on
  * (setup's own_key_needed is handled when Draw live is pressed on a hive that offers it). An absent or unknown reason is
  * never guessed.
  */
 function hostOffReason(why: unknown, missing?: unknown): string {
   if (why === 'self_check') {
     const parts = Array.isArray(missing) ? missing.filter((m): m is string => typeof m === 'string' && m.trim() !== '') : []
-    return `Live drawing is switched on, but this hive’s startup check ${parts.length ? `found parts missing (${andList(parts)})` : 'keeps it off'}, so nothing can be drawn here. ${HOST_OFF_STEP}`
+    // the hive names the parts only to whoever runs it (an admin), so a list is read by the one person who can act on it
+    return parts.length
+      ? `Live drawing is switched on, but this hive’s startup check found parts missing (${andList(parts)}), so nothing can be drawn here until a build of the hive has them.`
+      : `Live drawing is switched on, but this hive’s startup check keeps it off, so nothing can be drawn here. ${HOST_OFF_STEP}`
   }
   if (why === 'not_set_up') return `Live drawing isn’t set up on this hive yet, so nothing can be drawn here. ${HOST_OFF_STEP}`
   if (why === 'off') return `Live drawing is turned off on this hive, so nothing can be drawn here. ${HOST_OFF_STEP}`

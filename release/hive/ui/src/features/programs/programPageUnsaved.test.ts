@@ -149,13 +149,15 @@ async function hive(client: object, app = APP) {
   return useHive
 }
 
-async function mount(props: { source?: CreationReference; view?: 'graph' | 'studio'; id?: string }) {
+type PageProps = { source?: CreationReference; view?: 'graph' | 'studio'; id?: string; swarm?: string; prefer?: string }
+
+async function mount(props: PageProps) {
   const { act } = await import('react')
   const { createRoot } = await import('react-dom/client')
   const { default: ProgramPage } = await import('./ProgramPage')
   const container = doc.body.appendChild(doc.createElement('div'))
   const root = createRoot(container as unknown as HTMLElement)
-  const render = async (p: { source?: CreationReference; view?: 'graph' | 'studio'; id?: string }) => {
+  const render = async (p: PageProps) => {
     await act(async () => root.render(createElement(ProgramPage, { id: APP, swarm: SWARM, ...p })))
   }
   await render(props)
@@ -904,5 +906,37 @@ describe('Create shows its benches side by side (Jon 11-05: code and studio toge
     const p = await mount({})
     await p.act(flush)
     expect(p.container.findAll((n) => n.getAttribute('aria-label') === 'Create benches')).toHaveLength(0)
+  })
+})
+
+/**
+ * Jon on #574 (20 Nov): an app the Ask opens prefers the swarm of the mind it is with. The mounted page takes the
+ * route's `prefer` to its routing: it opens there when that swarm is one of the app's homes and not someone else's
+ * private swarm, and otherwise where it would have opened anyway. INVENTED ids.
+ */
+describe('the page opens an app in the swarm its route prefers only where the fence allows', () => {
+  const MIND = 's_invented_mind'
+  const OTHER = 's_invented_home'
+  const homes = (...h: { swarm_id: string; own?: boolean }[]) => ({ programHomes: async () => ({ homes: h.map((x) => ({ why: 'configured', ...x })) }) })
+  const swarm = (id: string, extra: object = {}) => ({ id, name: id, description: '', hue: 0, member_ids: [], created_at: '2026-10-01T00:00:00Z', ...extra })
+  const opened = async (client: object, mind: object = {}) => {
+    const store = await hive(client)
+    store.setState({ swarms: { ...store.getState().swarms, [OTHER]: swarm(OTHER), [MIND]: swarm(MIND, mind) } as never })
+    const p = await mount({ swarm: undefined, prefer: MIND })
+    await p.act(flush)
+    return navigations
+  }
+
+  it('a home: the app opens in the mind’s swarm, not the first home', async () => {
+    expect(await opened(homes({ swarm_id: OTHER }, { swarm_id: MIND }))).toEqual([{ name: 'program', id: APP, swarm: MIND }])
+  })
+  it('a swarm the app does not work in: where it would have opened anyway', async () => {
+    expect(await opened(homes({ swarm_id: OTHER }))).toEqual([{ name: 'program', id: APP, swarm: OTHER }])
+  })
+  it('someone else’s private home: where it would have opened anyway; the asker’s own private home: there', async () => {
+    expect(await opened(homes({ swarm_id: OTHER }, { swarm_id: MIND }), { visibility: 'private' })).toEqual([{ name: 'program', id: APP, swarm: OTHER }])
+    for (const u of mounted.splice(0)) await u()
+    navigations.length = 0
+    expect(await opened(homes({ swarm_id: OTHER }, { swarm_id: MIND, own: true }), { visibility: 'private' })).toEqual([{ name: 'program', id: APP, swarm: MIND }])
   })
 })

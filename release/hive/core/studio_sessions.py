@@ -82,6 +82,27 @@ def switched_on():
     return os.environ.get(SETTING, "").strip().lower() in ("1", "true", "on", "yes")
 
 
+# What whoever runs the hive reads for each part StudioSessions.components() names. The page showed these parts to every
+# member under their internal names ("studio_steps table"), and Jon asked on #559 for plain names or the list only for
+# whoever runs the hive; it has both. The hive's log keeps the internal names.
+PLAIN_PARTS = {
+    "studio_sessions table": "the drawing sessions store",
+    "studio_steps table": "the drawing steps store",
+    "studio_fenced_executions table": "the record that stops an ended step running again",
+    "gateway session/execution hook": "the hook from drawing sessions into the model gateway",
+    "SEND_GATE session wiring": "the check a step makes before its model call goes out",
+    "supervisor token rotation": "the renewal of a session's tokens",
+    "studio_sessions unique indexes": "the duplicate checks on drawing sessions",
+    "controls: pause, resume, stop": "the pause, resume and stop controls",
+    "mac safe-restart exact-commit override": "the reviewed safe restart for Macs",
+}
+
+
+def plain_parts(missing):
+    """The self-check's missing parts in PLAIN_PARTS' words, in its order; a part without plain words keeps its name."""
+    return [PLAIN_PARTS.get(name, name) for name in missing]
+
+
 def host_platform():
     import sys
     return sys.platform

@@ -576,7 +576,7 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
         setPanel(null)
       }
       try {
-        // an app it opens opens in the swarm of the mind it is with (run.ts RunCtx.swarm), as that mind's Open in… does
+        // an app it opens prefers the swarm of the mind it is with (run.ts RunCtx.swarm); the app page decides
         const withMind = answererVoiceId ?? answererId
         const swarm = withMind ? agents[withMind]?.swarm_id ?? undefined : undefined
         const handled = await performAct(act, { you, where, experience, onAct, swarm }, origin)

@@ -56,7 +56,7 @@ function rememberedSwarm(id: string): string | null {
   }
 }
 
-type ProgramPageProps = { id: string; swarm?: string; source?: CreationReference; view?: 'graph' | 'studio' | 'make' }
+type ProgramPageProps = { id: string; swarm?: string; prefer?: string; source?: CreationReference; view?: 'graph' | 'studio' | 'make' }
 
 /**
  * #/program/<id>[/<swarm>]: the host as a full page. A program call is scoped to one swarm.
@@ -147,7 +147,7 @@ export function AppUnavailable({ state, retry }: { state: ClosedState; retry?: (
 }
 
 /** A listed app's page: from here on the host has listed the app for this person, so its name and controls may show. */
-function ListedProgramPage({ id, swarm, source, view }: ProgramPageProps) {
+function ListedProgramPage({ id, swarm, prefer, source, view }: ProgramPageProps) {
   const swarms = useHive((s) => s.swarms)
   const program = useHive((s) => s.programs?.find((p) => p.id === id))
   const sorted = useMemo(() => Object.values(swarms).sort((a, b) => a.name.localeCompare(b.name)), [swarms])
@@ -221,17 +221,18 @@ function ListedProgramPage({ id, swarm, source, view }: ProgramPageProps) {
   useEffect(() => (personApp ? undefined : lookupHomes(client, id, (state) => setLookup({ client, id, attempt, state }))), [personApp, client, id, attempt])
   const homesState: HomesState = lookup && lookup.client === client && lookup.id === id && lookup.attempt === attempt ? lookup.state : HOMES_PENDING
   const homes = homesState.kind === 'known' ? homesState.homes : null
-  // pick the swarm: the route's, else the last used or the person's default (when the person may use it and the app
-  // works there), else a home (or, on a host that cannot say where it works, a swarm) that the person may use, that is
-  // not private, with an awake coordinator first. Never the swarm that sorts first by name; nothing qualifies: the
+  // pick the swarm: the route's, else the swarm the route prefers (the mind the Ask is with, Jon on #574), the last
+  // used or the person's default (each when the person may use it, the app works there and it isn't someone else's
+  // private swarm), else a home (or, on a host that cannot say where it works, a swarm) that the person may use, that
+  // is not private, with an awake coordinator first. Never the swarm that sorts first by name; nothing qualifies: the
   // chooser below, never a guess (stand-in r1 P1).
   const agents = useHive((s) => s.agents)
   const defaultSwarm = useAskStore((s) => s.settings?.swarm_id ?? null)
   // where the app may open by itself: only the homes the host returned (it limits them to swarms the person sees);
   // the Ask's `eligible` (where the Ask may route) is not consulted here (r2.2). No homes route: the chooser.
   const routing = useMemo(
-    () => (personApp ? { pick: personSwarm ?? undefined, choices: [] } : current || !sorted.length ? { pick: undefined, choices: [] } : appRouting({ swarms, agents, homesState, remembered: rememberedSwarm(id), defaultSwarm })),
-    [personApp, personSwarm, current, sorted, swarms, agents, homesState, id, defaultSwarm],
+    () => (personApp ? { pick: personSwarm ?? undefined, choices: [] } : current || !sorted.length ? { pick: undefined, choices: [] } : appRouting({ swarms, agents, homesState, remembered: rememberedSwarm(id), defaultSwarm, preferred: prefer ?? null })),
+    [personApp, personSwarm, current, sorted, swarms, agents, homesState, id, defaultSwarm, prefer],
   )
   const pick = routing.pick
   const choices = routing.choices

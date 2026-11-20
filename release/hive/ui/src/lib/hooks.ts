@@ -13,23 +13,39 @@ export function useMediaQuery(query: string): boolean {
 }
 
 /**
- * An element's content width from each ResizeObserver report (delivered once on observe and again on every change), null
- * until the first report or where the browser has no ResizeObserver. features/lab/useWidth.ts, forms/commons/hooks.ts and
- * programs/ProgramHost.tsx each keep their own copy of this, reading 0 before measuring.
+ * An element's content width: read once in the layout pass, before the first paint, so a view never draws one frame for
+ * the screen's width (Jon's review of #564), then from each ResizeObserver report. Null until it has a width; a width of
+ * 0 means the element isn't laid out (hidden, or a test's DOM), which leaves the views on their earlier answer.
+ * features/lab/useWidth.ts, forms/commons/hooks.ts and programs/ProgramHost.tsx each keep their own copy of this, reading
+ * 0 before measuring.
  */
 export function useElementWidth(ref: RefObject<Element | null>): number | null {
   const [width, setWidth] = useState<number | null>(null)
   useLayoutEffect(() => {
     const el = ref.current
-    if (!el || typeof ResizeObserver === 'undefined') return
+    if (!el) return
+    // a state set in a layout effect renders again before the browser paints
+    const first = contentWidth(el)
+    if (first > 0) setWidth(first)
+    if (typeof ResizeObserver === 'undefined') return
     const ro = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect.width
-      if (typeof w === 'number') setWidth(Math.round(w))
+      if (typeof w === 'number' && w > 0) setWidth(Math.round(w))
     })
     ro.observe(el)
     return () => ro.disconnect()
   }, [ref])
   return width
+}
+
+/** An element's content-box width, as ResizeObserver's contentRect gives it: its client width less its padding; 0 when it
+ * has no layout. Example: a 640 px wide window with 13 px of padding each side is 614. */
+function contentWidth(el: Element): number {
+  const w = (el as HTMLElement).clientWidth
+  if (typeof w !== 'number' || !(w > 0)) return 0
+  const cs = el.ownerDocument?.defaultView?.getComputedStyle?.(el)
+  const pad = cs ? (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0) : 0
+  return Math.round(w - pad)
 }
 
 /** The width a page window gives the views inside it (ui/ViewArea measures it), or null outside one. */

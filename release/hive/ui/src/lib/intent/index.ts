@@ -8,6 +8,7 @@
  */
 import { plural } from '../plural'
 import { featureById, FEATURES } from '../../features/registry'
+import { navCommandsFor, placeCommandsFor } from '../../features/palette/navCommands'
 import type { Route } from '../router'
 import { guidedIntent, type GuideIntent } from '../../features/guided/match'
 import { featureWords, foldWords, scoreFeatures } from './features'
@@ -36,6 +37,22 @@ const FEATURE_CONF: Record<number, number> = { 4: 0.95, 3: 0.86, 2: 0.62 }
 
 /** Kinds of hive things the command palette never lists (it holds pages, minds, swarms, apps and actions). */
 const PALETTE_LACKS = /\b(artifacts?|tasks?|goals?|files?|documents?|beliefs?|memor(?:y|ies)|messages?|notes?|plans?)\b/i
+
+/** The palette's pages and the places inside them, as an admin's palette lists them: the widest set, so a find a page
+ * could answer keeps the palette. Its minds, swarms and apps come from the world. */
+const PALETTE_PAGES = [...navCommandsFor({ admin: true }), ...placeCommandsFor({ admin: true })]
+
+/**
+ * Whether the command palette lists a row for these words: a page, place, mind, swarm or app whose name or search words
+ * contain them. That is the palette's prefix and substring match (lib/fuzzy) without its letter-by-letter one, which
+ * matches almost any short word somewhere. Examples: "tasks" is the Tasks page; "notes" is a mind or swarm named Notes
+ * when there is one; "artifact of Marsupial List" is nothing. Cost: one substring test per page, place and name.
+ */
+function paletteLists(words: string, world: World): boolean {
+  const q = words.trim().toLowerCase()
+  const has = (s: string | undefined) => !!s && s.toLowerCase().includes(q)
+  return PALETTE_PAGES.some((c) => has(c.label) || has(c.keywords)) || [...world.minds, ...world.swarms, ...(world.apps ?? [])].some((x) => has(x.name))
+}
 
 /** How a Still act changes the world, for the policy. */
 export function effectOf(act: IntentAct | undefined): Effect | undefined {
@@ -176,11 +193,11 @@ export function resolve(text: string, scope: IntentScope, world: World, scoped: 
   }
 
   // ---- an explicit search: "search for X", "find X". The palette it opens lists pages, minds, swarms, apps and actions
-  // (CommandPalette's Cmd groups), so words naming another kind of hive thing can't be found there: a tester's "Find
-  // artifact of Marsupial List" opened it empty (20 Nov). Such a row stays listed but no longer runs on Enter, and the
-  // words go where the policy sends them, usually the mind, which holds the hive's skills for finding them.
+  // (CommandPalette's Cmd groups), so words naming another kind of hive thing usually can't be found there: a tester's
+  // "Find artifact of Marsupial List" opened it empty (20 Nov). Such a row stays listed but no longer runs on Enter,
+  // and the words go where the policy sends them, usually the mind, which holds the hive's skills for finding them.
+  // Its score depends on the other rows, so the row is added after them (below).
   const search = raw.match(/^(?:search(?: for| everything for)?|find|look for)\s+(.{2,})$/i)
-  if (search) out.push({ key: 'search-explicit', tag: 'Search', parts: [{ t: 'Search everything for ' }, { t: search[1], q: true }], act: { do: 'search', text: search[1] }, effect: 'view', confidence: PALETTE_LACKS.test(search[1]) ? 0.3 : 0.9 })
 
   // ---- what the feature list understood well but Still's verbs did not reach (any feature, any wording it scores)
   for (const [id, s] of scores) {
@@ -196,6 +213,14 @@ export function resolve(text: string, scope: IntentScope, world: World, scoped: 
       continue
     }
     out.push({ key: `feature-${id}`, tag: 'Open', parts: [{ t: f.label, em: true }, { t: ` — ${f.blurb[0].toLowerCase()}${f.blurb.slice(1)}` }], act: { do: 'feature', id }, effect: effectOf({ do: 'feature', id }), confidence: FEATURE_CONF[s] })
+  }
+
+  // A search for a kind word runs on Enter only where the palette holds the answer: the palette lists something for
+  // the words ("find notes" with a mind named Notes, Jon's review of #563), and no row already names a page outright
+  // above the search's own 0.9, so "find tasks" opens the Tasks page itself (0.95) and not a choice beside the search.
+  if (search) {
+    const outright = out.some((c) => !!c.act && c.effect !== 'mind' && c.confidence > 0.9)
+    out.push({ key: 'search-explicit', tag: 'Search', parts: [{ t: 'Search everything for ' }, { t: search[1], q: true }], act: { do: 'search', text: search[1] }, effect: 'view', confidence: PALETTE_LACKS.test(search[1]) && (outright || !paletteLists(search[1], world)) ? 0.3 : 0.9 })
   }
 
   const seen = new Set<string>()

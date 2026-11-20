@@ -48,6 +48,19 @@ async function mount() {
 }
 
 describe('a page window’s views lay out for the width it gives them', () => {
+  it('measures the window before its first paint, so a narrow one never draws a frame laid out for a desktop', async () => {
+    // the layout pass reads the window's width; no ResizeObserver report has come yet (Jon's review of #564)
+    const proto = Object.getPrototypeOf((g.document as MiniDocument).createElement('div')) as object
+    Object.defineProperty(proto, 'clientWidth', { get: () => 614, configurable: true })
+    try {
+      const { root, text } = await mount()
+      expect(text()).toBe('narrow')
+      await act(async () => root.unmount())
+    } finally {
+      delete (proto as { clientWidth?: number }).clientWidth
+    }
+  })
+
   it('reads the screen until measured, then the window: narrow beside the half Ask, a desktop when the window is wide', async () => {
     const { root, text } = await mount()
     expect(text()).toBe('desktop')   // the screen's answer until the first report

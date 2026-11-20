@@ -225,6 +225,10 @@ PLAN_RULES = {
                              "no-design",
     "design-pieces-carry-the-design": "needs.design is design only when no piece has the kind design: a piece of kind "
                                       "design carries the look itself, so a plan with one says no-design",
+    # short: the plan shape and every rule share one goal read with the request's first 200 characters
+    # (create_plan_ports.task_text, TASK_READ_CHARS), and the host adds the dependencies it can itself
+    "design_piece_before_its_page": "no piece writing index.html depends on a design piece, even through others, "
+                                    "since a design review renders the page",
     "no-review-for-artifact-kind": "every kind a piece has is reviewed, by one of the hive's own reviews (hive_reviews) "
                                    "or by one the plan adds",
 }
@@ -298,6 +302,54 @@ def validate_plan(plan):
         caps.append({"selector": c["selector"], "n": c["n"]})
     return {"title": str(plan.get("title") or "")[:120], "pieces": out, "acceptance": acceptance,
             "questions": questions, "needs": {"design": design, "tests": tests, "reviews": reviews, "caps": caps}}, None
+
+
+def page_before_design(pieces):
+    """Make each design piece depend on the pieces writing the page its design review renders (the frame's UI files
+    over the integration checkpoint): the piece writing index.html, whatever its kind, and every code piece writing
+    style.css or app.js. Until they are built the review sees the scaffold's placeholder for their files: on v0.41's
+    Linux check (20 Nov) a tip calculator's plan gave its look piece (style.css) no deps, the reducer built it before
+    the piece writing index.html and app.js, and its design review failed six times on the placeholder while that
+    piece waited, until the plan stopped at 360 s. A dependency the plan's own order already gives is not added again,
+    and a writer the plan builds after the look keeps that order, except the index.html writer after a look that
+    doesn't write it: that review can only see the placeholder, so the plan is refused. Which edges are added is read
+    from the plan's own order alone, so it doesn't depend on the pieces' order in the list. Returns the ids of the
+    design pieces such an order puts first, leaving the plan as it came, else [] with every piece's deps updated.
+    Time: one walk of the graph per piece, then one per design piece, at most 2p * (p + e) steps for p pieces and e
+    deps edges, plus p * p file comparisons."""
+    from .create_plan_ports import UI_FILES          # the files the render reads; imported here as _render does
+    deps = {x["id"]: list(x["deps"]) for x in pieces}
+
+    def reach(start):   # every piece `start` depends on, directly or through other pieces
+        seen, todo = set(), list(deps.get(start, ()))
+        while todo:
+            d = todo.pop()
+            if d not in seen:
+                seen.add(d)
+                todo.extend(deps.get(d, ()))
+        return seen
+
+    first = {x["id"]: reach(x["id"]) for x in pieces}     # the plan's own order, before anything is added
+    late = []
+    for x in pieces:
+        if "design" not in x["kinds"]:
+            continue
+        for w in pieces:
+            writes = set(w["files"]) & set(UI_FILES)
+            if w is x or not writes or ("design" in w["kinds"] and "index.html" not in writes):
+                continue
+            if x["id"] in first[w["id"]]:                 # the plan builds this writer after the look
+                if "index.html" in writes and "index.html" not in x["files"] and x["id"] not in late:
+                    late.append(x["id"])
+            elif w["id"] not in first[x["id"]]:
+                deps[x["id"]].append(w["id"])
+    # an added edge closing a loop through other added edges is an order no dependency can fix either
+    late += [x["id"] for x in pieces if "design" in x["kinds"] and x["id"] not in late and x["id"] in reach(x["id"])]
+    if late:
+        return late
+    for x in pieces:
+        x["deps"] = deps[x["id"]]
+    return []
 
 
 RESERVED = {"none", "True", "False", "Empty", "base", "blocked", "plan", "deploy"}   # reducer symbols, never data
@@ -1489,6 +1541,10 @@ class CreatePlanEngine:
                 return await R("failed", f"plan-failed:{op}", "plan-failed", [q(op)],
                                {"invalid": "piece_owns_a_reserved_path", "paths": sorted(owned & set(plan["reserved"])),
                                 "by": out.get("by")})
+            late = page_before_design(plan["pieces"])
+            if late:   # the page's piece waits on a design piece whose review renders that page
+                return await R("failed", f"plan-failed:{op}", "plan-failed", [q(op)],
+                               {"invalid": "design_piece_before_its_page", "pieces": late, "by": out.get("by")})
             digest = _digest(plan)
             ref = f"planref-{digest[7:23]}"
             graph = [["Piece", q(x["id"]), selector_atom(x["assignee"]), list(x["kinds"]), [q(d) for d in x["deps"]],

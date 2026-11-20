@@ -39,9 +39,10 @@ export interface RunCtx {
   /** "on Goals" */
   where?: string
   /**
-   * The swarm of the mind the Ask is with. An app the Ask opens without a swarm of its own opens there, as that mind's
-   * own Open in… opens it: the app page alone may find no swarm it can use where the mind's panel opens the app (a
-   * tester's Open Commons Explorer, 20 Nov).
+   * The swarm of the mind the Ask is with. An app the Ask opens without a swarm of its own prefers it: the app page
+   * opens the app there when the app works there and it isn't someone else's private swarm, and otherwise where it
+   * would have opened anyway (pickSwarm.ts; Jon on #574, 20 Nov). The app page alone may find no swarm it can use
+   * where the mind's panel opens the app (a tester's Open Commons Explorer, 20 Nov).
    */
   swarm?: string
 }
@@ -167,7 +168,7 @@ export async function runIntent(act: IntentAct, ctx: RunCtx, origin: AskOrigin =
   const offline = (what: string) => say(`Not connected to the hive, so ${what}.`)
   switch (act.do) {
     case 'route': {
-      const route = act.route.name === 'program' && !act.route.swarm && ctx.swarm ? { ...act.route, swarm: ctx.swarm } : act.route
+      const route = act.route.name === 'program' && !act.route.swarm && ctx.swarm ? { ...act.route, prefer: ctx.swarm } : act.route
       go(href(route), act.label, ctx, origin)
       return true
     }

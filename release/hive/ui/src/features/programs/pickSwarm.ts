@@ -40,9 +40,13 @@ export function appUsable(homes: { swarm_id: string }[] | null): ReadonlySet<str
  * #2/#3), and never one the person cannot use or a private one (stand-in r1 P1).
  * - `usable`: the swarms the app may open in for this person (appUsable: the host's homes, which it limits to swarms
  *   the person sees, plus the swarms they participate in). Null (not known): nothing is chosen; the chooser shows.
- * - The remembered swarm, then the person's default swarm, are honoured when the person may use them, they are not
- *   private (stand-in r2 P1: a private swarm opens only by the person choosing it, in the chooser or a link they
- *   followed), and, with `homes` known, the app works there.
+ * - `preferred`: the swarm of the mind the Ask is with (Jon on #574, 20 Nov: a preference, not a fixed route swarm).
+ *   Tried first, and only when `homes` are known and it is one of them, under the same fence as the remembered and
+ *   default swarms below. So a mind in a swarm the app doesn't work in, or in someone else's private swarm, changes
+ *   nothing.
+ * - Then the remembered swarm, then the person's default swarm, are honoured when the person may use them, they are
+ *   not private unless the host marks them the person's own (stand-in r2 P1: a private swarm opens only by the person
+ *   choosing it, in the chooser or a link they followed), and, with `homes` known, the app works there.
  * - Otherwise only a usable, non-private swarm in use is chosen automatically:
  *   `homes` known: the first such home with an awake coordinator, else the first such home;
  *   `homes` null (a host without the route): such a swarm, an awake coordinator first, then the most awake minds.
@@ -55,8 +59,9 @@ export function pickProgramSwarm(opts: {
   usable: ReadonlySet<string> | null
   remembered: string | null
   defaultSwarm: string | null
+  preferred?: string | null
 }): string | null {
-  const { swarms, agents, homes, usable, remembered, defaultSwarm } = opts
+  const { swarms, agents, homes, usable, remembered, defaultSwarm, preferred } = opts
   if (!usable) return null
   const canUse = (id: string | null | undefined): id is string => !!id && !!swarms[id] && !swarms[id].archived_at && usable.has(id)
   // the person's own space the host made the app's home (homes `own`, e.g. Create in their own Studio): private, but
@@ -64,7 +69,8 @@ export function pickProgramSwarm(opts: {
   const own = new Set((homes ?? []).filter((h) => h.own === true).map((h) => h.swarm_id))
   const automatic = (id: string) => canUse(id) && (!privateSwarm(swarms[id]) || own.has(id))
   const homeIds = homes ? homes.map((h) => h.swarm_id) : null
-  for (const chosen of [remembered, defaultSwarm]) if (canUse(chosen) && (!privateSwarm(swarms[chosen]) || own.has(chosen)) && (!homeIds || homeIds.includes(chosen))) return chosen
+  // the preferred swarm only where the app is known to work, then the remembered and default swarms
+  for (const chosen of [homeIds ? preferred : null, remembered, defaultSwarm]) if (canUse(chosen) && (!privateSwarm(swarms[chosen]) || own.has(chosen)) && (!homeIds || homeIds.includes(chosen))) return chosen
   if (homeIds) {
     const ids = homeIds.filter(automatic)
     return ids.find((id) => coordinatorAwake(swarms[id], agents)) ?? ids[0] ?? null
@@ -90,12 +96,14 @@ export function appRouting(o: {
   homesState: { kind: 'pending' | 'failed' | 'absent' } | { kind: 'known'; homes: { swarm_id: string; own?: boolean }[] }
   remembered: string | null
   defaultSwarm: string | null
+  /** the swarm of the mind the Ask is with, tried first where the app works (pickProgramSwarm) */
+  preferred?: string | null
 }): { pick: string | null | undefined; choices: Swarm[] } {
-  const { swarms, agents, homesState, remembered, defaultSwarm } = o
+  const { swarms, agents, homesState, remembered, defaultSwarm, preferred } = o
   if (homesState.kind === 'pending' || homesState.kind === 'failed') return { pick: undefined, choices: [] }
   const homes = homesState.kind === 'known' ? homesState.homes : null
   const usable = appUsable(homes)
-  const pick = homes ? pickProgramSwarm({ swarms, agents, homes, usable, remembered, defaultSwarm }) : null
+  const pick = homes ? pickProgramSwarm({ swarms, agents, homes, usable, remembered, defaultSwarm, preferred }) : null
   const choices = pick !== null ? [] : Object.values(swarms)
     .filter((s) => !s.archived_at && (!privateSwarm(s) || (homes ?? []).some((h) => h.swarm_id === s.id && h.own === true)) && (usable ? usable.has(s.id) : true))
     .sort((a, b) => a.name.localeCompare(b.name))

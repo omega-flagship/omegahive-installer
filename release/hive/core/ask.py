@@ -499,7 +499,7 @@ class Ask:
         return {"swarm_id": row["swarm_id"] if row else None, "swarm": current,
                 "thread_budget_usd": float(row["thread_budget_usd"]) if row else DEFAULT_BUDGET,
                 "max_thread_budget_usd": MAX_BUDGET, "eligible": self.eligible_swarms(viewer),
-                "capabilities": self.capabilities()}
+                "capabilities": self.capabilities(viewer)}
 
     def put_prefs(self, viewer, data):
         hive = self.hive
@@ -722,8 +722,9 @@ class Ask:
         from .conductor import memory_enabled
         return self._conducting() and memory_enabled()
 
-    def capabilities(self):
-        """The on/off switches the page needs, and nothing else (GET /api/me/ask `capabilities`)."""
+    def capabilities(self, viewer=None):
+        """The on/off switches the page needs, and nothing else (GET /api/me/ask `capabilities`). `viewer` is who reads
+        them: only whoever runs the hive, an admin, is told which Studio parts are missing."""
         caps = {"conductor": self._conducting(), "memory": self.memory_on()}
         if caps["conductor"]:   # mind-voice r1: a personal-mind turn reads the person's memory whatever HIVE_ASK_MEMORY says
             caps["mind_memory"] = True
@@ -731,9 +732,10 @@ class Ask:
         # the startup self-check passed (StudioSessions.enabled) AND members' own makers can be made (the template is
         # set and usable); otherwise absent, and the Studio-off answer is the one before plus studio_off alone.
         # Show run f4 (2026-11-19): studio_off names the host's reason so the page can say it: "off" (Studio switched
-        # off), "self_check" (switched on, but the startup self-check keeps it off; studio_missing then names the parts
-        # it found missing, as the hive's log line does, since a tester's Mac hive on 20 Nov could only be told "turned
-        # off") or "not_set_up" (on, but members' makers can't be made). Additive: appended last, so the answer before
+        # off), "self_check" (switched on, but the startup self-check keeps it off, since a tester's Mac hive on 20 Nov
+        # could only be told "turned off") or "not_set_up" (on, but members' makers can't be made). With "self_check",
+        # studio_missing names the parts the check found missing, in plain words and only to an admin, who can act on
+        # them (Jon on #559); a member is told the check keeps it off. Additive: appended last, so the answer before
         # is unchanged ahead of it; never present with studio_sessions. The hive's state, not the person's
         studio, makers = getattr(self.hive, "studio", None), getattr(self.hive, "studio_makers", None)
         studio_off, studio_missing = None, []
@@ -767,8 +769,9 @@ class Ask:
                 caps["code_test_intents"] = code_project_tests.execution_available(self.hive)
         if studio_off is not None:
             caps["studio_off"] = studio_off
-        if studio_missing:
-            caps["studio_missing"] = studio_missing
+        if studio_missing and viewer is not None and viewer.admin:
+            from .studio_sessions import plain_parts
+            caps["studio_missing"] = plain_parts(studio_missing)
         return caps
 
     def _quota_ok(self, principal):

@@ -274,7 +274,7 @@ export function App() {
               )}
               {route.name === 'program' && (
                 <Lazy key={`program-${route.id}`}>
-                  <ProgramPage id={route.id} swarm={route.swarm} source={route.source} view={route.view} />
+                  <ProgramPage id={route.id} swarm={route.swarm} prefer={route.prefer} source={route.source} view={route.view} />
                 </Lazy>
               )}
               {/* Motivations above Tasks: #/goals and #/boards parse to Tasks (lib/router.ts), so they never render here */}
