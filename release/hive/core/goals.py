@@ -256,7 +256,7 @@ class Goals:
         goal = self.get(goal_id)
         self._fence(agent, goal)
         if goal["claimed_by"] != agent["id"] or goal["status"] != "claimed":
-            raise self.hive.error(409, "not_claimed", "you do not hold this task")
+            raise self._unheld(agent, goal, 409, "not_claimed", "you do not hold this task")
         path = str(path or "").strip()
         if (not path or len(path) > 300 or path.startswith("/") or "\\" in path
                 or any(part in ("", ".", "..") for part in path.split("/"))):
@@ -817,12 +817,21 @@ class Goals:
         self.hive.mark_input(agent["id"])   # a claim is real input to the idle signal (spend never is)
         return self._emit(goal_id)
 
+    def _unheld(self, agent, goal, status, code, message):
+        """The refusal for an action that needs a task the mind doesn't hold. An open task assigned to that mind names
+        the claim first: on a tester's hive on 20 Nov a model heartbeated its open plan goal turn after turn, told only
+        "you do not hold this task", and never claimed it."""
+        if goal["status"] == "open" and goal.get("assignee") == agent["id"]:
+            return self.hive.error(409, "not_claimed", f"this task is open and assigned to you: claim it with "
+                                   f"hive-goal-claim {goal['id']}, then finish it with hive-goal-propose {goal['id']}")
+        return self.hive.error(status, code, message)
+
     def heartbeat(self, agent, goal_id):
         """Renew the claimer's lease; also resumes a goal that was waiting on a person."""
         goal = self.get(goal_id)
         self._fence(agent, goal)
         if goal["claimed_by"] != agent["id"] or goal["status"] not in ("claimed", "waiting"):
-            raise self.hive.error(409, "not_claimed", "you do not hold this task")
+            raise self._unheld(agent, goal, 409, "not_claimed", "you do not hold this task")
         lease = _later(self.hive.settings.goal_lease_minutes)
         if goal.get("deadline_at"):
             # a heartbeat never outlives the hard deadline: past it the goal is expired, not renewable
@@ -848,7 +857,7 @@ class Goals:
         if goal.get("deadline_at") and goal["deadline_at"] < now() and goal["status"] not in ("done", "failed"):
             raise self.hive.error(409, "goal_expired", "this task's deadline has passed")
         if goal["claimed_by"] != agent["id"]:
-            raise self.hive.error(403, "forbidden", "only the mind that claimed a task can finish it")
+            raise self._unheld(agent, goal, 403, "forbidden", "only the mind that claimed a task can finish it")
         if data is not None:
             if not isinstance(data, dict):
                 raise self.hive.error(400, "bad_request", "data must be an object")

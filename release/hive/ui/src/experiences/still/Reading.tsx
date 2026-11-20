@@ -1,5 +1,8 @@
+// Purpose: Still's reading room for one mind: the conversation, what the mind offers to build in Create, and the line
+// to write to it.
 import { healthCheck } from '../../lib/healthQuestion'
 import { UsageRegion } from '../../shell/UsageRegion'
+import { CreateOffers } from '../../features/dot/CreateOffers'
 import { HEALTH_CHECK, HealthCheckLabel } from '../../ui/HealthCheckLabel'
 import { m } from 'framer-motion'
 import { useDraft } from '../drafts'
@@ -188,6 +191,8 @@ export function Reading({ id, onClose }: { id: string; onClose: () => void }) {
         </div>
       </div>
 
+      {/* what this mind offers to build in Create, composed in MeTTa for this look (createOffer.metta) */}
+      <CreateOffers agent={agent} className="st-read-col empty:hidden" />
       {/* the reading room covers Still's own question box, so the host's floating line takes over at the bottom: the
           composer ends above it (the room the shared phone sheet keeps, ui/overlays), never under it */}
       <div className="st-compose-wrap" style={{ paddingBottom: `max(18px, ${ASK_RESERVE})` }}>

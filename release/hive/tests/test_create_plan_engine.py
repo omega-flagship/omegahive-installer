@@ -1056,17 +1056,20 @@ def test_a_held_builder_whose_calls_keep_failing_stops_at_its_steps_budget(world
 
 def test_each_step_the_plan_hands_a_mind_carries_its_own_budget(world):
     """GoalMinds.call gives the step's goal its own budget (Goals.give_step_budget): the larger of Budgets.task_budget
-    and STEP_BUDGET_FLOOR_USD, started at the claim, in goal_budgets rather than the goal's binding, which a bound
-    task's answer would have to echo."""
+    and STEP_BUDGET_FLOOR_USD, in goal_budgets rather than the goal's binding, which a bound task's answer would have to
+    echo, and started at the claim GoalMinds makes for the step's mind as it hands the step over (Goals._start_budget):
+    the mind's stored spend then."""
     w = world
     team = w.client.post("/api/swarms", json={"name": "Reviewers"}).json()
     mind = w.client.post("/api/agents", json={"name": "Reviewer", "swarm_id": team["id"]}).json()
     who = w.engine.assignees.resolve(["mind", mind["id"]], "user:operator")
     out = w.client.portal.call(GoalMinds(w.engine).call, {"plan_id": "pl_budget", "person": "user:operator"}, "review",
                                {"reviewer": who}, {"instruction": "review it"})
-    row = w.hive.db.one("SELECT budget_usd, spent_at_start FROM goal_budgets WHERE goal_id = ?", (out["pending"],))
+    row = w.hive.db.one("SELECT budget_usd, spent_at_start, started_by FROM goal_budgets WHERE goal_id = ?",
+                        (out["pending"],))
     budget = max(w.hive.budgets.task_budget(w.hive.agent(mind["id"])), STEP_BUDGET_FLOOR_USD)
-    assert (row["budget_usd"], row["spent_at_start"]) == (budget, None)
+    spent = w.hive.db.one("SELECT COALESCE(spent_usd, 0) AS spent FROM agents WHERE id = ?", (mind["id"],))["spent"]
+    assert (row["budget_usd"], row["spent_at_start"], row["started_by"]) == (budget, spent, mind["id"])
     assert w.hive.goals.get(out["pending"])["binding"] is None
 
 

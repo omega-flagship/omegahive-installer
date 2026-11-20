@@ -1,4 +1,7 @@
+// Purpose: Flux's panels: a swarm's, a mind's (its beliefs, its chat with what it offers to build in Create, and the
+// composer), a decision's and the empty card, and who may act on a decision there.
 import { useVisibleAuthority } from '../../lib/useVisibleAuthority'
+import { CreateOffers } from '../../features/dot/CreateOffers'
 import { healthCheck } from '../../lib/healthQuestion'
 import { HealthCheckLabel } from '../../ui/HealthCheckLabel'
 import { plural } from '../../lib/plural'
@@ -320,6 +323,8 @@ function Talk({ agent }: { agent: Agent }) {
           {busy && <div className="py-1"><ThinkingDrops hue={agent.hue} label={thinking === 'skills' ? `${shown(agent.name)} is acting` : `${shown(agent.name)} is thinking`} /></div>}
         </div>
       </div>
+      {/* what this mind offers to build in Create, composed in MeTTa for this look (createOffer.metta) */}
+      <CreateOffers agent={agent} className="px-4 pb-2 empty:hidden" />
       <form className="px-4 pb-4" onSubmit={(e) => { e.preventDefault(); send() }}>
         <div className="flex items-end gap-2 rounded-[26px] p-1.5 pl-4" style={{ background: 'rgb(255 255 255 / 0.08)', boxShadow: `inset 0 1px 0 rgb(255 255 255 / 0.18), inset 0 0 0 1px ${hsl(agent.hue, 70, 70, 0.28)}` }}>
           <label className="sr-only" htmlFor={`flux-say-${id}`}>Message {shown(agent.name)}</label>

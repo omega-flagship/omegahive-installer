@@ -1,7 +1,8 @@
 // @vitest-environment node
 // Purpose: the mind-create-offers screen (createOffer.metta, createOffer.ts) mounted on real ReactDOM in every look: a
 // mind's open offers to build in Create show as cards with what to build, Start in Create and Not now pressed for that
-// offer, a press that failed says why, and with no offer nothing shows; the offer routes' answers are read exactly.
+// offer, a press that failed says why, and with no offer nothing shows; every look's own chat with a mind draws the card
+// above its composer; the offer routes' answers are read exactly.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement } from 'react'
 import type { Root } from 'react-dom/client'
@@ -11,6 +12,14 @@ import { MiniDocument, press, type MiniNode } from '../../ui/miniDom.testkit'
 import { Screen, type ScreenHost } from '../../screens/Screen'
 import { ScreensSpace } from '../../screens/screenSpace'
 import { offersScreen, parseOffer, parseOffers, startedPlan } from './createOffer'
+import classicChat from './Chat.tsx?raw'
+import canvasChat from '../../experiences/canvas/chat.tsx?raw'
+import fluxPanels from '../../experiences/flux/panels.tsx?raw'
+import cosmosPanels from '../../experiences/cosmos/Panels.tsx?raw'
+import stillReading from '../../experiences/still/Reading.tsx?raw'
+import constructPanes from '../../experiences/construct/Panes.tsx?raw'
+import professionalConversation from '../../experiences/professional/Conversation.tsx?raw'
+import createOffersHost from './CreateOffers.tsx?raw'
 
 // each file opens real MeTTa spaces: allow for a loaded machine
 vi.setConfig({ testTimeout: 20_000 })
@@ -79,6 +88,44 @@ describe('what a mind offers to build in Create, mounted in every look', () => {
   })
   it('the guards stay clean', () => {
     expect(Object.values(space.guards()).flat()).toEqual([])
+  })
+})
+
+describe('every look’s own chat with a mind draws its offers', () => {
+  // Each look draws a mind's chat itself (classic's mind panel, which #/dot/<mind> opens in every look, and the board
+  // card, panels, reading room, session and mind view of the others), so each mounts the card in that chat, between the
+  // conversation and its composer, where the person reads the mind's answer; the looks above show it draws in each.
+  it.each([
+    ['classic', classicChat, 'data-tour="chat-composer"'],
+    ['canvas', canvasChat, 'ref={inputRef}'],
+    ['flux', fluxPanels, '<form className="px-4 pb-4"'],
+    ['cosmos', cosmosPanels, 'Transmit to'],
+    ['still', stillReading, 'className="st-compose-wrap"'],
+    ['construct', constructPanes, '<label className="cx-sin">'],
+    ['professional', professionalConversation, 'className="pr-composer"'],
+  ])('%s: the card sits above the composer of the same chat', (_look, source, composer) => {
+    const at = source.indexOf(composer)
+    const card = source.lastIndexOf('<CreateOffers agent={agent}', at)
+    expect(at).toBeGreaterThan(-1)
+    expect(card).toBeGreaterThan(-1)
+    // in the same component: no function starts between the card and the composer
+    expect(source.slice(card, at)).not.toMatch(/\n(export )?function /)
+  })
+  // Mounted shrink-0, two cards and a mind's error notice pushed classic's composer under its Live log bar at 1440x900,
+  // where neither the box nor Send took a pointer (a dry run on a hive with no model, 19 Nov). So the cards give way
+  // first: the host lets them shrink below their height and scroll inside, and no look's mount keeps them from it.
+  it.each([
+    ['classic', classicChat], ['canvas', canvasChat], ['flux', fluxPanels], ['cosmos', cosmosPanels],
+    ['still', stillReading], ['construct', constructPanes], ['professional', professionalConversation],
+  ])('%s: the cards give way before the composer does', (_look, source) => {
+    const from = source.indexOf('<CreateOffers agent={agent}')
+    expect(from).toBeGreaterThan(-1)
+    expect(source.slice(from, source.indexOf('/>', from))).not.toMatch(/\b(shrink-0|flex-none|flex-shrink-0)\b/)
+  })
+  it('the host lets its cards shrink and scroll inside, whatever spacing a look gives', () => {
+    const giveWay = /const GIVE_WAY = '([^']*)'/.exec(createOffersHost)?.[1].split(' ') ?? []
+    expect(giveWay).toEqual(expect.arrayContaining(['min-h-0', 'overflow-y-auto']))
+    expect(createOffersHost).toContain('className={cx(GIVE_WAY, className)}')
   })
 })
 

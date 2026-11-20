@@ -1,5 +1,7 @@
-// Purpose: the Canvas look's chat card, a conversation with one mind that opens from its card to where MeTTa placed it.
+// Purpose: the Canvas look's chat card, a conversation with one mind that opens from its card to where MeTTa placed it,
+// with what the mind offers to build in Create above its composer.
 import { useCanvasCurrent } from './actionAuthority'
+import { CreateOffers } from '../../features/dot/CreateOffers'
 import { healthCheck } from '../../lib/healthQuestion'
 import { HealthCheckLabel } from '../../ui/HealthCheckLabel'
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
@@ -190,6 +192,8 @@ export function ChatCard({ r, to, agent, phase, now, reduced, onCloseX, onDismis
         )}
       </div>
 
+      {/* what this mind offers to build in Create, composed in MeTTa for this look (createOffer.metta) */}
+      <CreateOffers agent={agent} className="px-2.5 pt-2 empty:hidden" />
       <div className="border-t p-2.5" style={{ borderColor: 'var(--line)' }}>
         <div className="flex items-end gap-2 rounded-[14px] px-3 py-2" style={{ background: 'var(--card-2)', border: '1px solid var(--line-2)' }}>
           <textarea

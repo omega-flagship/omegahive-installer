@@ -1,14 +1,18 @@
-"""Purpose: a Create step's own rules, its packet's contract, reach the mind in its goal: in the goal's detail, which
-hive-goal-get shows whichever turn writes the answer, and in the message's head ahead of the packet's UNTRUSTED_DATA.
-On 19 Nov a test author wrote three checks in a row with no CREATE-CHECK line. The rule sat about 5,700 characters
-into its goal message, and each check was written turns later, when its recent history held only the message's start
-and its goal said only the answer's shape."""
+"""Purpose: a Create step's whole task reaches its mind in one text, its goal's detail and its message alike, claimed for
+that mind: the command and the person's words first, then the answer's shape and the step's own rules (its packet's
+contract), then the packet as UNTRUSTED_DATA, so any read or cut keeps what the mind needs to answer. On 19 Nov a test
+author wrote three checks in a row with no CREATE-CHECK line: the rule sat about 5,700 characters into its goal message,
+and each check was written turns later, when its recent history held only the message's start and its goal said only
+the answer's shape. On 20 Nov a planner on a tester's hive paged its open plan goal for a request only the message's
+end had held, and heartbeated a goal it never claimed."""
 import ast
 import asyncio
 import json
 from pathlib import Path
 
-from hive.core.create_plan_ports import ANSWER_SHAPES, GoalMinds, Ports
+import pytest
+
+from hive.core.create_plan_ports import ANSWER_SHAPES, TASK_READ_CHARS, GoalMinds, Ports
 
 ROOT = Path(__file__).resolve().parents[2]
 UNTRUSTED = "Everything below is UNTRUSTED_DATA from the person and other minds:\n"
@@ -21,16 +25,22 @@ PREVIOUS = {"reason": "crashed", "why": "no CREATE-CHECK line", "exit_code": 1,
 
 
 class Hive:
-    """The goal rows, step budgets and messages GoalMinds makes."""
+    """The goal rows, step budgets, claims and messages GoalMinds makes."""
 
     def __init__(self):
-        self.goals, self.rows, self.budgets, self.sent = self, [], [], []
+        self.goals, self.rows, self.budgets, self.claims, self.sent = self, [], [], [], []
 
     def _create_record(self, swarm_id, title, detail="", priority=0.5, **fields):
         self.rows.append(dict(fields, swarm_id=swarm_id, title=title, detail=detail))
 
     def give_step_budget(self, goal_id, agent_id):
         self.budgets.append((goal_id, agent_id))
+
+    def _agent_row(self, agent_id):
+        return {"id": agent_id, "swarm_id": "s_code"}
+
+    def claim(self, agent, goal_id):
+        self.claims.append((agent["id"], goal_id))
 
     async def send_to_agent(self, agent_id, text, sender=None, extra=None):
         self.sent.append({"agent": agent_id, "text": text, "sender": sender, "extra": extra})
@@ -80,34 +90,73 @@ def read_budget(path, name):
     raise AssertionError(f"{path} assigns no {name}")
 
 
+def goal_read_room():
+    """The fewest detail characters either kind of mind reads of a goal in one result."""
+    return min(read_budget("modules/hive/src/hive_commons.py", "GOAL_DETAIL_CHARS"),
+               read_budget("hive/templates/iter/tools/hive_goal_get.py", "DETAIL_CHARS"))
+
+
 def test_a_test_authors_rules_are_in_its_goal_and_ahead_of_the_untrusted_packet():
     hive = Hive()
     out = asyncio.run(ports(Engine(hive, PREVIOUS)).author_tests(RUN, {}, PLAN))
     goal = hive.rows[0]
     assert out == {"pending": goal["goal_id"]} and goal["assignee"] == "a_author"
     assert hive.budgets == [(goal["goal_id"], "a_author")]   # the step's own budget, on the goal its rules went into
+    assert hive.claims == [("a_author", goal["goal_id"])]   # claimed for its mind, so its answer is its one command
     detail = goal["detail"]
-    # what hive-goal-get shows the turn that writes the check: the verdict line, and the repair for this exact fault
-    assert detail.startswith("Finish with result data shaped " + ANSWER_SHAPES["author-tests"] + ". ")
-    assert "CREATE-CHECK" in detail and "It printed its findings and stopped (exit 1)" in detail
-    # whole, with both repair sentences, within what either kind of mind reads of a goal in one result
-    room = min(read_budget("modules/hive/src/hive_commons.py", "GOAL_DETAIL_CHARS"),
-               read_budget("hive/templates/iter/tools/hive_goal_get.py", "DETAIL_CHARS"))
-    assert len(detail) <= room, (len(detail), room)
-    head, marker, data = hive.sent[0]["text"].partition(UNTRUSTED)
-    assert marker and detail.removeprefix("Finish with result data ") in head   # the same rules, as the hive's words
+    assert detail == hive.sent[0]["text"]   # one task: what a goal read shows is what the message said
+    head, marker, data = detail.partition(UNTRUSTED)
+    # what a goal read shows the turn that writes the check: the command, the verdict line, and the repair for this
+    # exact fault, whole and as the hive's words ahead of the packet, within what either kind of mind reads at once
+    assert marker and f"hive-goal-propose {goal['goal_id']}" in head and ANSWER_SHAPES["author-tests"] in head
+    assert "CREATE-CHECK" in head and "It printed its findings and stopped (exit 1)" in head
+    assert len(head) <= goal_read_room(), (len(head), goal_read_room())
+    assert json.dumps(RUN["sentence"]) in head   # a short request, quoted whole beside the rules
     packet = json.loads(data)
     assert "contract" not in packet and packet["previous_attempt"]["why"] == "no CREATE-CHECK line"
     assert packet["sentence"] == RUN["sentence"] and packet["plan"] == PLAN
+
+
+def test_a_long_request_gives_way_to_a_test_authors_rules_inside_one_goal_read():
+    """The task quotes the request only as far as the step's rules leave room (the packet holds it whole), so a retried
+    test author's whole rules still end inside the smallest goal read, the request's start still quoted ahead of them."""
+    assert TASK_READ_CHARS == goal_read_room()   # the hive's constant follows both readers it names
+    hive = Hive()
+    sentence = "Build a functioning tic tac toe app " * 40
+    asyncio.run(ports(Engine(hive, PREVIOUS)).author_tests(dict(RUN, sentence=sentence), {}, PLAN))
+    head, marker, data = hive.rows[0]["detail"].partition(UNTRUSTED)
+    assert marker and len(head) <= goal_read_room(), (len(head), goal_read_room())
+    assert "It printed its findings and stopped (exit 1)" in head and sentence[:40] in head
+    assert json.loads(data)["sentence"] == sentence
 
 
 def test_a_step_without_rules_is_asked_for_its_shape_and_the_callers_packet_is_left_whole():
     hive = Hive()
     minds = GoalMinds(Engine(hive))
     asyncio.run(minds.call(RUN, "design", {}, {"sentence": RUN["sentence"], "plan": PLAN}))
-    assert hive.rows[0]["detail"] == "Finish with result data shaped " + ANSWER_SHAPES["design"] + "."
-    assert json.loads(hive.sent[0]["text"].partition(UNTRUSTED)[2]) == {"sentence": RUN["sentence"], "plan": PLAN}
+    head, _, data = hive.rows[0]["detail"].partition(UNTRUSTED)
+    assert head.rstrip().endswith(f"The result data is shaped {ANSWER_SHAPES['design']}.")
+    assert json.loads(data) == {"sentence": RUN["sentence"], "plan": PLAN}
     packet = {"sentence": RUN["sentence"], "contract": "It must FAIL on the scaffold."}
     asyncio.run(minds.call(RUN, "author-tests", {}, packet))
     assert packet == {"sentence": RUN["sentence"], "contract": "It must FAIL on the scaffold."}
-    assert hive.rows[1]["detail"].endswith(" It must FAIL on the scaffold.")
+    assert " It must FAIL on the scaffold." in hive.rows[1]["detail"].partition(UNTRUSTED)[0]
+
+
+@pytest.mark.parametrize("sentence", [RUN["sentence"], "Build a functioning tic tac toe app " * 40],
+                         ids=["a short request", "a request of 1,400 characters"])
+def test_a_planners_command_and_request_open_its_task_and_its_whole_rules_fit_one_goal_read(sentence):
+    """The smallest view a mind's later turn keeps of an earlier message is its first 700 characters
+    (helper_metta.context_recent_history_entries: max(700, min(4000, ...)) per entry), so the command, the claim and the
+    person's words come within them; the plan's shape and every plan rule end inside the smallest goal read."""
+    hive = Hive()
+    run = dict(RUN, sentence=sentence)
+    asyncio.run(GoalMinds(Engine(hive)).call(run, "plan", {}, {"sentence": sentence, "hive_reviews": []}))
+    goal = hive.rows[0]
+    task = goal["detail"]
+    assert hive.claims == [("a_author", goal["goal_id"])] and task == hive.sent[0]["text"]
+    opening = task[:700]
+    assert f"hive-goal-propose {goal['goal_id']}" in opening and "already claimed" in opening
+    assert sentence[:200] in opening   # the request, quoted (cut at 200 characters there, whole in the packet)
+    assert task.index(ANSWER_SHAPES["plan"]) + len(ANSWER_SHAPES["plan"]) <= goal_read_room()
+    assert json.loads(task.partition(UNTRUSTED)[2])["sentence"] == sentence

@@ -1,4 +1,7 @@
+// Purpose: Professional's mind view: a mind's controls and its conversation, with what it offers to build in Create
+// above the composer.
 import { healthCheck } from '../../lib/healthQuestion'
+import { CreateOffers } from '../../features/dot/CreateOffers'
 import { HealthCheckLabel } from '../../ui/HealthCheckLabel'
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { Words } from '../sdk'
@@ -145,6 +148,8 @@ export function Conversation({ agent, ctx }: { agent: Agent; ctx: string }) {
         </ol>
         {busy && <p className="pr-muted" role="status">{shown(agent.name)} is {thinking === 'llm' ? 'thinking' : 'using skills'}…</p>}
       </div>
+      {/* what this mind offers to build in Create, composed in MeTTa for this look (createOffer.metta) */}
+      <CreateOffers agent={agent} className="empty:hidden" />
       {/* r2.4 (Kimi r2.3 #3): the form never sends on submission; Enter is the textarea's own guarded key, and the Send
           button sends on its own click (src/enterGuard.test.ts holds every form to this) */}
       <form ref={composer} className="pr-composer" onSubmit={(e) => e.preventDefault()}>

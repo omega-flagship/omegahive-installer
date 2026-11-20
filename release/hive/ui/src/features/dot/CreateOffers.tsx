@@ -1,8 +1,10 @@
-// Purpose: draw what a mind offers to build in Create in its chat (the mind-create-offers screen, createOffer.metta) and
-// carry out the person's press: Start in Create opens the plan it started on Create's Make bench, Not now sets it aside.
+// Purpose: draw what a mind offers to build in Create in its chat, whichever look draws that chat (the mind-create-offers
+// screen, createOffer.metta), and carry out the person's press: Start in Create opens the plan it started on Create's
+// Make bench, Not now sets it aside.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Agent } from '../../api/types'
 import { experienceById } from '../../experiences/registry'
+import { cx } from '../../lib/cx'
 import { CREATE_APP_ID } from '../../lib/displayName'
 import { bindEpoch } from '../../lib/identityEpoch'
 import { navigate } from '../../lib/router'
@@ -21,14 +23,23 @@ interface OfferClient {
 
 const errText = (e: unknown) => (e as { message?: string } | null)?.message || 'The hive did not answer.'
 
+// The cards give way first when a chat is short: they shrink and scroll inside, so the composer under them stays whole,
+// as the outside member's connect steps do in Chat.tsx. Mounted shrink-0, two cards and a mind's error notice pushed
+// classic's composer under its Live log bar at 1440x900, where neither the box nor Send took a pointer (a dry run on a
+// hive with no model, 19 Nov).
+const GIVE_WAY = 'thin-scroll max-h-[45dvh] min-h-0 shrink overflow-y-auto'
+
 /**
  * What this mind offers to build in Create for the person reading its chat. MeTTa decides what shows (nothing while
  * there is no open offer); this reads the person's open offers from this mind (again on each create.offer event about
  * it), states the facts, and carries out a press. Start in Create starts the plan with the offer's words (the person's
  * own press, behind Create's person gate), then follows that plan and opens Create's Make bench on it; Not now sets the
- * offer aside. Every write after an await belongs to the identity it started under (lib/identityEpoch).
+ * offer aside. Every write after an await belongs to the identity it started under (lib/identityEpoch). Each look's own
+ * chat with a mind mounts it between the conversation and the composer, with the look's own spacing as `className`; the
+ * classic mind panel's is the default. The cards give way first when the chat is short (GIVE_WAY), so a look's
+ * className never sets shrink-0.
  */
-export function CreateOffers({ agent }: { agent: Agent }) {
+export function CreateOffers({ agent, className = 'px-3 pb-2 empty:hidden' }: { agent: Agent; className?: string }) {
   const client = useHive((s) => s.client) as unknown as OfferClient | null
   const look = experienceById(useLook().current?.experience).id
   const compose = useCompose(look)
@@ -70,7 +81,7 @@ export function CreateOffers({ agent }: { agent: Agent }) {
   const screen = useMemo(() => offersScreen(offers, agent.name, alert, compose), [offers, agent.name, alert, compose])
   const plan = useMemo(() => compose('mind-create-offers', screen.facts), [compose, screen])
   return (
-    <Screen plan={plan} className="shrink-0 px-3 pb-2 empty:hidden" host={{
+    <Screen plan={plan} className={cx(GIVE_WAY, className)} host={{
       data: screen.data,
       busy: pressing,
       onAction: (action, item) => press(action, Array.isArray(item.scope) ? item.scope[0] : undefined),

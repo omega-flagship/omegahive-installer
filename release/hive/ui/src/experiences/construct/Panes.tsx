@@ -1,5 +1,8 @@
+// Purpose: Construct's panes: the activity stream, the minds, a mind's session (its transcript, what it offers to build
+// in Create and its input line) and the inbox, with the feature each needs to be shown.
 import { healthCheck } from '../../lib/healthQuestion'
 import { wentAhead } from '../../lib/approvalDecision'
+import { CreateOffers } from '../../features/dot/CreateOffers'
 import { m } from 'framer-motion'
 import { useDraft } from '../drafts'
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
@@ -559,6 +562,8 @@ export function Session({ agent, phone }: { agent: Agent; phone: boolean }) {
           </div>
         )}
       </div>
+      {/* what this mind offers to build in Create, composed in MeTTa for this look (createOffer.metta) */}
+      <CreateOffers agent={agent} className="px-3 pb-2 empty:hidden" />
       <label className="cx-sin">
         <span className="cx-c-cyan">you</span>
         <span className="cx-c-dim">@</span>

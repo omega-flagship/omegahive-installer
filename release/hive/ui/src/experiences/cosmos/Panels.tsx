@@ -1,6 +1,8 @@
 // Purpose: Cosmos's holographic panels (a mind's transmission panel, requests, health and their parts), placed beside
-// the Ask: above its room, and the centred one in what the Ask's half column leaves.
+// the Ask: above its room, and the centred one in what the Ask's half column leaves; a mind's panel shows what the mind
+// offers to build in Create above its composer.
 import { healthCheck } from '../../lib/healthQuestion'
+import { CreateOffers } from '../../features/dot/CreateOffers'
 import { HealthCheckLabel } from '../../ui/HealthCheckLabel'
 import { wentAhead } from '../../lib/approvalDecision'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
@@ -502,6 +504,8 @@ function Comms({ agent }: { agent: Agent }) {
           </ol>
         )}
       </div>
+      {/* what this mind offers to build in Create, composed in MeTTa for this look (createOffer.metta) */}
+      <CreateOffers agent={agent} className="px-3 pt-2 empty:hidden" />
       <form
         className="cx-clear-escape shrink-0 px-3 pt-2 pb-3"
         style={{ borderTop: '1px solid var(--cx-line)' }}

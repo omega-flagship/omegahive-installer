@@ -45,3 +45,22 @@ def test_a_file_over_the_result_data_limit_and_one_file_too_many_are_refused(cli
     assert _stage(client, a, "one-more.js", "x").status_code == 409
     assert _stage(client, a, "f0.js", "again").status_code == 200        # a path it already staged still replaces
     assert len(hive.goals.staged_files("g_files")) == MAX_STAGED_FILES
+
+
+def test_an_open_goal_assigned_to_the_mind_names_its_claim_wherever_an_action_is_refused(client):
+    """On a tester's hive on 20 Nov a model heartbeated its open plan goal turn after turn, told only "you do not hold
+    this task". A heartbeat, a staged file and an answer on a goal assigned to the mind and still open name the claim;
+    another mind of the team is refused as before."""
+    hive = client.app.state.hive
+    _, (a, b) = make_swarm_and_agents(client)
+    hive.goals._create_record(a["swarm_id"], "Create plan pl_open: plan", "Plan it", 0.6, created_by="create-plan:pl_open",
+                              assignee=a["id"], goal_id="g_open")
+    claim = "claim it with hive-goal-claim g_open, then finish it with hive-goal-propose g_open"
+    for action, body in (("heartbeat", None), ("files", {"path": "app.js", "text": "x"}),
+                         ("result", {"status": "done", "result": "{}"})):
+        r = client.post(f"/api/agent/goals/g_open/{action}", headers=agent_headers(a), json=body)
+        assert r.status_code == 409 and r.json()["error"]["code"] == "not_claimed", (action, r.json())
+        assert claim in r.json()["error"]["message"], (action, r.json())
+    r = client.post("/api/agent/goals/g_open/heartbeat", headers=agent_headers(b))
+    assert r.status_code == 409 and r.json()["error"]["message"] == "you do not hold this task"
+    assert hive.goals.get("g_open")["status"] == "open" and hive.goals.staged_files("g_open") == {}

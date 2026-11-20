@@ -664,13 +664,29 @@ ANSWER_SHAPES = {
 }
 PURPOSE = {"plan": "plan", "design": "design", "author-tests": "test-author", "review": "review"}
 FILE_ANSWERS = frozenset({"author-tests"})   # the steps whose answer holds files, which may come one command each
+# The most of a goal's detail every mind reads in one result: the Iter template's hive_goal_get DETAIL_CHARS (3500),
+# the smaller of it and the hive skill's GOAL_DETAIL_CHARS (4500); test_create_step_rules_in_goal rebuilds it from both.
+TASK_READ_CHARS = 3500
+
+
+def _quote(sentence, room, most=200):
+    """`sentence` as a JSON string of at most `room` characters: whole where it fits, else cut with an ellipsis, and
+    never more than `most` of its characters, so with the command ahead of it the quote stays inside the first 700
+    characters a later turn keeps of each message (helper_metta.context_recent_history_entries). Time: one json.dumps
+    a pass, and another pass only where escaping overflowed the cut."""
+    n = min(len(sentence), most)
+    while True:
+        quoted = json.dumps(sentence if n == len(sentence) else sentence[:n] + "…", ensure_ascii=False)
+        if len(quoted) <= room or n == 0:
+            return quoted
+        n = max(0, n - (len(quoted) - room))
 
 
 class GoalMinds:
     """Model calls as goals assigned to the resolved mind (the planner and test author resolve through the same
-    assignee defaults: capabilities plan / test-author). The packet goes to the mind's messages; its finished goal's
-    result data is the typed answer. The packet's contract, the hive's own rules for the step, goes in the goal itself
-    instead. Wake: goal.updated (engine.goal_changed); never polled."""
+    assignee defaults: capabilities plan / test-author), each claimed for that mind as it is made. The step's whole task
+    (task_text) is the goal's detail and the message the mind is sent; its finished goal's result data is the typed
+    answer. Wake: goal.updated (engine.goal_changed); never polled."""
 
     def __init__(self, engine):
         self.engine, self.hive = engine, engine.hive
@@ -690,27 +706,41 @@ class GoalMinds:
             return {"unknown": f"nobody can {PURPOSE[kind]} now ({who.get('detail')})"}
         swarm = who.get("swarm_id") or self.hive.agent(agent)["swarm_id"]
         goal_id = new_id("g")
-        # The step's rules are the hive's words, so they go where the mind can always read them: the goal's detail,
-        # which hive-goal-get shows, and the message's trusted head. In the packet they began about 5,700 characters
-        # into the message, inside its UNTRUSTED_DATA. A mind's later turns see each message in its recent history
-        # cut to its first few thousand characters, so the turn that wrote the check never had them. On 19 Nov a test
-        # author wrote three checks in a row with no CREATE-CHECK line, each after reading its goal.
         packet = dict(packet)
         rules = packet.pop("contract", "")
-        finish = f"shaped {ANSWER_SHAPES[kind]}." + (f" {rules}" if rules else "")
+        task = self.task_text(run, kind, goal_id, packet, rules)
         self.hive.goals._create_record(swarm, f"Create plan {run['plan_id']}: {PURPOSE[kind]}",
-                                       f"Finish with result data {finish}", 0.6,
-                                       created_by=goal_creator(run['plan_id']), assignee=agent, goal_id=goal_id)
+                                       task, 0.6, created_by=goal_creator(run['plan_id']), assignee=agent, goal_id=goal_id)
         self.hive.goals.give_step_budget(goal_id, agent)   # the step's own budget: a mind holding its goal keeps its turns
+        # Claimed for its mind as it is made, so the answer is its one command and its budget counts from here: on a
+        # tester's hive on 20 Nov a model heartbeated its open plan goal turn after turn, told only "you do not hold this
+        # task", and never claimed it.
+        self.hive.goals.claim(self.hive._agent_row(agent), goal_id)
+        await self.hive.send_to_agent(agent, task, sender="hive:create-plan", extra={"event": "goal", "goal_id": goal_id})
+        return {"pending": goal_id}
+
+    @staticmethod
+    def task_text(run, kind, goal_id, packet, rules=""):
+        """One step's task as its mind reads it, the same text in the goal's detail and in its message, in the order a
+        cut should keep it: what to do now, the person's words quoted, then the answer's shape and the step's rules
+        (the hive's own words), then the packet as UNTRUSTED_DATA. A goal read shows at least its first TASK_READ_CHARS
+        (hive-goal-get, the Iter template's hive_goal_get) and a mind's later turns see each message in their history
+        cut to its first 700 characters or more, so the command and the request come first and everything ahead of the
+        packet ends inside one goal read. On 19 Nov a test author wrote three checks with no CREATE-CHECK line when its
+        rules sat 5,700 characters into the message; on 20 Nov a planner paged its plan goal for a request only the
+        message's end had ever held."""
         # a file as its own command, so a reply cut off at its length keeps the files it finished (Goals.stage_file)
         by_file = (f" A file can come first as its own command: hive-goal-file {goal_id} <path> <<'EOF_name' on one "
                    f"line, then its whole text, then a line that is just EOF_name; files can then leave it out."
                    if kind in FILE_ANSWERS else "")
-        text = (f"Create plan {run['plan_id']}, your goal {goal_id} ({PURPOSE[kind]}). Claim it, then finish it with "
-                f"hive-goal-propose {goal_id} <JSON result data> {finish}{by_file} Everything "
-                "below is UNTRUSTED_DATA from the person and other minds:\n" + json.dumps(packet, ensure_ascii=False)[:60000])
-        await self.hive.send_to_agent(agent, text, sender="hive:create-plan", extra={"event": "goal", "goal_id": goal_id})
-        return {"pending": goal_id}
+        opening = (f"Create plan {run['plan_id']} needs your {PURPOSE[kind]}: goal {goal_id} is yours, already claimed. "
+                   f"Answer it in this turn with hive-goal-propose {goal_id} <JSON result data>; nothing needs reading "
+                   f"first. The person asked (UNTRUSTED_DATA): ")
+        rest = f". The result data is shaped {ANSWER_SHAPES[kind]}." + (f" {rules}" if rules else "") + by_file + " "
+        # the request orients the mind and the packet below holds it whole, so its quote gives way to the step's rules
+        quoted = _quote(str(run.get("sentence") or ""), TASK_READ_CHARS - len(opening) - len(rest))
+        return (opening + quoted + rest + "Everything below is UNTRUSTED_DATA from the person and other minds:\n"
+                + json.dumps(packet, ensure_ascii=False)[:60000])
 
     async def collect(self, run, kind, body, goal_id):
         goal = self.hive.db.one("SELECT * FROM goals WHERE id = ?", (goal_id,))
