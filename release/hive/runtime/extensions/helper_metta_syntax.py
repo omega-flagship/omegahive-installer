@@ -16,6 +16,8 @@ OMEGACLAW_ROOT = CORE_ROOT.parents[1]
 # it is the body, word for word, up to the first line that is NAME (surrounding spaces aside). Nothing in the body is
 # read as syntax, so a whole file can be one argument: triple quotes, an unbalanced quote or bracket included, which a
 # """ block ends on or loses. Example: hive-goal-file g_1 app.js <<'EOF_app_js' ... EOF_app_js.
+# Only a command whose last argument can span lines takes one, and the parser refuses a body no line closes and one
+# a later line closes again, which means one of its own lines was NAME (helper_command_parser._signature_parse_one).
 _HEREDOC_OPEN = re.compile(r"<<'([A-Za-z_][A-Za-z0-9_.-]*)'[ \t]*(?:\n|$)")
 
 
@@ -69,9 +71,10 @@ def _escape_metta_string(text):
             escaped.append("\\r")
         elif ch == "\t":
             escaped.append("\\t")
-        elif ord(ch) < 32 or ord(ch) == 127:
-            escaped.append(f"\\x{ord(ch):02x}")
         else:
+            # Any other character, a control character included, is written as itself: PeTTa's string reader decodes
+            # only \n, \t and \r and reads any other escaped character as that character, so "\x01" came back as
+            # the text x01 and "\f" as f, while a raw character reaches py-call unchanged (NUL, ESC and U+2028 too).
             escaped.append(ch)
     return "".join(escaped)
 

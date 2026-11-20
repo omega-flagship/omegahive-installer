@@ -4,8 +4,9 @@ The plan engine's `build` effect (piece-started or a route-fix) goes here; there
   - the piece's fork is made first (space.ensure_fork), then code_controller.adopt_member(plan_id, piece,
     origin {task_id, grant_id, repository_id, workspace_id: the fork}, the piece's paths, its resolved assignee mind,
     budget_ref, review policy plan-reviewed, person, task=<the plan's build op>, brief=<what to build: the sentence,
-    the piece's title and brief, the acceptance criteria, the person's answers, and on a fix the plan's failing
-    output, each bounded and marked when truncated>) opens one member run. The plan's effect waits on
+    the piece's title and brief, the acceptance criteria, the person's answers, the probe, the plan's design when it
+    has one, and on a fix the plan's failing output, each bounded and marked when truncated, the whole fitted to the
+    member's limit>) opens one member run. The plan's effect waits on
     `member:<task_id>` (no goal; never a poll). adopt_member is idempotent, so a re-performed build (a restart) whose
     member is already ready takes its candidate at once;
   - the member's helper writes only the piece's files on the fork and checkpoints them; its test is THIS module's
@@ -33,14 +34,14 @@ import json
 import logging
 import re
 
-from .create_plan_ports import CHECK_PATH, ROUND_CONTRACT, ScopeError
+from .code_controller_member import BRIEF_LIMIT, _canonical
+from .create_plan_ports import CHECK_PATH, DESIGN_CHARS, ROUND_CONTRACT, ScopeError
 
 log = logging.getLogger(__name__)
 
 TERMINAL = ("delivered", "stopped")
 RESTING = ("blocked", "stopped", "deployed")             # plan phases in which no member should keep working
-BRIEF_TEXT, BRIEF_ANSWERS, BRIEF_FAILING, BRIEF_PROBE = 3000, 12000, 16000, 6000   # characters
-BRIEF_LIMIT = 40000                     # the member's brief limit, characters of its JSON
+BRIEF_TEXT, BRIEF_ANSWERS, BRIEF_FAILING, BRIEF_PROBE = 3000, 12000, 16000, 6000   # characters; _fit keeps the whole under BRIEF_LIMIT
 CHECK_SAID = 200                                         # characters of the check's own note a hold card quotes
 
 
@@ -51,6 +52,24 @@ def _bounded(value, limit):
     if len(text) <= limit:
         return value
     return {"truncated": True, "chars": len(text), "text": text[:limit]}
+
+
+def _fit(fields, limit):
+    """The brief from fields {name: (value, cap)}: each value bounded to its own cap, then, while the whole brief's
+    JSON is over `limit`, the field taking the most room cut by the overflow. Together the caps come to about 47,000
+    characters, and a change round's change field may take the whole limit, past the 40,000 adopt_member takes
+    (BRIEF_LIMIT), so a fix round with long answers and a long failing output, a design or an app's files would otherwise
+    be refused. Time: per pass one JSON dump of the brief and of each of its f fields; each pass cuts one field by the
+    overflow and a little more, so passes are few."""
+    caps = {name: cap for name, (_value, cap) in fields.items()}
+    while True:
+        brief = {name: _bounded(value, caps[name]) for name, (value, _cap) in fields.items()}
+        over = len(_canonical(brief)) - limit
+        room = {name: len(_canonical(part)) for name, part in brief.items() if caps[name] > 0}
+        if over <= 0 or not room:
+            return brief
+        name = max(room, key=room.get)
+        caps[name] = max(0, min(caps[name], room[name]) - over - 64)   # 64: the truncation marker's own keys
 
 
 def check_failure(failing, paths):
@@ -137,21 +156,24 @@ class PerChangeBuilds:
 
     def _brief(self, run, spec, failing):
         plan = self.engine._plan(run["plan_id"]) or {}
-        brief = {"sentence": _bounded(run["sentence"], BRIEF_TEXT), "title": _bounded(spec.get("title"), 400),
-                "brief": _bounded(spec.get("brief"), BRIEF_TEXT),
-                "acceptance": _bounded(plan.get("acceptance") or [], BRIEF_TEXT),
-                "answers": _bounded(self.engine.answers(run["plan_id"]), BRIEF_ANSWERS),
-                "failing": _bounded(failing, BRIEF_FAILING),
-                # the probe the candidate is played by (create_plan_ports.PROBE_PATH): its selectors are the elements
-                # to build, so a builder that sees it builds to them on its first try instead of in a fix round
-                "probe": _bounded(self._space(run).get("probe"), BRIEF_PROBE)}
+        space = self._space(run)
+        fields = {"sentence": (run["sentence"], BRIEF_TEXT), "title": (spec.get("title"), 400),
+                  "brief": (spec.get("brief"), BRIEF_TEXT), "acceptance": (plan.get("acceptance") or [], BRIEF_TEXT),
+                  "answers": (self.engine.answers(run["plan_id"]), BRIEF_ANSWERS), "failing": (failing, BRIEF_FAILING),
+                  # the probe the candidate is played by (create_plan_ports.PROBE_PATH): its selectors are the elements
+                  # to build, so a builder that sees it builds to them on its first try instead of in a fix round
+                  "probe": (space.get("probe"), BRIEF_PROBE)}
+        if space.get("design"):
+            # the plan's design (Ports._keep_design), the look every piece builds to: until 20 Nov a design step's
+            # answer went only into the reducer's state, and no builder ever saw it
+            fields["design"] = (space["design"], DESIGN_CHARS)
         # a change to a made app: what is asked, and this piece's files as the app runs them now, so the builder edits
-        # them instead of writing the app again from the scaffold; it gets the room the brief has left under its limit
+        # them instead of writing the app again from the scaffold. Capped only by the brief's own limit, it takes the
+        # room the other fields leave; when the whole is over, _fit cuts whichever field is longest, this one included
         change = self.ports.change_context(run, spec.get("files"))
         if change:
-            used = len(json.dumps(brief, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
-            brief["change"] = _bounded(change, max(2000, BRIEF_LIMIT - used - 200))
-        return brief
+            fields["change"] = (change, BRIEF_LIMIT)
+        return _fit(fields, BRIEF_LIMIT)
 
     def _task_key(self, run, op):
         """The member key for this build: the op, or op~n after n members for it were ended (a blocked or stopped plan

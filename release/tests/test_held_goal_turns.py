@@ -33,8 +33,8 @@ class Hive:
 
     def __call__(self, method, path, payload=None):
         self.calls.append(path)
-        if path == "/api/agent/goals/history":
-            return {"goals": []}, None
+        if path.startswith("/api/agent/goals/history"):
+            return {"goals": [], "next_offset": None}, None
         if path == "/api/agent/replies/owed":
             return {"owed": []}, None
         status = path.split("status=")[1]

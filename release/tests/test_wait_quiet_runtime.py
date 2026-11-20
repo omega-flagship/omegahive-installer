@@ -65,6 +65,9 @@ class FakeModel:
                 self.wfile.write(raw)
 
             def do_GET(self):
+                if self.path.startswith("/api/agent/goals/history"):
+                    self._reply({"goals": [], "next_offset": None})
+                    return
                 if model.goals is not None and self.path.startswith("/api/agent/goals?status="):
                     self._reply(model.goals(self.path.split("status=", 1)[1]))
                     return

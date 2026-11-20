@@ -182,6 +182,15 @@ Past either, a mind is refused in plain words until midnight UTC, or until its p
 either turns free inference off. A call that ends before it is sent, refused or cancelled, doesn't count. The calls
 are recorded with their tokens at no cost to the hive, so no limit on the Limits page counts them.
 
+A mind no one is asking rests on it. Its loop wakes every 15 minutes and may make several model calls a wake, so once
+no person has asked it anything for `HIVE_FREE_INFERENCE_IDLE_WINDOW_S` seconds (default 1800), directly or through
+minds and goals a person's request set going, its own calls are refused, counted for no one, until the next message.
+Minds writing to each other, or claiming goals they made themselves, pass on only the asking that started them, so
+they rest with it. A mind working a lease on a person's goal (their own, their request's or their Create plan's) goes on until the lease
+lapses; a program's goals and the hive's own carry no person, so they rest with the window. A new mind counts from its
+creation; at upgrade, each mind's last real input stands for its last asking. A turn the person runs from the Ask is
+never refused for it. 0 turns resting off.
+
 Both limits are this hive's alone. Each hive counts only its own calls, so a key that several deploys share is bounded
 across them only by its own limits at its provider. Set those limits too, as the last bound.
 

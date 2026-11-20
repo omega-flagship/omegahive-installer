@@ -173,3 +173,34 @@ describe('the say facade (Codex 3 Nov): a look reads its awake words from the sa
     expect(s.say('classic', 'experience.omegatown')).toBeNull()
   })
 })
+
+describe('Search is the shell\'s own part, drawn by every Ask renderer (feedback #127)', () => {
+  const s = partsSpace()
+  const part = id('shell', 'any', 'search')
+
+  it('is registered once, owned by the one Ask, on screen wherever the field is, and means ask.search', () => {
+    expect(s.playing('search', null)).toEqual([part])
+    const e = s.explain(part)
+    expect(e.owners).toEqual([id('shell', 'any', 'field')])
+    expect(e.states).toEqual(['awake', 'pro'])
+    expect(e.impls).toEqual([{ library: 'react', component: 'AskSearch' }])
+    expect(s.intentsOf(part)).toEqual(['ask.search'])
+    for (const look of ['classic', 'still', 'cosmos', 'flux', 'construct', 'canvas', 'professional']) {
+      expect(s.onScreen(look, 'awake').map((p) => `${p.look} ${p.name}`), look).toContain('shell search')
+      expect(s.onScreen(look, 'pro').map((p) => `${p.look} ${p.name}`), look).toContain('shell search')
+      expect(s.say(look, 'ask.search'), look).toMatch(/search/i)
+    }
+    expect(s.say('construct', 'ask.search')).toBe('search')
+    expect(s.say('classic', 'ask.search')).toBe('Search everything')
+  })
+
+  it('every component that draws the Ask field draws the one Search control, and none draws its own', () => {
+    expect(read('features/ask/AskSearch.tsx')).toContain("ASK_SEARCH_PART = 'shell any search'")
+    // Classic, Cosmos, Flux, Canvas and Construct's floating line are FloatingAsk (ClassicAsk.tsx)
+    for (const file of ['features/ask/ClassicAsk.tsx', 'features/ask/StillLine.tsx', 'experiences/still/Ask.tsx', 'experiences/construct/CommandLine.tsx', 'experiences/professional/Ask.tsx']) {
+      const text = read(file)
+      expect(text.match(/<AskSearch\b/g), file).toHaveLength(1)
+      expect(text, file).not.toContain('data-ask-search')
+    }
+  })
+})

@@ -107,7 +107,7 @@ retry without end. In R4.2:
 | Action | Consumer | Host effect, and the observation journalled first |
 |---|---|---|
 | `(think make-the-plan)` | planner mind | Journal `plan-started (op)`, then call the planner. |
-| `(think make-the-design)` | design mind (only for plans with no `design` pieces that declared `design`) | Journal `dispatched (op design plan-ref)`. |
+| `(think make-the-design)` | design mind (only for plans with no `design` pieces that declared `design`) | Journal `dispatched (op design plan-ref)`. The mind answers the look itself as text; the host keeps it in the plan's space for every builder's brief and journals `designed (op design-<digest>)`, since the reducer carries only short references. |
 | `(think author-acceptance-tests)` / `(do (detect-tests))` | test author / host scan | Journal `dispatched (op author-tests ref)` or `dispatched (op detect-tests none)`. The result names the suite's check paths, and none may be a piece's file. |
 | `(do (run-checks base or ckpt))` | runner | Journal `dispatched (run run-checks ckpt)`. |
 | `(do (start-piece p assignee))` | host resolver | Resolve the selector. If someone can take it, journal `piece-started (p task builder resolved)` and open an R3.12 task. If no one can, journal `assignee-unavailable (p)`; do not fall back to someone else. |

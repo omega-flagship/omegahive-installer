@@ -404,6 +404,13 @@ export class SimMoneyWork {
     })
   }
 
+  listCreations({ kind, saved, limit = 200 }: import('../moneyWork').CreationListOptions = {}) {
+    return this.delay(() => this.creationRows()
+      .filter((row) => (!kind || row.kind === kind) && (!saved || row.revision !== null))
+      .sort((left, right) => (right.revised_at ?? right.created_at).localeCompare(left.revised_at ?? left.created_at))
+      .slice(0, Math.max(1, Math.min(limit, 200))))
+  }
+
   /** One artifact as GET /api/artifacts/{id} answers: its list row, or 404. */
   artifact(artifactId: string) {
     return this.delay((): CreationRow => {

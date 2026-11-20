@@ -19,6 +19,7 @@ import datetime
 import hashlib
 import inspect
 import json
+import sqlite3
 
 from .db import new_id, now
 from .result_schema import SchemaError, check_schema, validate as validate_result
@@ -42,6 +43,7 @@ BINDING_KEYS = ("request_id", "base_revision", "snapshot_digest")
 # What continue_goal writes into a follow-up's binding: the completed task it continues and the result checks it
 # inherits. A binding of these keys alone ties its task to no request, snapshot, share or session.
 CONTINUATION_KEYS = frozenset({"continued_from", "review", "result_schema", "validate", "from_swarm", "review_request_id"})
+
 WORK_SQL = "COALESCE(json_extract(binding, '$.kind'), '') != 'ask.thread'"
 
 STOP_CAUSES = {
@@ -98,6 +100,15 @@ ATTEMPTS_SCHEMA = """CREATE TABLE IF NOT EXISTS goal_attempts (id TEXT PRIMARY K
   at TEXT NOT NULL, ok INTEGER NOT NULL, errors TEXT NOT NULL, raw TEXT NOT NULL, digest TEXT NOT NULL)"""
 FILES_SCHEMA = """CREATE TABLE IF NOT EXISTS goal_files (goal_id TEXT NOT NULL, path TEXT NOT NULL, text TEXT NOT NULL,
   agent_id TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (goal_id, path))"""
+# A goal's staged files (Goals.stage_file) last only while something may still read them. Whichever path changes the
+# goal's row, this trigger deletes them when its claim passes or ends (a new claimer, a release), when it fails or is
+# cancelled, and when it is done with no Create plan to take its answer; a Create plan's taker deletes them once it has
+# finished with the goal (Goals.drop_staged). Before, nothing deleted them, and a goal claimed again handed its new
+# claimer's answer the old claim's files as well, since the takers read every file staged on the goal.
+FILES_END_TRIGGER = """CREATE TRIGGER IF NOT EXISTS goal_files_end AFTER UPDATE OF status, claimed_by ON goals
+  WHEN NEW.claimed_by IS NOT OLD.claimed_by OR (NEW.status IS NOT OLD.status AND (NEW.status IN ('failed', 'cancelled')
+    OR (NEW.status = 'done' AND NEW.created_by NOT LIKE 'create-plan:%')))
+  BEGIN DELETE FROM goal_files WHERE goal_id = NEW.id; END"""
 # A task's own budget (Goals.give_step_budget): kept beside the goal, not in its binding, which a bound task's result
 # must echo. spent_at_start is started_by's stored spend at its claim, both NULL until a mind claims the task; the
 # budget applies (check_budget), and the goal list gives it as step_budget_usd, only while started_by holds the task.
@@ -117,6 +128,7 @@ class Goals:
         self.db = hive.db
         self.db.execute(ATTEMPTS_SCHEMA)
         self.db.execute(FILES_SCHEMA)
+        self.db.execute(FILES_END_TRIGGER)
         self.db.execute(REVIEWS_SCHEMA)
         self.db.execute(BUDGETS_SCHEMA)
         self.db.execute("CREATE INDEX IF NOT EXISTS goal_attempts_goal ON goal_attempts(goal_id, at)")
@@ -252,7 +264,8 @@ class Goals:
         at its room keeps the files it finished, where one JSON holding them all was lost whole. A path staged again
         keeps its last text. Refused: a goal the mind doesn't hold, a path that isn't a plain relative one, a file over
         MAX_RESULT_DATA_BYTES (the most result data a goal keeps), more than MAX_STAGED_FILES on one goal. Nothing is
-        emitted: the goal's answer, when it comes, reads these (staged_files)."""
+        emitted: the goal's answer, when it comes, reads these (staged_files), and they go once nothing will read them
+        (FILES_END_TRIGGER, drop_staged)."""
         goal = self.get(goal_id)
         self._fence(agent, goal)
         if goal["claimed_by"] != agent["id"] or goal["status"] != "claimed":
@@ -279,6 +292,12 @@ class Goals:
         """The files staged on a goal (stage_file), {path: text}, for its answer's taker to read beside the answer."""
         return {r["path"]: r["text"] for r in self.db.all("SELECT path, text FROM goal_files WHERE goal_id = ? "
                                                          "ORDER BY path", (goal_id,))}
+
+    def drop_staged(self, goal_id):
+        """Delete the files staged on a goal, once the Create plan that takes its answer has finished with it: the plan
+        engine once it journalled the goal's result, the code controller once its member step settled. Every other end
+        of a goal deletes them in the goals table's own trigger (FILES_END_TRIGGER)."""
+        self.db.execute("DELETE FROM goal_files WHERE goal_id = ?", (goal_id,))
 
     def _record_attempt(self, goal_id, agent_id, raw, errors):
         text = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False, sort_keys=True)
@@ -511,13 +530,14 @@ class Goals:
         return {**self.view_full(goal), "result_schema": self.result_schema(goal)}
 
     def history(self, agent, query="", offset=0):
-        """Completed work visible to this mind, newest first; three excerpts fit an Iter tool result."""
+        """Completed work visible to this mind, newest first; three excerpts fit an Iter tool result. An Ask thread's
+        goal is bookkeeping, never work (WORK_SQL), so it is never listed."""
         from .hive import HiveError
         if offset < 0:
             raise self.hive.error(400, "bad_request", "offset must be nonnegative")
         if not agent.get("swarm_id"):
             return {"goals": [], "next_offset": None}
-        sql = "SELECT id, binding FROM goals WHERE swarm_id = ? AND status = 'done'"
+        sql = f"SELECT id, binding FROM goals WHERE swarm_id = ? AND status = 'done' AND {WORK_SQL}"
         params = [agent["swarm_id"]]
         related = {row["goal_id"] for row in self.db.all(
             "SELECT goal_id FROM studio_sessions WHERE source_artifact_id = ? OR proposal_artifact_id = ?",
@@ -581,13 +601,19 @@ class Goals:
 
     async def continue_goal(self, agent, goal_id, instruction):
         """Continue settled work as a fresh root held by the mind that asked, carrying the source's instructions and
-        result and its result checks, never its grants."""
+        result and its result checks, never its grants. A research task is never continued."""
         source = self.for_agent(agent, goal_id)
+        row = self.get(goal_id)
+        research = getattr(self.hive, "research", None)
+        # A follow-up's detail would copy the report into an ordinary task, outside the research route that keeps it to
+        # its asker and admins (research.py), so this holds whoever can read the task. More research is a new request.
+        if research is not None and research.is_task(row):
+            raise self.hive.error(409, "research_task", "a research task can't be continued: more research is a new "
+                                  "research request")
         if source["status"] != "done":
             raise self.hive.error(409, "not_done", "continue a completed task; claim unfinished work instead")
         if not isinstance(instruction, str) or not instruction.strip() or len(instruction) > 3500:
             raise self.hive.error(400, "bad_request", "instruction must be nonempty text of at most 3500 characters")
-        row = self.get(goal_id)
         # Only CONTINUATION_KEYS, so result() accepts the follow-up's plain done without a binding echo.
         binding = {"continued_from": goal_id, "review": self.review_spec(row)}
         if source.get("result_schema") is not None:
@@ -676,7 +702,7 @@ class Goals:
                "status": "open", "created_by": created_by, "claimed_by": None, "result": None,
                "assignee": assignee_id, "binding": json.dumps(binding) if binding is not None else None,
                "deadline_at": _later(float(deadline_minutes)) if deadline_minutes else None,
-               "created_at": stamp, "updated_at": stamp}
+               "created_at": stamp, "updated_at": stamp, "asked_at": self._creator_asked(created_by, stamp)}
         if parent_id:
             # Admission and cancellation on another DB connection serialize at
             # the INSERT: a stale held-parent check never creates late children.
@@ -814,7 +840,7 @@ class Goals:
             raise self.hive.error(409, "not_open", f"task is {goal['status']}"
                                   + (f" by {goal['claimed_by']}" if goal["claimed_by"] else ""))
         self._start_budget(agent["id"], goal_id)
-        self.hive.mark_input(agent["id"])   # a claim is real input to the idle signal (spend never is)
+        self._mark_goal_input(agent["id"], goal_id)   # a claim is real input; it carries the goal's asking
         return self._emit(goal_id)
 
     def _unheld(self, agent, goal, status, code, message):
@@ -825,6 +851,87 @@ class Goals:
             return self.hive.error(409, "not_claimed", f"this task is open and assigned to you: claim it with "
                                    f"hive-goal-claim {goal['id']}, then finish it with hive-goal-propose {goal['id']}")
         return self.hive.error(status, code, message)
+
+    def person_behind(self, created_by):
+        """The person a goal's creator stands for, as 'user:...', or None when the hive doesn't know of one. Resolved only
+        from what the hive already records, never guessed: a person (user:...) is themselves; a request (request:<id>, as
+        the Code controller, research and collaboration file it) is its requests.from_principal when that is a person (as
+        record_stop reads it); a Create plan (create-plan:<id>) is its create_plan_runs.person (as visibility._plan_person
+        reads it). A mind's (agent:...), a program's (program:...) and the hive's own (host:..., hive:...) have none."""
+        creator = str(created_by or "")
+        person = None
+        if creator.startswith("user:"):
+            person = creator
+        elif creator.startswith("request:"):
+            row = self._read("SELECT from_principal AS who FROM requests WHERE id = ?", creator[len("request:"):])
+            person = row["who"] if row else None
+        elif creator.startswith("create-plan:"):
+            row = self._read("SELECT person AS who FROM create_plan_runs WHERE plan_id = ?", creator[len("create-plan:"):])
+            person = row["who"] if row else None
+        return person if isinstance(person, str) and person.startswith("user:") else None
+
+    def _read(self, sql, key):
+        """One row, or None on a hive without that table (the plan engine's or collaboration's not created yet)."""
+        try:
+            return self.db.one(sql, (key,))
+        except sqlite3.OperationalError:
+            return None
+
+    def _mind_behind(self, created_by):
+        """The mind a goal's creator stands for, by id, or None: a mind itself (agent:<id>), or a request a mind filed."""
+        creator = str(created_by or "")
+        if creator.startswith("request:"):
+            row = self._read("SELECT from_principal AS who FROM requests WHERE id = ?", creator[len("request:"):])
+            creator = str(row["who"]) if row else ""
+        return creator[len("agent:"):] if creator.startswith("agent:") else None
+
+    def person_made(self, goal):
+        """Whether a person stands behind this goal, or behind the root of its tree for a subtask (person_behind): work a
+        person asked for. A goal a mind made for itself or another mind is not, however deep. Time: one read per level,
+        a few past MAX_DEPTH at most (a parent loop, or a chain deeper than any split allows, reads as no person's)."""
+        seen = set()
+        while goal is not None and goal["id"] not in seen and len(seen) <= MAX_DEPTH + 8:
+            seen.add(goal["id"])
+            if not goal.get("parent_id"):
+                return self.person_behind(goal.get("created_by")) is not None
+            goal = self.db.one("SELECT * FROM goals WHERE id = ?", (goal["parent_id"],))
+        return False
+
+    def _creator_asked(self, created_by, stamp):
+        """The freshness a new goal carries (goals.asked_at): a goal a person stands behind (person_behind: a person's
+        own, their request's, their Create plan's) was asked as it was made; a mind's, or a request a mind filed, carries
+        that mind's own last_asked_at (none if no one asked it), so its subtasks run on the asking that started the tree
+        and rest with it; anything else (a program's, the hive's own) carries none."""
+        if self.person_behind(created_by) is not None:
+            return stamp
+        mind = self._mind_behind(created_by)
+        if mind is not None:
+            row = self.db.one("SELECT last_asked_at FROM agents WHERE id = ?", (mind,))
+            return row["last_asked_at"] if row else None
+        return None
+
+    def asking(self, goal_id):
+        """The asking a goal passes on (goals.asked_at), resolved when it is passed on if it was none when the goal was
+        made: every request path (collaboration, research, a Code instruction) writes its receiving goal before its
+        requests row, so at creation person_behind finds nobody. Resolved now: a person behind it, its own created_at;
+        a mind behind it (itself, or the request it filed), that mind's last_asked_at now; else none. A found stamp is
+        kept on the goal (only where it is still none), so later claims read it. Time: one read, two more when none."""
+        goal = self.db.one("SELECT id, asked_at, created_by, created_at FROM goals WHERE id = ?", (goal_id,))
+        if goal is None:
+            return None
+        if goal["asked_at"]:
+            return goal["asked_at"]
+        stamp = self._creator_asked(goal["created_by"], goal["created_at"])
+        if stamp:
+            self.db.execute("UPDATE goals SET asked_at = ? WHERE id = ? AND asked_at IS NULL", (stamp, goal_id))
+        return stamp
+
+    def _mark_goal_input(self, agent_id, goal_id):
+        """A claim or heartbeat: input to the idle signal always (Hive.mark_input); the mind's asking (last_asked_at, which
+        the free route reads) becomes the later of its own and the goal's (asking, Hive.pass_asked), so a mind claiming
+        goals it made itself, no one having asked it, can't keep itself awake."""
+        self.hive.mark_input(agent_id)
+        self.hive.pass_asked(agent_id, self.asking(goal_id))
 
     def heartbeat(self, agent, goal_id):
         """Renew the claimer's lease; also resumes a goal that was waiting on a person."""
@@ -846,7 +953,7 @@ class Goals:
             (now(), lease, goal_id, goal["status"], agent["id"], agent["id"]))
         if cur.rowcount != 1:   # released, reassigned or its mind deleted meanwhile: as if the lease had lapsed
             raise self.hive.error(409, "not_claimed", "you do not hold this task")
-        self.hive.mark_input(agent["id"])   # the holder saying it is still on owed work
+        self._mark_goal_input(agent["id"], goal_id)   # the holder saying it is still on owed work
         return self._emit(goal_id)
 
     async def result(self, agent, goal_id, status, result, data=None, trusted_review=False, top_digest=None, strict_binding=False):

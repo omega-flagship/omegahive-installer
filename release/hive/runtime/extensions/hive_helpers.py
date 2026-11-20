@@ -88,7 +88,7 @@ try:
         skill_catalog,
         skill_help,
         reload_signature_commands,
-        _signature_quote,
+        signature_quote,
         _signature_one_line,
         _signature_consume_token,
         _signature_validated_metta,
@@ -104,6 +104,7 @@ try:
         _signature_source_text,
         signature_raw_batch_complete,
         signature_balance_parentheses,
+        unclosed_heredoc,
         balance_parentheses,
     )
     from .helper_recall import (
@@ -206,7 +207,7 @@ except Exception:
         skill_catalog,
         skill_help,
         reload_signature_commands,
-        _signature_quote,
+        signature_quote,
         _signature_one_line,
         _signature_consume_token,
         _signature_validated_metta,
@@ -222,6 +223,7 @@ except Exception:
         _signature_source_text,
         signature_raw_batch_complete,
         signature_balance_parentheses,
+        unclosed_heredoc,
         balance_parentheses,
     )
     from helper_recall import (
@@ -424,6 +426,12 @@ def _model_response(response, provider_failure="normal", last_reply="clear"):
         if bad and not failed:
             found = re.findall(r'"((?:[^"\\]|\\.)*)"', bad[0])[:2]
             hint = re.sub(r'[\\"()]', "", " ".join(found)).strip()[:300]
+        elif failed and provider_failure != "format":
+            # a body no marker line closes is named, so the retry closes it (Jon's review of #497, P2); a cut-off
+            # reply's unfinished last file is the cut's doing, and provider_features gives that cause instead
+            marker = unclosed_heredoc(response)
+            if marker:
+                hint = f"a body opened with <<'{marker}' has no line {marker} to close it"
         reason = "LLM-FORMAT-ERROR retry with complete skill commands" + (f"; {hint}" if hint else "")
         kept = _kept_file_forms() if provider_failure == "format" else []
         if kept:

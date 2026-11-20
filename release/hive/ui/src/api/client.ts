@@ -383,6 +383,9 @@ export interface HiveClient {
   correctReservation?(id: string, body: import('./moneyWork').CorrectBody): Promise<import('./moneyWork').CorrectedReservation>
   /** What minds and apps produced, across the hive (composed from requests, flows, exhibits and app actions). */
   hiveArtifacts?(): Promise<import('./moneyWork').ArtifactList>
+  /** Metadata for creations in swarms the viewer can see, newest first. */
+  listCreations?(opts?: import('./moneyWork').CreationListOptions): Promise<import('../features/artifacts/artifacts').CreationRow[]>
+  studioRecent?(): Promise<import('./moneyWork').StudioRecentCreation[]>
   /** Candidate (Studio picker): this swarm's artifacts at their latest exact revision, metadata only, for a viewer who sees it. */
   swarmArtifacts?(swarmId: string, opts?: { kind?: string; limit?: number }): Promise<import('./moneyWork').SwarmArtifact[]>
   /** One saved revision of an artifact, its text included, for a person shown that artifact (the Artifacts page's reader). */

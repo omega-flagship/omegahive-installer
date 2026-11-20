@@ -137,19 +137,33 @@ describe('the plan at work', () => {
     expect(shown('plan', planFacts(stopped, UI).facts)).not.toContain('buttons:26')
     expect(shown('plan', planFacts(stopped, UI).facts)).toContain('buttons:22')
   })
-  it('a mind it waits on is refused for spending: it says which, in the hive\'s words, and offers the limits', () => {
-    // a test hive with a 1 USD month limit held the planner 30 minutes with nothing said
+  it('each mind it waits on that can\'t go on is its own row: refused for spending with the limits a press away, or stopped, asleep, in error or never started with Start or Wake where the person may', () => {
+    // a test hive with a 1 USD month limit held the planner 30 minutes with nothing said; on 20 Nov a tester's Make
+    // sat at "waiting for code review" with their reviewer stopped
     const { v } = simAt(4000)
-    const waiting = { name: 'Planner', message: 'A spending limit has no room for this call.' }
-    const page = planFacts({ ...v, waiting }, UI)
-    expect(shown('plan', page.facts)).toEqual(expect.arrayContaining(['notice:23', 'buttons:24']))
-    expect(page.data['waiting.name']).toBe('Planner')
-    expect(page.data['waiting.message']).toBe('A spending limit has no room for this call.')
-    const press = JSON.stringify(compose('plan', page.facts).parts.find((x) => x.order === 24)?.props)
-    expect(press).toContain('See limits')
-    expect(press).toContain('open-limits')
-    expect(shown('plan', planFacts({ ...v, waiting: null }, UI).facts)).not.toContain('notice:23')
-    expect(shown('plan', planFacts({ ...v, waiting, phase: 'stopped', status: 'stopped' }, UI).facts)).not.toContain('notice:23')
+    const row = (reason: string, may_act = true) => ({ mind: `a_${reason}`, name: reason === 'spending' ? 'Planner' : 'Reviewer',
+      step: 'code review of the board', reason, message: reason === 'spending' ? 'A spending limit has no room for this call.' : null, may_act })
+    type Row = { id: string; plan: ScreenPlan; data: Record<string, unknown> }
+    const rowsOf = (waiting: ReturnType<typeof row>[]) => planFacts({ ...v, waiting }, UI).data['waiting.rows'] as Row[]
+    const partsOf = (r: Row) => r.plan.parts.map((p) => `${p.block}:${p.order}`)
+    const pressOf = (r: Row, order: number) => JSON.stringify(r.plan.parts.find((x) => x.order === order)?.props)
+    expect(shown('plan', planFacts({ ...v, waiting: [row('spending'), row('stopped')] }, UI).facts)).toContain('stack:23')
+    const [spent, stopped] = rowsOf([row('spending'), row('stopped')])
+    expect(partsOf(spent)).toEqual(['notice:10', 'buttons:20'])
+    expect(spent.data).toEqual({ name: 'Planner', step: 'code review of the board', message: 'A spending limit has no room for this call.' })
+    expect(pressOf(spent, 20)).toContain('See limits')
+    expect(pressOf(spent, 20)).toContain('open-limits')
+    expect(stopped.id).toBe('a_stopped')
+    expect(partsOf(stopped)).toEqual(['notice:11', 'buttons:21'])
+    expect(pressOf(stopped, 21)).toContain('start-mind')
+    expect(rowsOf([row('asleep')]).map(partsOf)).toEqual([['notice:12', 'buttons:22']])
+    expect(pressOf(rowsOf([row('asleep')])[0], 22)).toContain('wake-mind')
+    expect(rowsOf([row('error')]).map(partsOf)).toEqual([['notice:13', 'buttons:21']])
+    expect(rowsOf([row('created')]).map(partsOf)).toEqual([['notice:14', 'buttons:21']])
+    // a mind this person may neither start nor wake is named with no press
+    expect(rowsOf([row('stopped', false), row('asleep', false)]).map(partsOf)).toEqual([['notice:11'], ['notice:12']])
+    expect(shown('plan', planFacts({ ...v, waiting: [] }, UI).facts)).not.toContain('stack:23')
+    expect(shown('plan', planFacts({ ...v, waiting: [row('stopped')], phase: 'stopped', status: 'stopped' }, UI).facts)).not.toContain('stack:23')
   })
   it('a plan this browser follows, while its view is on its way: the plan, not the empty canvas', () => {
     expect(planFacts(null, { ...UI, opening: true }).screen).toBe('plan')
@@ -297,7 +311,7 @@ describe('changing it in place: a later round on the same plan', () => {
 
 describe('the plan screens', () => {
   it('every part of each can be reached', () => {
-    for (const screen of ['plan-start', 'plan', 'plan-ready', 'plan-revision', 'plan-made']) {
+    for (const screen of ['plan-start', 'plan', 'plan-ready', 'plan-revision', 'plan-made', 'plan-waiting']) {
       const missing = space.orders(screen).filter((o) => !seen.get(screen)?.has(o))
       expect(missing, screen).toEqual([])
     }

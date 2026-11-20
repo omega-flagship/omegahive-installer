@@ -202,17 +202,32 @@ def chat(request):
 
 
 def module_loader():
-    """The host's module loader (OMEGACLAW_MODULE_LOADER, else modules/loader.metta), never the mind's workspace.
+    """The host's module loader (OMEGACLAW_MODULE_LOADER, else modules/loader.metta), never the mind's workspace, less
+    each module whose manifest requires what this mind lacks: then the mind imports a copy of that loader without those
+    modules' lines, written to its memory folder at every boot, and the log names each module left out and why.
 
-    The same resolution the command parser authorizes against (helper_command_parser.module_loader_path)."""
+    The same resolution the command parser authorizes against (helper_command_parser.module_loader_path and
+    module_selection). The parser never reads the copy, so a mind that edits it changes nothing it may call, and the
+    next boot writes it again."""
     try:
-        from hive.runtime.extensions.helper_command_parser import module_loader_path
+        from hive.runtime.extensions.helper_command_parser import module_loader_path, module_loader_text, module_selection
     except ImportError:
-        from helper_command_parser import module_loader_path
+        from helper_command_parser import module_loader_path, module_loader_text, module_selection
     path = module_loader_path()
     if not path.is_file():
         raise FileNotFoundError('Hive module loader missing: ' + str(path))
-    return str(path)
+    _running, off = module_selection(path)
+    if not off:
+        return str(path)
+    log = logging.getLogger('hive_modules')
+    for name, missing in off.items():
+        log.warning('module %s left out: %s', name, '; '.join(f'requires {entry}: {why}' for entry, why in missing))
+    copy = Path(memory_file('modules-loader.metta'))
+    staged = copy.with_name(copy.name + '.new')
+    staged.write_text(f'; Written at boot from {path}, without {", ".join(off)}: this mind lacks what they require.\n'
+                      + module_loader_text(path, off), encoding='utf-8')
+    os.replace(staged, copy)
+    return str(copy)
 
 
 def command_expr(expression):

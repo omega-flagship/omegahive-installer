@@ -1443,6 +1443,24 @@ def test_every_handover_sentence_is_said_in_everyday_words():
     assert [s for s in said if jargon.search(s)] == []
 
 
+def test_a_conductor_turn_says_so_in_its_accepted_frame_and_a_phase_one_turn_does_not(client, on, monkeypatch):
+    """The page says under each answer where it came from: a conductor turn's tools hold no web search, so its answers
+    come from a model alone (a research report is a frame of its own). The accepted frame says whose model answers, here
+    the model the Ask uses (a swarm turn; test_mind_voice.py has a turn with the person's own mind), a turn its
+    coordinator answers says nothing it can't know, and a personal turn's stored copy, which keeps only content-free keys
+    (Ask.content_free), keeps the value."""
+    from hive.core import ask as amod
+    hive = on["hive"]
+    script(client, Script("The aquarium usually opens at nine on Sundays."))
+    ask(client, on["ann"], "op-conducted-1", context=on["ctx"])
+    fs, _ = _answers(hive, "op-conducted-1")
+    assert [f.get("conducted") for f in fs if f["phase"] == "accepted"] == ["ask"]
+    assert "conducted" in amod.CONTENT_FREE_KEYS
+    monkeypatch.setenv("HIVE_ASK_CONDUCTOR", "0")
+    assert ask(client, on["ann"], "op-phase-one-1", context=on["ctx"]).status_code == 202
+    assert [f.get("conducted") for f in frames(hive, "op-phase-one-1") if f["phase"] == "accepted"] == [None]
+
+
 def test_the_chat_is_told_a_code_change_starts_from_a_code_task():
     """The same tester's request was refused bad_request: a code request needs a Code task's task, workspace and
     repository ids, which no question in the Ask carries. The dispatch tool says so and offers the Code page instead."""

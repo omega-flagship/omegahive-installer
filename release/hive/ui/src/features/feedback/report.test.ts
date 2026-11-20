@@ -185,6 +185,13 @@ describe('errors, ids and devices', () => {
     expect(p.text).toBe(reportText(report()))
     expect(payloadOf(report({ picture: false }), 'data:image/png;base64,AAAA').picture).toBeNull()
   })
+  it('names the requests, errors and logs only when they go with it', () => {
+    const plain = payloadOf(report(), null)
+    for (const name of ['recent_requests', 'errors', 'logs']) expect(plain).not.toHaveProperty(name)
+    const extras = { recent_requests: [{ at: '2026-11-17T01:23:40Z', method: 'GET', route: '/api/hive', status: 200, ms: 3, count: 1, who: 'you' }],
+      logs: ['2026-11-17T01:23:39Z WARNING hive: the model provider answered 429'] }
+    expect(payloadOf(report(), null, extras)).toEqual({ ...plain, ...extras })
+  })
 })
 
 /** A small seeded generator (mulberry32), so a failing case is reproduced by its seed. */

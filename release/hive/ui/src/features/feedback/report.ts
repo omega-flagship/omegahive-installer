@@ -264,8 +264,22 @@ export function issueUrl(board: { url: string }, r: Report): { url: string; copi
   return { url: build(short), copied: true }
 }
 
+/** A request the hive answered, as a report carries it: the logs' line (api/types HiveRequestLine), its time to the second. */
+export interface ReportRequest { at: string; method: string; route: string; status: number; ms: number; count: number; who: string }
+
+/**
+ * What a report to a report service carries beside the person's words, when they left it in (logs.ts extrasOf): their
+ * own recent requests, the errors unless they left those out, and for an admin the hive's own warnings and errors as
+ * lines. The names and shapes are the ones the hive checks (report_problems) and the feedback relay reads.
+ */
+export interface ReportExtras {
+  recent_requests: ReportRequest[]
+  errors?: ReportError[]
+  logs: string[]
+}
+
 /** What a report service takes (POST /api/feedback/send; hive/core/feedback.py report_problems checks the shape). */
-export interface ReportPayload {
+export interface ReportPayload extends Partial<ReportExtras> {
   schema: 'omega-hive-report-1'
   id: string
   kind: ReportKind
@@ -279,9 +293,10 @@ export interface ReportPayload {
   picture: string | null
 }
 
-export function payloadOf(r: Report, picture: string | null): ReportPayload {
+/** `extras` is what the person left in beside their words (null: none of it goes, and the payload names none of it). */
+export function payloadOf(r: Report, picture: string | null, extras: ReportExtras | null = null): ReportPayload {
   return { schema: 'omega-hive-report-1', id: r.id, kind: r.kind, title: titleOf(r.words), form: FORMS[r.kind].template, fields: fieldsOf(r), text: reportText(r),
-    picture: r.picture ? picture : null }
+    picture: r.picture ? picture : null, ...(extras ?? {}) }
 }
 
 /** The facts from what the hive answered and what the page knows; the hive's context may be missing (an older hive). */

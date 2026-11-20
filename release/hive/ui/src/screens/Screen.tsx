@@ -342,14 +342,19 @@ const BLOCKS: Record<string, Block> = {
   /**
    * A picture, such as a screenshot: (source (bind path)) a data: or blob: address the page made (nothing from another
    * origin), (alt "…") what it shows in words, an optional (caption "…"), and an optional button under it,
-   * (action <intent>) named (action_label "Remove the picture"). Draws nothing while the source is empty.
+   * (action <intent>) named (action_label "Remove the picture"). An optional (error_action <intent>) receives image
+   * load errors. The optional (max_height <percent>) caps the image height in dynamic viewport units.
    */
   picture: (p, host) => {
     const src = text(p.source, host)
     if (!/^(data:image\/|blob:)/.test(src)) return null
+    const onError = name(p.error_action)
+    const height = Number(text(p.max_height, host))
+    const maxHeight = height > 0 && height <= 100 ? `${height}dvh` : undefined
     return (
       <figure className="space-y-2">
-        <img src={src} alt={text(p.alt, host)} className="max-h-64 w-auto max-w-full rounded-lg border border-line object-contain" />
+        <img src={src} alt={text(p.alt, host)} className="max-h-64 w-auto max-w-full rounded-lg border border-line object-contain"
+          style={maxHeight ? { maxHeight } : undefined} onError={onError ? () => host.onAction?.(onError, {}) : undefined} />
         {p.caption && <figcaption className="text-meta text-ink-3">{text(p.caption, host)}</figcaption>}
         {p.action && (
           <button type="button" disabled={host.busy} onClick={() => host.onAction?.(name(p.action), {})}
@@ -605,6 +610,7 @@ const BLOCKS: Record<string, Block> = {
   /**
    * Buttons that each carry their own weight, icon and accessible name: (button label action ((aria "…") (icon pause)
    * (variant primary))). The aria text may name the row it sits in ("Hold reloads of {app.name}").
+   * A (link label href) in the same list opens an internal hash route.
    */
   buttons: (p, host) => <div className="flex flex-wrap items-center gap-2">{buttonItems(p.items, host)}</div>,
   /**
@@ -650,13 +656,19 @@ const BLOCKS: Record<string, Block> = {
  */
 function buttonItems(items: PropValue | undefined, host: ScreenHost, className?: string): ReactNode[] {
   const drawn = (Array.isArray(items) ? items : []).flatMap((b) => {
-    if (!Array.isArray(b) || b[0] !== 'button') return []
+    if (!Array.isArray(b) || (b[0] !== 'button' && b[0] !== 'link')) return []
     const opts: Record<string, PropValue> = {}
     for (const o of Array.isArray(b[3]) ? b[3] : []) if (Array.isArray(o) && o.length === 2 && typeof o[0] === 'string') opts[o[0]] = o[1]
     const holds = (opts.on === undefined || host.data[name(opts.on)] === true) && (opts.off === undefined || host.data[name(opts.off)] !== true)
     return holds ? [{ b, opts }] : []
   })
   return drawn.map(({ b, opts }, i) => {
+    if (b[0] === 'link') {
+      const href = text(b[2], host)
+      return href.startsWith('#/')
+        ? <a key={i} href={href} className="min-h-9 content-center px-2.5 text-sm text-ink underline underline-offset-4">{text(b[1], host)}</a>
+        : null
+    }
     const variant = name(opts.variant)
     const aria = text(opts.aria, host)
     return (

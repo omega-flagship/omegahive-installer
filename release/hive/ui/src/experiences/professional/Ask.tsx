@@ -1,7 +1,9 @@
-// Purpose: Professional's Ask card: its field, choices, voice and conversation, with the Ask's size links in its head.
+// Purpose: draw Professional's Ask card: the field, its choices and voice, the conversation when shown, with the
+// Ask's size links in its head, and what waits on the person whether or not it is.
 import { useId, useRef, type RefObject } from 'react'
+import { AskSearch } from '../../features/ask/AskSearch'
 import { PanelView } from '../../features/ask/ClassicAsk'
-import { Thread, ThreadHead } from '../../features/ask/Thread'
+import { AskCards, Thread, ThreadHead } from '../../features/ask/Thread'
 import { keepFieldFocus, useAskField, useSeen } from '../../features/ask/useAskField'
 import { guardComposing } from '../../features/ask/keys'
 import { AnswererInline } from '../../features/ask/AnswererPicker'
@@ -9,7 +11,6 @@ import { useAskVoice } from '../../features/ask/useAskVoice'
 import { VoiceAnnouncer, VoiceListening, VoiceNoticeView } from '../../features/ask/VoiceParts'
 import { useAskStore } from '../../store/ask'
 import { current } from './binding'
-import { DirectingStudio } from '../../features/studioLive/DirectingStudio'
 import { changeAskSize, halfSwitch, useAskSize } from '../../features/ask/askSize'
 import type { AskMode } from '../../features/ask/placement'
 import { SIZE_WORDS } from '../../features/ask/words'
@@ -70,6 +71,7 @@ export function ProfessionalAsk({ ctx, inputRef, half = false, mode = 'desktop' 
               if (v.onFieldKey(e)) return
               f.onKeyDown(e)
             }} placeholder="What would you like to do?" aria-label="Ask the hive" role="combobox" aria-expanded={options.length > 0} aria-controls={`${id}-list`} aria-autocomplete="list" aria-activedescendant={activeIndex >= 0 ? `${id}-option-${activeIndex}` : undefined} autoComplete="off" disabled={!current(ctx)} />
+            <AskSearch look="professional" words={f.valueNow} className="pr-button pr-ask-search" may={() => current(ctx)} disabled={!current(ctx)}>Search</AskSearch>
             <button type="button" className="pr-button" {...v.button} aria-label={v.label} disabled={!current(ctx)}>{v.listening ? 'Stop voice' : 'Voice'}</button>
             <button type="button" className="pr-button pr-primary" onMouseDown={keepFieldFocus} disabled={!f.value.trim() || !current(ctx)} onClick={() => { if (current(ctx)) void f.submit() }}>Ask</button>
           </div>
@@ -85,8 +87,9 @@ export function ProfessionalAsk({ ctx, inputRef, half = false, mode = 'desktop' 
         <PanelView f={f} />
         <AnswererInline look="professional" chip={f.chip ?? (f.answerer ? { kind: 'planned', name: f.answerer } : null)} answering={f.answering} may={() => current(ctx)} />
         {f.answering && !f.preparing && <p className="pr-muted" role={f.waking ? undefined : 'status'} aria-live={f.waking ? 'off' : undefined}>{f.waking ? `Waking ${f.answerer ?? 'the orchestrator'}…` : `${f.answerer ?? 'The orchestrator'} is answering…`} <button type="button" className="pr-link" onClick={() => { if (current(ctx)) void useAskStore.getState().stop() }}>Stop</button></p>}
-        {/* J3 r4.3 O3: the Studio setup card / Directing Studio shows even before the thread has rows */}
-        {!showThread && <DirectingStudio />}
+        {/* with no conversation drawn (none yet, or hidden), what waits on the person still shows: stopped tasks, minds'
+            offers to build in Create, and the Studio setup card or Directing Studio (J3 r4.3 O3) */}
+        {!showThread && <AskCards />}
         {showThread && <div className="pr-ask-thread"><ThreadHead variant="letter" onClose={half ? undefined : () => { if (current(ctx)) useAskStore.getState().setThreadOpen(false) }} /><Thread variant="letter" /></div>}
       </div>
     </section>

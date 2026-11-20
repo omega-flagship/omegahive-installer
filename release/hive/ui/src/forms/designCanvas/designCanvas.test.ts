@@ -8,7 +8,7 @@ import { finalAsResult, HostConfirmController } from '../../features/programs/Ho
 import { needsConfirm, prepareConfirm } from '../../lib/hostConfirm'
 import { useHive } from '../../store/store'
 import { FORM_OVER_FRAME, formFor, FORMS, NATIVE_GRAMMARS } from '../contract'
-import { Compare, Deliver, Drawer, Empty, ErrorState, Skeleton, TopLine } from './Chrome'
+import { Compare, Deliver, Drawer, ErrorState, Skeleton, TopLine } from './Chrome'
 import DesignCanvas from './DesignCanvas'
 import { commitRevision, current, nextRevision, openDoc, readSource, saveParams, savedReference, sourceFocus, type Doc, type StudioSource } from './model'
 import { ScenePicture } from './Stage'
@@ -156,7 +156,7 @@ const base = { program, describe: null, graph: { revision: 'r', items: [], links
 function stateFor(doc: Doc, over: Partial<CanvasState> = {}): CanvasState {
   return {
     phase: { kind: 'ready' }, doc, scene: current(doc).scene, revision: current(doc), selected: null, select: () => undefined, mode: 'make', setMode: () => undefined, drawer: false, setDrawer: () => undefined,
-    notice: null, setNotice: () => undefined, receipts: [], busy: null, dirty: doc.cursor !== doc.floor, recent: null, commit: async () => true, undo: () => undefined, redo: () => undefined,
+    notice: null, setNotice: () => undefined, receipts: [], busy: null, dirty: doc.cursor !== doc.floor, commit: async () => true, undo: () => undefined, redo: () => undefined,
     canUndo: doc.cursor > doc.floor, canRedo: false, keep: async () => undefined, download: async () => undefined, retry: () => undefined, ...over,
   } as CanvasState
 }
@@ -184,10 +184,12 @@ describe('mounted: what a person and a screen reader get', () => {
     expect(html).toContain('>Try again</button>')
     expect(renderToStaticMarkup(createElement(Skeleton, { reduced: true }))).toContain('data-still="true"')
   })
-  it('the empty canvas lists recent designs from the host’s artifact list (a read only)', () => {
-    const html = renderToStaticMarkup(createElement(Empty, { ask: () => undefined, askReady: true, recent: [{ artifact_id: 'ar_simposter', kind: 'studio-source', title: 'Night-sky festival poster', revision: 4, digest: 'sha256:' + 'd'.repeat(64), created_at: 'c', revised_at: 'r' }], scope: SWARM }))
-    expect(html).toContain('Or pick up where you left off')
-    expect(html).toContain('Night-sky festival poster')
+  it('the simulated recent feed carries the exact saved design reference', async () => {
+    const [poster] = await a.swarmArtifacts(SWARM, { kind: 'studio-source' })
+    expect(await a.studioRecent()).toContainEqual({
+      kind: 'design', id: poster.artifact_id, title: poster.title, swarm_id: SWARM,
+      revision: poster.revision, digest: poster.digest, at: poster.revised_at,
+    })
   })
   it('the top line: the three states as one radio group, undo/redo labelled, and the unsaved state said in words', async () => {
     const doc = await edited()

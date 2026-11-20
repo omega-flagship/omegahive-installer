@@ -86,9 +86,9 @@
 (OrganPrinciple assume "Demo graphs are examples only. Omega may build new domain/situation graphs by adding explicit atoms.")
 
 (RuntimeDependency omegaclaw.reasoning.assume python ">=3.10")
-(RuntimeDependency omegaclaw.reasoning.assume fabricpc "external-repo")
-(RuntimeDependency omegaclaw.reasoning.assume jax ">=0.4")
-(RuntimeDependency omegaclaw.reasoning.assume optax ">=0.2")
+(RecommendedDependency omegaclaw.reasoning.assume fabricpc "external-repo")
+(RecommendedDependency omegaclaw.reasoning.assume jax ">=0.4")
+(RecommendedDependency omegaclaw.reasoning.assume optax ">=0.2")
 (RuntimeConfig omegaclaw.reasoning.assume FABRICPC_REPO "optional-external-repo-path")
 (RuntimeConfig omegaclaw.reasoning.assume FABRICPC_PYTHON "optional-python-path")
 (RuntimeConfig omegaclaw.reasoning.assume OMEGACLAW_ASSUME_REQUEST_TIMEOUT_SECONDS "optional-timeout")

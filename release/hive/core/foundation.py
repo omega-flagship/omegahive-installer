@@ -773,13 +773,18 @@ class HiveFoundation:
                     or agent.get("owner") != owner or team.get("archived_at")
                     or team.get("coordinator_id") != agent["id"] or agent["swarm_id"] != team_id
                     or agent["kind"] != "omega" or agent.get("driver") != "local"
-                    or agent.get("desired") in ("stopped", "paused")
                     or (controller_id is not None and controller_id != agent["id"])):
                 raise self._error("The exact Research swarm and coordinator are not currently admitted.")
             template = self.hive.minds.templates.get(RESEARCH_TEMPLATE)
             if (not template or template.get("_foundation") != RESEARCH_TEMPLATE
                     or template not in self.hive.minds.registered(team_id, exact=True)):
                 raise self._error("Research is unavailable until its built-in researcher template is ready.")
+            # checked last, so it is said only when nothing else refuses: a coordinator a person stopped, or one a start
+            # the host refused left stopped (Hive._start_locked), is the one cause a wake lifts. The details name it, so
+            # research.admit can say it is asleep and the page can offer to wake it (an idle-asleep one is admitted).
+            if agent.get("desired") in ("stopped", "paused"):
+                raise self.hive.error(409, "foundation_unavailable", "The Research swarm's coordinator is stopped.",
+                                      {"reason": "coordinator_stopped", "mind_id": agent["id"]})
             budget = budget_usd()
             return {"research": True, "controller_usd": CONTROLLER_BUDGET_USD, "request_usd": budget, "child_usd": budget,
                     "max_children": 1, "lifetime_seconds": lifetime_minutes() * 60 + 60,

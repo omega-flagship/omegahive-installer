@@ -16,7 +16,10 @@ host does the rest:
   Limits, all against reservations made in that transaction (concurrent requests cannot overdraw): one research per Ask
   turn; at most MAX_OPEN unfinished per person; the person's day, month and total limits (their own spend plus what this
   research reserves or has spent); the Research swarm's month cap (HIVE_RESEARCH_MONTH_USD, $5, or a lower month rule a
-  person set on that swarm).
+  person set on that swarm). A Research swarm that can't start a researcher refuses as no_researcher, except one whose
+  only fault is a stopped coordinator (a person stopped it, or a start the host refused left it so): that refuses as
+  researcher_asleep with the coordinator's mind_id, the intent keeps the reason (ask_intents last_refusal), and once the
+  person wakes it the same intent is sent again as it is.
 - start: a FRESH researcher is spawned for the request through Minds.spawn (the coordinator's lease, the template, the
   request's whole budget as the child's allocation and hard cap; foundation.research_limits is the host-bound exception
   the spawn admits, as Code's is). It has no memory, its first prompt is the brief (the title and the instruction only:
@@ -27,7 +30,8 @@ host does the rest:
 - the researcher's role denies every skill ("*"); policy lets a live researcher child use only CHILD_SKILLS, which the
   role's own glob refusal does not refuse (a person's rule, at any scope, still decides). Its task tools are fenced
   host-side to its own task (fence, visible_goals): no other research task is listed, read, claimed or finished by it,
-  and no other mind finishes a research task.
+  and no other mind finishes a research task. No mind continues one (is_task, Goals.continue_goal), since a follow-up
+  would copy its report into an ordinary task.
 - when the task ends (done, failed, cancelled, or failed at its deadline; a stalled one is unfinished), the report is
   checked: a citation counts only when its URL is a page this researcher fetched successfully (the final address, as the
   web audit keeps it: scheme, host and path) between its claim and its result; a citation whose query the audit could not
@@ -54,6 +58,7 @@ import shutil
 import threading
 
 from .db import new_id, now
+from .minds import stamp
 
 log = logging.getLogger("hive")
 
@@ -173,9 +178,15 @@ class Research:
         self.hive, self.db = hive, hive.db
         for sql in SCHEMA:
             self.db.execute(sql)
-        if "erase_pending" not in {r["name"] for r in self.db.all("PRAGMA table_info(research_reports)")}:
+        columns = {r["name"] for r in self.db.all("PRAGMA table_info(research_reports)")}
+        if "erase_pending" not in columns:
             # 1 while a personal request's researcher still has traces to erase (retire_finished retries it)
             self.db.execute("ALTER TABLE research_reports ADD COLUMN erase_pending INTEGER NOT NULL DEFAULT 0")
+        for column in ("hold_reason", "hold_until"):
+            if column not in columns:
+                self.db.execute(f"ALTER TABLE research_reports ADD COLUMN {column} TEXT")
+        self.db.execute("CREATE INDEX IF NOT EXISTS research_active_child ON research_reports(child_id) WHERE state = 'working'")
+        self.db.execute("CREATE INDEX IF NOT EXISTS research_originating_turn ON research_reports(turn_id)")
         self._lock = threading.RLock()
         hive.events.listen(self.observe)
 
@@ -307,6 +318,19 @@ class Research:
         req = self.db.one("SELECT receiving_goal FROM requests WHERE id = ?", (c["request_id"],))
         return req["receiving_goal"] if req else None
 
+    def is_task(self, goal):
+        """A research task: a research request's receiving task (its binding's kind is research and a research_reports
+        row names it). Only its own researcher touches it (fence), and no mind continues it (Goals.continue_goal)."""
+        binding = goal.get("binding")
+        if isinstance(binding, str):
+            try:
+                binding = json.loads(binding)
+            except ValueError:
+                return False
+        if not isinstance(binding, dict) or binding.get("kind") != SERVICE:
+            return False
+        return self.db.one("SELECT 1 FROM research_reports WHERE goal_id = ?", (goal["id"],)) is not None
+
     def fence(self, agent, goal):
         """Host-side task scope (Goals.claim/heartbeat/result/for_agent/cancel_ack): a researcher child touches only its
         own task, and a research task is touched only by its own researcher (never the coordinator or another one)."""
@@ -314,16 +338,8 @@ class Research:
         mine = self.own_task(agent_id)
         if mine is not None and goal["id"] != mine:
             raise self._err(403, "not_assigned", "a researcher works only on its own research task")
-        binding = goal.get("binding")
-        if isinstance(binding, str):
-            try:
-                binding = json.loads(binding)
-            except ValueError:
-                binding = None
-        if isinstance(binding, dict) and binding.get("kind") == SERVICE and mine != goal["id"]:
-            row = self.db.one("SELECT child_id FROM research_reports WHERE goal_id = ?", (goal["id"],))
-            if row is not None:
-                raise self._err(403, "not_assigned", "only this research task's own researcher works on it")
+        if mine != goal["id"] and self.is_task(goal):
+            raise self._err(403, "not_assigned", "only this research task's own researcher works on it")
 
     def visible_goals(self, agent, goals):
         """A researcher child's task listing is its own task only; every other mind's is unchanged."""
@@ -452,7 +468,13 @@ class Research:
                                 reason="no_researcher")
             try:
                 hive.foundation.research_limits(swarm["id"], coordinator["id"])
-            except Exception:
+            except Exception as exc:
+                # a stopped coordinator is the one cause a person can lift, by waking it; the same intent is then sent
+                # again as it is (ask_intents.submit takes a refused intent), so the refusal names the mind to wake
+                details = getattr(exc, "details", None)
+                if isinstance(details, dict) and details.get("reason") == "coordinator_stopped":
+                    raise self._err(409, "not_available", "The Research swarm's coordinator is asleep.",
+                                    reason="researcher_asleep", mind_id=details.get("mind_id")) from None
                 raise self._err(409, "not_available", "The Research swarm isn't ready.", reason="no_researcher") from None
             self._limits(principal, swarm["id"], budget)
             deadline = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=minutes)
@@ -573,7 +595,24 @@ class Research:
     # ---- the report: checked against the web audit, kept, sent to the asking turn; the researcher retired --------------
 
     def observe(self, kind, payload):
-        """EventBus listener: a research task's claim time is noted; a task that ended is delivered after its commit."""
+        """Send a worker's hold and actual outcome to the turn that dispatched it."""
+        if kind == "budget.slowed":
+            until = _parse(payload.get("until"))
+            if until is not None and until.tzinfo is not None and until > datetime.datetime.now(datetime.timezone.utc):
+                self.db.after_commit(lambda: self._hold(payload.get("agent_id"), "spend_rate", stamp(until)))
+            return
+        if kind == "budget.refused":
+            self.db.after_commit(lambda: self._hold(payload.get("agent_id"), "spending_limit"))
+            return
+        if kind == "agent.updated":
+            agent = payload.get("agent") or {}
+            status = agent.get("status")
+            if status in ("asleep", "error"):
+                reason = "asleep" if status == "asleep" else "worker_error"
+                self.db.after_commit(lambda: self._hold(agent.get("id"), reason))
+            elif status == "awake":
+                self.db.after_commit(lambda: self._resume(agent.get("id"), ("asleep", "worker_error")))
+            return
         if kind != "goal.updated":
             return
         goal = payload.get("goal") if isinstance(payload.get("goal"), dict) else {}
@@ -586,6 +625,32 @@ class Research:
                 "UPDATE research_reports SET claimed_at = ? WHERE goal_id = ? AND claimed_at IS NULL", (now(), goal_id)))
         elif status in FINISHED:
             self.db.after_commit(lambda: self._deliver_safely(goal_id))
+
+    def _frame(self, row, state, **fields):
+        turn = self.hive.ask._row(row["turn_id"]) if row["turn_id"] else None
+        if turn and not turn["deleted_at"]:
+            return self.hive.ask._frame(turn["id"], "research", intent_id=row["intent_id"],
+                                        request_id=row["request_id"], state=state, **fields)
+        return None
+
+    def worker_admitted(self, worker_id):
+        self._resume(worker_id, ("spending_limit", "spend_rate"))
+
+    def _resume(self, worker_id, reasons):
+        self._hold(worker_id, None, clearing=reasons)
+
+    def _hold(self, worker_id, reason, until=None, *, clearing=()):
+        """A researcher has one request. A controller's own status says nothing about its workers."""
+        with self.db.transaction():
+            row = self.db.one("SELECT * FROM research_reports WHERE child_id = ? AND state = 'working'", (worker_id,))
+            if row is None or (row["hold_reason"], row["hold_until"]) == (reason, until):
+                return
+            if clearing and row["hold_reason"] not in clearing:
+                return
+            self.db.execute("UPDATE research_reports SET hold_reason = ?, hold_until = ? WHERE request_id = ?",
+                            (reason, until, row["request_id"]))
+            frame = self._frame(row, "held", reason=reason, until=until) if reason else self._frame(row, "resumed")
+        self.hive.ask._publish([frame])
 
     def _deliver_safely(self, goal_id):
         try:
@@ -675,15 +740,11 @@ class Research:
                                    (state, json.dumps(report) if report is not None else None, by, now(), goal_id)).rowcount
                 if moved != 1:
                     return None
-                turn = db.one("SELECT * FROM ask_turns WHERE id = ?", (row["turn_id"],)) if row["turn_id"] else None
-                if turn is not None and not turn["deleted_at"]:
-                    frames.append(hive.ask._frame(turn["id"], "research", intent_id=row["intent_id"],
-                                                  request_id=row["request_id"], state=state,
-                                                  research=self.view(db.one("SELECT * FROM research_reports WHERE goal_id = ?",
-                                                                            (goal_id,)))))
+                finished = db.one("SELECT * FROM research_reports WHERE goal_id = ?", (goal_id,))
+                frames.append(self._frame(row, state, research=self.view(finished)))
             hive.ask._publish(frames)
             self._retire_later(row["request_id"])
-            return self.view(db.one("SELECT * FROM research_reports WHERE goal_id = ?", (goal_id,)))
+            return self.view(finished)
 
     def _retire_later(self, request_id):
         """After the response: never inside the researcher's own result call (it would be deleted mid-call). On the
@@ -773,6 +834,48 @@ class Research:
 
     def _readable(self, viewer, row):
         return row is not None and (viewer.admin or row["principal"] == viewer.principal)
+
+    def status_for_turn(self, turn_id, request_id=None):
+        """Read only research sent by the same person and routing mind as this authenticated Ask turn."""
+        turn = self.hive.ask._row(turn_id)
+        if not turn or turn["deleted_at"]:
+            return []
+        rows = self.db.all(
+            "SELECT r.*, g.status AS task_status, a.status AS worker_status FROM research_reports r "
+            "JOIN ask_turns t ON t.id = r.turn_id JOIN goals g ON g.id = r.goal_id "
+            "LEFT JOIN agents a ON a.id = r.child_id "
+            "WHERE r.principal = ? AND t.principal = r.principal AND t.mind_id = ? AND t.deleted_at IS NULL "
+            "AND (? IS NULL OR r.request_id = ?) ORDER BY r.created_at DESC, r.rowid DESC LIMIT 5",
+            (turn["principal"], turn["mind_id"], request_id, request_id))
+        statuses = []
+        for row in rows:
+            state = row["state"] if row["state"] != "working" else row["task_status"]
+            status = {"request_id": row["request_id"], "title": row["title"], "state": state}
+            if row["state"] == "working":
+                reason, until = row["hold_reason"], _parse(row["hold_until"])
+                if reason == "asleep" and row["worker_status"] != "asleep":
+                    reason = None
+                if reason == "worker_error" and row["worker_status"] != "error":
+                    reason = None
+                if reason == "spending_limit" and row["child_id"] not in self.hive.refusals:
+                    reason = None
+                if reason == "spend_rate" and (until is None or until <= datetime.datetime.now(datetime.timezone.utc)):
+                    reason = None
+                if reason:
+                    status.update(state="held", reason=reason, until=row["hold_until"])
+            if row["state"] == "done" and row["report"]:
+                status["summary"] = json.loads(row["report"])["summary"]
+            statuses.append(status)
+        return statuses
+
+    def restore_thread_report(self, turn, frame):
+        """A personal turn's stored event stays content-free. Its owner can read the separately saved report."""
+        if frame.get("phase") == "research" and frame.get("state") == "done" and "research" not in frame:
+            row = self.db.one("SELECT * FROM research_reports WHERE request_id = ? AND turn_id = ? AND principal = ?",
+                              (frame.get("request_id"), turn["id"], turn["principal"]))
+            if row is not None and row["state"] == "done":
+                return {**frame, "research": self.view(row)}
+        return frame
 
     def get(self, viewer, request_id):
         row = self.db.one("SELECT * FROM research_reports WHERE request_id = ?", (str(request_id),))

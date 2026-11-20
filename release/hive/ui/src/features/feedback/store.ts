@@ -11,8 +11,8 @@ import { pageErrors, utcSecond } from '../../lib/recentErrors'
 import { downloadBlob } from '../../lib/download'
 import { capturePage, pngBlob } from './capture'
 import { loadMindDrafts, settleDraft, type Draft } from './drafts'
-import { logsFile, logsText } from './logs'
-import { deviceOf, factsOf, issueUrl, mergeErrors, payloadOf, reportId, reportText, type Report, type ReportKind } from './report'
+import { extrasOf, logsFile, logsText } from './logs'
+import { deviceOf, factsOf, issueUrl, mergeErrors, payloadOf, reportId, reportText, type Report, type ReportExtras, type ReportKind } from './report'
 import { pageOf, screensVisited, stepsOf } from './trail'
 
 /** What the person did with the report last, for the words that follow it. */
@@ -32,6 +32,18 @@ export interface LogsState {
   missing: string
   failed: string
   done: 'none' | 'saved' | 'copied'
+}
+
+/**
+ * The person's recent requests and the hive's logs for a report to a report service: asked of the hive when the area
+ * opens (`hive`, the answer of GET /api/feedback/logs; `missing` why there is none), shown, and sent with the report
+ * while `kept`, which is the person's to switch off.
+ */
+export interface AttachState {
+  kept: boolean
+  loading: boolean
+  hive: FeedbackLogs | null
+  missing: string
 }
 
 export interface FeedbackState {
@@ -59,6 +71,7 @@ export interface FeedbackState {
   /** the draft this report was made from (drafts.ts): settled once the report leaves */
   draft: Pick<Draft, 'id' | 'origin' | 'draftedBy'> | null
   logs: LogsState
+  attach: AttachState
 }
 
 const noLogs = (): LogsState => ({ shown: false, loading: false, text: '', file: '', scope: 'page', missing: '', failed: '', done: 'none' })
@@ -69,6 +82,8 @@ const closed = (): FeedbackState => ({
   // the picture is the person's to add (Jon on #367): a picture shows everything on the page, unredacted
   ctx: null, ctxError: '', picture: { url: null, drawing: false, failed: false, kept: false }, errorsKept: true,
   done: 'none', copiedToo: false, reference: '', sending: false, failed: '', draft: null, logs: noLogs(),
+  // the requests and logs go with a report to a report service unless the person switches them off
+  attach: { kept: true, loading: false, hive: null, missing: '' },
 })
 
 export const useFeedback = create<FeedbackState>(() => closed())
@@ -87,12 +102,36 @@ export function reportOf(s: FeedbackState, errors = pageErrors()): Report {
   }
 }
 
+/**
+ * The requests, errors and log lines that go with the report as it stands, or null when none do: only to a report
+ * service, only while the person keeps them in, and only once the hive has given them and the area shows them.
+ */
+export function extrasOfState(s: FeedbackState, errors = pageErrors()): ReportExtras | null {
+  if (s.ctx?.to.kind !== 'service' || !s.attach.kept || !s.attach.hive) return null
+  return extrasOf(s.attach.hive, errors, s.errorsKept)
+}
+
 let opened = 0
 
 /**
+ * Ask the hive for the person's recent requests and its logs, to show them with a report to a report service. A read
+ * of the person's own hive: nothing leaves it here. A hive that cannot give them says why, and the report goes without.
+ */
+function gatherExtras(client: HiveClient, run: number): void {
+  const put = (over: Partial<AttachState>) => run === opened && useFeedback.setState((st) => ({ attach: { ...st.attach, loading: false, ...over } }))
+  if (!client.feedbackLogs) {
+    put({ missing: 'this hive does not give its logs yet' })
+    return
+  }
+  put({ loading: true })
+  client.feedbackLogs().then((hive) => put({ hive }), (e: unknown) => put({ missing: e instanceof Error ? e.message : 'the hive did not answer' }))
+}
+
+/**
  * Open the area with a fresh report: a new id, the steps from the screens visited, the page as it is, and the hive asked
- * what it adds and which drafts minds made. No picture is drawn until the person adds one (addPicture). `seed` is a draft
- * the person chose to use: its kind, words, steps and expected start the report, all theirs to change.
+ * what it adds and which drafts minds made. No picture is drawn until the person adds one (addPicture). When reports go
+ * to a report service, the hive is also asked for the person's recent requests and its logs, shown before they go.
+ * `seed` is a draft the person chose to use: its kind, words, steps and expected start the report, all theirs to change.
  */
 export function openFeedback(client: HiveClient | null, look: string, seed?: Draft): void {
   const run = ++opened
@@ -107,7 +146,11 @@ export function openFeedback(client: HiveClient | null, look: string, seed?: Dra
   // what the hive adds; a hive too old to answer leaves the version unknown and the report still goes by copy or file
   if (client?.feedback) {
     client.feedback().then(
-      (ctx) => run === opened && useFeedback.setState({ ctx }),
+      (ctx) => {
+        if (run !== opened) return
+        useFeedback.setState({ ctx })
+        if (ctx.to.kind === 'service') gatherExtras(client, run)
+      },
       (e: unknown) => run === opened && useFeedback.setState({ ctxError: e instanceof Error ? e.message : 'The hive did not answer' }),
     )
   }
@@ -181,13 +224,19 @@ export async function openOnBoard(client: HiveClient | null = null): Promise<voi
   left(client)
 }
 
-/** Hand the report to the report service the hive names; the hive passes it on as the person saw it. */
+/** A send waits while something that goes with the report is still coming: the picture being drawn, or the requests and logs. */
+export const sendWaits = (s: FeedbackState): boolean => (s.picture.kept && s.picture.drawing) || (s.attach.kept && s.attach.loading)
+
+/**
+ * Hand the report to the report service the hive names; the hive passes it on as the person saw it: the picture if they
+ * added one, and their recent requests and the hive's logs unless they switched those off.
+ */
 export async function sendReport(client: HiveClient | null): Promise<void> {
   const s = useFeedback.getState()
-  if (!client?.sendFeedback || s.ctx?.to.kind !== 'service' || s.sending) return
+  if (!client?.sendFeedback || s.ctx?.to.kind !== 'service' || s.sending || sendWaits(s)) return
   useFeedback.setState({ sending: true, failed: '' })
   try {
-    const out = await client.sendFeedback(payloadOf(reportOf(s), s.picture.url))
+    const out = await client.sendFeedback(payloadOf(reportOf(s), s.picture.url, extrasOfState(s)))
     useFeedback.setState({ sending: false, done: 'sent', reference: out.reference ?? '' })
     left(client)
   } catch (e) {

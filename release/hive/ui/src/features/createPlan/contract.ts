@@ -190,8 +190,9 @@ export interface PlanView {
   next_action: string | null
   /** the engine's last error (kept for diagnostics; never drawn raw) */
   last_error: string | null
-  /** a mind this plan waits on whose model calls are refused for spending, in the hive's words; absent or null: none */
-  waiting?: { name: string; message: string } | null
+  /** each mind this plan waits on that can't go on now (refused for spending, stopped, asleep, in error, never started),
+   * one row a mind; empty: none */
+  waiting?: PlanWaiting[]
   review_policy: string | null
   pieces: PlanPiece[]
   questions: PlanQuestion[]
@@ -229,3 +230,14 @@ export interface PlanClient {
   createPlanRevert?(planId: string, round: number): Promise<unknown>
   createPlanFile?(planId: string, path: string, ckpt: string): Promise<unknown>
 }
+/** A mind the plan waits on that can't go on now: the step it holds, why, and whether this person may start or wake it
+ * (may_act: the plan route's own control test). A spending row carries the hive's words for the refusal. */
+export interface PlanWaiting {
+  mind: string
+  name: string
+  step: string
+  reason: 'spending' | 'stopped' | 'asleep' | 'error' | 'created' | string
+  message: string | null
+  may_act: boolean
+}
+

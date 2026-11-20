@@ -5,7 +5,8 @@ invented persona. In thread A they talk about a travel app; in a new thread B sh
 - the answer's system prompt is Juniper's own (name and persona), never "the Ask conductor";
 - her browser's memory of thread A (a `mind_` note) reaches thread B's model, with HIVE_ASK_MEMORY unset;
 - a reply said with `say` and repeated as the closing text is answered once;
-- a mind-thread note never reaches another mind's turn, and no note reaches a non-personal turn with memory off.
+- a mind-thread note never reaches another mind's turn, and no note reaches a non-personal turn with memory off;
+- the accepted frame says whose model answers: her own mind's on a turn with it, the Ask's on a swarm turn in her voice.
 """
 import json
 
@@ -57,6 +58,8 @@ def test_a_personal_thread_is_answered_in_the_minds_voice_with_its_memory_of_an_
     b = ask(client, w["ann"], "op-mv-thread-b", text="what about that travel app?", memory_notes=[kept])
     assert b.status_code == 202 and b.json()["thread"]["id"] != a.json()["thread"]["id"]
     fs = wait(hive, "op-mv-thread-b", closed)
+    # the page says where the answer came from: her own mind's model alone, since this turn is with her mind
+    assert [f.get("conducted") for f in fs if f["phase"] == "accepted"] == ["mind"]
     system, context = _system(s.bodies[0]), s.bodies[0]["messages"][1]["content"]
     assert "You are Juniper" in system and "Ask conductor" not in system
     assert "travel app for long-distance hikers" in context and "earlier thread with you" in context
@@ -112,6 +115,8 @@ def test_a_swarm_turn_speaks_as_the_persons_own_mind_and_never_reads_a_mind_thre
     assert r.json()["speaks_as"] == {"mind_id": w["mine"]["id"], "name": "Juniper"}
     fs = wait(hive, "op-mv-coord-01", closed)
     assert s.bodies, [(f["phase"], f.get("outcome")) for f in fs]
+    # the voice is hers, but the model is the one the Ask uses, so the page doesn't call it her mind's model
+    assert [f.get("conducted") for f in fs if f["phase"] == "accepted"] == ["ask"]
     system, context = _system(s.bodies[0]), s.bodies[0]["messages"][1]["content"]
     assert "You are Juniper" in system and PERSONA in system and "Ask conductor" not in system
     assert f"working in the swarm {w['swarm']['name']}" in system and f"You are {w['coord']['name']}" not in system

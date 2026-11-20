@@ -187,7 +187,7 @@ class HelperSurfaceTests(unittest.TestCase):
         self.assertNotIn("\nline two", atom)
         self.assert_metta_ok(atom)
 
-        quoted = hive_helpers._signature_quote('line one:\nline two\tquoted "ok"')
+        quoted = hive_helpers.signature_quote('line one:\nline two\tquoted "ok"')
         self.assertIn("\\n", quoted)
         self.assertIn("\\t", quoted)
         self.assertIn('\\"ok\\"', quoted)

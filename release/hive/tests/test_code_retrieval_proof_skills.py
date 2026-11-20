@@ -1,7 +1,7 @@
 """Actual membrane and proxy registration; synthetic transport, no model call."""
 import json
 import tomllib
-from hive.tests.test_code_evidence_skills import membrane,oc,MODULE
+from hive.tests.test_code_evidence_skills import membrane,oc,WORKSPACE
 
 
 def test_retrieval_is_bound_and_does_not_change_edit_observations(membrane):
@@ -53,11 +53,11 @@ def test_unread_or_disabled_proofs_do_not_execute(membrane):
 
 
 def test_native_registry_is_complete():
-    manifest=tomllib.loads((MODULE/'module.toml').read_text())
+    manifest=tomllib.loads((WORKSPACE/'module.toml').read_text())
     for skill,fn in [('code-retrieve','retrieve'),('code-proof-result','proof_result'),('code-proof-check','proof_check')]:
         assert 'skill:'+skill in manifest['provides'] and callable(getattr(oc,fn))
         for name in ['entry.metta','skills.metta','signatures.metta','catalog.metta','affordance.metta']:
-            assert skill in (MODULE/name).read_text()
+            assert skill in (WORKSPACE/name).read_text()
 
 
 def test_oversized_metadata_is_explicitly_refused_without_advancing_state(membrane):

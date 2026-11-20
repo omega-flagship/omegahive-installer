@@ -65,6 +65,10 @@ KINDS = {
                                               "person can add a key of their own."),
     "free_inference_hive_daily_cap": Kind(WAIT, "This hive has used all {limit} of its free model calls for today. They "
                                                 "come back at midnight UTC, or add a key of your own."),
+    "free_inference_idle": Kind(WAIT, "Resting: no one has asked this mind anything for a while, so it won't spend your "
+                                      "free calls in the background. A message wakes it.",
+                                mind_say="Resting: no one has asked this mind anything for a while, so it won't spend "
+                                         "its person's free calls in the background. A message wakes it."),
     "free_inference_off": Kind(MODEL, "Free inference isn't offered on this hive now. Choose another way for your mind "
                                       "to think."),
     "free_model_not_offered": Kind(MODEL, "This hive's free inference doesn't offer {model}.{offered}"),

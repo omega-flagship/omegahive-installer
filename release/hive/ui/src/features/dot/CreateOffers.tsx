@@ -1,22 +1,24 @@
 // Purpose: draw what minds offer to build in Create (the mind-create-offers screen, createOffer.metta), a mind's own in
-// its chat, whichever look draws that chat, and every mind's in the Ask's thread, and carry out the person's press:
-// Start in Create opens the plan it started on Create's Make bench, Not now sets it aside.
-import { useCallback, useEffect, useMemo, useState } from 'react'
+// its chat, whichever look draws that chat, and every mind's in the Ask's thread, from the read the folded Ask's mark
+// shares, and carry out the person's press: Start in Create opens the plan it started on Create's Make bench, Not now
+// sets it aside.
+import { useMemo, useState } from 'react'
 import type { Agent } from '../../api/types'
 import { experienceById } from '../../experiences/registry'
 import { cx } from '../../lib/cx'
 import { CREATE_APP_ID } from '../../lib/displayName'
+import { useIdentityEpoch } from '../../lib/epochBound'
 import { bindEpoch } from '../../lib/identityEpoch'
 import { navigate } from '../../lib/router'
 import { Screen } from '../../screens/Screen'
 import { useCompose } from '../../screens/useCompose'
 import { useLook } from '../../shell/uiVariant'
-import { hiveBus, useHive } from '../../store/store'
+import { useHive } from '../../store/store'
 import { followPlan } from '../createPlan/usePlan'
-import { offersScreen, parseOffers, startedPlan } from './createOffer'
+import { offersScreen, startedPlan } from './createOffer'
+import { useOpenOffers } from './useOpenOffers'
 
 interface OfferClient {
-  createOffers?(mind?: string): Promise<unknown>
   createOfferStart?(offerId: string): Promise<unknown>
   createOfferDismiss?(offerId: string): Promise<unknown>
 }
@@ -39,33 +41,31 @@ const DRESS = 'xc-dress'
 /**
  * What minds offer to build in Create for the person reading: one mind's in its chat (`agent`), every mind's in the
  * Ask's thread (no `agent`), where each card names its own mind. MeTTa decides what shows (nothing while there is no
- * open offer); this reads the person's open offers (again on each create.offer event about them), states the facts,
- * and carries out a press. Start in Create starts the plan with the offer's words (the person's own press, behind
- * Create's person gate), then follows that plan and opens Create's Make bench on it; Not now sets the offer aside.
- * Every write after an await belongs to the identity it started under (lib/identityEpoch). Each look's own chat with a
- * mind mounts it between the conversation and the composer, with the look's own spacing as `className`; the classic
- * mind panel's is the default. The cards give way first when the chat is short (GIVE_WAY), so a look's className never
- * sets shrink-0, and they wear the worn experience's chrome (DRESS).
+ * open offer); this reads the person's open offers through the read the folded Ask's mark shares (useOpenOffers),
+ * states the facts, and carries out a press. Start in Create starts the plan with the offer's words (the person's own
+ * press, behind Create's person gate), then follows that plan and opens Create's Make bench on it; Not now sets the
+ * offer aside, in that read, so the mark stops counting it too. Every write after an await belongs to the identity it
+ * started under (lib/identityEpoch), and the press in flight, its failure words and the binding its answer writes
+ * through start empty for each identity (keyed by lib/epochBound's useIdentityEpoch, as PlanUsage is): a component that
+ * stayed mounted across a sign-in change otherwise kept the earlier person's binding, and every later press's answer
+ * was dropped with its button left busy.
+ * Each look's own chat with a mind mounts it between the conversation and the composer, with the look's own spacing as
+ * `className`; the classic mind panel's is the default. The cards give way first when the chat is short (GIVE_WAY), so
+ * a look's className never sets shrink-0, and they wear the worn experience's chrome (DRESS).
  */
-export function CreateOffers({ agent, className = 'px-3 pb-2 empty:hidden' }: { agent?: Pick<Agent, 'id' | 'name'>; className?: string }) {
+export function CreateOffers(props: { agent?: Pick<Agent, 'id' | 'name'>; className?: string }) {
+  return <CreateOffersFor key={useIdentityEpoch()} {...props} />
+}
+
+function CreateOffersFor({ agent, className = 'px-3 pb-2 empty:hidden' }: { agent?: Pick<Agent, 'id' | 'name'>; className?: string }) {
   const client = useHive((s) => s.client) as unknown as OfferClient | null
   const look = experienceById(useLook().current?.experience).id
   const compose = useCompose(look)
   const binding = useMemo(() => bindEpoch(), [])
-  const [offers, setOffers] = useState<ReturnType<typeof parseOffers>>([])
+  const read = useOpenOffers(agent?.id)
+  const offers = read.data
   const [pressing, setPressing] = useState(false)
   const [alert, setAlert] = useState<string | null>(null)
-
-  const mind = agent?.id
-  const load = useCallback(() => {
-    if (!client?.createOffers) return
-    void client.createOffers(mind).then(
-      (raw) => binding.commit(() => setOffers(parseOffers(raw))),
-      () => undefined,   // an unreadable list leaves the last one: an offer is never invented
-    )
-  }, [client, mind, binding])
-  useEffect(() => { load() }, [load])
-  useEffect(() => hiveBus.on((e) => { if (e.type === 'create.offer' && (!mind || e.agent_id === mind)) load() }), [load, mind])
 
   const press = (action: string, offerId: string | undefined) => {
     if (!offerId || pressing) return
@@ -76,7 +76,7 @@ export function CreateOffers({ agent, className = 'px-3 pb-2 empty:hidden' }: { 
     void act.call(client, offerId).then(
       (raw) => binding.commit(() => {
         setPressing(false)
-        setOffers((now) => now.filter((o) => o.id !== offerId))
+        read.mutate((now) => (now ?? []).filter((o) => o.id !== offerId))
         if (action !== 'start-offer') return
         const planId = startedPlan(raw)
         if (planId) followPlan(planId)
@@ -88,7 +88,7 @@ export function CreateOffers({ agent, className = 'px-3 pb-2 empty:hidden' }: { 
 
   // composed once per change of the offers or the alert: each card is a MeTTa composition of its own
   const name = agent?.name ?? null
-  const screen = useMemo(() => offersScreen(offers, name, alert, compose), [offers, name, alert, compose])
+  const screen = useMemo(() => offersScreen(offers ?? [], name, alert, compose), [offers, name, alert, compose])
   const plan = useMemo(() => compose('mind-create-offers', screen.facts), [compose, screen])
   return (
     <Screen plan={plan} className={cx(DRESS, GIVE_WAY, className)} host={{

@@ -23,6 +23,7 @@ export interface AskTurnRecord {
   created_at: string
   closed_at: string | null
   turn_spent_usd: number | null
+  has_research?: true
 }
 
 /** GET /api/ask/audit rows (admins): every person's turns, newest first; page with `before` = the last created_at. */

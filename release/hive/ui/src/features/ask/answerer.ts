@@ -220,6 +220,8 @@ const atStart = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
  * it, so it never says they can (ask-fix r1). Every other thread keeps the audit sentence. Only the swarm's coordinator
  * is called its orchestrator: in a swarm with no coordinator the mind answers directly (the answer-through route), and
  * the line says so; when the swarm list has not said who coordinates, nothing is claimed (followups r4).
+ * It names who answers and never where an answer came from: each answer says that under itself (answer.metta), since a
+ * research report in the same thread comes from the web.
  * `swarmOf`: what the page knows of the thread's swarm (hive.swarms), absent when unknown.
  */
 export function threadInfo(t: { mind: { id: string; name: string }; swarm?: { id: string; name: string } | null }, personal: MyMind | null | undefined, mindName: (n: string, id?: string) => string, swarmOf: (id: string) => SwarmFacts | undefined = () => undefined, voice?: { mind_id: string; name: string } | null): string {
@@ -237,7 +239,7 @@ export function threadInfo(t: { mind: { id: string; name: string }; swarm?: { id
   const known = !!facts && 'coordinator_id' in facts
   // "coordinator", the host's own word for it (ask.py refusals), never "orchestrator", which people would have to learn
   const role = own || !t.swarm ? '' : known && facts.coordinator_id === t.mind.id ? `, as ${t.swarm.name}’s coordinator` : known && !facts.coordinator_id ? `. ${who} answers directly, because ${t.swarm.name} has no coordinator` : `, in ${t.swarm.name}`
-  const base = `Answers come from ${who}’s own knowledge${role}.`
+  const base = `Answers come from ${who}${role}.`
   return own ? base : `${base} Admins can review this in the audit log.`
 }
 

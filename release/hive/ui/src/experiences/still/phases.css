@@ -7,7 +7,7 @@ html[data-shell-experience='still']:is([data-shell-phase='rest'], [data-shell-ph
 html[data-shell-experience='still']:is([data-shell-phase='rest'], [data-shell-phase='awake']) .still .st-question-block {
  margin: auto 0 !important; padding-top: 88px; width: 100%; flex: 0 0 auto;
 }
-html[data-shell-experience='still'][data-shell-phase='rest'] .still :is(.st-tries, .st-sugs, .st-panel, .st-writing, .st-receipt) { display: none; }
+html[data-shell-experience='still'][data-shell-phase='rest'] .still :is(.st-tries, .st-sugs, .st-panel, .st-writing, .st-receipt, .st-ask-search) { display: none; }
 .still .st-question-block { position: relative; }
 .still .st-phase-anchor { position: static; }
 /* Awake keeps the actual question on the paper while the app list scrolls. Pro keeps its existing handover. */

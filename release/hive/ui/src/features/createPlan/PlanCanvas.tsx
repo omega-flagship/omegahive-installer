@@ -12,8 +12,7 @@ import { useReducedMotion } from '../../lib/hooks'
 import { useIdentityEpoch } from '../../lib/epochBound'
 import { experienceById } from '../../experiences/registry'
 import { useLook } from '../../shell/uiVariant'
-import { Screen } from '../../screens/Screen'
-import type { ScreenItem } from '../../screens/Screen'
+import { Screen, type ScreenItem } from '../../screens/Screen'
 import { useCompose } from '../../screens/useCompose'
 import { guardComposing } from '../ask/keys'
 import { cx } from '../../lib/cx'
@@ -107,6 +106,12 @@ function BoundPlanCanvas() {
   const onAction = (action: string, item: ScreenItem) => {
     if (action === 'stop-ask') setStopAsking(true)
     else if (action === 'open-limits') navigate({ name: 'usage' })
+    // a waited-on mind's own row (plan-waiting): its press starts or wakes that mind through its own route, and the
+    // store says why if the hive refuses; the row goes once the plan's next read finds the mind able to go on
+    else if (action === 'start-mind' || action === 'wake-mind') {
+      const mind = String(Array.isArray(item?.scope) ? item.scope[0] : '')
+      if (mind) void useHive.getState().agentAction(mind, action === 'start-mind' ? 'start' : 'wake')
+    }
     else if (action === 'stop-no') setStopAsking(false)
     else if (action === 'stop-yes') { setStopAsking(false); plan.stop() }
     else if (action === 'open-app' && view?.installed) {

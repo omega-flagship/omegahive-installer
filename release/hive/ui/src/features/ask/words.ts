@@ -5,6 +5,10 @@
  */
 import type { DoneOutcome, RefusalReason } from '../../api/ask'
 import type { HiveCapabilities, HiveMemory } from '../../lib/askMemory'
+import { plural } from '../../lib/plural'
+import type { AnswerSource } from '../../store/ask'
+import type { ResearchWakeView } from '../../store/askResearchWake'
+import type { WaitPhase } from './answerFacts'
 import { CHOOSE_WHO, HOST_SAY } from './answerer'
 
 export interface Offer {
@@ -304,4 +308,41 @@ export function memoryStatus(signedIn: boolean, hive: HiveMemory, caps: HiveCapa
   if (hive === 'learning' || learned) return 'Kept only in this browser, for you on this hive. The hive stores none of it; each question sends the few notes that matter, for that answer only.'
   if (caps) return 'Nothing learned yet. Memory is on: when the Ask learns something about you, it is kept here, in this browser only.'
   return 'Nothing learned yet. When the hive’s Ask learns something about you, it is kept here, in this browser only. If this hive’s memory is off, nothing will be.'
+}
+
+/**
+ * Where an answer came from, in a line under it (answer.metta): a model alone, the asker's own mind's (by its name) or the
+ * one the Ask uses, or the web, with how many of the pages it cites the researcher opened. Example: "From Vega’s model
+ * alone, without a web search."
+ */
+export function answerSourceWords(source: AnswerSource, who?: string | null): string {
+  if (source.kind === 'model') return `From ${source.of === 'ask' ? 'the Ask’s' : who ? `${who}’s` : 'your mind’s'} model alone, without a web search.`
+  const opened = source.sources.filter((s) => s.verified).length
+  return opened ? `From the web: the researcher opened ${plural(opened, 'page')} it cites.` : 'From the web, though the researcher opened none of the pages it cites.'
+}
+
+/**
+ * How a research request held back by an asleep Research swarm stands (answerFacts.waitPhase), said under its answer once
+ * something happened to it, with the coordinator's name once read. Empty before the press: the answer above already says
+ * it wasn't sent and why.
+ */
+export function researchWakeWords(phase: WaitPhase, v: ResearchWakeView | null): string {
+  const name = v?.name ?? 'the Research swarm'
+  switch (phase) {
+    case 'sent':
+      return `Sent to ${name}. Its report comes back to this conversation.`
+    case 'closed':
+      return 'This research can’t be sent from here any more. Ask again to send it.'
+    case 'working':
+      return v && v.step !== 'sending' ? `Waking ${name}…` : `Sending the research to ${name}…`
+    case 'blocked':
+      if (v?.gate === 'spending') return `${name} has reached its spending limit, so it can’t wake for this research.`
+      if (v?.gate === 'authority') return `You can’t wake ${name} with your current access, so the research wasn’t sent.`
+      return `${name} can’t be woken right now, so the research wasn’t sent.`
+    case 'failed':
+      if (v?.unsent === 'send') return `${name} is awake, but the research wasn’t sent. Press again to send it.`
+      return v?.reason ? `Couldn’t wake ${name}. The hive says: ${v.reason}.` : `Couldn’t wake ${name}, so the research wasn’t sent.`
+    case 'ready':
+      return ''
+  }
 }

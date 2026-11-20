@@ -1116,7 +1116,7 @@ export class LiveClient implements HiveClient {
     const missing: string[] = []
     const take = <T,>(what: string, p: Promise<T>) => p.catch(() => (missing.push(what), undefined))
     const [creations, requests, swarms, shares, activity] = await Promise.all([
-      take('creations', this.request<import('../features/artifacts/artifacts').CreationRow[]>('GET', '/api/artifacts')),
+      take('creations', this.listCreations()),
       take('reviews', this.request<import('./types').CollabRequest[]>('GET', '/api/requests')),
       take('flows', this.request<Swarm[]>('GET', '/api/swarms')),
       take('exhibits', this.request<import('../features/artifacts/artifacts').ShareRow[]>('GET', '/api/shares')),
@@ -1128,6 +1128,15 @@ export class LiveClient implements HiveClient {
     if (flowGap && !missing.includes('flows')) missing.push('flows in some swarms')
     return { items: composeArtifacts({ creations, requests, flows, shares, activity }), missing }
   }
+  listCreations = ({ kind, saved, limit }: import('./moneyWork').CreationListOptions = {}) => {
+    const params = new URLSearchParams()
+    if (kind) params.set('kind', kind)
+    if (saved) params.set('saved', 'true')
+    if (limit !== undefined) params.set('limit', String(limit))
+    const query = params.toString()
+    return this.request<import('../features/artifacts/artifacts').CreationRow[]>('GET', query ? `/api/artifacts?${query}` : '/api/artifacts')
+  }
+  studioRecent = () => this.request<import('./moneyWork').StudioRecentCreation[]>('GET', '/api/me/studio-recent')
   swarmArtifacts = (swarmId: string, opts: { kind?: string; limit?: number } = {}) => {
     const q = new URLSearchParams()
     if (opts.kind) q.set('kind', opts.kind)

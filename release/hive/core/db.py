@@ -156,18 +156,27 @@ class Database:
             for column, ddl in (("last_error", "TEXT"), ("idle_sleep_minutes", "REAL NOT NULL DEFAULT 0"),
                                 ("options", "TEXT"),
                                 ("last_input_at", "TEXT"),    # real input, never spend (Hive.mark_input; Health idle pass)
+                                ("last_asked_at", "TEXT"),    # input from outside the mind only (Hive.mark_asked; free route)
                                 ("belief_link", "TEXT")):     # its owner's link setting (Hive.link_patterns): NULL all
                                                               # of its beliefs, else a JSON list of domains, [] none
                 if column not in columns:
                     self._conn.execute(f"ALTER TABLE agents ADD COLUMN {column} {ddl}")
+            if "last_asked_at" not in columns:
+                # once, as the column arrives: a mind's last real input stands for its last asking, so minds in use keep
+                # their window at deploy (their own messages and beliefs stamped it too, so it may be a little late)
+                self._conn.execute("UPDATE agents SET last_asked_at = last_input_at "
+                                   "WHERE last_asked_at IS NULL AND last_input_at IS NOT NULL")
             goal_columns = {r[1] for r in self._conn.execute("PRAGMA table_info(goals)")}
             for column, ddl in (("lease_until", "TEXT"), ("attempts", "INTEGER NOT NULL DEFAULT 0"),
                                 ("assignee", "TEXT"), ("binding", "TEXT"), ("result_data", "TEXT"),
                                 ("cancel_ack_at", "TEXT"), ("cancel_ack_by", "TEXT"), ("deadline_at", "TEXT"),
                                 ("submitted_at", "TEXT"), ("reviewed_by", "TEXT"), ("reviewed_at", "TEXT"),
-                                ("review_notes", "TEXT"), ("returns", "INTEGER NOT NULL DEFAULT 0")):
+                                ("review_notes", "TEXT"), ("returns", "INTEGER NOT NULL DEFAULT 0"),
+                                ("asked_at", "TEXT")):   # its creator's freshness (Goals.create; Hive.pass_asked)
                 if column not in goal_columns:
                     self._conn.execute(f"ALTER TABLE goals ADD COLUMN {column} {ddl}")
+            if "asked_at" not in goal_columns:   # once, as the column arrives: a person's goal was asked when it was made
+                self._conn.execute("UPDATE goals SET asked_at = created_at WHERE asked_at IS NULL AND created_by LIKE 'user:%'")
             approval_columns = {r[1] for r in self._conn.execute("PRAGMA table_info(approvals)")}
             if "redeemed_at" not in approval_columns:
                 self._conn.execute("ALTER TABLE approvals ADD COLUMN redeemed_at TEXT")

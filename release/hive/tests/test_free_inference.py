@@ -41,7 +41,7 @@ ANSWER = {"model": "invented", "choices": [{"index": 0, "message": {"role": "ass
           "usage": {"prompt_tokens": 21, "completion_tokens": 4}}
 ENV = ("HIVE_FREE_INFERENCE_KEY", "HIVE_FREE_INFERENCE_MODELS", "HIVE_FREE_INFERENCE_DAILY_CALLS", "HIVE_PROVIDERS_FILE",
        "ASI_API_KEY", "HIVE_LOCAL_ONLY_SWARMS", "HIVE_ASK_CONDUCTOR", "HIVE_FREE_INFERENCE_URL",
-       "HIVE_FREE_INFERENCE_HIVE_DAILY_CALLS", "HIVE_FREE_INFERENCE_VISITORS")
+       "HIVE_FREE_INFERENCE_HIVE_DAILY_CALLS", "HIVE_FREE_INFERENCE_VISITORS", "HIVE_FREE_INFERENCE_IDLE_WINDOW_S")
 
 
 @pytest.fixture(autouse=True)
@@ -162,7 +162,7 @@ class AdmitAll:
     def __init__(self):
         self.calls, self.released, self.refuse = [], [], None
 
-    def admit(self, agent, principal=None, dispatch=False):
+    def admit(self, agent, principal=None, dispatch=False, idle_guard=True):
         self.calls.append((principal, dispatch))
         return ("user:u_ann", "2026-11-17T00:00:00.000Z") if dispatch else None
 
@@ -423,12 +423,21 @@ def hive_client(monkeypatch, request):
         yield client
 
 
-def free_mind(client, owner=ANN, model=f"{FREE}/{FREE_DEFAULT_MODELS[0]}"):
-    """A mind made by the admin, then owned by a person and set on the free route."""
-    swarm, (agent,) = make_swarm_and_agents(client, n=1)
+def free_mind(client, owner=ANN, model=f"{FREE}/{FREE_DEFAULT_MODELS[0]}", asked=True, new=False, n=1):
+    """A mind made by the admin, then owned by a person and set on the free route. asked: someone has just written to it
+    (Hive.mark_asked), as for a mind in use; False leaves it never addressed, which the free route lets rest once its
+    window from creation has passed: made two hours ago, unless new. n > 1: the other minds of its swarm come back too,
+    as (mind, others)."""
+    swarm, agents = make_swarm_and_agents(client, n=n)
+    agent = agents[0]
     client.hive.db.execute("UPDATE agents SET owner = ?, model = ? WHERE id = ?", (owner, model, agent["id"]))
-    agent["swarm_id"] = swarm["id"]
-    return agent
+    if asked:
+        client.hive.mark_asked(agent["id"])
+    elif not new:
+        client.hive.db.execute("UPDATE agents SET created_at = ? WHERE id = ?", (stamp_ago(hours=2), agent["id"]))
+    for a in agents:
+        a["swarm_id"] = swarm["id"]
+    return agent if n == 1 else (agent, agents[1:])
 
 
 def call(client, agent):
@@ -608,7 +617,7 @@ def test_settlement_and_the_mind_page_say_free_and_bounded(hive_client):
     setup = {i["id"]: i for i in hive_client.get("/api/me/setup", headers=hive_client.ann).json()["items"]}
     assert setup["provider_key"]["done"] and setup["monthly_limit"]["done"]   # no key, and no money to limit
     assert hive.onboarding.preflight(row) is None
-    hive.gateway.free_gate.admit(row, dispatch=True)   # the day's one call is used
+    hive.gateway.free_gate.admit(row, principal=ANN, dispatch=True)   # the day's one call is used, by her own Ask
     assert hive.budgets.settlement(row, row["model"])["reason"] == "free_inference_daily_cap"
     with pytest.raises(Exception) as refusal:
         hive.onboarding.preflight(row)
@@ -621,6 +630,517 @@ def test_the_free_models_are_listed_for_every_signed_in_person(hive_client):
         assert listed == [f"{FREE}/{FREE_DEFAULT_MODELS[0]}"]
     status = {p["name"]: p for p in hive_client.get("/api/providers", headers=hive_client.ann).json()}[FREE]
     assert status["label"] == "Free inference" and status["needs_key"] is False and status["daily_calls"] == 200
+
+
+# ---- a mind no one has asked rests: its own wakes spend none of its person's free calls ---------------------------
+
+WAKE_CALLS = 8   # one wake of a mind's loop: (+ 2 maxWakeLoops) model calls (runtime native_core), every 15 minutes
+
+
+def stamp_ago(**delta):
+    moment = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(**delta)
+    return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def rests(client, agent, calls=WAKE_CALLS):
+    """A wake's calls are each refused at once as resting, counted against no one and sent nowhere."""
+    sent, used = len(client.upstream.sent), client.hive.gateway.free_gate.used(ANN)
+    said = KINDS["free_inference_idle"].say
+    for _ in range(calls):
+        response = call(client, agent)
+        assert response.status_code == 429, response.text
+        assert response.json()["error"] == {"code": "free_inference_idle", "message": said}
+    assert len(client.upstream.sent) == sent and client.hive.gateway.free_gate.used(ANN) == used
+    kept = client.hive.model_refusals[agent["id"]]   # the mind's chat and Health say why it is quiet
+    assert kept["code"] == "free_inference_idle" and kept["say"] == KINDS["free_inference_idle"].mind_say
+
+
+def test_a_mind_no_one_asked_rests_and_its_wakes_spend_none_of_its_persons_free_calls(hive_client):
+    agent = free_mind(hive_client, asked=False)
+    assert hive_client.hive.db.one("SELECT last_input_at FROM agents WHERE id = ?", (agent["id"],))["last_input_at"] is None
+    rests(hive_client, agent)
+    assert hive_client.hive.gateway.free_gate.used(ANN) == 0 and hive_client.upstream.sent == []
+    assert usage_rows(hive_client, agent) == []
+    said = KINDS["free_inference_idle"].say
+    assert said.startswith("Resting:") and "free_inference" not in said and "A message wakes it." in said
+
+
+def test_a_persons_message_wakes_a_resting_mind_and_its_calls_count(hive_client):
+    agent = free_mind(hive_client, asked=False)
+    rests(hive_client, agent, calls=2)
+    wrote = hive_client.post(f"/api/agents/{agent['id']}/messages", headers=hive_client.ann, json={"text": "invented question"})
+    assert wrote.status_code == 200, wrote.text
+    assert [call(hive_client, agent).status_code for _ in range(3)] == [200] * 3
+    assert hive_client.hive.gateway.free_gate.used(ANN) == 3 and len(hive_client.upstream.sent) == 3
+
+
+def test_a_minds_own_words_never_wake_it(hive_client):
+    """What a mind does by itself between wakes (a message to another mind, a reply in its chat, a belief it publishes, a
+    goal result, its inbox polls over HTTP) stamps last_input_at or last_active_at, so neither can say someone asked it:
+    a mind posting on its own wakes would keep itself awake. Only the mind it wrote to was asked."""
+    hive = hive_client.hive
+    agent, (other,) = free_mind(hive_client, asked=False, n=2)
+    headers = agent_headers(agent)
+    hive.mark_asked(agent["id"], stamp_ago(hours=1))   # a person last wrote an hour ago
+    goal = hive_client.post("/api/agent/goals", headers=headers, json={"title": "invented task"}).json()   # its own goal
+    assert hive_client.post(f"/api/agent/goals/{goal['id']}/claim", headers=headers).status_code == 200
+    rests(hive_client, agent, calls=2)
+    before = hive.db.one("SELECT last_asked_at FROM agents WHERE id = ?", (agent["id"],))["last_asked_at"]
+    room = hive_client.post("/api/rooms", json={"kind": "group", "name": "Duo",
+                                                "members": [f"agent:{agent['id']}", f"agent:{other['id']}"]}).json()
+    to_other = hive_client.post(f"/api/agent/rooms/{room['id']}/messages", headers=headers,
+                                json={"text": f"@{other['name']} invented note"})
+    assert to_other.status_code == 200 and to_other.json()["delivered_to"] == [f"agent:{other['id']}"], to_other.text
+    assert hive_client.post("/api/agent/messages", headers=headers, json={"text": "thinking out loud"}).status_code == 200
+    published = hive_client.post("/api/agent/publish", headers=headers, json={"statement": "(--> sky blue)", "f": .9, "c": .8})
+    assert published.status_code == 200, published.text
+    result = hive_client.post(f"/api/agent/goals/{goal['id']}/result", headers=headers,
+                              json={"status": "done", "result": "invented result"})
+    assert result.status_code == 200, result.text
+    assert hive_client.get("/api/agent/inbox", headers=headers).status_code == 200
+    row = hive.db.one("SELECT last_input_at, last_active_at, last_asked_at FROM agents WHERE id = ?", (agent["id"],))
+    assert row["last_input_at"] > before and row["last_active_at"] > before   # what the guard must not read
+    assert row["last_asked_at"] == before
+    rests(hive_client, agent)
+    assert hive_client.upstream.sent == [] and hive.gateway.free_gate.used(ANN) == 0
+    # a message from another mind passes on only how fresh the sender's own asking is (Hive.mark_asked_by)
+    assert hive.db.one("SELECT last_asked_at FROM agents WHERE id = ?", (other["id"],))["last_asked_at"] == before
+
+
+class _Later(datetime.datetime):
+    """The clock the free gate reads, moved ahead (FreeGate.resting), for a window to pass without waiting."""
+    ahead = datetime.timedelta(0)
+
+    @classmethod
+    def now(cls, tz=None):
+        return datetime.datetime.now(tz) + cls.ahead
+
+
+def later(monkeypatch, **delta):
+    import types
+    from hive.core import free_inference
+    monkeypatch.setattr(_Later, "ahead", datetime.timedelta(**delta))
+    monkeypatch.setattr(free_inference, "datetime", types.SimpleNamespace(
+        datetime=_Later, timezone=datetime.timezone, timedelta=datetime.timedelta))
+
+
+def free_minds(client, n, new=False):
+    """n minds of one swarm, all Ann's and on the free route, never asked (made two hours ago unless new), in one room."""
+    first, others = free_mind(client, asked=False, new=new, n=n)
+    minds = [first, *others]
+    room = client.post("/api/rooms", json={"kind": "group", "name": "Minds",
+                                           "members": [f"agent:{m['id']}" for m in minds]}).json()
+    for m in others:
+        client.hive.db.execute("UPDATE agents SET owner = ?, model = ?, created_at = ? WHERE id = ?",
+                               (ANN, first_model(client, first), stamp_ago(hours=2), m["id"]))
+    return minds, room
+
+
+def first_model(client, mind):
+    return client.hive.db.one("SELECT model FROM agents WHERE id = ?", (mind["id"],))["model"]
+
+
+def mind_says(client, room, sender, to):
+    """One mind's message reaching another, at the one place every route lands (Hive.enqueue_message, as rooms, DMs and
+    goal notes deliver), so the idle guard is tested apart from the throughput limit a room's post meets first
+    (mind_posts, below)."""
+    client.hive.enqueue_message(to["id"], "invented note", room["id"], f"agent:{sender['id']}")
+
+
+def asked_at(client, mind):
+    return client.hive.db.one("SELECT last_asked_at FROM agents WHERE id = ?", (mind["id"],))["last_asked_at"]
+
+
+def mind_posts(client, room, sender, to):
+    """sender's post naming `to` in the room, on the minds' own route (throughput.Throughput.admit judges each delivery):
+    the minds it reached."""
+    posted = client.post(f"/api/agent/rooms/{room['id']}/messages", headers=agent_headers(sender),
+                         json={"text": f"@{to['name']} invented note"})
+    assert posted.status_code == 200, posted.text
+    return posted.json()["delivered_to"]
+
+
+def hive_says(client, room):
+    return [m["text"] for m in client.get(f"/api/rooms/{room['id']}/messages").json() if m["sender"] == "system:hive"]
+
+
+def stored(client, mind):
+    return client.hive.db.one("SELECT * FROM agents WHERE id = ?", (mind["id"],))
+
+
+def test_a_free_mind_with_no_money_budget_gets_minds_messages_while_its_person_has_free_calls(hive_client):
+    """The free route costs no money: a mind on it with budget 0 (no money headroom at all, the usual case) is judged by
+    the free calls left, not by money. A delivery is not a call: it counts none, and passes on only the sender's asking."""
+    hive = hive_client.hive
+    (a, b), room = free_minds(hive_client, 2)
+    assert hive.budgets.headroom_micros(stored(hive_client, b)) == 0   # what refused it before
+    hive.mark_asked(a["id"], stamp_ago(minutes=20))
+    assert mind_posts(hive_client, room, a, b) == [f"agent:{b['id']}"]
+    assert hive_says(hive_client, room) == []
+    assert asked_at(hive_client, b) == asked_at(hive_client, a)        # her message's time, never now
+    assert hive.gateway.free_gate.used(ANN) == 0 and hive_client.upstream.sent == []
+
+
+@pytest.mark.parametrize("hive_client,full,why", [
+    ({"cap": 3}, ANN, "{name}'s person has used up today's free calls (they come back at midnight UTC)"),
+    ({"cap": 5, "hive_cap": 3}, BOB, "the hive has used up today's free calls (they come back at midnight UTC)"),
+], indirect=["hive_client"])
+def test_a_free_mind_whose_free_calls_are_used_up_today_gets_no_minds_messages_and_the_room_says_why(hive_client, full, why):
+    """Its person's calls today, or the hive's. Judged whether or not the mind is resting (b was never asked): the day
+    being used up is what the room must say."""
+    hive = hive_client.hive
+    (a, b), room = free_minds(hive_client, 2)
+    hive.mark_asked(a["id"], stamp_ago(minutes=20))
+    hive.db.execute("INSERT INTO free_inference_calls (person, day, calls) VALUES (?, ?, 3)", (full, period_start("day")))
+    assert mind_posts(hive_client, room, a, b) == []
+    assert hive_says(hive_client, room) == [f"Not delivered to {b['name']}: {why.format(name=b['name'])}."]
+    assert hive.gateway.free_gate.used(full) == 3 and hive_client.upstream.sent == []   # the check counts nothing
+
+
+def test_a_paid_mind_with_no_budget_left_still_gets_no_minds_messages(hive_client):
+    hive = hive_client.hive
+    (a, b), room = free_minds(hive_client, 2)
+    hive.db.execute("UPDATE agents SET model = ? WHERE id = ?", ("openai/gpt-6.1", b["id"]))
+    hive.mark_asked(a["id"], stamp_ago(minutes=20))
+    assert hive.budgets.headroom_micros(stored(hive_client, b)) == 0
+    assert mind_posts(hive_client, room, a, b) == []
+    assert hive_says(hive_client, room) == [f"Not delivered to {b['name']}: {b['name']} has no budget left to answer."]
+
+
+def test_two_minds_talking_with_no_person_rest_after_the_window(hive_client, monkeypatch):
+    (a, b), room = free_minds(hive_client, 2)
+    hive_client.hive.mark_asked(a["id"], stamp_ago(minutes=20))   # a person last wrote to a twenty minutes ago
+    for _ in range(3):
+        mind_says(hive_client, room, a, b)
+        mind_says(hive_client, room, b, a)
+    assert asked_at(hive_client, a) == asked_at(hive_client, b)   # their talk passes on her message's time, never now
+    assert call(hive_client, a).status_code == 200 and call(hive_client, b).status_code == 200
+    later(monkeypatch, minutes=11)   # thirty-one minutes after her message
+    for _ in range(3):
+        mind_says(hive_client, room, a, b)
+        mind_says(hive_client, room, b, a)
+    rests(hive_client, a)
+    rests(hive_client, b)
+
+
+def test_a_chain_a_person_started_goes_on_inside_her_window_only(hive_client, monkeypatch):
+    (a, b, c), room = free_minds(hive_client, 3)
+    wrote = hive_client.post(f"/api/agents/{a['id']}/messages", headers=hive_client.ann, json={"text": "invented question"})
+    assert wrote.status_code == 200, wrote.text
+    mind_says(hive_client, room, a, b)
+    mind_says(hive_client, room, b, c)
+    assert asked_at(hive_client, a) == asked_at(hive_client, b) == asked_at(hive_client, c)
+    assert [call(hive_client, m).status_code for m in (a, b, c)] == [200] * 3
+    later(monkeypatch, minutes=31)
+    mind_says(hive_client, room, a, b)
+    mind_says(hive_client, room, b, c)
+    for m in (a, b, c):
+        rests(hive_client, m, calls=2)
+    assert hive_client.hive.gateway.free_gate.used(ANN) == 3
+
+
+@pytest.mark.parametrize("new", [True, False])
+def test_a_mind_no_one_asked_passes_nothing_on(hive_client, new):
+    """Two minds of one owner, never asked; a writes to b: all of b's wake calls rest. A never-asked mind's window from
+    its creation is its own, so even a new one writing to a resting mind wakes nothing."""
+    (a, b), room = free_minds(hive_client, 2, new=new)   # a new, or made two hours ago; b made two hours ago
+    assert asked_at(hive_client, a) is None
+    if new:
+        assert call(hive_client, a).status_code == 200
+    mind_says(hive_client, room, a, b)
+    assert asked_at(hive_client, b) is None
+    rests(hive_client, b)
+
+
+def test_a_new_mind_gets_the_window_once_from_its_creation(hive_client):
+    agent = free_mind(hive_client, asked=False, new=True)
+    hive = hive_client.hive
+    assert hive.db.one("SELECT last_asked_at FROM agents WHERE id = ?", (agent["id"],))["last_asked_at"] is None
+    assert [call(hive_client, agent).status_code for _ in range(WAKE_CALLS)] == [200] * WAKE_CALLS   # its first wake
+    assert hive.gateway.free_gate.used(ANN) == WAKE_CALLS
+    hive.db.execute("UPDATE agents SET created_at = ? WHERE id = ?", (stamp_ago(minutes=31), agent["id"]))
+    rests(hive_client, agent)   # the same mind past the window, with nothing from outside since
+    assert hive.gateway.free_gate.used(ANN) == WAKE_CALLS and len(hive_client.upstream.sent) == WAKE_CALLS
+
+
+@pytest.mark.parametrize("dispatch", [False, True])
+def test_resting_is_judged_on_both_admissions_before_anything_counts(hive_client, dispatch):
+    """The estimate's check (dispatch=False) and the count just before sending (dispatch=True) both refuse a resting
+    mind, before the day's count is touched: a call that got past the first while its window closed is caught by the
+    second."""
+    agent = free_mind(hive_client, asked=False)
+    gate, row = hive_client.hive.gateway.free_gate, hive_client.hive._agent_row(agent["id"])
+    with pytest.raises(GatewayError) as resting:
+        gate.admit(row, dispatch=dispatch)
+    assert (resting.value.status, resting.value.code, resting.value.remedy) == (429, "free_inference_idle", "wait")
+    assert gate.used(ANN) == 0 and gate.hive_used() == 0
+    assert hive_client.hive.db.all("SELECT * FROM free_inference_calls") == []   # not even an empty row for the day
+    hive_client.hive.mark_asked(agent["id"])
+    assert gate.admit(row, dispatch=dispatch) == ((ANN, period_start("day")) if dispatch else None)
+    assert gate.used(ANN) == (1 if dispatch else 0)
+
+
+def test_resting_is_the_hives_own_refusal_never_a_providers_wait(hive_client):
+    """free_inference_idle asks nothing of a provider, so no wait is kept on the mind (Hive.model_refusal_holds): the
+    first message lets its next call go at once, and a refused call never reaches the endpoint."""
+    kind = KINDS["free_inference_idle"]
+    assert kind.upstream is False and kind.remedy == "wait"
+    agent = free_mind(hive_client, asked=False)
+    rests(hive_client, agent)
+    hive = hive_client.hive
+    assert hive_client.upstream.sent == []   # the fake endpoint got no request at all
+    assert hive.model_refusals[agent["id"]]["retry_at"] is None
+    assert hive.model_refusal_holds(hive._agent_row(agent["id"])) is None
+    hive.enqueue_message(agent["id"], "invented question", None, ANN)
+    assert call(hive_client, agent).status_code == 200 and len(hive_client.upstream.sent) == 1
+
+
+@pytest.mark.parametrize("step", ["claim", "heartbeat"])
+def test_a_claim_or_heartbeat_on_a_persons_goal_wakes_it(hive_client, step):
+    """A person's goal carries its making as its asking (goals.asked_at): claiming it, or a heartbeat on it, passes that on."""
+    agent = free_mind(hive_client, asked=False)
+    goal = hive_client.post(f"/api/swarms/{agent['swarm_id']}/goals", json={"title": "invented task"}).json()
+    made = hive_client.hive.db.one("SELECT asked_at, created_at, created_by FROM goals WHERE id = ?", (goal["id"],))
+    assert made["created_by"].startswith("user:") and made["asked_at"] == made["created_at"]
+    hive_client.post(f"/api/agent/goals/{goal['id']}/claim", headers=agent_headers(agent))
+    if step == "heartbeat":   # long after the claim, the holder says it is still on the work
+        hive_client.hive.db.execute("UPDATE agents SET last_asked_at = ? WHERE id = ?", (stamp_ago(hours=2), agent["id"]))
+        beat = hive_client.post(f"/api/agent/goals/{goal['id']}/heartbeat", headers=agent_headers(agent))
+        assert beat.status_code == 200, beat.text
+    assert asked_at(hive_client, agent) == made["asked_at"]
+    assert call(hive_client, agent).status_code == 200
+    assert hive_client.hive.gateway.free_gate.used(ANN) == 1
+
+
+def test_a_mind_no_one_asked_cant_wake_itself_with_its_own_goal(hive_client):
+    """hive-goal-create, claim and heartbeat by a mind no one asked: its goal carries no asking, so its calls rest."""
+    agent = free_mind(hive_client, asked=False)
+    headers = agent_headers(agent)
+    goal = hive_client.post("/api/agent/goals", headers=headers, json={"title": "invented task"})
+    assert goal.status_code == 200, goal.text
+    goal = goal.json()
+    assert hive_client.hive.db.one("SELECT asked_at FROM goals WHERE id = ?", (goal["id"],))["asked_at"] is None
+    assert hive_client.post(f"/api/agent/goals/{goal['id']}/claim", headers=headers).status_code == 200
+    assert hive_client.post(f"/api/agent/goals/{goal['id']}/heartbeat", headers=headers).status_code == 200
+    assert asked_at(hive_client, agent) is None
+    rests(hive_client, agent)
+    assert hive_client.upstream.sent == []
+
+
+def test_a_goal_a_mind_makes_runs_on_the_asking_that_started_it(hive_client, monkeypatch):
+    """A person writes to A; A makes a goal inside her window; B claims it and is admitted, until her window runs out.
+    (A goal a mind makes is not a person's goal, so no live-lease admit holds B past it: on_persons_goal.)"""
+    (a, b), _ = free_minds(hive_client, 2)
+    wrote = hive_client.post(f"/api/agents/{a['id']}/messages", headers=hive_client.ann, json={"text": "invented question"})
+    assert wrote.status_code == 200, wrote.text
+    goal = hive_client.post("/api/agent/goals", headers=agent_headers(a), json={"title": "invented subtask"}).json()
+    assert hive_client.hive.db.one("SELECT asked_at FROM goals WHERE id = ?", (goal["id"],))["asked_at"] == asked_at(hive_client, a)
+    assert hive_client.post(f"/api/agent/goals/{goal['id']}/claim", headers=agent_headers(b)).status_code == 200
+    assert asked_at(hive_client, b) == asked_at(hive_client, a)
+    assert call(hive_client, b).status_code == 200
+    later(monkeypatch, minutes=31)
+    assert hive_client.post(f"/api/agent/goals/{goal['id']}/heartbeat", headers=agent_headers(b)).status_code == 200
+    rests(hive_client, b)
+
+
+@pytest.mark.parametrize("lease", ["live", "expired"])
+def test_a_live_lease_on_a_persons_goal_keeps_its_mind_going(hive_client, lease):
+    """The runtime sends no heartbeat by itself and a lease (60 minutes) outlasts the window (30): while the mind holds a
+    live lease on a goal a person made, it doesn't rest mid-run; once the lease has lapsed, it does."""
+    agent = free_mind(hive_client, asked=False)
+    goal = hive_client.post(f"/api/swarms/{agent['swarm_id']}/goals", json={"title": "invented task"}).json()
+    assert hive_client.post(f"/api/agent/goals/{goal['id']}/claim", headers=agent_headers(agent)).status_code == 200
+    hive_client.hive.db.execute("UPDATE agents SET last_asked_at = ? WHERE id = ?", (stamp_ago(minutes=45), agent["id"]))
+    if lease == "live":
+        assert hive_client.hive.db.one("SELECT lease_until FROM goals WHERE id = ?", (goal["id"],))["lease_until"] > stamp_ago()
+        assert [call(hive_client, agent).status_code for _ in range(WAKE_CALLS)] == [200] * WAKE_CALLS
+    else:
+        hive_client.hive.db.execute("UPDATE goals SET lease_until = ? WHERE id = ?", (stamp_ago(minutes=1), goal["id"]))
+        rests(hive_client, agent)
+
+
+def person_behind_goal(client, agent, source):
+    """A goal a person started another way, recorded as the hive records it: a Create plan's step (create_plan_ports:
+    created_by create-plan:<plan>, its run's person) or a request's receiving goal (research and the Code controller:
+    created_by request:<id>, its from_principal). Returns the goal row."""
+    hive, at = client.hive, stamp_ago()
+    if source == "create-plan":
+        hive.db.insert("create_plan_runs", {"plan_id": "pl_invented01", "person": ANN, "sentence": "invented app",
+                                            "epoch": "ep-invented", "reducer_sha256": "0" * 64,
+                                            "review_policy": "review-required", "lease": 1, "piece_cap": 1, "fix_cap": 1,
+                                            "phase": "claimed", "status": "building", "created_at": at, "updated_at": at})
+        created_by = "create-plan:pl_invented01"
+    else:
+        hive.db.insert("requests", {"id": "rq_invented01", "kind": "research", "title": "invented", "from_swarm": agent["swarm_id"],
+                                    "from_principal": ANN, "to_swarm": agent["swarm_id"], "context_refs": "[]",
+                                    "constraints": "{}", "acceptance": "{}", "budget_root": "rq_invented01", "limit_usd": 1.0,
+                                    "ancestry": "[]", "depth": 0, "created_at": at})
+        created_by = "request:rq_invented01"
+    view = hive.goals._create_record(agent["swarm_id"], "Create plan pl_invented01: build", "invented", 0.6,
+                                     created_by=created_by, assignee=agent["id"])
+    return hive.db.one("SELECT * FROM goals WHERE id = ?", (view["id"],))
+
+
+@pytest.mark.parametrize("source", ["create-plan", "request"])
+def test_a_goal_a_person_started_through_create_or_a_request_is_hers(hive_client, monkeypatch, source):
+    """Create on the free route: a plan's step (or a request's goal) resolves to the person behind it (Goals.person_behind),
+    so it carries its making as its asking, and its mind goes on past the window while its lease is live, and rests once
+    the lease has lapsed with no new asking."""
+    agent = free_mind(hive_client, asked=False)
+    goal = person_behind_goal(hive_client, agent, source)
+    assert hive_client.hive.goals.person_behind(goal["created_by"]) == ANN and goal["asked_at"] == goal["created_at"]
+    assert hive_client.post(f"/api/agent/goals/{goal['id']}/claim", headers=agent_headers(agent)).status_code == 200
+    assert asked_at(hive_client, agent) == goal["asked_at"]
+    later(monkeypatch, minutes=45)   # past the window, inside the 60-minute lease
+    assert [call(hive_client, agent).status_code for _ in range(WAKE_CALLS)] == [200] * WAKE_CALLS
+    hive_client.hive.db.execute("UPDATE goals SET lease_until = ? WHERE id = ?", (stamp_ago(), goal["id"]))   # lapsed
+    rests(hive_client, agent)
+    assert hive_client.hive.gateway.free_gate.used(ANN) == WAKE_CALLS
+
+
+def test_no_person_is_guessed_behind_a_goal(hive_client):
+    """A program's, the hive's own, a mind's, an unknown request's or plan's: no person (and no asking carried)."""
+    goals = hive_client.hive.goals
+    for creator in ("program:invented", "host:screens", "hive:flows", "agent:a_00000001", "request:rq_missing",
+                    "create-plan:pl_missing", "", None):
+        assert goals.person_behind(creator) is None, creator
+        assert goals._creator_asked(creator, stamp_ago()) is None, creator
+    assert goals.person_behind("user:u_ann") == ANN
+
+
+def test_a_resting_mind_assigned_a_request_by_a_mind_a_person_asked_wakes_and_claims(hive_client):
+    """Through collaboration's real route (POST /api/agent/requests): the receiving goal is written before its requests
+    row, so its asking is resolved when it is passed on (Goals.asking). Mind r works a person's goal; it asks swarm V for a
+    review, assigned to the resting reviewer v, whose goal note then carries r's asking: v is admitted and claims."""
+    client, hive = hive_client, hive_client.hive
+    R, V = (client.post("/api/swarms", json={"name": n}).json() for n in ("Requester", "Review"))
+    role = client.post("/api/roles", json={"name": "Critic security r", "prompt": "review",
+                                           "mandate": {"id": "security", "version": "1"}}).json()["id"]
+    r = client.post("/api/agents", json={"name": "Asker", "kind": "module", "swarm_id": R["id"]}).json()
+    v = client.post("/api/agents", json={"name": "Critic", "kind": "module", "swarm_id": V["id"], "role_id": role}).json()
+    hive.db.execute("UPDATE agents SET owner = ?, model = ?, created_at = ? WHERE id = ?",
+                    (ANN, f"{FREE}/{FREE_DEFAULT_MODELS[0]}", stamp_ago(hours=2), v["id"]))   # resting, never asked
+    rests(client, v, calls=2)
+    work = client.post(f"/api/swarms/{R['id']}/goals", json={"title": "invented work", "assignee": r["name"]}).json()
+    assert client.post(f"/api/agent/goals/{work['id']}/claim", headers=agent_headers(r)).status_code == 200
+    client.put(f"/api/swarms/{V['id']}/services", json={"kinds": ["review"]})
+    asked = client.post("/api/agent/requests", headers=agent_headers(r),
+                        json={"kind": "review", "to_swarm": V["id"], "title": "Review invented", "from_goal": work["id"],
+                              "constraints": {"mandates": [{"id": "security", "version": "1"}]}})
+    assert asked.status_code == 200, asked.text
+    goal = asked.json()["receiving_goal"]
+    assert asked_at(client, v) == asked_at(client, r)   # the goal note carried r's asking
+    assert hive.db.one("SELECT asked_at FROM goals WHERE id = ?", (goal,))["asked_at"] == asked_at(client, r)
+    assert call(client, v).status_code == 200
+    assert client.post(f"/api/agent/goals/{goal}/claim", headers=agent_headers(v)).status_code == 200
+
+
+def test_the_migration_fills_last_asked_at_from_last_input_at_once(tmp_path):
+    from hive.core.db import Database
+    path = tmp_path / "hive.db"
+    db = Database(path)
+    for i, stamp in enumerate(("2026-11-19T10:00:00.000Z", None)):
+        db.execute("INSERT INTO agents (id, name, kind, model, hue, status, driver, token_hash, created_at, last_input_at) "
+                   "VALUES (?, 'invented', 'omega', 'mock/x', 1, 'awake', 'hive', ?, '2026-11-01T00:00:00.000Z', ?)",
+                   (f"a_{i}", f"t{i}", stamp))
+    db.execute("ALTER TABLE agents DROP COLUMN last_asked_at")   # as a hive from before this change has it
+    db = Database(path)
+    rows = {r["id"]: r["last_asked_at"] for r in db.all("SELECT id, last_asked_at FROM agents")}
+    assert rows == {"a_0": "2026-11-19T10:00:00.000Z", "a_1": None}
+    db.execute("UPDATE agents SET last_asked_at = NULL")
+    db = Database(path)   # once: a later start fills nothing
+    assert [r["last_asked_at"] for r in db.all("SELECT last_asked_at FROM agents")] == [None, None]
+
+
+def test_the_migration_fills_a_persons_goals_asking_once(tmp_path):
+    from hive.core.db import Database
+    path = tmp_path / "hive.db"
+    db = Database(path)
+    for gid, creator in (("g_person", "user:u_ann"), ("g_mind", "agent:a_0"), ("g_plan", "create-plan:pl_x")):
+        db.execute("INSERT INTO goals (id, swarm_id, title, priority, status, created_by, created_at, updated_at) "
+                   "VALUES (?, 's_0', 'invented', 0.5, 'open', ?, '2026-11-19T10:00:00.000Z', '2026-11-19T10:00:00.000Z')",
+                   (gid, creator))
+    db.execute("ALTER TABLE goals DROP COLUMN asked_at")   # as a hive from before this change has it
+    db = Database(path)
+    rows = {r["id"]: r["asked_at"] for r in db.all("SELECT id, asked_at FROM goals")}
+    # a person's own goal at once; the others are resolved when they are passed on (Goals.asking)
+    assert rows == {"g_person": "2026-11-19T10:00:00.000Z", "g_mind": None, "g_plan": None}
+    db.execute("UPDATE goals SET asked_at = NULL")
+    db = Database(path)   # once: a later start fills nothing
+    assert {r["asked_at"] for r in db.all("SELECT asked_at FROM goals")} == {None}
+
+
+def test_an_ask_on_a_resting_mind_goes_at_once(hive_client):
+    """An Ask delivered to a swarm's coordinator is the asker's message (Ask._admit -> enqueue_message), so the mind's own
+    calls for it go at once; a conducting Ask turn and a browser turn name the person asking (principal) on the call
+    itself, which is admitted even while the mind rests."""
+    hive, client = hive_client.hive, hive_client
+    sw = client.post("/api/swarms", json={"name": "Home", "visibility": "shared", "shared_with": [ANN]}).json()
+    client.put(f"/api/swarms/{sw['id']}/visibility", json={"visibility": "shared", "shared_with": [ANN]})
+    coord = client.post("/api/agents", json={"name": "Orchestra", "swarm_id": sw["id"]}).json()
+    client.put(f"/api/agents/{coord['id']}/visibility", json={"visibility": "shared", "shared_with": [ANN]})
+    assert client.patch(f"/api/swarms/{sw['id']}", json={"coordinator_id": coord["id"]}).status_code == 200
+    hive.db.execute("UPDATE agents SET status = 'awake', desired = 'awake', owner = ?, model = ?, created_at = ?, "
+                    "last_asked_at = NULL WHERE id = ?", (ANN, f"{FREE}/{FREE_DEFAULT_MODELS[0]}", stamp_ago(hours=2), coord["id"]))
+    rests(client, coord, calls=2)   # awake, made long ago, never asked
+    asked = client.post("/api/ask", headers=client.ann, json={"operation_id": "op-idle-ask", "text": "invented question",
+                                                              "context": {"swarm_id": sw["id"]}})
+    assert asked.status_code == 202, asked.text
+    assert [call(client, coord).status_code for _ in range(WAKE_CALLS)] == [200] * WAKE_CALLS   # its turn, at once
+    assert hive.gateway.free_gate.used(ANN) == WAKE_CALLS
+    # the conductor's and the mind gateway's call: the person asking named on it, on a mind resting again
+    hive.db.execute("UPDATE agents SET last_asked_at = ? WHERE id = ?", (stamp_ago(hours=2), coord["id"]))
+    row, gw = hive._agent_row(coord["id"]), hive.gateway
+    assert gw.free_gate.resting(row)
+    assert gw.estimate(row, {"messages": []}, principal=ANN) == (False, 0.0)
+    response, _ = asyncio.run(gw.chat(row, {"messages": [{"role": "user", "content": "hi"}]}, principal=ANN))
+    assert response["choices"][0]["message"]["content"] == "hello from free"
+    assert gw.free_gate.used(ANN) == WAKE_CALLS + 1 and len(client.upstream.sent) == WAKE_CALLS + 1
+
+
+def test_a_call_for_the_person_asking_is_never_resting(hive_client):
+    """The Ask's conductor and a browser turn name the person asking (principal): that person is the input."""
+    agent = free_mind(hive_client, asked=False)
+    gate, row = hive_client.hive.gateway.free_gate, hive_client.hive._agent_row(agent["id"])
+    assert gate.admit(row, principal=ANN, dispatch=True) == (ANN, period_start("day"))
+    with pytest.raises(GatewayError) as resting:
+        gate.admit(row, dispatch=True)
+    assert resting.value.code == "free_inference_idle" and gate.used(ANN) == 1
+    # First Light and the mind's page ask whether the route would serve it, not whether it is resting now
+    assert hive_client.hive.onboarding.preflight(row) is None
+    assert hive_client.hive.budgets.settlement(row, row["model"])["reason"] is None
+
+
+@pytest.mark.parametrize("hive_client", [{"key": None}], indirect=True)
+def test_a_paid_mind_no_one_asked_is_unaffected(hive_client, monkeypatch):
+    monkeypatch.setenv("ASI_API_KEY", "invented-hive-asi-key-0005")
+    hive_client.post("/api/budgets", json={"scope": "hive", "period": "month", "limit_usd": 5})
+    _, (agent,) = make_swarm_and_agents(hive_client, n=1, model="asicloud/asi1-mini")
+    hive_client.hive.db.execute("UPDATE agents SET budget_usd = 1, owner = ? WHERE id = ?", (ANN, agent["id"]))
+    assert hive_client.hive.db.one("SELECT last_input_at FROM agents WHERE id = ?", (agent["id"],))["last_input_at"] is None
+    assert [call(hive_client, agent).status_code for _ in range(3)] == [200] * 3
+
+
+def test_a_window_of_zero_turns_resting_off_and_old_input_rests_again(hive_client, monkeypatch):
+    agent = free_mind(hive_client)
+    assert call(hive_client, agent).status_code == 200
+    hive_client.hive.db.execute("UPDATE agents SET last_asked_at = ?, last_input_at = ? WHERE id = ?",
+                                (stamp_ago(minutes=31), stamp_ago(minutes=31), agent["id"]))
+    rests(hive_client, agent)   # half an hour by default: input older than that is none
+    monkeypatch.setenv("HIVE_FREE_INFERENCE_IDLE_WINDOW_S", "3600")
+    assert call(hive_client, agent).status_code == 200
+    monkeypatch.setenv("HIVE_FREE_INFERENCE_IDLE_WINDOW_S", "0")
+    never = free_mind(hive_client, asked=False)
+    assert call(hive_client, never).status_code == 200 and call(hive_client, agent).status_code == 200
+    assert hive_client.hive.gateway.free_gate.used(ANN) == 4
+
+
+@pytest.mark.parametrize("raw,window", [(None, 1800), ("600", 600), ("0", 0), ("-5", 1800), ("soon", 1800)])
+def test_the_idle_window_setting(monkeypatch, raw, window):
+    from hive.core.free_inference import FREE_IDLE_WINDOW_S, idle_window
+    if raw is not None:
+        monkeypatch.setenv("HIVE_FREE_INFERENCE_IDLE_WINDOW_S", raw)
+    assert FREE_IDLE_WINDOW_S == 1800 and idle_window() == window   # unreadable keeps the guard on, never off
 
 
 # ---- the deploy's key is never shown ------------------------------------------------------------------------------

@@ -26,6 +26,7 @@ import { FpsMeter } from './shell/FpsMeter'
 import { chromeFor, experienceById } from './experiences/registry'
 import { PreviewBuildBanner } from './shell/PreviewBuildBanner'
 import { HeldExperienceNotice } from './shell/HeldExperienceNotice'
+import { PrivacyNotice } from './shell/PrivacyNotice'
 import { applyChrome } from './experiences/chrome'
 import { useShortcuts } from './shell/shortcuts'
 import { useHive } from './store/store'
@@ -462,6 +463,8 @@ export function App() {
         <PreviewBuildBanner />
         {/* a saved choice this preview build holds back (Still, Canvas) is said, not silently shown as Classic (TF-03) */}
         <HeldExperienceNotice />
+        {/* per-person privacy is intended, not yet in place (#595 parked): said once per signed-in session, when the hive has someone else in it (shell/privacyNote) */}
+        <PrivacyNotice signedIn={!!client && !needsLogin} />
         <FpsMeter place={experience !== 'classic' && ready && !needsLogin ? 'escape' : 'centre'} />
       </MotionConfig>
     </LazyMotion>

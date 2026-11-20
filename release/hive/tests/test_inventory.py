@@ -108,6 +108,30 @@ def test_a_module_the_mind_did_not_load_is_configured_not_callable(client):
     assert skill(view, "hive-publish")["status"] == "callable"
 
 
+def test_a_module_left_out_for_a_missing_requirement_is_not_in_the_receipt(client, monkeypatch, tmp_path):
+    """code_workspace requires the OmegaCode client, which no standard install gives its minds. Such a mind never
+    imports it, so its receipt leaves it out and the mind's Tools list neither the module nor its skills, instead of
+    showing them set up but not loaded. A mind that has the client lists it."""
+    import sys
+    monkeypatch.delenv("OMEGACODE_SRC", raising=False)
+    monkeypatch.setattr(sys, "path", [p for p in sys.path if not (pathlib.Path(p or ".") / "omegacode").exists()])
+    mind = make_mind(client)
+    awake(client, mind)
+    receipt, ids = real_receipt()
+    assert "code" in [m["dir"] for m in receipt["modules"]]
+    assert "code_workspace" not in [m["dir"] for m in receipt["modules"]]
+    assert post(client, mind, receipt).status_code == 200
+    view = client.get(f"/api/agents/{mind['id']}/inventory").json()
+    assert ids["code_workspace"] not in [m["id"] for m in view["modules"]]
+    assert not [s for s in view["skills"] if s["id"] == "code-open" or s["module"] == ids["code_workspace"]]
+    package = tmp_path / "omegacode"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "client.py").write_text("")
+    monkeypatch.setenv("OMEGACODE_SRC", str(tmp_path))
+    assert "code_workspace" in [m["dir"] for m in real_receipt()[0]["modules"]]
+
+
 def test_a_signature_without_a_loaded_module_is_not_callable(client):
     mind = make_mind(client)
     awake(client, mind)

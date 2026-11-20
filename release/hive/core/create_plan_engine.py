@@ -1525,11 +1525,15 @@ class CreatePlanEngine:
         """Journal the result observation for an effect's port answer, THEN record the effect's state (review F4: an
         effect is never marked done before its result is journalled). A result the host cannot translate (a model's
         unquotable path, a missing reference) or one the reducer refuses becomes `unknown (op)`: a readback, never a
-        guess and never an exception that wedges the plan."""
+        guess and never an exception that wedges the plan. Once that is recorded, the files a mind staged on the
+        effect's goal one command each are deleted (Goals.drop_staged): the plan has taken them and reads them no more."""
         try:
-            return await self._finish_typed(run, effect, out)
+            finished = await self._finish_typed(run, effect, out)
         except EngineError as exc:
-            return await self._unknown(run, effect, {"unknown": f"untranslatable result: {exc}"[:300]})
+            finished = await self._unknown(run, effect, {"unknown": f"untranslatable result: {exc}"[:300]})
+        if effect.get("goal_id"):
+            self.hive.goals.drop_staged(effect["goal_id"])
+        return finished
 
     async def _unknown(self, run, effect, why):
         op = effect["op"]
@@ -1862,7 +1866,7 @@ class CreatePlanEngine:
                 "acceptance": plan.get("acceptance", []),
                 "phase": run["phase"], "status": run["status"], "review_policy": run["review_policy"],
                 "unreviewed": bool(nxt and nxt.startswith("(tell confirm-unreviewed-deploy")),
-                "next_action": nxt, "last_error": run["last_error"], "waiting": self._waiting(effects),
+                "next_action": nxt, "last_error": run["last_error"], "waiting": self._waiting(pid, effects),
                 "pieces": pieces, "questions": questions,
                 "checks": checks, "checkpoint": {"ckpt": self._latest_ckpt(run), "workspace": space.get("integration")},
                 "preview": previews[-1] if previews else None,
@@ -1874,25 +1878,60 @@ class CreatePlanEngine:
                 "effects": [{"kind": e["kind"], "op": e["op"], "state": e["state"], "goal_id": e["goal_id"]} for e in effects],
                 "updated_at": run["updated_at"]}
 
-    def _waiting(self, effects):
-        """A mind this plan waits on whose model calls are refused for spending (Hive.refusals, kept until a call of its
-        is admitted again), as {mind, name, code, message}: the plan says why it isn't moving instead of sitting at its
-        phase with nothing said. A test hive with a 1 USD month limit held its planner 30 minutes that way, the plan at
-        "planning" with no line, no error and no question. The minds are the claimers (else assignees) of the goals
-        of the effects waiting on one; the message is the hive's own, which names no limit a viewer may not see.
-        Time: one goal and one mind row read per waiting effect, n effects."""
+    def _waiting(self, pid, effects):
+        """Each mind this plan waits on that can't go on now, one row a mind, as {mind, name, step, reason} and, refused
+        for spending, the refusal's code and message: the plan says why it isn't moving instead of sitting at its phase
+        with nothing said. reason is spending (Hive.refusals, kept until a call of its is admitted again: a test hive
+        with a 1 USD month limit held its planner 30 minutes that way) or the mind's state (_held_state: on 20 Nov a
+        tester's Make sat at "waiting for code review" with their reviewer stopped, and went on once they started it).
+        The minds are the claimers (else assignees) of the goals of the effects waiting on one, and a build's builder
+        while the build waits on its piece's member (member:<task>, no goal); step is the plan's
+        words for what it waits on (_step_words); a spending message is the hive's own, which names no limit a viewer
+        may not see. Time: one goal and one mind row read per waiting effect, n effects."""
         refusals = getattr(self.hive, "refusals", None) or {}
+        rows, seen = [], set()
         for e in effects:
             if e["state"] != "waiting" or not e["goal_id"]:   # an effect waits on its goal's mind only while "waiting"
                 continue
-            goal = self.db.one("SELECT claimed_by, assignee FROM goals WHERE id = ?", (e["goal_id"],)) or {}
-            mind = goal.get("claimed_by") or goal.get("assignee")
-            refused = refusals.get(mind) if mind else None
+            if str(e["goal_id"]).startswith("member:"):
+                # a build waits on its piece's member (create_plan_members), whose work its builder does and which no
+                # goal row names: on 20 Nov a Make sat at "Building: 0 of 1 piece in" for 26 minutes while its builder
+                # was refused for spending, and the view said nothing
+                mind = self._body(e).get("builder")
+            else:
+                goal = self.db.one("SELECT claimed_by, assignee FROM goals WHERE id = ?", (e["goal_id"],)) or {}
+                mind = goal.get("claimed_by") or goal.get("assignee")
+            if not mind or mind in seen:
+                continue
+            row = self.db.one("SELECT name, status, desired FROM agents WHERE id = ? AND deleted = 0", (mind,))
+            refused = refusals.get(mind)
+            reason = "spending" if refused else _held_state(row) if row else None
+            if reason is None:
+                continue
+            seen.add(mind)
+            out = {"mind": mind, "name": row["name"] if row and row["name"] else "A mind", "step": self._step_words(pid, e),
+                   "reason": reason}
             if refused:
-                row = self.db.one("SELECT name FROM agents WHERE id = ?", (mind,)) or {}
-                return {"mind": mind, "name": row.get("name") or "A mind", "code": refused.get("code"),
-                        "message": refused.get("message") or "A spending limit has no room for this call."}
-        return None
+                out.update(code=refused.get("code"),
+                           message=refused.get("message") or "A spending limit has no room for this call.")
+            rows.append(out)
+        return rows
+
+    def _step_words(self, pid, effect):
+        """The plan's own words for what a waiting effect asks of its mind: "the plan", "building the board", "code review
+        of the board"."""
+        kind, body = effect["kind"], self._body(effect)
+        if kind in _WAIT_WORDS:
+            return _WAIT_WORDS[kind]
+        spec = self._piece_spec(pid, body.get("piece")) or {}
+        piece = spec.get("title") or body.get("piece") or "a piece"
+        if kind == "build":
+            return f"building {piece}"
+        if kind == "review":
+            rule = body.get("rule") or {}
+            art, review = str(rule.get("artifact_kind") or ""), str(rule.get("review_kind") or "review")
+            return f"{review if art and art in review else (art + ' ' + review).strip()} of {piece}".replace("-", " ")
+        return kind.replace("-", " ")
 
     @staticmethod
     def _last_state(run):
@@ -1911,6 +1950,37 @@ class CreatePlanEngine:
                         "status": newest["status"], "round": len(self._rounds(r["plan_id"])),
                         "updated_at": max(r["updated_at"], newest["updated_at"])})
         return out
+
+    def installed_for(self, principal):
+        """Project successful deployment receipts newest first without replaying the person's plans."""
+        return self.db.all(
+            "SELECT json_extract(r.installed, '$.program_id') AS program_id, "
+            "COALESCE(json_extract(r.installed, '$.installed_at'), "
+            "(SELECT j.at FROM create_plan_journal j WHERE j.plan_id = r.plan_id "
+            "AND j.kind IN ('deployed', 'deployed-confirmed') AND j.verdict = 'accepted' ORDER BY j.seq DESC LIMIT 1), "
+            "r.updated_at) AS at "
+            "FROM create_plan_runs r WHERE r.person = ? AND r.installed IS NOT NULL "
+            "AND json_type(r.installed, '$.program_id') = 'text' ORDER BY at DESC, program_id DESC", (principal,))
+
+
+# the plan's words for a waiting step that names no piece (_step_words); a build or review names its piece
+_WAIT_WORDS = {"plan": "the plan", "design": "the design", "author-tests": "the acceptance check",
+               "detect-tests": "the acceptance check"}
+
+
+def _held_state(row):
+    """Why a mind can't take a plan's step now, from its row, or None while it can: stopped with an error, never started
+    (a new mind's 'created'), stopped or being stopped, or asleep with no wake asked for. A mind starting or awake can."""
+    status, desired = row["status"], row["desired"]
+    if status == "error":
+        return "error"
+    if status == "created":
+        return "created"
+    if status == "stopped" or desired == "stopped":
+        return "stopped"
+    if status == "asleep" and desired != "awake":
+        return "asleep"
+    return None
 
 
 _STEP_WORDS = {"plan-failed": "planning", "fix-rounds": "fixing it", "piece-repairs": "repairing a piece",

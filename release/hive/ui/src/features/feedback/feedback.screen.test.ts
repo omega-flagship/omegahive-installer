@@ -9,6 +9,7 @@ import { Screen } from '../../screens/Screen'
 import { ScreensSpace } from '../../screens/screenSpace'
 import { feedbackScreen, routeOf } from './data'
 import type { Draft } from './drafts'
+import type { ReportExtras } from './report'
 import { reportOf, type FeedbackState, type LogsState } from './store'
 
 vi.setConfig({ testTimeout: 20_000 })
@@ -24,8 +25,15 @@ const state = (over: Partial<FeedbackState> = {}): FeedbackState => ({
     errors: [{ id: 'e-1a2b3c4d', at: '2026-11-16T00:12:30.000Z', method: 'POST', route: '/api/ask', status: 500, code: 'internal_error', message: 'The hive hit an error it did not expect.' }] },
   ctxError: '', picture: { url: 'data:image/png;base64,iVBORw0KGgo=', drawing: false, failed: false, kept: true }, errorsKept: true,
   done: 'none', copiedToo: false, reference: '', sending: false, failed: '', draft: null,
-  logs: { shown: false, loading: false, text: '', file: '', scope: 'page', missing: '', failed: '', done: 'none' }, ...over,
+  logs: { shown: false, loading: false, text: '', file: '', scope: 'page', missing: '', failed: '', done: 'none' },
+  attach: { kept: true, loading: false, hive: null, missing: '' }, ...over,
 })
+const SERVICE: FeedbackDestination = { kind: 'service', url: 'https://reports.example.org/in', host: 'reports.example.org' }
+const EXTRAS: ReportExtras = {
+  recent_requests: [{ at: '2026-11-17T01:23:40Z', method: 'POST', route: '/api/ask', status: 429, ms: 61, count: 2, who: 'you' }],
+  errors: [{ at: '2026-11-17T01:23:40Z', id: 'e-1a2b3c4d', where: 'POST /api/ask', status: 429, code: 'rate_limited', message: 'More model calls than the hive allows.' }],
+  logs: ['2026-11-17T01:23:39Z WARNING hive: the model provider answered 429'],
+}
 const LOGS = (over: Partial<LogsState> = {}): LogsState => ({
   shown: true, loading: false, text: 'Omega hive logs · 2026-11-17T01:23:45Z\nVersion: Mac v0.31 (build f9648d4386)',
   file: 'omega-hive-logs-2026-11-17T01-23-45Z.txt', scope: 'hive', missing: '', failed: '', done: 'none', ...over,
@@ -38,9 +46,9 @@ const DRAFTS: Draft[] = [
 ]
 
 /** The screen for a state, in a look: its parts' orders and its drawn HTML. */
-function draw(s: FeedbackState, look = 'classic', share = false, drafts: readonly Draft[] = []) {
+function draw(s: FeedbackState, look = 'classic', share = false, drafts: readonly Draft[] = [], extras: ReportExtras | null = null) {
   const report = reportOf(s, [])
-  const { data, facts } = feedbackScreen(s, report, { share }, s.ctx?.errors.length ?? 0, drafts)
+  const { data, facts } = feedbackScreen(s, report, { share }, s.ctx?.errors.length ?? 0, drafts, extras)
   const plan = space.compose('feedback', look, facts)
   for (const p of plan.parts) seen.add(p.order)
   // the area's own host takes presses (FeedbackHost), so a row's own buttons draw
@@ -76,7 +84,7 @@ describe('where a report can go decides its buttons', () => {
     expect(orders).toEqual(expect.arrayContaining([48, 50, 56]))
     expect(html).toContain('Send to the team')
     // where it goes, before the press (Jon on #367)
-    expect(html).toContain('Sends your report, and the picture if you added one, to reports.example.org, the report service this hive is set to send reports to.')
+    expect(html).toContain('Sends your report, the picture if you added one, and your recent requests and the hive&#x27;s logs unless you left them out, to reports.example.org, the report service this hive is set to send reports to.')
     expect(html.indexOf('reports.example.org, the report service')).toBeLessThan(html.indexOf('Send to the team'))
   })
   it('a destination set wrongly is said, and the copy stays', () => {
@@ -116,9 +124,12 @@ describe('everything the report carries is on the screen before it goes', () => 
     const gone = draw(state({ picture: { url: 'data:image/png;base64,iVBORw0KGgo=', drawing: false, failed: false, kept: false } }))
     expect(gone.html).not.toContain('data:image/png')
     expect(gone.html).not.toContain('Picture: HR-1a2b3c4d.png')
-    const added = draw(state())   // added: shown with its way to remove it, and nothing offers to add another
-    expect(added.orders).toContain(23)
+    const added = draw(state())   // added: shown with what it shows and its way to remove it, and nothing offers to add another
+    expect(added.orders).toEqual(expect.arrayContaining([23, 27]))
     expect(added.html).toContain('alt="This page as it was when you added the picture"')
+    expect(added.html).toContain('other people&#x27;s names and messages included, and it isn&#x27;t cleaned the way your words are. Remove it if you would rather not send it.')
+    expect(added.html).toContain('Remove the picture')
+    expect(draw(state({ picture: { url: null, drawing: false, failed: false, kept: false } })).orders).not.toContain(27)
     expect(added.orders).not.toContain(24)
     expect(added.orders).not.toContain(26)
   })
@@ -142,6 +153,60 @@ describe('everything the report carries is on the screen before it goes', () => 
     expect(draw(state({ kind: 'ux' })).html).toContain('What was hard?')
     expect(draw(state({ kind: 'idea' })).html).toContain('What do you need?')
     expect(draw(state({ kind: 'idea' })).html).not.toContain('Steps:')
+  })
+})
+
+describe("a report service also gets the person's recent requests and the hive's logs, shown first and theirs to switch off", () => {
+  const service = (over: Partial<FeedbackState> = {}) => state({ ctx: { ...state().ctx!, to: SERVICE }, ...over })
+  /** Whether the button that sends is held: its opening tag has the disabled attribute. */
+  const held = (html: string) => {
+    const from = html.lastIndexOf('<button', html.indexOf('Send to the team'))
+    return / disabled=""/.test(html.slice(from, html.indexOf('>', from)))
+  }
+  it('on by default: the switch is on, and all of what goes is on the screen before the button that sends it', () => {
+    const { orders, html } = draw(service(), 'classic', false, [], EXTRAS)
+    expect(orders).toEqual(expect.arrayContaining([34, 35, 38]))
+    expect(orders).not.toEqual(expect.arrayContaining([36]))
+    expect(html).toContain('Include requests and logs<')
+    expect(html).toMatch(/role="switch"[^>]*aria-checked="true"[^>]*aria-label="Include my recent requests and the hive&#x27;s logs \(cleaned\)"|aria-label="Include my recent requests and the hive&#x27;s logs \(cleaned\)"[^>]*aria-checked="true"/)
+    expect(html).toContain('Keys, emails, addresses and ids are taken out on the hive and again here.')
+    for (const line of ['2026-11-17T01:23:40Z 429 POST /api/ask, 2 times, the slowest 61 ms', 'More model calls than the hive allows.'])
+      expect(html).toContain(line)
+    expect(html.indexOf('the slowest 61 ms')).toBeLessThan(html.indexOf('Send to the team'))
+    expect(held(html)).toBe(false)
+  })
+  it('switched off: the switch stays to turn it back on, and none of it is shown or goes', () => {
+    const { orders, html } = draw(service({ attach: { kept: false, loading: false, hive: null, missing: '' } }))
+    expect(orders).toEqual(expect.arrayContaining([34, 35]))
+    expect(orders).not.toContain(38)
+    expect(html).toMatch(/aria-checked="false"/)
+    expect(html).not.toContain('the slowest 61 ms')
+  })
+  it('while they are gathered it says so and the send waits; a hive that did not give them is said', () => {
+    const loading = draw(service({ attach: { kept: true, loading: true, hive: null, missing: '' } }))
+    expect(loading.orders).toContain(36)
+    expect(loading.html).toContain('Gathering your recent requests and the hive&#x27;s logs…')
+    expect(held(loading.html)).toBe(true)
+    const missing = draw(service({ attach: { kept: true, loading: false, hive: null, missing: 'the hive did not answer' } }))
+    expect(missing.orders).toContain(37)
+    expect(missing.orders).not.toContain(38)
+    expect(missing.html).toContain('The hive did not give your requests and its logs: the hive did not answer. Your report still goes without them.')
+    expect(held(missing.html)).toBe(false)
+  })
+  it('the send also waits while the picture is being drawn', () => {
+    expect(held(draw(service({ picture: { url: null, drawing: true, failed: false, kept: true } })).html)).toBe(true)
+  })
+  it('no other route offers it: the board and the copy carry no requests or logs', () => {
+    for (const to of [BOARD, { ...BOARD, public: true }, { kind: 'none' } as FeedbackDestination]) {
+      const { orders } = draw(state({ ctx: { ...state().ctx!, to } }))
+      for (const order of [34, 35, 36, 37, 38]) expect(orders).not.toContain(order)
+    }
+  })
+  it.each(['classic', 'cosmos', 'flux', 'canvas', 'still', 'construct', 'professional'])('%s draws the switch and what goes', (look) => {
+    const { plan, html } = draw(service(), look, false, [], EXTRAS)
+    expect(plan.missing).toEqual([])
+    expect(html).toContain('Include requests and logs<')
+    expect(html).toContain('the slowest 61 ms')
   })
 })
 

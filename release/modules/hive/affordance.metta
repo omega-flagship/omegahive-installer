@@ -74,7 +74,7 @@
 (SkillTrigger "hive-artifact-create" "mentions-word:table" 0.65 "a table is shown as a view")
 (SkillTrigger "hive-artifact-create" "mentions-word:chart" 0.65 "a chart is shown as a view")
 (SkillTrigger "hive-artifact-create" "mentions-word:checklist" 0.65 "a checklist is shown as a view")
-(SkillCardLine "hive-revision" "hive-revision ar_id {json} - change something you saved (a view, plan or note) with its whole new body, keeping its id: asked to change what you made, revise it, since a new artifact starts the work over. A change to an app Create built goes to hive-create, naming the app and the change.")
+(SkillCardLine "hive-revision" "hive-revision ar_id {json} - change something you saved to show (a plan laid out, a comparison, a summary or a note) with its whole new body, keeping its id: asked to change it, revise it, since a new artifact starts the work over. A change to an app, game or tool goes to hive-create, naming the app and the change, whether Create built it or it was saved as a view.")
 (SkillTrigger "hive-revision" "mentions-word:change" 0.80 "a change to something saved is a revision of it")
 (SkillTrigger "hive-revision" "mentions-word:fix" 0.75 "a fix to something saved is a revision of it")
 (SkillTrigger "hive-revision" "mentions-word:update" 0.75 "an update to something saved is a revision of it")

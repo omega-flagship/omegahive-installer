@@ -1,7 +1,8 @@
 """Purpose: a file a mind sends as hive-goal-file reaches the staging route exactly as written, through the command
 parser and the hive's PeTTa: PeTTa reads the string literal the parser writes and hands hive_commons.goal_file its text,
-so a quoted CSV or a JSON string keeps the quote marks it starts and ends with, and every line keeps its newline. Before,
-goal_file also stripped a quote from each end of what PeTTa had already decoded."""
+so a quoted CSV or a JSON string keeps the quote marks it starts and ends with, every line keeps its newline, and a
+control character stays itself. Before, goal_file also stripped a quote from each end of what PeTTa had already
+decoded, and the parser wrote a control character as \\xNN, which PeTTa reads as the letters xNN."""
 import os
 import subprocess
 import sys
@@ -13,7 +14,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_a_quoted_csv_and_a_json_string_file_are_staged_word_for_word(tmp_path):
+def test_a_quoted_csv_a_json_string_and_control_characters_are_staged_word_for_word(tmp_path):
     # HIVE_TEST_PETTA is what CI's runtime step sets (scripts/ci/runtime-tests.sh), and reading it is what makes
     # scripts/ci/pr_hive_tests.py --runtime select this module; PETTA_PATH serves a local run.
     petta = Path(os.environ.get("HIVE_TEST_PETTA") or os.environ.get("PETTA_PATH") or str(Path.home() / "PeTTa"))
@@ -42,13 +43,14 @@ def test_a_quoted_csv_and_a_json_string_file_are_staged_word_for_word(tmp_path):
         from petta import PeTTa
         metta = PeTTa(petta_path=str(petta))
         metta.process_metta_string(rule)
-        files = {"people.csv": '"name","age"\n"bob","3"\n', "greeting.json": '"hello"\n'}
+        files = {"people.csv": '"name","age"\n"bob","3"\n', "greeting.json": '"hello"\n',
+                 "notes.txt": "page 1\x0cpage 2\x0bv\x01\x1b[31mred\x7f\x1c\x00\n"}
         for name, text in files.items():
             reply = f"hive-goal-file g_1 {name} <<'EOF_f'\n{text}EOF_f"
             out = metta.process_metta_string("!" + parser.signature_balance_parentheses(reply))
             assert out and "HIVE-GOAL-FILE-STAGED " + name in out[0], out
         assert [(p["path"], p["text"]) for _, _, p in staged] == list(files.items()), staged
-        assert [(m, path) for m, path, _ in staged] == [("POST", "/api/agent/goals/g_1/files")] * 2, staged
+        assert [(m, path) for m, path, _ in staged] == [("POST", "/api/agent/goals/g_1/files")] * 3, staged
         print("HIVE-GOAL-FILE-WORD-FOR-WORD-OK")
     ''')
     result = subprocess.run([sys.executable, "-c", script, str(ROOT), str(tmp_path), str(petta), rule],

@@ -17,6 +17,9 @@
 ;         report.failed   the last send did not go through (data report.error)
 ;         report.copied_too  the board's address could not hold it all, so it is on the clipboard too
 ;         device.share    this device can hand the picture to its share sheet
+;         attach.goes     the person's recent requests and the hive's logs go with it (a report service only; data
+;                         attach.text is all of them, report.attach the one switch that leaves them out)
+;         attach.loading  the hive is being asked for them; attach.missing it did not give them (data attach.missing)
 ;         report.drafted  the report was made from a draft (data report.drafted_by names who drafted it)
 ;   count report.errors   the hive's and the page's recent errors
 ;   count drafts          drafts waiting: what the hive noticed going wrong, and what minds drafted (features/feedback/drafts.ts)
@@ -66,7 +69,8 @@
 (Part feedback 23 picture ((source (bind picture.url)) (alt "This page as it was when you added the picture")
   (caption (words "Goes as " (bind report.id) ".png")) (action remove-picture) (action_label "Remove the picture")))
 (When feedback 23 (on picture.goes))
-; the picture is the person's to add: what it shows, then a word if it could not be drawn, then the press
+; the picture is the person's to add: what it shows, then a word if it could not be drawn, then the press; once added,
+; what it shows stays said beside it (27)
 (Part feedback 24 note ((text "A picture shows everything on this page as it is now, other people's names and messages included, and it isn't cleaned the way your words are. Add one only if it helps the team see what happened.")))
 (When feedback 24 (off picture.kept))
 (When feedback 24 (off picture.drawing))
@@ -75,6 +79,8 @@
 (Part feedback 26 actions ((items ((action "Add a picture of this page" add-picture)))))
 (When feedback 26 (off picture.kept))
 (When feedback 26 (off picture.drawing))
+(Part feedback 27 note ((text "The picture shows everything that was on this page, other people's names and messages included, and it isn't cleaned the way your words are. Remove it if you would rather not send it.")))
+(When feedback 27 (on picture.goes))
 (Part feedback 30 section ((title "The hive's recent errors")
   (body "The newest errors your hive and this page met, each with its id, so the team can find it.")))
 (When feedback 30 (has report.errors))
@@ -88,15 +94,30 @@
 (Part feedback 33 actions ((items ((action "Put the errors back" keep-errors)))))
 (When feedback 33 (has report.errors))
 (When feedback 33 (off errors.kept))
+; the person's recent requests and the hive's logs: to a report service only, shown whole, theirs to switch off
+(Part feedback 34 section ((title "Your recent requests and the hive's logs")
+  (body "What you asked the hive lately, the errors and, for an admin, the hive's own warnings help the team see what happened. Keys, emails, addresses and ids are taken out on the hive and again here. Switch this off to send your report without them.")))
+(When feedback 34 (is to.route service))
+(Part feedback 35 toggles ((source report.attach) (label label) (checked on) (action attach-logs)
+  (aria "Include my recent requests and the hive's logs (cleaned)")))
+(When feedback 35 (is to.route service))
+(Part feedback 36 note ((text "Gathering your recent requests and the hive's logs…")))
+(When feedback 36 (is to.route service))
+(When feedback 36 (on attach.loading))
+(Part feedback 37 notice ((tone warn) (text (words "The hive did not give your requests and its logs: " (bind attach.missing) ". Your report still goes without them."))))
+(When feedback 37 (is to.route service))
+(When feedback 37 (on attach.missing))
+(Part feedback 38 code ((label "Your recent requests and the hive's logs, as they go") (text (bind attach.text))))
+(When feedback 38 (on attach.goes))
 (Part feedback 40 section ((title "Your report, as it goes")))
 (Part feedback 41 code ((label "Your report, as it goes") (text (bind report.text))))
 
 ; ---------- the ways it leaves, by where this hive sends reports
-(Part feedback 48 note ((text (words "Sends your report, and the picture if you added one, to " (bind to.host) ", the report service this hive is set to send reports to."))))
+(Part feedback 48 note ((text (words "Sends your report, the picture if you added one, and your recent requests and the hive's logs unless you left them out, to " (bind to.host) ", the report service this hive is set to send reports to."))))
 (When feedback 48 (is to.route service))
 (Part feedback 49 note ((text "Write a few words first.")))
 (When feedback 49 (on report.empty))
-(Part feedback 50 actions ((tone primary) (items ((action "Send to the team" send report.held send)))))
+(Part feedback 50 actions ((tone primary) (items ((action "Send to the team" send send.held send)))))
 (When feedback 50 (is to.route service))
 (Part feedback 51 actions ((tone primary) (items ((action "Open it on GitHub" open-board report.held external)))))
 (When feedback 51 (is to.route board))

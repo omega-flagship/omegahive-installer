@@ -9,10 +9,13 @@ import io
 import json
 import os
 import pathlib
+import select
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import types
 import urllib.error
 from urllib.parse import urlsplit
@@ -23,7 +26,6 @@ from fastapi.testclient import TestClient
 from hive.core import credentials as cr
 from hive.core import session_launch as sl
 from hive.tests.test_core_api import PETTA, FakeSupervisor, client  # noqa: F401  (fixture)
-from hive.tests.known_failures import request_credential_reset
 from hive.tests.test_session_credentials import BINDING, rpc, tool
 
 HELPER_PATH = pathlib.Path(__file__).resolve().parents[1] / "tools" / "session_header_helper.py"
@@ -117,7 +119,6 @@ def test_the_exception_mode_issues_only_to_the_named_minds_with_no_ticket(client
                      "something-else") == {"status": "refused", "code": "exceptions_only"}   # an unknown mode fails closed
 
 
-@request_credential_reset
 def test_the_exception_socket_refuses_a_peer_of_another_uid(client, monkeypatch):
     """The real socket in exception mode answers a peer of the hive's own uid and closes on any other."""
     import asyncio
@@ -149,6 +150,41 @@ def test_the_exception_socket_refuses_a_peer_of_another_uid(client, monkeypatch)
                 return hive.session_launch, sl.default_socket(data).exists()
         assert asyncio.run(off()) == (None, False)                                   # no opt-in: no socket at all
     finally:
+        shutil.rmtree(data, ignore_errors=True)
+
+
+@pytest.mark.parametrize("closes", ["after the request arrives", "before the request is sent"])
+@pytest.mark.parametrize("copy", ["helper", "launcher"])
+def test_a_socket_that_closes_without_reading_the_request_is_no_answer(copy, closes, monkeypatch):
+    """omega-flagship/omegahive#285: a refusing socket closes with the request unread. Linux reports that as a reset, or
+    as a broken pipe when the close comes first, and macOS as end of file; both copies read each as no answer."""
+    from hive.core import localowner
+    fn, owner = (hh.request_credential, hh) if copy == "helper" else (sl.request_credential, localowner)
+    data = short_dir()
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        path = data / "s.sock"
+        server.bind(str(path))
+        server.listen(1)
+        closed = threading.Event()
+
+        def refuse():
+            conn, _ = server.accept()
+            if closes == "after the request arrives":
+                select.select([conn], [], [], 5)                                 # the request waits unread
+            conn.close()
+            closed.set()
+
+        refuser = threading.Thread(target=refuse)
+        refuser.start()
+        if closes == "before the request is sent":
+            real = owner.peer_uid                                                # checked just before the send
+            monkeypatch.setattr(owner, "peer_uid", lambda sock: (closed.wait(5), real(sock))[1])
+        assert fn(path, {"op": "bridge"}) is None
+        refuser.join(5)
+        assert closed.is_set()
+    finally:
+        server.close()
         shutil.rmtree(data, ignore_errors=True)
 
 

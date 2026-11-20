@@ -103,7 +103,7 @@ describe('every frame a hand-over turn stores is read, live and as a personal tu
   it('a research frame keeps the report it carries, read to the host\'s caps; its stored copy keeps none and is read too', () => {
     const live = checkAskEvent({ ...env, seq: 8, phase: 'research', intent_id: intent, request_id: 'rq_res1', state: 'done', research: view }) as { research?: { report: { checks: unknown; sections: { claims: { citations: unknown[] }[] }[] } } }
     expect(live.research?.report.checks).toEqual({ claims: 2, cited: 1 })
-    expect(live.research?.report.sections[0].claims[1].citations).toEqual([{ url: 'https://example.org/never-fetched', verified: false }])
+    expect(live.research?.report.sections[0].claims[1].citations).toEqual([{ url: 'https://example.org/never-fetched', verified: false, match: null }])
     const stored = checkAskEvent({ ...env, seq: 8, phase: 'research', intent_id: intent, request_id: 'rq_res1', state: 'done', personal: true })
     expect(stored).toMatchObject({ phase: 'research', request_id: 'rq_res1', state: 'done' })
     expect(stored).not.toHaveProperty('research')

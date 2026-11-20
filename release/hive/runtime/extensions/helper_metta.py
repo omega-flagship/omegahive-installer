@@ -12,6 +12,10 @@ try:
     from .helper_history import _iter_history_entries, _compact_long_history_tokens
 except Exception:  # pragma: no cover - direct script import fallback
     from helper_history import _iter_history_entries, _compact_long_history_tokens
+try:
+    from .helper_metta_syntax import _escape_metta_string, _metta_string
+except Exception:  # pragma: no cover - direct script import fallback
+    from helper_metta_syntax import _escape_metta_string, _metta_string
 
 CORE_ROOT = pathlib.Path(__file__).resolve().parents[3]
 OMEGACLAW_ROOT = CORE_ROOT.parents[1]
@@ -546,29 +550,6 @@ def ensure_runtime_memory_files(names=""):
         f"RUNTIME-MEMORY-FILES existing={','.join(existing)} "
         f"created={','.join(created)} rejected={','.join(rejected)}"
     )
-
-def _escape_metta_string(text):
-    escaped = []
-    for ch in str(text or ""):
-        if ch == "\\":
-            escaped.append("\\\\")
-        elif ch == '"':
-            escaped.append('\\"')
-        elif ch == "\n":
-            escaped.append("\\n")
-        elif ch == "\r":
-            escaped.append("\\r")
-        elif ch == "\t":
-            escaped.append("\\t")
-        elif ord(ch) < 32 or ord(ch) == 127:
-            escaped.append(f"\\x{ord(ch):02x}")
-        else:
-            escaped.append(ch)
-    return "".join(escaped)
-
-
-def _metta_string(text):
-    return '"' + _escape_metta_string(text) + '"'
 
 def _has_unescaped_quote(text):
     escaped = False

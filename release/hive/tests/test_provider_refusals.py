@@ -352,7 +352,8 @@ def test_a_sentence_for_one_person_has_words_for_the_mind_that_speak_to_no_one()
         if kind.mind_say:
             words = kind.mind_say.format(limit=200)
             assert not re.search(r"\byou", words, re.IGNORECASE), (code, words)
-    assert {c for c, k in KINDS.items() if k.mind_say} == {"free_inference_daily_cap", "free_inference_invited_only"}
+    assert {c for c, k in KINDS.items() if k.mind_say} == {"free_inference_daily_cap", "free_inference_invited_only",
+                                                           "free_inference_idle"}
 
 
 def test_each_refusal_in_a_row_waits_twice_as_long_up_to_half_an_hour(client):

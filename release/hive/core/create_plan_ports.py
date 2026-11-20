@@ -8,6 +8,8 @@ The engine decides nothing here; it calls one port per journalled effect. Ports 
           Same delivery as the per-change engine's second opinion (goals._create_record + send_to_agent).
           A step's own rules (its packet's contract) go in the goal's detail and the message's head, outside the
           packet's UNTRUSTED_DATA, so hive-goal-get shows them in whichever turn writes the answer.
+          A design's answer is the look itself, as text: the ports keep it in the plan's space for every builder's
+          brief and give the reducer a reference minted from its digest (Ports._keep_design).
   members each piece's build: one real R3.14 per-change member per piece (create_plan_members.PerChangeBuilds).
   space   the hive-owned build workspace: one integration workspace from the Create scaffold repository, one fork per
           piece, checkpoints, and cross-fork merges, all through the hive's OmegaCode relay (OmegaCodeSpace).
@@ -459,7 +461,8 @@ class Ports:
         return CHECK_PATH in await self.space.files(run, self.engine._space(run)["scaffold"])
 
     async def design(self, run, body, plan):
-        return await self._call(run, "design", body, {"sentence": run["sentence"], "plan": plan})
+        return await self._call(run, "design", body, {"sentence": run["sentence"], "plan": plan,
+                                                       "contract": DESIGN_RULES})
 
     async def author_tests(self, run, body, plan):
         space = self.engine._space(run)
@@ -564,8 +567,10 @@ class Ports:
         """The host's half of a model answer: typed, bounded, and written only where that mind may write."""
         if not isinstance(out, dict) or "unknown" in out or out.get("failed") or out.get("blocked"):
             return out if isinstance(out, dict) else {"unknown": "no answer"}
-        if kind in ("plan", "design"):
+        if kind == "plan":
             return out
+        if kind == "design":
+            return self._keep_design(run, out)
         if kind == "author-tests":
             files = out.get("files") or {}
             if set(files) == {PROBE_PATH}:
@@ -604,6 +609,20 @@ class Ports:
         why = str(why)[:1000]
         self.engine._space_set(run["plan_id"], author_refusal=why)
         return {"unknown": f"the test author's answer was refused: {why}"[:600]}
+
+    def _keep_design(self, run, out):
+        """A design step's answer is the look itself, as text (DESIGN_RULES): kept in the plan's space for every
+        builder's brief (create_plan_members), with a reference minted from its digest for the reducer, as a preview's
+        is (AppReleases.preview), since the reducer carries only short references (code_controller_engine.REF). On 20
+        Nov a Studio maker told only {"ref": "a design reference"} wrote its whole design in ref four times; each was
+        refused as no reference the controller carries and counted lost, and the plan blocked 57 s after Make. So a
+        design written under ref is kept as well. An empty one is lost, and the reducer asks again within its retries."""
+        design = out.get("design") if out.get("design") is not None else out.get("ref")
+        if not isinstance(design, str) or not design.strip():
+            return {"unknown": "the design answered no design", "by": out.get("by")}
+        design = design.strip()
+        self.engine._space_set(run["plan_id"], design=design)
+        return {"ref": "design-" + hashlib.sha256(design.encode()).hexdigest()[:32], "by": out.get("by")}
 
     # checks, preview, deploy
     async def run_check(self, run, ckpt, suite, base):
@@ -702,9 +721,14 @@ PLAN_SHAPE = ('{"plan": {"title": str, "pieces": [{"id": word, "kinds": [code or
               'whole number}]}}}. A word is a letter, then letters, digits, _ or -, 48 at most. Add a review only when '
               'the hive\'s own (hive_reviews in the packet, which every piece of their kind gets anyway) lack it, its '
               'review_kind a capability some team or mind offers, such as security, never the piece\'s own kind.')
+# the most of a plan's design every builder's brief carries (create_plan_members); the designer is told it
+DESIGN_CHARS = 4000
+DESIGN_RULES = (f"Write the look itself as text: its layout, colours, type, each state the person sees and the words "
+                f"on screen. Not a file, link or name: the hive keeps this text and gives every builder its first "
+                f"{DESIGN_CHARS:,} characters with their piece.")
 ANSWER_SHAPES = {
     "plan": PLAN_SHAPE + " The plan check refuses a plan unless " + "; ".join(PLAN_RULES.values()) + ".",
-    "design": '{"ref": "a design reference"}',
+    "design": '{"design": "the look, as text"}',
     # the goal text's shape is what a test author answers with, whatever its contract says, so it names the probe: with
     # the Python file here a real author on 19 November wrote three Python checks before its fourth answer, a probe
     "author-tests": '{"files": {"' + PROBE_PATH + '": <the probe as one JSON object, {"cases": [...]}, as the contract '
@@ -735,7 +759,8 @@ class GoalMinds:
     """Model calls as goals assigned to the resolved mind (the planner and test author resolve through the same
     assignee defaults: capabilities plan / test-author), each claimed for that mind as it is made. The step's whole task
     (task_text) is the goal's detail and the message the mind is sent; its finished goal's result data is the typed
-    answer. Wake: goal.updated (engine.goal_changed); never polled."""
+    answer. A claim the hive refuses withdraws the goal unsent. Wake: goal.updated (engine.goal_changed); never
+    polled."""
 
     def __init__(self, engine):
         self.engine, self.hive = engine, engine.hive
@@ -764,7 +789,16 @@ class GoalMinds:
         # Claimed for its mind as it is made, so the answer is its one command and its budget counts from here: on a
         # tester's hive on 20 Nov a model heartbeated its open plan goal turn after turn, told only "you do not hold this
         # task", and never claimed it.
-        self.hive.goals.claim(self.hive._agent_row(agent), goal_id)
+        from .hive import HiveError
+        try:
+            self.hive.goals.claim(self.hive._agent_row(agent), goal_id)
+        except HiveError as exc:
+            # a claim the hive refuses (409 coding_not_ready on a new hive not yet ready for coding, the mind deleted
+            # since it was chosen, the goal no longer open) would leave the goal open, assigned and budgeted for a mind
+            # never told of it: it is withdrawn, nothing is sent, and the step comes back unknown with the refusal's
+            # words, as when no mind can take it (the tech lead's N1 on #567)
+            await self.withdraw(run, goal_id)
+            return {"unknown": f"the {PURPOSE[kind]} could not go to its mind ({exc.code}: {exc.message})", "by": agent}
         await self.hive.send_to_agent(agent, task, sender="hive:create-plan", extra={"event": "goal", "goal_id": goal_id})
         return {"pending": goal_id}
 

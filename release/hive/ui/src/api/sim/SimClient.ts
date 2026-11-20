@@ -4008,6 +4008,29 @@ export class SimClient implements HiveClient {
   listEstimated() { return this.mw.listEstimated() }
   correctReservation(id: string, body: import('../moneyWork').CorrectBody) { return this.mw.correctReservation(id, body) }
   hiveArtifacts() { return this.mw.hiveArtifacts() }
+  listCreations(opts?: import('../moneyWork').CreationListOptions) { return this.mw.listCreations(opts) }
+  async studioRecent(): Promise<import('../moneyWork').StudioRecentCreation[]> {
+    const [designs, images, { apps }] = await Promise.all([
+      this.studioFlags.piecesNone ? [] : this.mw.listCreations({ kind: 'studio-source', saved: true, limit: 3 }),
+      this.mw.listCreations({ kind: 'image', saved: true, limit: 3 }),
+      this.myApps(),
+    ])
+    const rows: import('../moneyWork').StudioRecentCreation[] = []
+    for (const row of [...designs, ...images]) {
+      if (row.revision !== null && row.digest && row.revised_at)
+        rows.push({ kind: row.kind === 'image' ? 'image' : 'design', id: row.artifact_id, title: row.title,
+          at: row.revised_at, swarm_id: row.swarm_id, revision: row.revision, digest: row.digest })
+    }
+    const added = new Set<string>()
+    for (const r of this.plansSim.installed().sort((a, b) => b.installed_at.localeCompare(a.installed_at))) {
+      const app = apps.find((a) => a.id === r.program_id)
+      if (!app || added.has(app.id)) continue
+      added.add(app.id)
+      rows.push({ kind: 'app', id: app.id, title: app.name, at: r.installed_at,
+        swarm_id: app.open.kind === 'swarm' ? app.open.swarm_id : null })
+    }
+    return rows.sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id)).slice(0, 3)
+  }
   swarmArtifacts(swarmId: string, opts?: { kind?: string; limit?: number }) {
     // SIM r1.13: ?studiopieces=none plays a Studio space with no saved canvas
     if (this.studioFlags.piecesNone && opts?.kind === 'studio-source') return this.delay(() => [])

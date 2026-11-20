@@ -932,21 +932,29 @@ class Collab:
                 "created_by": r["created_by"], "revision": r["n"], "digest": r["digest"],
                 "created_at": r["created_at"], "revised_at": r["revised_at"]}
 
-    def creations(self, swarm_ids, limit=200):
+    def creations(self, swarm_ids, limit=200, *, kind="", saved=False):
         """The Artifacts page: every artifact the given swarms own, newest first, each with its latest revision's
         number, digest and time, all None while nothing is saved yet. swarm_artifacts leaves those out (the Studio
         picker needs an exact revision); a person looking for what a mind said it made needs them listed. Metadata
         only, never a body; created_by is the maker's principal, which the route turns into a mind id only for a viewer
         who sees that mind.
-        Time: one scan of the swarms' artifacts with one latest-revision lookup each, then a sort of those rows."""
+        The optional kind and saved filters apply before the limit.
+        Time: one scan of the swarms' artifacts with one latest-revision lookup each, then a sort of matching rows."""
         ids = list(dict.fromkeys(swarm_ids))
         if not ids:
             return []
         limit = max(1, min(int(limit), 200))
+        where = [f"a.owner_swarm IN ({','.join('?' * len(ids))})"]
+        params = ids.copy()
+        if kind:
+            where.append("a.kind = ?")
+            params.append(kind)
+        if saved:
+            where.append("r.n IS NOT NULL")
         rows = self.db.all(
-            self._CREATION_ROWS + f"WHERE a.owner_swarm IN ({','.join('?' * len(ids))}) "
+            self._CREATION_ROWS + f"WHERE {' AND '.join(where)} "
             "ORDER BY COALESCE(r.created_at, a.created_at) DESC, a.rowid DESC LIMIT ?",   # ties: newest insert first
-            (*ids, limit))
+            (*params, limit))
         return [self._creation(r) for r in rows]
 
     def creation(self, artifact_id):
@@ -955,6 +963,21 @@ class Collab:
         viewer is shown it. Time: one indexed lookup and one latest-revision lookup."""
         r = self.db.one(self._CREATION_ROWS + "WHERE a.id = ?", (str(artifact_id),))
         return self._creation(r) if r else None
+
+    def personal_studio_creations(self, principal, visible_swarms, limit):
+        """Latest saved designs and pictures authored by the person or kept in their personal swarm."""
+        if not visible_swarms:
+            return []
+        # Bind visibility and personal ownership independently: a visible shared swarm alone proves no authorship.
+        ids = [s["id"] for s in visible_swarms]
+        own = [s["id"] for s in visible_swarms if s.get("personal_of") == principal]
+        personal = f" OR a.owner_swarm IN ({','.join('?' * len(own))})" if own else ""
+        rows = self.db.all(
+            self._CREATION_ROWS + f"WHERE a.owner_swarm IN ({','.join('?' * len(ids))}) "
+            f"AND (a.created_by = ?{personal}) AND a.kind IN ('studio-source', 'image') AND r.n IS NOT NULL "
+            "ORDER BY r.created_at DESC, a.id DESC LIMIT ?",
+            (*ids, principal, *own, limit))
+        return [self._creation(row) for row in rows]
 
     def subscription_access(self, swarm_id, artifact_id):
         """r2.8: the artifact a frame may subscribe to is one owned by the frame's own swarm (the caller has already

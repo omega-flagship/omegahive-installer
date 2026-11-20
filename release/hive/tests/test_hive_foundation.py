@@ -1121,15 +1121,21 @@ def test_quiet_foundation_success_is_returned_unchanged_without_a_warning(f, mon
 
 # ---- request helpers stay on the proposal path (attempt 13: code-read, then code-open, then blocked) ----
 
-def _helper_hints():
+def _helper_hints(monkeypatch):
+    """The hint lines of the Code and hive modules this mind runs, and the skill heads its SKILLS filter knows, both from
+    the parser's own module selection: code_workspace's are there only where the mind has the OmegaCode client, as on a
+    real mind, whose prompt never carries the hints of a module it left out."""
     import importlib.util, re, sys
+    from hive.runtime.extensions import helper_command_parser as parser
     root = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(root / "src"))
     spec = importlib.util.spec_from_file_location("hive_commons_helper_only", root / "modules/hive/src/hive_commons.py")
     hc = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(hc)
-    text = (root / "modules/code/catalog.metta").read_text(encoding="utf-8")
-    text += (root / "modules/hive/catalog.metta").read_text(encoding="utf-8")
+    heads = set(parser._load_signature_commands(fallback=parser.SIGNATURE_BOOTSTRAP_COMMANDS))
+    monkeypatch.setattr(hc, "_skill_heads", lambda: heads)
+    catalogs = [p for p in parser._module_declaration_paths("catalog.metta") if p.parent.name in ("code", "code_workspace", "hive")]
+    text = "".join(p.read_text(encoding="utf-8") for p in catalogs)
     lines = [re.sub(r'\\(.)', r'\1', m) for m in re.findall(r'\(SkillContextHint\s+"[^"]+"\s+"((?:[^"\\]|\\.)+)"\)', text)]
     raw = "(" + " ".join('"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"' for s in lines) + ")"
     return hc, raw
@@ -1138,7 +1144,7 @@ def _helper_hints():
 def _skills_line(f, agent, monkeypatch):
     """The prompt's SKILLS line as this mind sees it: the real hive decisions, not a fake."""
     import re
-    hc, raw = _helper_hints()
+    hc, raw = _helper_hints(monkeypatch)
     hc._skill_view.update(at=0.0, key=None, modes=None)
     monkeypatch.setattr(hc, "_call", lambda method, path, payload=None: (f.policy.decisions(agent, payload["skills"]), None))
     return " ".join(re.findall(r'"((?:[^"\\]|\\.)*)"', hc.skill_hints(raw)))
@@ -1159,7 +1165,13 @@ def _helper(f, template_id=CHILD_TEMPLATE):
     return f.db.one("SELECT * FROM agents WHERE id=?", (agent["id"],))
 
 
-def test_helper_skills_line_hides_direct_workspace_heads_and_keeps_the_proposal_path(f, monkeypatch):
+@pytest.mark.parametrize("client", [False, True], ids=["without the OmegaCode client", "with the OmegaCode client"])
+def test_helper_skills_line_hides_direct_workspace_heads_and_keeps_the_proposal_path(f, monkeypatch, request, client):
+    # without the client code_workspace is never loaded; with it, the helper's denials hide its heads
+    if client:
+        request.getfixturevalue("omegacode_client")
+    else:
+        monkeypatch.delenv("OMEGACODE_SRC", raising=False)
     helper = _helper(f)
     line = _skills_line(f, helper, monkeypatch)
     for gone in ("code-open", "code-exec", "code-replace", "code-create", "code-move",
@@ -1189,7 +1201,7 @@ def test_helper_calling_code_open_is_denied_and_the_proposal_heads_still_run(f):
     assert f.db.all("SELECT * FROM approvals WHERE agent_id=?", (helper["id"],)) == []
 
 
-def test_controller_skills_are_unchanged_by_a_helper(f, monkeypatch):
+def test_controller_skills_are_unchanged_by_a_helper(f, monkeypatch, omegacode_client):
     code = controller(f)
     skills = ["code-open", "code-read", "code-propose", "code-proposal-context", "code-test-prepare",
               *NATIVE_SKILLS, "hive-goal-propose"]
@@ -1201,7 +1213,7 @@ def test_controller_skills_are_unchanged_by_a_helper(f, monkeypatch):
     assert "code-open" in line_before and "code-read" in line_before
 
 
-def test_a_mind_from_another_template_is_unaffected(f, monkeypatch):
+def test_a_mind_from_another_template_is_unaffected(f, monkeypatch, omegacode_client):
     other = _helper(f, template_id="person.code-helper.v1")
     assert other["persona"] == ""
     assert not [r for r in f.policy.all_rules() if r["scope"] == "agent:" + other["id"]]

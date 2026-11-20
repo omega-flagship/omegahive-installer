@@ -138,6 +138,18 @@ export interface SwarmArtifact {
   revised_at: string
 }
 
+/** Filters applied before the limit in GET /api/artifacts. */
+export interface CreationListOptions {
+  kind?: string
+  saved?: boolean
+  limit?: number
+}
+
+type StudioRecentBase = { id: string; title: string; at: string }
+export type StudioRecentCreation =
+  | (StudioRecentBase & { kind: 'design' | 'image'; swarm_id: string; revision: number; digest: string })
+  | (StudioRecentBase & { kind: 'app'; swarm_id: string | null })
+
 /** One saved revision of an artifact with its text (GET /api/artifacts/{id}/revisions/{n}), the Artifacts page's reader,
  *  for a person who is shown that artifact. */
 export interface CreationText {

@@ -41,6 +41,7 @@ from .db import new_id, now
 PROFILE = "plan-member"
 POLICIES = ("plan-reviewed", "review-required")
 CHECK_DIR = "checks/"       # the plan's acceptance check (create_plan_engine.CHECK_DIR): never in a builder's packet
+BRIEF_LIMIT = 40000         # characters of a member's brief as canonical JSON: adopt_member refuses a longer one
 
 
 def _canonical(value):
@@ -171,8 +172,8 @@ def adopt_member(engine, plan_id, piece, origin, paths, assignee, budget_ref, re
         "task_id", "grant_id", "repository_id", "workspace_id")}, "paths": sorted(set(paths)), "assignee": assignee,
         "budget_ref": budget_ref}
     if brief is not None:
-        if not isinstance(brief, dict) or len(_canonical(brief)) > 40000:
-            raise EngineError("brief is a JSON object of at most 40000 characters", 400, "bad_request")
+        if not isinstance(brief, dict) or len(_canonical(brief)) > BRIEF_LIMIT:
+            raise EngineError(f"brief is a JSON object of at most {BRIEF_LIMIT} characters", 400, "bad_request")
         member["brief"] = brief
     if contract is not None:
         if not isinstance(contract, str) or not contract.strip() or len(contract) > 2000:
@@ -344,7 +345,8 @@ def _packet(engine, run, files, purpose, failing, goal_id, read_only=None):
             f"Anything else in files is refused. A file can come first as its own command instead: hive-goal-file "
             f"{goal_id} <path> <<'EOF_name' on one line, then the file's whole text, then a line that is just EOF_name "
             f"(a marker none of its lines is); a file sent that way needn't be in files. A reply cut off at its length "
-            f"keeps every such file it finished.")
+            f"keeps every such file it finished. Never code-open: this goal takes its files only through hive-goal-file "
+            f"and hive-goal-propose, never from a code workspace.")
     if read_only:
         text += (" The app's other files, as they stand on your copy, are under read_only: read them and build on them "
                  "(their names, ids and functions), and never write them.")

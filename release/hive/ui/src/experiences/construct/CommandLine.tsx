@@ -13,11 +13,13 @@ import { useC } from './state'
 import { Decode } from './Decode'
 import { useAskField, useSeen } from '../../features/ask/useAskField'
 import { guardComposing } from '../../features/ask/keys'
+import { AskSearch } from '../../features/ask/AskSearch'
 import { PanelView } from '../../features/ask/ClassicAsk'
 import { AnswererInline } from '../../features/ask/AnswererPicker'
 import { Thread, ThreadHead, useThreadRows } from '../../features/ask/Thread'
 import { shownMind } from '../../features/ask/words'
 import { presenceCommand } from '../../features/ask/Presence'
+import { useAskWaiting, withWaiting } from '../../features/ask/waiting'
 import { useAskStore, type AskRow } from '../../store/ask'
 import { bindEpoch, onIdentityChange } from '../../lib/identityEpoch'
 import type { Candidate } from '../../lib/intent'
@@ -70,6 +72,11 @@ export function CommandLine({ phone }: { phone: boolean }) {
   const mindId = useC((s) => s.mind)
   const mind = useHive((s) => (mindId ? s.agents[mindId] : undefined))
   const threadOpen = useAskStore((s) => s.threadOpen)
+  // what waits on the person in the ask log (an offer to build, a stopped task): the folded toggle carries how many and
+  // its words name what waits, as the other folded Asks' buttons do
+  const waiting = useAskWaiting()
+  const waits = waiting.offers + waiting.stops
+  const toggleWords = threadOpen ? 'Hide the ask log' : withWaiting('Show the ask log', waiting)
   // a page over the construct covers the prompt: the host's floating terminal line is the Ask then (one landmark)
   const covered = useRoute().name !== 'hive'
   const comp = useMemo(() => complete(value), [value])
@@ -327,7 +334,7 @@ export function CommandLine({ phone }: { phone: boolean }) {
                           e.preventDefault()
                           void f.take(c)
                         }}
-                        onMouseMove={() => i !== f.sel && f.setSel(i)}
+                        {...f.hoverRow(i)}
                       >
                         {c.act?.do !== 'mind' && <span className="cx-c-cyan">{c.tag.toLowerCase()}</span>}
                         <span className="cx-c-txt">{sentence(c)}</span>
@@ -400,8 +407,10 @@ export function CommandLine({ phone }: { phone: boolean }) {
             </span>
           )}
           </span>
-          <button type="button" className="cx-key cx-ask-toggle" onClick={() => useAskStore.getState().setThreadOpen(!threadOpen)} aria-expanded={threadOpen} aria-label={threadOpen ? 'Hide the ask log' : 'Show the ask log'}>
+          <AskSearch look="construct" words={() => value} className="cx-key cx-ask-search" />
+          <button type="button" className="cx-key cx-ask-toggle" onClick={() => useAskStore.getState().setThreadOpen(!threadOpen)} aria-expanded={threadOpen} aria-label={toggleWords} title={toggleWords}>
             {threadOpen ? 'log ×' : 'ask log'}
+            {!threadOpen && waits > 0 && <span className="cx-badge cx-ask-waiting" data-waiting="" aria-hidden>{waits}</span>}
           </button>
         </div>
         <label className="cx-prompt">

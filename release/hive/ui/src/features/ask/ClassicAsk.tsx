@@ -25,12 +25,15 @@ import type { Candidate } from '../../lib/intent'
 import { useAskBridge } from './bridge'
 import { SKIN_WORDS, type FloatingLook } from './skins'
 import { AnswererPicker } from './AnswererPicker'
+import { AskSearch, SearchIcon } from './AskSearch'
+import { ConnectNotice } from './ConnectNotice'
 import { holdPopFlag, MIND_PANEL_BODY, POP_ROOM_VAR, popRoom } from './popDismiss'
 import { AskLeadMark } from '../../brand/AskLeadMark'
 import { useThreadReport } from './askRoom'
 import { changeAskSize } from './askSize'
 import type { AskRegion } from './askScreen'
 import { SIZE_WORDS } from './words'
+import { useAskWaiting, withWaiting } from './waiting'
 
 const parts = (c: Candidate) =>
   c.parts.map((p, j) =>
@@ -111,6 +114,10 @@ export function FloatingAsk({ place, experience, inputRef, look, displayedOrigin
   const setThreadOpen = useAskStore((s) => s.setThreadOpen)
   const pinned = useAskStore((s) => s.pinned)
   const rows = useAskStore((s) => s.log.length)
+  // what waits on the person in the thread (an offer to build, a stopped task), counted from the reads its cards draw:
+  // the folded button marks it with how many, where it marks rows with a dot, and its words name what waits
+  const waiting = useAskWaiting()
+  const waits = waiting.offers + waiting.stops
   // the person's own mind answered the latest turn (Platform P2 acting_as): the chip opens You › <mind>
   const stop = useAskStore((s) => s.stop)
   // ask-send-r1: the Ask is in use while focus is anywhere within its capsule (field, Ask button, mic, rows)
@@ -226,6 +233,9 @@ export function FloatingAsk({ place, experience, inputRef, look, displayedOrigin
     }
   }, [popOpen])
   const spend = f.thread ? `${money(f.thread.spent_usd)} / ${money(f.thread.budget_usd)}` : null
+  // the button beside the microphone says what it does in plain words, on hover too (round 1: an icon with no label),
+  // and what waits on the person in the thread while it's folded
+  const threadButtonWords = threadOpen ? 'Hide the thread' : withWaiting(`Show the thread${rows ? ` (${rows} rows)` : ''}`, waiting)
 
   const onEscape = () => {
     if (!mayAct()) return false
@@ -352,7 +362,7 @@ export function FloatingAsk({ place, experience, inputRef, look, displayedOrigin
                       data-tag={c.tag}
                       data-limit={c.limit || undefined}
                       onMouseDown={(e) => e.preventDefault()}
-                      onMouseMove={() => i !== f.sel && f.setSel(i)}
+                      {...f.hoverRow(i)}
                       onClick={() => void f.take(c)}
                     >
                       <span className="ask-sug-tag">{c.tag}</span>
@@ -420,12 +430,13 @@ export function FloatingAsk({ place, experience, inputRef, look, displayedOrigin
               {spend && <span className="ask-chip" data-answerer-spend="">{spend}</span>}
             </span>
           </span>
+          <AskSearch look={experience} words={f.valueNow} className="ask-icon ask-search" may={mayAct} disabled={displayedOriginCurrent ? !mayAct() : undefined}><SearchIcon /></AskSearch>
           {/* at half the thread is always shown: its switch back to the bubble is in the thread's head */}
-          {!half && <button type="button" className="ask-icon" onClick={() => { if (mayAct()) setThreadOpen(!threadOpen) }} aria-expanded={threadOpen} aria-label={threadOpen ? 'Hide the thread' : `Show the thread${rows ? ` (${rows} rows)` : ''}`}>
+          {!half && <button type="button" className="ask-icon" onClick={() => { if (mayAct()) setThreadOpen(!threadOpen) }} aria-expanded={threadOpen} aria-label={threadButtonWords} title={threadButtonWords}>
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden>
               <path d="M4 6h16M4 12h11M4 18h7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none" />
             </svg>
-            {rows > 0 && !threadOpen && <span className="ask-dot" aria-hidden />}
+            {!threadOpen && (waits > 0 ? <span className="ask-dot" data-waiting="" aria-hidden>{waits}</span> : rows > 0 && <span className="ask-dot" aria-hidden />)}
           </button>}
           <button type="button" className="ask-icon ask-mic" {...v.button} disabled={displayedOriginCurrent ? !mayAct() : undefined} aria-label={v.label} title={v.support.ok ? 'Talk: tap to start and stop (with a mouse, hold to talk) · Ctrl/⌘ Shift Space' : v.label} data-voice={v.state}>
             <MicIcon />
@@ -468,6 +479,8 @@ export function PanelView({ f }: { f: ReturnType<typeof useAskField> }) {
 
 function PanelBody({ f, p }: { f: ReturnType<typeof useAskField>; p: NonNullable<ReturnType<typeof useAskField>['panel']> }) {
   const you = f.value.trim()
+  // no model this person can ask: MeTTa composes what it says and offers, per look (connect.metta)
+  if (p.kind === 'connect') return <ConnectNotice held={p.held} />
   if (p.kind === 'say')
     return (
       <p className="ask-say" role={p.tone === 'warn' ? 'alert' : 'status'} data-tone={p.tone}>

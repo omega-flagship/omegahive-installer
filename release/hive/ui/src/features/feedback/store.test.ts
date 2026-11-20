@@ -1,7 +1,8 @@
 // Purpose: tests the feedback area's actions (features/feedback/store.ts) with the browser stood in for: opening makes a
-// fresh report and asks the hive what it adds; nothing leaves before the person presses a button; and each press (copy,
-// save, open on the board, send) does what it says with the report as the person saw it; and the hive's logs are
-// gathered only on their press and saved or copied exactly as shown.
+// fresh report and asks the hive what it adds; nothing leaves before the person presses a button; each press (copy, save,
+// open on the board, send) does what it says with the report as the person saw it; a report to a report service carries
+// the person's recent requests and the hive's logs unless they switch them off, and the picture only if they added one;
+// and the hive's logs file is gathered only on their press and saved or copied exactly as shown.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HiveClient } from '../../api/client'
 import type { FeedbackContext, FeedbackLogs } from '../../api/types'
@@ -17,7 +18,8 @@ vi.mock('./capture', () => ({
   pngBlob: () => new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' }),
 }))
 
-const { addPicture, closeFeedback, copyLogs, copyReport, openFeedback, openOnBoard, reportOf, saveLogs, saveReport, sendReport, showLogs, useFeedback } = await import('./store')
+const { addPicture, closeFeedback, copyLogs, copyReport, extrasOfState, openFeedback, openOnBoard, reportOf, saveLogs, saveReport, sendReport, showLogs, useFeedback } = await import('./store')
+const { extrasOf, extrasText } = await import('./logs')
 const { capturePage } = await import('./capture')
 const { issueUrl, payloadOf, reportText } = await import('./report')
 const { noteScreen } = await import('./trail')
@@ -132,6 +134,21 @@ describe('the picture is the person\'s to add', () => {
     await sendReport(c)
     expect((send.mock.calls[0] as unknown[])[0]).toMatchObject({ picture: null })
   })
+  it('a send waits while an added picture is still being drawn, so no report goes without what the area says goes', async () => {
+    let drawn: (url: string) => void = () => undefined
+    vi.mocked(capturePage).mockImplementationOnce(() => new Promise<string>((r) => { drawn = r }))
+    const { c, send } = client(CTX(SERVICE))
+    openFeedback(c, 'Classic hive')
+    await settle()
+    useFeedback.setState({ words: 'The Ask stopped' })
+    addPicture()
+    await sendReport(c)
+    expect(send).not.toHaveBeenCalled()
+    drawn('data:image/png;base64,iVBORw0KGgo=')
+    await settle()
+    await sendReport(c)
+    expect((send.mock.calls[0] as unknown[])[0]).toMatchObject({ picture: 'data:image/png;base64,iVBORw0KGgo=' })
+  })
 })
 
 describe('each press does what it says, with the report as the person saw it', () => {
@@ -204,6 +221,122 @@ describe('each press does what it says, with the report as the person saw it', (
     useFeedback.setState({ words: 'The Ask stopped' })
     await sendReport(c)
     expect(send).not.toHaveBeenCalled()
+  })
+})
+
+describe("a report to a report service carries the person's recent requests and the hive's logs, theirs to leave out", () => {
+  const HIVE: FeedbackLogs = {
+    version: 'Mac v0.33 (build 691e651a12)', which: 'own hive, Mac install', system: 'Mac', scope: 'hive',
+    requests: [
+      { at: '2026-11-17T01:23:40.000Z', method: 'POST', route: '/api/ask', status: 429, ms: 61, count: 2, who: 'you' },
+      { at: '2026-11-17T01:22:00.000Z', method: 'GET', route: '/api/swarms/{swarm_id}', status: 404, ms: 4, count: 1, who: 'another person' },
+    ],
+    errors: [
+      { id: 'e-1a2b3c4d', at: '2026-11-17T01:23:40.100Z', method: 'POST', route: '/api/ask', status: 429, code: 'rate_limited', message: 'More model calls than the hive allows, ana@example.org.', who: 'you' },
+      { id: 'e-0c3f9b12', at: '2026-11-17T01:22:00.000Z', method: 'GET', route: '/api/swarms/{swarm_id}', status: 404, code: 'not_found', who: 'another person' },
+    ],
+    log: [{ at: '2026-11-17T01:23:39.000Z', level: 'WARNING', logger: 'hive', message: 'the model provider answered 429 to 203.0.113.9' }],
+  }
+  const serviceWith = (logs: () => Promise<FeedbackLogs>, to: FeedbackContext['to'] = SERVICE) => {
+    const send = vi.fn(async () => ({ sent: true as const, to: 'reports.example.org', reference: 'https://github.com/acme/board/issues/7' }))
+    const feedbackLogs = vi.fn(logs)
+    return { c: { feedback: vi.fn(async () => CTX(to)), sendFeedback: send, feedbackLogs } as unknown as HiveClient, send, feedbackLogs }
+  }
+  const sentOf = (send: ReturnType<typeof vi.fn>, call = 0) => (send.mock.calls[call] as unknown[])[0] as Record<string, unknown>
+
+  it('on by default: asked of the hive as the area opens, and sent as shown, cleaned, the person\'s own only', async () => {
+    const { c, send, feedbackLogs } = serviceWith(async () => HIVE)
+    openFeedback(c, 'Classic hive')
+    await settle()
+    expect(feedbackLogs).toHaveBeenCalledTimes(1)
+    expect(send).not.toHaveBeenCalled()   // gathered and shown; nothing has left
+    useFeedback.setState({ words: 'The Ask stopped' })
+    const s = useFeedback.getState()
+    expect(s.attach).toMatchObject({ kept: true, loading: false, missing: '' })
+    const shown = extrasOfState(s)!
+    await sendReport(c)
+    const sent = sentOf(send)
+    expect(sent.recent_requests).toEqual([{ at: '2026-11-17T01:23:40Z', method: 'POST', route: '/api/ask', status: 429, ms: 61, count: 2, who: 'you' }])
+    expect(sent.errors).toEqual([{ at: '2026-11-17T01:23:40Z', id: 'e-1a2b3c4d', where: 'POST /api/ask', status: 429, code: 'rate_limited',
+      message: 'More model calls than the hive allows, [email].' }])
+    expect(sent.logs).toEqual(['2026-11-17T01:23:39Z WARNING hive: the model provider answered 429 to [address]'])
+    expect(sent).toEqual(payloadOf(reportOf(s), s.picture.url, shown))   // exactly what the area showed
+    expect(JSON.stringify(sent)).not.toContain('e-0c3f9b12')             // another person's stays on the hive
+    expect(useFeedback.getState()).toMatchObject({ done: 'sent', reference: 'https://github.com/acme/board/issues/7' })
+  })
+  it('switched off: the payload names no requests, errors list or logs', async () => {
+    const { c, send } = serviceWith(async () => HIVE)
+    openFeedback(c, 'Classic hive')
+    await settle()
+    useFeedback.setState((st) => ({ words: 'The Ask stopped', attach: { ...st.attach, kept: false } }))
+    expect(extrasOfState(useFeedback.getState())).toBeNull()
+    await sendReport(c)
+    const sent = sentOf(send)
+    for (const name of ['recent_requests', 'errors', 'logs']) expect(sent, name).not.toHaveProperty(name)
+    expect(JSON.stringify(sent)).not.toContain('/api/ask')
+    useFeedback.setState((st) => ({ attach: { ...st.attach, kept: true } }))   // and back on
+    await sendReport(c)
+    expect(sentOf(send, 1)).toHaveProperty('recent_requests')
+  })
+  it('the errors left out leave the errors list out too, the requests and logs still going', async () => {
+    const { c, send } = serviceWith(async () => HIVE)
+    openFeedback(c, 'Classic hive')
+    await settle()
+    useFeedback.setState({ words: 'The Ask stopped', errorsKept: false })
+    await sendReport(c)
+    const sent = sentOf(send)
+    expect(sent).not.toHaveProperty('errors')
+    expect(sent.recent_requests).toHaveLength(1)
+    expect(JSON.stringify(sent)).not.toContain('e-1a2b3c4d')
+  })
+  it('a send waits while they are gathered; a hive that does not give them says why and the report goes without', async () => {
+    let answer: (logs: FeedbackLogs) => void = () => undefined
+    const slow = serviceWith(() => new Promise<FeedbackLogs>((r) => { answer = r }))
+    openFeedback(slow.c, 'Classic hive')
+    await settle()
+    useFeedback.setState({ words: 'The Ask stopped' })
+    expect(useFeedback.getState().attach.loading).toBe(true)
+    await sendReport(slow.c)
+    expect(slow.send).not.toHaveBeenCalled()
+    answer(HIVE)
+    await settle()
+    await sendReport(slow.c)
+    expect(sentOf(slow.send).logs).toHaveLength(1)
+
+    const refused = serviceWith(async () => { throw new Error('only a signed-in person can do that') })
+    openFeedback(refused.c, 'Classic hive')
+    await settle()
+    useFeedback.setState({ words: 'The Ask stopped' })
+    expect(useFeedback.getState().attach).toMatchObject({ loading: false, hive: null, missing: 'only a signed-in person can do that' })
+    await sendReport(refused.c)
+    expect(sentOf(refused.send)).not.toHaveProperty('recent_requests')
+  })
+  it('the board and the copy are never asked for them: only a report service takes them', async () => {
+    const { c, feedbackLogs } = serviceWith(async () => HIVE, PUBLIC_BOARD)
+    openFeedback(c, 'Classic hive')
+    await settle()
+    expect(feedbackLogs).not.toHaveBeenCalled()
+    expect(extrasOfState(useFeedback.getState())).toBeNull()
+  })
+  it('the text shown is the payload line for line, and stays within what the hive takes', () => {
+    const x = extrasOf(HIVE, [], true)
+    expect(extrasText(x, 'hive').split('\n')).toEqual([
+      'Your recent requests to the hive, newest first:', '2026-11-17T01:23:40Z 429 POST /api/ask, 2 times, the slowest 61 ms', '',
+      'Errors, newest first:', '2026-11-17T01:23:40Z 429 rate_limited POST /api/ask (e-1a2b3c4d): More model calls than the hive allows, [email].', '',
+      "The hive's own warnings and errors, newest first:", '2026-11-17T01:23:39Z WARNING hive: the model provider answered 429 to [address]',
+    ])
+    expect(extrasText(extrasOf({ ...HIVE, scope: 'person', log: [] }, [], false), 'person').split('\n')).toEqual([
+      'Your recent requests to the hive, newest first:', '2026-11-17T01:23:40Z 429 POST /api/ask, 2 times, the slowest 61 ms', '', 'Errors: left out'])
+    const many: FeedbackLogs = { ...HIVE,
+      requests: Array.from({ length: 100 }, () => HIVE.requests[0]),
+      errors: Array.from({ length: 100 }, (_, i) => ({ ...HIVE.errors[0], id: `e-${String(i).padStart(8, '0')}`, message: 'm'.repeat(3000) })),
+      log: Array.from({ length: 500 }, () => HIVE.log[0]) }
+    const cut = extrasOf(many, [], true)
+    expect(cut.recent_requests).toHaveLength(50)
+    expect(cut.errors!.length).toBeLessThanOrEqual(100)
+    expect(cut.logs.length).toBeLessThanOrEqual(400)
+    expect(new TextEncoder().encode(JSON.stringify([cut.recent_requests, cut.errors, cut.logs])).length).toBeLessThanOrEqual(200 * 1024)
+    expect(cut.recent_requests.length + cut.errors!.length).toBeGreaterThan(50)   // the oldest go first, never all of it
   })
 })
 

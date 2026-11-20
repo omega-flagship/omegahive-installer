@@ -239,7 +239,11 @@ describe('the mutation sets are derived, and pinned', () => {
     // unacknowledged stops). A GET; its Got it, acknowledgeTaskStop, is a write.
     // feedback logs: 161 = 160 plus feedbackLogs (GET /api/feedback/logs: what the hive puts in the logs file a person
     // saves). A GET; saving or copying the file sends nothing.
-    expect(client.reads.size).toBe(161)
+    // Studio's recent creations: 162 = 161 plus listCreations (GET of the person's newest designs, pictures and apps, for
+    // the empty canvas's recent list). A GET; opening one sends nothing.
+    // and 163 = 162 plus studioRecent (GET of the three newest creations the empty canvas reopens)
+    expect(client.reads.size).toBe(163)
+    for (const r of ['listCreations', 'studioRecent']) expect(client.reads.has(r), r).toBe(true)
     for (const r of ['artifactView', 'artifact', 'myStage', 'research']) expect(client.reads.has(r), r).toBe(true)
     expect(client.reads.has('feedbackLogs')).toBe(true)
     expect(client.reads.has('feedbackDrafts')).toBe(true)

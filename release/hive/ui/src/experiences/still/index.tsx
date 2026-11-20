@@ -1,3 +1,5 @@
+// Purpose: draw Still, the hive as a calm sheet of paper: a greeting, one place to ask with what it answered or what waits
+// under it, and the passages for what needs you, what is happening and what the hive has learned.
 import { UsageRegion } from '../../shell/UsageRegion'
 import { usePhase } from '../../shell/phase'
 import { navigate, parse, useRoute } from '../../lib/router'
@@ -14,7 +16,7 @@ import { FEATURES, featureById } from '../../features/registry'
 import { openClassic, openGallery, openPalette, shown, storeIdentity, useHive, useHomeRequested, useReducedMotion } from '../sdk'
 import { Ask, isStillAct, type Receipt } from './Ask'
 import { registerActHandler } from '../../features/ask/handlers'
-import { Thread, ThreadHead } from '../../features/ask/Thread'
+import { StillLetter } from './Letter'
 import { usePresenceWords } from '../../features/ask/Presence'
 import { useAskView } from '../../features/ask/view'
 import { askOrigin, useAskStore } from '../../store/ask'
@@ -30,7 +32,6 @@ import { searchHive } from './search'
 import { Sheet } from './Sheets'
 import { useNow, useSprings, useWorld } from './shared'
 import './still.css'
-import { DirectingStudio } from '../../features/studioLive/DirectingStudio'
 
 
 /** How long Still waits for the hive before saying plainly that nothing is confirmed (and letting go of busy). */
@@ -311,7 +312,6 @@ function Paper() {
     refs: world.minds.filter((x) => x.awake).slice(0, 20).map((x) => ({ kind: 'mind' as const, ref: x.id, label: x.name })),
     summary: `${world.pending} waiting on you; ${awake} of ${plural(world.minds.length, 'mind')} awake`,
   })
-  const letterRows = useAskStore((s) => s.log.length)
   const words = usePresenceWords()
   const learnedToday = useHive((s) => {
     let n = 0
@@ -377,14 +377,7 @@ function Paper() {
               <Ask inputRef={ask} world={world} onAct={act} />
               <div ref={phaseAnchor} className="st-phase-anchor" />
               <Activity mode={phaseHeld ? 'hidden' : 'visible'}>
-              {/* J3 r4.3 O3: the Studio setup card / Directing Studio shows even before the letter has rows */}
-              {letterRows === 0 && <div className="st-pro-only"><DirectingStudio /></div>}
-              {letterRows > 0 && (
-                <section className="st-letter st-pro-only" aria-label="Today’s page">
-                  <ThreadHead variant="letter" />
-                  <Thread variant="letter" words={words} />
-                </section>
-              )}
+              <StillLetter words={words} />
               </Activity>
             </m.div>
 

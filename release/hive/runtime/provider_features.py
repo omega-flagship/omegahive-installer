@@ -32,19 +32,19 @@ def _skill_line(name, arguments):
     parameter named like a declared argument takes its place, and the rest fill the places left in the order given, any
     surplus after them. A value that isn't text is written as its JSON; text is quoted where it would run into the next
     argument, and the last one takes the rest of the line as it is. The parser then reads the line like any other, so a
-    wrong argument meets its recovery hint, never an unknown tool."""
-    if not arguments or (isinstance(arguments, dict) and set(arguments) == {'text'} and isinstance(arguments['text'], str)):
-        text = (arguments or {}).get('text', '') if isinstance(arguments, dict) else ''
-        return f"{name} {text.strip()}".rstrip()
+    wrong argument meets its recovery hint, never an unknown tool. `arguments` is always an object: the pinned core's
+    providers/lib_llm_ext.py, which scripts/setup_core.py puts in third_party/Omega, makes a call whose arguments are
+    any other JSON an error call, which is never converted here."""
+    if not arguments or (set(arguments) == {'text'} and isinstance(arguments['text'], str)):
+        return f"{name} {(arguments or {}).get('text', '').strip()}".rstrip()
     try:
         from hive.runtime.extensions.helper_command_parser import SIGNATURE_COMMANDS
     except ImportError:
         from helper_command_parser import SIGNATURE_COMMANDS
     declared = [arg_name if isinstance(arg_name, str) else arg_name[0] for _kind, arg_name in SIGNATURE_COMMANDS.get(name, ())]
-    given = list(arguments.items()) if isinstance(arguments, dict) else [(None, value) for value in arguments]
     slots = {arg_name: None for arg_name in declared}
     rest = []
-    for key, value in given:
+    for key, value in arguments.items():
         if key in slots and slots[key] is None:
             slots[key] = (value,)
         else:
@@ -66,10 +66,10 @@ def _skill_line(name, arguments):
 
 def _metta_string(text):
     try:
-        from hive.runtime.extensions.helper_command_parser import _signature_quote
+        from hive.runtime.extensions.helper_command_parser import signature_quote
     except ImportError:
-        from helper_command_parser import _signature_quote
-    return _signature_quote(text)
+        from helper_command_parser import signature_quote
+    return signature_quote(text)
 
 
 # Reasoning efforts, highest first, as OpenRouter's reasoning.effort takes them (Claude 5: low to max).
@@ -303,12 +303,15 @@ class HiveProviderFeatures:
                            kind='llm', usage=getattr(raw, 'usage', None),
                            prompt_chars=getattr(self, '_hive_prompt_chars', 0), completion_chars=len(text))
         if choices and text and not getattr(choices[0].message, 'tool_calls', None):
-            from hive.runtime.extensions.helper_command_parser import signature_raw_batch_complete
+            from hive.runtime.extensions.helper_command_parser import signature_raw_batch_complete, unclosed_heredoc
             # The ORIGINAL SDK content: a literal opening quote and an encoded closing quote must never become
             # runnable through cleanup. hive-run-response validates the decoded batch again before repair.
             if not signature_raw_batch_complete(text):
                 log.info('format failure: a %d-character text reply is not a complete batch: %r', len(text), text[:200])
-                _FORMAT_CAUSE = 'an incomplete batch of commands'
+                # a body no marker line closes is named, so the retry closes it (Jon's review of #497, P2)
+                marker = unclosed_heredoc(text)
+                _FORMAT_CAUSE = (f"a body opened with <<'{marker}' and no line {marker} to close it" if marker
+                                 else 'an incomplete batch of commands')
                 return providers.LLMResponse().with_error('Incomplete provider response; no commands executed')
             return response(text)
         result = super().convert_response(raw)

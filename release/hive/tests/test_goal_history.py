@@ -188,6 +188,17 @@ def test_history_search_is_literal_paged_and_scoped(client, mind):
                        json={"instruction": " "}).status_code == 400
 
 
+def test_an_ask_threads_bookkeeping_goal_is_never_listed_as_completed_work(client, mind):
+    swarm, reader, maker, invoke = mind
+    work = completed(client, swarm, maker, title="Weekly report")
+    hive = client.app.state.hive
+    thread = hive.goals._create_record(swarm["id"], "Ask thread", "", created_by="user:operator",
+                                       binding={"kind": "ask.thread"})
+    hive.db.execute("UPDATE goals SET status = 'done', result = 'answered' WHERE id = ?", (thread["id"],))
+    listed = client.get("/api/agent/goals/history", headers=agent_headers(reader)).json()
+    assert [goal["id"] for goal in listed["goals"]] == [work["id"]]
+
+
 def test_continuation_preserves_result_schema_and_review(client):
     swarm = client.post("/api/swarms", json={"name": "Reviewed"}).json()
     agent = client.post("/api/agents", json={"name": "Maker", "kind": "module", "swarm_id": swarm["id"]}).json()

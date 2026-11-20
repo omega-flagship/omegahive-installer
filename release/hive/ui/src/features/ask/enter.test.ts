@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest'
 import { decide, resolve, type Candidate, type World } from '../../lib/intent'
 import { askRows, asksMind, enterAction, highlighted, sendsToMind, type AskSeen } from './enter'
 import fieldSource from './useAskField.ts?raw'
+import classicSource from './ClassicAsk.tsx?raw'
+import stillLineSource from './StillLine.tsx?raw'
+import stillSource from '../../experiences/still/Ask.tsx?raw'
+import constructSource from '../../experiences/construct/CommandLine.tsx?raw'
 
 /**
  * UI review 2026-10-12 ST1 (money safety): with "Search everything for “kelp”" highlighted and marked ↵, Enter sent the
@@ -164,5 +168,38 @@ describe('ST1 is wired: the one hook every skin draws uses these rows and this r
     expect(fieldSource).not.toMatch(/if \(useAskStore\.getState\(\)\.open\) return run/)
     // one policy switch on Enter, reached only through enterAction
     expect(fieldSource.match(/switch \(d\.kind\)/g)).toHaveLength(1)
+  })
+})
+
+describe('feedback #127: a pointer over a row is not a choice', () => {
+  it('“Hi”: with no arrow key pressed, Enter takes the mind row wherever the pointer rests; an arrow key to Search takes Search', () => {
+    for (const experience of EXPERIENCES) {
+      const f = field('Hi', experience)
+      expect(f.d.kind, experience).toBe('mind')
+      const at = f.rows.findIndex((c) => c.act?.do === 'search')
+      expect(at, experience).toBeGreaterThan(0)
+      // the pointer over Search changes neither `sel` nor `moved` (the hook keeps hover apart), so Enter sees the rest state
+      const rest = f.enter(0, false)
+      expect(rest, experience).toEqual({ kind: 'take', c: f.rows[0] })
+      expect(asksMind(rest), experience).toBe(true)
+      // the keyboard moved the highlight to Search: Enter searches
+      const moved = f.enter(at, true)
+      expect(moved, experience).toEqual({ kind: 'take', c: f.rows[at] })
+      expect(asksMind(moved), experience).toBe(false)
+    }
+  })
+
+  it('is wired: hover is its own state, Enter never reads it, and no row sets the selection from a mouse handler', () => {
+    expect(fieldSource).toContain('const [hover, setHover] = useState<number | null>(null)')
+    const hoverRow = fieldSource.slice(fieldSource.indexOf('hoverRow: (i: number) => ({'), fieldSource.indexOf('list: value.trim()'))
+    expect(hoverRow).toContain('setHover')
+    expect(hoverRow).not.toMatch(/setSel|setMoved/)
+    // enterAction is still given only the keyboard's selection
+    expect(fieldSource).toContain('enterAction(shownList, sel, moved, decision,')
+    for (const [name, source] of Object.entries({ classicSource, stillLineSource, stillSource, constructSource })) {
+      expect(source, name).toContain('{...f.hoverRow(i)}')
+      expect(source, name).not.toMatch(/onMouse\w+=\{[^}]*setSel\(/)
+      expect(source, name).not.toMatch(/onPointer(Move|Enter|Over)=\{[^}]*setSel\(/)
+    }
   })
 })

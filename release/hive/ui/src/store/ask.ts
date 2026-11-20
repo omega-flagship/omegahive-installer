@@ -31,7 +31,7 @@ import type { BrowserAskOwner } from '../features/browserIter/askOwner'
  *    under the same id (the host returns the original turn), until the host settles it (Review B1, 45392df).
  */
 import { create } from 'zustand'
-import { AskRefusal, checkAskEvent, readCapabilities, readResearchView, type AppActProposal, type AskBody, type AskContext, type AskEvent, type AskSettings, type AskThread, readActingAs, readMyMind, readBrowserMindRoute, type BrowserMindRoute, type ActingAs, type MyMind, type AskVia, type AskWho, type PresenceTarget, type PresenceVerb, type RefusalReason, type ResearchView } from '../api/ask'
+import { AskRefusal, checkAskEvent, readCapabilities, readResearchView, RESEARCHER_ASLEEP, type AppActProposal, type AskBody, type AskContext, type AskEvent, type AskSettings, type AskThread, readActingAs, readMyMind, readBrowserMindRoute, type BrowserMindRoute, type ActingAs, type IntentState, type MyMind, type AskVia, type AskWho, type PresenceTarget, type PresenceVerb, type RefusalReason, type ResearchView } from '../api/ask'
 import { ApiError, type HiveClient } from '../api/client'
 import { EXPERIENCES } from '../experiences/registry'
 import { featureById } from '../features/registry'
@@ -238,7 +238,21 @@ export interface AskRow {
    * is the thread's latest request, `until` the time it is kept to (stoppedUntil)
    */
   ending?: { early: boolean; latest: boolean; until: number }
+  /** answer rows: where the answer came from, said under it (features/ask/answer.metta) */
+  source?: AnswerSource
+  /**
+   * a turn's last answer row: the research request it held back because the Research swarm is asleep (its intent), and
+   * how that intent stands since (its frames): under it, one press wakes the swarm and sends it (askResearchWake)
+   */
+  wait?: { intent: string; state: IntentState }
 }
+
+/**
+ * Where an answer came from: a model alone (a conducted turn: the conductor's tools hold no web search), the asker's own
+ * mind's model on a turn with that mind (`of: 'mind'`) or the model the Ask uses (`of: 'ask'`), as the host's accepted
+ * frame says; or the web, with the pages a researcher cited and whether it opened each (a research report).
+ */
+export type AnswerSource = { kind: 'model'; of: 'mind' | 'ask' } | { kind: 'web'; sources: { url: string; title?: string; verified: boolean }[] }
 
 /** What the page did with a frame (only the page knows; the host's frame says what was asked). */
 export type Outcome =
@@ -585,6 +599,35 @@ const proposalLabel = (label: string | undefined, r: Route) => (label ?? '').rep
  * A turn's rows, derived from its frames and the page's outcomes: the person's words, then every frame in seq order
  * with the steers (echoed or still pending) and page notes in their places. Pure: the same turn gives the same rows.
  */
+export function researchRow(e: Extract<AskEvent, { phase: 'research' }>, base: Pick<AskRow, 'id' | 'op' | 'seq'>): AskRow {
+  if (e.state === 'held') {
+    const reason = {
+      spend_rate: () => `its next call fits the monthly spending pace around ${new Date(e.until!).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
+      spending_limit: () => 'its next call needs room in its spending limit',
+      asleep: () => 'the researcher is asleep',
+      worker_error: () => 'the researcher stopped with an error',
+    }[e.reason]()
+    return { ...base, kind: 'note', text: `Research is waiting because ${reason}.` }
+  }
+  if (e.state === 'resumed') return { ...base, kind: 'note', text: 'Research has resumed.' }
+  if (e.state !== 'done') {
+    const text = e.state === 'failed' ? 'Research ended without a report.' : 'The research request was cancelled.'
+    return { ...base, kind: 'note', text }
+  }
+  const report = e.research?.report
+  if (!report) return { ...base, kind: 'note', text: 'Research finished. Its report could not be loaded.' }
+  const sections = report.sections.flatMap(section => [
+    section.heading,
+    ...section.claims.map(claim => {
+      const sources = claim.citations.filter(citation => citation.match !== null)
+        .map(citation => `${citation.url}${citation.match === 'path' ? ' (page path verified)' : ''}`)
+      return [claim.text, sources.length ? sources.join('\n') : 'No verified source.'].join('\n')
+    }),
+  ])
+  const questions = report.open_questions.length ? ['Open questions', ...report.open_questions] : []
+  return { ...base, kind: 'answer', who: 'Research', text: [report.summary, ...sections, ...questions].join('\n\n') }
+}
+
 export function turnRows(t: TurnMeta, mindName?: string, thread?: { spent_usd: number; budget_usd: number; mind?: { id: string } } | null): AskRow[] {
   // an answer is named by the mind whose voice gave it (the hive's speaks_as): on a swarm turn of a person who has
   // their own mind that is their mind, never the coordinator the turn is routed to for money and limits; by id, so the
@@ -598,6 +641,12 @@ export function turnRows(t: TurnMeta, mindName?: string, thread?: { spent_usd: n
   if (t.rerouted && (!t.actingAs || t.fixSwarm)) rows.push({ id: `${t.op}#around`, op: t.op, kind: 'note', text: t.rerouted, ...(t.reroutedWhy ? { detail: t.reroutedWhy } : {}), ...(t.fixSwarm ? { swarm: t.fixSwarm, fixCoordinator: true } : {}) })
   const echoed = new Set<string>()
   for (const e of t.events) if (e.phase === 'steer') echoed.add(e.steer_id)
+  // the conductor answers this turn: each of its answers comes from the model its accepted frame names, alone (a research
+  // report is its own row); a value the host never sends says nothing
+  const of = t.events.map((e) => (e.phase === 'accepted' ? e.conducted : undefined)).find((c) => c === 'mind' || c === 'ask')
+  const source: AnswerSource | undefined = of ? { kind: 'model', of } : undefined
+  // research this turn held back because the Research swarm is asleep, by intent, with each one's state since then
+  const waits = new Map<string, IntentState>()
   const pending = t.steers.filter((s) => !echoed.has(s.steer_id))
   const notesAt = (seq: number) => t.notes.filter((n) => n.after === seq)
   const steersAt = (seq: number) => pending.filter((s) => s.at_seq === seq)
@@ -625,13 +674,13 @@ export function turnRows(t: TurnMeta, mindName?: string, thread?: { spent_usd: n
       case 'answer':
         if (e.delta) {
           if (streaming) streaming.text = (streaming.text + e.text).slice(0, ANSWER_MAX)
-          else rows.push((streaming = { ...base, kind: 'answer', text: e.text, who, whoId, streaming: true }))
+          else rows.push((streaming = { ...base, kind: 'answer', text: e.text, who, whoId, streaming: true, ...(source ? { source } : {}) }))
         } else if (streaming) {
           // the whole answer replaces the pieces (Platform: the host always ends with one non-delta answer, or done)
           streaming.text = e.text
           streaming.streaming = false
           streaming = null
-        } else rows.push({ ...base, kind: 'answer', text: e.text, who, whoId })
+        } else rows.push({ ...base, kind: 'answer', text: e.text, who, whoId, ...(source ? { source } : {}) })
         break
       case 'act':
         if (o?.kind === 'act') rows.push({ ...base, kind: 'local', text: o.text, state: o.state, undo: o.undo })
@@ -640,12 +689,22 @@ export function turnRows(t: TurnMeta, mindName?: string, thread?: { spent_usd: n
         rows.push({ ...base, kind: 'local', text: `Handed to ${e.to.name ?? e.to.ref}: ${e.label ?? e.intent_kind}`, state: 'sent' })
         break
       case 'research': {
-        // the report back at its turn: in the live frame, or read by its id (outcome research), or not readable here
-        const view = e.research ?? (o?.kind === 'research' ? o.view : undefined)
+        // its researcher held or back at work: a note under the turn saying why (researchRow)
+        if (e.state === 'held' || e.state === 'resumed') {
+          rows.push(researchRow(e, base))
+          break
+        }
+        // the report back at its turn: in the live frame (the host sends research.py's whole view), or read by its id
+        // (outcome research), or not readable here
+        const view = ('research' in e ? e.research : undefined) ?? (o?.kind === 'research' ? o.view : undefined)
         if (e.state !== 'done') rows.push({ ...base, kind: 'research', text: RESEARCH_WORDS[e.state], state: 'failed' })
         else rows.push({ ...base, kind: 'research', text: view ? RESEARCH_WORDS.done : view === null ? RESEARCH_WORDS.unread : RESEARCH_WORDS.loading, state: view ? 'sent' : view === null ? 'failed' : 'waiting', ...(view ? { research: view } : {}) })
         break
       }
+      case 'intent':
+        if (e.state === 'refused' && e.reason === RESEARCHER_ASLEEP) waits.set(e.intent_id, 'refused')
+        else if (waits.has(e.intent_id)) waits.set(e.intent_id, e.state)
+        break
       case 'proposal':
         if (o?.kind === 'nav') rows.push({ ...base, kind: 'nav', text: `Opened ${o.label}`, route: o.route, from: o.from, label: o.label, state: o.state, moveId: e.proposal.id })
         else if (o?.kind === 'go') rows.push({ ...base, kind: 'go', text: `Suggested: ${o.label}`, route: o.route, label: o.label, moveId: e.proposal.id })
@@ -690,6 +749,16 @@ export function turnRows(t: TurnMeta, mindName?: string, thread?: { spent_usd: n
   }
   // a closed turn settles an answer still arriving: what came is what it said
   if (streaming && t.state !== 'open' && t.state !== 'sending') streaming.streaming = false
+  // the latest held-back research waits under the turn's last answer, where its Wake press is drawn
+  const wait = [...waits].pop()
+  if (wait) {
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (rows[i].kind === 'answer') {
+        rows[i] = { ...rows[i], wait: { intent: wait[0], state: wait[1] } }
+        break
+      }
+    }
+  }
   if (t.gap) {
     // Review B2: the history is not whole. Said plainly; nothing after the gap was applied.
     const gaveUp = t.gap.state === 'gave-up'

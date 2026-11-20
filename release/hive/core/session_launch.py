@@ -276,15 +276,20 @@ def request_credential(socket_path, request, timeout=10):
         sock.settimeout(timeout)
         sock.connect(str(socket_path))
         check_peer(sock)
-        sock.sendall(json.dumps(request, separators=(",", ":")).encode() + b"\n")
         chunks = []
-        while True:
-            chunk = sock.recv(65536)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            if chunk.endswith(b"\n"):
-                break
+        # A socket that refuses closes without reading the request. Linux reports that close as a reset, or as a broken
+        # pipe when it comes before the request is sent, and macOS as end of file: each is a close with no answer.
+        try:
+            sock.sendall(json.dumps(request, separators=(",", ":")).encode() + b"\n")
+            while True:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                if chunk.endswith(b"\n"):
+                    break
+        except (BrokenPipeError, ConnectionResetError):
+            pass
     return json.loads(b"".join(chunks) or b"null")
 
 

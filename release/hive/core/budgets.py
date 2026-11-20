@@ -358,7 +358,7 @@ class Budgets:
                 # is for pays nothing, bounded by their model calls a day. Settles exactly as the gateway would admit it now
                 gw.enforce_egress(agent, provider_name)
                 payer = gw.free_gate.person_for(agent, principal=user) if gw.free_gate is not None else None
-                gw.admit_free(agent, principal=user)
+                gw.admit_free(agent, principal=user, idle_guard=False)   # who pays, not whether the mind rests now
                 return dict(out, payer=payer, payer_mode="free", bounded=True)
             if provider.local:
                 return dict(out, free=True, bounded=True)

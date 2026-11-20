@@ -55,10 +55,10 @@ describe('threadInfo: the audit sentence only where it is true', () => {
     const swarm = { id: 's_lyra', name: 'Lyra' }
     const facts = (f: { name: string; coordinator_id?: string | null } | undefined) => () => f
     // no coordinator: the mind answers directly through the answer-through route, and the line says so
-    expect(threadInfo({ mind: { id: 'a_vega', name: 'Vega' }, swarm }, me, shown, facts({ name: 'Lyra', coordinator_id: null }))).toBe('Answers come from Vega’s own knowledge. Vega answers directly, because Lyra has no coordinator. Admins can review this in the audit log.')
+    expect(threadInfo({ mind: { id: 'a_vega', name: 'Vega' }, swarm }, me, shown, facts({ name: 'Lyra', coordinator_id: null }))).toBe('Answers come from Vega. Vega answers directly, because Lyra has no coordinator. Admins can review this in the audit log.')
     expect(threadInfo({ mind: { id: 'a_vega', name: 'Vega' }, swarm }, me, shown, facts({ name: 'Lyra', coordinator_id: '' }))).not.toMatch(/’s coordinator|orchestrator/)
     // another mind coordinates: this one is not called the coordinator
-    expect(threadInfo({ mind: { id: 'a_vega', name: 'Vega' }, swarm }, me, shown, facts({ name: 'Lyra', coordinator_id: 'a_orion' }))).toBe('Answers come from Vega’s own knowledge, in Lyra. Admins can review this in the audit log.')
+    expect(threadInfo({ mind: { id: 'a_vega', name: 'Vega' }, swarm }, me, shown, facts({ name: 'Lyra', coordinator_id: 'a_orion' }))).toBe('Answers come from Vega, in Lyra. Admins can review this in the audit log.')
     // not known who coordinates: nothing claimed
     expect(threadInfo({ mind: { id: 'a_vega', name: 'Vega' }, swarm }, me, shown)).not.toMatch(/orchestrator|no coordinator/)
     expect(threadInfo({ mind: { id: 'a_vega', name: 'Vega' }, swarm }, me, shown, facts({ name: 'Lyra' }))).not.toMatch(/’s coordinator|orchestrator|no coordinator/)
@@ -66,13 +66,13 @@ describe('threadInfo: the audit sentence only where it is true', () => {
   const shown = (n: string) => n
   it('a personal-mind thread never says admins can review it', () => {
     const words = threadInfo({ mind: { id: 'a_me', name: 'Jon Grove' }, swarm: { id: 's_me', name: 'Jon Grove' } }, me, shown)
-    expect(words).toBe('Answers come from Jon Grove’s own knowledge.')
+    expect(words).toBe('Answers come from Jon Grove.')
     // another mind in the same swarm is not the person's own: its thread keeps the sentence
     expect(threadInfo({ mind: { id: 'a_other', name: 'Vega' }, swarm: { id: 's_me', name: 'Lyra' } }, me, shown)).toMatch(/Admins can review this in the audit log\.$/)
   })
   it('a swarm thread keeps it', () => {
     const lyra = (coordinator_id: string | null) => (id: string) => (id === 's_lyra' ? { name: 'Lyra', coordinator_id } : undefined)
-    expect(threadInfo({ mind: { id: 'a_vega', name: 'Vega' }, swarm: { id: 's_lyra', name: 'Lyra' } }, me, shown, lyra('a_vega'))).toBe('Answers come from Vega’s own knowledge, as Lyra’s coordinator. Admins can review this in the audit log.')
+    expect(threadInfo({ mind: { id: 'a_vega', name: 'Vega' }, swarm: { id: 's_lyra', name: 'Lyra' } }, me, shown, lyra('a_vega'))).toBe('Answers come from Vega, as Lyra’s coordinator. Admins can review this in the audit log.')
     expect(threadInfo({ mind: { id: 'a_vega', name: 'Vega' }, swarm: null }, null, shown)).toMatch(/Admins can review this in the audit log\.$/)
   })
 })

@@ -1,3 +1,5 @@
+// Purpose: draw the interactive Studio canvas and connect its controls to the host.
+
 import { plural } from '../../lib/plural'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { fillAsk } from '../../features/ask/useAskField'
@@ -8,6 +10,7 @@ import { Compare, Deliver, Drawer, Empty, ErrorState, NoticeLine, Skeleton, TopL
 import type { Reserve, View } from './geometry'
 import { describeElement } from './model'
 import { Stage } from './Stage'
+import { StudioRecent } from './StudioRecent'
 import { useCanvas, type CanvasProps } from './useCanvas'
 import { DECK_NOTE } from './words'
 import './designCanvas.css'
@@ -96,7 +99,11 @@ export default function DesignCanvas(props: CanvasProps) {
       aria-label={`${props.program.name}: the living canvas`}
       style={{ ['--dc-top' as string]: `${reserve.top}px`, ['--dc-bottom' as string]: `${reserve.bottom}px` }}
     >
-      {s.phase.kind === 'empty' && <Empty ask={askOrSay} askReady={present} recent={s.recent} scope={props.scope} />}
+      {s.phase.kind === 'empty' && (
+        <Empty ask={askOrSay} askReady={present}>
+          <StudioRecent />
+        </Empty>
+      )}
       {s.phase.kind === 'loading' && <Skeleton reduced={reduced} />}
       {s.phase.kind === 'error' && (
         <ErrorState

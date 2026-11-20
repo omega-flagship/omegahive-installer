@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { SwarmArtifact } from '../../api/moneyWork'
 import { navigate, openInDesign, sameCreation, type CreationReference } from '../../lib/router'
 import { useHive } from '../../store/store'
 import { askConfirm } from '../../ui/confirm'
@@ -65,7 +64,6 @@ export function useCanvas(props: CanvasProps) {
   const [notice, setNotice] = useState<Notice | null>(null)
   const [receipts, setReceipts] = useState<Receipt[]>([])
   const [busy, setBusy] = useState<null | 'saving' | 'committing'>(null)
-  const [recent, setRecent] = useState<SwarmArtifact[] | null>(null)
   /**
    * Stand-in r4 B1: the lifetime epoch the returned controls were rendered under. A cleanup moves the epoch on; a
    * StrictMode replay re-activates the same mount but never the controls rendered before it: it publishes fresh ones
@@ -197,8 +195,7 @@ export function useCanvas(props: CanvasProps) {
   const hadSource = useRef(false)
   useEffect(() => {
     if (!source) {
-      // a late answer for what was open before is dropped; a rerun with nothing open before (a new `view` on a
-      // re-render, as under StrictMode) moves nothing on, so the recent-designs read in flight is not dropped
+      // Drop a late answer when a design was open before this empty canvas.
       if (hadSource.current) loadSeq.current++
       hadSource.current = false
       docRef.current = null
@@ -209,22 +206,6 @@ export function useCanvas(props: CanvasProps) {
     if (docRef.current && sameCreation(docRef.current.reference, source)) return
     void load(source)
   }, [source, load])
-
-  // ---- the person's recent designs in this swarm (a read through the host's artifact list), for the empty canvas
-  useEffect(() => {
-    if (phase.kind !== 'empty' || !scope || !client?.swarmArtifacts) return
-    let live = true
-    const fence = begin()   // the list belongs to the person it was read for
-    const take = (a: SwarmArtifact[]) => {
-      fence.release()
-      if (live && fence.valid()) setRecent(a)
-    }
-    client.swarmArtifacts(scope, { kind: 'studio-source', limit: 6 }).then(take).catch(() => take([]))
-    return () => {
-      live = false
-      fence.release()
-    }
-  }, [phase.kind, scope, client]) // eslint-disable-line react-hooks/exhaustive-deps -- begin reads live state at call time
 
   const dirty = !!doc && isDirty(doc)
   useEffect(() => onDirty?.(dirty), [dirty, onDirty])
@@ -412,7 +393,6 @@ export function useCanvas(props: CanvasProps) {
     receipts,
     busy,
     dirty,
-    recent,
     commit: (...args: Parameters<typeof commit>) => controlsLive() ? commit(...args) : Promise.resolve(false),
     undo: () => { if (controlsLive()) stepBack() },
     redo: () => { if (controlsLive()) stepForward() },

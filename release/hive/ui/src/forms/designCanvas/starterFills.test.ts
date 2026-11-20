@@ -26,7 +26,7 @@ function buttons(node: ReactNode, out: ReactElement<{ className?: string; onClic
 describe('Studio starters fill the Ask (never send)', () => {
   it('each starter button passes its own words to the ask callback', () => {
     const got: string[] = []
-    const tree = Empty({ ask: (t: string) => { got.push(t) }, askReady: true, recent: [], scope: undefined })
+    const tree = Empty({ ask: (t: string) => { got.push(t) }, askReady: true })
     const starters = buttons(tree)
     expect(starters.length).toBe(SUGGESTIONS.length)
     starters.forEach((b) => b.props.onClick?.())

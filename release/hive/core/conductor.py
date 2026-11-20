@@ -238,6 +238,9 @@ DISPATCH_REFUSED_SAY = {
                "Here's what I can tell you myself.",
     "no_researcher": "The Research swarm has no researcher to take this right now, so I didn't send anything. Here's "
                      "what I can tell you myself.",
+    # its coordinator is stopped: the page offers one press under the answer that wakes it and sends this same request
+    "researcher_asleep": "The Research swarm is asleep, so I didn't send this yet. Waking it sends the request; here's "
+                         "what I can tell you myself meanwhile.",
     "research_turn_used": "I've already sent one research request from this message. Ask me again to start another.",
     "research_busy": "You already have three research requests running. When one finishes I can start another.",
     "member_allowance": "Sending this research would go past your monthly allowance, so I didn't send it. An admin "
@@ -467,6 +470,9 @@ _TOOLS = [
           {"kind": {"type": "string", "enum": list(MAKE_KINDS)}, "title": {"type": "string", "maxLength": 300},
            "body": {"type": "string"}}, ["kind", "title"]),
     _dispatch_tool_schema(),
+    _tool("research_status", "Check research this mind previously handed off for this person. Pass its request id "
+          "or omit it for the five most recent. Use this when asked for progress before starting it again.",
+          {"request_id": {"type": "string"}}, []),
     _tool("say", "Speak to the person: a sentence or two, streamed as you go. Set done on your last words when nothing "
                  "is left to do: the turn ends with them, and nothing more is asked of you.",
           {"text": {"type": "string", "maxLength": 2000},
@@ -1852,6 +1858,8 @@ class Conductor:
                 out.append(self._tool_result(call_id, await self._stage_tool(st, name, args)))
             elif name == "make":
                 out.append(self._tool_result(call_id, await self._make_tool(st, args)))
+            elif name == "research_status":
+                out.append(self._tool_result(call_id, self._research_status_tool(st, args)))
             elif name == "remember" and memory_enabled():
                 out.append(self._tool_result(call_id, self._remember_tool(st, args)))
             elif name in TOOL_KIND:
@@ -2033,6 +2041,13 @@ class Conductor:
             st.code_cut = True
             kept = f"{kept}\n\n{CODE_KEPT_OUT}" if kept else CODE_KEPT_OUT
         return kept
+    def _research_status_tool(self, st, args):
+        if not isinstance(args, dict) or set(args) - {"request_id"}:
+            return {"ok": False, "reason": "invalid"}
+        if "request_id" in args and not _str(args["request_id"], 80, FIELD_ID):
+            return {"ok": False, "reason": "invalid"}
+        research = self.hive.research.status_for_turn(st.turn_id, args.get("request_id"))
+        return {"ok": True, "research": research}
 
     async def _dispatch_tool(self, st, args):
         if not isinstance(args, dict) or set(args) - {"kind", "request", "label"} or not _str(args.get("kind"), 80, FIELD_ID) \
@@ -2067,6 +2082,9 @@ class Conductor:
         result = {"ok": True, **frame, "state": out.get("state")}
         if out.get("state") == "linked":
             result["next"] = TASK_SENT_NEXT if out.get("intent_kind") == TASK else DISPATCH_SENT_NEXT
+            if out.get("intent_kind") == "research.request":
+                request_id = out.get("request_id")
+                result["research"] = self.hive.research.status_for_turn(st.turn_id, request_id)
         return result
 
     def _remember_tool(self, st, args):
@@ -2145,7 +2163,7 @@ class Conductor:
             raise DispatchUnavailable(exc.code, dispatch_refused_say(exc.code, reason, recorded.get("intent_kind")),
                                       reason) from None
         view = self.intents.get(viewer, recorded["intent_id"])
-        return {**recorded, "state": view.get("state")}
+        return {**recorded, "state": view.get("state"), "request_id": view.get("request_id")}
 
     # ---- the result route ------------------------------------------------------------------------------------------------
 

@@ -1,6 +1,6 @@
 // Purpose: deliver an Ask turn to the host, first waking the mind that answers it when that mind must be awake.
 /** Host delivery boundary for the Ask: native reads and lifecycle effects stay in the store layer. */
-import { readMyMind, type MyMind, type AskContext } from '../api/ask'
+import { readMyMind, type MyMind, type AskContext, type PageAskContext } from '../api/ask'
 import { ApiError, type HiveClient } from '../api/client'
 import type { Agent, Swarm } from '../api/types'
 
@@ -145,10 +145,12 @@ export class WakeBeforeSend<T> {
 
 /** Existing host reads only. In particular, visibility is not ownership. */
 export type NativeWakeClient = Pick<HiveClient, 'me' | 'askSettings' | 'myMind' | 'getAgent' | 'getSwarm' | 'agentAction'>
+/** What a wake resolves its mind from: a request's context, or only a swarm's (askResearchWake names just the swarm). */
+export type WakeContext = AskContext | Pick<PageAskContext, 'mind' | 'selection' | 'swarm_id'>
 export interface NativeWakeOptions<T> {
   client: NativeWakeClient
   principal: string
-  context: AskContext
+  context: WakeContext
   current(): boolean
   send(): Promise<T>
   phase(phase: WakePhase): void
@@ -284,7 +286,9 @@ export interface WakeView {
   /** The host's reason a failed wake failed (start_refused, or the mind's last_error), when it gave one. */
   reason?: string
 }
-interface DeliveryOptions<T> extends NativeWakeOptions<T> {
+interface DeliveryOptions<T> extends Omit<NativeWakeOptions<T>, 'context'> {
+  /** the request's whole context, which a route to the person's own mind carries on (routeOwn) */
+  context: AskContext
   /** the hive's conductor answers this turn (its capabilities, and no browser answer): nothing is woken first */
   conducted?: boolean
   /** Re-enter the same request, body and operation after a known not-sent result. */

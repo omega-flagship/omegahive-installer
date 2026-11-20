@@ -77,6 +77,43 @@ def test_the_artifacts_page_lists_every_artifact_of_the_swarms_a_person_sees_sav
     assert len(client.get("/api/artifacts?limit=1", headers=ann).json()) == 1
 
 
+def test_recent_saved_pictures_filter_before_the_limit_for_each_viewer(client):
+    ann, bob = person(client, "u_picture_ann"), person(client, "u_picture_bob")
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="8"/>'
+    mine = client.post("/api/swarms", headers=ann, json={"name": "Invented home"}).json()
+    shared = client.post("/api/swarms", headers=ann, json={"name": "Invented work"}).json()
+    other = client.post("/api/swarms", headers=bob, json={"name": "Invented other"}).json()
+    maker, helper, stranger = (client.post("/api/agents", headers=who, json={
+        "name": "Maker", "kind": "module", "swarm_id": swarm["id"],
+    }).json() for who, swarm in ((ann, mine), (ann, shared), (bob, other)))
+
+    def make(agent, title, *, kind="image", body=svg):
+        data = {"kind": kind, "title": title}
+        if body is not None:
+            data["body"] = body
+        response = call(client, agent, "POST", "/api/agent/artifacts", data)
+        assert response.is_success, response.text
+        return response.json()["id"]
+
+    first = make(maker, "First picture")
+    second = make(helper, "Second picture")
+    call(client, helper, "POST", f"/api/agent/artifacts/{second}/revisions", {"body": svg, "parent": 1})
+    make(maker, "No saved revision", body=None)
+    make(maker, "Newer note", kind="note", body="A note.")
+    theirs = make(stranger, "Private picture")
+    db = client.app.state.hive.db
+    for artifact_id, stamp in ((first, "2026-11-11T09:00:00Z"), (second, "2026-11-11T09:00:01Z")):
+        db.execute("UPDATE artifact_revisions SET created_at = ? WHERE artifact_id = ?", (stamp, artifact_id))
+
+    query = "/api/artifacts?kind=image&saved=true"
+    got = client.get(query + "&limit=1", headers=ann)
+    assert got.is_success, got.text
+    assert [(row["artifact_id"], row["revision"]) for row in got.json()] == [(second, 2)]
+    assert "<svg" not in got.text
+    assert [row["artifact_id"] for row in client.get(query, headers=ann).json()] == [second, first]
+    assert [row["artifact_id"] for row in client.get(query, headers=bob).json()] == [theirs]
+
+
 def test_a_member_signed_in_with_a_password_sees_the_creations_of_a_swarm_shared_with_them(client):
     """GET /api/artifacts for a member who signed in with e-mail and password, as testers on staging do
     (omega-flagship/omegahive#69): the creations of a swarm shared with them come back."""

@@ -317,6 +317,26 @@ def test_a_run_of_one_request_answered_alike_is_one_line_with_its_count(client):
     assert [(r["route"], r["status"], r["count"]) for r in requests[:2]] == [("/api/swarms/{swarm_id}", 404, 1), ("/api/swarms", 200, 3)]
 
 
+def test_requests_of_one_millisecond_are_still_newest_first(client):
+    # the stamp is to the millisecond, and a fast machine answers two requests inside one: the order kept decides
+    feedback = client.app.state.hive.feedback
+    at = "2026-11-17T01:23:40.000Z"
+    for _ in range(3):
+        feedback.requested("u_ana", False, "GET", "/api/swarms", 200, 1, at)
+    feedback.requested("u_ben", False, "GET", "/api/hive", 200, 1, at)
+    feedback.requested("u_ana", False, "GET", "/api/swarms/{swarm_id}", 404, 1, at)
+    feedback.requested("u_ben", False, "GET", "/api/hive", 200, 1, at)       # folds into ben's line, now the newest
+    own = feedback.requests_for("u_ana", False)
+    assert [(r["route"], r["status"], r["count"]) for r in own] == [("/api/swarms/{swarm_id}", 404, 1), ("/api/swarms", 200, 3)]
+    everyone = [r for r in feedback.requests_for("u_ana", True) if r["at"] == at]   # not the fixture's own sign-in
+    assert [(r["route"], r["count"], r["who"]) for r in everyone] == [
+        ("/api/hive", 2, "another person"), ("/api/swarms/{swarm_id}", 1, "you"), ("/api/swarms", 3, "you")]
+    assert all(set(r) == {"at", "method", "route", "status", "ms", "count", "who"} for r in everyone)   # the order's count stays inside
+    # an earlier time still comes after a later one, whatever order they were kept in
+    feedback.requested("u_ana", False, "GET", "/api/apps", 200, 1, "2026-11-17T01:23:39.999Z")
+    assert feedback.requests_for("u_ana", False)[-1]["route"] == "/api/apps"
+
+
 def test_nothing_kept_names_an_id_a_query_or_a_body(client):
     ana = person(client, "u_ana")
     secret = secrets.token_urlsafe(32)
@@ -510,3 +530,199 @@ def test_each_person_keeps_only_their_newest_hundred_requests(client):
     assert len(feedback._requests["user:u_zed"]) == fb.KEEP_REQUESTS   # the hive holds no more than that a person
     kept = feedback.requests_for("user:u_zed", False)
     assert len(kept) == fb.KEEP_REQUESTS and kept[0]["at"] == "2026-11-17T00:01:59.000Z" and kept[-1]["at"] == "2026-11-17T00:00:20.000Z"
+
+
+# ---- the report service's token, and what a report may also carry ---------------------------------------------------
+
+class _Echo(http.server.BaseHTTPRequestHandler):
+    """A report service that keeps each post's Authorization header, and may answer with a redirect."""
+    auth: list = []
+    redirect_to: str | None = None
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers["Content-Length"]))
+        _Echo.auth.append(self.headers.get("Authorization"))
+        if _Echo.redirect_to:
+            self.send_response(307)
+            self.send_header("Location", _Echo.redirect_to)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        body = b'{"reference": "https://github.com/acme/board/issues/7"}'
+        self.send_response(201)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture()
+def echo():
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Echo)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    _Echo.auth, _Echo.redirect_to = [], None
+    yield f"http://127.0.0.1:{server.server_address[1]}/report"
+    server.shutdown()
+
+
+TOKEN = "relay-token-0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+
+
+def test_a_report_goes_with_the_token_the_file_holds_and_without_one_when_no_file_is_named(client, echo, tmp_path, caplog):
+    feedback = client.app.state.hive.feedback
+    feedback.to = fb.destination(echo)
+    assert feedback.token_file is None
+    assert client.post("/api/feedback/send", json=_report()).status_code == 200
+    assert _Echo.auth == [None]                      # no file named: no header
+    held = tmp_path / "relay.token"
+    held.write_text(f"  {TOKEN}\n")
+    feedback.token_file = str(held)
+    with caplog.at_level(logging.DEBUG):
+        r = client.post("/api/feedback/send", json=_report())
+    assert r.status_code == 200 and r.json()["reference"] == "https://github.com/acme/board/issues/7"
+    assert _Echo.auth == [None, f"Bearer {TOKEN}"]   # the file's text, the white space around it off
+    assert TOKEN not in r.text and TOKEN not in caplog.text
+    # read at each send: a new token needs no restart
+    held.write_text("another-token-1234567890")
+    assert client.post("/api/feedback/send", json=_report()).status_code == 200
+    assert _Echo.auth[-1] == "Bearer another-token-1234567890"
+
+
+def test_the_setting_names_the_token_file(monkeypatch):
+    from hive.core.config import load_settings
+    monkeypatch.setenv("HIVE_FEEDBACK_TOKEN_FILE", "/run/secrets/feedback-relay.token")
+    assert load_settings().feedback_token_file == "/run/secrets/feedback-relay.token"
+    monkeypatch.delenv("HIVE_FEEDBACK_TOKEN_FILE")
+    assert load_settings().feedback_token_file is None
+
+
+@pytest.mark.parametrize("make", ["missing", "empty", "folder", "two lines", "not text"])
+def test_a_token_file_that_cannot_be_read_sends_nothing_and_says_so_in_plain_words(client, echo, tmp_path, caplog, make):
+    held = tmp_path / "relay.token"
+    if make == "empty":
+        held.write_text(" \n")
+    elif make == "folder":
+        held.mkdir()
+    elif make == "two lines":        # a line break would add a header of its own
+        held.write_text(f"{TOKEN}\nX-Other: 1")
+    elif make == "not text":
+        held.write_bytes(b"\xff\xfe\x00" + TOKEN.encode())
+    feedback = client.app.state.hive.feedback
+    feedback.to, feedback.token_file = fb.destination(echo), str(held)
+    with caplog.at_level(logging.DEBUG):
+        r = client.post("/api/feedback/send", json=_report())
+    assert r.status_code == 502 and r.json()["error"]["code"] == "report_not_delivered"
+    words = r.json()["error"]["message"]
+    assert "could not read its token" in words and "was not sent" in words
+    assert _Echo.auth == []                          # nothing left the hive
+    for text in (r.text, caplog.text, json.dumps(client.get("/api/feedback/logs").json())):
+        assert TOKEN not in text and str(tmp_path) not in text and "Errno" not in text
+
+
+def test_a_service_that_fails_never_has_the_token_in_the_answer_the_log_or_the_logs(client, echo, tmp_path, caplog):
+    held = tmp_path / "relay.token"
+    held.write_text(TOKEN)
+    feedback = client.app.state.hive.feedback
+    feedback.token_file = str(held)
+    # a redirect is not followed: the token would travel on to wherever it points
+    feedback.to = fb.destination(echo)
+    _Echo.redirect_to = echo + "/elsewhere"
+    with caplog.at_level(logging.DEBUG):
+        moved = client.post("/api/feedback/send", json=_report())
+    assert moved.status_code == 502 and "answered 307" in moved.json()["error"]["message"]
+    assert _Echo.auth == [f"Bearer {TOKEN}"]         # one post, none after the redirect
+    # a service that is not there
+    feedback.to = fb.destination("http://127.0.0.1:9/report")
+    with caplog.at_level(logging.DEBUG):
+        gone = client.post("/api/feedback/send", json=_report())
+    assert gone.status_code == 502 and "Could not reach" in gone.json()["error"]["message"]
+    logs = json.dumps(client.get("/api/feedback/logs").json())
+    for text in (moved.text, gone.text, caplog.text, logs):
+        assert TOKEN not in text
+    try:
+        feedback.send(_report())
+    except RuntimeError as e:                        # no chain to log: the request it would name holds the token
+        assert e.__cause__ is None and e.__suppress_context__
+
+
+REQUEST = {"at": "2026-11-17T01:23:40Z", "method": "GET", "route": "/api/swarms/{swarm_id}", "status": 404, "ms": 4, "count": 1, "who": "you"}
+ERROR = {"at": "2026-11-17T01:23:40Z", "id": "e-1a2b3c4d", "where": "GET /api/swarms/{swarm_id}", "status": 404, "code": "not_found",
+         "message": "no such swarm"}
+LOG = "2026-11-17T01:23:31Z WARNING hive: the model provider answered 429"
+
+
+def test_a_report_may_carry_recent_requests_errors_and_log_lines_and_one_without_them_still_passes():
+    assert fb.report_problems(_report()) == ""
+    assert fb.report_problems(_report(recent_requests=[REQUEST], errors=[ERROR], logs=[LOG])) == ""
+    assert fb.report_problems(_report(recent_requests=[], errors=[], logs=[])) == ""
+    assert fb.report_problems(_report(recent_requests=None, errors=None, logs=None)) == ""
+    # as many as the hive takes of each
+    assert fb.report_problems(_report(recent_requests=[REQUEST] * fb.SEND_REQUESTS, errors=[ERROR] * fb.SEND_ERRORS,
+                                      logs=[LOG] * fb.SEND_LOGS)) == ""
+
+
+@pytest.mark.parametrize("over, problem", [
+    ({"recent_requests": "GET /api/hive"}, "recent_requests is a list"),
+    ({"recent_requests": ["GET /api/hive"]}, "each of recent_requests"),
+    ({"recent_requests": [{**REQUEST, "body": "x"}]}, "each of recent_requests"),
+    ({"recent_requests": [{**REQUEST, "status": 4.5}]}, "each of recent_requests"),
+    ({"recent_requests": [{**REQUEST, "status": True}]}, "each of recent_requests"),
+    ({"recent_requests": [{**REQUEST, "who": {"name": "ana"}}]}, "each of recent_requests"),
+    ({"recent_requests": [REQUEST] * (fb.SEND_REQUESTS + 1)}, "recent_requests holds at most 50"),
+    ({"errors": {"id": "e-1"}}, "errors is a list"),
+    ({"errors": [{**ERROR, "principal": "user:u_ana"}]}, "each of errors"),
+    ({"errors": [ERROR] * (fb.SEND_ERRORS + 1)}, "errors holds at most 100"),
+    ({"logs": LOG}, "logs is a list"),
+    ({"logs": [{"message": LOG}]}, "logs is a list of lines of text"),
+    ({"logs": [LOG] * (fb.SEND_LOGS + 1)}, "logs holds at most 400"),
+    ({"logs": ["x" * 1024] * 201}, "together hold at most 200 KB"),
+    ({"logs": ["x" * 1024] * 100, "errors": [{"message": "y" * 1024}] * 100}, "together hold at most 200 KB"),
+])
+def test_what_a_report_carries_beside_the_words_is_checked_for_shape_and_size(client, service, over, problem):
+    assert problem in fb.report_problems(_report(**over))
+    client.app.state.hive.feedback.to = fb.destination(service)
+    r = client.post("/api/feedback/send", json=_report(**over))
+    assert r.status_code == 400 and r.json()["error"]["code"] == "bad_report" and problem in r.json()["error"]["message"]
+    assert _Service.got == []
+
+
+def test_the_hive_cleans_every_text_a_report_carries_again_and_adds_nothing(client, service, monkeypatch):
+    hive = client.app.state.hive
+    hive.feedback.to = fb.destination(service)
+    fake_key = "sk-or-v1-" + "0123456789abcdef0123"   # built at run time: the token scanner refuses the whole shape in source
+    held = "held-by-this-hive-only-123"   # a key of no known shape, which only the hive that holds it can take out
+    redact.REDACTOR.register(held)
+    report = _report(
+        recent_requests=[{**REQUEST, "route": "/api/people/ana@example.org"}],
+        errors=[{**ERROR, "message": "key:k_0000b0b1 has spent its month, says user:u_ana from 203.0.113.9",
+                 "raised": "KeyError at /Users/ana/hive/core/ask.py:1130 in _close"}],
+        logs=["2026-11-17T01:23:31Z WARNING hive: Bearer abcdefgh12345678 refused for ben@example.org",
+              f"2026-11-17T01:23:30Z ERROR hive: {fake_key} was sent, then {held}"])
+    try:
+        r = client.post("/api/feedback/send", json=report)
+    finally:
+        redact.REDACTOR.unregister(held)
+    assert r.status_code == 200, r.text
+    [got] = _Service.got
+    sent = json.dumps(got)
+    for secret in ("ana@example.org", "k_0000b0b1", "u_ana", "203.0.113.9", "/Users/ana", "abcdefgh12345678", "ben@example.org",
+                   fake_key, held):
+        assert secret not in sent, secret
+    assert got["recent_requests"] == [{**REQUEST, "route": "/api/people/[email]"}]   # numbers and clean texts as they were
+    assert got["errors"][0]["status"] == 404 and got["errors"][0]["id"] == "e-1a2b3c4d"
+    assert "[key]" in got["logs"][1] and len(got["logs"]) == 2
+    # nothing else is touched, and nothing is added
+    assert {k: v for k, v in got.items() if k not in ("recent_requests", "errors", "logs")} == \
+        {k: v for k, v in report.items() if k not in ("recent_requests", "errors", "logs")}
+    # each text is as the hive's own cleaning of what it keeps leaves it
+    assert got["logs"][0] == redact.clean(report["logs"][0])
+    assert report["logs"][0].startswith("2026-11-17T01:23:31Z WARNING hive: Bearer abcdefgh")   # the report given is not changed
+
+
+def test_a_clean_report_with_requests_and_logs_is_passed_on_as_the_person_saw_it(client, service):
+    client.app.state.hive.feedback.to = fb.destination(service)
+    report = _report(recent_requests=[REQUEST], errors=[ERROR], logs=[LOG])
+    assert client.post("/api/feedback/send", json=report).status_code == 200
+    assert _Service.got == [report]

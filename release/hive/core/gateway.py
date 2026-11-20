@@ -620,13 +620,15 @@ class Gateway:
         elif callable(getattr(gate, "bridge_up", None)):
             gate.bridge_up(provider)
 
-    def admit_free(self, agent, principal=None, dispatch=False):
+    def admit_free(self, agent, principal=None, dispatch=False, idle_guard=True):
         """A call on the free route is admitted only by the hive's FreeGate (free_inference.py: offered, a model the deploy
-        pays for, for a person it admits, under their calls and the hive's for the day). dispatch=True counts this call
-        and returns its ticket (for free_uncommitted). principal: as admit_subscription. Refuses with no gate."""
+        pays for, for a person it admits, a mind someone asked lately, under their calls and the hive's for the day).
+        dispatch=True counts this call and returns its ticket (for free_uncommitted). principal: as admit_subscription.
+        idle_guard=False asks whether the route would serve the mind at all, resting aside (FreeGate.admit). Refuses
+        with no gate."""
         if self.free_gate is None:
             raise refused("free_inference_off", 403)
-        return self.free_gate.admit(agent, principal=principal, dispatch=dispatch)
+        return self.free_gate.admit(agent, principal=principal, dispatch=dispatch, idle_guard=idle_guard)
 
     def free_uncommitted(self, ticket, committed):
         """A counted free call ended, any way (no connection, a refusal or a closed turn at the send boundary, a

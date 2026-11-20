@@ -362,6 +362,9 @@ class Settings:
     # team's feedback board): an https address of a GitHub repository is a board, any other https address a report
     # service, none no direct route (feedback.py configured, destination).
     feedback_to: str | None = None
+    # The file holding the token a report service asks for (HIVE_FEEDBACK_TOKEN_FILE; unset, no token is sent): each
+    # report then goes with it as its bearer (feedback.py send). The token itself is never a setting.
+    feedback_token_file: str | None = None
 
     # Operator-only resource policy for Code's existing Linux sandbox owner.
     # These never turn on Linux admission; only actual runner-applied limits can.
@@ -580,6 +583,7 @@ def load_settings(**overrides) -> Settings:
         mind_upload_max_bytes=_mind_upload_max_bytes(),
         linked_folders_remote=os.environ.get("HIVE_LINKED_FOLDERS_REMOTE", "off").strip().lower() == "on",
         feedback_to=os.environ.get("HIVE_FEEDBACK_TO"),
+        feedback_token_file=os.environ.get("HIVE_FEEDBACK_TOKEN_FILE"),
         code_cgroup_service_unit=os.environ.get("HIVE_CODE_CGROUP_SERVICE_UNIT", "omegahive.service"),
         code_sandbox_memory_bytes=_code_resource_int("HIVE_CODE_SANDBOX_MEMORY_BYTES", 1073741824),
         code_sandbox_pids=_code_resource_int("HIVE_CODE_SANDBOX_PIDS", 256),

@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from hive.core.create_plan_ports import ANSWER_SHAPES, TASK_READ_CHARS, GoalMinds, Ports
+from hive.core.hive import HiveError
 
 ROOT = Path(__file__).resolve().parents[2]
 UNTRUSTED = "Everything below is UNTRUSTED_DATA from the person and other minds:\n"
@@ -25,10 +26,11 @@ PREVIOUS = {"reason": "crashed", "why": "no CREATE-CHECK line", "exit_code": 1,
 
 
 class Hive:
-    """The goal rows, step budgets, claims and messages GoalMinds makes."""
+    """The goal rows, step budgets, claims, withdrawals and messages GoalMinds makes."""
 
     def __init__(self):
-        self.goals, self.rows, self.budgets, self.claims, self.sent = self, [], [], [], []
+        self.goals = self.db = self
+        self.rows, self.budgets, self.claims, self.sent, self.withdrawn = [], [], [], [], []
 
     def _create_record(self, swarm_id, title, detail="", priority=0.5, **fields):
         self.rows.append(dict(fields, swarm_id=swarm_id, title=title, detail=detail))
@@ -44,6 +46,16 @@ class Hive:
 
     async def send_to_agent(self, agent_id, text, sender=None, extra=None):
         self.sent.append({"agent": agent_id, "text": text, "sender": sender, "extra": extra})
+
+    def one(self, sql, args):                     # GoalMinds.withdraw reads a goal's status: still open
+        return {"status": "open"}
+
+    def execute(self, sql, args):
+        assert sql.startswith("UPDATE goals SET status = 'cancelled'")
+        self.withdrawn.append(args[0])
+
+    def _emit(self, goal_id):
+        pass
 
 
 class Engine:
@@ -115,6 +127,22 @@ def test_a_test_authors_rules_are_in_its_goal_and_ahead_of_the_untrusted_packet(
     packet = json.loads(data)
     assert "contract" not in packet and packet["previous_attempt"]["why"] == "no CREATE-CHECK line"
     assert packet["sentence"] == RUN["sentence"] and packet["plan"] == PLAN
+
+
+@pytest.mark.parametrize("code", ["coding_not_ready", "mind_deleted", "not_open"])
+def test_a_refused_claim_withdraws_the_step_goal_unsent(code):
+    """The tech lead's N1 on #567: claim() can refuse (409 coding_not_ready on a new hive not ready for coding,
+    mind_deleted, not_open). The step's goal is then withdrawn, nothing is sent, and the step comes back unknown with
+    the refusal's words and its mind, as when no mind can take it."""
+    hive = Hive()
+
+    def refused(agent, goal_id):
+        raise HiveError(409, code, "refused here")
+    hive.claim = refused
+    out = asyncio.run(ports(Engine(hive, PREVIOUS)).author_tests(RUN, {}, PLAN))
+    goal = hive.rows[0]
+    assert out == {"unknown": f"the test-author could not go to its mind ({code}: refused here)", "by": "a_author"}
+    assert hive.withdrawn == [goal["goal_id"]] and hive.sent == []
 
 
 def test_a_long_request_gives_way_to_a_test_authors_rules_inside_one_goal_read():

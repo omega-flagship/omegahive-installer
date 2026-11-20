@@ -2,6 +2,7 @@
 import { AnimatePresence, m } from 'framer-motion'
 import { useCallback, useEffect, useEffectEvent, useId, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 import { useFocusedWhile } from '../../lib/useFocusedWhile'
+import { AskSearch } from '../../features/ask/AskSearch'
 import { PanelView } from '../../features/ask/ClassicAsk'
 import { useAskField, useSeen } from '../../features/ask/useAskField'
 import { guardComposing } from '../../features/ask/keys'
@@ -199,6 +200,7 @@ export function Ask({ inputRef, world, onAct }: Props) {
         <button type="button" className="st-link st-ask-mic ask-mic" {...v.button} aria-label={v.label} data-voice={v.state}>
           {v.listening ? 'stop' : 'speak'}
         </button>
+        <AskSearch look="still" words={f.valueNow} className="st-link st-ask-search" disabled={!onPaper}>search</AskSearch>
       </div>
       <VoiceAnnouncer v={v} />
       {v.listening && <VoiceListening v={v} className="st-receipt st-listening" toggleClass="st-link ask-voice-pause" />}
@@ -233,7 +235,7 @@ export function Ask({ inputRef, world, onAct }: Props) {
                 exit={{ opacity: 0, transition: { duration: sp.reduced ? 0 : 0.12 } }}
                 transition={{ ...sp.snappy, delay: sp.reduced ? 0 : i * 0.025 }}
                 onMouseDown={(e) => e.preventDefault()}
-                onMouseMove={() => i !== f.sel && f.setSel(i)}
+                {...f.hoverRow(i)}
                 onClick={() => void f.take(s)}
               >
                 {on && <m.span layoutId="st-sug-hl" className="st-sug-hl" transition={sp.snappy} />}

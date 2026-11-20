@@ -77,18 +77,23 @@ def request_credential(socket_path, request, timeout=SOCKET_TIMEOUT):
         sock.connect(str(socket_path))
         if peer_uid(sock) != os.geteuid():
             raise Refused("the launch socket is not served by this account")
-        sock.sendall(json.dumps(request, separators=(",", ":")).encode() + b"\n")
         chunks, total = [], 0
-        while True:
-            chunk = sock.recv(65536)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            total += len(chunk)
-            if total > 1 << 20:
-                raise Refused("the launch socket answer is too large")
-            if chunk.endswith(b"\n"):
-                break
+        # A socket that refuses closes without reading the request. Linux reports that close as a reset, or as a broken
+        # pipe when it comes before the request is sent, and macOS as end of file: each is a close with no answer.
+        try:
+            sock.sendall(json.dumps(request, separators=(",", ":")).encode() + b"\n")
+            while True:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+                if total > 1 << 20:
+                    raise Refused("the launch socket answer is too large")
+                if chunk.endswith(b"\n"):
+                    break
+        except (BrokenPipeError, ConnectionResetError):
+            pass
     return json.loads(b"".join(chunks) or b"null")
 
 

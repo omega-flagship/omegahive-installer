@@ -15,6 +15,14 @@ it beside RELEASE_VERSION), so a release sets it for every hive that takes it an
   none                           no direct route: the person copies the report or saves it
 Whatever the destination, the page also offers the copy for the testers' group and the saved file.
 
+A report service that asks for a token gets it from a file: HIVE_FEEDBACK_TOKEN_FILE names it, and each report then
+goes with `Authorization: Bearer <the file's text>`. The token is read at each send, so a new file needs no restart,
+and it is never logged, answered or put in an error's words. A file that is set and cannot be read sends nothing.
+
+A report to a report service may also carry the person's recent requests, the errors and the hive's own log lines
+(`recent_requests`, `errors`, `logs`), when the person left them in: the page shows them and sends them, the hive
+checks their shape and size (report_problems) and cleans every text in them again before the report leaves (send).
+
 Every error answer the hive gives carries an id (e-xxxxxxxx) in its X-Hive-Error-Id header, and the hive keeps the
 most recent ones with the person who met them, so a report can name what failed by id, code and route, and for an
 unexpected error where in the hive it was raised. The id goes in a header so no answer's body changes: an unknown
@@ -86,11 +94,35 @@ BOARD_TIMEOUT_S = 10
 SEND_TIMEOUT_S = 30
 # A report with its picture, base64: a 1440x900 screen as PNG is well under 4 MB.
 SEND_MAX_BYTES = 12 * 1024 * 1024
+# What a report may carry beside the person's words, when they left it in: at most this many of their recent requests,
+# error answers (all the hive keeps) and log lines, and this much of the three together as JSON. The hive keeps 100
+# requests a person and 100 log lines, so a page that sends more is not the hive's own page.
+SEND_REQUESTS = 50
+SEND_ERRORS = KEEP_ERRORS
+SEND_LOGS = 400
+SEND_EXTRAS_BYTES = 200 * 1024
+# The parts a request and an error may have in a report (the page's HiveRequestLine and ReportError; the feedback
+# relay's REQUEST_PARTS and ERROR_PARTS, omegahive-deploy feedback-relay/relay.py), each a text or a whole number.
+REQUEST_PARTS = ("at", "method", "route", "status", "ms", "count", "who")
+ERROR_PARTS = ("at", "status", "source", "code", "method", "route", "where", "id", "message", "raised", "who")
+# A token as a header can carry it: printable ASCII with no space, so no line break can add a header of its own.
+TOKEN = re.compile(r"[\x21-\x7e]{1,4096}")
 REPORT_ID = re.compile(r"HR-[0-9a-f]{8}")
 KINDS = ("bug", "ux", "idea")
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 # The folder this code was laid out from: a release keeps RELEASE_VERSION and, when built with one, FEEDBACK_TO here.
 RELEASE_ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """No redirect is followed when a report is sent: urllib would carry the Authorization header on to wherever the
+    answer points."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+_SEND = urllib.request.build_opener(_NoRedirect)
 
 
 def configured(env_value: str | None, root: pathlib.Path = RELEASE_ROOT) -> str | None:
@@ -305,9 +337,13 @@ class Feedback:
     def __init__(self, hive, raw_destination: str | None):
         self.hive = hive
         self.to = destination(configured(raw_destination))
+        # the file holding the report service's token (HIVE_FEEDBACK_TOKEN_FILE), or None when it asks for none
+        self.token_file: str | None = (getattr(hive.settings, "feedback_token_file", None) or "").strip() or None
         self._errors: collections.deque = collections.deque(maxlen=KEEP_ERRORS)
         # each person's last requests, by the principal of their session; None for requests no person's session made
         self._requests: dict[str | None, collections.deque] = {}
+        # the order requests were kept in, across everyone: two answered in one millisecond have one time between them
+        self._kept = 0
         self._lock = threading.Lock()
         self.log = log_ring()
         # the board's visibility: True, False, or None while not known (never asked, or GitHub could not be reached)
@@ -356,21 +392,25 @@ class Feedback:
     def requested(self, principal: str | None, mind: bool, method: str, route: str, status: int, ms: float, at: str) -> None:
         """Keep one request with whoever made it: a person's session's principal, or None (a mind on its gateway, or a
         request no session came with). One like the request before it (method, route, status, a mind's or not) folds
-        into that line: its count grows, its time is the newest and its ms the slowest. Time: O(1)."""
+        into that line: its count grows, its time is the newest and its ms the slowest. Each line also keeps when it
+        was last added to, as a count (`seq`), which orders two lines of one millisecond. Time: O(1)."""
         ms = round(ms)
         with self._lock:
+            self._kept += 1
             ring = self._requests.get(principal)
             if ring is None:
                 ring = self._requests[principal] = collections.deque(maxlen=KEEP_REQUESTS)
             last = ring[-1] if ring else None
             if last is not None and (last["method"], last["route"], last["status"], last["mind"]) == (method, route, status, mind):
-                last.update(at=at, count=last["count"] + 1, ms=max(last["ms"], ms))
+                last.update(at=at, count=last["count"] + 1, ms=max(last["ms"], ms), seq=self._kept)
             else:
-                ring.append({"at": at, "method": method, "route": route, "status": status, "ms": ms, "count": 1, "mind": mind})
+                ring.append({"at": at, "method": method, "route": route, "status": status, "ms": ms, "count": 1, "mind": mind,
+                             "seq": self._kept})
 
     def requests_for(self, principal: str, everyone: bool) -> list[dict]:
         """The newest KEEP_REQUESTS requests, newest first: this person's own, or for an admin (`everyone`) the whole
-        hive's, each saying who made it. Time: r log r comparisons, r the requests kept (KEEP_REQUESTS a person)."""
+        hive's, each saying who made it. Two of one time (the stamp is to the millisecond) come in the order they were
+        kept, the later first. Time: r log r comparisons, r the requests kept (KEEP_REQUESTS a person)."""
         with self._lock:
             kept = [(who, dict(e)) for who, ring in self._requests.items() if everyone or who == principal for e in ring]
         lines = []
@@ -378,8 +418,11 @@ class Feedback:
             mind = e.pop("mind")
             e["who"] = "you" if who == principal else "a mind" if mind else "no session" if who is None else "another person"
             lines.append(e)
-        lines.sort(key=lambda e: e["at"], reverse=True)
-        return lines[:KEEP_REQUESTS]
+        lines.sort(key=lambda e: (e["at"], e["seq"]), reverse=True)
+        lines = lines[:KEEP_REQUESTS]
+        for e in lines:
+            del e["seq"]
+        return lines
 
     # ---- the board --------------------------------------------------------------------------------------------------
 
@@ -444,26 +487,50 @@ class Feedback:
 
     # ---- handing a report to a report service -----------------------------------------------------------------------
 
+    def _token(self) -> str | None:
+        """The report service's token from the file HIVE_FEEDBACK_TOKEN_FILE names, without the white space around it,
+        or None when no file is named. Raises RuntimeError, with words for the person and never the token or the
+        system's own words, when the file is set and cannot be read, is empty, or holds what no header can carry."""
+        if not self.token_file:
+            return None
+        try:
+            with open(self.token_file, encoding="utf-8") as f:
+                token = f.read(8192).strip()
+        except (OSError, ValueError):
+            token = ""
+        if not TOKEN.fullmatch(token):
+            log.warning("feedback: the report service's token file could not be read, or holds no token; no report is sent")
+            raise RuntimeError("This hive could not read its token for the report service, so the report was not sent. "
+                               "Whoever runs this hive can check the file HIVE_FEEDBACK_TOKEN_FILE names.")
+        return token
+
     def send(self, report: dict) -> dict:
         """Post a person's report to the report service HIVE_FEEDBACK_TO names. The page sends only what the person saw
-        and said yes to; the hive adds nothing. Raises ValueError for a report the hive refuses to pass on, and
-        RuntimeError, with words for the person, when the service could not take it."""
+        and said yes to; the hive adds nothing. It only takes out: every text in the requests, errors and log lines a
+        report carries is cleaned again here (cleaned_extras), since the hive knows keys the page does not. With
+        HIVE_FEEDBACK_TOKEN_FILE set, the post carries that file's token as its bearer. Raises ValueError for a report
+        the hive refuses to pass on, and RuntimeError, with words for the person, when the service could not take it
+        or the token could not be read."""
         if self.to.get("kind") != "service":
             raise LookupError("this hive has no report service to send to")
         problems = report_problems(report)
         if problems:
             raise ValueError(problems)
-        data = json.dumps(report).encode("utf-8")
-        req = urllib.request.Request(self.to["url"], data=data, method="POST",
-                                     headers={"Content-Type": "application/json", "User-Agent": "omegahive"})
+        headers = {"Content-Type": "application/json", "User-Agent": "omegahive"}
+        token = self._token()
+        if token is not None:
+            headers["Authorization"] = f"Bearer {token}"
+        data = json.dumps(cleaned_extras(report)).encode("utf-8")
+        req = urllib.request.Request(self.to["url"], data=data, method="POST", headers=headers)
         host = self.to["host"]
+        # `from None` below: an error's chain is logged with its traceback, and the request it names holds the token
         try:
-            with urllib.request.urlopen(req, timeout=SEND_TIMEOUT_S) as resp:
+            with _SEND.open(req, timeout=SEND_TIMEOUT_S) as resp:
                 body = resp.read(64 * 1024)
         except urllib.error.HTTPError as e:
-            raise RuntimeError(f"The report service at {host} answered {e.code}.") from e
-        except OSError as e:
-            raise RuntimeError(f"Could not reach the report service at {host}.") from e
+            raise RuntimeError(f"The report service at {host} answered {e.code}.") from None
+        except OSError:
+            raise RuntimeError(f"Could not reach the report service at {host}.") from None
         reference = None
         try:
             answer = json.loads(body.decode("utf-8") or "null")
@@ -474,9 +541,48 @@ class Feedback:
         return {"sent": True, "to": host, "reference": reference}
 
 
+def _again(text: str) -> str:
+    """A text a report carries, cleaned as the hive cleans what it keeps: this hive's key ids and people out
+    (keyview.strip_identities), then keys, emails, home folders, ids, codes, cookies and addresses (redact.clean)."""
+    return clean(keyview.strip_identities(text))
+
+
+def cleaned_extras(report: dict) -> dict:
+    """The report with every text in its recent requests, errors and log lines cleaned again; a report without them
+    is returned as it is, and nothing else in a report is touched. Only a report report_problems passed comes here.
+    Time: one cleaning pass over each text, at most SEND_EXTRAS_BYTES in all."""
+    if not any(report.get(name) for name in ("recent_requests", "errors", "logs")):
+        return report
+    out = dict(report)
+    for name in ("recent_requests", "errors"):
+        if report.get(name):
+            out[name] = [{k: _again(v) if isinstance(v, str) else v for k, v in line.items()} for line in report[name]]
+    if report.get("logs"):
+        out["logs"] = [_again(line) for line in report["logs"]]
+    return out
+
+
+def _lines_problem(name: str, lines, most: int, parts: tuple[str, ...] | None) -> str:
+    """Why one of a report's lists is refused, or "": a list of at most `most`, each a text (`parts` None) or an
+    object of the named parts, each a text or a whole number."""
+    if not isinstance(lines, list):
+        return f"{name} is a list, when given"
+    if len(lines) > most:
+        return f"{name} holds at most {most}"
+    for line in lines:
+        if parts is None:
+            if not isinstance(line, str):
+                return f"{name} is a list of lines of text"
+        elif not isinstance(line, dict) or not all(
+                k in parts and isinstance(v, (str, int)) and not isinstance(v, bool) for k, v in line.items()):
+            return f"each of {name} has only {', '.join(parts)}, each a text or a whole number"
+    return ""
+
+
 def report_problems(report) -> str:
     """Why a report cannot be passed on, or "" when it can: the shape the page builds (features/feedback/report.ts
-    payload), schema omega-hive-report-1."""
+    payload), schema omega-hive-report-1. The recent requests, errors and log lines are each optional: a list within
+    its size (SEND_REQUESTS, SEND_ERRORS, SEND_LOGS), of the shape the page sends, SEND_EXTRAS_BYTES together."""
     if not isinstance(report, dict):
         return "a report is a JSON object"
     if report.get("schema") != "omega-hive-report-1":
@@ -493,4 +599,18 @@ def report_problems(report) -> str:
     picture = report.get("picture")
     if picture is not None and (not isinstance(picture, str) or not picture.startswith("data:image/png;base64,")):
         return "picture is a PNG data address, or null"
+    # what a report may also carry when the person left it in; a report without them is whole
+    extras = 0
+    for name, most, parts in (("recent_requests", SEND_REQUESTS, REQUEST_PARTS), ("errors", SEND_ERRORS, ERROR_PARTS),
+                              ("logs", SEND_LOGS, None)):
+        lines = report.get(name)
+        if lines is None:
+            continue
+        problem = _lines_problem(name, lines, most, parts)
+        if problem:
+            return problem
+        # measured as the page measures it (logs.ts extrasBytes): compact JSON, UTF-8
+        extras += len(json.dumps(lines, ensure_ascii=False, separators=(",", ":")).encode("utf-8", "replace"))
+    if extras > SEND_EXTRAS_BYTES:
+        return f"recent_requests, errors and logs together hold at most {SEND_EXTRAS_BYTES // 1024} KB"
     return ""

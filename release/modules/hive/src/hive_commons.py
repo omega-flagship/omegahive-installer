@@ -1450,7 +1450,9 @@ def inventory_receipt(provides_text, modules_text, parser=None):
     loaded = set(_atoms(modules_text))
     loaders = parser._active_module_loader_paths()
     modules = []
-    directories = list(parser._enabled_module_names(loaders[0]) if loaders else [])
+    # the modules this mind runs: its loader's, less those whose manifest requires what it lacks (module_selection),
+    # which it never imported, so none reads as set up but not loaded
+    directories = list(parser.module_selection(loaders[0])[0] if loaders else [])
     # J3 host R6.1: a module the host loaded into this mind beyond its loader (OMEGACLAW_EXTRA_MODULES); none when unset
     directories += [d for d in getattr(parser, "_extra_module_names", lambda: [])() if d not in directories]
     for directory in directories:

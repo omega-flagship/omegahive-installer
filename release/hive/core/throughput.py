@@ -9,7 +9,8 @@ of "K mind turns, then wait for a person").
   fuller the swarm, the less of its own limit a mind may have used to still get through (all of it at PRIORITY_FROM, none
   at the swarm's limit).
 - A mind whose spending headroom is gone (budgets.headroom_micros, every limit on it, its swarm's included) is not
-  sent mind messages: each would cost a model call it cannot make.
+  sent mind messages: each would cost a model call it cannot make. A mind on the free route costs no money: it is judged
+  by the free calls left today instead (FreeGate, its person's and the hive's), never by money.
 - Over a limit, a message is refused now, never queued (a late release would distort time); the hive says so in the room
   and tells the sender once per NOTICE_SECONDS, with when to try again.
 """
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import datetime
 
+from .config import is_free
 from .db import now
 
 DEFAULT_MIND = 20          # messages an hour a mind may send other minds, unless set
@@ -149,6 +151,8 @@ class Throughput:
                     return ("its swarm is near its hourly limit and minds that have sent less go first",
                             self._next_free("sender", me, max(1, int(cap * allowed))))
         target = self.hive.db.one("SELECT * FROM agents WHERE id = ? AND deleted = 0", (target_id,))
+        if target is not None and is_free(str(target.get("model") or "").partition("/")[0]):
+            return self._free_refusal(target)
         if target is not None and self._paid(target):
             head = self.hive.budgets.headroom_micros(target)
             if head is not None and head <= 0:
@@ -156,9 +160,28 @@ class Throughput:
         return None
 
     def _paid(self, agent):
-        """Whether the mind's model calls cost money (a local or mock model never runs out of budget)."""
+        """Whether the mind's model calls cost money (a local or mock model never runs out of budget, nor does the free
+        route: the deploy's key, held to free calls a day)."""
         provider = self.hive.settings.providers.get(str(agent.get("model") or "").partition("/")[0])
-        return provider is not None and not provider.local and provider.name != "mock"
+        return provider is not None and not provider.local and provider.name != "mock" and not is_free(provider.name)
+
+    def _free_refusal(self, target):
+        """Why a mind on the free route can't answer a mind message now, or None: only its person's or the hive's free
+        calls being used up today. A read (FreeGate.admit, dispatch=False): it counts no call. idle_guard=False: a
+        delivery is not a call, and the mind's own wake call meets the idle guard itself. Any other refusal (the route
+        off, the model dropped, no person) is the mind's own call's to say."""
+        gate = getattr(getattr(self.hive, "gateway", None), "free_gate", None)   # set by app.py; a bare Hive has none
+        if gate is None:
+            return None
+        from .gateway import GatewayError
+        try:
+            gate.admit(target, dispatch=False, idle_guard=False)
+        except GatewayError as e:
+            if e.code == "free_inference_daily_cap":
+                return (f"{target['name']}'s person has used up today's free calls (they come back at midnight UTC)", None)
+            if e.code == "free_inference_hive_daily_cap":
+                return ("the hive has used up today's free calls (they come back at midnight UTC)", None)
+        return None
 
     def admit(self, sender_id, targets, room_id=None):
         """Split targets (agent:<id> members) into (admitted, refused), recording each admitted one as sent now.

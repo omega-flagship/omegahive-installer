@@ -32,15 +32,31 @@ def _no_network(deny_network):
 
 
 def host_phases():
-    """{phase: where} for every literal phase passed to Ask._frame (ask._frame(turn_id, "phase", ...)) or to the
-    conductor's _emit(st, "phase", ...). Intents._frame passes an intent id second, never a literal; its own body
-    passes "intent". Time: one parse of each hive/core module."""
+    """{phase: where} for every literal phase passed to Ask._frame or to the conductor's _emit(st, "phase", ...): a call
+    through the Ask (self.ask._frame, self.hive.ask._frame), the Ask's own self._frame, or the conductor's own
+    self._emit. Other classes' own _frame and _emit take something else second: Intents._frame an intent id, never a
+    literal, and Research._frame a research request's state ("held", "resumed"), which reaches the page inside the
+    Ask's "research" frame it forwards. Time: one parse of each hive/core module."""
+    own = {"_frame": "Ask", "_emit": "Conductor"}
     phases = {}
+
+    def visit(node, path, cls):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ClassDef):
+                visit(child, path, child.name)
+                continue
+            if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute) and child.func.attr in own \
+                    and len(child.args) >= 2 and isinstance(child.args[1], ast.Constant) \
+                    and isinstance(child.args[1].value, str):
+                receiver = child.func.value
+                through_ask = isinstance(receiver, ast.Attribute) and receiver.attr == "ask"
+                own_method = isinstance(receiver, ast.Name) and receiver.id == "self" and cls == own[child.func.attr]
+                if through_ask or own_method:
+                    phases.setdefault(child.args[1].value, f"{path.name}:{child.lineno}")
+            visit(child, path, cls)
+
     for path in sorted((ROOT / "hive" / "core").glob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text(), str(path))):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("_frame", "_emit") \
-                    and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str):
-                phases.setdefault(node.args[1].value, f"{path.name}:{node.lineno}")
+        visit(ast.parse(path.read_text(), str(path)), path, None)
     return phases
 
 

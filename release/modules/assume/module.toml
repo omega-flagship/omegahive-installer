@@ -62,6 +62,11 @@ provides = [
 
 requires = [
   "python>=3.10",
+]
+
+# Not required: without FabricPC, jax and optax, assume runs its dense step in Python instead of the warm FabricPC organ
+# (src/assume.py _feature_step_fabricpc), so a mind without them keeps the module.
+recommends = [
   "fabricpc:external-repo",
   "jax>=0.4",
   "optax>=0.2",

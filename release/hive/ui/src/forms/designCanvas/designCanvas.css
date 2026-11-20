@@ -1,6 +1,4 @@
-/* Design's living canvas (Surface, piece 1). The work fills the page; everything else is quiet, in context, and recedes.
-   Colours come from the app's identity in the current look (shell/appLook: --app-accent, --font-display) and the
-   look's inks; the artboard keeps the design's own colours. Reduced motion: no transitions at all. */
+/* Purpose: style the Studio canvas, its editing controls and alternate states. */
 
 .dc {
   position: relative;
@@ -751,9 +749,13 @@ html[data-xc-active] .xc-dress .dc .dc-ring-danger:hover {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: safe center;
+  overflow-y: auto;
   text-align: center;
   gap: 10px;
+}
+.dc-empty > * {
+  flex-shrink: 0;
 }
 .dc-empty-title {
   margin: 0;
@@ -792,28 +794,11 @@ html[data-xc-active] .xc-dress .dc .dc-ring-danger:hover {
   color: var(--dc-accent);
 }
 .dc-recent {
-  margin-top: 18px;
-}
-.dc-empty .dc-quiet {
-  color: var(--dc-ink-2);
-}
-.dc-recent ul {
-  list-style: none;
-  margin: 6px 0 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 6px;
-}
-.dc-recent-btn {
-  padding: 6px 12px;
-  border-radius: 10px;
-  font-size: 13.5px;
-  color: var(--dc-ink);
-}
-.dc-recent-btn:hover {
-  background: color-mix(in oklab, var(--color-ink) 7%, transparent);
+  --color-ink: var(--dc-ink);
+  --color-ink-2: var(--dc-ink-2);
+  --color-ink-3: var(--dc-ink-2);
+  --color-float: var(--dc-surface);
+  --color-float-ink: var(--dc-ink);
 }
 .dc-skeleton {
   position: absolute;

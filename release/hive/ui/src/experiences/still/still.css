@@ -235,6 +235,11 @@
 .st-sug[aria-selected='true'] {
   color: var(--ink);
 }
+/* the row under the pointer (feedback #127): darker ink only; the lifted card stays on the row Enter takes */
+.st-sug[data-hover]:not([aria-selected='true']) {
+  color: var(--ink);
+  background: rgb(60 40 20 / 0.035);
+}
 .st-sug-hl {
   position: absolute;
   inset: 0 -14px;

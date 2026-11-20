@@ -351,7 +351,7 @@ def test_an_out_of_piece_edit_from_the_helper_is_never_written(m):
 def test_a_builder_that_sends_each_file_as_its_own_command_has_them_written(m):
     """A builder's files packed into one JSON were lost whole when its reply was cut off at its length. Its packet now
     says it may send each file as its own command (hive-goal-file), and the files it staged are written with an
-    answer that names none of them, the answer's own files map having the last word."""
+    answer that names none of them, the answer's own files map having the last word; once written, they are deleted."""
     adopt(m)
     run(m.engine.step(m.tid))
     body = json.loads(m.engine._effects(m.tid, "helper")[-1]["body"])
@@ -359,6 +359,9 @@ def test_a_builder_that_sends_each_file_as_its_own_command_has_them_written(m):
     told = m.hive.db.one("SELECT text FROM messages WHERE agent_id = ? AND sender = 'hive:code-controller' ORDER BY "
                          "created_at", (m.helper["id"],))["text"]
     assert f"hive-goal-file {body['goal_id']} <path> <<'EOF_name'" in told
+    # a builder offered code-open followed it, found no workspace or no client, and failed its goal; files reach the
+    # plan only through these two commands, so its packet says never to open one
+    assert "Never code-open: this goal takes its files only through hive-goal-file and hive-goal-propose" in told
     paths = json.loads(m.engine._run(m.tid)["member"])["paths"]
     m.hive.goals.claim(agent, body["goal_id"])
     for path in paths:
@@ -369,6 +372,7 @@ def test_a_builder_that_sends_each_file_as_its_own_command_has_them_written(m):
     run(m.engine.on_event({"type": "goal.updated", "goal": {"id": body["goal_id"]}}))
     changed = next(r for r in m.engine.view(m.tid)["journal"] if r["kind"] == "changed")
     assert changed["evidence"]["files_text"] == {p: f'// {p}: "quoted" (and bracketed)\n' for p in paths}
+    assert m.hive.goals.staged_files(body["goal_id"]) == {}
 
 
 def test_a_refused_answer_is_said_to_the_next_attempt(m):

@@ -239,7 +239,8 @@ CONVERSATION = "ask:"
 # what a personal turn's stored frame may keep (Ask.content_free): ids, phase, seq, time, host enums, money, flags, digests
 CONTENT_FREE_KEYS = frozenset({"operation_id", "turn_id", "principal", "seq", "phase", "at", "outcome", "reason", "state",
                                "op", "spent_usd", "turn_spent_usd", "delta", "truncated", "message_id",
-                               "intent_id", "request_id", "dispatch_id", "links_rev", "digest", "error", "app_ask"})
+                               "intent_id", "request_id", "dispatch_id", "links_rev", "digest", "error", "app_ask",
+                               "until", "conducted"})
 # done.limit (ask-limits r1): an enum and money; reason (gateway r1a): the host enum monthly_total_required
 LIMIT_FRAME_KEYS = ("kind", "current_usd", "limit_usd", "estimate_usd", "reason")
 PAGE_LABEL = ("Page context resolved by the hive: names, ids and statuses the person may see. It describes where they "
@@ -897,6 +898,9 @@ class Ask:
                     self.hive.app_ask._member(self.hive.app_ask._lookup(app_binding["generation"]), replay["operation_id"])
             return replay
         swarm, mind, addressed, context, thread = decided
+        # whose model the conductor answers with: the model the Ask uses, or on a turn with the asker's own mind that mind's
+        # model (below); the accepted frame says which, so the page can say where each answer came from
+        whose_model = "ask"
         if model is not None and data.get(CONDUCTOR_KEY) is None and hive.personal.acting_as(viewer.principal, mind):
             # a key the person or the host added since the page last read the mind counts for this turn (the pickup's own
             # rules, personal.py); an app's prepared Ask writes nothing before its admission, so it keeps the row it has.
@@ -904,7 +908,8 @@ class Ask:
             # every other async caller of it does (app.py, onboarding.py)
             if app_binding is None:   # with the prices current, so a key saved a moment ago already counts
                 mind = await hive.personal.priced_pick_up(mind) or mind
-            model = mind.get("model") or model   # the conductor speaks as the person's personal mind, with its model
+            if mind.get("model"):   # the conductor speaks as the person's personal mind, with its model
+                model, whose_model = mind["model"], "mind"
         prepared_thread = None
         if thread is None:   # outside the lock; an empty thread left by a race or a crash is adopted next time, or swept
             pref = hive.db.one("SELECT thread_budget_usd FROM ask_prefs WHERE principal = ?", (viewer.principal,))
@@ -945,7 +950,7 @@ class Ask:
                     outbox, turn_id = None, existing["id"]
                 else:
                     outbox, turn_id = self._admit(viewer, data, body_digest, swarm, mind, context, model, browser,
-                                                   app_binding=app_binding, carried=carried)
+                                                   app_binding=app_binding, carried=carried, whose_model=whose_model)
                 if app_binding is not None:
                     hive.app_ask.before_admit(app_binding)
         if browser:   # the person's browser answers: nothing reaches the mind, the conductor or the room
@@ -968,13 +973,15 @@ class Ask:
         return self.view(self._row(turn_id))
 
     def _admit(self, viewer, data, body_digest, swarm, mind, context, model=None, browser=False, *, app_binding=None,
-               carried=False):
+               carried=False, whose_model="ask"):
         """model: a conductor turn's model (conductor.py): admitted the same way, but nothing is queued for the mind and it
         opens as 'conducting'. browser (gateway r1b): a browser turn, content-free like a personal conductor turn, opens
         as 'browser' with route 'browser_mind'; nothing is queued for the mind and no conductor runs. carried: a carried
         turn (CARRY_KEY), admitted as a host turn that nothing answers (its caller closes it at once): nothing is queued
         for the mind, and a turn for the person's own mind is content-free as a conductor turn is. Returns (outbox,
-        turn_id); outbox is True for a new conductor, browser or carried turn, None for a replay."""
+        turn_id); outbox is True for a new conductor, browser or carried turn, None for a replay. whose_model: whose model a
+        conductor turn answers with, "mind" (the asker's own mind's, on a turn with it) or "ask" (the model the Ask uses),
+        which its accepted frame says."""
         hive = self.hive
         queued = model is None and not browser and not carried   # the mind itself answers: its words go to its outbox
         threads = hive.db.all("SELECT * FROM work_sessions WHERE owner = ? AND agent_id = ? AND purpose = 'ask' AND status = 'active' "
@@ -1059,10 +1066,15 @@ class Ask:
                 hive.app_ask.admitted(app_binding, self._row(turn_id))
             # speaks_as: the mind whose voice answers (personal.speaker, the conductor's own rule), so the page names it
             # over the answer; on a swarm turn of a person with their own mind that is their mind, not the coordinator
+            # conducted: the host's conductor answers (conductor.py), whose tools hold no web search, so the page says each
+            # of its answers comes from a model alone, "mind" (the asker's own mind's, on a turn with it) or "ask" (the
+            # model the Ask uses, as on a swarm turn spoken in the person's own mind's voice); a research report is its own
+            # frame
             frames.append(self._frame(turn_id, "accepted", thread=self._thread_brief(hive.sessions.view(thread)),
                                       acting_as=hive.personal.acting_as(viewer.principal, mind),
                                       speaks_as=hive.personal.speaks_as(viewer.principal, mind, model is not None,
-                                                                        self.with_mind(context))))
+                                                                        self.with_mind(context)),
+                                      **({"conducted": whose_model} if model is not None else {})))
         def publish():
             self._publish(frames)
             if queued:
@@ -1088,7 +1100,8 @@ class Ask:
         turn's frames share the same quota: its acts, `dispatched` frames and `say` deltas (an `answer` with delta: true
         is a hint, not the terminal answer) keep the reserve too, so its final answer and done always fit."""
         t = self._row(turn_id)
-        if (phase not in TERMINAL or fields.get("delta")) and phase != "thinking":
+        # A dispatched task has its own lifecycle after the original turn uses its frame quota.
+        if (phase not in TERMINAL or fields.get("delta")) and phase not in ("thinking", "research"):
             if t["next_seq"] > MAX_EVENTS - (TERMINAL_RESERVE if t["state"] in OPEN else 0):
                 return None
         if phase == "thinking" and t["next_seq"] > MAX_EVENTS - 4:
@@ -1537,6 +1550,11 @@ class Ask:
                         frame.pop("item", None)
                         hive.db.execute("UPDATE ask_events SET frame = ? WHERE turn_id = ? AND seq = ?", (json.dumps(frame), tid, e["seq"]))
                         continue
+                    if frame.get("phase") == "research" and "research" in frame:
+                        frame.pop("research")
+                        hive.db.execute("UPDATE ask_events SET frame = ? WHERE turn_id = ? AND seq = ?",
+                                        (json.dumps(frame), tid, e["seq"]))
+                        continue
                     if dispatched or "text" in frame or "label" in frame or any(k in act for k in ("text", "caption", "label")):
                         for k in ("text", "label") + (("intent_id", "intent_kind") if dispatched else ()):
                             if k in frame:
@@ -1731,7 +1749,10 @@ class Ask:
             raise refusal(self.hive, "rate_limited")
         self.expire()
         t = self._own(viewer, operation_id)
-        return {**self.view(t), "links_rev": int(t["links_rev"]), "links": self.intents.links(t["id"]), **self.events(t["id"], after, limit)}
+        page = self.events(t["id"], after, limit)
+        if not t["deleted_at"] and self._is_personal(t["id"]):
+            page["events"] = [self.hive.research.restore_thread_report(t, frame) for frame in page["events"]]
+        return {**self.view(t), "links_rev": int(t["links_rev"]), "links": self.intents.links(t["id"]), **page}
 
     def _is_personal(self, turn_id):
         """By the row's mark, or by its mind being a personal mind (a row the mark has not reached reads the same)."""
@@ -1777,9 +1798,11 @@ class Ask:
 
     def list(self, viewer, limit=50):
         self.expire()
-        rows = self.hive.db.all("SELECT * FROM ask_turns WHERE principal = ? ORDER BY created_at DESC LIMIT ?",
+        rows = self.hive.db.all("SELECT t.*, EXISTS(SELECT 1 FROM research_reports r WHERE r.turn_id = t.id) AS has_research "
+                                "FROM ask_turns t WHERE principal = ? ORDER BY created_at DESC LIMIT ?",
                                 (viewer.principal, max(1, min(int(limit), 200))))
-        return [self.view(r) for r in rows]
+        return [{**self.view(r), **({"has_research": True} if r["has_research"] and not r["deleted_at"] else {})}
+                for r in rows]
 
     def audit(self, limit=100, principal=None, before=None):
         """Every person's turns, for admins (no true secrets): text, resolved context and state, newest first. A personal

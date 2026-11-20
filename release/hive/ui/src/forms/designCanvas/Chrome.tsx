@@ -1,7 +1,6 @@
+// Purpose: draw the Studio canvas controls, history and alternate states.
 import { plural } from '../../lib/plural'
-import { useEffect, useId, useRef, useState } from 'react'
-import type { SwarmArtifact } from '../../api/moneyWork'
-import { navigate, openInDesign } from '../../lib/router'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Icon } from '../../ui/Icon'
 import { current, type Doc, type Revision, type Scene } from './model'
 import { ScenePicture } from './Stage'
@@ -380,7 +379,7 @@ function Tools({ doc }: { doc: Doc }) {
 
 // ------------------------------------------------------------------ states: empty, loading, error
 
-export function Empty({ ask, askReady, recent, scope }: { ask: (t: string) => void; askReady: boolean; recent: SwarmArtifact[] | null; scope?: string }) {
+export function Empty({ ask, askReady, children }: { ask: (t: string) => void; askReady: boolean; children?: ReactNode }) {
   return (
     <div className="dc-empty">
       <h2 className="dc-empty-title">{EMPTY_TITLE}</h2>
@@ -393,23 +392,7 @@ export function Empty({ ask, askReady, recent, scope }: { ask: (t: string) => vo
           </button>
         ))}
       </div>
-      {scope && recent && recent.length > 0 && (
-        <div className="dc-recent" data-tour="design-recent">
-          <p className="dc-quiet">Or pick up where you left off</p>
-          <ul>
-            {recent.map((a) => (
-              <li key={a.artifact_id}>
-                <button type="button" className="dc-recent-btn" onClick={() => {
-                  const r = openInDesign({ artifact_id: a.artifact_id, revision: a.revision, digest: a.digest }, scope)
-                  if (r) navigate(r)
-                }}>
-                  {a.title || a.artifact_id} <span className="dc-quiet">· revision {a.revision}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {children}
     </div>
   )
 }

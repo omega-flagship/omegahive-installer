@@ -205,3 +205,16 @@ def deny_network(monkeypatch):
         return real_sync(self, request)
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", async_request)
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", sync_request)
+
+
+@pytest.fixture()
+def omegacode_client(tmp_path, monkeypatch):
+    """A mind with the OmegaCode client, for a test that asks for one: an omegacode package with a client module, as an
+    OmegaCode release's src holds it, named by OMEGACODE_SRC, so code_workspace's service:omegacode requirement is met
+    (hive/runtime/extensions/module_requires.py). Returns the src folder."""
+    src = tmp_path / "omegacode-src"
+    (src / "omegacode").mkdir(parents=True)
+    (src / "omegacode" / "__init__.py").write_text("")
+    (src / "omegacode" / "client.py").write_text("class NativeClient:\n    pass\n")
+    monkeypatch.setenv("OMEGACODE_SRC", str(src))
+    return src

@@ -137,15 +137,20 @@ class HostModuleLoaderTests(unittest.TestCase):
             cwd = os.getcwd()
             os.chdir(workspace)
             try:
-                with mock.patch.dict(os.environ, {}, clear=False):
+                with mock.patch.dict(os.environ, {'OMEGACLAW_MEMORY_DIR': str(workspace / 'memory')}, clear=False):
                     os.environ.pop('OMEGACLAW_MODULE_LOADER', None)
                     loaded = Path(hive_services.module_loader())
                     authorized = parser._active_module_loader_paths()
+                    running, off = parser.module_selection(authorized[0])
+                    imported = parser._enabled_module_names(loaded)
             finally:
                 os.chdir(cwd)
-        self.assertEqual(loaded, ROOT / 'modules' / 'loader.metta')
-        self.assertEqual([Path(p).resolve() for p in authorized], [loaded.resolve()])
+        self.assertEqual([Path(p).resolve() for p in authorized], [(ROOT / 'modules' / 'loader.metta').resolve()])
+        # the host loader itself, or its copy less the modules this mind lacks requirements for (module_selection)
+        self.assertEqual(loaded, ROOT / 'modules' / 'loader.metta' if not off else workspace / 'memory' / 'modules-loader.metta')
+        self.assertEqual(imported, running)
         self.assertNotEqual(loaded.resolve(), planted.resolve())
+        self.assertNotIn('agentverse', imported)
 
     def test_host_env_loader_is_loaded_and_authorized(self):
         from hive.runtime import hive_services

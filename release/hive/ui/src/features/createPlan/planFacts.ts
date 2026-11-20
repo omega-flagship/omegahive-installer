@@ -1,6 +1,6 @@
 import type { Compose, ScreenFacts } from '../../screens/screenSpace'
 import { clockTime } from '../../lib/format'
-import type { PlanRevision, PlanSummary, PlanView } from './contract'
+import type { PlanRevision, PlanSummary, PlanView, PlanWaiting } from './contract'
 import { codeTarget, isHeld, openQuestions, planEnded } from './planModel'
 
 /**
@@ -8,7 +8,8 @@ import { codeTarget, isHeld, openQuestions, planEnded } from './planModel'
  * flags and known symbols, never a person's words) from which MeTTa composes it, and the values its parts draw by path,
  * each of the app's versions (plan-revision) and each app the person made (plan-made) composed as its own small screen.
  * Pure: the page hands in the plan view (or none yet), where its own controls stand, and the composer for the look it
- * wears.
+ * wears, and the composer for the look it wears, which
+ * composes each mind the plan waits on as its own small screen (plan-waiting).
  */
 export type PlanScreen = 'plan-start' | 'plan' | 'plan-ready'
 export interface PlanUi {
@@ -70,6 +71,17 @@ function revisionMeta(r: PlanRevision): string {
   return `Version ${r.round}${at ? ` · deployed ${at}` : ''}${from}`
 }
 
+/** the states a press of Start moves: a mind stopped, stopped with an error, or never started */
+const STARTABLE = new Set(['stopped', 'error', 'created'])
+
+/** One waited-on mind's row facts (plan.metta's plan-waiting): why it can't go on, and which press this person has. */
+function waitingFacts(w: PlanWaiting): ScreenFacts {
+  return { flags: { spending: w.reason === 'spending', stopped: w.reason === 'stopped', asleep: w.reason === 'asleep',
+    error: w.reason === 'error', created: w.reason === 'created', 'can.start': w.may_act && STARTABLE.has(w.reason),
+    'can.wake': w.may_act && w.reason === 'asleep' } }
+}
+
+
 export function planFacts(view: PlanView | null, ui: PlanUi, compose: Compose): PlanComposed {
   const open = view ? openQuestions(view).length : 0
   const answered = view ? view.questions.filter((q) => q.answered).length : 0
@@ -82,6 +94,8 @@ export function planFacts(view: PlanView | null, ui: PlanUi, compose: Compose): 
   // finished: nothing more is built unless the person asks for a change (an installed app at rest, or a stopped round:
   // planModel.planEnded, which a later round at work on the installed app is not)
   const ended = !!view && planEnded(view)
+  // a stopped or finished plan waits on nothing, so it names no mind
+  const waiting = ended ? [] : view?.waiting ?? []
   const live = !!view && (!!ui.showing || !!view.checkpoint || !!view.preview || !!codeTarget(view))
   const words = ui.words ?? ''
   const flags = {
@@ -89,7 +103,7 @@ export function planFacts(view: PlanView | null, ui: PlanUi, compose: Compose): 
     'start.busy': ui.starting,
     'plan.stopped': view?.status === 'stopped',
     'plan.blocked': !!view && HELD.has(view.status),
-    'plan.waiting': !!view?.waiting && !ended,
+    'plan.waiting': waiting.length > 0,
     'plan.installed': !!view?.installed,
     'plan.live': live,
     'plan.unreviewed': !!view?.unreviewed,
@@ -136,8 +150,8 @@ export function planFacts(view: PlanView | null, ui: PlanUi, compose: Compose): 
       'start.error': ui.startError ?? '',
       'held.sentence': ui.held?.sentence ?? '',
       'installed.name': view?.installed?.name ?? '',
-      'waiting.name': view?.waiting?.name ?? '',
-      'waiting.message': view?.waiting?.message ?? '',
+      'waiting.rows': waiting.map((w) => ({ id: w.mind, plan: compose('plan-waiting', waitingFacts(w)),
+        data: { name: w.name, step: w.step, message: w.message ?? '' } })),
       'round.words': view?.round_words ? `“${view.round_words}”` : '',
       'revise.words': words,
       // the Change button waits while there are no words, a change is on its way, or the hive can't take one now

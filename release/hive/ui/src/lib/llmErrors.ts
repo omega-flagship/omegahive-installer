@@ -17,6 +17,7 @@ const KNOWN: Record<LlmErrorCode, Omit<LlmErrorInfo, 'code'>> = {
   free_inference_busy: { status: 429, title: 'Free inference busy', hint: 'More calls came in at once than the free key takes. It retries on its own.' },
   free_inference_daily_cap: { status: 429, title: 'Free calls used up', hint: 'Today’s free model calls for this mind’s person are used. They come back at midnight UTC, or add a key of your own.' },
   free_inference_hive_daily_cap: { status: 429, title: 'Hive’s free calls used up', hint: 'This hive has used today’s free model calls. They come back at midnight UTC, or add a key of your own.' },
+  free_inference_idle: { status: 429, title: 'Resting', hint: 'No one has asked this mind anything for a while, so it won’t spend free calls in the background. A message wakes it.' },
   free_inference_off: { status: 403, title: 'Free inference off', hint: 'This hive doesn’t offer free inference now. Choose another way for this mind to think.' },
   free_model_not_offered: { status: 403, title: 'Model not offered free', hint: 'Free inference here doesn’t offer this mind’s model. Choose a model it offers, or another way to think.' },
   free_inference_invited_only: { status: 403, title: 'Free inference is for invited people', hint: 'Free inference on this hive is for the people it invited. Add a key of your own for this mind to think.' },

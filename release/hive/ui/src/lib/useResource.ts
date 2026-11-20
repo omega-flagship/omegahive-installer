@@ -1,5 +1,6 @@
 // Purpose: one loading model for every page: a read's states, bound to the signed-in identity (Resource, useResource),
-// the client methods it reads through, and each read counted in flight while it is out (lib/readsInFlight).
+// the client methods it reads through, each read counted in flight while it is out (lib/readsInFlight), and, for a
+// read several components make at once (ReadOptions.share), one read shared by all of them.
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { ApiError, type HiveClient } from '../api/client'
 import { useHive } from '../store/store'
@@ -243,7 +244,73 @@ export interface ReadOptions<T> extends ResourceOptions<T> {
   context?: unknown
   /** Read again for the same identity (an update time, a retry counter): the last answer stays on screen meanwhile. */
   key?: unknown
+  /**
+   * The name of a read several components make at once, such as the person's task stops, which the Ask's cards, a
+   * mind's chat and the folded Ask's mark all show or count: every component using the name shares one Resource, so it
+   * is fetched and polled once while any of them is mounted, a mutate or reload reaches all of them, and the reloads
+   * one event asks of each make one read. A name is one read, with the same fetcher, options, context and key wherever
+   * it is used, so define it once in a hook (features/tasks/useTaskStops) rather than spelling it at each call.
+   */
+  share?: string
 }
+
+/**
+ * A shared read (ReadOptions.share): its Resource; `use`, which counts a mounted user and returns the release that, for
+ * the last user to leave, stops the read and drops its answer; `startFor`, which starts it for an identity, key and
+ * resync count unless it already runs for them, so the first user to see a change restarts it and the others don't;
+ * and `reload`, which makes one read of every reload asked in one synchronous run.
+ */
+interface Shared {
+  res: Resource<unknown>
+  use: () => () => void
+  startFor: (ctx: string, key: unknown, resyncs: unknown) => void
+  reload: () => void
+}
+
+// one entry per name, kept while the page lives (the names are a fixed few and a mind's own): an entry nobody uses is
+// stopped and holds no answer, and its object stays the same, so a component hidden and shown again (React's Activity,
+// StrictMode's second mount) finds the read it left, the way screens/room.ts keeps one room for the page
+const shared = new Map<string, Shared>()
+
+function sharedRead<T>(name: string, make: () => Resource<T>): Shared {
+  const had = shared.get(name)
+  if (had) return had
+  const res = make() as Resource<unknown>
+  let users = 0
+  let started: unknown[] | null = null
+  let queued = false
+  const entry: Shared = {
+    res,
+    use: () => {
+      users++
+      return () => {
+        if (--users > 0) return
+        res.stop()
+        res.rebind('')
+        started = null
+      }
+    },
+    startFor: (ctx, key, resyncs) => {
+      const now = [ctx, key, resyncs]
+      if (sameDeps(started, now)) return
+      started = now
+      res.rebind(ctx)
+      res.start()
+    },
+    reload: () => {
+      if (queued) return
+      queued = true
+      queueMicrotask(() => {
+        queued = false
+        if (users > 0) void res.load()
+      })
+    },
+  }
+  shared.set(name, entry)
+  return entry
+}
+
+const sameDeps = (was: unknown[] | null, now: unknown[]) => !!was && was.length === now.length && was.every((d, i) => Object.is(d, now[i]))
 
 /**
  * Load `fetcher` and track its state. Inside the fetcher, call optional client methods through `need(client, 'x')`,
@@ -251,27 +318,38 @@ export interface ReadOptions<T> extends ResourceOptions<T> {
  *
  * The answer is bound to the store's current client instance plus `context` (Surface K1/L1): a different client, or a
  * different context, never sees the previous one's answer, not even for the render before the new read starts. `key`
- * only re-reads within the same identity.
+ * only re-reads within the same identity. With `share`, every component using the name reads through one Resource.
  */
 export function useResource<T>(fetcher: () => Promise<T>, opts: ReadOptions<T> = {}): ResourceHandle<T> {
-  const { key, context, ...rest } = opts
+  const { key, context, share, ...rest } = opts
   const client = useHive((s) => s.client)
   // the store's resync count: when it moves, what this read holds may miss what the live stream said, so it reads again
   // (the last answer stays on screen meanwhile, as for `key`)
   const resyncs = useHive((s) => s.resyncs)
   useAuthContext(client)
   const ctx = readContext(client, context)
-  const [res] = useState(() => new Resource<T>(fetcher, rest, ctx))
+  // a component's own Resource, used while it names no shared read (made once, so a name that comes or goes later, or
+  // changes with the mind a chat shows, never leaves it without one)
+  const [own] = useState(() => new Resource<T>(fetcher, rest, ctx))
+  const entry = share === undefined ? null : sharedRead(share, () => new Resource<T>(fetcher, rest, ctx))
+  const res = entry ? (entry.res as Resource<T>) : own
   useEffect(() => {
     res.setFetcher(fetcher)
   })
+  // a shared read counts its mounted users; when the last one leaves it stops and drops its answer, so nothing read
+  // for a person outlives every component showing it
+  useEffect(() => entry?.use(), [entry])
   useEffect(() => {
+    if (entry) {
+      entry.startFor(ctx, key, resyncs)
+      return
+    }
     res.rebind(ctx)
     res.start()
     return () => res.stop()
-  }, [res, key, ctx, resyncs])
+  }, [res, entry, key, ctx, resyncs])
   const raw = useSyncExternalStore(res.subscribe, res.getState, res.getState)
   // between a change of identity and the effect that rebinds, the old answer is already not this identity's
   const state: ResourceState<T> = res.isBoundTo(ctx) ? raw : PENDING
-  return { ...state, reload: () => void res.load(), mutate: (fn) => res.mutateIn(ctx, fn) }
+  return { ...state, reload: entry ? entry.reload : () => void res.load(), mutate: (fn) => res.mutateIn(ctx, fn) }
 }

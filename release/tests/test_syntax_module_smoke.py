@@ -48,7 +48,8 @@ class ModuleSyntaxSmokeTests(unittest.TestCase):
             "code-output run_one 1024": '((code-output "run_one" "1024"))',
             "code-diagnostics src/example.metta": '((code-diagnostics "src/example.metta"))',
         }
-        with enabled_module_loader(helper, "code"):
+        # code_workspace carries these since the split; it loads only where the mind has the OmegaCode client
+        with enabled_module_loader(helper, "code", "code_workspace", omegacode_client=True):
             for raw, expected in cases.items():
                 with self.subTest(raw=raw):
                     self.assert_parse(raw, expected)
@@ -69,7 +70,7 @@ class ModuleSyntaxSmokeTests(unittest.TestCase):
             'code-hunk-bytes review_one h_one after 0': '((code-hunk-bytes "review_one" "h_one" "after" "0"))',
             'code-select review_one h_a h_b': '((code-select "review_one" "h_a h_b"))',
         }
-        with enabled_module_loader(helper, "code"):
+        with enabled_module_loader(helper, "code", "code_workspace", omegacode_client=True):
             for raw, expected in cases.items():
                 with self.subTest(raw=raw):
                     self.assert_parse(raw, expected)

@@ -23,7 +23,8 @@
    "speaks_as": {
     "mind_id": "id-2",
     "name": "Orchestra"
-   }
+   },
+   "conducted": "ask"
   },
   {
    "type": "ask",
@@ -180,6 +181,7 @@
    "principal": "user:u_ann",
    "seq": 1,
    "phase": "accepted",
+   "conducted": "ask",
    "at": "2026-11-16T05:23:00Z",
    "thread": {
     "id": "id-1",

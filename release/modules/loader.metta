@@ -1,6 +1,8 @@
 ; Safe default modules for a source checkout.
 ; Installers write deployment-specific selections to ~/OmegaClaw/local/modules-loader.metta.
 ; Parser/catalog membranes read the imported loader, so a module is callable only when imported.
+; A mind leaves out each module whose module.toml requires what it lacks (hive_services.module_loader), such as
+; code_workspace without the OmegaCode client.
 !(import! &self (library OmegaClaw-Core ./modules/assume/entry.metta))
 !(import! &self (library OmegaClaw-Core ./modules/channel_hive/entry.metta))
 !(import! &self (library OmegaClaw-Core ./modules/channel_router/entry.metta))
@@ -8,6 +10,7 @@
 ; calls at import time, so the definition must already exist.
 !(import! &self (library OmegaClaw-Core ./modules/hive/entry.metta))
 !(import! &self (library OmegaClaw-Core ./modules/code/entry.metta))
+!(import! &self (library OmegaClaw-Core ./modules/code_workspace/entry.metta))
 !(import! &self (library OmegaClaw-Core ./modules/channel_web_control/entry.metta))
 !(import! &self (library OmegaClaw-Core ./modules/media_imagegen/entry.metta))
 !(import! &self (library OmegaClaw-Core ./modules/media_videogen/entry.metta))

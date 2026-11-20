@@ -71,6 +71,10 @@
 (intent ask.field action)
 (says default ask.field "Ask")
 (says construct ask.field "command")
+;; Search, the Ask's own marked control (feedback #127): searching is never something Enter falls into
+(intent ask.search action)
+(says default ask.search "Search everything")
+(says construct ask.search "search")
 (intent apps.open action)
 (says default apps.open "Your apps")
 (says construct apps.open "apps")

@@ -1,6 +1,7 @@
 """Purpose: test hive-goal-file's route. A mind stages whole files on a goal it holds, one command each, for the goal's
 answer to take beside its own files map; a path staged again keeps its last text; a goal it doesn't hold, a path that
-isn't a plain relative one, a file over the result-data limit and one file too many are refused."""
+isn't a plain relative one, a file over the result-data limit and one file too many are refused; and the files go once
+nothing will read them."""
 from hive.core.goals import MAX_RESULT_DATA_BYTES, MAX_STAGED_FILES
 from hive.tests.test_core_api import agent_headers, client, make_swarm_and_agents  # noqa: F401  (fixture)
 
@@ -64,3 +65,40 @@ def test_an_open_goal_assigned_to_the_mind_names_its_claim_wherever_an_action_is
     r = client.post("/api/agent/goals/g_open/heartbeat", headers=agent_headers(b))
     assert r.status_code == 409 and r.json()["error"]["message"] == "you do not hold this task"
     assert hive.goals.get("g_open")["status"] == "open" and hive.goals.staged_files("g_open") == {}
+
+
+def test_a_claims_files_go_when_the_goal_passes_to_another_mind_fails_or_is_cancelled(client):
+    """Nothing deleted staged files, and a goal claimed again handed its new claimer's answer the old claim's files."""
+    hive, a, b = _held(client)
+    assert _stage(client, a, "a.js", "a's").status_code == 200
+    with hive.db.transaction():
+        assert hive.goals.release_rows(a["id"], "test", "a was deleted") == ["g_files"]
+    assert hive.goals.staged_files("g_files") == {}
+    assert client.post("/api/agent/goals/g_files/claim", headers=agent_headers(b)).status_code == 200
+    assert _stage(client, b, "b.js", "b's").status_code == 200
+    assert hive.goals.staged_files("g_files") == {"b.js": "b's"}
+    hive.db.execute("UPDATE goals SET status = 'cancelled' WHERE id = 'g_files'")   # as a plan withdraws its step
+    assert hive.goals.staged_files("g_files") == {}
+    hive.goals._create_record(b["swarm_id"], "Create plan pl_files: test-author", "Write the check", 0.6,
+                              created_by="create-plan:pl_files", assignee=b["id"], goal_id="g_check")
+    hive.goals.claim(hive.agent(b["id"]), "g_check")
+    hive.goals.stage_file(hive.agent(b["id"]), "g_check", "check.py", "x")
+    hive.goals.stop("g_check", "failed", "deadline")
+    assert hive.goals.staged_files("g_check") == {}
+
+
+def test_a_create_steps_files_stay_through_done_until_its_plan_takes_them(client):
+    """A Create plan reads a done step's staged files after it is done, so they stay until the plan has taken them
+    (Goals.drop_staged); a done goal no plan reads the answer of keeps none."""
+    hive, a, _ = _held(client)
+    assert _stage(client, a, "a.js", "x").status_code == 200
+    hive.db.execute("UPDATE goals SET status = 'done' WHERE id = 'g_files'")
+    assert hive.goals.staged_files("g_files") == {"a.js": "x"}
+    hive.goals.drop_staged("g_files")
+    assert hive.goals.staged_files("g_files") == {}
+    hive.goals._create_record(a["swarm_id"], "Tidy the notes", "A person's task", 0.5, created_by="user:u_jon",
+                              assignee=a["id"], goal_id="g_task")
+    hive.goals.claim(hive.agent(a["id"]), "g_task")
+    hive.goals.stage_file(hive.agent(a["id"]), "g_task", "notes.md", "x")
+    hive.db.execute("UPDATE goals SET status = 'done' WHERE id = 'g_task'")
+    assert hive.goals.staged_files("g_task") == {}

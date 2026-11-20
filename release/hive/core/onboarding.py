@@ -318,7 +318,7 @@ class Onboarding:
         if is_free(provider_name):
             # free inference: no price and no paying key by design; ready exactly when the free gate would admit the call
             try:
-                gw.admit_free(mind)
+                gw.admit_free(mind, idle_guard=False)   # whether it serves the mind, not whether it rests now
             except GatewayError as exc:
                 raise self._refuse(FREE_REFUSALS.get(exc.code, "no_model")) from None
             return None

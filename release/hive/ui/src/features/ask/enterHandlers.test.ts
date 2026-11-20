@@ -112,7 +112,8 @@ vi.stubGlobal('navigator', { userAgent: '', language: 'en-GB' })
 const { useHive } = await import('../../store/store')
 const { useAskStore, askRetryContext } = await import('../../store/ask')
 const { testPerson, signInAs, releasePersons, reportTestPrincipal } = await import('../../lib/identityEpoch.testkit')
-const { ClassicAsk, FloatingAsk } = await import('./ClassicAsk')
+const { ClassicAsk, FloatingAsk, PanelView } = await import('./ClassicAsk')
+const { AskSearch, ASK_SEARCH_PART, askSearchWords } = await import('./AskSearch')
 const { VoiceNoticeView } = await import('./VoiceParts')
 const { StillLine } = await import('./StillLine')
 const { Ask: StillAsk } = await import('../../experiences/still/Ask')
@@ -261,6 +262,105 @@ describe('r2.1 stand-in #2 / Kimi #1: an IME-confirming Enter never sends, in ev
     await type(m, 'kelp')
     await press(m, 'Enter', { keyCode: 229, nativeEvent: { isComposing: false, keyCode: 229 } })
     expect(M.asks, skin).toEqual(['kelp'])
+  })
+})
+
+describe('omegahive-feedback#135: with no model this person can ask, every skin says so and Enter sends nothing', () => {
+  const provider = (name: string, over: Record<string, unknown> = {}) => ({ name, label: name, local: false, needs_key: true, connected: false, configured: false, source: null, key_hint: '', key_env: '', base_url: '', models: ['invented-model'], keys: 0, ...over })
+  const NO_MODEL = [provider('openrouter'), provider('mock', { local: true, needs_key: false, connected: true, configured: true, test_only: true, readiness: 'test_only' })]
+  const WITH_KEY = [provider('openrouter', { connected: true, configured: true, source: 'stored', keys: 1 }), NO_MODEL[1]]
+  const panelOf = (m: Mounted) => (find(m.tree, (e) => e.type === PanelView)[0]?.props.f as { panel: { kind: string; held?: boolean } | null } | undefined)?.panel ?? null
+  const wakes = () => useAskStore.getState().open
+  afterEach(() => useHive.setState({ providers: null }))
+
+  it.each(ALL)('%s: at rest the connect notice is what the skin draws; typed words and Enter are kept, nothing is sent or woken', async (skin) => {
+    useHive.setState({ providers: NO_MODEL as never })
+    const m = mount(SKINS[skin])
+    expect(panelOf(m), skin).toEqual({ kind: 'connect', held: false })
+    await type(m, 'kelp')
+    // with words the rows show as ever (opening a page needs no model); the notice steps aside
+    expect(panelOf(m), skin).toBeNull()
+    await press(m, 'Enter')
+    expect(M.asks, skin).toEqual([])
+    expect(wakes(), skin).toBeNull()
+    expect(valueOf(m), skin).toBe('kelp')
+    expect(panelOf(m), skin).toEqual({ kind: 'connect', held: true })
+    // Enter again on the notice still sends nothing, and adds no second message: the notice already says what helps
+    clock += 5_000
+    await press(m, 'Enter')
+    expect(M.asks, skin).toEqual([])
+    expect(valueOf(m), skin).toBe('kelp')
+    expect(panelOf(m), skin).toEqual({ kind: 'connect', held: true })
+    expect(useHive.getState().toasts.filter((t) => t.title === 'Nothing was sent'), skin).toEqual([])
+  })
+  it.each(ALL)('%s: on You and your keys (and Models) the notice steps aside, held or resting, so it never covers the add-key form; the words stay', async (skin) => {
+    useHive.setState({ providers: NO_MODEL as never })
+    const m = mount(SKINS[skin])
+    await type(m, 'kelp')
+    await press(m, 'Enter')
+    expect(panelOf(m), skin).toEqual({ kind: 'connect', held: true })
+    for (const hash of ['#/me', '#/models']) {
+      // Add a key was pressed: the page is now the keys place
+      win.location.hash = hash
+      win.dispatchEvent({ type: 'hashchange' })
+      m.settle(); await flush(); m.settle()
+      expect(panelOf(m), `${skin} ${hash}`).toBeNull()
+      expect(valueOf(m), `${skin} ${hash}`).toBe('kelp')
+    }
+  })
+  it('the shared hook, on the keys page: no resting notice; Enter for a mind sends nothing and says to add a key on this page', async () => {
+    useHive.setState({ providers: NO_MODEL as never })
+    win.location.hash = '#/me'
+    win.dispatchEvent({ type: 'hashchange' })
+    const m = mount(() => useAskField({ experience: 'classic' }))
+    const f = () => m.tree as ReturnType<typeof useAskField>
+    expect(f().panel).toBeNull()
+    await f().run({ do: 'mind', text: 'kelp' }, 'kelp'); m.settle()
+    expect(M.asks).toEqual([])
+    expect(f().panel).toBeNull()
+    expect(refusedWith(REFUSED.connectHere)).toBe(true)
+  })
+  it.each(ALL)('%s: a key added (the hive states its providers again) clears the notice with no reload, and the same words send', async (skin) => {
+    useHive.setState({ providers: NO_MODEL as never })
+    const m = mount(SKINS[skin])
+    await type(m, 'kelp')
+    await press(m, 'Enter')
+    expect(panelOf(m), skin).toEqual({ kind: 'connect', held: true })
+    useHive.setState({ providers: WITH_KEY as never })
+    m.settle(); await flush(); m.settle()
+    expect(panelOf(m), skin).toBeNull()
+    clock += 5_000
+    await press(m, 'Enter')
+    expect(M.asks, skin).toEqual(['kelp'])
+  })
+  it.each(ALL)('%s: with a model, or before the hive has listed any, the Ask is as it was', async (skin) => {
+    for (const providers of [WITH_KEY, null]) {
+      useHive.setState({ providers: providers as never })
+      M.asks.length = 0
+      const m = mount(SKINS[skin])
+      expect(panelOf(m), skin).toBeNull()
+      await type(m, 'kelp')
+      await press(m, 'Enter')
+      expect(M.asks, skin).toEqual(['kelp'])
+      expect(panelOf(m), skin).toBeNull()
+      m.unmount(); mounted = mounted.filter((x) => x !== m)
+      clock += 10_000
+    }
+  })
+  it('the shared hook: closing the resting notice holds until the hive next states its providers; never on the keys or models pages', async () => {
+    useHive.setState({ providers: NO_MODEL as never })
+    const m = mount(() => useAskField({ experience: 'classic' }))
+    const f = () => m.tree as ReturnType<typeof useAskField>
+    expect(f().noModel).toBe(true)
+    expect(f().panel).toEqual({ kind: 'connect', held: false })
+    f().setPanel(null); m.settle()
+    expect(f().panel).toBeNull()
+    // the hive states them again, still with nothing to ask: said again
+    useHive.setState({ providers: [...NO_MODEL] as never }); m.settle()
+    expect(f().panel).toEqual({ kind: 'connect', held: false })
+    // Esc closes it too
+    f().onKeyDown(key('Escape') as never); m.settle()
+    expect(f().panel).toBeNull()
   })
 })
 
@@ -1078,5 +1178,95 @@ describe('retained Ask again: the rendered request, presentation and identity ow
     expect(b.posts).toHaveBeenCalledTimes(1)
     await useAskStore.getState().retryLast(b.op, epoch, askRetryContext(b.op, currentEpoch()))
     await vi.waitFor(() => expect(b.posts).toHaveBeenCalledTimes(2))
+  })
+})
+
+describe('feedback #127: the pointer only highlights; Enter follows the keyboard, and Search is its own control', () => {
+  // every Ask renderer: the six skins above, and each remaining floating look and the phone capsule
+  const floating = (experience: string, look: 'liquid' | 'terminal' | 'note', mode: 'desktop' | 'phone' = 'desktop') => () =>
+    FloatingAsk({ place: mode === 'phone' ? { mode, bottom: 12, left: 16, width: 358 } : place, experience, inputRef, look })
+  const EVERY = { ...SKINS, liquid: floating('flux', 'liquid'), terminal: floating('construct', 'terminal'), note: floating('canvas', 'note'),
+    phoneCapsule: () => FloatingAsk({ place: { mode: 'phone' as const, bottom: 12, left: 16, width: 358 }, experience: 'classic', inputRef, look: 'capsule' }),
+    phoneNote: floating('canvas', 'note', 'phone') } as const
+  type Every = keyof typeof EVERY
+  const LOOK: Record<Every, string> = { still: 'still', stillLine: 'still', capsule: 'classic', floating: 'cosmos', professional: 'professional', construct: 'construct',
+    liquid: 'flux', terminal: 'construct', note: 'canvas', phoneCapsule: 'classic', phoneNote: 'canvas' }
+  const EACH = Object.keys(EVERY) as Every[]
+  const rowsOf = (m: Mounted) => find(m.tree, (e) => e.props.role === 'option' && /Hi/.test(text(e)))
+  const searchRow = (m: Mounted) => rowsOf(m).find((e) => /Search everything for/.test(text(e)))!
+  const selected = (m: Mounted) => rowsOf(m).filter((e) => e.props['aria-selected'] === true).map(text).join(' ')
+  const controlOf = (m: Mounted) => find(m.tree, (e) => e.type === AskSearch)
+
+  it.each(EACH)('%s: "Hi", the pointer moves over the Search row, Enter: one send to the mind, and search does not open', async (skin) => {
+    const m = mount(EVERY[skin])
+    await type(m, 'Hi')
+    expect(rowsOf(m).length, skin).toBeGreaterThanOrEqual(2)
+    expect(selected(m), skin).toMatch(/Ask/)
+    const move = searchRow(m).props.onMouseMove as (() => void) | undefined
+    // Professional's rows are plain buttons with no pointer highlight of their own; every other skin has one
+    if (skin !== 'professional') expect(move, skin).toBeTypeOf('function')
+    move?.(); m.settle()
+    if (move) expect('data-hover' in searchRow(m).props && searchRow(m).props['data-hover'] !== undefined, skin).toBe(true)
+    // the row Enter takes (aria-selected, marked ↵) did not move
+    expect(selected(m), skin).toMatch(/Ask/)
+    expect(selected(m), skin).not.toMatch(/Search everything/)
+    await press(m)
+    expect(M.asks, skin).toEqual(['Hi'])
+    expect(searched(), skin).toBe(0)
+  })
+
+  it.each(EACH)('%s: the pointer leaves the row: the highlight goes, and Enter still sends', async (skin) => {
+    const m = mount(EVERY[skin])
+    await type(m, 'Hi')
+    ;(searchRow(m).props.onMouseMove as (() => void) | undefined)?.(); m.settle()
+    ;(searchRow(m).props.onMouseLeave as (() => void) | undefined)?.(); m.settle()
+    expect(searchRow(m).props['data-hover'], skin).toBeUndefined()
+    await press(m)
+    expect(M.asks, skin).toEqual(['Hi'])
+    expect(searched(), skin).toBe(0)
+  })
+
+  it.each(EACH)('%s: the arrow key moves to the Search row: Enter searches, asks no mind (the keyboard still chooses)', async (skin) => {
+    const m = mount(EVERY[skin])
+    await type(m, 'Hi')
+    // the pointer rests on the mind row meanwhile: it does not hold Enter there either
+    ;(rowsOf(m)[0].props.onMouseMove as (() => void) | undefined)?.(); m.settle()
+    for (let i = 0; i < 6 && !/Search everything/.test(selected(m)); i++) { (inputOf(m).props.onKeyDown as (e: unknown) => void)(key('ArrowDown')); m.settle() }
+    expect(selected(m), skin).toMatch(/Search everything/)
+    await press(m)
+    expect(M.asks, skin).toEqual([])
+    expect(searched(), skin).toBe(1)
+  })
+
+  it.each(EACH)('%s: clicking the Search row still searches', async (skin) => {
+    const m = mount(EVERY[skin])
+    await type(m, 'Hi')
+    const row = searchRow(m)
+    const button = find(row, (e) => e.type === 'button')[0]
+    const click = (button?.props.onClick ?? row.props.onClick ?? row.props.onPointerDown) as (e: unknown) => void
+    click({ preventDefault() {} })
+    await flush(); m.settle(); await flush(); m.settle()
+    expect(M.asks, skin).toEqual([])
+    expect(searched(), skin).toBe(1)
+  })
+
+  it.each(EACH)('%s: one Search control, the shell\'s search part, named in the look\'s words; it opens search with the typed words and sends nothing', async (skin) => {
+    const m = mount(EVERY[skin])
+    expect(controlOf(m), skin).toHaveLength(1) // on show before anything is typed
+    await type(m, 'Hi')
+    const control = controlOf(m)
+    expect(control, skin).toHaveLength(1)
+    expect(control[0].props.look, skin).toBe(LOOK[skin])
+    const button = (AskSearch as unknown as (p: unknown) => El)(control[0].props)
+    expect(button.type).toBe('button')
+    expect(button.props['data-ui-part']).toBe(ASK_SEARCH_PART)
+    expect(button.props['data-intent']).toBe('ask.search')
+    expect(button.props['aria-label'], skin).toBe(askSearchWords(LOOK[skin]))
+    expect(String(button.props['aria-label'])).toMatch(/search/i)
+    ;(button.props.onClick as () => void)()
+    await flush(); m.settle()
+    expect(palette.mock.calls, skin).toEqual([['Hi']])
+    expect(M.asks, skin).toEqual([])
+    expect(valueOf(m), skin).toBe('Hi') // the words stay: nothing was spent
   })
 })

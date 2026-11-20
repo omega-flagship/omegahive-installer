@@ -26,6 +26,7 @@ Policy: every tool is decided under the native skill name in the table, through 
 
 | Tool | Policy name |
 |---|---|
+| `hive_code_mind_proof` | none (the proof checks its member and their claimed task itself) |
 | `hive_whoami` | none (identity read) |
 | `hive_inbox` | none (identity read) |
 | `hive_send` | `send` |
@@ -49,6 +50,41 @@ Policy: every tool is decided under the native skill name in the table, through 
 | `hive_repo_query` | `repo-query` |
 
 `hive_evidence_publish` is built but **gated off**: it is not listed, and a call answers 501 `evidence_publish_gated` after argument checks, before any policy decision or effect. Its schema is below so owners can bind to it.
+
+### `hive_code_mind_proof`
+
+Check a synthetic claimed task using this member: fixed read and host candidate denial; metadata only. Issues a short read capability; no model work.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_~-]{1,200}$"
+    },
+    "repository_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_~-]{1,200}$"
+    },
+    "workspace_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_~-]{1,200}$"
+    },
+    "suggestion_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_~-]{1,200}$"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "repository_id",
+    "workspace_id",
+    "suggestion_id"
+  ]
+}
+```
 
 ### `hive_whoami`
 

@@ -636,7 +636,7 @@ export class SimAsk {
     const lose = /\blose a step\b/.test(text)
     if (lose) t.unreadable = true
     const dropOne = lose || this.count % 3 === 0
-    steps.push([90, { phase: 'accepted', thread: { ...t.thread }, ...(t.actingAs ? { acting_as: t.actingAs } : {}) }])
+    steps.push([90, { phase: 'accepted', thread: { ...t.thread }, ...(t.actingAs ? { acting_as: t.actingAs } : {}), ...(this.flags.conductor ? { conducted: t.actingAs ? 'mind' : 'ask' } : {}) }])
     steps.push([380, { phase: 'thinking', step: `reading ${place}` }])
     steps.push([520, { phase: 'thinking', step: about ? `asking ${about.name}` : `checking ${swarm.name}` }, dropOne])
 

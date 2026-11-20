@@ -30,6 +30,9 @@ and are not repeated here.
 
 ## Unreleased
 
+### Fixed (recent creations in Studio)
+- Studio's empty canvas lists your three newest saved designs, pictures or deployed Create apps in one list. Each opens the saved revision or app. The empty canvas also links to Artifacts.
+
 ### Fixed (Mac updater download)
 - An accepted update's download asks for the rest of the zip after a stall or a dropped connection (a `Range`
   request). Before, one stall of over a minute failed the update and the next try began again at the first byte. A

@@ -30,7 +30,7 @@ describe('the mind whose voice answers is the one named', () => {
     const t = { mind: coord }
     expect(threadInfo(t, own, (n) => n, () => undefined, { mind_id: own.id, name: own.name }))
       .toBe('Your mind Berton’s mind answers for you here, working with Review controller. Admins can review this in the audit log.')
-    expect(threadInfo(t, own, (n) => n)).toBe('Answers come from Review controller’s own knowledge. Admins can review this in the audit log.')
+    expect(threadInfo(t, own, (n) => n)).toBe('Answers come from Review controller. Admins can review this in the audit log.')
   })
 
   // the hive names a person's own mind "Your mind" until they name it (core/personal.py DEFAULT_MIND_NAME)

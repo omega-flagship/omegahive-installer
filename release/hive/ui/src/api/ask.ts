@@ -322,6 +322,8 @@ export interface ResearchCitation {
   title?: string
   quote?: string
   verified: boolean
+  /** how the address matched a page the researcher fetched (research.check): exact, by path, or not at all */
+  match?: 'exact' | 'path' | null
 }
 /** One claim of a report; `cited` when at least one of its sources is a page the researcher fetched. */
 export interface ResearchClaim {
@@ -359,7 +361,11 @@ interface Frame<P extends string> {
 }
 
 export type AskEvent =
-  | (Frame<'accepted'> & { thread: AskThread })
+  /**
+   * `conducted`: the host's conductor answers this turn (hive/core/ask.py), whose tools hold no web search, with the
+   * asker's own mind's model (`mind`, a turn with that mind) or the model the Ask uses (`ask`)
+   */
+  | (Frame<'accepted'> & { thread: AskThread; conducted?: 'mind' | 'ask' })
   /** `truncated: true` with an empty step: the host trimmed later thinking frames (said once, quietly) */
   | (Frame<'thinking'> & { step?: string; truncated?: boolean })
   /** `delta: true`: a piece of streamed text, appended until a non-delta answer (the whole text) or `done` */
@@ -376,13 +382,17 @@ export type AskEvent =
   | (Frame<'dispatched'> & { intent_id: string; intent_kind: string; to: DispatchedTo; label?: string })
   /** linkage r2.13 (ask_intents Intents._frame): an intent this turn recorded moved on. A hint (its record is GET
    *  /api/ask/{op}/links) that applies nothing, but it holds its place in the turn's order like every frame. */
-  | (Frame<'intent'> & { intent_id: string; state: IntentState; links_rev: number; request_id?: string; dispatch_id?: string })
+  /** one of this turn's intents moved (hive/core/ask_intents.py: a hint, the intent's view is the record); a refusal says
+   * its kind's reason, a host enum: researcher_asleep is a research request held back because the Research swarm's
+   * coordinator is stopped, which the person may wake to send it as it is (askResearchWake) */
+  | (Frame<'intent'> & { intent_id: string; state: IntentState; links_rev?: number; request_id?: string; dispatch_id?: string; reason?: string })
   /** a direct link of this turn to a request (Intents.link): a hint like an intent */
   | (Frame<'link'> & { request_id: string; links_rev: number })
   /** research.deliver: the report back at its turn, after the turn's done; a personal turn's stored copy has no `research` */
   | (Frame<'research'> & { intent_id?: string | null; request_id: string; state: ResearchState; research?: ResearchView })
   /** a frame of a phase this page does not know (`sent_as`): it holds its seq and is never applied or shown */
   | (Frame<'unknown'> & { sent_as: string })
+  | (Frame<'research'> & ResearchFrame)
   /**
    * Something for this browser to remember about the person (conductor `remember`; asker-only). Live, it carries the
    * item and, for a revise, the note id it revises; the stored copy read back later is `{op, digest}` only (both blank
@@ -391,6 +401,31 @@ export type AskEvent =
   | (Frame<'memory'> & { op: MemoryOp; digest: string; item?: { statement: string; kind: string; truth: { frequency: number; confidence: number } }; target_id?: string | null })
 
 export type MemoryOp = 'remember' | 'revise' | ''
+
+export type ResearchHold = 'spend_rate' | 'spending_limit' | 'asleep' | 'worker_error'
+/** research.py _hold: a researcher held, with why and until when, or back at work; a report comes in the deliver frame */
+type ResearchFrame =
+  | { request_id: string; state: 'held'; reason: ResearchHold; until?: string | null }
+  | { request_id: string; state: 'resumed' }
+
+/** A refusal's reason as the host keeps it: an enum, never words (ask_intents REASON). */
+const INTENT_REASON = /^[a-z][a-z0-9_]{0,40}$/
+/** The research refusal a person can lift by waking the Research swarm (hive/core/research.py admit). */
+export const RESEARCHER_ASLEEP = 'researcher_asleep'
+
+/**
+ * A research request of the person's still held back by an asleep Research swarm, read strictly from its intent view
+ * (GET /api/ask/intents/{id}): the swarm whose coordinator to wake. Anything else (another kind, a request already sent
+ * or closed, another refusal) is null, so nothing is woken or sent for it.
+ */
+export function readAsleepResearch(v: unknown): { swarm: string } | null {
+  if (!v || typeof v !== 'object') return null
+  const o = v as Record<string, unknown>
+  const refusal = o.last_refusal as Record<string, unknown> | null | undefined
+  const to = (o.destination as Record<string, unknown> | null | undefined)?.to_swarm
+  if (o.kind !== 'research.request' || o.state !== 'refused' || refusal?.reason !== RESEARCHER_ASLEEP || !id(to)) return null
+  return { swarm: to }
+}
 
 /** GET /api/ask/{op}?after=&limit=: the turn view plus its frames after `after`, in seq order (paged). */
 export interface AskTurnState extends Partial<Omit<AskAccepted, 'operation_id' | 'turn_id'>> {
@@ -535,6 +570,31 @@ const id = (v: unknown): v is string => typeof v === 'string' && ID.test(v)
 const who = (v: unknown): v is AskWho => !!v && typeof v === 'object' && id((v as AskWho).id) && str((v as AskWho).name, 120)
 export const PRESENCE_CAPTION_MAX = 120
 
+function checkedResearch(frame: Record<string, unknown>): boolean {
+  if (!id(frame.request_id)) return false
+  if (frame.state === 'held') {
+    if (frame.reason === 'spend_rate') {
+      return str(frame.until, 40) && Number.isFinite(Date.parse(frame.until))
+    }
+    return (frame.reason === 'spending_limit' || frame.reason === 'asleep' || frame.reason === 'worker_error') &&
+      frame.until == null
+  }
+  if (frame.state === 'failed' || frame.state === 'cancelled' || frame.state === 'resumed') return true
+  if (frame.state !== 'done') return false
+  // A personal replay or a server that has retired the report can send the outcome without its content.
+  if (frame.research === undefined) return true
+  const report = (frame.research as { report?: ResearchReport | null } | null)?.report
+  return report === null || !!report && str(report.summary, 4000) &&
+    Array.isArray(report.sections) && report.sections.length <= 12 && report.sections.every(section =>
+      !!section && str(section.heading, 400) && Array.isArray(section.claims) && section.claims.length <= 30 &&
+      section.claims.every(claim => !!claim && str(claim.text, 2000) && typeof claim.cited === 'boolean' &&
+        Array.isArray(claim.citations) && claim.citations.length <= 8 && claim.citations.every(citation =>
+          !!citation && str(citation.url, 2048) && citation.url.startsWith('https://') &&
+          (citation.match === 'exact' || citation.match === 'path' || citation.match === null)))) &&
+    Array.isArray(report.open_questions) && report.open_questions.length <= 10 &&
+    report.open_questions.every(question => str(question, 600))
+}
+
 /** A presence target: a feature id, an entity of a known kind with a plain id, or a named region; nothing else. */
 export function validTarget(t: unknown): t is PresenceTarget {
   if (!t || typeof t !== 'object' || Array.isArray(t)) return false
@@ -584,10 +644,14 @@ export function checkAskEvent(e: unknown): AskEvent | null {
         : null
     }
     case 'intent':
-      return id(f.intent_id) && INTENT_STATES.includes(f.state as IntentState) && count(f.links_rev) && optId(f.request_id) && optId(f.dispatch_id) ? (f as unknown as AskEvent) : null
+      return id(f.intent_id) && INTENT_STATES.includes(f.state as IntentState) && (f.links_rev === undefined || count(f.links_rev)) && optId(f.request_id) && optId(f.dispatch_id)
+        && (f.reason === undefined || (typeof f.reason === 'string' && INTENT_REASON.test(f.reason))) ? (f as unknown as AskEvent) : null
     case 'link':
       return id(f.request_id) && count(f.links_rev) ? (f as unknown as AskEvent) : null
     case 'research': {
+      // a researcher held or back at work (research.py _hold): checked as the host sends it
+      if (f.state === 'held' || f.state === 'resumed') return checkedResearch(f) ? (f as unknown as AskEvent) : null
+      // the report back at its turn (research.py deliver)
       if (!id(f.request_id) || !RESEARCH_STATES.includes(f.state as ResearchState) || !optId(f.intent_id)) return null
       // a report this page cannot read is left out, never the frame: the row reads the report again by its id
       const { research, ...rest } = f
@@ -683,9 +747,14 @@ function readList<T>(v: unknown, max: number, read: (x: unknown) => T | null): T
   }
   return out
 }
+/** research.check's judgement of one address: exact, by path, or not a page the researcher fetched (null); a report
+ * stored before the check named it has none (undefined). Anything else is unreadable (false). */
+const readMatch = (m: unknown): ResearchCitation['match'] | false => (m === undefined || m === null || m === 'exact' || m === 'path' ? m : false)
 const readCitation = (v: unknown): ResearchCitation | null => {
   if (!object(v) || typeof v.url !== 'string' || !HTTPS.test(v.url) || (v.title != null && !str(v.title, 300)) || (v.quote != null && !str(v.quote, 500))) return null
-  return { url: v.url, verified: v.verified === true, ...(typeof v.title === 'string' && v.title ? { title: v.title } : {}), ...(typeof v.quote === 'string' && v.quote ? { quote: v.quote } : {}) }
+  const match = readMatch(v.match)
+  if (match === false) return null
+  return { url: v.url, verified: v.verified === true, ...(match !== undefined ? { match } : {}), ...(typeof v.title === 'string' && v.title ? { title: v.title } : {}), ...(typeof v.quote === 'string' && v.quote ? { quote: v.quote } : {}) }
 }
 const readClaim = (v: unknown): ResearchClaim | null => {
   if (!object(v) || !str(v.text, 1000) || !v.text) return null

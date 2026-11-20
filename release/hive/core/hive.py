@@ -1876,7 +1876,7 @@ class Hive:
             }
             self.db.insert("messages", message)
             if self._is_input(agent_id, sender, extra):
-                self.mark_input(agent_id, message["created_at"])
+                self._mark_message_input(agent_id, sender, extra, message["created_at"])
                 self.model_refusal_release(agent_id)   # someone wrote: a refused provider is asked again at once
         return message
 
@@ -1904,6 +1904,50 @@ class Hive:
         never stamps it: a mind thinking with nothing coming in is what Health notices (health.py idle pass), and what
         an owner's idle_sleep_minutes counts from."""
         self.db.execute("UPDATE agents SET last_input_at = ? WHERE id = ?", (at or now(), agent_id))
+
+    def _mark_message_input(self, agent_id, sender, extra, at):
+        """An inbound message _is_input counts: input to the idle signal always (mark_input). Asking (last_asked_at) by
+        who sent it: a person's message stamps now; another mind's passes on only how fresh the sender's own asking is
+        (mark_asked_by), so minds writing to each other never keep themselves awake; a goal assigned to this mind passes
+        on the goal's own freshness (goals.asked_at, pass_asked)."""
+        sender = str(sender or "")
+        if sender.startswith("agent:"):
+            self.mark_asked_by(agent_id, sender[6:], at)
+        elif sender.startswith("hive:"):   # _is_input admits only a goal assigned to this mind: it carries the goal's freshness
+            self.mark_input(agent_id, at)
+            self.pass_asked(agent_id, self.goals.asking((extra or {}).get("goal_id")))
+        else:
+            self.mark_asked(agent_id, at)
+
+    def mark_asked_by(self, agent_id, sender_id, at=None):
+        """A message from mind sender_id reached this mind: input to its idle signal (mark_input), and its last_asked_at
+        becomes the later of its own and the sender's. Never now, and never the sender's creation: a sender no one
+        asked passes on nothing, so a new mind can't keep a resting one awake, and a chain a person started (person ->
+        A -> B -> C) runs on her message's time and rests with it. Compared by time (parse_stamp), never as text."""
+        self.mark_input(agent_id, at)
+        row = self.db.one("SELECT last_asked_at FROM agents WHERE id = ?", (sender_id,))
+        self.pass_asked(agent_id, row["last_asked_at"] if row else None)
+
+    def pass_asked(self, agent_id, stamp):
+        """This mind's last_asked_at becomes the later of its own and `stamp` (a sender's, or a goal's asked_at); a
+        missing or unreadable stamp passes nothing. Compared by time (parse_stamp), never as text."""
+        theirs = parse_stamp(stamp)
+        if theirs is None:
+            return
+        row = self.db.one("SELECT last_asked_at FROM agents WHERE id = ?", (agent_id,))
+        mine = parse_stamp(row["last_asked_at"]) if row else None
+        if mine is None or theirs > mine:
+            self.db.execute("UPDATE agents SET last_asked_at = ? WHERE id = ?", (stamp, agent_id))
+
+    def mark_asked(self, agent_id, at=None):
+        """Input that came from outside the mind (agents.last_asked_at, and the idle signal with it, mark_input): a
+        person's message (another mind's message, a goal assigned, claimed or heartbeaten pass on their freshness
+        instead: mark_asked_by, pass_asked). Never what the mind does by itself:
+        its own messages and beliefs stamp last_input_at, and its inbox polls, tool calls and starts last_active_at, so
+        neither can say someone asked it. The free route lets a mind no one asked lately rest (FreeGate.admit), so a
+        mind posting on its own wakes can't keep spending its person's free calls."""
+        stamp = at or now()
+        self.db.execute("UPDATE agents SET last_input_at = ?, last_asked_at = ? WHERE id = ?", (stamp, stamp, agent_id))
 
     async def send_to_agent(self, agent_id, text, conversation_id=None, sender="user:operator", extra=None, from_room=False,
                             fence=None, wake=True):
@@ -3040,9 +3084,11 @@ class Hive:
     def note_admitted(self, agent):
         """A paid call admitted again, by Budgets.check and its reservation both: the mind is no longer paused for
         spending, so its refusal record goes and the next refusal is announced as the first of a new pause; the same for
-        a pace the spend-rate guard set (spend_rate_refusal)."""
+        a pace the spend-rate guard set (spend_rate_refusal). A research request its researcher's spending held resumes
+        (Research.worker_admitted)."""
         self.refusals.pop(agent["id"], None)
         self.slowed.pop(agent["id"], None)
+        self.research.worker_admitted(agent["id"])
 
     def spend_rate_refusal(self, agent, exc):
         """A paid call the spend-rate guard refused (cost_reservations.SpendRateLimited): the 429 spend_rate a mind reads

@@ -4,8 +4,9 @@ import type { FeedbackDestination } from '../../api/types'
 import type { ScreenFacts } from '../../screens/screenSpace'
 import { plural } from '../../lib/plural'
 import type { Draft } from './drafts'
-import { errorsText, reportText, type Report } from './report'
-import type { FeedbackState } from './store'
+import { extrasText } from './logs'
+import { errorsText, reportText, type Report, type ReportExtras } from './report'
+import { sendWaits, type FeedbackState } from './store'
 
 /** How a report can leave this hive now (feedback.metta's to.route). */
 export type Route = 'service' | 'board' | 'copy' | 'invalid'
@@ -40,9 +41,11 @@ export function draftRows(drafts: readonly Draft[], inUse: string | null, when: 
 
 /**
  * `report` is the report as it would go; `errors` how many recent errors there are to send, kept or left out; `drafts`
- * what the hive and its minds drafted, waiting for the person.
+ * what the hive and its minds drafted, waiting for the person; `extras` the requests, errors and log lines that go with
+ * it to a report service as it stands (store.ts extrasOfState), null when none do.
  */
-export function feedbackScreen(s: FeedbackState, report: Report, device: { share: boolean }, errors: number, drafts: readonly Draft[] = []): { data: Record<string, unknown>; facts: ScreenFacts } {
+export function feedbackScreen(s: FeedbackState, report: Report, device: { share: boolean }, errors: number, drafts: readonly Draft[] = [],
+  extras: ReportExtras | null = null): { data: Record<string, unknown>; facts: ScreenFacts } {
   const pictureGoes = !!s.picture.url && s.picture.kept
   const empty = s.words.trim() === ''
   const waiting = draftRows(drafts, s.draft?.id ?? null)
@@ -65,6 +68,12 @@ export function feedbackScreen(s: FeedbackState, report: Report, device: { share
       drafts: waiting,
       // what holds every way out: nothing written yet, or a send under way
       'report.held': empty || s.sending,
+      // the send also waits for what goes with it: the picture being drawn, the requests and logs being gathered
+      'send.held': empty || s.sending || sendWaits(s),
+      // the one switch for the requests and logs, and the text of them as they go
+      'report.attach': [{ id: 'logs', label: 'Include requests and logs', on: s.attach.kept }],
+      'attach.text': extras ? extrasText(extras, s.attach.hive?.scope ?? 'person') : '',
+      'attach.missing': s.attach.missing,
       // the logs, gathered on the person's press and shown whole before they leave (store.ts showLogs)
       'logs.text': s.logs.text, 'logs.file': s.logs.file, 'logs.missing': s.logs.missing, 'logs.failed': s.logs.failed,
       'logs.loading': s.logs.loading,
@@ -76,6 +85,7 @@ export function feedbackScreen(s: FeedbackState, report: Report, device: { share
         'picture.goes': pictureGoes, 'errors.kept': s.errorsKept, 'report.empty': empty, 'report.failed': s.failed !== '',
         'report.copied_too': s.copiedToo, 'device.share': device.share, 'report.drafted': s.draft !== null,
         'logs.shown': s.logs.shown, 'logs.loading': s.logs.loading, 'logs.missing': s.logs.missing !== '', 'logs.failed': s.logs.failed !== '',
+        'attach.loading': s.attach.kept && s.attach.loading, 'attach.missing': s.attach.kept && s.attach.missing !== '', 'attach.goes': extras !== null,
       },
       counts: { 'report.errors': errors, drafts: waiting.length },
     },

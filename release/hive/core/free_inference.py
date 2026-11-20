@@ -25,6 +25,18 @@ the owner's grants and which the owner's limits count. Here:
   0 or an unreadable value turns the route off. Free tiers count requests a day too (OpenRouter's free models). Both
   counts are taken in one statement before dispatch, and given back for a call that ends before it commits at the send
   boundary (Gateway.free_uncommitted), when nothing can have reached the endpoint;
+- when: only while a person is asking the mind, directly or through a chain they started. A mind's own call (no
+  caller naming the person) is refused, counted for no one and sent nowhere, when its last asking (agents.last_asked_at)
+  is older than HIVE_FREE_INFERENCE_IDLE_WINDOW_S seconds, 1800 by default (0 turns this off). A person's message stamps
+  it now (Hive.mark_asked); another mind's message passes on only the sender's own last asking (Hive.mark_asked_by), and
+  a goal assigned, claimed or heartbeaten passes on the goal's (goals.asked_at: a goal a person stands behind, their own,
+  their request's or their Create plan's, its making; a mind's goal its maker's last asking; Goals.person_behind,
+  Hive.pass_asked), so minds can't keep each other or themselves awake. A mind never asked
+  counts from its creation, but passes nothing on. Past the window, a live lease on a goal a person made (or the root of
+  its tree) still admits it (FreeGate.on_persons_goal): the runtime sends no heartbeat by itself and a lease outlasts the
+  window. Its loop wakes every 15 minutes with up to 8 model calls a wake, and on staging a mind nobody addressed spent
+  156 of its person's 200 calls overnight. A call the Ask or a browser turn makes for the person asking is never refused
+  for it: that person is the input;
 - recorded: the call's tokens, at $0 to the hive, payer the person, payer_mode 'free'. It is not the hive's money, so no
   limit of the hive, a swarm or a person counts it, and the calls a day bound it instead;
 - unseen: the gateway sends the key only as the upstream Authorization header; providers.py lists no key row, hint or
@@ -38,6 +50,7 @@ import os
 
 from .budgets import period_start
 from .config import FREE, is_free
+from .db import parse_stamp
 from .refusals import refused
 
 PAYER_MODE = "free"
@@ -45,6 +58,7 @@ DAILY_CALLS_DEFAULT = 200
 HIVE_DAILY_CALLS_DEFAULT = 2000   # ten people's full day
 SQLITE_MAX = 2 ** 63 - 1          # the largest INTEGER SQLite binds: a larger setting means "no lower bound than this"
 TABLE = "free_inference_calls"
+FREE_IDLE_WINDOW_S = 1800         # half an hour with nothing from outside a mind and its own calls rest
 
 # Every refusal of this route is a row of refusals.py, each in words written for the person, never a provider's text.
 
@@ -69,6 +83,20 @@ def daily_cap():
 def hive_daily_cap():
     """HIVE_FREE_INFERENCE_HIVE_DAILY_CALLS: the whole hive's model calls a day on the free route."""
     return _calls("HIVE_FREE_INFERENCE_HIVE_DAILY_CALLS", HIVE_DAILY_CALLS_DEFAULT)
+
+
+def idle_window():
+    """HIVE_FREE_INFERENCE_IDLE_WINDOW_S: seconds after the last input from outside a mind (Hive.mark_asked) that its own
+    calls are still admitted. Unset gives FREE_IDLE_WINDOW_S; 0 turns resting off; anything unreadable or negative keeps
+    the default, so a typo never lets idle minds spend."""
+    raw = os.environ.get("HIVE_FREE_INFERENCE_IDLE_WINDOW_S", "").strip()
+    if not raw:
+        return FREE_IDLE_WINDOW_S
+    try:
+        value = int(raw)
+    except ValueError:
+        return FREE_IDLE_WINDOW_S
+    return value if value >= 0 else FREE_IDLE_WINDOW_S
 
 
 def visitors_admitted():
@@ -144,12 +172,16 @@ class FreeGate:
         check_model(self.hive.settings.providers, (agent or {}).get("model") if isinstance(agent, dict) else None)
         return self.person_for(agent, principal)
 
-    def admit(self, agent, principal=None, dispatch=False):
-        """Authorized (above), then the day: the person's calls and the hive's. dispatch=True counts this call for both in
-        one statement (atomic: refused past either cap) and returns its ticket (person, day) for release; False only checks
-        there is room and returns None.
+    def admit(self, agent, principal=None, dispatch=False, idle_guard=True):
+        """Authorized (above), then resting (resting, below), then the day: the person's calls and the hive's.
+        dispatch=True counts this call for both in one statement (atomic: refused past either cap) and returns its ticket
+        (person, day) for release; False only checks there is room and returns None. idle_guard=False: the question is
+        whether the route would serve this mind at all (First Light's preflight, Budgets.settlement), not whether its own
+        call may go now.
         Time: one indexed sum over the day's rows, d = the people who used it today, per admission."""
         person = self.authorize(agent, principal)
+        if idle_guard and principal is None and self.resting(agent):
+            raise refused("free_inference_idle", 429)
         limit, ceiling, day = daily_cap(), hive_daily_cap(), period_start("day")
         if not dispatch:
             if self.used(person, day) >= limit or self.hive_used(day) >= ceiling:
@@ -164,6 +196,37 @@ class FreeGate:
         if counted != 1:
             raise self._full(person, day, limit)
         return person, day
+
+    def resting(self, agent, moment=None):
+        """Whether a stored mind's own call meets nobody asking: no input from outside it (agents.last_asked_at, stamped
+        by Hive.mark_asked) within idle_window() seconds. A mind never asked counts from its creation (created_at), so a
+        new mind gets the window once; one made before this guard and never asked since rests at once (the migration
+        fills last_asked_at from last_input_at, so a mind in use doesn't). Past the window, a live lease on a goal a
+        person made still admits it (on_persons_goal). Never
+        last_input_at or last_active_at: the mind's own messages and beliefs stamp the first, its inbox polls, tool calls
+        and starts the second, so either would let a mind keep itself awake. An unreadable stamp is resting. A proposed
+        mind (no id) never is: it makes no calls of its own. Example: asked 10 minutes ago, or never asked and made 10
+        minutes ago -> False; asked 40 minutes ago, or never asked and made 40 minutes ago -> True (window 1800)."""
+        window = idle_window()
+        agent_id = agent.get("id") if isinstance(agent, dict) else None
+        if window <= 0 or not agent_id:
+            return False
+        row = self.hive.db.one("SELECT last_asked_at, created_at FROM agents WHERE id = ?", (agent_id,))
+        asked = parse_stamp((row["last_asked_at"] or row["created_at"]) if row else None)
+        moment = moment or datetime.datetime.now(datetime.timezone.utc)
+        if asked is not None and (moment - asked).total_seconds() < window:
+            return False
+        return not self.on_persons_goal(agent_id, moment)
+
+    def on_persons_goal(self, agent_id, moment):
+        """Whether the mind holds a live lease on a goal a person made (claimed by it, lease_until still ahead;
+        Goals.person_made): its loop sends no heartbeat by itself and the lease outlasts the window, so a person's goal
+        must not rest mid-run and expire. A goal a mind made for itself never counts. Time: one indexed read of the
+        mind's claimed goals."""
+        stamp = moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        held = self.hive.db.all("SELECT * FROM goals WHERE claimed_by = ? AND status = 'claimed' AND lease_until > ?",
+                                (agent_id, stamp))
+        return any(self.hive.goals.person_made(goal) for goal in held)
 
     def _full(self, person, day, limit):
         """The refusal for a day with no room: the person's own when they reached their calls, else the hive's (a call given

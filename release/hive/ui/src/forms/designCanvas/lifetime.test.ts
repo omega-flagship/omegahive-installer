@@ -181,30 +181,6 @@ describe('after unmount nothing local is written, and owned listeners are releas
     expect(await render().commit([{ op: 'set', element: 'kicker', patch: { text: 'AFTER REPLAY' } }])).toBe(true)   // fresh control
     expect(isDirty(docNow()!)).toBe(true)
   })
-  it('r3: the empty canvas keeps its recent designs when a StrictMode re-render gives a new view and the source effect reruns', async () => {
-    h.doc = null
-    props = { ...props, source: undefined, view: (async () => ({})) as never }
-    const list = deferred<unknown[]>()
-    const recent = [{ artifact_id: 'ar_simposter', kind: 'studio-source', title: 'Invented poster', revision: 1, digest: 'sha256:' + 'd'.repeat(64), created_at: 'c', revised_at: 'r' }]
-    Object.assign(client, { swarmArtifacts: () => list.promise })
-    try {
-      mount()
-      unmount()
-      mount()   // the replayed setup: the list is read again
-      await tick()
-      // the replay's re-render hands the canvas a new `view`, so the source effect (and only it) runs again
-      props = { ...props, view: (async () => ({})) as never }
-      render()
-      const source = h.effects.find((e) => String(e.fn).includes('sameCreation'))!
-      if (typeof source.cleanup === 'function') (source.cleanup as () => void)()
-      source.cleanup = source.fn()
-      list.resolve(recent)
-      await tick()
-      expect(render().recent).toEqual(recent)
-    } finally {
-      delete (client as { swarmArtifacts?: unknown }).swarmArtifacts
-    }
-  })
   it('stand-in r4 B1 probe: a control retired by unmount stays retired after a StrictMode replay (an old select)', async () => {
     const c = mount()
     unmount()

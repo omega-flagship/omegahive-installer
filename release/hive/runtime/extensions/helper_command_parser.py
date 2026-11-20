@@ -24,6 +24,10 @@ except Exception:
         _metta_string,
         test_metta_expression,
     )
+try:
+    from .module_requires import unmet as _module_unmet
+except Exception:
+    from module_requires import unmet as _module_unmet
 
 class SignatureParseError(Exception):
     pass
@@ -92,6 +96,8 @@ SKILL_AFFORDANCE_DECLARATIONS_PATH = CORE_ROOT / "hive" / "runtime" / "extension
 SKILL_AFFORDANCE_DECLARATIONS_GLOB = "skill_affordance*.metta"
 MODULE_DECLARATIONS_ROOT = CORE_ROOT / "modules"
 MODULE_LOADER_PATH = MODULE_DECLARATIONS_ROOT / "loader.metta"
+# where a reply's line ends (_signature_split_state): the three line endings, and no other character
+_LINE_END = re.compile(r"\r\n|\r|\n")
 
 
 DECLARATION_ORDER = {
@@ -108,23 +114,51 @@ DECLARATION_ORDER = {
 }
 
 
+_LOADER_IMPORT = re.compile(r"\./modules/([A-Za-z0-9_.-]+)/entry\.metta")
+
+
+def _loader_line_module(raw):
+    """The module directory a loader line imports (its ./modules/<name>/entry.metta outside a comment), else None."""
+    match = _LOADER_IMPORT.search(_strip_signature_comment(raw))
+    return match.group(1) if match else None
+
+
 def _enabled_module_names(loader_path=MODULE_LOADER_PATH):
     loader = pathlib.Path(loader_path)
     if not loader.exists():
         return []
     names = []
     seen = set()
-    pattern = re.compile(r"\./modules/([A-Za-z0-9_.-]+)/entry\.metta")
     for raw in loader.read_text(encoding="utf-8").splitlines():
-        line = _strip_signature_comment(raw)
-        match = pattern.search(line)
-        if not match:
+        name = _loader_line_module(raw)
+        if not name:
             continue
-        name = match.group(1)
         if name not in seen:
             seen.add(name)
             names.append(name)
     return names
+
+
+def module_selection(loader_path, modules_root=None):
+    """(running, off) for one host loader. running: the modules it imports whose manifests require nothing this mind is
+    shown to lack (module_requires), in the loader's order. off: {name: [(entry, why)]} for those that do, which this
+    mind neither imports (hive_services.module_loader) nor parses or catalogues (_module_declaration_paths). Modules a
+    host adds to one mind (OMEGACLAW_EXTRA_MODULES) are that host's own choice and are not checked."""
+    root = pathlib.Path(modules_root or MODULE_DECLARATIONS_ROOT)
+    running, off = [], {}
+    for name in _enabled_module_names(loader_path):
+        missing = _module_unmet(root / name)
+        if missing:
+            off[name] = missing
+        else:
+            running.append(name)
+    return running, off
+
+
+def module_loader_text(loader_path, off):
+    """The loader's text with each line importing a module named in ``off`` taken out, every other line as it is."""
+    lines = pathlib.Path(loader_path).read_text(encoding="utf-8").splitlines(keepends=True)
+    return "".join(line for line in lines if _loader_line_module(line) not in off)
 
 
 def _extra_module_names(modules_root=None):
@@ -143,7 +177,8 @@ def _extra_module_names(modules_root=None):
 
 
 def module_loader_path():
-    """The one module loader a mind runs and the parser authorizes against (hive_services.module_loader imports it).
+    """The one module loader a mind runs and the parser authorizes against (hive_services.module_loader imports it,
+    less the modules module_selection leaves out).
 
     Only the host decides: OMEGACLAW_MODULE_LOADER when set, else this checkout's modules/loader.metta. Never a file
     in the mind's own (writable) workspace, so a mind cannot replace its own module set.
@@ -172,7 +207,7 @@ def _module_declaration_paths(filename, declaration_root=CORE_ROOT):
         return []
     paths = []
     seen = set()
-    names = [name for loader in _active_module_loader_paths(root) for name in _enabled_module_names(loader)]
+    names = [name for loader in _active_module_loader_paths(root) for name in module_selection(loader, modules_root)[0]]
     if root == CORE_ROOT:
         names += _extra_module_names(modules_root)
     for name in names:
@@ -657,7 +692,7 @@ def skill_help(topic, path=SKILL_CATALOG_DECLARATIONS_PATH):
     return f"Unknown skill-help topic {topic}. Known topics: {known}"
 
 
-def _signature_quote(text):
+def signature_quote(text):
     return _metta_string(text)
 
 
@@ -822,18 +857,47 @@ def _signature_consume_metta(text, consume_all=False):
 
 
 def _signature_split_commands(raw):
+    return _signature_split_state(raw)[0]
+
+
+def unclosed_heredoc(text):
+    """The marker of a marker-ended body a reply opens and no line closes, or None. hive-goal-file g_1 a.js <<'EOF_a'
+    with no line EOF_a after it leaves 'EOF_a': the runtime refuses such a reply as an incomplete batch and names the
+    line it lacks, so the retry closes the body instead of sending it the same way again."""
+    return _signature_split_state(text)[1]
+
+
+def _signature_split_state(raw):
+    """(the reply's logical commands, the marker of a body still open when the reply ends, or None). Time: one pass
+    over the reply's lines, and per line that ends a body early one join and one pass over the markers closed so far."""
     logical = []
     current = []
     in_block = False
     in_quote = False
     escaped = False
     heredoc = None   # the marker a marker-ended body's closing line is, while inside one
-    for line in str(raw or "").replace("_quote_", '"').replace("_newline_", "\n").strip("\n").splitlines():
+    closed = {}      # each marker a body has closed with so far, to the index in logical of the first such body
+    text = str(raw or "").replace("_quote_", '"').replace("_newline_", "\n").strip("\r\n")
+    # Lines end at \n, \r\n or \r only. str.splitlines also ends one at a form feed, a vertical tab, \x1c to \x1e,
+    # NEL and U+2028/9, so such a character in a file's marker-ended body came back as a newline.
+    for line in _LINE_END.split(text) if text else []:
         if heredoc is not None:
             current.append(line)
             if line.strip() == heredoc:
                 logical.append("\n".join(current))
+                closed.setdefault(heredoc, len(logical) - 1)
                 current, heredoc = [], None
+            continue
+        if line.strip() in closed:
+            # A line outside any body that is a marker some body closed with: a body met its marker among its own lines
+            # and ended there, and the rest of the file followed as if it were commands, whole bodies of its own
+            # included. Every line from the first body that marker closed joins that command, which
+            # _signature_parse_one refuses, so no line of the file runs. Before, a body opening after the early marker
+            # forgot it, so a file holding a whole hive-goal-file after it ran the commands that followed.
+            start = closed[line.strip()]
+            logical[start:] = ["\n".join(logical[start:] + current + [line])]
+            closed = {marker: min(index, start) for marker, index in closed.items()}
+            current, in_block, in_quote, escaped = [], False, False, False
             continue
         continuing = in_block or in_quote
         stripped = line.strip()
@@ -844,7 +908,7 @@ def _signature_split_commands(raw):
         current.append(buffered)
         scan = buffered
         opened = None if continuing else _HEREDOC_OPEN.search(scan)
-        if opened and '"' not in scan[:opened.start()]:
+        if opened and '"' not in scan[:opened.start()] and _signature_takes_body(_signature_explicit_command_head(scan)):
             heredoc = opened.group(1)   # the body's lines join this command, read as text, up to its marker
             continue
         if '"""' in scan:
@@ -867,7 +931,7 @@ def _signature_split_commands(raw):
             current = []
     if current:
         logical.append("\n".join(current))
-    return _signature_merge_continuations(logical)
+    return _signature_merge_continuations(logical), heredoc
 
 
 def _signature_explicit_command_head(line):
@@ -876,6 +940,17 @@ def _signature_explicit_command_head(line):
         candidate = candidate[1:-1].strip()
     head, _ = _signature_consume_token(candidate)
     return head if head in SIGNATURE_COMMANDS else ""
+
+
+# The argument types a body can fill, marker-ended (<<'NAME') or triple-quoted. A command takes a body only when its
+# last argument is one of these, so <<'NAME' ending another command's line opens nothing and the lines after it stay
+# commands of their own: before, it opened a body after any command and swallowed the commands that followed.
+_BODY_TYPES = frozenset({"multiline", "rest-text", "shell-command"})
+
+
+def _signature_takes_body(head):
+    signature = SIGNATURE_COMMANDS.get(head, ())
+    return bool(signature) and signature[-1][0] in _BODY_TYPES
 
 
 def _signature_base64ish_text(text):
@@ -940,7 +1015,7 @@ def _signature_looks_like_primary_prose(text):
 
 def _signature_render_prose_fallback(text):
     payload = base64.b64encode(str(text or "").encode("utf-8")).decode("ascii")
-    return f"(({SIGNATURE_PROSE_FALLBACK} {_signature_quote(payload)}))"
+    return f"(({SIGNATURE_PROSE_FALLBACK} {signature_quote(payload)}))"
 
 
 def _signature_merge_continuations(lines):
@@ -998,24 +1073,22 @@ def _signature_block_call(cmd, signature, rest, content):
         raise SignatureParseError("a multiline body is the command's last argument")
     arg_type = signature[-1][0]
     value = _signature_one_line(content) if arg_type == "rest-text" else content
-    return f"({cmd} {' '.join(args + [_signature_quote(value)])})"
+    return f"({cmd} {' '.join(args + [signature_quote(value)])})"
 
 
 def finished_file_commands(text):
     """A reply's hive-goal-file commands that are finished, each closed by its own marker line, and the hive-goal-claim
-    commands among them that the cut didn't end inside, in order and as the text the parser reads back; a command the
-    reply was cut off inside is left out. A reply cut off at its room keeps these (provider_features._keep_finished_files),
-    so a builder keeps the files it finished, and a claim written in that same reply comes first, without which every
-    staged file would be refused as not claimed. Time: one split."""
-    kept = []
-    commands = list(_signature_split_commands(text))
-    for n, line in enumerate(commands):
-        head, rest = _signature_consume_token(str(line or "").strip())
-        if head == "hive-goal-file" and _signature_extract_heredoc(rest) is not None:
-            kept.append(line)
-        elif head == "hive-goal-claim" and n < len(commands) - 1:   # the last command is the one the cut may end inside
-            kept.append(line)
-    return "\n".join(kept)
+    commands before the last of them, in order and as the text the parser reads back; a command the reply was cut off
+    inside is left out. A reply cut off at its room keeps these (provider_features._keep_finished_files), so a builder
+    keeps the files it finished, and a claim written in that same reply comes first, without which every staged file
+    would be refused as not claimed. A claim with no finished file after it is left out too: kept alone, it ran beside
+    a wait saying the reply's finished files were staged when none were. Time: one split, one pass."""
+    commands = [(line, *_signature_consume_token(str(line or "").strip())) for line in _signature_split_commands(text)]
+    files = {n for n, (_line, head, rest) in enumerate(commands)
+             if head == "hive-goal-file" and (body := _signature_extract_heredoc(rest)) is not None and not body[2]}
+    last = max(files, default=-1)
+    return "\n".join(line for n, (line, head, _rest) in enumerate(commands)
+                     if n in files or (head == "hive-goal-claim" and n < last))
 
 
 def _signature_outer_parens_wrap_whole(text):
@@ -1105,13 +1178,13 @@ def _signature_parse_prefix_args(signature, rest):
             token, rest = _signature_consume_token(rest)
             if not token:
                 raise SignatureParseError(f"missing {name}")
-            args.append(_signature_quote(token))
+            args.append(signature_quote(token))
         elif arg_type == "base64":
             token, rest = _signature_consume_token(rest)
-            args.append(_signature_quote(_signature_validate_base64_token(token)))
+            args.append(signature_quote(_signature_validate_base64_token(token)))
         elif arg_type == "base64-utf8":
             token, rest = _signature_consume_token(rest)
-            args.append(_signature_quote(_signature_validate_base64_token(token, require_utf8=True)))
+            args.append(signature_quote(_signature_validate_base64_token(token, require_utf8=True)))
         elif arg_type == "number":
             token, rest = _signature_consume_token(rest)
             if not re.fullmatch(r"-?\d+(\.\d+)?", token or ""):
@@ -1132,12 +1205,12 @@ def _signature_parse_prefix_args(signature, rest):
             token, rest = _signature_consume_token(rest)
             if token not in SIGNATURE_KNOWN_SPACES:
                 raise SignatureParseError(_signature_space_error(token))
-            args.append(_signature_quote(token))
+            args.append(signature_quote(token))
         elif arg_type == "metta":
             if not rest.strip():
                 raise SignatureParseError(f"missing {name}")
             expr, rest = _signature_consume_metta(rest, consume_all=index == len(signature) - 1)
-            args.append(_signature_quote(expr))
+            args.append(signature_quote(expr))
         elif arg_type == "metta-raw":
             if not rest.strip():
                 raise SignatureParseError(f"missing {name}")
@@ -1153,15 +1226,15 @@ def _signature_lowered_multiline_call(lowered, signature, rest, content):
     args, extra = _signature_parse_prefix_args(signature, rest)
     if extra:
         raise SignatureParseError("unexpected text outside multiline body")
-    rendered = args + [_signature_quote(payload)]
+    rendered = args + [signature_quote(payload)]
     return f"({lowered} {' '.join(rendered)})"
 
 
 def _signature_syntax_error(head, message, raw):
     message = _signature_recovery_message(head, message)
     return (
-        f"(syntax-error {_signature_quote(head)} "
-        f"{_signature_quote(message)} {_signature_quote(raw)})"
+        f"(syntax-error {signature_quote(head)} "
+        f"{signature_quote(message)} {signature_quote(raw)})"
     )
 
 
@@ -1213,9 +1286,9 @@ def _signature_render_typed_value(arg_type, name, value):
     if arg_type == "space":
         if value not in SIGNATURE_KNOWN_SPACES:
             raise SignatureParseError(_signature_space_error(value))
-        return _signature_quote(value)
+        return signature_quote(value)
     if arg_type == "metta":
-        return _signature_quote(_signature_validated_metta(value))
+        return signature_quote(_signature_validated_metta(value))
     if arg_type == "metta-raw":
         return _signature_validated_metta(value)
     if arg_type == "number":
@@ -1223,15 +1296,15 @@ def _signature_render_typed_value(arg_type, name, value):
             raise SignatureParseError(f"{name} must be number")
         return value
     if arg_type == "base64":
-        return _signature_quote(_signature_validate_base64_token(value))
+        return signature_quote(_signature_validate_base64_token(value))
     if arg_type == "base64-utf8":
-        return _signature_quote(_signature_validate_base64_token(value, require_utf8=True))
+        return signature_quote(_signature_validate_base64_token(value, require_utf8=True))
     if arg_type == "rest-text":
-        return _signature_quote(_signature_one_line(value))
+        return signature_quote(_signature_one_line(value))
     if arg_type in {"text", "jid", "filepath", "shell-command"}:
         if not value:
             raise SignatureParseError(f"missing {name}")
-        return _signature_quote(value)
+        return signature_quote(value)
     raise SignatureParseError(f"unsupported shorthand field type {arg_type}")
 
 
@@ -1298,13 +1371,27 @@ def _signature_parse_one(line):
     cmd, rest = _signature_consume_token(line)
     if cmd not in SIGNATURE_COMMANDS:
         if cmd.lower() in SIGNATURE_NO_ACTION_HEADS:
-            return f"(wait {_signature_quote(_signature_one_line(original))})"
+            return f"(wait {signature_quote(_signature_one_line(original))})"
         return (
-            f"(wait {_signature_quote(_signature_unknown_head_message(cmd))})"
+            f"(wait {signature_quote(_signature_unknown_head_message(cmd))})"
         )
     signature = SIGNATURE_COMMANDS[cmd]
+    # A marker-ended body is refused, never read as plain arguments, when its command takes none, when no line closes
+    # it (before, the opener and every line after it became the file), and when a line after its close is its marker
+    # again, since then a line of the body was the marker and ended it early (_signature_split_commands).
+    opened = _HEREDOC_OPEN.search(rest)
+    if opened and '"' not in rest[:opened.start()]:
+        marker = opened.group(1)
+        if not _signature_takes_body(cmd):
+            raise SignatureParseError(f"{cmd} takes no body, so nothing may follow <<'{marker}' on its line")
+        end = _heredoc_end(rest, opened.end(), marker)
+        if end is None:
+            raise SignatureParseError(f"a body opened with <<'{marker}' has no line {marker} to close it")
+        if any(line.strip() == marker for line in rest[end:].split("\n")):
+            raise SignatureParseError(f"a line of the body opened with <<'{marker}' is {marker} itself, so the body "
+                                      f"ended there; mark it with a name that is none of its lines")
     block = _signature_extract_heredoc(rest) or _signature_extract_block(rest)
-    if block and any(arg_type in {"multiline", "rest-text", "shell-command"} for arg_type, _ in signature):
+    if block and _signature_takes_body(cmd):
         before, content, tail = block
         rest = (before + " " + tail).strip()
         lowered = SIGNATURE_MULTILINE_LOWERING.get(cmd)
@@ -1334,10 +1421,10 @@ def _signature_parse_one(line):
                     if arg_type == "rest-text" and lowered and "\n" in value:
                         payload = base64.b64encode(value.encode("utf-8")).decode("ascii")
                         if args:
-                            return f"({lowered} {' '.join(args)} {_signature_quote(payload)})"
-                        return f"({lowered} {_signature_quote(payload)})"
+                            return f"({lowered} {' '.join(args)} {signature_quote(payload)})"
+                        return f"({lowered} {signature_quote(payload)})"
                     value = _signature_one_line(value) if arg_type == "rest-text" else value
-                    args.append(_signature_quote(value))
+                    args.append(signature_quote(value))
                     rest = ""
                 else:
                     value = rest
@@ -1345,10 +1432,10 @@ def _signature_parse_one(line):
                     if arg_type == "rest-text" and lowered and "\n" in value:
                         payload = base64.b64encode(value.encode("utf-8")).decode("ascii")
                         if args:
-                            return f"({lowered} {' '.join(args)} {_signature_quote(payload)})"
-                        return f"({lowered} {_signature_quote(payload)})"
+                            return f"({lowered} {' '.join(args)} {signature_quote(payload)})"
+                        return f"({lowered} {signature_quote(payload)})"
                     value = _signature_one_line(value) if arg_type == "rest-text" else value
-                    args.append(_signature_quote(value))
+                    args.append(signature_quote(value))
                     rest = ""
             else:
                 value = rest
@@ -1356,10 +1443,10 @@ def _signature_parse_one(line):
                 if arg_type == "rest-text" and lowered and "\n" in value:
                     payload = base64.b64encode(value.encode("utf-8")).decode("ascii")
                     if args:
-                        return f"({lowered} {' '.join(args)} {_signature_quote(payload)})"
-                    return f"({lowered} {_signature_quote(payload)})"
+                        return f"({lowered} {' '.join(args)} {signature_quote(payload)})"
+                    return f"({lowered} {signature_quote(payload)})"
                 value = _signature_one_line(value) if arg_type == "rest-text" else value
-                args.append(_signature_quote(value))
+                args.append(signature_quote(value))
                 rest = ""
         elif arg_type == "multiline":
             if rest.startswith('"'):
@@ -1377,20 +1464,20 @@ def _signature_parse_one(line):
             if lowered:
                 payload = base64.b64encode(value.encode("utf-8")).decode("ascii")
                 if args:
-                    return f"({lowered} {' '.join(args)} {_signature_quote(payload)})"
-                return f"({lowered} {_signature_quote(payload)})"
-            args.append(_signature_quote(value))
+                    return f"({lowered} {' '.join(args)} {signature_quote(payload)})"
+                return f"({lowered} {signature_quote(payload)})"
+            args.append(signature_quote(value))
         elif arg_type in {"text", "jid", "filepath"}:
             token, rest = _signature_consume_token(rest)
             if not token:
                 raise SignatureParseError(f"missing {name}")
-            args.append(_signature_quote(token))
+            args.append(signature_quote(token))
         elif arg_type == "base64":
             token, rest = _signature_consume_token(rest)
-            args.append(_signature_quote(_signature_validate_base64_token(token)))
+            args.append(signature_quote(_signature_validate_base64_token(token)))
         elif arg_type == "base64-utf8":
             token, rest = _signature_consume_token(rest)
-            args.append(_signature_quote(_signature_validate_base64_token(token, require_utf8=True)))
+            args.append(signature_quote(_signature_validate_base64_token(token, require_utf8=True)))
         elif arg_type == "number":
             token, rest = _signature_consume_token(rest)
             if not re.fullmatch(r"-?\d+(\.\d+)?", token or ""):
@@ -1413,18 +1500,18 @@ def _signature_parse_one(line):
                         token = rest
                 else:
                     token = rest
-                args.append(_signature_quote(_signature_one_line(token)))
+                args.append(signature_quote(_signature_one_line(token)))
             rest = ""
         elif arg_type == "space":
             token, rest = _signature_consume_token(rest)
             if token not in SIGNATURE_KNOWN_SPACES:
                 raise SignatureParseError(_signature_space_error(token))
-            args.append(_signature_quote(token))
+            args.append(signature_quote(token))
         elif arg_type == "metta":
             if not rest.strip():
                 raise SignatureParseError(f"missing {name}")
             expr, rest = _signature_consume_metta(rest, consume_all=index == len(signature) - 1)
-            args.append(_signature_quote(expr))
+            args.append(signature_quote(expr))
         elif arg_type == "metta-raw":
             if not rest.strip():
                 raise SignatureParseError(f"missing {name}")
@@ -1435,7 +1522,7 @@ def _signature_parse_one(line):
             expected = len(name)
             if len(fields) != expected or not all(fields):
                 raise SignatureParseError(f"expected {expected} pipe fields")
-            args.extend(_signature_quote(field) for field in fields)
+            args.extend(signature_quote(field) for field in fields)
             rest = ""
             break
         elif arg_type == "pipe-spec":
@@ -1449,7 +1536,7 @@ def _signature_parse_one(line):
             expected = len(name)
             if len(fields) != expected or not all(fields):
                 raise SignatureParseError(f"expected {expected} pipe fields")
-            args.append(_signature_quote(spec))
+            args.append(signature_quote(spec))
             rest = ""
             break
         else:

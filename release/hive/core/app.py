@@ -2157,6 +2157,12 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         reads = MeDecisions(hive, lambda: p4b_person(request))
         return await run_in_threadpool(reads.studio_sessions, list(request.query_params.multi_items()))
 
+    @app.get("/api/me/studio-recent")
+    async def me_studio_recent(request: Request):
+        from .studio_recent import recent_creations
+        who = viewer(operator(request))
+        return await run_in_threadpool(recent_creations, hive, who)
+
     @app.get("/api/me/limit-requests")
     async def my_limit_requests(request: Request):
         return await run_in_threadpool(hive.ownhive.requests, viewer(operator(request)))
@@ -2451,7 +2457,8 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
     @app.post("/api/feedback/send")
     async def feedback_send(request: Request):
         """Hand a report to the report service HIVE_FEEDBACK_TO names. The page sends it only after the person has
-        seen all of it and pressed Send; the hive passes it on as it is."""
+        seen all of it and pressed Send; the hive passes it on as it is, the requests, errors and log lines it may
+        carry cleaned once more, with the service's token when HIVE_FEEDBACK_TOKEN_FILE names one."""
         operator(request)
         report = await bounded_body(request, FEEDBACK_MAX_BYTES)
         try:
@@ -5662,6 +5669,7 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
     @app.get("/api/agent/goals/{goal_id}/output")
     async def agent_goal_output(goal_id: str, request: Request, offset: int = 0):
         return hive.goals.output(agent_from(request), goal_id, offset)
+
     @app.post("/api/agent/create")
     async def agent_create_offer(request: Request):
         # hive-create: a mind offers its person a Create build; only the person's press starts a plan (create_offers.py)
@@ -6005,14 +6013,14 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         return hive.collab.swarm_artifacts(swarm_id, kind or None, limit)
 
     @app.get("/api/artifacts")
-    async def creations(request: Request, limit: int = 200):
+    async def creations(request: Request, limit: int = 200, kind: str = "", saved: bool = False):
         """The Artifacts page: every artifact of the swarms this person sees (as GET /api/swarms lists them), saved or
         not yet, metadata only. The maker is named as mind_id only when it is a mind GET /api/agents shows this person;
-        a person who made one is never named."""
+        a person who made one is never named. The optional kind and saved filters apply before the limit."""
         session = operator(request)
         who = viewer(session)
         seen = hive.visibility.swarms(who, [s for s in hive.swarms() if not s.get("archived_at")])
-        rows = hive.collab.creations([s["id"] for s in seen], limit)
+        rows = hive.collab.creations([s["id"] for s in seen], limit, kind=kind, saved=saved)
         minds = seen_minds(session)
         for r in rows:
             r["mind_id"] = mind_named(r.pop("created_by"), minds)
@@ -6558,9 +6566,20 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         v = g_person(request, mutating=True, admin_only=False)
         data = await g_body(request, 16 * 1024, optional=optional)
         try:
-            return await act(engine, v.principal, data if isinstance(data, dict) else {})
+            return _plan_view_for(request, await act(engine, v.principal, data if isinstance(data, dict) else {}))
         except EngineError as exc:
             raise HiveError(exc.status, exc.code, str(exc))
+
+    def _plan_view_for(request, view):
+        """A plan view as this caller reads it: each mind the plan waits on carries may_act, exactly "control_refusal is
+        None" for this caller, the test the start and wake routes refuse through, so the press the plan offers can't
+        drift from its route. Anything that isn't a plan view passes as it is."""
+        if isinstance(view, dict) and isinstance(view.get("waiting"), list):
+            session = operator(request)
+            for row in view["waiting"]:
+                mind = hive.db.one("SELECT * FROM agents WHERE id = ? AND deleted = 0", (row.get("mind"),))
+                row["may_act"] = control_refusal(session, mind) is None
+        return view
 
     @app.post("/api/create/plans")
     async def create_plan_start(request: Request):
@@ -6594,7 +6613,7 @@ def _create_app(settings: Settings | None = None, supervisor=None, reconcile_sec
         run = engine._run(plan_id)
         if run is None or run["person"] != v.principal:
             raise HiveError(404, "not_found", f"no plan {plan_id}")
-        return engine.view(plan_id)
+        return _plan_view_for(request, engine.view(plan_id))
 
     @app.get("/api/create/plans/{plan_id}/files")
     async def create_plan_files(plan_id: str, request: Request, path: str | None = None, ckpt: str | None = None):

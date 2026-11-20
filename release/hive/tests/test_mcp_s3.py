@@ -15,7 +15,6 @@ from hive.core import mcp
 from hive.core.app import create_app
 from hive.core.config import load_settings
 from hive.core.goals import binding_digest
-from hive.tests.known_failures import mcp_doc_lacks_code_mind_proof
 
 PETTA = os.environ.get("PETTA_PATH", str(pathlib.Path.home() / "PeTTa"))
 pytestmark = pytest.mark.skipif(not pathlib.Path(PETTA, "src", "main.pl").exists(), reason="needs PeTTa")
@@ -517,7 +516,6 @@ def test_hiveconnect_draft_read_client_runs_against_this_host(c):
     assert checked["page"]["end"] is True and len(checked["snapshots"]) == 1
 
 
-@mcp_doc_lacks_code_mind_proof
 def test_published_schema_document_matches_the_tools_exactly():
     """hive/MCP_S3.md is the build's published copy of every tool schema (L0 drift guard)."""
     text = (pathlib.Path(mcp.__file__).resolve().parents[1] / "MCP_S3.md").read_text()

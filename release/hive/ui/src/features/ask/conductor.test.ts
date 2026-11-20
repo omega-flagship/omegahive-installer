@@ -29,10 +29,11 @@ const { askContext } = await import('./context')
 const { parse } = await import('../../lib/router')
 const { ApiError } = await import('../../api/client')
 const { useHive } = await import('../../store/store')
-const { threadRows, useAskStore } = await import('../../store/ask')
+const { researchRow, threadRows, useAskStore } = await import('../../store/ask')
 const { ACTS_PER_TURN, APP_UNRESOLVED_REASON, conductorSettled, REFUSED_APP_REASON, resetConductor } = await import('./conductor')
 const { newSession, sessionKey } = await import('../../store/programSession')
 const { declareFieldForTest } = await import('./fields')
+const { RESEARCH_WORDS } = await import('./words')
 const { lookState, previewLook } = await import('../../shell/uiVariant')
 const { SimAsk } = await import('../../api/sim/ask')
 type AskEvent = import('../../api/ask').AskEvent
@@ -149,6 +150,39 @@ describe('parser: each kind accepted well-formed, rejected otherwise (never gues
 })
 
 describe('executor', () => {
+  it('shows a spending hold and then the actual research result in the closed originating turn', async () => {
+    const op = await turn()
+    deliver(op, { phase: 'done', outcome: 'answered' })
+    deliver(op, { phase: 'research', request_id: 'rq_storm', state: 'held', reason: 'spend_rate', until: '2026-10-07T11:00:00Z' })
+    expect(rows().find(row => row.kind === 'note' && row.text.includes('Research is waiting'))?.text).toContain('monthly spending pace')
+    expect(rows().some(row => row.kind === 'answer')).toBe(false)
+    expect(rows().some(row => row.kind === 'research')).toBe(false)
+    // the host's frame at delivery (research.py deliver): research.view whole, each citation as research.check matched it
+    const done = { phase: 'research', request_id: 'rq_storm', state: 'done', research: {
+      request_id: 'rq_storm', title: 'When was the latest storm?', state: 'done', report: {
+        summary: 'The latest storm was in October.',
+        sections: [{ heading: 'Date', claims: [{ text: 'It reached Lisbon.', cited: true, citations: [
+          { url: 'https://weather.example/storm', match: 'exact', verified: true },
+          { url: 'https://weather.example/unread', match: null, verified: false },
+        ] }] }],
+        open_questions: [],
+        checks: { claims: 1, cited: 1, uncited: 0, path_matched: 0 },
+      } } }
+    deliver(op, done)
+    const report = rows().find(row => row.kind === 'research')
+    expect(report).toMatchObject({ text: RESEARCH_WORDS.done, state: 'sent' })
+    expect(report?.research?.report?.summary).toBe('The latest storm was in October.')
+    // the same frame as the page reads it, said again as an earlier turn's words (Earlier): only the sources opened
+    const checked = checkAskEvent({ type: 'ask', operation_id: op, seq: 9, ...done })
+    expect(checked).toHaveProperty('research.report.summary', 'The latest storm was in October.')
+    const said = researchRow(checked as Parameters<typeof researchRow>[0], { id: 'rq_storm' }).text
+    expect(said).toContain('The latest storm was in October.')
+    expect(said).toContain('https://weather.example/storm')
+    expect(said).not.toContain('https://weather.example/unread')
+    expect(checkAskEvent({ type: 'ask', operation_id: op, seq: 5, phase: 'research', request_id: 'rq_storm',
+      state: 'held', reason: 'spend_rate', until: 'some time' })).toBeNull()
+  })
+
   it('applies acts in seq order and answers each one, with the page view after it', async () => {
     const op = await turn()
     declareFieldForTest({ id: 'palette.search', label: 'Search the hive', kind: 'search' }, () => undefined)

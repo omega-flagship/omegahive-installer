@@ -251,8 +251,9 @@ export function parsePlanView(raw: unknown, minds?: MindLookup): PlanView | null
     status_line: null,
     next_action: str(raw.next_action),
     last_error: str(raw.last_error),
-    waiting: isObj(raw.waiting) && str(raw.waiting.message)
-      ? { name: str(raw.waiting.name) ?? 'A mind', message: str(raw.waiting.message)! } : null,
+    waiting: list(raw.waiting, (w) => isObj(w) && str(w.mind)
+      ? { mind: str(w.mind)!, name: str(w.name) ?? 'A mind', step: str(w.step) ?? '', reason: str(w.reason) ?? '',
+          message: str(w.message), may_act: w.may_act === true } : null),
     review_policy: str(raw.review_policy),
     pieces: list(raw.pieces, (x) => parsePiece(x, minds)),
     questions: list(raw.questions, parseQuestion),

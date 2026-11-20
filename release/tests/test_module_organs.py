@@ -43,13 +43,13 @@ def expected_provides_atom(module_id: str, provide: str) -> str:
     return f"(Provides {module_id} ({wrapper} {name}))"
 
 
-def expected_dependency_atom(module_id: str, requirement: str) -> str:
+def expected_dependency_atom(module_id: str, requirement: str, head: str = "RuntimeDependency") -> str:
     for sep in (">=", "==", ":"):
         if sep in requirement:
             name, version = requirement.split(sep, 1)
             if sep == ">=":
                 version = f">={version}"
-            return f'(RuntimeDependency {module_id} {name} "{version}")'
+            return f'({head} {module_id} {name} "{version}")'
     raise AssertionError(f"Unsupported requirement entry: {requirement}")
 
 
@@ -178,6 +178,9 @@ class OmegaClawInstalledModuleTests(unittest.TestCase):
 
                 for requirement in manifest.get("requires", []):
                     self.assertIn(expected_dependency_atom(module_id, requirement), entry)
+
+                for requirement in manifest.get("recommends", []):
+                    self.assertIn(expected_dependency_atom(module_id, requirement, "RecommendedDependency"), entry)
 
                 for event in manifest.get("trace", {}).get("writes", []):
                     self.assertIn(f"(TraceWrites {module_id} {event})", entry)

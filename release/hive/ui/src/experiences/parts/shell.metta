@@ -38,3 +38,16 @@
 (UiIntent (UiPart shell any field) ask.field)
 (UiDoc (UiPart shell any field) "The one Ask: one field, one thread, one identity, in every look and state. Hidden at rest, never remounted; a key typed at rest lands in it.")
 (UiHistory (UiPart shell any field) cosmos-rest-r1 added "2026-10-17")
+
+; Search: the Ask's own marked control, on show wherever the field is (feedback #127). One owner (the one Ask); every
+; skin draws it with the one component in its own furniture, and names it with its own words for ask.search.
+(UiPart shell any search)
+(UiRole (UiPart shell any search) search)
+(UiIn (UiPart shell any search) awake)
+(UiIn (UiPart shell any search) pro)
+(UiImpl (UiPart shell any search) react AskSearch)
+(UiSource AskSearch "features/ask/AskSearch.tsx")
+(UiOwnedBy (UiPart shell any search) (UiPart shell any field))
+(UiIntent (UiPart shell any search) ask.search)
+(UiDoc (UiPart shell any search) "Search, as its own button beside the Ask field in every look. It opens search with the words typed so far; nothing is sent. Enter in the field never searches unless the Search row was chosen with the arrow keys or clicked.")
+(UiHistory (UiPart shell any search) feedback-127 added "2026-11-19")

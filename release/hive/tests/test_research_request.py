@@ -3,6 +3,7 @@
 No network: deny_network, a scripted conductor model, fake web tools (test_web_tools' resolver, site and search
 provider) and fake researchers driven in process. Synthetic people and data, disposable hives."""
 import asyncio
+import datetime
 import json
 import secrets
 import time
@@ -289,6 +290,33 @@ def test_each_request_gets_its_own_researcher_and_none_sees_another_persons_task
     assert "ANN-SECRET" not in jon_texts
 
 
+def test_a_research_task_is_never_continued_whoever_can_read_it(client, on, monkeypatch):
+    """Continue would copy the report into an ordinary task, outside the fence, the citation check and the asker's
+    frame, so it refuses a research task before writing anything: to its own researcher in the moment between its
+    result and its retirement, and to another mind even if the fence ever let that mind read the task."""
+    hive = on["hive"]
+    dispatch_research(client, on)
+    row = row_of(hive)
+    mind, fetched = _claim_and_fetch(client, hive, row["goal_id"], ["https://example.org/cepheids"])
+    monkeypatch.setattr(hive.research, "_retire_later", lambda request_id: None)   # its researcher stays live
+    _finish(hive, mind, row["goal_id"], report({"url": "https://example.org/cepheids",
+                                                "fetched_at": fetched[0]["fetched_at"]}, None))
+    assert hive.db.one("SELECT status FROM goals WHERE id = ?", (row["goal_id"],))["status"] == "done"
+    assert hive.research.child(mind["id"]) is not None
+    tasks = hive.db.one("SELECT COUNT(*) AS n FROM goals")["n"]
+
+    def refused(by):
+        with pytest.raises(HiveError) as e:
+            run(hive.goals.continue_goal(agent(hive, by["id"]), row["goal_id"], "Add how metallicity shifts the relation."))
+        return e.value.code
+
+    assert refused(mind) == "research_task"
+    assert refused(coordinator(hive)) == "not_assigned"   # the fence: only the task's own researcher reads it
+    monkeypatch.setattr(hive.research, "fence", lambda agent, goal: None)
+    assert refused(coordinator(hive)) == "research_task"
+    assert hive.db.one("SELECT COUNT(*) AS n FROM goals")["n"] == tasks
+
+
 def test_the_researcher_role_denies_everything_but_web_and_its_own_task_and_a_persons_deny_wins(client, on):
     hive = on["hive"]
     dispatch_research(client, on)
@@ -435,6 +463,60 @@ def test_a_researcher_finishes_with_a_cited_report_it_reaches_the_askers_thread_
     hive.research.deliver(row["goal_id"])   # delivered once: a repeated event changes nothing
     assert len([1 for r in hive.db.all("SELECT frame FROM ask_events WHERE turn_id = ?", (t["id"],))
                 if json.loads(r["frame"])["phase"] == "research"]) == 1
+
+
+def test_the_dispatching_mind_reads_a_paced_handoff_and_only_its_own(client, on):
+    hive = on["hive"]
+    dispatch_research(client, on)
+    row = row_of(hive)
+    until = rmod.stamp(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=20))
+    pace = {"scope": "hive", "period": "month", "limit_usd": 5.0, "retry_after": 1200,
+            "until": until, "say": "Spending faster than this month allows."}
+    hive.events.publish("budget.slowed", agent_id=coordinator(hive)["id"], **pace)
+    assert hive.research.status_for_turn(row["turn_id"])[0]["state"] == "open"
+    from hive.core.ask import MAX_EVENTS
+    while hive.ask._row(row["turn_id"])["next_seq"] <= MAX_EVENTS:
+        assert hive.ask._frame(row["turn_id"], "answer", text="Part of the original turn.")
+    hive.events.publish("budget.slowed", agent_id=row["child_id"], **pace)
+    hive.events.publish("budget.slowed", agent_id=row["child_id"], **pace)
+    page = client.get("/api/ask/op-res-001", headers=on["ann"]).json()
+    held = [f for f in page["events"] if f["phase"] == "research"]
+    assert [(f["state"], f["reason"], f["until"]) for f in held] == [("held", "spend_rate", until)]
+    assert "research" not in held[0]
+
+    def ask_for_status(who, op):
+        model = script(client, Script([call("research_status", request_id=row["request_id"])], "I checked."))
+        ask(client, on[who], op, text="How is the research going?", context=on["ctx"])
+        _answers(hive, op)
+        return tool_results(model.bodies[-1])[0]
+
+    assert ask_for_status("ann", "op-res-status") == {"ok": True, "research": [{
+        "request_id": row["request_id"], "title": "Cepheid distances", "state": "held",
+        "reason": "spend_rate", "until": until,
+    }]}
+    assert ask_for_status("jon", "op-res-other-status") == {"ok": True, "research": []}
+
+    hive.note_admitted(hive._agent_row(row["child_id"]))
+    assert hive.research.status_for_turn(row["turn_id"])[0]["state"] == "open"
+    hive.events.publish("budget.slowed", agent_id=row["child_id"], **pace)
+    mind, _ = _claim_and_fetch(client, hive, row["goal_id"], [])
+    _finish(hive, mind, row["goal_id"], report(None, None))
+    assert ask_for_status("ann", "op-res-done")["research"][0]["state"] == "done"
+    page = client.get("/api/ask/op-res-001", headers=on["ann"]).json()
+    assert [f["state"] for f in page["events"] if f["phase"] == "research"] == ["held", "resumed", "held", "done"]
+
+
+def test_research_can_sleep_resume_and_sleep_again(client, on):
+    hive = on["hive"]
+    dispatch_research(client, on)
+    row = row_of(hive)
+    for status in ("asleep", "awake", "asleep"):
+        hive.db.update("agents", row["child_id"], {"status": status})
+        hive.events.publish("agent.updated", agent=hive.agent(row["child_id"]))
+    page = client.get("/api/ask/op-res-001", headers=on["ann"]).json()
+    assert [(f["state"], f.get("reason")) for f in page["events"] if f["phase"] == "research"] == [
+        ("held", "asleep"), ("resumed", None), ("held", "asleep"),
+    ]
 
 
 def test_claims_with_no_fetched_source_are_flagged_uncited(client, on):
@@ -593,6 +675,70 @@ def test_a_personal_turn_keeps_its_research_frame_content_free(client, on):
     assert research[0]["request_id"] == row["request_id"] and research[0]["state"] == "done"
     assert "Brighter Cepheids" not in json.dumps(stored)
     assert hive.research.get(Viewer("user:u_ann", False), row["request_id"])["report"]["checks"]["cited"] == 1
+    owner = client.get("/api/ask/op-res-001", headers=on["ann"])
+    assert owner.status_code == 200
+    replayed = next(f for f in owner.json()["events"] if f["phase"] == "research")
+    assert replayed["research"]["report"]["sections"][0]["claims"][0]["text"] == "Brighter Cepheids pulse more slowly."
+    listed = next(t for t in client.get("/api/ask", headers=on["ann"]).json() if t["operation_id"] == "op-res-001")
+    assert listed["has_research"] is True and listed["text"] == ""
+    assert client.get("/api/ask/op-res-001", headers=on["bob"]).status_code == 404
+
+
+def test_a_stopped_coordinator_refuses_as_asleep_and_the_same_request_goes_out_once_it_is_awake(client, on):
+    """A tester's research question (20 Nov) met a stopped Research coordinator: their own mind said there was no
+    researcher and answered from its own knowledge, with no way to send it. A coordinator whose stopped state is the only refusal
+    now refuses as researcher_asleep, naming it: the person hears that it is asleep, the refused intent keeps the reason
+    and its frame says it, nothing is admitted, and once the coordinator is awake the same intent goes out as it is."""
+    hive = on["hive"]
+    owned(hive)
+    ctl = coordinator(hive)
+    # a person stopped it (a refused start leaves the same desired state: Hive._start_locked)
+    hive.db.execute("UPDATE agents SET status = 'stopped', desired = 'stopped' WHERE id = ?", (ctl["id"],))
+    s, fs, said = dispatch_research(client, on, op="op-res-asleep")
+    assert said == [cmod.DISPATCH_REFUSED_SAY["researcher_asleep"]]
+    assert tool_results(s.bodies[1])[0]["detail"] == "researcher_asleep"
+    intent = hive.db.one("SELECT * FROM ask_intents WHERE kind = 'research.request'")
+    refusal = json.loads(intent["last_refusal"])
+    assert intent["state"] == "refused" and (refusal["code"], refusal["reason"]) == ("not_available", "researcher_asleep")
+    framed = [f for f in fs if f["phase"] == "intent" and f["intent_id"] == intent["id"] and f["state"] == "refused"]
+    assert [f.get("reason") for f in framed] == ["researcher_asleep"]
+    assert not hive.db.one("SELECT 1 FROM research_reports")
+    view = client.get(f"/api/ask/intents/{intent['id']}", headers=on["ann"]).json()
+    assert view["last_refusal"]["reason"] == "researcher_asleep" and view["destination"]["to_swarm"] == research_swarm(hive)["id"]
+    # woken (a wake leaves it desired awake), the person's submit sends the same intent with its stored request
+    hive.db.execute("UPDATE agents SET status = 'awake', desired = 'awake' WHERE id = ?", (ctl["id"],))
+    r = client.post(f"/api/ask/intents/{intent['id']}/submit", headers={**on["ann"], "Origin": "http://127.0.0.1:8700"})
+    assert r.status_code in (200, 201), r.text
+    linked = hive.db.one("SELECT * FROM ask_intents WHERE id = ?", (intent["id"],))
+    row = row_of(hive)
+    assert linked["state"] == "linked" and row["intent_id"] == intent["id"] and child_of(hive, row)
+    assert hive.db.one("SELECT * FROM goals WHERE id = ?", (row["goal_id"],))["detail"] == INSTRUCTION
+
+
+def test_an_asleep_coordinator_is_said_only_when_waking_it_is_all_research_needs(client, on):
+    """researcher_asleep promises that a wake sends the request, so it is said only when the stopped state is the one
+    refusal: with the researcher template not ready too, research_limits refuses for the template, which research.admit
+    says as no_researcher, and the stopped state is named only once nothing else refuses; a coordinator the hive put to
+    sleep for being idle is admitted (research starts a fresh researcher; the coordinator never thinks). research_limits
+    is read directly here, since a dispatch ensures the foundation first and that puts a missing template back."""
+    hive = on["hive"]
+    owned(hive)
+    ctl = coordinator(hive)
+    team = research_swarm(hive)["id"]
+    hive.db.execute("UPDATE agents SET status = 'stopped', desired = 'stopped' WHERE id = ?", (ctl["id"],))
+    template = hive.minds.templates.pop(rmod.TEMPLATE)
+    try:
+        with pytest.raises(HiveError) as unready:
+            hive.foundation.research_limits(team, ctl["id"])
+    finally:
+        hive.minds.templates[rmod.TEMPLATE] = template
+    assert "template" in unready.value.message and (unready.value.details or {}).get("reason") != "coordinator_stopped"
+    with pytest.raises(HiveError) as stopped:
+        hive.foundation.research_limits(team, ctl["id"])
+    assert stopped.value.details == {"reason": "coordinator_stopped", "mind_id": ctl["id"]}
+    hive.db.execute("UPDATE agents SET status = 'asleep', desired = 'asleep' WHERE id = ?", (ctl["id"],))
+    _s, _fs, said = dispatch_research(client, on, op="op-res-idle")
+    assert said == [] and row_of(hive)
 
 
 def test_research_is_refused_in_plain_words_while_web_tools_are_off(client, on):

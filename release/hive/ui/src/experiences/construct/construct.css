@@ -729,6 +729,8 @@
   cursor: pointer;
 }
 .cx-ac li.is-sel { background: rgba(57, 255, 122, 0.16); box-shadow: inset 2px 0 0 var(--cx-phos); }
+/* the line under the pointer (feedback #127): a fainter wash, no bar; enter still takes the selected line */
+.cx-ac li[data-hover]:not(.is-sel) { background: rgba(57, 255, 122, 0.07); }
 .cx-ac li:hover { background: rgba(57, 255, 122, 0.1); }
 
 /* ---------- console */
@@ -1066,6 +1068,14 @@
 .cx-ask-toggle {
   flex: none;
   margin-left: auto;
+}
+/* how many things wait on the person in the folded ask log (an offer to build, a stopped task) */
+.cx-ask-waiting {
+  margin-left: 6px;
+}
+/* Search, its own marked key beside the ask log (feedback #127) */
+.cx-ask-search {
+  flex: none;
 }
 .cx-ask-log {
   position: absolute;

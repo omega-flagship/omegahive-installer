@@ -13,6 +13,7 @@ and run in a subprocess (SubprocessChecks; production runs it in sandbox_run): r
 buggy app.js (routed to the code piece), then green.
 """
 import asyncio
+import hashlib
 import json
 import os
 import pathlib
@@ -88,6 +89,9 @@ APP_BUGGY = ("const phases = %s;\nconst list = document.getElementById(\"phases\
              "for (const p of phases) { const li = document.createElement('li'); li.textContent = p; list.append(li); }\n"
              % json.dumps(PHASES[:-1]))
 APP_FIXED = APP_BUGGY.replace(json.dumps(PHASES[:-1]), json.dumps(PHASES))
+# what a design maker answers: the look as text, as the Studio maker on 20 Nov wrote it
+DESIGN = ("One centred column, max width 420px: the heading, then the list #phases. Night sky background #0b1020, "
+          "text #e8ecff, each phase on its own line with 8px between, the system font stack, no external fonts.")
 
 
 def run(coro):
@@ -214,9 +218,10 @@ class FakePerChangeEngine:
     def adopt_member(self, plan_id, piece, origin, paths, assignee, budget_ref, review_policy, person,
                      controller_id=None, task=None, brief=None, contract=None):
         import hashlib
+        from hive.core.code_controller_member import BRIEF_LIMIT
         assert review_policy == "plan-reviewed" and origin["workspace_id"] == f"ws_{piece}"
         tid = "mt_" + hashlib.sha256(f"{plan_id}|{piece}|{task}".encode()).hexdigest()[:32]
-        assert len(json.dumps(brief, sort_keys=True, separators=(",", ":"), ensure_ascii=False)) <= 40000
+        assert len(json.dumps(brief, sort_keys=True, separators=(",", ":"), ensure_ascii=False)) <= BRIEF_LIMIT
         self.calls.append(("adopt", piece, task, assignee))
         if tid not in self.runs:
             self.runs[tid] = {"request_id": tid, "profile": "plan-member", "phase": "claimed", "status": "accepted",
@@ -297,6 +302,7 @@ class FakeMinds:
         self.authored = []              # check sources the test author writes first, in order; then CHECK
         self.always = None              # a check source the test author always writes (a permanently broken author)
         self.probe = None               # a probe the test author writes instead of a Python check (the play check)
+        self.designs = []               # what each design step answers, in order; then {"design": DESIGN}
 
     def _who(self, run, kind, body):
         from hive.core.create_plan_ports import GoalMinds
@@ -373,6 +379,8 @@ class FakeMinds:
             if body["rule"]["review_kind"] == "design-review":
                 assert body["evidence"]["ref"].startswith("render-")
             return {"reviewer": agent, "decision": decision, "notes": "ok" if decision == "pass" else "too dark"}
+        if kind == "design":
+            return {"by": agent, **(self.designs.pop(0) if self.designs else {"design": DESIGN})}
         raise AssertionError(kind)
 
 
@@ -1234,17 +1242,81 @@ def test_a_plan_waiting_on_a_mind_refused_for_spending_says_which_and_why(world)
     w.minds.question = False
     w.minds.pending = {"plan"}
     pid = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()["plan_id"]
-    assert w.engine.view(pid)["waiting"] is None
+    assert w.engine.view(pid)["waiting"] == []
     effect = next(e for e in w.engine.view(pid)["effects"] if e["state"] == "waiting")
     # the planner's goal as GoalMinds makes it (the fake minds only name it): assigned to the Maker
     w.hive.goals._create_record(w.make["id"], f"Create plan {pid}: plan", "Finish with result data", 0.6,
                                 created_by=f"create-plan:{pid}", assignee=w.maker["id"], goal_id=effect["goal_id"])
+    w.hive.db.execute("UPDATE agents SET status = 'awake', desired = 'awake' WHERE id = ?", (w.maker["id"],))
     mind = w.hive.agent(w.maker["id"])
     said = "Spending faster than this month allows: a call this size fits again in about 999 minutes."
     w.hive.note_refusal(mind, "spend_rate", said)
-    assert w.engine.view(pid)["waiting"] == {"mind": mind["id"], "name": mind["name"], "code": "spend_rate", "message": said}
+    assert w.engine.view(pid)["waiting"] == [{"mind": mind["id"], "name": mind["name"], "step": "the plan", "reason": "spending",
+                                              "code": "spend_rate", "message": said}]
     w.hive.note_admitted(mind)                       # a call of its admitted again: nothing to say
-    assert w.engine.view(pid)["waiting"] is None
+    assert w.engine.view(pid)["waiting"] == []
+
+
+def test_a_plan_waiting_on_a_mind_that_cant_go_on_names_it_once_with_its_state_and_who_may_start_it(world):
+    """On 20 Nov a tester's Make sat at "waiting for code review" with their reviewer stopped, and went on once they
+    started it. The view names each waited-on mind that can't take its step now, once, with the plan's words for the
+    step and the mind's state; a mind starting, waking or awake is named by nothing. The plan route adds whether this
+    person may start or wake it, by the control test the mind routes refuse through."""
+    w = world
+    w.minds.question = False
+    w.minds.pending = {"plan"}
+    pid = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()["plan_id"]
+    effect = next(e for e in w.engine.view(pid)["effects"] if e["state"] == "waiting")
+    w.hive.goals._create_record(w.make["id"], f"Create plan {pid}: plan", "Finish with result data", 0.6,
+                                created_by=f"create-plan:{pid}", assignee=w.maker["id"], goal_id=effect["goal_id"])
+    state = lambda status, desired: w.hive.db.execute("UPDATE agents SET status = ?, desired = ? WHERE id = ?",  # noqa: E731
+                                                      (status, desired, w.maker["id"]))
+    for (status, desired), reason in ((("stopped", "stopped"), "stopped"), (("awake", "stopped"), "stopped"),
+                                      (("asleep", "asleep"), "asleep"), (("error", "awake"), "error"),
+                                      (("created", "stopped"), "created")):
+        state(status, desired)
+        assert w.engine.view(pid)["waiting"] == [{"mind": w.maker["id"], "name": "Maker", "step": "the plan",
+                                                  "reason": reason}], (status, desired)
+    for status, desired in (("asleep", "awake"), ("starting", "awake"), ("awake", "awake")):   # on its way, or going
+        state(status, desired)
+        assert w.engine.view(pid)["waiting"] == [], (status, desired)
+    # the person may start their own Maker; a member who neither owns nor administers the mind may not
+    state("stopped", "stopped")
+    rows = w.client.get(f"/api/create/plans/{pid}", headers=w.jon).json()["waiting"]
+    assert [(r["mind"], r["reason"], r["may_act"]) for r in rows] == [(w.maker["id"], "stopped", True)]
+    other = w.client.post("/api/agents", json={"name": "Reviewer", "swarm_id": w.make["id"]}).json()
+    w.hive.db.execute("UPDATE agents SET status = 'stopped', desired = 'stopped' WHERE id = ?", (other["id"],))
+    w.hive.db.execute("UPDATE goals SET assignee = ? WHERE id = ?", (other["id"], effect["goal_id"]))
+    w.hive.db.execute("UPDATE people SET role = 'member' WHERE id = 'u_jon'")
+    rows = w.client.get(f"/api/create/plans/{pid}", headers=w.jon).json()["waiting"]
+    assert [(r["name"], r["reason"], r["may_act"]) for r in rows] == [("Reviewer", "stopped", False)]
+
+
+def test_a_build_waiting_on_its_member_names_its_builder_while_it_cant_go_on(world):
+    """A build waits on its piece's member (member:<task>), which no goal row names, so on 20 Nov a Make sat at
+    "Building: 0 of 1 piece in" for 26 minutes while its builder was refused for spending, with nothing said. The view
+    names the builder and the plan's words for the piece it builds whenever the builder can't go on, as for the
+    planner and the reviewers: never started, or awake but refused for spending with the hive's words; and nothing
+    while it is awake and its calls are admitted."""
+    w = world
+    w.minds.question = False
+    w.code.defer = True
+    pid = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()["plan_id"]
+    view = w.engine.view(pid)
+    build = next(e for e in view["effects"] if e["state"] == "waiting" and e["kind"] == "build")
+    body = json.loads(w.hive.db.one("SELECT body FROM create_plan_effects WHERE goal_id = ?", (build["goal_id"],))["body"])
+    builder = w.hive.agent(body["builder"])
+    title = next(p["title"] for p in view["pieces"] if p["id"] == body["piece"])
+    row = {"mind": builder["id"], "name": builder["name"], "step": f"building {title}"}
+    # the test hive's minds are never started, so the builder can't take the build until it is
+    assert build["goal_id"].startswith("member:") and view["waiting"] == [{**row, "reason": "created"}]
+    w.hive.db.execute("UPDATE agents SET status = 'awake', desired = 'awake' WHERE id = ?", (builder["id"],))
+    assert w.engine.view(pid)["waiting"] == []
+    said = "A spending limit has no room for this call."
+    w.hive.note_refusal(builder, "budget_exhausted", said)
+    assert w.engine.view(pid)["waiting"] == [{**row, "reason": "spending", "code": "budget_exhausted", "message": said}]
+    w.hive.note_admitted(builder)
+    assert w.engine.view(pid)["waiting"] == []
 
 
 def test_a_held_builder_whose_calls_keep_failing_stops_at_its_steps_budget(world):
@@ -1286,8 +1358,9 @@ def test_a_held_builder_whose_calls_keep_failing_stops_at_its_steps_budget(world
     assert (refused.value.status, refused.value.code) == (402, "spend_limit")
     assert refused.value.details["scope"] == f"task:{effect['goal_id']}"
     assert spent - call < budget <= spent + 1e-9                     # it spent its budget, passing it by one call at most
-    assert w.engine.view(pid)["waiting"] == {"mind": builder["id"], "name": "Builder", "code": "spend_limit",
-                                             "message": "A spending limit has no room for this call."}
+    assert w.engine.view(pid)["waiting"] == [{"mind": builder["id"], "name": "Builder", "step": "the plan",
+                                              "reason": "spending", "code": "spend_limit",
+                                              "message": "A spending limit has no room for this call."}]
     w.hive.check_budget(w.hive.agent(other["id"]), paid=True, estimate=call)      # the step held its mind, not the hive
     w.client.portal.call(GoalMinds(w.engine).withdraw, {"plan_id": pid}, effect["goal_id"])   # the plan withdrew it
     assert w.hive.goals.get(effect["goal_id"])["status"] == "cancelled"
@@ -1541,6 +1614,28 @@ def test_a_test_author_that_sends_its_check_as_its_own_command_is_read_with_its_
                          {"binding_digest": None, "proposal": {"notes": "staged"}})
     out = w.client.portal.call(GoalMinds(w.engine).collect, {"plan_id": "pl_x"}, "author-tests", {}, gid)
     assert out == {"notes": "staged", "files": {cpe.CHECK_PATH: check}, "by": w.maker["id"]}
+
+
+def test_a_staged_check_is_deleted_once_the_plan_has_journalled_its_answer(world):
+    """The check a test author stages as its own command is read with its answer, then deleted once the plan has
+    journalled that answer (Goals.drop_staged): nothing reads it again."""
+    w = world
+    w.minds.question, w.minds.pending = False, {"author-tests"}
+    w.minds.collect = GoalMinds(w.engine).collect
+    pid = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()["plan_id"]
+    gid = next(e["goal_id"] for e in w.engine.view(pid)["effects"]
+               if e["kind"] == "author-tests" and e["state"] == "waiting")
+    mind = w.hive.agent(w.maker["id"])
+    w.hive.goals._create_record(w.make["id"], f"Create plan {pid}: test-author", "Finish with result data", 0.6,
+                                created_by=f"create-plan:{pid}", assignee=mind["id"], goal_id=gid)
+    w.hive.goals.claim(mind, gid)
+    w.hive.goals.stage_file(mind, gid, cpe.CHECK_PATH, CHECK)
+    w.client.portal.call(w.hive.goals.result, mind, gid, "done", "check written",
+                         {"binding_digest": None, "proposal": {"notes": "staged"}})
+    assert w.hive.goals.staged_files(gid) == {cpe.CHECK_PATH: CHECK}   # done, and not yet taken
+    w.client.portal.call(w.engine.goal_changed, gid)
+    assert any(r["kind"] == "tests-authored" for r in w.engine.view(pid)["journal"])
+    assert w.hive.goals.staged_files(gid) == {}
 
 
 def test_a_builder_cannot_own_or_replace_the_check(world):
@@ -1843,6 +1938,86 @@ def test_a_plan_whose_page_waits_on_its_look_comes_back_to_the_planner_as_its_ru
     assert {x["id"]: x["deps"] for x in planned["evidence"]["plan"]["pieces"]} == {"page": [], "style": ["page", "app"],
                                                                                     "app": ["page"]}
     assert view["phase"] == "ready-to-deploy", (view["phase"], view["status"], view["last_error"])
+
+
+def _with_a_design_step(w):
+    """The fake planner's plan with every piece code and needs.design design: a plan that asks its design maker for
+    the look before anything is built (a design piece would carry the look itself)."""
+    real = w.minds._answer
+
+    def a_design_step(kind, body, packet, agent):
+        answer = real(kind, body, packet, agent)
+        if kind == "plan":
+            for piece in answer["plan"]["pieces"]:
+                piece["kinds"] = ["code"]
+            answer["plan"]["needs"] = {**answer["plan"]["needs"], "design": "design"}
+        return answer
+    w.minds._answer = a_design_step
+
+
+@pytest.mark.parametrize("key", ["design", "ref"])
+def test_a_design_answered_as_text_is_kept_and_every_builder_gets_it(world, key):
+    """A design step's answer is the look itself, as text: the hive keeps it, journals designed with a reference minted
+    from its digest, and puts it in every builder's brief. On 20 Nov a Studio maker told only {"ref": "a design
+    reference"} wrote its whole design under ref four times, each refused as no reference, and the plan blocked as
+    lost 57 s after Make, so a design under ref is kept too."""
+    w = world
+    w.minds.question = False
+    _with_a_design_step(w)
+    w.minds.designs = [{key: DESIGN}]
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    assert view["phase"] == "ready-to-deploy", (view["phase"], view["status"], view["last_error"])
+    designers = [packet for kind, _a, packet in w.minds.calls if kind == "design"]
+    assert len(designers) == 1 and designers[0]["contract"] == cpp.DESIGN_RULES
+    assert cpp.ANSWER_SHAPES["design"] == '{"design": "the look, as text"}'
+    ref = "design-" + hashlib.sha256(DESIGN.encode()).hexdigest()[:32]
+    assert [r["fields"] for r in view["journal"] if r["kind"] == "designed"] == [f'("design-1" "{ref}")']
+    members = [json.loads(r["member"]) for r in w.code.runs.values()]      # the app's fix round is a member too
+    assert {m["piece"] for m in members} == {"page", "style", "app"}
+    assert all(m["brief"]["design"] == DESIGN for m in members)
+
+
+def test_an_empty_design_is_lost_and_the_maker_is_asked_again(world):
+    """A design with no words is no design: it is lost, the reducer asks again within its retries, and the next answer
+    is kept."""
+    w = world
+    w.minds.question = False
+    _with_a_design_step(w)
+    w.minds.designs = [{"design": "  "}, {"design": DESIGN}]
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    assert view["phase"] == "ready-to-deploy", (view["phase"], view["status"], view["last_error"])
+    maker = w.engine.assignees.resolve(["capability", "design"], "user:u_jon")["agent_id"]
+    lost = [j["evidence"] for j in view["journal"] if j["kind"] == "unknown"]
+    assert lost == [{"unknown": "the design answered no design", "by": maker}]
+    assert len([k for k, _a, _p in w.minds.calls if k == "design"]) == 2
+    briefs = [json.loads(r["member"])["brief"] for r in w.code.runs.values()]
+    assert briefs and all(b["design"] == DESIGN for b in briefs)
+
+
+def test_a_plan_with_no_design_step_gives_its_builders_no_design(world):
+    w = world
+    w.minds.question = False
+    view = w.client.post("/api/create/plans", json={"sentence": SENTENCE}, headers=w.jon).json()
+    assert view["phase"] == "ready-to-deploy", (view["phase"], view["status"], view["last_error"])
+    briefs = [json.loads(r["member"])["brief"] for r in w.code.runs.values()]
+    assert briefs and not any("design" in b for b in briefs)
+
+
+def test_a_brief_whose_fields_together_pass_the_member_limit_is_cut_to_fit():
+    """Each field keeps its own cap, and where they together pass the member's limit the field taking the most room is
+    cut, quotes and all (an escaped quote counts twice), until the brief fits; a brief under the limit is as it was."""
+    from hive.core.code_controller_member import BRIEF_LIMIT, _canonical
+    from hive.core.create_plan_members import _fit
+    fields = {"title": ("Fill the list", 400), "answers": (["x" * 20000], 12000),
+              "failing": ({"notes": ['"' * 30000]}, 16000), "probe": ({"cases": ["y" * 9000]}, 6000),
+              "design": ("z" * 9000, 4000)}
+    brief = _fit(fields, BRIEF_LIMIT)
+    assert len(_canonical(brief)) <= BRIEF_LIMIT
+    assert brief["title"] == "Fill the list"                                  # a short field is never cut
+    assert all(brief[n]["truncated"] is True for n in ("answers", "failing", "probe", "design"))
+    assert len(brief["failing"]["text"]) < 16000 and len(brief["answers"]["text"]) == 12000   # the largest, cut first
+    small = {"title": ("Fill the list", 400), "design": ("z" * 100, 4000)}
+    assert _fit(small, BRIEF_LIMIT) == {"title": "Fill the list", "design": "z" * 100}
 
 
 # the planner can never cause these: the host writes the Plan atom as revision 1 with no parent, and reports planned

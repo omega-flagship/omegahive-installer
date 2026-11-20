@@ -1,4 +1,4 @@
-"""Anti-drift guards (docs/omegadots/DRIFT.md): echoes, spend, goal leases."""
+"""Purpose: Anti-drift guards (docs/omegadots/DRIFT.md): echoes, spend, goal leases."""
 
 import asyncio
 

@@ -47,6 +47,23 @@ requires = [
 OMEGACLAW_WA_AUTH_DIR = { required = false, runtime_state = true }
 ```
 
+`requires` lists what the module can't work without, and a mind holds it to that. Before anything imports, each
+module the loader names whose `requires` has an entry shown missing where the mind runs is left out of that mind:
+it isn't imported, its signatures and catalogue aren't read, its boot receipt doesn't list it, and the mind's log
+names the module and the entry it lacks (`hive/runtime/extensions/module_requires.py`):
+
+| Entry | Met when | Can't tell |
+|---|---|---|
+| `python>=3.10` | the interpreter is at least that version | never |
+| `service:omegacode` | the mind has the client it reaches that service with; for OmegaCode, its native client imports from `OMEGACODE_SRC` or the interpreter's path | whether the service answers, and a service with no check |
+| `jax>=0.4`, `node>=20` | a Python distribution of that name is such a version, or an executable of that name is on `PATH` | an executable's version |
+| any other `kind:value` | no rule | always |
+
+An entry no rule can check counts as met, so a module is only left out when something is shown missing. What a
+module works better with but can do without goes under `recommends` instead, which nothing holds a mind to: assume
+recommends FabricPC, jax and optax and runs its dense step without them. `entry.metta` declares each entry as a
+`(RuntimeDependency ...)` or `(RecommendedDependency ...)` atom.
+
 `entry.metta` is the important part. It declares the module into `&self`:
 
 ```metta

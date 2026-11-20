@@ -33,6 +33,7 @@ import motivations from '../features/tasks/motivations.metta?raw'
 import swarms from '../features/swarm/swarms.metta?raw'
 import programs from '../features/programs/programs.metta?raw'
 import program from '../features/programs/program.metta?raw'
+import studioRecent from '../forms/designCanvas/recent.metta?raw'
 import lifecycle from '../features/lifecycle/lifecycle.metta?raw'
 import profile from '../features/keys/profile.metta?raw'
 import explore from '../features/explore/explore.metta?raw'
@@ -40,6 +41,7 @@ import flow from '../features/flow/flow.metta?raw'
 import conversations from '../features/dot/conversations.metta?raw'
 import createOffer from '../features/dot/createOffer.metta?raw'
 import refused from '../features/dot/refused.metta?raw'
+import askConnect from '../features/ask/connect.metta?raw'
 import setup from '../features/setup/setup.metta?raw'
 import firstLightFree from '../features/firstlight/free.metta?raw'
 import assetRemoval from '../features/assets/removal.metta?raw'
@@ -54,6 +56,7 @@ import beliefLink from '../features/minds/beliefLink.metta?raw'
 import askScreen from './ask.metta?raw'
 import askThread from '../features/ask/thread.metta?raw'
 import stopped from '../features/tasks/stopped.metta?raw'
+import askAnswer from '../features/ask/answer.metta?raw'
 
 export { readProps, ScreensError }
 export type { Bound, DrawnPart, Depth, How, Place, PropValue, Props, ScreenPlan } from './plan'
@@ -77,6 +80,7 @@ export const SCREEN_SOURCES: readonly (readonly [string, string])[] = [
   ['swarms', swarms],
   ['programs', programs],
   ['program', program],
+  ['studio-recent', studioRecent],
   ['lifecycle', lifecycle],
   ['profile', profile],
   ['explore', explore],
@@ -84,6 +88,7 @@ export const SCREEN_SOURCES: readonly (readonly [string, string])[] = [
   ['conversations', conversations],
   ['create-offer', createOffer],
   ['refused', refused],
+  ['ask-connect', askConnect],
   ['setup', setup],
   ['first-light-free', firstLightFree],
   ['asset-removal', assetRemoval],
@@ -98,6 +103,7 @@ export const SCREEN_SOURCES: readonly (readonly [string, string])[] = [
   ['ask', askScreen],
   ['ask-thread', askThread],
   ['stopped', stopped],
+  ['ask-answer', askAnswer],
 ]
 
 /** This moment's facts: counts per source and flags. Values are numbers or booleans only. */

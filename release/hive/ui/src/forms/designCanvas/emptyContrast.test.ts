@@ -33,8 +33,8 @@ describe('the empty state reads in every experience', () => {
   it('the heading, the line under it, and the recent links take the canvas’s ink, never the chrome’s', () => {
     expect(rule('.dc-empty-title')).toMatch(/color:\s*var\(--dc-ink\)/)
     expect(rule('.dc-empty-body')).toMatch(/color:\s*var\(--dc-ink-2\)/)
-    expect(rule('.dc-empty .dc-quiet')).toMatch(/color:\s*var\(--dc-ink-2\)/)
-    expect(rule('.dc-recent-btn')).toMatch(/color:\s*var\(--dc-ink\)/)
+    expect(rule('.dc-recent')).toMatch(/--color-ink:\s*var\(--dc-ink\)/)
+    expect(rule('.dc-recent')).toMatch(/--color-ink-3:\s*var\(--dc-ink-2\)/)
   })
   it('inside an experience the ink and the surface come from the same chrome, as a pair (never one without the other)', () => {
     const dress = rule('html[data-xc-active] .xc-dress .dc')

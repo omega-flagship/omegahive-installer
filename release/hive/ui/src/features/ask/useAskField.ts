@@ -32,6 +32,7 @@ import { askRows, asksMind, enterAction, highlighted, NOTHING_SEEN, type AskSeen
 import { guardComposing } from './keys'
 import { paysLine, shownMind } from './words'
 import { askAutoWake } from './autoWake'
+import { askNeedsModel, ensureProviders, needsModel } from './connect'
 import { answererChoice } from './answererChoice'
 import { mindInUse } from './mindInUse'
 
@@ -44,6 +45,8 @@ export type Panel =
   | { kind: 'limit'; c: Candidate; safe?: Candidate }
   | { kind: 'none'; near: Candidate[] }
   | { kind: 'say'; text: string; tone?: 'warn' }
+  /** no model this person can ask (connect.ts): `held` once Enter was pressed on words for a mind, which were kept */
+  | { kind: 'connect'; held: boolean }
   | null
 
 export interface AskFieldOpts {
@@ -124,7 +127,11 @@ export const REFUSED = {
   busy: 'The last one is still running.',
   changed: 'The line under the field just changed. Read it, then press Enter again.',
   panel: 'Choose one of the lines shown, or press Esc.',
+  connectHere: 'Connect a model first: add a key on this page. Your words are kept.',
 } as const
+const REST_CONNECT: Panel = { kind: 'connect', held: false }
+/** The pages where a key or model is added: the connect notice never opens over them (it would cover the form). */
+const keysPlace = (name: string): boolean => name === 'me' || name === 'models'
 function refuseEnter(body: string): void {
   useHive.getState().toast({ tone: 'info', icon: 'info', title: 'Nothing was sent', body, group: 'ask-enter', ttl: 5000 })
 }
@@ -251,6 +258,8 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
   const [privateAddressWords, setPrivateAddressWords] = useState<string | null>(null)
   const [sel, setSel] = useState(0)
   const [moved, setMoved] = useState(false)
+  // the row under the pointer (feedback #127): a highlight only. Enter never reads it; `sel`/`moved` are the keyboard's
+  const [hover, setHover] = useState<number | null>(null)
   const [panel, setPanel] = useState<Panel>(null)
   // what opened under the field closes on Esc anywhere and on words typed outside the Ask (a mind's composer): popDismiss
   usePopDismiss(!!panel, () => setPanel(null))
@@ -311,6 +320,14 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
   const swarms = useHive((s) => s.swarms)
   const agents = useHive((s) => s.agents)
   const canAsk = useHive((s) => !!s.client?.ask)
+  // omegahive-feedback#135: no model this person can ask (connect.ts). The hive's own list of providers for them,
+  // read once here when nothing has, then kept current by providers.updated: a key added reopens the Ask at once.
+  const client = useHive((s) => s.client)
+  const providers = useHive((s) => s.providers)
+  useEffect(() => { if (client) ensureProviders() }, [client, providers])
+  const noModel = needsModel(providers)
+  // closing the resting notice holds until the hive next states its providers (a key added, removed or changed)
+  const [connectClosed, setConnectClosed] = useState<unknown>(undefined)
 
   const scope = useMemo(() => ({ experience, swarm: routeSwarm(route) }), [experience, route])
   // "delete the Forge swarm": read the archived swarms once, so an archived one (cleanup pending) can be named too
@@ -481,6 +498,7 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
     setValue(v)
     setSel(0)
     setMoved(false)
+    setHover(null)
     setPanel(null)
     histAt.current = -1
   }, [addressed, sharedWriter])
@@ -531,6 +549,12 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
     async (act: IntentAct, you: string, extra: AskOpts = {}) => {
       if (!fieldCurrent()) return refuseEnter(REFUSED.hidden)
       if (!addressCurrent(you)) return
+      // no model this person can ask: nothing is sent and no mind is woken; the words stay, and the Ask says what helps
+      if (act.do === 'mind' && askNeedsModel()) {
+        // where a key or model is added the notice would cover the form: say it in passing instead
+        if (keysPlace(route.name)) return refuseEnter(REFUSED.connectHere)
+        return setPanel({ kind: 'connect', held: true })
+      }
       const dispatched = { you, steering: !!useAskStore.getState().open }
       onDispatch?.(dispatched)
       emitAskDispatch(dispatched)
@@ -548,7 +572,7 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
       // conductor does not drive tours yet ends the turn without a step, and the same demo then plays here
       const guideText = act.do === 'guide' ? act.text : null
       const g = guideText ? guidedIntent(guideText) : null
-      if (g?.kind === 'script' && g.script.status === 'ready' && canAsk && useHive.getState().client?.askActResult && !useAskStore.getState().open) {
+      if (g?.kind === 'script' && g.script.status === 'ready' && canAsk && !askNeedsModel() && useHive.getState().client?.askActResult && !useAskStore.getState().open) {
         const spoken = via.current
         const origin = askOrigin()
         const bind = bindEpoch()
@@ -626,6 +650,8 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
       if (!fieldCurrent()) return 'not-current'
       // these words must start a turn: with a turn open (or a drawing being directed) they would steer it instead
       if (useAskStore.getState().open || studioRoute()) return 'busy'
+      // no model to ask: run() keeps the words and opens the connect notice; nothing was asked
+      if (askNeedsModel()) { await run({ do: 'mind', text: you }, you); return 'not-current' }
       await run({ do: 'mind', text: you }, you, { ...opts, newTurnOnly: true })
       return 'asked'
     }
@@ -642,6 +668,8 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
       // suggestion popup. A deliberate Enter uses that same guarded choice;
       // automatic voice submission never retries it.
       if (restored.current) return ev.quiet ? undefined : restored.current.retry?.()
+      // the connect notice is open and already says what helps: Enter adds no second message, and sends nothing
+      if (panel?.kind === 'connect' && !keysPlace(route.name) && askNeedsModel()) return
       // demo mode's showreel (features/showreel): "show me around" starts it; while it shows, its own script answers
       // "why?" and the like (0 model calls), and it pauses rather than being taken over
       if (!moved && showreelWords(you, { where })) return done(you)
@@ -678,9 +706,20 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
           return setPanel({ kind: 'none', near: d.near })
       }
     },
-    [value, moved, take, decision, shownList, sel, run, done, addressCurrent, where, open, panel, fieldCurrent],
+    [value, moved, take, decision, shownList, sel, run, done, addressCurrent, where, open, panel, fieldCurrent, route.name],
   )
 
+  // At rest (no words, nothing else open) the Ask says a model is needed before anything is typed, except on the pages
+  // where a key or model is added. With words in the field the rows show as ever: opening pages needs no model.
+  // a model arrived (a key added, free inference opened): the notice is gone at once, and the same words can be sent
+  // and on the pages where a key or model is added it steps aside, held or resting; the words stay in the field
+  const livePanel: Panel = panel?.kind === 'connect' && (!noModel || keysPlace(route.name)) ? null : panel
+  const restingConnect = noModel && !livePanel && !value.trim() && connectClosed !== providers && !keysPlace(route.name)
+  const shownPanel: Panel = livePanel ?? (restingConnect ? REST_CONNECT : null)
+  const closePanel = useCallback((p: Panel) => {
+    if (p === null && restingConnect) setConnectClosed(providers)
+    setPanel(p)
+  }, [restingConnect, providers])
   const onKeyDown = useCallback(
     (e: KeyboardEvent<HTMLInputElement>, onEscape?: () => boolean) => {
       // a key that confirms an IME candidate belongs to the input method, never to the Ask (keys.ts)
@@ -713,16 +752,19 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
         void submit({ repeat: e.repeat })
       } else if (e.key === 'Escape') {
         // Esc steps back: what opened under the field, then the words, then the skin (thread, blur)
-        if (panel) {
+        if (livePanel) {
           e.preventDefault()
           setPanel(null)
+        } else if (restingConnect) {
+          e.preventDefault()
+          setConnectClosed(providers)
         } else if (value) {
           e.preventDefault()
           change('')
         } else if (onEscape?.()) e.preventDefault()
       }
     },
-    [shownList, value, active, change, submit, panel],
+    [shownList, value, active, change, submit, livePanel, restingConnect, providers],
   )
 
   /** Spoken words into the field (interim words included): editable like typing; marked as voice for the audit. */
@@ -747,13 +789,23 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
       setSel(i)
       setMoved(true)
     },
+    /** The row under the pointer, or null (feedback #127). It only highlights: Enter follows the keyboard's `sel`. */
+    hover: hover !== null && hover < shownList.length ? hover : null,
+    /** A row's pointer handlers: moving over it highlights it, leaving clears it. Neither changes what Enter does. */
+    hoverRow: (i: number) => ({
+      'data-hover': hover === i ? '' : undefined,
+      onMouseMove: () => { if (hover !== i) setHover(i) },
+      onMouseLeave: () => setHover((h) => (h === i ? null : h)),
+    }),
     list: value.trim() && !wordsRestored ? shownList : [],
     active,
     take,
     submit,
     onKeyDown,
-    panel,
-    setPanel,
+    panel: shownPanel,
+    setPanel: closePanel,
+    /** no model this person can ask: the skins need nothing from it beyond the panel; read by tests and the thread */
+    noModel,
     busy,
     where,
     route,

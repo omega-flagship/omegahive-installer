@@ -13,6 +13,7 @@ import { GoogleConnectorSettings } from '../settings/GoogleConnectorSettings'
 import { PersonNotices } from '../settings/PersonNotices'
 import { MemorySection } from './AskMemorySection'
 import { AddKeyPanel } from './AddKeyForm'
+import { onAddKeyRequest, takeAddKeyRequest } from './addKeyIntent'
 import { profileScreen } from './data'
 import { DemoAskCard } from './DemoAskCard'
 import { OwnMonthlyLimit } from './OwnMonthlyLimit'
@@ -60,7 +61,9 @@ export default function ProfilePage() {
   const look = experienceById(useLook().current?.experience).id
   const me = useResource(() => need(client, 'me', 'Who you are')(), { isEmpty: () => false })
   const [keysError, setKeysError] = useState<unknown>(undefined)
-  const [adding, setAdding] = useState(false)
+  // the Ask's "Add a key" (features/ask/ConnectNotice) lands here with the form already open
+  const [adding, setAdding] = useState(takeAddKeyRequest)
+  useEffect(() => onAddKeyRequest(() => { if (takeAddKeyRequest()) setAdding(true) }), [])
   const [signingOut, setSigningOut] = useState(false)
   const [editing, setEditing] = useState<ReadonlySet<string>>(() => new Set())
   const [confirming, setConfirming] = useState<ReadonlySet<string>>(() => new Set())

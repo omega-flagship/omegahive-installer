@@ -281,6 +281,21 @@ html[data-ask-resizing] .ask-dock { transition: none; }
   background: var(--color-accent-2);
   box-shadow: 0 0 8px var(--color-accent-2);
 }
+/* something waits on the person in the folded thread (an offer to build, a stopped task): the dot grows to carry how
+   many, in each look's own dot colour and the ink its accent takes, so it reads apart from the plain rows dot */
+.ask-dot[data-waiting] {
+  top: 3px;
+  right: 3px;
+  width: auto;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  color: var(--color-primary-ink);
+}
 
 /* ---- suggestions and the policy's panel, stacked above the capsule */
 .ask-pop {
@@ -318,6 +333,16 @@ html[data-ask-resizing] .ask-dock { transition: none; }
 .ask-sug[aria-selected='true'] {
   background: color-mix(in oklab, var(--color-accent) 16%, transparent);
   box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-accent) 28%, transparent) inset;
+}
+/* the row under the pointer (feedback #127): a lighter wash and no ring, so the keyboard's row (the one Enter takes,
+   marked ↵) stays the clear one. Each skin restates it in its own material below. */
+.ask-sug[data-hover]:not([aria-selected='true']) {
+  background: color-mix(in oklab, var(--color-ink) 6%, transparent);
+}
+/* Search, its own marked control beside the field (feedback #127; the shell's `search` part, AskSearch.tsx) */
+.ask-dock[data-mode='phone'] .ask-icon.ask-search,
+.ask-dock[data-mode='landscape'] .ask-icon.ask-search {
+  width: 36px;
 }
 .ask-sug-tag {
   flex: none;
@@ -857,6 +882,14 @@ html[data-ask][data-ask-native='construct'] .toast-stack {
   text-underline-offset: 3px;
   white-space: nowrap;
 }
+/* what waits on today's page while it's folded, as a small figure after the button's words */
+.ask-still-waiting {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 11px;
+  vertical-align: super;
+  text-decoration: none;
+}
 .ask-letter {
   max-height: 55vh;
   display: flex;
@@ -945,6 +978,9 @@ html[data-ask][data-ask-native='construct'] .toast-stack {
 .ask-letter .ask-sug[aria-selected='true'] {
   background: rgb(163 34 27 / 0.09);
   box-shadow: none;
+}
+.ask-letter .ask-sug[data-hover]:not([aria-selected='true']) {
+  background: rgb(60 40 20 / 0.045);
 }
 .ask-letter .ask-sug-tag {
   color: #a3221b;
@@ -1110,7 +1146,8 @@ html[data-ask][data-ask-native='construct'] .toast-stack {
   top: 55%;
   margin: -5px 0 0 -5px;
 }
-.st-ask-mic {
+.st-ask-mic,
+.st-ask-search {
   align-self: center;
   font-family: var(--serif, Georgia, serif);
   font-size: 15px;
@@ -1554,6 +1591,9 @@ html {
   background: color-mix(in srgb, var(--xc-accent) 14%, transparent);
   box-shadow: inset 2px 0 0 var(--ax-accent);
 }
+.ask-root[data-skin='transmission'] .ask-sug[data-hover]:not([aria-selected='true']) {
+  background: color-mix(in srgb, var(--xc-accent) 6%, transparent);
+}
 .ask-root[data-skin='transmission'] .ask-sug-tag,
 .ask-root[data-skin='transmission'] .ask-head-title {
   font-family: var(--ax-wide);
@@ -1746,6 +1786,9 @@ html {
   background: color-mix(in srgb, var(--ax-soft) 14%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ax-soft) 30%, transparent);
 }
+.ask-root[data-skin='liquid'] .ask-sug[data-hover]:not([aria-selected='true']) {
+  background: color-mix(in srgb, var(--ax-soft) 6%, transparent);
+}
 .ask-root[data-skin='liquid'] .ask-sug[data-tag='Ask'] .ask-sug-tag {
   color: var(--ax-soft);
 }
@@ -1889,6 +1932,9 @@ html {
 .ask-root[data-skin='command-line'] .ask-sug[aria-selected='true'] {
   background: color-mix(in srgb, var(--xc-accent) 16%, transparent);
   box-shadow: inset 2px 0 0 var(--ax-phos);
+}
+.ask-root[data-skin='command-line'] .ask-sug[data-hover]:not([aria-selected='true']) {
+  background: color-mix(in srgb, var(--xc-accent) 7%, transparent);
 }
 .ask-root[data-skin='command-line'] .ask-btn[data-tone='primary'] {
   color: var(--xc-surface);
@@ -2432,6 +2478,9 @@ html[data-ui-motion='none'] .ask-fx-current {
 .ask-root[data-skin='note'] .ask-sug[aria-selected='true'] {
   background: color-mix(in srgb, var(--xc-accent) 12%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--xc-accent) 35%, transparent);
+}
+.ask-root[data-skin='note'] .ask-sug[data-hover]:not([aria-selected='true']) {
+  background: color-mix(in srgb, var(--xc-accent) 5%, transparent);
 }
 .ask-root[data-skin='note'] .ask-sug[data-tag='Ask'] .ask-sug-tag,
 .ask-root[data-skin='note'] .ask-who {

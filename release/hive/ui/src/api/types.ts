@@ -446,7 +446,8 @@ export type AgentAction = 'start' | 'stop' | 'sleep' | 'wake'
 
 /** Gateway refusals before an LLM call (API.md "LLM spend is checked before the call"). */
 export type LlmErrorCode = 'no_budget' | 'unpriced_model' | 'budget_exhausted' | 'hive_budget_exhausted' | 'rate_limited'
-  | 'free_inference_busy' | 'free_inference_daily_cap' | 'free_inference_hive_daily_cap' | 'free_inference_off'
+  | 'free_inference_busy' | 'free_inference_daily_cap' | 'free_inference_hive_daily_cap' | 'free_inference_idle'
+  | 'free_inference_off'
   | 'free_model_not_offered' | 'free_inference_invited_only' | 'free_inference_person_only' | 'free_inference_key_refused'
   | 'free_model_unreconciled' | 'provider_no_credit' | 'provider_key_refused' | 'provider_busy' | 'provider_unavailable'
   | 'provider_request_refused'

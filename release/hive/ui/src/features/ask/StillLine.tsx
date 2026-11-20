@@ -12,6 +12,7 @@ import { guardComposing } from './keys'
 import { useReducedMotion } from '../../lib/hooks'
 import { useAskStore } from '../../store/ask'
 import type { Candidate } from '../../lib/intent'
+import { AskSearch } from './AskSearch'
 import { PanelView } from './ClassicAsk'
 import type { Placement } from './placement'
 import { Thread, ThreadHead } from './Thread'
@@ -23,6 +24,7 @@ import { useDraft } from '../../experiences/drafts'
 import { useStillFieldCaret, useStillFieldPart } from './stillField'
 import { useThreadReport } from './askRoom'
 import type { AskRegion } from './askScreen'
+import { useAskWaiting, withWaiting } from './waiting'
 
 const sentence = (c: Candidate) => c.parts.map((p) => p.t).join('')
 
@@ -36,6 +38,11 @@ export function StillLine({ place, inputRef, words, region = 'bubble' }: { place
   const threadOpen = useAskStore((s) => s.threadOpen)
   const setThreadOpen = useAskStore((s) => s.setThreadOpen)
   const stop = useAskStore((s) => s.stop)
+  // what waits on the person on today's page (an offer to build, a stopped task): the folded button carries how many and
+  // its words name what waits, as the other folded Asks' buttons do
+  const waiting = useAskWaiting()
+  const waits = threadOpen ? 0 : waiting.offers + waiting.stops
+  const pageWords = threadOpen ? undefined : withWaiting('Today’s page', waiting)
   const [focused, setFocused] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   const v = useAskVoice(f, inputRef, root)
@@ -74,7 +81,7 @@ export function StillLine({ place, inputRef, words, region = 'bubble' }: { place
             ) : (
               <ul id={listId} role="listbox" aria-label="What this will do" className="ask-sugs" data-unsaved-ignore="">
                 {f.list.map((c, i) => (
-                  <li key={c.key} id={`${id}-${i}`} role="option" aria-selected={c === f.active} aria-label={sentence(c)} className="ask-sug" onMouseDown={(e) => e.preventDefault()} onMouseMove={() => i !== f.sel && f.setSel(i)} onClick={() => void f.take(c)}>
+                  <li key={c.key} id={`${id}-${i}`} role="option" aria-selected={c === f.active} aria-label={sentence(c)} className="ask-sug" onMouseDown={(e) => e.preventDefault()} {...f.hoverRow(i)} onClick={() => void f.take(c)}>
                     <span className="ask-sug-tag">{c.tag}</span>
                     <span className="ask-sug-body">{sentence(c)}{c.pays && <span className="ask-sug-pays" data-pays="">{c.pays}</span>}</span>
                   </li>
@@ -130,8 +137,10 @@ export function StillLine({ place, inputRef, words, region = 'bubble' }: { place
         <button type="button" className="ask-still-btn ask-mic" {...v.button} aria-label={v.label} data-voice={v.state}>
           {v.listening ? 'Stop' : 'Speak'}
         </button>
-        {!half && <button type="button" className="ask-still-btn" onClick={() => setThreadOpen(!threadOpen)} aria-expanded={threadOpen}>
+        <AskSearch look="still" words={f.valueNow} className="ask-still-btn ask-search">Search</AskSearch>
+        {!half && <button type="button" className="ask-still-btn" onClick={() => setThreadOpen(!threadOpen)} aria-expanded={threadOpen} aria-label={waits > 0 ? pageWords : undefined} title={waits > 0 ? pageWords : undefined}>
           {threadOpen ? 'Fold' : 'Today’s page'}
+          {waits > 0 && <span className="ask-still-waiting" data-waiting="" aria-hidden>{waits}</span>}
         </button>}
         {f.answering && (
           <button type="button" className="ask-still-btn" onClick={() => void stop()}>

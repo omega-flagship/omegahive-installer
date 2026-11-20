@@ -74,11 +74,9 @@
 (Part plan 21 notice ((tone warn) (text (words "Waiting on something: " (bind plan.status)))))
 (When plan 21 (on plan.blocked))
 (Part plan 22 buttons ((items ((button "Make something else" fresh ((variant primary)))))))
-; a mind the plan waits on is refused for spending: say so in the hive's words, and where its limits are
-(Part plan 23 notice ((tone warn) (text (words (bind waiting.name) " is waiting on a spending limit: " (bind waiting.message)))))
+; each mind the plan waits on that can't go on now, a row a mind (plan-waiting): why, and the press that moves it
+(Part plan 23 stack ((source waiting.rows)))
 (When plan 23 (on plan.waiting))
-(Part plan 24 buttons ((items ((button "See limits" open-limits ((variant ghost) (icon gauge) (aria "See the spending limits")))))))
-(When plan 24 (on plan.waiting))
 ; held (it waits on the person or the hive): it never holds Make; the person may make something else meanwhile, and
 ; this build stays as it is, its question with it. Offered only where the empty canvas names the build again (the same
 ; test, plan.leavable): a question asked while the build still works is answered here, not left.
@@ -88,6 +86,26 @@
 (Part plan 26 buttons ((items ((button "Make something else" fresh ((variant ghost) (aria "Make something else; this build stays here with its question")))))))
 (Row plan 26 leave)
 (When plan 26 (on plan.leavable))
+
+; ---------- one mind the plan waits on: refused for spending (in the hive's words, with where its limits are), or
+; stopped, asleep, stopped with an error or never started, with Start or Wake where this person may press it
+(Screen plan-waiting "A mind the plan waits on")
+(Part plan-waiting 10 notice ((tone warn) (text (words (bind name) " is waiting on a spending limit: " (bind message)))))
+(When plan-waiting 10 (on spending))
+(Part plan-waiting 11 notice ((tone warn) (text (words "Waiting for " (bind step) ": " (bind name) " is stopped."))))
+(When plan-waiting 11 (on stopped))
+(Part plan-waiting 12 notice ((tone warn) (text (words "Waiting for " (bind step) ": " (bind name) " is asleep."))))
+(When plan-waiting 12 (on asleep))
+(Part plan-waiting 13 notice ((tone warn) (text (words "Waiting for " (bind step) ": " (bind name) " stopped with an error."))))
+(When plan-waiting 13 (on error))
+(Part plan-waiting 14 notice ((tone warn) (text (words "Waiting for " (bind step) ": " (bind name) " hasn't been started."))))
+(When plan-waiting 14 (on created))
+(Part plan-waiting 20 buttons ((items ((button "See limits" open-limits ((variant ghost) (icon gauge) (aria "See the spending limits")))))))
+(When plan-waiting 20 (on spending))
+(Part plan-waiting 21 buttons ((items ((button (words "Start " (bind name)) start-mind ((variant ghost) (aria (words "Start " (bind name)))))))))
+(When plan-waiting 21 (on can.start))
+(Part plan-waiting 22 buttons ((items ((button (words "Wake " (bind name)) wake-mind ((variant ghost) (aria (words "Wake " (bind name)))))))))
+(When plan-waiting 22 (on can.wake))
 (When plan 22 (on plan.stopped))
 ; questions never hold the rest: they sit above the board and settle once answered
 (Part plan 30 island ((name plan-questions)))

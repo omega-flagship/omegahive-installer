@@ -22,14 +22,6 @@ def fails_on_runner_1(issue, why, raises, strict=True):
     return pytest.mark.xfail(ON_RUNNER_1, reason=reason, raises=raises, strict=strict)
 
 
-# The launch socket refuses a peer by closing with its request unread, which Linux reports as a reset.
-request_credential_reset = fails_on_runner_1(
-    285, "request_credential raises the reset Linux reports when the socket refuses", ConnectionResetError)
-
-mcp_doc_lacks_code_mind_proof = fails_on_runner_1(
-    286, "hive/MCP_S3.md has no section for the hive_code_mind_proof tool",
-    pytest.RaisesExc(AssertionError, match="hive_code_mind_proof"))
-
 # A race with the clock tick, so it sometimes passes on runner 1.
 namespace_misses_same_tick_link = fails_on_runner_1(
     288, "the namespace cache misses a link made in the same clock tick as its last scan",

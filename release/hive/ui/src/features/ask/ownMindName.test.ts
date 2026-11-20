@@ -15,8 +15,8 @@ describe('the person\'s own mind is shown by the name they gave it', () => {
     expect(threadLabel('Omega', undefined, 'a_own')).toBe('Omega')
     // the thread's info line too, which a real hive showed as "Answers come from the orchestrator's own knowledge."
     const own: MyMind = { id: 'a_own', name: 'Omega', swarm_id: 's_own' }
-    expect(threadInfo({ mind: { id: 'a_own', name: 'Omega' } }, own, shownMind)).toBe('Answers come from Omega’s own knowledge.')
-    expect(threadInfo({ mind: { id: 'a_other', name: 'Omega' } }, own, shownMind)).toMatch(/^Answers come from the orchestrator’s own knowledge\./)
+    expect(threadInfo({ mind: { id: 'a_own', name: 'Omega' } }, own, shownMind)).toBe('Answers come from Omega.')
+    expect(threadInfo({ mind: { id: 'a_other', name: 'Omega' } }, own, shownMind)).toMatch(/^Answers come from the orchestrator\./)
   })
 
   it('a mind the hive presents is still never shown as Omega, and the rule comes back once the person is gone', () => {

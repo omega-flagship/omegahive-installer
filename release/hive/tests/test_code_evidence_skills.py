@@ -9,6 +9,8 @@ import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 MODULE = ROOT / 'modules/code'
+# the evidence skills are declared by code_workspace, which runs them through the shared modules/code/src/omega_code.py
+WORKSPACE = ROOT / 'modules/code_workspace'
 spec = importlib.util.spec_from_file_location('code_evidence_under_test', MODULE / 'src/omega_code.py')
 oc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(oc)
@@ -111,11 +113,11 @@ def test_status_uses_bounded_output_followup_instead_of_full_artifact_download(m
 
 def test_registry_signatures_and_wrappers_are_complete():
     skills = {'code-runs': 'runs', 'code-verifications': 'verifications', 'code-output': 'output', 'code-diagnostics': 'diagnostics'}
-    manifest = tomllib.loads((MODULE / 'module.toml').read_text())
+    manifest = tomllib.loads((WORKSPACE / 'module.toml').read_text())
     for skill, fn in skills.items():
         assert 'skill:'+skill in manifest['provides']
         for filename in ('entry.metta', 'signatures.metta', 'skills.metta', 'catalog.metta', 'affordance.metta'):
-            assert skill in (MODULE / filename).read_text()
+            assert skill in (WORKSPACE / filename).read_text()
         assert callable(getattr(oc, fn))
 
 

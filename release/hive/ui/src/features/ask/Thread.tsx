@@ -40,6 +40,7 @@ import { DirectingStudio } from '../studioLive/DirectingStudio'
 import { changeAskSize, halfSwitch, useAskSize } from './askSize'
 import type { AskMode } from './placement'
 import { StoppedTasks } from '../tasks/StoppedTasks'
+import { AnswerPartsSlot } from './AnswerPartsSlot'
 
 /** glass: Classic · letter: Still · transmission: Cosmos · liquid: Flux · terminal: Construct · note: Canvas */
 export type ThreadVariant = 'glass' | 'letter' | 'transmission' | 'liquid' | 'terminal' | 'note'
@@ -349,7 +350,8 @@ function Trail({ moves }: { moves: AskRow[] }) {
 /**
  * A mind's answer, in the look's grammar: its little markdown kept (answerText), each run drawn as every look draws
  * words said in the hive (features/views/Words: an artifact id a chip that opens it, a belief or truth number said in
- * English), what was asked about lit up, and the exact answer once, "as written", at its end (uifix-r3, S3).
+ * English), what was asked about lit up, and the exact answer once, "as written", at its end (uifix-r3, S3). Under it,
+ * what MeTTa composes for it (answer.metta): where it came from, and research its turn held back (AnswerPartsSlot).
  */
 export function AnswerRow({ r, variant, words }: { r: AskRow; variant: ThreadVariant; words: string[] }) {
   return (
@@ -360,6 +362,7 @@ export function AnswerRow({ r, variant, words }: { r: AskRow; variant: ThreadVar
         <AnswerParagraph key={i} className="ask-answer" text={p} mark={(run) => <Words text={run} written={false} mark={(w) => lit(w, words)} />} />
       ))}
       {hasNotation(r.text) && <AsWritten text={r.text} className="ask-row-note" />}
+      <AnswerPartsSlot r={r} />
     </div>
   )
 }
@@ -694,14 +697,27 @@ export function ThreadHead({ variant, onClose, pinnable, sizes }: { variant: Thr
   )
 }
 
+/** The thread: today's rows, then what the Ask shows with or without them (AskCards). */
 export function Thread({ variant, words = [] }: { variant: ThreadVariant; words?: string[] }) {
-  // J3 r4.3 O3: while a live Studio session runs (or its setup card is open), Directing Studio sits under the thread in
-  // every look: receipt cards from host records, the Steer | Queue switch, the cost readout and the one Stop. Above it,
-  // what waits on the person: the tasks minds stopped, and every mind's open offers to build in Create with Start, so a
-  // person told to press Start finds it where they talk (createOffer.metta; nothing while none is open)
   return (
     <>
       <ThreadLog rows={useThreadRows()} variant={variant} words={words} />
+      <AskCards />
+    </>
+  )
+}
+
+/**
+ * What waits on the person in the Ask, drawn under the thread and, where a look keeps its Ask on the page without the
+ * thread (Professional's card before it has rows or with its conversation hidden, Still's question box before today's
+ * page), in the thread's place, so a person told to press Start finds the card in the Ask whatever its thread shows.
+ * The tasks minds stopped, then every mind's open offers to build in Create with Start (createOffer.metta), then, J3 r4.3
+ * O3, while a live Studio session runs or its setup card is open, Directing Studio: receipt cards from host records, the
+ * Steer | Queue switch, the cost readout and the one Stop. Each draws nothing while it has nothing to show.
+ */
+export function AskCards() {
+  return (
+    <>
       <StoppedTasks />
       <CreateOffers />
       <DirectingStudio />

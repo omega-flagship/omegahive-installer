@@ -60,6 +60,10 @@ const MEASURED: Record<string, { worst: number; hookWorst?: number }> = {
  */
 const SCREEN_CAP = 20000
 const SCREEN_CAPPED: Record<string, number> = {
+  // what MeTTa composes under an Ask answer (answer.metta): its words and rows, and mounted in every look with the Wake
+  // press, measured three passes on the Mac mini (macOS, Node 26, 5 workers, 20 Nov)
+  'features/ask/answerSource.test.ts': 954,
+  'features/ask/answerParts.mounted.test.ts': 4642,
   'features/artifacts/artifacts.test.ts': 531,
   'features/ask/askStopped.screen.test.ts': 146, // the Ask's Continue (thread.metta), measured two passes at load 36-41
   'features/artifacts/creationReader.test.ts': 1066, // the Artifacts reader composed by MeTTa, measured two passes at load 135-175

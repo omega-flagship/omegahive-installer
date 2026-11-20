@@ -15,7 +15,9 @@ code requests require an admin; task creation and research requests require the 
 - code.test queues an action to an existing original request/controller/lease; it never creates another request or grants test execution.
 - Links attach a request the same person already made directly. They grant and change nothing.
 - Reads are the owner's only; admins see links through the Ask audit routes. Frames are 'ask' frames
-  {phase: "intent", intent_id, state, links_rev}, so the asker-only rule applies; they are hints and may be dropped.
+  {phase: "intent", intent_id, state, links_rev}, so the asker-only rule applies; they are hints and may be dropped. A
+  refusal keeps its kind's reason beside its code (last_refusal {code, reason?, status, at}) and its frame says it
+  (reason, a host enum such as researcher_asleep), so a refusal the person can lift is told apart from the rest.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import re
 import secrets
 
 from .db import now
@@ -59,6 +62,8 @@ KEY_PREFIX = "ask."
 STATES = ("pending", "dispatching", "linked", "refused", "abandoned")
 TURN_MAX_AGE = datetime.timedelta(hours=24)
 LIST_LIMIT = 50
+# a refusal's reason as kept and framed: a host enum (research.py's researcher_asleep, web_off, ...), never free text
+REASON = re.compile(r"[a-z][a-z0-9_]{0,40}")
 
 
 def _iso_time(value):
@@ -662,6 +667,10 @@ class Intents:
         raced = isinstance(error, HiveError) and error.code == "operation_conflict"
         refused = isinstance(error, HiveError) and 400 <= error.status < 500 and not raced
         code = error.code if isinstance(error, HiveError) else (type(error).__name__ if error is not None else "not_linked")
+        # the kind's own reason beside the code (a host enum such as researcher_asleep, never words), so a refusal the
+        # person can lift is told apart from the others sharing its code: kept in last_refusal and said on the frame
+        reason = (error.details or {}).get("reason") if refused and isinstance(error.details, dict) else None
+        reason = reason if isinstance(reason, str) and REASON.fullmatch(reason) else None
         stamp = now()
         if row["deleted_at"]:
             state, outcome = "abandoned", ("refused" if refused else "not_committed")
@@ -670,16 +679,16 @@ class Intents:
         else:
             state, outcome = "pending", "not_committed"
         last_dispatch = canonical({"dispatch_id": dispatch_id, "outcome": outcome, "code": code, "at": stamp})
+        refusal = {"code": code, "status": getattr(error, "status", None), "at": stamp, **({"reason": reason} if reason else {})}
         frames = []
         with hive.db.transaction():
             moved = hive.db.execute(
                 "UPDATE ask_intents SET state = ?, last_dispatch = ?, last_refusal = CASE WHEN ? THEN ? ELSE last_refusal END, "
                 "updated_at = ? WHERE id = ? AND state = 'dispatching' AND dispatch_id = ?",
-                (state, last_dispatch, refused, canonical({"code": code, "status": getattr(error, "status", None), "at": stamp}),
-                 stamp, intent_id, dispatch_id)).rowcount
+                (state, last_dispatch, refused, canonical(refusal), stamp, intent_id, dispatch_id)).rowcount
             if moved == 1:
                 self._bump(row["turn_id"])
-                frames.append(self._frame(row["turn_id"], intent_id, state))
+                frames.append(self._frame(row["turn_id"], intent_id, state, **({"reason": reason} if state == "refused" and reason else {})))
         self.ask._publish(frames)
         if error is not None:
             raise error

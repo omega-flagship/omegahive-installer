@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ASK_HISTORY_MAX, type AskTurnRecord } from '../../api/missingUi'
 import type { AskEvent, AskTurnState } from '../../api/ask'
+import { researchRow } from '../../store/ask'
 import { ago } from '../../lib/format'
 import { errorMessage } from '../../lib/useResource'
 import { useHive } from '../../store/store'
@@ -49,13 +50,18 @@ export function turnOutcome(t: Pick<AskTurnRecord, 'state' | 'reason'>): string 
  * the whole answer (non-delta) replaces the pieces said on the way, as in the live thread; joining both printed the
  * answer twice. Pieces alone (a turn cut off before its whole answer) are shown as they are.
  */
-export const answerText = (events: AskEvent[]): string => {
+export const answerText = (events: AskEvent[]): string => keptAnswer(events)
+
+/** Keep this browser's original words and read the handoff's later state from the host. */
+export function keptAnswer(events: AskEvent[], cached?: string): string {
   const answers = events.filter((e) => e.phase === 'answer')
   const whole = answers.filter((e) => !(e as { delta?: unknown }).delta)
-  return (whole.length ? whole : answers)
-    .map((e) => String((e as { text?: unknown }).text ?? ''))
+  const kept = new Set(whole.length ? whole : answers)
+  const host = events
+    .flatMap(e => e.phase === 'research' ? [researchRow(e, { id: e.request_id }).text] :
+      cached === undefined && e.phase === 'answer' && kept.has(e) ? [e.text] : [])
     .join('\n')
-    .trim()
+  return [cached, host].filter(Boolean).join('\n').trim()
 }
 
 /** Pages read per click; a longer answer keeps a way to read on. */
@@ -151,10 +157,10 @@ function EarlierFor({ onClose }: { onClose: () => void }) {
   if (!client?.askHistory) return null
 
   // reads the first pages of an answer, or the next pages of a partly read one; a failure keeps what was read
-  const readOn = async (op: string) => {
+  const readOn = async (op: string, refresh = false) => {
     if (!client.askTurn || reading.has(op)) return
     const ask = client.askTurn.bind(client)
-    const from = answers[op]?.read ?? undefined
+    const from = refresh ? undefined : answers[op]?.read ?? undefined
     const binding = bindEpoch()
     const mark = (on: boolean) => setReading((r) => {
       const n = new Set(r)
@@ -176,8 +182,8 @@ function EarlierFor({ onClose }: { onClose: () => void }) {
   const show = async (t: AskTurnRecord) => {
     if (open === t.operation_id) return setOpen(null)
     setOpen(t.operation_id)
-    if (answers[t.operation_id]?.read) return
-    await readOn(t.operation_id)
+    if (!t.has_research && answers[t.operation_id]?.read) return
+    await readOn(t.operation_id, t.has_research)
   }
 
   const full = rows !== null && rows.length < limit
@@ -197,6 +203,7 @@ function EarlierFor({ onClose }: { onClose: () => void }) {
         <ul className="ask-earlier-list" style={{ listStyle: 'none', margin: 0, padding: 0, maxHeight: 320, overflowY: 'auto' }}>
           {rows.map((t) => {
             const w = keptWords(t, t.text ? null : keptMindTalk(memory.talks, t.turn_id))
+            const readsHost = !w.removed && !!client.askTurn && (w.answer === undefined || t.has_research)
             return (
               <li key={t.turn_id} style={{ padding: '6px 0', borderTop: '1px solid color-mix(in oklab, var(--color-ink) 6%, transparent)' }}>
                 <div className="ask-row-text" style={w.removed ? { opacity: 0.7, fontStyle: 'italic' } : undefined}>{w.text}</div>
@@ -205,18 +212,16 @@ function EarlierFor({ onClose }: { onClose: () => void }) {
                   {t.thread ? ` · ${shownMind(t.thread.mind.name, t.thread.mind.id)}` : ''} · {turnOutcome(t)}
                   {typeof t.turn_spent_usd === 'number' ? ` · ${money(t.turn_spent_usd)}` : ''}
                 </div>
-                {w.answer !== undefined && (
-                  <button type="button" className="ask-btn" data-tone="quiet" aria-expanded={open === t.operation_id} onClick={() => setOpen(open === t.operation_id ? null : t.operation_id)}>
+                {(w.answer !== undefined || readsHost) && (
+                  <button type="button" className="ask-btn" data-tone="quiet" aria-expanded={open === t.operation_id} onClick={() => {
+                    if (readsHost) void show(t)
+                    else setOpen(open === t.operation_id ? null : t.operation_id)
+                  }}>
                     {open === t.operation_id ? 'Hide the answer' : 'Show the answer'}
                   </button>
                 )}
-                {w.answer !== undefined && open === t.operation_id && <p className="ask-row-text" style={{ whiteSpace: 'pre-wrap' }} data-kept-here>{w.answer}</p>}
-                {!w.removed && w.answer === undefined && client.askTurn && (
-                  <button type="button" className="ask-btn" data-tone="quiet" aria-expanded={open === t.operation_id} onClick={() => void show(t)}>
-                    {open === t.operation_id ? 'Hide the answer' : 'Show the answer'}
-                  </button>
-                )}
-                {w.answer === undefined && open === t.operation_id && (() => {
+                {!readsHost && w.answer !== undefined && open === t.operation_id && <p className="ask-row-text" style={{ whiteSpace: 'pre-wrap' }} data-kept-here>{w.answer}</p>}
+                {readsHost && open === t.operation_id && (() => {
                   const busy = reading.has(t.operation_id)
                   const shown = answers[t.operation_id]
                   const a = shown?.read ?? null
@@ -225,11 +230,11 @@ function EarlierFor({ onClose }: { onClose: () => void }) {
                     <>
                       {a ? (
                         <p className="ask-row-text" style={{ whiteSpace: 'pre-wrap' }}>
-                          {answerText(a.events) || (note ? 'No answer words in the part read so far.' : 'No answer was kept for this turn.')}
+                          {keptAnswer(a.events, w.answer) || (note ? 'No answer words in the part read so far.' : 'No answer was kept for this turn.')}
                         </p>
                       ) : busy || !shown ? (
-                        <p className="ask-row-text">Loading…</p>
-                      ) : null}
+                        <p className="ask-row-text">{w.answer || 'Loading…'}</p>
+                      ) : w.answer ? <p className="ask-row-text" style={{ whiteSpace: 'pre-wrap' }}>{w.answer}</p> : null}
                       {note && <p className="ask-row-note" data-answer-partial>{note}</p>}
                       {shown?.failed && !busy && <p className="ask-row-note" role="alert">{shown.failed}</p>}
                       {((a && a.next !== null) || (shown?.failed && !a)) && (

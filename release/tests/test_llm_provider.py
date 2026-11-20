@@ -364,7 +364,10 @@ class FailureProvenanceTests(LlmProviderTests):
         for label, content, finish, cause in (
                 ('cut off', 'send "cut off', 'length', 'a reply cut off at its length limit'),
                 ('filtered', 'send "half', 'content_filter', 'a filtered reply'),
-                ('unbalanced', 'I will write it now:\nsend "unterminated', 'stop', 'an incomplete batch of commands')):
+                ('unbalanced', 'I will write it now:\nsend "unterminated', 'stop', 'an incomplete batch of commands'),
+                # Jon's review of #497 (P2): a file body no marker line closes names the line it lacks
+                ('unclosed body', "hive-goal-file g_1 notes.txt <<'EOF_n'\nhello", 'stop',
+                 "a body opened with <<'EOF_n' and no line EOF_n to close it")):
             with self.subTest(label):
                 _text, kind = self.chat_with(content, finish)
                 self.assertEqual((kind, self.services.last_failure_cause()), ('format', cause))

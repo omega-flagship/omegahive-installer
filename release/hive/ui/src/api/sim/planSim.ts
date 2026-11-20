@@ -159,6 +159,12 @@ export class SimPlans {
   private appTitle(p: Plan): string | null {
     return p.pieces.length > 0 || p.round > 1 ? 'London weather' : null
   }
+  installed() {
+    return [...this.plans.keys()].flatMap((id) => {
+      const receipt = this.tick(id).installed
+      return receipt ? [receipt] : []
+    })
+  }
   /** GET /api/create/plans/{id} */
   get(id: string): Record<string, unknown> { return this.view(this.tick(id)) }
   /** POST /api/create/plans/{id}/answers {q, text}: records the answer and releases what it held */

@@ -931,6 +931,7 @@ class CodeControllerEngine:
                 outcome = await self._helper_result(run, effect, goal_id)
             if outcome is None:
                 return None
+            self.hive.goals.drop_staged(goal_id)   # settled: nothing reads the files staged on the goal again
             return await self._step(rid)
 
     TRANSIENT_LOOKUP = ("code_test_source_unavailable", "service_unreachable", "relay_proof_failed")

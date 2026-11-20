@@ -22,7 +22,7 @@ import { feedbackScreen } from './data'
 import { draftEvent, loadMindDrafts, settleDraft, useDrafts, watchHiveDrafts } from './drafts'
 import { mergeErrors } from './report'
 import { useOpenFeedback } from './open'
-import { addPicture, canSharePicture, closeFeedback, copyLogs, copyReport, openFeedback, openOnBoard, reportOf, saveLogs, saveReport, sendReport, sharePicture, showLogs, useFeedback } from './store'
+import { addPicture, canSharePicture, closeFeedback, copyLogs, copyReport, extrasOfState, openFeedback, openOnBoard, reportOf, saveLogs, saveReport, sendReport, sharePicture, showLogs, useFeedback } from './store'
 import { watchScreens } from './trail'
 import { watchAsk } from './watchAsk'
 import './feedback.css'
@@ -128,7 +128,7 @@ function FeedbackSheet({ experience }: { experience: string }) {
   const { plan, data } = useMemo(() => {
     const report = reportOf(s, page)
     const available = mergeErrors(s.ctx?.errors ?? [], page).length
-    const { data, facts } = feedbackScreen(s, report, { share }, available, drafts)
+    const { data, facts } = feedbackScreen(s, report, { share }, available, drafts, extrasOfState(s, page))
     return { plan: compose('feedback', facts), data }
   }, [s, page, share, compose, drafts])
 
@@ -138,8 +138,9 @@ function FeedbackSheet({ experience }: { experience: string }) {
     else if (bind === 'report.expected') useFeedback.setState({ expected: value, done: 'none' })
     else if (bind === 'report.steps') useFeedback.setState({ steps: value, done: 'none' })
   }
-  const onAction = (action: string, item?: ScreenItem) => {
-    if (action === 'remove-picture') useFeedback.setState((st) => ({ picture: { ...st.picture, kept: false }, done: 'none' }))
+  const onAction = (action: string, item?: ScreenItem, value?: boolean) => {
+    if (action === 'attach-logs') useFeedback.setState((st) => ({ attach: { ...st.attach, kept: value === true }, done: 'none' }))
+    else if (action === 'remove-picture') useFeedback.setState((st) => ({ picture: { ...st.picture, kept: false }, done: 'none' }))
     else if (action === 'add-picture') addPicture()
     else if (action === 'drop-errors') useFeedback.setState({ errorsKept: false, done: 'none' })
     else if (action === 'keep-errors') useFeedback.setState({ errorsKept: true, done: 'none' })

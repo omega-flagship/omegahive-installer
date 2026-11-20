@@ -6,6 +6,7 @@ Found by Mesto (PhysixSNET/omegahive#38)."""
 import json
 import pathlib
 import sys
+import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -14,7 +15,8 @@ sys.path.insert(0, str(ROOT / "hive" / "runtime" / "extensions"))  # the parser 
 import helper_command_parser as parser  # noqa: E402
 import helper_metta_syntax as metta  # noqa: E402
 
-SIGNATURES = ROOT / "modules" / "code" / "signatures.metta"
+# The Code skills' signatures, the request path's (modules/code) and the workspace's (modules/code_workspace).
+SIGNATURE_FILES = [ROOT / "modules" / "code" / "signatures.metta", ROOT / "modules" / "code_workspace" / "signatures.metta"]
 
 
 def _args(rendered):
@@ -31,8 +33,18 @@ def _args(rendered):
 
 
 class CodeSignatureExactTextTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.signatures = pathlib.Path(cls.temp.name) / "signatures.metta"
+        cls.signatures.write_text("".join(f.read_text(encoding="utf-8") for f in SIGNATURE_FILES), encoding="utf-8")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.temp.cleanup()
+
     def setUp(self):
-        parser.reload_signature_commands(SIGNATURES)
+        parser.reload_signature_commands(self.signatures)
 
     def tearDown(self):
         parser.reload_signature_commands()
