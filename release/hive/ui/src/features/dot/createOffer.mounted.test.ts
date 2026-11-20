@@ -2,7 +2,7 @@
 // Purpose: the mind-create-offers screen (createOffer.metta, createOffer.ts) mounted on real ReactDOM in every look: a
 // mind's open offers to build in Create show as cards with what to build, Start in Create and Not now pressed for that
 // offer, a press that failed says why, and with no offer nothing shows; every look's own chat with a mind draws the card
-// above its composer; the offer routes' answers are read exactly.
+// above its composer, in that look's own chrome; the offer routes' answers are read exactly.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement } from 'react'
 import type { Root } from 'react-dom/client'
@@ -23,6 +23,12 @@ import createOffersHost from './CreateOffers.tsx?raw'
 
 // each file opens real MeTTa spaces: allow for a loaded machine
 vi.setConfig({ testTimeout: 20_000 })
+
+// under vitest a `?raw` import of a .css file comes back empty (theme/lightTokens.test.ts), so the stylesheet is read
+// from disk
+const fsName = 'node:fs'
+const { readFileSync } = (await import(/* @vite-ignore */ fsName)) as { readFileSync: (p: URL, e: 'utf8') => string }
+const indexCss = readFileSync(new URL('../../index.css', import.meta.url), 'utf8')
 
 const LOOKS = ['classic', 'cosmos', 'flux', 'canvas', 'still', 'construct', 'professional']
 const offer = (over: Partial<CreateOffer> = {}): CreateOffer => ({
@@ -125,7 +131,17 @@ describe('every look’s own chat with a mind draws its offers', () => {
   it('the host lets its cards shrink and scroll inside, whatever spacing a look gives', () => {
     const giveWay = /const GIVE_WAY = '([^']*)'/.exec(createOffersHost)?.[1].split(' ') ?? []
     expect(giveWay).toEqual(expect.arrayContaining(['min-h-0', 'overflow-y-auto']))
-    expect(createOffersHost).toContain('className={cx(GIVE_WAY, className)}')
+    expect(createOffersHost).toContain('className={cx(DRESS, GIVE_WAY, className)}')
+  })
+  // Each experience draws its chat in its own tree, outside the classic pages' dress, and the cards' blocks draw in the
+  // classic tokens: undressed, Canvas's white chat drew the offer and Not now in classic's #eceaff, about 1.2:1 on white
+  // (the v0.40 Mac kit, 20 Nov). Dressed, inside an experience the tokens they draw with follow its chrome.
+  it('inside an experience the cards wear its chrome, so their words read on its surfaces', () => {
+    expect(/const DRESS = '([^']*)'/.exec(createOffersHost)?.[1]).toBe('xc-dress')
+    const dress = /html\[data-xc-active\] \.xc-dress \{([^}]*)\}/.exec(indexCss)?.[1] ?? ''
+    for (const [token, chrome] of [['ink', 'ink'], ['ink-2', 'ink-2'], ['primary-ink', 'on-accent'], ['primary-top', 'accent']]) {
+      expect(dress).toMatch(new RegExp(`--color-${token}: var\\(--xc-${chrome}\\);`))
+    }
   })
 })
 

@@ -29,6 +29,13 @@ const errText = (e: unknown) => (e as { message?: string } | null)?.message || '
 // hive with no model, 19 Nov).
 const GIVE_WAY = 'thin-scroll max-h-[45dvh] min-h-0 shrink overflow-y-auto'
 
+// The cards are drawn by the shared blocks in the classic hive's colour tokens, and each experience draws its chat in its
+// own tree, outside the classic pages' dress (App.tsx). So the cards wear the dress themselves: inside an experience
+// (html[data-xc-active]) index.css re-points those tokens at the worn experience's chrome, whose inks hold 4.5:1 on its
+// surfaces (each experience's chrome.test.ts); in the classic hive the dress is off. Undressed, Canvas's white chat drew
+// the offer and Not now in classic's near-white ink on white, about 1.2:1 (the v0.40 Mac kit, 20 Nov).
+const DRESS = 'xc-dress'
+
 /**
  * What this mind offers to build in Create for the person reading its chat. MeTTa decides what shows (nothing while
  * there is no open offer); this reads the person's open offers from this mind (again on each create.offer event about
@@ -37,7 +44,7 @@ const GIVE_WAY = 'thin-scroll max-h-[45dvh] min-h-0 shrink overflow-y-auto'
  * offer aside. Every write after an await belongs to the identity it started under (lib/identityEpoch). Each look's own
  * chat with a mind mounts it between the conversation and the composer, with the look's own spacing as `className`; the
  * classic mind panel's is the default. The cards give way first when the chat is short (GIVE_WAY), so a look's
- * className never sets shrink-0.
+ * className never sets shrink-0, and they wear the worn experience's chrome (DRESS).
  */
 export function CreateOffers({ agent, className = 'px-3 pb-2 empty:hidden' }: { agent: Agent; className?: string }) {
   const client = useHive((s) => s.client) as unknown as OfferClient | null
@@ -81,7 +88,7 @@ export function CreateOffers({ agent, className = 'px-3 pb-2 empty:hidden' }: { 
   const screen = useMemo(() => offersScreen(offers, agent.name, alert, compose), [offers, agent.name, alert, compose])
   const plan = useMemo(() => compose('mind-create-offers', screen.facts), [compose, screen])
   return (
-    <Screen plan={plan} className={cx(GIVE_WAY, className)} host={{
+    <Screen plan={plan} className={cx(DRESS, GIVE_WAY, className)} host={{
       data: screen.data,
       busy: pressing,
       onAction: (action, item) => press(action, Array.isArray(item.scope) ? item.scope[0] : undefined),
