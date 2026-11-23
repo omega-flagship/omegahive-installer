@@ -136,14 +136,13 @@ class FakeHive:
 class CreateTests(unittest.TestCase):
     DIGEST = "sha256:" + "d" * 64
     PIN = {"release": "/r/apps/omegadesign", "digest": DIGEST, "files": {}}
-    CONTROLLER = {"id": "a_ctl", "name": "Create · Code controller", "swarm_id": "s_code", "budget_usd": 0.5}
+    CONTROLLER = {"id": "a_ctl", "name": "Create · Code controller", "swarm_id": "s_code", "budget_usd": 0}
 
     def hive(self, changes=None):
         studio = "/api/programs/omegadesign"
         answers = {
             ("GET", studio): {"id": "omegadesign", "digest": self.DIGEST, "error": None, "ui": True},
             ("GET", "/api/agents"): Turns([[{"id": "a_me", "name": "Your mind"}], [{"id": "a_me", "name": "Your mind"}, self.CONTROLLER]]),
-            ("GET", "/api/agents/a_ctl"): dict(self.CONTROLLER, budget_usd=5),
             ("GET", studio + "/install"): Turns([{"program": "omegadesign", "release_digest": self.DIGEST, "placement": "swarm", "installed": False},
                                            {"program": "omegadesign", "release_digest": self.DIGEST, "placement": "swarm", "installed": True,
                                             "review": {"revoked": False, "release_digest": self.DIGEST, "by": "user:u_test"}}]),
@@ -154,19 +153,19 @@ class CreateTests(unittest.TestCase):
         answers.update(changes or {})
         return FakeHive(answers)
 
-    def test_studio_is_reviewed_in_the_controllers_swarm_and_create_is_listed(self):
+    def test_studio_is_reviewed_in_the_controllers_swarm_and_create_is_listed_leaving_its_budget_alone(self):
         api = self.hive()
         with unittest.mock.patch.object(bootstrap.time, "sleep"):
             bootstrap.put_in_create(api, self.PIN)
         writes = [(m, p, b) for m, p, b in api.calls if m != "GET"]
-        self.assertEqual(writes, [("PATCH", "/api/agents/a_ctl", {"budget_usd": 5}),
-                                  ("POST", "/api/programs/omegadesign/install",
+        self.assertEqual(writes, [("POST", "/api/programs/omegadesign/install",
                                    {"release_digest": self.DIGEST, "placement": "swarm", "use_in": ["s_code"]})])
         self.assertIn(("GET", "/api/me/apps", None), api.calls)
 
-    def test_an_inactive_swarm_is_turned_on_and_an_installed_release_is_not_reviewed_again(self):
+    def test_an_inactive_swarm_is_turned_on_an_installed_release_is_not_reviewed_again_and_a_cap_stays_its_owners(self):
         done = {"program": "omegadesign", "release_digest": self.DIGEST, "placement": "swarm", "installed": True,
                 "review": {"revoked": False, "release_digest": self.DIGEST, "by": "user:u_test"}}
+        # an updated hive whose controller an earlier setup capped at 5 USD: setup changes no budget either way
         api = self.hive({("GET", "/api/programs/omegadesign/install"): done,
                            ("GET", "/api/programs/omegadesign/activations"): [],
                            ("GET", "/api/agents"): [dict(self.CONTROLLER, budget_usd=5)]})
@@ -189,7 +188,6 @@ class CreateTests(unittest.TestCase):
                  {("GET", "/api/me/apps"): {"apps": []}},
                  {("GET", "/api/programs/omegadesign"): {"id": "omegadesign", "digest": "sha256:" + "e" * 64, "error": None, "ui": True}},
                  {("GET", "/api/programs/omegadesign"): {"id": "omegadesign", "digest": self.DIGEST, "error": "broken", "ui": True}},
-                 {("GET", "/api/agents/a_ctl"): dict(self.CONTROLLER, budget_usd=0.5)},
                  {("GET", "/api/agents"): [self.CONTROLLER, dict(self.CONTROLLER, id="a_two")]})
         for changes in cases:
             with self.subTest(changes=changes), unittest.mock.patch.object(bootstrap.time, "sleep"), \

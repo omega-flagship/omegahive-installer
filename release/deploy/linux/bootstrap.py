@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 import os
 from pathlib import Path
 import pwd
@@ -28,8 +27,9 @@ STUDIO = "omegadesign"
 CODE = "omegacode"
 # The foundation's Create · Code team leader (hive/core/foundation.py ensure): Create opens in its swarm.
 CONTROLLER = "Create · Code controller"
-# Create · Code's builds spend from the controller's budget; the Mac installer raises it to this (install/macos/omegahive.sh create()).
-CONTROLLER_BUDGET_USD = 5
+# The hive makes the controller with no cap of its own and the hive's total holds what Create · Code's builds spend
+# (hive/core/foundation.py: _ensure_team(CODE, ..., 0)), so setup leaves its budget alone: one cap for the whole hive,
+# set by the person, and no default cap on a controller (Jon, omega-flagship/omegahive#679, 23 Nov).
 # The foundation makes its teams at start and again at an owner's sign-in; this bounds the wait for the controller.
 SETUP_SECONDS = 120
 
@@ -272,10 +272,6 @@ class OwnerAPI:
                 self.token = None
 
 
-def number(value):
-    return type(value) in (int, float) and math.isfinite(value)
-
-
 def relay_verdict(status, value):
     """A relay probe's answer: 404 naming not_relayed means the hive's Code guard let the request through to Code, whose
     route list doesn't carry it (the release smoke reads the same answer), and 503 means the guard refused it."""
@@ -431,12 +427,6 @@ def put_in_create(api, pin):
             and entry.get("error") is None and entry.get("ui") is True, "Studio did not load in your hive as reviewed.")
     controller = create_controller(api)
     swarm = controller["swarm_id"]
-    if not (number(controller.get("budget_usd")) and controller["budget_usd"] >= CONTROLLER_BUDGET_USD):
-        require(type(controller.get("id")) is str and re.fullmatch(r"a_[A-Za-z0-9_-]{1,96}", controller["id"]))
-        api.request("PATCH", "/api/agents/" + controller["id"], {"budget_usd": CONTROLLER_BUDGET_USD})
-        raised = api.request("GET", "/api/agents/" + controller["id"])
-        require(type(raised) is dict and number(raised.get("budget_usd")) and raised["budget_usd"] >= CONTROLLER_BUDGET_USD,
-                "Your hive kept the Create · Code controller's budget below what Create's builds need.")
     status = api.request("GET", "/api/programs/" + STUDIO + "/install")
     require(type(status) is dict and status.get("program") == STUDIO and status.get("release_digest") == pin["digest"]
             and status.get("placement") in {"person", "swarm"})
