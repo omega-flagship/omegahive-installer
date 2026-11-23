@@ -525,6 +525,9 @@ def test_no_reviewer_under_the_persons_waivable_policy_is_ready_and_says_unrevie
 
 
 def test_the_foundation_reviewer_is_found_and_woken_when_the_team_has_none(x, monkeypatch):
+    # the Review controller has no cap of its own: the hive's total, the one cap its owner sets, is what lets it run,
+    # as a hive with a key starts with one (HIVE_START_LIMIT_MONTH_USD)
+    x.hive.budgets.set("hive", "month", 1000)
     fake(x, monkeypatch, [(True, "ok\n")])
     run(x.engine.step(x.rid))
     helper_finishes(x, 1, SUGGESTION)
@@ -558,6 +561,9 @@ def test_a_stopped_reviewer_is_never_sent_the_review_and_the_card_says_how_to_br
 def test_a_reviewer_started_again_gets_the_next_proposal_and_the_old_reason_goes(x, monkeypatch):
     """Under the waivable policy a stopped reviewer leaves the proposal ready, unreviewed, with the reason on the card;
     once its owner starts it, the next proposal (after Ask for changes) goes to it and the reason is gone."""
+    # the Review controller has no cap of its own: the hive's total, the one cap its owner sets, is what lets it run,
+    # as a hive with a key starts with one (HIVE_START_LIMIT_MONTH_USD)
+    x.hive.budgets.set("hive", "month", 1000)
     out = x.client.put("/api/me/code-controller", headers={**x.jon, **ORIGIN}, json={"review_policy": "review-waivable"})
     assert out.status_code == 200
     x.rq = accepted(x, origin=origin(x), operation_id="op-request-restarted-reviewer")

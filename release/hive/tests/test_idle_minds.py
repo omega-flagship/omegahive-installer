@@ -99,6 +99,36 @@ def test_health_notices_spend_with_no_input_asks_once_and_is_rate_limited(client
     assert len(health_messages(hive, a["id"])) == 2
 
 
+def test_a_mind_going_round_on_its_own_is_asked_once_in_the_chat_its_person_reads(client):
+    from hive.tests.test_health import trace
+    _, (a, _) = make_swarm_and_agents(client)
+    hive = client.app.state.hive
+    awake(hive, a["id"], input_ago={"minutes": 5})          # input just now: not idle, only going round
+    for i in range(4):
+        trace(client, a, i, '(shell "ls /data")', "notes.txt")
+    assert len(run(hive)) == 1
+    msgs = health_messages(hive, a["id"])
+    assert len(msgs) == 1 and msgs[0]["conversation_id"] == f"c_{a['id']}"
+    assert 'You ran (shell "ls /data") 4 times on your own and got the same result each time' in msgs[0]["text"]
+    assert hive.db.one("SELECT kind FROM health_idle WHERE agent_id = ?", (a["id"],))["kind"] == "repeat"
+    for i in range(4, 8):                                    # still going round: it was asked once, and that is all
+        trace(client, a, i, '(shell "ls /data")', "notes.txt")
+    assert run(hive) == [] and len(health_messages(hive, a["id"])) == 1
+
+
+def test_a_mind_whose_person_is_with_it_is_not_asked_about_a_loop(client, monkeypatch):
+    from hive.tests.test_health import alerts_of, trace
+    _, (a, _) = make_swarm_and_agents(client)
+    hive = client.app.state.hive
+    awake(hive, a["id"], input_ago={"minutes": 5})
+    monkeypatch.setattr(hive, "present_for", lambda agent: "user:operator")   # its person's live work holds it
+    alerts = alerts_of(hive)
+    for i in range(4):
+        trace(client, a, i, '(shell "ls /data")', "notes.txt")
+    assert [x["kind"] for x in alerts] == ["repeat"]         # the pattern still reaches admins
+    assert run(hive) == [] and health_messages(hive, a["id"]) == []
+
+
 def test_owed_goal_and_unanswered_message_come_first(client):
     _, (a, _) = make_swarm_and_agents(client)
     hive = client.app.state.hive

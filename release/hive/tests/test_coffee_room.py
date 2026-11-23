@@ -1,4 +1,6 @@
-"""The Coffee Room (Jon, 2026-10-06; PLATFORM_COFFEE_ROOM_PLAN_20261006.md): one room per hive where every
+"""Purpose: verify Coffee Room membership, which each mind's owner decides, and message delivery.
+
+The Coffee Room (Jon, 2026-10-06; PLATFORM_COFFEE_ROOM_PLAN_20261006.md): one room per hive where every
 person and every eligible mind meets; it wakes no one by itself; minds may leave one unprompted note an hour; any
 message can start a DM or a group that links back to it."""
 import json
@@ -63,9 +65,9 @@ def test_new_minds_join_and_deleted_minds_leave(client):
     assert f"agent:{late['id']}" not in members(coffee(client))
 
 
-def test_admins_opt_minds_in_and_out_and_members_cannot(client):
+def test_a_minds_owner_opts_it_in_and_out_and_a_member_cannot(client):
     priv_sw = client.post("/api/swarms", json={"name": "Quiet"}).json()
-    shy = client.post("/api/agents", json={"name": "Shy", "swarm_id": priv_sw["id"]}).json()
+    shy = client.post("/api/agents", json={"name": "Shy", "swarm_id": priv_sw["id"]}).json()      # the operator's own
     bob = person(client, "u_bob")
     assert client.patch(f"/api/agents/{shy['id']}", headers=bob, json={"coffee": True}).status_code in (403, 404)
     assert client.patch(f"/api/agents/{shy['id']}", json={"coffee": "yes"}).status_code == 400
@@ -73,6 +75,126 @@ def test_admins_opt_minds_in_and_out_and_members_cannot(client):
     assert out["coffee"] == "member" and f"agent:{shy['id']}" in members(coffee(client))
     assert client.patch(f"/api/agents/{shy['id']}", json={"coffee": False}).json()["coffee"] == "opted_out"
     assert f"agent:{shy['id']}" not in members(coffee(client))
+
+
+def test_a_private_minds_owner_opts_in_even_when_the_owner_is_not_an_admin(client):
+    owner = person(client, "u_wren")
+    other = person(client, "u_fern")
+    mind = client.post("/api/agents", headers=owner, json={"name": "Invented Juniper"}).json()
+    path = f"/api/agents/{mind['id']}"
+    refused = client.patch(path, json={"coffee": True})
+    assert refused.status_code == 403
+    assert refused.json()["error"]["code"] == "owner_only"
+    assert client.patch(path, headers=other, json={"coffee": True}).status_code in (403, 404)
+    assert f"agent:{mind['id']}" not in members(coffee(client))
+    accepted = client.patch(path, headers=owner, json={"coffee": True})
+    assert accepted.status_code == 200 and accepted.json()["coffee"] == "member"
+    assert f"agent:{mind['id']}" in members(coffee(client))
+    assert client.patch(path, headers=owner, json={"coffee": False}).json()["coffee"] == "opted_out"
+    assert f"agent:{mind['id']}" not in members(coffee(client))
+
+
+def test_nonpublic_swarm_also_requires_the_mind_owners_consent(client):
+    owner = person(client, "u_lyra")
+    swarm = client.post("/api/swarms", headers=owner, json={"name": "Invented Quiet"}).json()
+    mind = client.post("/api/agents", headers=owner,
+                       json={"name": "Invented Rowan", "swarm_id": swarm["id"], "visibility": "public"}).json()
+    path = f"/api/agents/{mind['id']}"
+    assert client.patch(path, json={"coffee": True}).status_code == 403
+    assert client.patch(path, headers=owner, json={"coffee": True}).status_code == 200
+    assert f"agent:{mind['id']}" in members(coffee(client))
+
+
+def test_old_admin_opt_ins_and_a_previous_owners_consent_do_not_disclose_private_minds(client):
+    from hive.core.db import now
+    owner = person(client, "u_moss")
+    mind = client.post("/api/agents", headers=owner, json={"name": "Invented Hazel"}).json()
+    db = client.app.state.hive.db
+    db.execute("INSERT INTO coffee_prefs VALUES (?, 'in', 'user:operator', ?)", (mind["id"], now()))
+    assert f"agent:{mind['id']}" not in members(coffee(client))
+    assert client.patch(f"/api/agents/{mind['id']}", headers=owner, json={"coffee": True}).status_code == 200
+    db.execute("UPDATE agents SET owner = 'user:u_new_owner' WHERE id = ?", (mind["id"],))
+    assert f"agent:{mind['id']}" not in members(coffee(client))
+
+
+def test_admin_can_ask_privately_but_the_request_does_not_grant_membership(client):
+    owner = person(client, "u_birch")
+    outsider = person(client, "u_alder")
+    mind = client.post("/api/agents", headers=owner, json={"name": "Invented Ash"}).json()
+    dm = client.post("/api/rooms", json={"kind": "dm", "members": ["user:u_birch"]}).json()
+    request = "Please add Invented Ash to the Coffee Room only if you want everyone in the hive to see its name."
+    assert client.post(f"/api/rooms/{dm['id']}/messages", json={"text": request}).status_code == 200
+    messages = client.get(f"/api/rooms/{dm['id']}/messages", headers=owner).json()
+    assert any(message["text"] == request for message in messages)
+    assert client.get(f"/api/rooms/{dm['id']}/messages", headers=outsider).status_code == 404
+    assert f"agent:{mind['id']}" not in members(coffee(client))
+    assert client.patch(f"/api/agents/{mind['id']}", headers=owner, json={"coffee": True}).status_code == 200
+
+
+def test_only_a_minds_owner_moves_it_over_every_viewer_visibility_and_stored_choice(client):
+    """Jon on #265, under #615 (each person is their own admin): the owner alone puts a mind in or takes it out, public or
+    private, with the member role or the admin one. The rule, every cell: anyone else is refused, 403 when they see the
+    mind and 404 when they don't, and nothing changes; an owner's request decides; an opt-out stays whoever stored it;
+    an opt-in counts for a private mind only when its owner made it. Each case starts from a stored choice set directly."""
+    from hive.core.db import now
+    hive = client.app.state.hive
+    who = {"wren": "user:u_wren", "oak": "user:u_oak", "fern": "user:u_fern", "elm": "user:u_elm", "operator": "user:operator"}
+    heads = {"wren": person(client, "u_wren"), "oak": person(client, "u_oak", "admin"), "fern": person(client, "u_fern"),
+             "elm": person(client, "u_elm", "admin"), "operator": {}}
+    admins = {"oak", "elm", "operator"}
+    minds = {}
+    for owner in ("wren", "oak"):                      # a member owner and an admin owner, each with three kinds of mind
+        open_sw = client.post("/api/swarms", headers=heads[owner], json={"name": f"Invented Open {owner}", "visibility": "public"}).json()
+        quiet_sw = client.post("/api/swarms", headers=heads[owner], json={"name": f"Invented Quiet {owner}"}).json()
+        assert open_sw["visibility"] == "public" and quiet_sw["visibility"] == "private"
+        for shape, sw, vis in (("public", open_sw, "public"), ("private_mind", open_sw, "private"), ("private_swarm", quiet_sw, "public")):
+            m = client.post("/api/agents", headers=heads[owner], json={"name": f"Invented {owner} {shape}", "swarm_id": sw["id"],
+                                                                        "visibility": vis}).json()
+            assert m["owner"] == who[owner], m
+            minds[(owner, shape)] = m
+    stored = {"none": None, "in_by_owner": ("in", True), "in_by_other": ("in", False),
+              "out_by_owner": ("out", True), "out_by_other": ("out", False)}
+    wrong = []
+    for (owner, shape), m in minds.items():
+        public = shape == "public"
+        for name, pref in stored.items():
+            if pref is None:
+                before = "member" if public else "private"
+            else:
+                before = "opted_out" if pref[0] == "out" else "member" if public or pref[1] else "private"
+            for viewer in who:
+                for want in (True, False):
+                    hive.db.execute("DELETE FROM coffee_prefs WHERE agent_id = ?", (m["id"],))
+                    if pref is not None:
+                        hive.db.execute("INSERT INTO coffee_prefs VALUES (?, ?, ?, ?)",
+                                        (m["id"], pref[0], who[owner] if pref[1] else "user:u_elm", now()))
+                    r = client.patch(f"/api/agents/{m['id']}", headers=heads[viewer], json={"coffee": want})
+                    if viewer == owner:
+                        expect = (200, None, "member" if want else "opted_out")
+                    elif viewer in admins or shape != "private_mind":
+                        expect = (403, "owner_only", before)
+                    else:                                  # a member who doesn't see a private mind isn't told it exists
+                        expect = (404, "not_found", before)
+                    hive.rooms.sync_coffee()
+                    row = hive.db.one("SELECT * FROM agents WHERE id = ?", (m["id"],))
+                    got = (r.status_code, None if r.status_code == 200 else r.json()["error"]["code"], hive.rooms.coffee_status(row))
+                    if got != expect or (got[2] == "member") != (f"agent:{m['id']}" in rows(client)):
+                        wrong.append((owner, shape, name, viewer, want, got, expect))
+    assert wrong == [], wrong[:8]
+
+
+def test_an_admin_keeps_the_rooms_own_controls_and_a_member_has_none(client):
+    elm, fern = person(client, "u_elm", "admin"), person(client, "u_fern")
+    room = coffee(client)
+    path = f"/api/rooms/{room['id']}"
+    assert client.patch(path, headers=elm, json={"name": "Invented Lounge", "topic": "Mornings at nine",
+                                                 "settings": {"turn_cap": 4}}).status_code == 200
+    got = coffee(client)
+    assert got["name"] == "Invented Lounge" and got["topic"] == "Mornings at nine"
+    assert client.patch(path, headers=fern, json={"topic": "mine"}).status_code == 400
+    _, (a,) = public_minds(client, 1)
+    assert client.post(f"{path}/members", headers=elm, json={"members": [f"agent:{a['id']}"]}).status_code == 400
+    assert client.delete(f"{path}/members/agent:{a['id']}", headers=elm).status_code == 400
 
 
 def test_the_room_wakes_no_one_unless_addressed_and_here_reaches_at_most_five_awake_minds(client):

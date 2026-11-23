@@ -8,7 +8,6 @@ import pytest
 
 from hive.tests.test_core_api import agent_headers, client, make_swarm_and_agents  # noqa: F401  (fixture)
 from hive.tests.test_cost_reservations import MODEL as PAID, _fake_chat, _gateway
-from hive.tests.test_spend_rate_guard import MonthApart
 
 
 
@@ -139,25 +138,29 @@ def test_lowering_the_cap_refuses_the_next_reservation(client):
         res.reserve("r-2", {"x": 2}, 0.2, lambda: host_budget_snapshot(h, a["id"]))
 
 
-# ---- defaults sized from what a mind has left ---------------------------------------------------------------------------
+# ---- a session given no budget has no cap of its own ------------------------------------------------------------------
 
-def test_a_session_given_no_budget_takes_a_tenth_of_what_the_mind_has_left(client):
+def test_a_session_given_no_budget_has_no_cap_of_its_own_and_runs_under_the_hive_cap(client):
+    """Jon on #256, 23 Nov: a session with no cap set runs under the hive cap and its payer's allowance only, never a
+    sized default of what the mind has left. A session given a budget still caps the mind while it runs."""
     swarm, (a,) = make_swarm_and_agents(client, n=1)
     h = hive_of(client)
-    s = client.post("/api/sessions", json={"mind": a["id"], "title": "No cap yet"}).json()
-    assert s["budget_usd"] == 1.0                                       # no hive cap: $1 as before
+    s = client.post("/api/sessions", json={"mind": a["id"], "title": "No hive cap yet"}).json()
+    assert s["budget_usd"] == 0                                         # no $1 stand-in either
     client.post(f"/api/sessions/{s['id']}/end")
-    set_rule(client, "hive", "month", 1000)                             # headroom: the hive cap's $1000, no day at a tenth
+    set_rule(client, "hive", "month", 1000)
+    s = client.post("/api/sessions", json={"mind": a["id"], "title": "No cap"}).json()
+    assert s["budget_usd"] == 0                                         # not a tenth of the $1000 it has left
+    # nothing it set tightens the mind: the hive cap alone holds it while the session runs
+    assert keyed(h.budgets.applicable(h.agent(a["id"]))) == {("hive", "month"): (1000, h.budgets.hive_cap()["rule_id"])}
     assert h.budgets.headroom(h.agent(a["id"])) == 1000
-    s = client.post("/api/sessions", json={"mind": a["id"], "title": "Sized"}).json()
-    assert s["budget_usd"] == 100                                       # a tenth, at most $100
     client.post(f"/api/sessions/{s['id']}/end")
     mind = next(m for m in client.get("/api/budgets/limits").json()["minds"] if m["agent_id"] == a["id"])
-    assert (mind["headroom_usd"], mind["session_default_usd"], mind["lease_default_usd"], mind["paid_calls"]) == \
-        (1000, 100, 100, "allowed")
-    # the session's cap is machinery: nothing it set outlives the session
-    assert keyed(h.budgets.applicable(h.agent(a["id"]))) == {("hive", "month"): (1000, h.budgets.hive_cap()["rule_id"])}
-    assert client.post("/api/sessions", json={"mind": a["id"], "title": "Given", "budget_usd": 3}).json()["budget_usd"] == 3
+    assert (mind["headroom_usd"], mind["lease_default_usd"], mind["paid_calls"]) == (1000, 1000, "allowed")
+    assert "session_default_usd" not in mind
+    given = client.post("/api/sessions", json={"mind": a["id"], "title": "Given", "budget_usd": 3}).json()
+    assert given["budget_usd"] == 3 and h.budgets.headroom(h.agent(a["id"])) == 3   # a cap it was given holds
+    client.post(f"/api/sessions/{given['id']}/end")
     spend(h, a["id"], 1000)
     r = client.post("/api/sessions", json={"mind": a["id"], "title": "Nothing left"})
     assert r.status_code == 402 and r.json()["error"]["code"] == "spend_limit"
@@ -219,8 +222,10 @@ def test_limits_routes_are_admin_only_and_never_show_a_hidden_team(client):
     ann, bob = person(client, "u_ann"), person(client, "u_bob")
     sw = client.post("/api/swarms", headers=ann, json={"name": "Ann's lab"}).json()
     mind = client.post("/api/agents", headers=ann, json={"name": "Ada", "kind": "module", "swarm_id": sw["id"]}).json()
-    client.patch(f"/api/agents/{mind['id']}", json={"budget_usd": 5})
-    set_rule(client, f"swarm:{sw['id']}", "month", 500)
+    # a cap on Ann's mind or swarm is hers to set (limits_view.limit_refusal); the hive cap is an admin's
+    assert client.patch(f"/api/agents/{mind['id']}", headers=ann, json={"budget_usd": 5}).status_code == 200
+    assert client.post("/api/budgets", headers=ann, json={"scope": f"swarm:{sw['id']}", "period": "month",
+                                                          "limit_usd": 500}).status_code == 200
     set_rule(client, "hive", "month", 1000)
     r = client.get("/api/budgets/limits", headers=bob)
     assert r.status_code == 403 and r.json()["error"]["code"] == "admin_only"
@@ -283,7 +288,7 @@ def test_a_hold_made_then_the_total_lowered_counts_for_every_team(client):
     a, b = _team_mind(client, "One"), _team_mind(client, "Two")
     set_rule(client, "hive", "month", 1000)
     set_rule(client, "hive", "day", 1000)
-    res = Reservations(h.db, clock=MonthApart())                          # the guard full at each call: admission alone
+    res = Reservations(h.db)
     assert _hold(h, res, a["id"], 0.5, "r-a")
     for period in ("month", "day"):
         set_rule(client, f"swarm:{b['swarm_id']}", period, 10)
@@ -302,7 +307,7 @@ def test_property_rule_changes_between_admissions_never_hide_a_hold(client):
     minds = [_team_mind(client, f"T{i}", budget=rnd.choice([0, 3, 50])) for i in range(3)]
     minds.append(client.post("/api/agents", json={"name": "Extra", "swarm_id": minds[0]["swarm_id"], "model": PAID}).json())
     teams = sorted({m["swarm_id"] for m in minds})
-    res, holds = Reservations(h.db, clock=MonthApart()), []              # the guard full at each call: admission alone
+    res, holds = Reservations(h.db), []
     for step in range(120):
         if rnd.random() < 0.35:
             what = rnd.choice(["total", "total-day", "total-off", "team", "team-off", "cap", "cap-off", "every"])
@@ -472,14 +477,9 @@ def test_a_session_cap_on_a_fractional_starting_spend_is_floored(client):
     swarm, (a,) = make_swarm_and_agents(client, n=1)
     h = hive_of(client)
     h.db.execute("UPDATE agents SET spent_usd = 0.0000006 WHERE id = ?", (a["id"],))
-    s = client.post("/api/sessions", json={"mind": a["id"], "title": "Fractional", "budget_usd": 0.25}).json()
+    client.post("/api/sessions", json={"mind": a["id"], "title": "Fractional", "budget_usd": 0.25})
     cap = h.db.one("SELECT limit_usd FROM budgets WHERE scope = ? AND period = 'total'", (f"agent:{a['id']}",))["limit_usd"]
     assert cap == 0.25 and cap <= 0.0000006 + 0.25
-    set_rule(client, "hive", "month", 1000)                                # and a default sized from the hive cap
-    client.post(f"/api/sessions/{s['id']}/end")
-    s = client.post("/api/sessions", json={"mind": a["id"], "title": "Auto"}).json()
-    cap = h.db.one("SELECT limit_usd FROM budgets WHERE scope = ? AND period = 'total'", (f"agent:{a['id']}",))["limit_usd"]
-    assert cap <= 0.0000006 + s["budget_usd"] and cap == round(cap, 6)
 
 
 def test_the_reservation_snapshot_uses_the_stored_spend_not_the_rounded_view(client):
@@ -508,21 +508,9 @@ def test_a_composed_session_cap_never_exceeds_its_exact_inputs(client):
         assert Decimal(repr(cap)) * 1_000_000 == int(Decimal(repr(cap)) * 1_000_000)
         client.post(f"/api/sessions/{s['id']}/end")
     set_rule(client, "hive", "month", 1000)
-    for spent in (0.2499999996, 99.9999999):                  # a sized default never exceeds the headroom
+    for spent in (0.2499999996, 99.9999999):                  # a Create step's sized budget never exceeds the headroom
         h.db.execute("UPDATE agents SET spent_usd = ? WHERE id = ?", (spent, a["id"]))
-        assert h.budgets.session_default(h.agent(a["id"])) <= h.budgets.headroom(h.agent(a["id"]))
-
-
-def test_an_ask_preference_just_under_a_micro_boundary_is_floored_into_the_thread_cap(client):
-    """r8: PUT /api/me/ask stored round(value, 6), so 0.2499999996 became 0.25 and fed the thread's session cap."""
-    from hive.tests.test_ask import ask, cap, world
-    w = world(client)
-    h = w["hive"]
-    me = client.put("/api/me/ask", headers=w["ann"], json={"swarm_id": w["swarm"]["id"], "thread_budget_usd": 0.2499999996}).json()
-    assert me["thread_budget_usd"] == 0.249999
-    assert client.put("/api/me/ask", headers=w["ann"], json={"thread_budget_usd": 0.0000004}).json()["error"]["code"] == "invalid"
-    t = ask(client, w["ann"], "op-floor", context={"swarm_id": w["swarm"]["id"]}).json()["thread"]
-    assert t["budget_usd"] == 0.249999 and cap(h, w["coord"]) <= 0.249999 + float(h._agent_row(w["coord"]["id"])["spent_usd"] or 0)
+        assert h.budgets.task_budget(h.agent(a["id"])) <= h.budgets.headroom(h.agent(a["id"]))
 
 
 def test_an_allowance_raise_request_is_floored_to_the_cent(client):

@@ -1,10 +1,11 @@
+// Purpose: prove the Ask wakes an asleep or stopped answering mind before sending, then delivers the request and its steers once.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.stubGlobal('window', Object.assign(new EventTarget(), {
   location: { hash: '#/', search: '', pathname: '/' }, matchMedia: () => ({ matches: false }),
 }))
 const { useHive } = await import('./store')
 const { useAskStore } = await import('./ask')
-const { askAutoWake } = await import('./askAutoWake')
+const { askAutoWake, wakeStep } = await import('./askAutoWake')
 const { ApiError } = await import('../api/client')
 type HiveClient = import('../api/client').HiveClient
 const thread = { id: 'ses_wake', mind: { id: 'a_ada', name: 'Ada' }, budget_usd: .25, spent_usd: 0 }
@@ -297,6 +298,30 @@ it('only a typed native budget_exhausted wake response becomes a spending gate',
   expect(f.client.ask).not.toHaveBeenCalled()
 })
 
+it('a wake the host refuses as owner_only is the authority gate, never a failure to press again', async () => {
+  const f = fixture()
+  f.client.agentAction.mockRejectedValueOnce(new ApiError(403, 'owner_only', 'only this mind’s owner or a hive admin can do that'))
+  await useAskStore.getState().send('Read my note', { route: 'hive', experience: 'classic' })
+  const op = Object.keys(useAskStore.getState().turns)[0]
+  expect(askAutoWake.view(op)).toMatchObject({ phase: 'gated', gate: 'authority', mindId: 'a_ada' })
+  expect(f.client.ask).not.toHaveBeenCalled()
+})
+
+it('the first step of a wake follows from the mind as inspected, for every state, access and gate', () => {
+  const states = ['awake', 'starting', 'asleep', 'unavailable'] as const
+  const steps = states.flatMap((state) => [true, false].map((canWake) => [state, canWake, wakeStep({ state, canWake })]))
+  expect(steps).toEqual([
+    ['awake', true, { kind: 'send' }], ['awake', false, { kind: 'send' }],
+    ['starting', true, { kind: 'wait' }], ['starting', false, { kind: 'wait' }],
+    ['asleep', true, { kind: 'wake' }], ['asleep', false, { kind: 'gated', gate: 'authority' }],
+    ['unavailable', true, { kind: 'unavailable' }], ['unavailable', false, { kind: 'unavailable' }],
+  ])
+  // a gate the host's facts name stops every mind that isn't awake, and never an awake one
+  for (const state of states) for (const canWake of [true, false]) {
+    expect(wakeStep({ state, canWake, gate: 'spending' })).toEqual(state === 'awake' ? { kind: 'send' } : { kind: 'gated', gate: 'spending' })
+  }
+})
+
 it('an error message mentioning a budget is not native spending authority', async () => {
   const f = fixture()
   f.client.agentAction.mockRejectedValueOnce(new Error('budget_exhausted appears only in untyped text'))
@@ -369,10 +394,10 @@ describe('fresh principal mismatches remain fail-closed at store boundaries', ()
   it('chooser save never writes or clears the local choice for a mismatched principal', async () => {
     const f = fixture()
     const { answererChoice } = await import('../features/ask/answererChoice')
-    const saved = { swarm_id: 's_before', thread_budget_usd: .25 }
+    const saved = { swarm_id: 's_before' }
     useAskStore.setState({ settings: saved })
     answererChoice.select({ kind: 'swarm', swarm: 's_local', name: 'Invented local choice' }, () => true)
-    const save = vi.fn(async () => ({ swarm_id: 's_other', thread_budget_usd: .25 }))
+    const save = vi.fn(async () => ({ swarm_id: 's_other' }))
     Object.assign(f.client, { setAskSettings: save })
     f.client.me.mockResolvedValue({ principal: 'user:other', role: 'admin' })
     expect(await useAskStore.getState().chooseAnswerer('s_other')).toBe('failed')

@@ -238,6 +238,19 @@ takes away one item, the anchored ones included; a newer one of the same item un
 item in the tray brings it back. A row or column starts at equal shares; a split the person dragged opens at the shares they left
 it at whenever the same kinds are split the same way, a pair in either order.
 
+That is all the rules read of a log, so the page keeps no more of it: `foldLog` keeps the anchor and each item's newest
+statement after it, and folds everything older into one `(Before (k …) t)`, the keys it named since the newest `Clear`
+(they stay in the tray) and its newest task. Composing the folded log answers what the whole log answers, and a long
+session's log stays as short as the items named since the anchor. The rules walk every list with MeTTaScript's own
+`foldl-atom`, `filter-atom`, `map-atom`, `union-atom` and `unique-atom`, which loop in JavaScript, so no rule keeps a
+MeTTa frame per statement or item (one that did ran out of stack at about 400).
+
+Side by side and compared, every item keeps its kind's least size, as the shown item does. A share that would draw an
+item smaller holds it at its least and the others share the rest, a learned split is used only while it is one (a
+share for each item, each above 0, together the whole length), and when the stage cannot hold every item at its least,
+the oldest recalled item gives way into the tray, where a press brings it back as the newest. A compared pair that
+cannot stand one over the other gives way to its first, and a stage with no area draws nothing until it has room.
+
 The answer is `(Arranged mode task placed dividers tray seen unknown)`: every item drawn with its kind and rectangle,
 every divider with the least and most it may be dragged to, the tray, the items to credit with interest in the task
 (once per statement, as `seen.episode` says), and the keys the log names that the page has no item for. A drag is
@@ -246,8 +259,9 @@ neighbour's least size. A group is named by its path from the outermost one (`()
 `g0`, `g0-1`), so a pair compared beside a recalled item has two dividers a drag tells apart.
 
 `screens/arrange/arrange.test.ts` checks each statement, with seeded random stages and item sets for the rules that
-must hold everywhere: nothing overlaps or leaves the stage, and exactly the items with interest or a relation are
-drawn beside what is shown.
+must hold everywhere: nothing overlaps or leaves the stage, nothing side by side or compared is drawn under its least
+size, exactly the items with interest or a relation are drawn beside what is shown, and a folded log, folded at once or
+after every statement, composes what the whole log composes.
 
 The stage draws the answer over whichever look is open. `StageHost` is mounted once in App.tsx, beside the Ask, so
 every look and page has it; it binds the stage to the signed-in person and loads `StageView`, and MeTTa with it, at
@@ -301,10 +315,13 @@ own component with its own state, and one holding an iframe would reload if its 
 Under each answer in the Ask's thread, the `ask-answer` screen (`features/ask/answer.metta`, drawn by
 `features/ask/AnswerParts.tsx`, loaded lazily by `AnswerPartsSlot.tsx` as the words are) says where the answer came
 from: a model alone when the hive's conductor answered (its tools hold no web search), the asker's own mind's model or the
-one the Ask uses as the host says, or the web with the pages a researcher opened. When the turn's research request
-was held back because the Research swarm is asleep, it adds one press, Wake Research and send, which wakes the swarm's
-coordinator and then sends the same request (`store/askResearchWake.ts`), and says how that went. `answerFacts.ts` states
-the facts from the row; the store derives the row's source and its waiting request from the turn's own frames.
+one the Ask uses as the host says. When the turn's research request was held back because the Research swarm is asleep,
+it adds one press, Wake Research and send, which wakes the swarm's coordinator and then sends the same request
+(`store/askResearchWake.ts`), and says how that went. The press is offered only where it can go through: the page first
+reads the request and the coordinator as the press would, and offers it while the coordinator is awake (as Send the
+research) or the person may wake it; anyone else is told that only its owner or a hive admin can, and the page reads
+again once the coordinator's status moves on. `answerFacts.ts` states the facts from the row; the store derives the
+row's source and its waiting request from the turn's own frames.
 
 ## Building a page this way
 

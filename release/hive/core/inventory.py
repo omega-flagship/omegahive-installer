@@ -10,6 +10,9 @@ Statuses (what the receipt proves, no more):
                   availability, remaining budget or future authority; policy is re-checked at dispatch.
 - ``imported``    the module is loaded and declares the skill, but the parser did not register a head for it.
 - ``configured``  the loader selects the module, but the mind did not load it.
+- ``left-out``    the loader selects the module, but the mind left it out because its manifest requires what the mind
+                  lacks; ``left_out`` says what, as the hive words each unmet entry (module_requires.need), for example
+                  "needs the OmegaCode client".
 - ``unknown``     no receipt, a receipt that no longer describes a running process, or nothing attests the skill.
 
 Descriptive metadata (help, topic, effects, risk, declared signature) comes from Match's extractor library
@@ -27,6 +30,7 @@ import re
 
 from .db import now
 from .policy import command_skill
+from ..runtime.extensions.module_requires import need
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS inventory_receipts (
@@ -44,7 +48,8 @@ NAME = re.compile(r"[A-Za-z0-9_.:+*<>=!?/-]{1,96}\Z")
 HASH = re.compile(r"sha256:[0-9a-f]{64}\Z")
 DIR = re.compile(r"[A-Za-z0-9_.-]{1,64}\Z")
 RECEIPT_KEYS = {"boot_id", "boot_nonce", "pid", "loader", "core", "modules", "provides", "parser"}
-MODULE_KEYS = {"dir", "id", "version", "source_digest", "configured", "loaded", "signature_heads"}
+MODULE_KEYS = {"dir", "id", "version", "source_digest", "configured", "loaded", "signature_heads", "left_out"}
+MAX_LEFT_OUT = 16   # unmet requires entries named for one left-out module
 
 # Skills that reach a model provider other than the mind's own chat loop.  The mind calls the vendor directly with
 # its own environment key, and this build has no host-side metering route for media: the route is unknown, never guessed.
@@ -75,6 +80,12 @@ def core_files(root):
 
 def revision_of(body):
     return "sha256:" + hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _needs(module):
+    """A receipt module's unmet requires entries with the hive's words for each, for example
+    [{"requires": "service:omegacode", "needs": "the OmegaCode client"}]; [] for a module that isn't left out."""
+    return [{"requires": e, "needs": need(e)} for e in module.get("left_out", [])]
 
 
 class Inventory:
@@ -132,7 +143,8 @@ class Inventory:
         clean = []
         for m in modules:
             if not isinstance(m, dict) or set(m) - MODULE_KEYS or not DIR.match(str(m.get("dir"))):
-                raise self._bad("each module has a dir and only dir, id, version, source_digest, configured, loaded, signature_heads")
+                raise self._bad("each module has a dir and only dir, id, version, source_digest, configured, loaded, "
+                                "signature_heads, left_out")
             if m.get("id") is not None and not NAME.match(str(m["id"])):
                 raise self._bad("module id is a plain name")
             if m.get("version") is not None and not re.fullmatch(r"[A-Za-z0-9._+-]{1,32}", str(m["version"])):
@@ -144,8 +156,18 @@ class Inventory:
             heads = m.get("signature_heads") or []
             if not isinstance(heads, list) or len(heads) > MAX_SKILLS or not all(NAME.match(str(h)) for h in heads):
                 raise self._bad("signature_heads is a list of skill names")
-            clean.append({**m, "configured": bool(m.get("configured", True)), "loaded": bool(m.get("loaded", False)),
-                          "signature_heads": sorted(set(heads))})
+            row = {**m, "configured": bool(m.get("configured", True)), "loaded": bool(m.get("loaded", False)),
+                   "signature_heads": sorted(set(heads))}
+            if "left_out" in m:
+                # only requires entries the hive's own rules word, never the mind's words (see the docstring above)
+                left = m["left_out"]
+                if (not isinstance(left, list) or not 0 < len(left) <= MAX_LEFT_OUT
+                        or not all(isinstance(e, str) and need(e) for e in left)):
+                    raise self._bad(f"left_out lists 1 to {MAX_LEFT_OUT} requires entries, such as service:omegacode")
+                if row["loaded"]:
+                    raise self._bad("a module left out is not loaded")
+                row["left_out"] = list(dict.fromkeys(left))
+            clean.append(row)
         out["modules"] = clean
         provides = data.get("provides") or []
         if not isinstance(provides, list) or len(provides) > MAX_SKILLS:
@@ -241,14 +263,22 @@ class Inventory:
     def _provider(self, agent, at):
         hive = self.hive
         payer, _ = hive.payer_for(agent)
+        own_key, key_id = False, None
+        if float(agent.get("budget_usd") or 0) <= 0:
+            # a mind with no cap: the route its next paid call would settle on (Budgets.settlement), so one on its own
+            # person's key shows the limits that hold it there and no $0 total of its own (paid_without_cap)
+            settled = hive.budgets.settlement(agent, agent["model"], turn_bound=False)
+            if settled.get("key_id"):
+                payer, own_key, key_id = settled["payer"], settled["own_key"], settled["key_id"]
         owner = agent.get("owner") or ""
         kind = "hive" if payer == "hive" else "mind-owner" if payer == owner else "session-owner"
-        scopes = [f"{s}:{p}" for s, p, _l, _o in hive.budgets.applicable(agent, None, payer, False)]
-        scopes = (["agent:%s:total" % agent["id"]] if hive.budgets.lifetime_cap_applies(agent, None, payer, False) else []) + scopes + (["hive:hard-total"] if hive.budgets.hard_cap() else [])
+        scopes = [f"{s}:{p}" for s, p, _l, _o in hive.budgets.applicable(agent, key_id, payer, own_key)]
+        scopes = (["agent:%s:total" % agent["id"]] if hive.budgets.lifetime_cap_applies(agent, None, payer, own_key, key_id) else []) + scopes + (["hive:hard-total"] if hive.budgets.hard_cap() else [])
         last = self.db.one("SELECT resolved_model FROM usage WHERE agent_id = ? AND resolved_model IS NOT NULL ORDER BY id DESC LIMIT 1",
                            (agent["id"],))
         return {"model": agent["model"], "resolved_model": last["resolved_model"] if last else None, "payer_kind": kind,
-                "budget_route": list(dict.fromkeys(scopes)), "budget_route_note": "key and person scopes join when a call is made with a key",
+                "budget_route": list(dict.fromkeys(scopes)),
+                "budget_route_note": None if key_id else "key and person scopes join when a call is made with a key",
                 "snapshot_at": at}
 
     def _route(self, skill, provider):
@@ -303,10 +333,13 @@ class Inventory:
         owner_of = {}
         for m in (receipt or {}).get("modules", []):
             for head in m["signature_heads"]:
-                owner_of[head] = m
+                if not m.get("left_out") or head not in owner_of:   # a running module keeps a head both declare
+                    owner_of[head] = m
         provides = {tuple(p) for p in (receipt or {}).get("provides", [])}
         parser = (receipt or {}).get("parser", {})
-        names = set(parser) | {s for _m, s in provides} | set(found)
+        # a left-out module's skills are listed from its signatures, since nothing else of it reached the mind
+        names = (set(parser) | {s for _m, s in provides} | set(found)
+                 | {h for m in (receipt or {}).get("modules", []) if m.get("left_out") for h in m["signature_heads"]})
         if receipt is None and agent["kind"] == "module":
             names = set()   # an outside member runs none of our skills; nothing to list
         skills = []
@@ -324,6 +357,8 @@ class Inventory:
             if attested and receipt is not None:
                 if m is None:
                     status = "callable" if in_parser else "unknown"   # a core head
+                elif m.get("left_out"):
+                    status = "left-out"
                 elif not m["loaded"]:
                     status = "configured" if m["configured"] else "unknown"
                 elif in_parser:
@@ -339,13 +374,15 @@ class Inventory:
                 "help": None if offer is None else offer["skill_help"], "topic": None if offer is None else offer["topics"],
                 "effects": None if offer is None else offer["effects"], "risk": None if offer is None else offer["risks"],
                 "metadata": "verified-source" if offer is not None else "unverified",
-                "status": status, "policy": {"decision": mode, "reason": reason, "snapshot_at": at},
+                "status": status, "left_out": _needs(m) if status == "left-out" else None,
+                "policy": {"decision": mode, "reason": reason, "snapshot_at": at},
                 "route": self._route(name, provider)})
         return {"mind_id": agent_id, "kind": agent["kind"], "availability": availability, "stale_reason": stale_reason,
                 "inventory_revision": row["revision"] if row else None, "loaded_at": row["received_at"] if row else None,
                 "process": {"boot_id": receipt["boot_id"], "pid": receipt.get("pid")} if receipt else None,
                 "modules": [{"id": m.get("id") or m["dir"], "version": m.get("version"), "source_digest": m.get("source_digest"),
-                             "configured": m["configured"], "loaded": m["loaded"], "source_verified": verified.get(m["dir"], False)}
+                             "configured": m["configured"], "loaded": m["loaded"], "source_verified": verified.get(m["dir"], False),
+                             "left_out": _needs(m)}
                             for m in (receipt or {}).get("modules", [])],
                 "core": {"source_digest": receipt["core"]["source_digest"], "source_verified": verified.get("core", False)}
                 if receipt and receipt.get("core") else None,

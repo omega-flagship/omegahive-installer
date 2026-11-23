@@ -14,7 +14,8 @@ import time
 
 
 CORE_ROOT = pathlib.Path(__file__).resolve().parents[3]
-STATE_DIR = CORE_ROOT / "memory" / "runtime" / "gameboy"
+# the mind's memory folder: OMEGACLAW_MEMORY_DIR when a hive runs the mind, else the checkout's memory folder
+STATE_DIR = pathlib.Path(os.environ.get("OMEGACLAW_MEMORY_DIR") or CORE_ROOT / "memory") / "runtime" / "gameboy"
 ROM_DIR = pathlib.Path(os.environ.get("OMEGACLAW_GAMEBOY_ROM_DIR", STATE_DIR / "roms"))
 SCREENSHOT_DIR = STATE_DIR / "screens"
 SAVE_DIR = STATE_DIR / "states"

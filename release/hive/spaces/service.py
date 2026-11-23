@@ -1,4 +1,4 @@
-"""Purpose: shared swarm spaces: lib_hive.metta running in an embedded PeTTa.
+"""Purpose: shared swarm spaces: lib_hive.metta running in an embedded PeTTa, beside the limit law (lib_limits.metta).
 
 All interpreter calls run on one worker thread.  PeTTa itself has no persistence: every write to the commons is
 appended to an operations log (``spaces.log.jsonl``, see ``oplog``) and fsynced before the write returns, and the log
@@ -36,6 +36,7 @@ from .oplog import LogCorrupt, OpLog
 log = logging.getLogger("omegahive.spaces")
 
 LIB_HIVE = pathlib.Path(__file__).resolve().with_name("lib_hive.metta")
+LIB_LIMITS = LIB_HIVE.with_name("lib_limits.metta")   # who may set or remove a spending limit (limit_policy.py)
 REPO_CHUNK = 2000   # atoms per interpreter job when mounting a repo space, so other spaces' calls interleave
 REPO_JOB_SECONDS = 120        # one repo job (a chunk, a clear, a count)
 REPO_SETTLE_SECONDS = 600     # cleanup after a failure: it queues behind any job that timed out, which still runs
@@ -202,6 +203,9 @@ class _Interpreter:
 
             metta = PeTTa(verbose=False, petta_path=self.petta_path)
             metta.load_metta_file(str(LIB_HIVE))
+            metta.load_metta_file(str(LIB_LIMITS))
+            metta.load_metta_file(str(LIB_HIVE.parent.parent / "core" / "goal_claim.metta"))
+            metta.load_metta_file(str(LIB_HIVE.parent.parent / "core" / "research_task.metta"))
         except Exception as exc:  # pragma: no cover - environment failure
             self._error = exc
             self._path_cleanup_state = self._remove_failed_startup_path(paths, entry)

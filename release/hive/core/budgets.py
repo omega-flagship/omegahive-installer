@@ -19,8 +19,8 @@ the call would pass refuses it (402 ``spend_limit``). The rows:
 Nothing is derived: a limit applies only where a person, a form or a work session stored it. A mind's own ``budget_usd``
 cap still applies, and HIVE_BUDGET_USD while the hive has no cap. A mind with no cap of its own (budget_usd 0) makes paid
 calls only under a hive cap (Budgets.paid_without_cap), or as a personal mind its person pays for from their allowance.
-The two Foundation-purpose bindings keep their explicit caps, stored rules, spend and reservations: the every-mind rule
-and the hive cap's admission of uncapped minds don't reach them.
+A Foundation mind is no different: with no cap of its own the hive cap admits it and the every-mind rule holds it, as it
+does any mind (Jon, 23 Nov: "ONE cap for the whole hive"). A work session given no budget has no cap of its own either.
 
 Own hive H1 (ownhive.py): a call on a key is also held to the key owner's own limits on it (``keyuse:<scope>``, month): the
 owner's own-use limit when the call is theirs (or a pre-H1 person's with no grant: billed to the owner, as before), else
@@ -32,7 +32,6 @@ limits are set on their own routes (/api/me/key-limits), never through Budgets.s
 from __future__ import annotations
 
 import datetime
-import os
 import re
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 
@@ -41,8 +40,8 @@ from .db import new_id, now
 PERIODS = ("day", "month", "total")
 SCOPE = re.compile(r"^(hive|every-mind|swarm:s_(?:[0-9a-f]{8}|[0-9a-f]{32})|agent:a_(?:[0-9a-f]{8}|[0-9a-f]{32})|person:u_(?:[0-9a-f]{8}|[0-9a-f]{32})|key:(k_(?:[0-9a-f]{8}|[0-9a-f]{32})|env:[a-z0-9_-]+))$")
 MICRO = 1_000_000
-# a work session or task given no budget gets a tenth of what its mind has left, from $0.25 to $100 (session_default)
-SESSION_DIVISOR, SESSION_MIN_MICROS, SESSION_MAX_MICROS = 10, 250_000, 100 * MICRO
+# a Create step given no budget gets a tenth of what its mind has left, from $0.25 to $100 (Budgets.task_budget)
+STEP_DIVISOR, STEP_MIN_MICROS, STEP_MAX_MICROS = 10, 250_000, 100 * MICRO
 
 
 def to_micros(x, up=False):
@@ -56,11 +55,11 @@ def dollars(micros):
     return micros / MICRO
 
 
-def session_default_micros(remaining_micros):
-    """A session or task given no budget: a tenth of what the mind has left, at least $0.25, at most $100, and never more
+def step_default_micros(remaining_micros):
+    """A Create step given no budget: a tenth of what the mind has left, at least $0.25, at most $100, and never more
     than it has left (0 when it has nothing left)."""
     r = max(0, int(remaining_micros))
-    return min(r, min(SESSION_MAX_MICROS, max(SESSION_MIN_MICROS, r // SESSION_DIVISOR)))
+    return min(r, min(STEP_MAX_MICROS, max(STEP_MIN_MICROS, r // STEP_DIVISOR)))
 
 
 def month_pace(spent_usd, moment=None):
@@ -93,9 +92,13 @@ class Budgets:
     def rules(self):
         return self.db.all("SELECT * FROM budgets ORDER BY created_at")
 
-    def set(self, scope, period, limit_usd, note=""):
+    def check_scope(self, scope):
+        """400 bad_scope unless ``scope`` has a limit scope's shape, checked before anything reads what it names."""
         if not SCOPE.fullmatch(scope):
             raise self.hive.error(400, "bad_scope", "scope is hive, every-mind, swarm:<id>, agent:<id>, person:<id> or key:<id>")
+
+    def set(self, scope, period, limit_usd, note=""):
+        self.check_scope(scope)
         if period not in PERIODS:
             raise self.hive.error(400, "bad_period", f"period is one of {list(PERIODS)}")
         if scope == "every-mind" and period != "month":
@@ -168,10 +171,7 @@ class Budgets:
 
     def default_allowance(self):
         """The hive's member default month allowance (HIVE_MEMBER_MONTHLY_USD, $50)."""
-        try:
-            return float(os.environ.get("HIVE_MEMBER_MONTHLY_USD", "50"))
-        except ValueError:
-            return 50.0
+        return float(self.hive.settings.member_monthly_usd)
 
     # ---- the hive cap, the every-mind rule and a work session's machinery -----------------------------------------------
 
@@ -187,13 +187,6 @@ class Budgets:
         from .foundation import foundation_budget_ids
         return foundation_budget_ids(self.db)
 
-    def _foundation_bound(self, agent):
-        """A mind of the two Foundation-purpose bindings (by its swarm or by its own id, so one moved to another swarm
-        still counts), which keeps its explicit bounds: the every-mind rule and the hive cap's admission of uncapped minds
-        (paid_without_cap) never reach it."""
-        swarms, minds = self._foundation_ids()
-        return agent.get("swarm_id") in swarms or agent.get("id") in minds
-
     def hive_cap(self, rules=None):
         """The hive cap as {key, scope, period, limit_usd, rule_id}: the hive month rule, else the hive day rule, else
         None. A hive with no cap admits no paid call by a mind with no cap of its own (paid_without_cap), and only then
@@ -207,11 +200,11 @@ class Budgets:
 
     def every_mind_row(self, agent, rules=None):
         """The every-mind rule as this mind's month cap, ``(agent:<id>, month, limit, "every-mind")``, or None: only for a
-        mind with no cap of its own (budget_usd 0 and no rule on it but a work session's machinery, session_cap_rules) and
-        never for a Foundation-bound mind. Its spend is the mind's own month, as any agent month rule's is."""
+        mind with no cap of its own (budget_usd 0 and no rule on it but a work session's machinery, session_cap_rules),
+        a Foundation one included. Its spend is the mind's own month, as any agent month rule's is."""
         rules = self.rules() if rules is None else rules
         every = next((r for r in rules if r["scope"] == "every-mind" and r["period"] == "month"), None)
-        if every is None or float(agent.get("budget_usd") or 0) > 0 or self._foundation_bound(agent):
+        if every is None or float(agent.get("budget_usd") or 0) > 0:
             return None
         scope = f"agent:{agent['id']}"
         machinery = {rid for rid, base in self.session_cap_rules().items() if base is None}
@@ -233,10 +226,9 @@ class Budgets:
     def server_settings(self, rules=None):
         """Every spending setting from the server's environment, what it is, and whether it applies right now. ``set``:
         the process found it in its environment (the Limits page shows it as "from server settings"); ``applies``: it
-        changes a limit now. HIVE_BUDGET_USD applies only while the hive has no cap; the member allowance and the
-        conductor's turn have no panel setting above them (a person's own month rule still replaces the member
-        allowance). HIVE_SWARM_MONTHLY_USD and HIVE_PERSON_REQUEST_CEILING_USD are retired (config.RETIRED_ENV)."""
-        from .conductor import turn_cap_usd
+        changes a limit now. HIVE_BUDGET_USD applies only while the hive has no cap; the member allowance has no panel
+        setting above it (a person's own month rule still replaces it). HIVE_SWARM_MONTHLY_USD and
+        HIVE_PERSON_REQUEST_CEILING_USD are retired (config.RETIRED_ENV)."""
         s, env = self.hive.settings, self.hive.settings.budget_env or {}
         seeded = self.hive_cap(rules) is None
         out = []
@@ -248,12 +240,8 @@ class Budgets:
         item("HIVE_BUDGET_USD", float(s.hive_budget_usd or 0), seeded and s.hive_budget_usd,
              "an all-time cap on the whole hive" if seeded else "not used: the hive cap on the Limits page replaces it",
              until_total=True)
-        try:
-            member = float(os.environ.get("HIVE_MEMBER_MONTHLY_USD", "50"))
-        except ValueError:
-            member = 50.0
+        member = float(s.member_monthly_usd)
         item("HIVE_MEMBER_MONTHLY_USD", member, True, "the month allowance of each member with no limit of their own")
-        item("HIVE_ASK_CONDUCTOR_TURN_USD", turn_cap_usd(), True, "the most one Ask conductor turn may spend")
         from .ask import gateway_enabled
         start, gw = self.start_limit(), gateway_enabled()
         blocked = self._blocking(out)   # never itself: the entry below is not until_total
@@ -303,14 +291,26 @@ class Budgets:
             return self.set("hive", "month", amount, note)
 
     def paid_without_cap(self, agent, rules=None, payer=None, own_key=False, key_id=None, turn_bound=False):
-        """True when a paid call by a mind with no cap of its own (budget_usd 0) is let through to the limits above it.
-        Only once the hive has a cap, and never for a Foundation-bound mind (which keeps its explicit bounds). Without a
-        cap, budget 0 still means no paid calls (402 no_budget), as before, except for a personal mind paid by its own
-        person from their month allowance (allowance_pays), or (gateway r1a) a turn-bound call on the person's own key
-        held to their one total monthly limit (own_key_bound)."""
+        """True when a paid call by a mind with no cap of its own (budget_usd 0) is let through to the limits above it,
+        by any of four routes:
+        - a person's own key: the person the call is for (Hive.user_for) pays, on a key that is theirs in the ring, hive
+          cap or not (Jon on #650: "a person's own key should just work"); the limits that person set on their keys,
+          a limit on the mind's team or the key, and the hive cap when there is one still hold the call
+          (Budgets.applicable). Pat's mind on Pat's key is this route, and so is Pat asking someone else's mind once
+          OwnHive.own_key_for has moved the call onto Pat's key. A person's key paying for a hive mind with no person
+          behind it is not (that call is no one's), nor is one for another person (H1.1), which
+          OwnHive.person_key_check refuses 402 own_key_needed whatever the cap (OI-13 r1.1);
+        - the hive's money once the hive has a cap, which admits a Foundation mind as it does any other (Jon on 23 Nov:
+          "ONE cap for the whole hive - set by the user");
+        - a personal mind paid by its own person from their month allowance (allowance_pays);
+        - (gateway r1a) a turn-bound call on the person's own key held to their one total monthly limit (own_key_bound).
+        Otherwise budget 0 still means no paid calls (402 no_budget), as before.
+        Time: the first route adds one Hive.user_for (its Ask turn and session reads), only for a call on its payer's own
+        key."""
         if float(agent.get("budget_usd") or 0) > 0:
             return False
-        return ((self.hive_cap(rules) is not None and not self._foundation_bound(agent))
+        own = bool(own_key) and payer == self.hive.ownhive.key_person(key_id) and payer == self.hive.user_for(agent)
+        return (own or self.hive_cap(rules) is not None
                 or self.allowance_pays(agent, payer, own_key, rules, key_id)
                 or self.own_key_bound(agent, payer, own_key, key_id, turn_bound) is not None)
 
@@ -325,9 +325,12 @@ class Budgets:
         paid_without_cap. The one answer for every place that must know who pays: First Light's pickup and creation
         (personal.py) and the mind's page (PersonalMinds.paid_by).
         {model, free, key_id, key_owner, payer, own_key, hive_key, governing_limits, bounded, host_paid, reason}:
-        - governing_limits: the finite month limits that hold THIS payer on THIS key: their person:<id> month row (their
-          rule, or the member default), a grant or invite on this key to them, or the hive's own total. A swarm, mind or
-          key: row also limits the call, but never stands in for these (a key rule is the key's, not the person's bound);
+        - governing_limits: the finite limits that hold THIS payer on THIS key: the hive's own total on every call, own
+          key or not, since Budgets.check holds every call by it; on their own key, the limit they set on their keys
+          (OwnHive.rules' own rows); on the hive's money, also their person:<id> month row (their rule, or the member
+          default) and a grant or invite on this key to them; on a turn-bound call, their one monthly total. A swarm,
+          mind or key: row also limits the call, but never stands in for these (a key rule is the key's, not the
+          person's bound);
         - bounded: the call would be admitted (its own cap, or paid_without_cap) AND a governing limit holds it;
         - host_paid: on a key no named person owns, paid by `user` from the hive's money, and bounded;
         - reason: why not, when it is not (the refusal's code), else None."""
@@ -390,13 +393,19 @@ class Budgets:
             if total is None:
                 return dict(out, reason="monthly_total_required")
             governing.append(total)
-        if not own_key:   # on the hive's money: what holds THIS payer on THIS key
-            person = "person:" + payer[5:] if isinstance(payer, str) and payer.startswith("user:u_") else None
-            for scope, period, limit, origin in self.applicable(proposed, key_id, payer, own_key, turn_bound):
-                held = (scope == person and period == "month") or origin in self.GOVERNING_ORIGINS or scope == "hive"
-                row = (scope, period, float(limit), origin) if isinstance(limit, (int, float)) else None
-                if held and row and 0 <= row[2] < float("inf") and row not in governing:
-                    governing.append(row)
+        # what holds THIS payer on THIS key: the hive's rows hold every call, a person's own key included, as
+        # Budgets.check counts every call against them (so a Foundation controller with no cap of its own, paid on its
+        # owner's key, is held by the hive's total, the one cap its owner sets: Jon on 23 Nov, "ONE cap for the whole
+        # hive - set by the user"); on their own key, also the limit its person set on their keys; on the hive's money,
+        # also the payer's month allowance and a grant or invite to them
+        person = ("person:" + payer[5:] if not own_key and isinstance(payer, str) and payer.startswith("user:u_")
+                  else None)
+        for scope, period, limit, origin in self.applicable(proposed, key_id, payer, own_key, turn_bound):
+            held = (scope == "hive" or (own_key and origin == "own")
+                    or (not own_key and ((scope == person and period == "month") or origin in self.GOVERNING_ORIGINS)))
+            row = (scope, period, float(limit), origin) if isinstance(limit, (int, float)) else None
+            if held and row and 0 <= row[2] < float("inf") and row not in governing:
+                governing.append(row)
         cap = float(proposed.get("budget_usd") or 0)
         if cap > 0:
             governing.append((f"agent:{proposed['id']}", "total", cap, "own-cap"))
@@ -409,9 +418,9 @@ class Budgets:
         return out
 
     def lifetime_cap_applies(self, agent, rules=None, payer=None, own_key=False, key_id=None, turn_bound=False):
-        """Whether the mind's own budget_usd is one of its reservation rows: always when it is above 0; at 0 only while
-        the hive has no cap (where it refuses, as no_budget does) and the call is not one allowance_pays or
-        own_key_bound admits (the same predicate as paid_without_cap: one source)."""
+        """Whether the mind's own budget_usd is one of its reservation rows: always when it is above 0; at 0 only for a
+        call paid_without_cap refuses (where no_budget refuses it too: one source), so never for a call its person pays
+        on their own key, nor under a hive cap, allowance_pays or own_key_bound."""
         if float(agent.get("budget_usd") or 0) > 0:
             return True
         return not self.paid_without_cap(agent, rules, payer, own_key, key_id, turn_bound)
@@ -540,20 +549,14 @@ class Budgets:
             return self.headroom(agent) or 0.0
         return 0.0
 
-    def session_default(self, agent):
-        """The budget of a session or task given none: a tenth of the mind's headroom, $0.25 to $100, never above it,
-        once the hive has a cap; None without one (the caller keeps its fixed default)."""
-        if self.hive_cap() is None:
-            return None
-        return dollars(session_default_micros(self.headroom_micros(agent) or 0))
-
     def task_budget(self, agent):
-        """What a task given no budget of its own may spend: session_default once the hive has a total, $1 without one
-        (plan H5), 0 when the mind has nothing left under its limits, the default a work session given none starts with
-        (sessions.py). Each step a Create plan hands a mind gets it or STEP_BUDGET_FLOOR_USD, whichever is more
-        (Goals.give_step_budget)."""
-        auto = self.session_default(agent)
-        return 1.0 if auto is None else auto
+        """What a Create step given no budget of its own may spend: a tenth of the mind's headroom, $0.25 to $100, never
+        above it, once the hive has a cap; $1 without one (plan H5); 0 when the mind has nothing left under its limits.
+        Each step a plan hands a mind gets it or STEP_BUDGET_FLOOR_USD, whichever is more (Goals.give_step_budget). A
+        work session given no budget has no cap of its own and isn't sized (sessions.py)."""
+        if self.hive_cap() is None:
+            return 1.0
+        return dollars(step_default_micros(self.headroom_micros(agent) or 0))
 
     # what each scope's row bounds, as a refusal's limit.kind names it (the turn-bound refusal's "member_allowance" too)
     ROW_KINDS = {"person": "member_allowance", "hive": "hive_cap", "swarm": "swarm_cap", "agent": "mind_cap"}
@@ -621,7 +624,8 @@ class Budgets:
         person paying from the hive's money is held to their allowance; spend on their own key is theirs and is not.
         Gateway r1a (r1.1 §F, r1.2): a turn-bound call on their own key is also held to an admin-set person:<id> month
         rule when one exists, as an additional row (never the member default, and never a substitute for their own
-        total). Time: one read of the rules, plus the work-session rules when an every-mind rule exists."""
+        total). Time: one read of the rules, plus the work-session rules when an every-mind rule exists. A Foundation mind with
+        no budget of its own (a researcher) is held to the hive's rows like any other mind, with no share of its own."""
         scopes = ["hive", f"agent:{agent['id']}"]
         person_scope = None
         if payer and payer.startswith("user:u_") and not own_key:

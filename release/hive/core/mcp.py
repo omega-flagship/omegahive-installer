@@ -165,12 +165,15 @@ TOOLS = [
     {"name": "hive_goal_get", "description": "One task (goal) in full: detail, binding and binding_digest, deadline, result schema and review spec.",
      "inputSchema": _props({"goal_id": _S}, ["goal_id"])},
     {"name": "hive_goal_result",
-     "description": "Report on a task (goal) you hold: done with a result, failed with why, or waiting on a person. A bound task needs its binding_digest "
-                    "(top level, exactly as hive_goal_get shows it). data is the structured result; it is checked against the task's result schema.",
+     "description": "Report on a task you hold: done with a result, failed with why, or waiting on a person. A bound task needs its binding_digest "
+                    "(top level, exactly as hive_goal_get shows it). For Research, pass the claim_ref from hive_goal_claim as goal_id. "
+                    "The task's result schema checks the structured result in data.",
      "inputSchema": _props({"goal_id": _S, "status": {"type": "string", "enum": ["done", "failed", "waiting"]},
                             "result": {"type": "string", "maxLength": 4000}, "data": {"type": "object"}, "binding_digest": _S},
                            ["goal_id", "status", "result"])},
-    {"name": "hive_goal_heartbeat", "description": "Renew the lease on a task (goal) you hold (also resumes it from waiting). Never reopens cancelled, expired or done work.",
+    {"name": "hive_goal_heartbeat",
+     "description": "Renew the lease on a task you hold and resume it if it is waiting. For Research, pass the claim_ref from hive_goal_claim as "
+                    "goal_id. Research leases renew only on recorded progress. Never reopens cancelled, expired or done work.",
      "inputSchema": _props({"goal_id": _S}, ["goal_id"])},
     {"name": "hive_goal_cancel_ack", "description": "Acknowledge that a task (goal) you held was cancelled or expired, and stop work on it.",
      "inputSchema": _props({"goal_id": _S}, ["goal_id"])},
@@ -762,16 +765,16 @@ class Harnesses:
         return {"goals": [{k: g.get(k) for k in ("id", "title", "detail", "status", "priority", "claimed_by", "parent_id", "result", "lease_until")} for g in goals[:100]]}
 
     async def _t_hive_goal_claim(self, agent, args):
-        return self.hive.goals.claim(agent, args["goal_id"])
+        return await asyncio.to_thread(self.hive.goals.claim, agent, args["goal_id"])
 
     async def _t_hive_goal_get(self, agent, args):
-        return self.hive.goals.for_agent(agent, args["goal_id"])
+        return await asyncio.to_thread(self.hive.goals.for_agent, agent, args["goal_id"])
 
     async def _t_hive_goal_heartbeat(self, agent, args):
-        return self.hive.goals.heartbeat(agent, args["goal_id"])
+        return await asyncio.to_thread(self.hive.goals.heartbeat, agent, args["goal_id"])
 
     async def _t_hive_goal_cancel_ack(self, agent, args):
-        return self.hive.goals.cancel_ack(agent, args["goal_id"])
+        return await asyncio.to_thread(self.hive.goals.cancel_ack, agent, args["goal_id"])
 
     async def _t_hive_goal_result(self, agent, args):
         hive, status = self.hive, args["status"]

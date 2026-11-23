@@ -642,7 +642,8 @@ export const COMMANDS: Cmd[] = [
       try {
         const r = await readPeople()
         if (ctx !== readContext(hive().client) || !b.current()) return
-        if (!r) return fail('people', 'this hive does not list people here', undefined, 'page people.manage opens the people page')
+        // null here is a member's view (readPeople asks /me first): what the 403 said before, without the 403
+        if (!r) return fail('people', 'admins only', undefined, 'page people.manage opens the people page')
         const now = Date.now()
         const waiting = r.invites.filter((i) => i.status === 'pending')
         sayAll([

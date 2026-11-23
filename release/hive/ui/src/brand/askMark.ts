@@ -1,3 +1,4 @@
+// Purpose: turn the Ask's frames into what its Omega mark shows, in the look it is in.
 import { useEffect, useRef, useState } from 'react'
 import { useAskStore } from '../store/ask'
 import type { AskEvent } from '../api/ask'
@@ -16,7 +17,7 @@ export function activityOf(e: AskEvent, acts: Record<string, string>): AskActivi
     case 'answer': return 'answering'
     case 'act': return e.act.kind === 'unreadable' ? null : ((acts[e.act.kind] as AskActivity | undefined) ?? 'thinking')
     case 'dispatched': return /build|code/i.test(e.intent_kind) ? 'building' : /make|create|draft|write/i.test(e.intent_kind) ? 'making' : 'finding'
-    case 'action-needs-confirm': return 'waiting'
+    case 'action-needs-confirm': case 'go_ahead': return 'waiting'
     case 'ui-change': return 'changed'
     case 'refused': return 'failed'
     case 'done': return e.outcome && e.outcome !== 'complete' && e.outcome !== 'cancelled' ? 'failed' : null

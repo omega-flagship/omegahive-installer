@@ -135,9 +135,14 @@ class OwnHive:
             db.execute("ALTER TABLE key_limits ADD COLUMN scope TEXT")
         for r in db.all("SELECT id, owner, key_id, grantee FROM key_limits WHERE scope IS NULL"):
             db.execute("UPDATE key_limits SET scope = ? WHERE id = ?", (scope_of(r["owner"], r["key_id"], r["grantee"]), r["id"]))
+        usage = {r["name"] for r in db.all("PRAGMA table_info(usage)")}
         # H1.1: whose limit scope each call was recorded under (OwnHive.grantee_for at record time); NULL before H1.1
-        if "key_grantee" not in {r["name"] for r in db.all("PRAGMA table_info(usage)")}:
+        if "key_grantee" not in usage:
             db.execute("ALTER TABLE usage ADD COLUMN key_grantee TEXT")
+        # whose own key paid each call (OwnHive.key_person at record time): NULL for the hive's keys, and for every row
+        # from before it was recorded, which the spend monitor counts as the hive's money as it always did
+        if "key_person" not in usage:
+            db.execute("ALTER TABLE usage ADD COLUMN key_person TEXT")
 
     @property
     def db(self):

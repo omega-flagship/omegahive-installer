@@ -1292,12 +1292,13 @@ html[data-ui-motion='none'] .ask-capsule[data-state='answering'] .ask-aurora {
 }
 .ask-num { width: 6em; min-height: 36px; margin-left: 4px; padding: 0 8px; border-radius: 10px; background: color-mix(in oklab, var(--color-ink) 6%, transparent); border: 1px solid color-mix(in oklab, var(--color-primary-top) 20%, transparent); color: inherit; }
 
-/* toasts keep clear of a side sheet or a pinned thread (they stay above the Ask in z-order) */
+/* toasts keep clear of a side sheet or a pinned thread (they stay above the Ask in z-order); a wider ui/Sheet open
+   beside it still wins (--side-sheet-room, index.css; this file loads later at the same specificity; pr-79 #16) */
 html[data-ask-side='landscape'] .toast-stack {
-  right: 50vw;
+  right: max(50vw, var(--side-sheet-room, 0px));
 }
 html[data-ask-side='desktop'] .toast-stack {
-  right: 404px;
+  right: max(404px, var(--side-sheet-room, 0px));
 }
 
 /* ================================================================ the Ask's sizes (askSize.ts, screens/ask.metta)

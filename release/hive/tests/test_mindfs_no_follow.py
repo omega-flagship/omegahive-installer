@@ -1,4 +1,4 @@
-"""The hive never follows a link a mind planted in its own folder (hive/supervisor/mindfs.py).
+"""Purpose: Verify the Hive's link-safe file operations and workspace admission.
 
 A mind is OS-sandboxed and may write anything inside <data>/agents/<id>/, links included; the hive is not sandboxed.
 For every place the hive writes, reads or deletes inside a mind folder, a symlink (and a hard link where one can be
@@ -16,7 +16,11 @@ import pytest
 
 from hive.supervisor import mindfs
 from hive.supervisor.mindfs import UnsafeMindPath
-from hive.supervisor.workspace import iter_kit_digest
+from hive.supervisor.workspace import ITER_TEMPLATE, iter_code_tools_stamp, iter_kit_digest
+
+# A worker's stamp names which code tools it has, the kit's shell that asks while its mind's own coding is off, so a
+# worker built with other tools is copied again.
+WITHOUT = iter_code_tools_stamp(False)
 
 SECRET = "outside-secret-do-not-touch\n"
 
@@ -35,6 +39,17 @@ def mind(tmp_path):
 def untouched(m):
     assert m.target.read_text() == SECRET
     assert sorted(p.name for p in m.outside.iterdir()) == ["target.txt"], "nothing was created outside"
+
+
+def test_copy_file_checks_source_descriptor_before_import(mind):
+    alias = mind.tmp / "linked"
+    os.link(mind.target, alias)
+    with pytest.raises(UnsafeMindPath, match="plain file"):
+        mindfs.copy_file(alias, mind.root, "imported")
+    assert not (mind.root / "imported").exists()
+    alias.unlink()
+    mindfs.copy_file(mind.target, mind.root, "imported")
+    assert (mind.root / "imported").read_text() == SECRET
 
 
 def hardlink_or_skip(src, dst):
@@ -291,10 +306,18 @@ def _iter_clones(ws, tmp_path):
         for name in names:
             (base / name).parent.mkdir(parents=True, exist_ok=True)
             (base / name).write_text(f"# {base.name} {name}\n")
-    (metta / "iter.metta").write_text("# loop\n(= (MAX_TOOLS) 30)\n")
+    # Each loop sets its tool cap as the pinned Iter does (MAX_TOOLS, 30 there), here below the tools a worker holds, so
+    # the copy has to raise it
+    (src / "iter.py").write_text("# iter-src iter.py\nMAX_TOOLS = 3\n")
+    (metta / "iter.metta").write_text("# loop\n(= (MAX_TOOLS) 3)\n")
     (ws.settings.core_root / "core-dependency.json").write_text(json.dumps(
         {"revision": "a" * 40, "iter": {"revision": "b" * 40}, "iter_metta": {"revision": "c" * 40}}))
     ws.iter_source = lambda key="iter": metta if key == "iter_metta" else src
+
+
+def _held(root):
+    """The tools an Iter loop loads from a worker: tools/*.py but those starting with an underscore."""
+    return sum(1 for path in (root / "tools").iterdir() if path.suffix == ".py" and not path.name.startswith("_"))
 
 
 def test_create_iter_replaces_planted_links_in_the_copy(mind, tmp_path):
@@ -307,12 +330,13 @@ def test_create_iter_replaces_planted_links_in_the_copy(mind, tmp_path):
     (mind.root / "iter").symlink_to(mind.outside, target_is_directory=True)
     ws.create(dict(AGENT, kind="iter"), "tok-iter")
     untouched(mind)
-    assert (mind.root / "iter.py").read_text() == "# iter-src iter.py\n" and regular(mind.root / "iter.py")
+    assert (mind.root / "iter.py").read_text() == f"# iter-src iter.py\nMAX_TOOLS = {_held(mind.root)}\n"
+    assert regular(mind.root / "iter.py")
     assert (mind.root / "tools").is_dir() and not (mind.root / "tools").is_symlink()
     assert (mind.root / "memory" / "hive.txt").is_file() and not (mind.root / "memory").is_symlink()
     assert (mind.root / "token").read_text() == "tok-iter"
     assert not (mind.root / "irc.py").exists() and not (mind.root / ".git").exists()
-    assert regular(mind.root / ".iter_revision") and (mind.root / ".iter_revision").read_text() == "b" * 40 + "+kit:" + iter_kit_digest()
+    assert regular(mind.root / ".iter_revision") and (mind.root / ".iter_revision").read_text() == "b" * 40 + "+kit:" + iter_kit_digest() + WITHOUT
     assert os.readlink(mind.root / "iter") == "."
     assert os.readlink(mind.root / "PeTTa" / "run.sh") == str((tmp_path / "run.sh").resolve())
 
@@ -329,9 +353,12 @@ def test_a_metta_iter_takes_the_loop_and_drops_iter_py_without_following_links(m
     ws.sync_iter(metta)
     untouched(mind)
     assert not (mind.root / "iter.py").exists() and not (mind.root / "iter.py").is_symlink()
-    assert regular(mind.root / "iter.metta") and "(= (MAX_TOOLS) 40)" in (mind.root / "iter.metta").read_text()
-    assert (mind.root / "tools" / "metta.py").read_text() == "# iter-metta-src tools/metta.py\n"
-    assert (mind.root / ".iter_revision").read_text() == "b" * 40 + "+" + "c" * 40 + "+tools/metta.py+kit:" + iter_kit_digest()
+    assert regular(mind.root / "iter.metta")
+    assert f"(= (MAX_TOOLS) {_held(mind.root)})" in (mind.root / "iter.metta").read_text()
+    # the loop's own metta.py is copied in, through no link, and then the kit's sandboxed one takes its place, since this
+    # mind's own coding is off (workspace.ITER_CODE_TOOLS)
+    assert (mind.root / "tools" / "metta.py").read_text() == (ITER_TEMPLATE / "tools" / "metta.py").read_text()
+    assert (mind.root / ".iter_revision").read_text() == "b" * 40 + "+" + "c" * 40 + "+tools/metta.py+kit:" + iter_kit_digest() + WITHOUT
 
 
 def test_studio_skills_never_read_or_write_through_run_metta(mind):
@@ -479,6 +506,54 @@ def test_docker_refuses_to_mount_a_linked_memory_or_run_metta(mind, monkeypatch)
     with pytest.raises(StartRefused):
         d.start(AGENT, {})
     untouched(mind)
+
+
+@pytest.mark.parametrize("source_inside_mind", [False, True])
+def test_docker_refuses_an_alias_outside_its_writable_memory(mind, monkeypatch, source_inside_mind):
+    from hive.supervisor.drivers import DockerDriver, StartRefused
+
+    driver = DockerDriver(_workspace(mind))
+    monkeypatch.setattr(driver, "status", lambda agent_id: "absent")
+    monkeypatch.setattr(driver, "_docker", lambda *args: pytest.fail(f"unexpected Docker command {args[0]}"))
+    memory = mind.root / "memory"
+    memory.mkdir()
+    source = mind.root / "other" if source_inside_mind else mind.target
+    if source_inside_mind:
+        source.write_text("outside writable memory")
+    os.link(source, memory / "linked")
+    with pytest.raises(StartRefused, match="hard link outside the writable workspace") as refused:
+        driver.start(AGENT, {})
+    assert "'memory/linked'" in str(refused.value)
+    untouched(mind)
+
+
+def test_workspace_links_can_stay_inside_a_mind(mind):
+    from hive.supervisor.drivers import _admit_workspace
+
+    memory = mind.root / "memory"
+    memory.mkdir()
+    original = mind.root / "original"
+    original.write_text("fixture")
+    os.link(original, memory / "linked")
+    _admit_workspace(mind.root)
+    with pytest.raises(mindfs.UnsafeMindPath):
+        mindfs.open_read(mind.root, "original")
+
+
+def test_docker_allows_links_contained_in_writable_memory(mind, monkeypatch):
+    from hive.supervisor.drivers import DockerDriver
+
+    driver = DockerDriver(_workspace(mind))
+    monkeypatch.setattr(driver, "status", lambda agent_id: "absent")
+    calls = []
+    monkeypatch.setattr(driver, "_docker", lambda *args: calls.append(args) or SimpleNamespace(returncode=0))
+    memory = mind.root / "memory"
+    memory.mkdir()
+    source = memory / "original"
+    source.write_text("fixture")
+    os.link(source, memory / "linked")
+    driver.start(AGENT, {})
+    assert [args[0] for args in calls] == ["rm", "run"]
 
 
 # ---- hive-side readers and writers (placement, memory API, archive, research, Studio credentials) -----------------

@@ -9,8 +9,9 @@ through the next step's in-step context read (studio_steps.context), and the swe
 exist") makes them work for a next step. With Studio off, or no bound session, steer_session() is None and Ask.steer is
 byte-identical to before.
 
-Limits (§4.6): text <= MAX_TEXT (Ask's body check); the person's PER_MINUTE / PER_DAY counters, counted over their Ask
-turns and their Studio directions together; at most MAX_UNREAD_DIRECTIONS directions queued and not yet read per session.
+Limits (§4.6): text <= MAX_TEXT (Ask's body check); the person's Ask per-minute / per-day counters (HIVE_ASK_PER_MINUTE
+/ _PER_DAY), counted over their Ask turns and their Studio directions together; at most MAX_UNREAD_DIRECTIONS directions
+queued and not yet read per session.
 A session that is stopping or has ended refuses with 409 studio_session_closed and writes nothing (K6); a paused or held
 session queues and says so.
 """
@@ -48,9 +49,10 @@ class StudioSteers:
         return None
 
     def _steer_quota_ok(self, principal):
-        """§4.6: the same per-person counters as Ask requests (ask.PER_MINUTE / PER_DAY), over the person's Ask turns and
-        their Studio directions together."""
-        from .ask import PER_DAY, PER_MINUTE, _iso
+        """§4.6: the same per-person counters as Ask requests (settings.ask_limits per_minute / per_day, read through
+        ask.ask_limits), over the person's Ask turns and their Studio directions together."""
+        from .ask import _iso, ask_limits
+        limits = ask_limits(self.hive)
         t = time.time()
         minute, day = _iso(t - 60), _iso(t - 86400)
         db = self.hive.db
@@ -58,8 +60,8 @@ class StudioSteers:
                        "created_at >= ?", (minute, principal, day))
         steers = db.one("SELECT SUM(created_at >= ?) AS minute, COUNT(*) AS day FROM ask_steers WHERE principal = ? AND "
                         "outcome = 'studio' AND created_at >= ?", (minute, principal, day))
-        return ((turns["minute"] or 0) + (steers["minute"] or 0) < PER_MINUTE
-                and (turns["day"] or 0) + (steers["day"] or 0) < PER_DAY)
+        return ((turns["minute"] or 0) + (steers["minute"] or 0) < limits.per_minute
+                and (turns["day"] or 0) + (steers["day"] or 0) < limits.per_day)
 
     def direction(self, ask, viewer, turn, ses, body, body_digest):
         """Inside Ask.steer's transaction: record one direction for the session (plan §4.2) and return (answer, frame,

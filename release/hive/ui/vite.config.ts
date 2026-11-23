@@ -1,7 +1,8 @@
 /// <reference types="vitest/config" />
-import { defineConfig, loadEnv, type ProxyOptions } from 'vite'
+import { defineConfig, loadEnv, searchForWorkspaceRoot, type ProxyOptions } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { fileURLToPath } from 'node:url'
 
 /**
  * The page's nonce slot. The hive (hive/core/app.py PAGE_NONCE_SLOT, the same word) replaces it with a fresh nonce in
@@ -9,6 +10,9 @@ import tailwindcss from '@tailwindcss/vite'
  * preload tag and into the csp-nonce meta that lib/appFrame.ts frameNonce reads.
  */
 const PAGE_NONCE_SLOT = 'HIVE-CSP-NONCE'
+
+/** The host's defaults file (hive/config.json), which the simulator imports (src/api/sim/ask.ts). */
+const HIVE_CONFIG = fileURLToPath(new URL('../config.json', import.meta.url))
 
 /** The hive's own paths the UI calls or opens, which the dev and preview servers forward to VITE_HIVE_URL. */
 const HIVE_PATHS = ['/api', '/llm', '/mcp', '/flow-studio', '/mind-iter', '/local-signin']
@@ -53,7 +57,9 @@ export default defineConfig(({ mode }) => {
     base: mode === 'development' ? '/' : './',
     // only the build a hive serves has a slot to fill (the demo and the surface preview are served as plain files)
     html: mode === 'production' ? { cspNonce: PAGE_NONCE_SLOT } : undefined,
-    server: { proxy },
+    // the simulator reads the host's defaults from hive/config.json, outside this root: the dev server serves that one
+    // file beside its default allow list (the workspace root)
+    server: { proxy, fs: { allow: [searchForWorkspaceRoot(process.cwd()), HIVE_CONFIG] } },
     preview: { proxy },
     build: {
       target: 'es2022',

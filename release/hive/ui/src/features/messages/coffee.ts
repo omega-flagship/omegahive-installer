@@ -1,4 +1,7 @@
-import type { CoffeeMembership, Room, RoomMember, RoomMessage, RoomOrigin } from '../../api/types'
+// Purpose: define Coffee Room membership, owner requests and message presentation.
+import type { Agent, CoffeeMembership, Room, RoomMember, RoomMessage, RoomOrigin } from '../../api/types'
+import type { HiveClient } from '../../api/client'
+import { bindOperation } from '../../lib/boundOperation'
 
 /**
  * The Coffee Room, as the UI reads it: the one place in the whole UI that knows the host contract (plan r1,
@@ -10,8 +13,10 @@ import type { CoffeeMembership, Room, RoomMember, RoomMessage, RoomOrigin } from
  * - Break-off:     POST /api/rooms takes `origin: { room_id, message_id }`; the room view returns `origin`.
  * - @here:         a message view's `here_reached` lists the awake minds it reached, at most 5.
  * - Notes:         a message view's `note: true` marks a mind's unprompted note (no mentions, wakes nobody).
- * - Membership:    automatic; a mind's view carries `coffee: "member" | "opted_out" | "private" | "not_a_mind"`; an
- *                  admin toggles it with PATCH /api/agents/{id} `{ coffee: true | false }` (never for `not_a_mind`).
+ * - Membership:    automatic; a mind's view carries `coffee: "member" | "opted_out" | "private" | "not_a_mind"`; only
+ *                  the mind's owner changes it, with PATCH /api/agents/{id} `{ coffee: true | false }`: a public mind in
+ *                  a public swarm is in until its owner takes it out, and a private or shared one is out until its
+ *                  owner puts it in. Anyone else, an admin included, asks the owner through a private message.
  * - GET /api/rooms/coffee loads the room by alias. `origin` on a DM is kept only when the DM is new.
  * - People are named by name only ("Member" without one), never by email or principal.
  * - The room can't be copied, left, re-kinded, re-visibilitied or hand-managed; an admin may rename it and set its topic.
@@ -183,12 +188,54 @@ export const heardBy = (m: Pick<RoomMessage, 'text' | 'delivered_to' | 'here_rea
 /** The minds an @here reached (never more than the cap, whatever arrives). */
 export const hereReached = (m: Pick<RoomMessage, 'here_reached'>): string[] => (m.here_reached ?? []).slice(0, HERE_CAP)
 
-/** "Reached Vega, Deneb and Mira (awake)" / "No awake minds to reach". */
-export function hereLabel(reached: string[], nameOf: (member: string) => string): string {
-  if (!reached.length) return '@here reached no one: no minds were awake'
+/**
+ * "@here reached Vega, Deneb and Mira (awake)". Reaching no one says why, from the minds the room holds (`mindsHere`): a
+ * room with no minds in it (a hive whose minds are all private) is not a room whose minds were asleep.
+ */
+export function hereLabel(reached: string[], nameOf: (member: string) => string, mindsHere: number): string {
+  if (!reached.length) return mindsHere ? '@here reached no one: no mind here was awake' : '@here reached no one: no minds are in the Coffee Room'
   const names = reached.map(nameOf)
   const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
   return `@here reached ${list} (awake)`
+}
+
+/** How many minds a room holds. */
+export const mindsIn = (room: Pick<Room, 'members'>): number => room.members.filter((m) => isMind(m.member)).length
+
+/**
+ * The hive's minds the Coffee Room does not hold: a private one its owner has not added, or one taken out (the host's
+ * `coffee` state). App modules never join, and a host that does not say is left out.
+ */
+export const mindsOutside = <A extends { id: string; coffee?: CoffeeMembership }>(room: Pick<Room, 'members'>, minds: readonly A[]): A[] =>
+  minds.filter((a) => (a.coffee === 'private' || a.coffee === 'opted_out') && !room.members.some((m) => m.member === `agent:${a.id}`))
+
+const escaped = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * The names a text gives after an @ of minds outside the room: a mind's whole name, written out or run together
+ * ("@Invented Juniper", "@InventedJuniper"), or its first word ("@Invented"), never a longer word that only begins with it.
+ */
+export function namedOutside(text: string, names: readonly string[]): string[] {
+  return names.filter((name) => {
+    const words = name.trim().split(/\s+/).filter(Boolean)
+    return !!words.length && [words, words.slice(0, 1)].some((w) =>
+      new RegExp(`(?<![\\w@])@${w.map(escaped).join('\\s*')}(?![\\p{L}\\p{N}_])`, 'iu').test(text))
+  })
+}
+
+/**
+ * The line under the Coffee Room's box. A mind named with @ that is not in the room hears nothing, and in a room with no
+ * minds neither @here nor a name reaches anyone, so it says so first, and that a mind's owner adds it; otherwise what
+ * @here does. `mindsHere`: the minds the room holds; `named`: names of minds outside it the draft gives (namedOutside).
+ */
+export function hereHintWords(text: string, mindsHere: number, named: readonly string[]): string {
+  if (named.length) {
+    const one = named.length === 1
+    const who = one ? named[0] : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}`
+    return `${who} ${one ? "isn't" : "aren't"} in the Coffee Room, so ${one ? 'it' : 'they'} won't hear this. ${one ? 'Its owner can add it' : 'Their owners can add them'} under Members.`
+  }
+  if (!mindsHere) return 'No minds are in the Coffee Room yet, so @here and @names reach no one here. Owners can add their minds under Members.'
+  return saysHere(text) ? HERE_TYPING : `Minds hear only messages that @mention them. ${HERE_HINT}`
 }
 
 export const isNote = (m: Pick<RoomMessage, 'note'>): boolean => m.note === true
@@ -200,24 +247,43 @@ export const noteLabel = (name: string): string => `A thought from ${name}`
 
 export const COFFEE_STATE: Record<Exclude<CoffeeMembership, 'not_a_mind'>, { label: string; on: boolean; why: string }> = {
   member: { label: 'In the Coffee Room', on: true, why: 'Everyone in the hive can talk with it there; it wakes only when @mentioned or reached by @here.' },
-  opted_out: { label: 'Not in the Coffee Room', on: false, why: 'An admin took it out. Put it back any time.' },
-  private: { label: 'Not in the Coffee Room', on: false, why: 'Private minds join only if an admin adds them.' },
+  opted_out: { label: 'Not in the Coffee Room', on: false, why: 'It was taken out. Its owner can put it back.' },
+  private: { label: 'Not in the Coffee Room', on: false, why: 'Private minds join only if their owner chooses to add them.' },
 }
 
 /** What to show for a mind: null when the hive does not say, or for an app module (never a member, no toggle). */
 export const coffeeState = (a: { coffee?: CoffeeMembership }): (typeof COFFEE_STATE)[keyof typeof COFFEE_STATE] | null =>
   a.coffee && a.coffee !== 'not_a_mind' ? COFFEE_STATE[a.coffee] : null
 
-/** Before an admin adds a private or shared mind (or one in a private or shared swarm), whatever its status says. */
+/** Before an owner adds a private or shared mind (or one in a private or shared swarm), whatever its status says. */
 export const COFFEE_DISCLOSURE = "This mind's name becomes visible to everyone in the hive."
 
 type MindLike = { coffee?: CoffeeMembership; visibility?: string | null; swarm_id?: string | null }
 export function needsDisclosure(a: MindLike, swarm?: { visibility?: string | null } | null): boolean {
   if (a.coffee === 'private') return true
-  return (a.visibility ?? 'public') !== 'public' || (!!a.swarm_id && !!swarm && (swarm.visibility ?? 'public') !== 'public')
+  return (a.visibility ?? 'public') !== 'public' || (!!a.swarm_id && (!swarm || (swarm.visibility ?? 'public') !== 'public'))
 }
 
-/** The admin switch: putting a private mind in asks first (the disclosure); nothing is sent unless confirmed. */
+/** Whether this person puts the mind in or takes it out: its owner only, public or private, and an admin only for their
+ *  own minds (Jon, #615: each person is their own admin). A mind with no owner recorded is the hive owner's. The hive
+ *  enforces the same rule (rooms.py set_coffee). */
+export function canChangeCoffee(a: { owner?: string | null }, principal: string | undefined): boolean {
+  return !!principal && principal === (a.owner || 'user:operator')
+}
+
+/** A request is an ordinary private message to the owner; sending it never changes Coffee Room membership. A private
+ *  mind's request says its name becomes visible to everyone; a mind that was taken out is asked back. */
+export async function requestCoffeeMembership(a: Pick<Agent, 'id' | 'name' | 'owner' | 'coffee'>, client: Pick<HiveClient, 'createRoom' | 'postRoomMessage'> | null, alive: () => boolean = () => true): Promise<void> {
+  if (!client?.createRoom || !client.postRoomMessage) throw new Error('This hive cannot send a private request to the owner.')
+  const op = bindOperation(alive)
+  const room = await op.write(() => client.createRoom!({ kind: 'dm', members: [a.owner || 'user:operator'] }))
+  const ask = a.coffee === 'private'
+    ? `Would you add ${a.name} to the Coffee Room? Only do this if you want everyone in the hive to see its name. Open ${a.name}, choose Model and turn on “In the Coffee Room”. You can leave it private instead.`
+    : `Would you put ${a.name} back in the Coffee Room? Open ${a.name}, choose Model and turn on “In the Coffee Room”. You can leave it out instead.`
+  await op.write(() => client.postRoomMessage!(room.id, ask))
+}
+
+/** Putting a private mind in asks its owner first; nothing is sent unless confirmed. */
 export async function setCoffeeMembership(
   a: MindLike & { id: string }, on: boolean,
   deps: { swarm?: { visibility?: string | null } | null; confirm: (message: string, label: string) => Promise<boolean>; patch: (id: string, body: { coffee: boolean }) => Promise<boolean> },

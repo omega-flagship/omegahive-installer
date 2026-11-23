@@ -11,8 +11,19 @@
 # Every folder a cache restores into starts empty, and pip's cache is the job's own: a self-hosted runner keeps its
 # home and tool cache between jobs, a restore extracts over what is there without removing it, and a pull request's job
 # must not leave a file a later job installs or a later main job saves.
+#
+# With runtime-packages, the cached Python also holds tests/ci-runtime-requirements.txt (tests/ci-requirements.txt and
+# chromadb, installed under hive/ci-constraints.txt), under a key of its own, so hive-runtime stops paying 7 minutes of
+# pip a job (run 44869136739) and the other jobs' cache entry stays exactly hive/ci-constraints.txt.
 name: petta-toolchain
 description: Python 3.12, hive requirements under hive/ci-constraints.txt, and SWI-Prolog + PeTTa built (or restored) by pin.
+inputs:
+  lift-userns:
+    description: "'true' (the default) sets the AppArmor userns restriction to 0 for the job; 'false' leaves it alone."
+    default: 'true'
+  runtime-packages:
+    description: "'true' also caches tests/ci-runtime-requirements.txt in the Python, under a key of its own."
+    default: 'false'
 runs:
   using: composite
   steps:
@@ -31,23 +42,14 @@ runs:
       run: echo "python=$pythonLocation" >> "$GITHUB_OUTPUT"
     - name: Restore the Python with hive's requirements installed (keyed by its version and the requirement files)
       # The folder is in the cache's identity as well as the key, so a Python installed under another runner's tool
-      # cache is never restored here. hive/requirements.txt reads hive/google-constraints.txt through its -c line.
+      # cache is never restored here. hive/requirements.txt reads hive/google-constraints.txt through its -c line. With
+      # runtime-packages the key also carries the runtime requirement files' hash: an entry of its own, never restored
+      # by a job without them, and no restore-keys, so it never starts from the other entry.
       id: python-cache
       uses: actions/cache/restore@v4
       with:
         path: ${{ steps.where.outputs.python }}
-        key: hive-python-${{ runner.os }}-${{ runner.environment }}-py${{ steps.py.outputs.python-version }}-${{ hashFiles('hive/requirements.txt', 'hive/google-constraints.txt', 'hive/ci-constraints.txt') }}-v1
-    - name: Build prerequisites are installed (ci-runner-setup installs them; jobs have no apt-get)
-      shell: bash
-      run: |
-        missing=()
-        for p in cmake ninja-build libssl-dev libarchive-dev libpcre2-dev libyaml-dev zlib1g-dev libedit-dev libgmp-dev; do
-          case "$(dpkg-query -W -f='${db:Status-Abbrev}' "$p" 2>/dev/null)" in ii*) ;; *) missing+=("$p") ;; esac
-        done
-        if [ "${#missing[@]}" -gt 0 ]; then
-          echo "::error::not installed: ${missing[*]}. Run ci-runner-setup on this machine."
-          exit 1
-        fi
+        key: hive-python-${{ runner.os }}-${{ runner.environment }}-py${{ steps.py.outputs.python-version }}-${{ hashFiles('hive/requirements.txt', 'hive/google-constraints.txt', 'hive/ci-constraints.txt') }}${{ inputs.runtime-packages == 'true' && format('-runtime-{0}', hashFiles('tests/ci-requirements.txt', 'tests/ci-runtime-requirements.txt')) || '' }}-v1
     - name: Restore SWI-Prolog and PeTTa (keyed by pin, Python and machine kind)
       # runner.environment (github-hosted / self-hosted) is in the key: a toolchain built on GitHub's machine is bound to
       # its paths (/home/runner, setup-python under /opt/hostedtoolcache) and restores off-path on ours, and on a key hit
@@ -59,12 +61,39 @@ runs:
           ~/swipl-patched
           ~/PeTTa
         key: petta-${{ runner.os }}-${{ runner.environment }}-py${{ steps.py.outputs.python-version }}-swipl-${{ env.SWIPL_TAG }}-petta-${{ env.PETTA_REF }}-v1
+    - name: Build prerequisites are installed (ci-runner-setup installs them on ours; on GitHub's machine the job does)
+      # GitHub's machine gives the job general sudo and is thrown away after it, so the job installs them there, and
+      # only when something may be built: the toolchain, when the restore above missed, or a requirement pip builds from
+      # source, when the Python restore missed. A job that restores both builds only janus-swi, with setuptools against
+      # the restored SWI-Prolog and the image's compiler, and its runtime libraries are on the image already, so it
+      # never waits on Ubuntu's mirrors: on 19 Nov 4 of the 5 smokes started between 12:06Z and 12:30Z failed in this
+      # step, apt unable to reach azure.archive.ubuntu.com, and the one that reached it fetched its packages in 3 s.
+      # Ours has no apt-get for jobs, so the step only checks, on every job.
+      if: runner.environment != 'github-hosted' || steps.petta-cache.outputs.cache-hit != 'true' || steps.python-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        pkgs=(cmake ninja-build libssl-dev libarchive-dev libpcre2-dev libyaml-dev zlib1g-dev libedit-dev libgmp-dev)
+        if [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ]; then
+          sudo apt-get -o Acquire::Retries=3 update -q
+          sudo apt-get -o Acquire::Retries=3 install -y -q "${pkgs[@]}"
+        fi
+        missing=()
+        for p in "${pkgs[@]}"; do
+          case "$(dpkg-query -W -f='${db:Status-Abbrev}' "$p" 2>/dev/null)" in ii*) ;; *) missing+=("$p") ;; esac
+        done
+        if [ "${#missing[@]}" -gt 0 ]; then
+          echo "::error::not installed: ${missing[*]}. Run ci-runner-setup on this machine."
+          exit 1
+        fi
     - name: Allow unprivileged user namespaces (the Linux mind sandbox needs them)
       # Ubuntu 24.04 restricts them through AppArmor by default, and deploy/apparmor/omegahive-mind-launcher lifts that
       # for the launcher only inside a release (deploy/RUNBOOK.md, section 0), which this checkout is not, so the
       # restriction is off for hive/tests here. The job's release step runs the sandbox tests with it back on, and an
       # always() step and the runner's root-owned job hooks set it back to 1. The sudoers rule allows exactly this
-      # command line and the same with =1.
+      # command line and the same with =1. The value is the machine's, so where several runners share one (the full
+      # run's shards) only the switch shard changes it, under a host lock (scripts/ci/switch-shard.sh), and every
+      # other job there passes lift-userns: 'false' and never touches it.
+      if: inputs.lift-userns == 'true'
       shell: bash
       run: sudo -n /usr/sbin/sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
     - name: Install hive requirements (nothing to install when the Python was restored)
@@ -73,11 +102,23 @@ runs:
         python -m pip install --upgrade pip
         python -m pip install -r hive/requirements.txt -c hive/ci-constraints.txt
     - name: Installed Python packages are exactly hive/ci-constraints.txt (before the toolchain adds janus-swi)
+      # A restored runtime-packages Python holds the runtime packages too, which the step after this one checks.
       shell: bash
-      run: python scripts/dev/check_ci_constraints.py hive/ci-constraints.txt --requirements hive/requirements.txt
+      env:
+        EXTRA: ${{ inputs.runtime-packages == 'true' && steps.python-cache.outputs.cache-hit == 'true' && '--allow-extra' || '' }}
+      run: python scripts/dev/check_ci_constraints.py hive/ci-constraints.txt --requirements hive/requirements.txt $EXTRA
+    - name: Install the runtime tests' packages under hive/ci-constraints.txt (nothing to install when restored)
+      # tests/ci-runtime-requirements.txt is not passed to the check as --requirements: its -r line is an option the
+      # check fails closed on. Every hive pin must still be installed at its version after this install.
+      if: inputs.runtime-packages == 'true'
+      shell: bash
+      run: |
+        python -m pip install -q -c hive/ci-constraints.txt -r tests/ci-runtime-requirements.txt
+        python scripts/dev/check_ci_constraints.py hive/ci-constraints.txt --allow-extra
     - name: Save the Python with hive's requirements installed
-      # Saved after the check above passed and before setup_petta_env.sh installs janus-swi, so a restored Python holds
-      # exactly hive/ci-constraints.txt and the check above passes on it.
+      # Saved after the checks above passed and before setup_petta_env.sh installs janus-swi, so a restored Python holds
+      # exactly hive/ci-constraints.txt (and, with runtime-packages, the runtime packages) and the checks pass on it.
+      # Two jobs that both missed one key both save it: the first wins, the other only warns that the key exists.
       if: steps.python-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4
       with:

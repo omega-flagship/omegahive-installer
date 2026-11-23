@@ -780,18 +780,28 @@ def test_conducted_scope_and_fresh_spend_check_run_inside_final_transaction(clie
 
 
 
-def test_conducted_final_spend_refusal_rolls_back_thread_scope_and_notices(client, p1, monkeypatch):
+def test_conducted_final_refusal_rolls_back_thread_scope_and_notices(client, p1, monkeypatch):
+    """A refusal inside the final admission transaction, after a conducted turn has moved the thread to its own scope,
+    rolls that scope back with the rest and publishes nothing. No spend check refuses there any more, since an Ask
+    thread has no money cap of its own (omegahive#294 item 2), so the refusal here is the rate limit's second look, the
+    next check in the same transaction; its first look, before the transaction, passes."""
     w = p1
     f = frame(client, w)
     hive = w["hive"]
     _p1_synthetic_conductor(hive, monkeypatch)
     monkeypatch.setattr(hive.ask, "_conducting", lambda: True)
-    held_calls = []
-    def exhausted(thread):
-        assert hive.db._conn.in_transaction and thread["cap_scope"] == "thread"
-        held_calls.append(thread["id"])
-        return float(thread["budget_usd"]) + 1.0
-    monkeypatch.setattr(hive.sessions, "thread_held", exhausted)
+    scoped = []
+    rescope = hive.sessions.rescope
+    def recorded(*args, **kwargs):
+        assert hive.db._conn.in_transaction
+        scoped.append(args[1])
+        return rescope(*args, **kwargs)
+    monkeypatch.setattr(hive.sessions, "rescope", recorded)
+    looks = []
+    def quota(principal):
+        looks.append(principal)
+        return len(looks) < 2
+    monkeypatch.setattr(hive.ask, "_quota_ok", quota)
     published = []
     publish = hive.events.publish
     def observed(kind, **payload):
@@ -799,9 +809,9 @@ def test_conducted_final_spend_refusal_rolls_back_thread_scope_and_notices(clien
         return publish(kind, **payload)
     monkeypatch.setattr(hive.events, "publish", observed)
     before = _p1_admission_counts(hive)
-    response = op(client, w, f, "send", op_id="conducted-held-refusal", text="Do not bypass a held liability")
-    assert response.status_code == 402 and response.json()["error"]["code"] == "spend_limit"
-    assert held_calls and _p1_admission_counts(hive) == before
+    response = op(client, w, f, "send", op_id="conducted-final-refusal", text="Refused after the scope moved")
+    assert response.status_code == 429 and response.json()["error"]["code"] == "rate_limited"
+    assert scoped == ["thread"] and len(looks) == 2 and _p1_admission_counts(hive) == before
     assert not set(published) & {"goal.updated", "room", "message", "ask"}
 
 

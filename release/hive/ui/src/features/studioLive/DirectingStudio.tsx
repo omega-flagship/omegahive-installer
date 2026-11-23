@@ -1,4 +1,6 @@
 /**
+ * Purpose: draw Directing Studio under the Ask's thread in every look: the setup card, receipts, Steer or Queue, the
+ * cost readout and the one Stop.
  * J3 r4.3 O3: "Directing Studio" in the shared Ask (every look renders it with the thread), the setup card, the receipt
  * cards (host records only; narration stays in the thread above), the Steer | Queue switch, the cost readout and the
  * one Stop. StudioLiveBar is the same Stop as a small bar above every experience and app.
@@ -213,7 +215,7 @@ export function DrawingSessionView({ projection, edit, toggleEdit }: { projectio
         const recovery = n.handoff === 'checking' ? 'Checking the original operation; no replacement is started.' : checkable ? 'Check again to resolve the original operation; no replacement is started.' : 'An original-operation check is not available here. Open the Ask to review it; these words stay held.'
         const reason = held ? recovery : askOpen ? 'The Ask is still answering. This draft waits for a separate turn.' : ''
         return <div key={n.id} className="sl-next" data-studio-next="">
-          {!n.handoff && <div className="sl-hint">Next: a new Ask turn{thread ? `, paid from your monthly limit (this thread: ${usd(thread.spent_usd)} of ${usd(thread.budget_usd)})` : ', paid from your monthly limit'}. It starts when the current answer ends complete, or when you send it.</div>}
+          {!n.handoff && <div className="sl-hint">Next: a new Ask turn{thread ? `, paid from your monthly limit (this thread has spent ${usd(thread.spent_usd)})` : ', paid from your monthly limit'}. It starts when the current answer ends complete, or when you send it.</div>}
           {held && <div className="sl-hint" role="status">The Ask has not confirmed this handoff. Your words stay here. {recovery}</div>}
           {n.handoff === 'not-admitted' && <div className="sl-hint" role="status">The original handoff was not admitted. Your editable draft is kept; Send now is a new request you choose.</div>}
           {n.handoff === 'edited' && <div className="sl-hint" role="status">The original words were admitted. Your edited draft is kept; only you can send it as new work.</div>}

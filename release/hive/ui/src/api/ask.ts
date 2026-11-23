@@ -128,6 +128,11 @@ export interface AskBody {
    * only. At most 8 exchanges and 8 KB (host conductor.check_conversation).
    */
   conversation?: Exchange[]
+  /**
+   * The person said Go ahead after this answer stopped as expensive (Jon on #294: an outlier asks once): this turn never
+   * stops to ask. Only `true`; the host refuses anything else (400 invalid). Sent only from that offer, never kept.
+   */
+  go_ahead?: true
 }
 
 /** Host gateway r1b DONE_WORDS; closing never changes an existing operation's owner. */
@@ -152,6 +157,7 @@ export interface AskThread {
   /** the mind the person addressed, when they did */
   about?: AskWho | null
   swarm?: AskWho | null
+  /** always 0 now: an Ask thread holds no cap of its own (Jon on #294), so the page shows its spend only */
   budget_usd: number
   spent_usd: number
 }
@@ -165,7 +171,6 @@ export interface AskAccepted {
   thread: AskThread
   state: 'accepted' | 'thinking' | 'done' | 'refused' | 'browser'
   route?: 'browser_mind'
-  cap_usd?: number
   month_remaining_usd?: number | null
   reason?: RefusalReason | null
   text?: string
@@ -370,6 +375,12 @@ export type AskEvent =
   | (Frame<'thinking'> & { step?: string; truncated?: boolean })
   /** `delta: true`: a piece of streamed text, appended until a non-delta answer (the whole text) or `done` */
   | (Frame<'answer'> & { text: string; message_id?: string; delta?: true })
+  /**
+   * The turn's settled spend reached the person's threshold (Jon on #294: "this one looks expensive (about $X), go
+   * ahead?"): it waits for their answer (POST /api/ask/{op}/go-ahead) while this is its latest frame; a later thinking,
+   * act, answer or done frame means it moved on. A figure the page cannot read is null (the question still shows).
+   */
+  | (Frame<'go_ahead'> & { spent_usd: number | null; limit_usd: number | null })
   | (Frame<'proposal'> & { proposal: NavigateProposal | UiProposal | { id: string; kind: 'app_read' | 'layout'; digest: string } })
   | (Frame<'ui-change'> & { prefs_before?: unknown; prefs_after?: unknown; undo?: { history_id: string } })
   | (Frame<'action-needs-confirm'> & { proposal: AppActProposal })
@@ -388,8 +399,9 @@ export type AskEvent =
   | (Frame<'intent'> & { intent_id: string; state: IntentState; links_rev?: number; request_id?: string; dispatch_id?: string; reason?: string })
   /** a direct link of this turn to a request (Intents.link): a hint like an intent */
   | (Frame<'link'> & { request_id: string; links_rev: number })
-  /** research.deliver: the report back at its turn, after the turn's done; a personal turn's stored copy has no `research` */
-  | (Frame<'research'> & { intent_id?: string | null; request_id: string; state: ResearchState; research?: ResearchView })
+  /** research.deliver: the report back at its turn, after the turn's done; a personal turn's stored copy has no `research`.
+   *  reason, on a failed one: the cause its task was stopped with (hive/core/goals.py STOP_CAUSES), an enum, never words */
+  | (Frame<'research'> & { intent_id?: string | null; request_id: string; state: ResearchState; research?: ResearchView; reason?: string | null })
   /** a frame of a phase this page does not know (`sent_as`): it holds its seq and is never applied or shown */
   | (Frame<'unknown'> & { sent_as: string })
   | (Frame<'research'> & ResearchFrame)
@@ -402,10 +414,11 @@ export type AskEvent =
 
 export type MemoryOp = 'remember' | 'revise' | ''
 
-export type ResearchHold = 'spend_rate' | 'spending_limit' | 'asleep' | 'worker_error'
+export type ResearchHold = 'spending_limit' | 'asleep' | 'stopped' | 'worker_error'
 /** research.py _hold: a researcher held, with why and until when, or back at work; a report comes in the deliver frame */
 type ResearchFrame =
-  | { request_id: string; state: 'held'; reason: ResearchHold; until?: string | null }
+  /** limit: the limit that held it, kind_period such as hive_day, or unseen for one its asker may not see; an enum */
+  | { request_id: string; state: 'held'; reason: ResearchHold; until?: string | null; limit?: string | null }
   | { request_id: string; state: 'resumed' }
 
 /** A refusal's reason as the host keeps it: an enum, never words (ask_intents REASON). */
@@ -469,12 +482,14 @@ export interface AskSwarmChoice {
   orchestrator?: { id: string; name: string; status?: string } | null
 }
 
-/** GET /api/me/ask: the default swarm (its coordinator answers), a new thread's limit, and the swarms one may pick. */
+/** GET /api/me/ask: the default swarm (its coordinator answers), the expensive-answer question, and the swarms one may pick. */
 export interface AskSettings {
   swarm_id: string | null
   swarm?: AskSwarmChoice | null
-  thread_budget_usd: number
-  max_thread_budget_usd?: number
+  /** an answer that looks expensive stops once to ask (on unless the person turned it off). Read with readExpensive. */
+  ask_when_expensive?: boolean
+  /** the person's threshold now, by the hive's HIVE_ASK_EXPENSIVE_* settings (hive/API.md, "The threshold") */
+  expensive_usd?: number
   eligible?: AskSwarmChoice[]
   /** The host's own switches (core/ask.py capabilities(), on GET and PUT /api/me/ask). Absent on an older host. */
   capabilities?: AskCapabilities
@@ -547,11 +562,28 @@ export function readActingAs(v: unknown): ActingAs | null {
   return id(r.mind_id) && plainName(r.name) ? { mind_id: r.mind_id, name: r.name } : null
 }
 
-/** PUT /api/me/ask. */
+/** PUT /api/me/ask: any other key is 400 invalid (thread_budget_usd retired with the per-thread cap). */
 export interface AskSettingsPut {
   swarm_id?: string | null
   mind_id?: string
-  thread_budget_usd?: number
+  ask_when_expensive?: boolean
+}
+
+/** The expensive-answer question as the host says it: whether it is on, and the person's threshold now. */
+export interface AskExpensive {
+  on: boolean
+  usd: number
+}
+/** The settings' question, read strictly: a boolean switch and a finite threshold, or null (an older host, or malformed). */
+export function readExpensive(st: AskSettings | null | undefined): AskExpensive | null {
+  const usd = st?.expensive_usd
+  return typeof st?.ask_when_expensive === 'boolean' && typeof usd === 'number' && Number.isFinite(usd) && usd >= 0 ? { on: st.ask_when_expensive, usd } : null
+}
+
+/** POST /api/ask/{operation_id}/go-ahead {go}: the turn's asker answered its question. */
+export interface AskGoAheadResult {
+  ok: true
+  go: boolean
 }
 
 /** A refusal with the host's details (mind_asleep carries `mind`, ask_busy the open `operation_id`). */
@@ -573,11 +605,11 @@ export const PRESENCE_CAPTION_MAX = 120
 function checkedResearch(frame: Record<string, unknown>): boolean {
   if (!id(frame.request_id)) return false
   if (frame.state === 'held') {
-    if (frame.reason === 'spend_rate') {
-      return str(frame.until, 40) && Number.isFinite(Date.parse(frame.until))
+    if (frame.reason === 'spending_limit') {
+      return frame.until == null && (frame.limit == null || (typeof frame.limit === 'string' && INTENT_REASON.test(frame.limit)))
     }
-    return (frame.reason === 'spending_limit' || frame.reason === 'asleep' || frame.reason === 'worker_error') &&
-      frame.until == null
+    return (frame.reason === 'asleep' || frame.reason === 'stopped' ||
+      frame.reason === 'worker_error') && frame.until == null && frame.limit == null
   }
   if (frame.state === 'failed' || frame.state === 'cancelled' || frame.state === 'resumed') return true
   if (frame.state !== 'done') return false
@@ -629,6 +661,10 @@ export function checkAskEvent(e: unknown): AskEvent | null {
       return (f.step === undefined || str(f.step, 200)) && (f.truncated === undefined || typeof f.truncated === 'boolean') ? (f as unknown as AskEvent) : null
     case 'answer':
       return str(f.text, 8000) && (f.delta === undefined || f.delta === true) ? (f as unknown as AskEvent) : null
+    case 'go_ahead':
+      // kept whatever its figures say, as an unreadable act is: the turn waits on the person, so dropping the frame
+      // would leave them no question to answer. A figure that is not a finite non-negative number is null.
+      return { ...f, spent_usd: usd(f.spent_usd), limit_usd: usd(f.limit_usd) } as unknown as AskEvent
     case 'act': {
       // an act without a readable id cannot even be answered: dropped. Otherwise a malformed act is kept as unreadable,
       // never applied, and answered ok:false, so the turn's seq stays whole and the host does not wait for it.
@@ -653,6 +689,8 @@ export function checkAskEvent(e: unknown): AskEvent | null {
       if (f.state === 'held' || f.state === 'resumed') return checkedResearch(f) ? (f as unknown as AskEvent) : null
       // the report back at its turn (research.py deliver)
       if (!id(f.request_id) || !RESEARCH_STATES.includes(f.state as ResearchState) || !optId(f.intent_id)) return null
+      // a failed one's cause is an enum (goals.py STOP_CAUSES), never words: a frame with words for it is not the host's
+      if (f.state === 'failed' && f.reason != null && !(typeof f.reason === 'string' && INTENT_REASON.test(f.reason))) return null
       // a report this page cannot read is left out, never the frame: the row reads the report again by its id
       const { research, ...rest } = f
       const view = readResearchView(research)
@@ -720,6 +758,8 @@ export function checkAskEvent(e: unknown): AskEvent | null {
   }
 }
 
+/** A money figure from the host: a finite non-negative number, else null. */
+const usd = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null)
 /** Plain words: a string within the cap and with no angle brackets (rendered as text anyway). */
 const plain = (v: unknown, max: number): v is string => typeof v === 'string' && v.length <= max && !/[<>]/.test(v)
 const only = (o: Record<string, unknown>, keys: string[]) => Object.keys(o).every((k) => keys.includes(k))

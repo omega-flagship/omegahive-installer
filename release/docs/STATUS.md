@@ -62,7 +62,7 @@ The two privacy gaps noted here are fixed by `port/idle-minds-r2.5` (see above).
 - **The Ask answers as you.** The personal mind's conversation words are never stored on the hive and are readable only by that person, admins included. It can still hand work to swarms.
 - **Mind page (`#/me/mind`).** View, edit and forget the browser memory; download and restore it; link a folder to it; swarm conversations are collected into the browser; "Use my swarm talk in answers" is off by default.
 - **The Ask answers through a swarm's own mind** when the swarm has no coordinator.
-- **Spend stop.** "New thread" and "Raise the limit for new threads" are offered in place.
+- **Ask money.** No Ask turn or thread has a spending cap of its own. An answer that looks expensive asks once, "This one looks expensive (about $X so far). Go ahead?", and an expensive stop offers Go ahead in place. A person turns the question off on their You page.
 - **Change who answers**, plus a "Recent conversations" page.
 
 ### Hive and apps

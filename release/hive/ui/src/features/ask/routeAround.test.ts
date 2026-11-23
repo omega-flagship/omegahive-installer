@@ -1,3 +1,4 @@
+// Purpose: prove the Ask never targets a swarm it cannot use, and routes around it to one that can answer.
 import { describe, expect, it } from 'vitest'
 import type { AskContext, AskSettings, MyMind } from '../../api/ask'
 import { answerMindFor, cannotAnswer, routeAround, threadInfo } from './answerer'
@@ -10,7 +11,7 @@ import { answerMindFor, cannotAnswer, routeAround, threadInfo } from './answerer
 const names: Record<string, string> = { s_evo: 'Evolve Omega', s_lyra: 'Lyra', s_kelp: 'Kelp Commons' }
 const name = (id: string) => (names[id] ? { name: names[id], ...(id === 's_evo' ? { coordinator_id: null } : { coordinator_id: 'a_x' }) } : undefined)
 const ctx = (swarm_id?: string, extra: Partial<AskContext> = {}): AskContext => ({ route: '#/swarms/' + (swarm_id ?? ''), experience: 'classic', ...(swarm_id ? { swarm_id } : {}), ...extra }) as AskContext
-const settings = (swarm_id: string | null, ...ids: string[]): AskSettings => ({ swarm_id, thread_budget_usd: 1, eligible: ids.map((id) => ({ id, name: names[id] })) })
+const settings = (swarm_id: string | null, ...ids: string[]): AskSettings => ({ swarm_id, eligible: ids.map((id) => ({ id, name: names[id] })) })
 const me: MyMind = { id: 'a_me', name: 'Ada', swarm_id: 's_me' }
 
 describe('routeAround: a page swarm the Ask cannot use is never the target', () => {
@@ -46,7 +47,7 @@ describe('routeAround: a page swarm the Ask cannot use is never the target', () 
     expect(routeAround(priv, settings(null, 's_lyra'), me, name).context).toBe(priv)
     const c = ctx('s_evo')
     expect(routeAround(c, null, me, name).context).toBe(c)
-    expect(routeAround(c, { swarm_id: null, thread_budget_usd: 1 }, me, name).context).toBe(c)
+    expect(routeAround(c, { swarm_id: null }, me, name).context).toBe(c)
   })
 })
 
@@ -82,7 +83,7 @@ describe('threadInfo: the audit sentence only where it is true', () => {
  * with "has no coordinator to answer", and nothing pointed an admin at the fix. INVENTED ids and names.
  */
 describe('ask-fix r2: the words, the admin’s fix, and the mind it would answer through', () => {
-  const settingsNone: AskSettings = { swarm_id: null, thread_budget_usd: 1, eligible: [{ id: 's_lyra', name: 'Lyra' }, { id: 's_kelp', name: 'Kelp Commons' }] }
+  const settingsNone: AskSettings = { swarm_id: null, eligible: [{ id: 's_lyra', name: 'Lyra' }, { id: 's_kelp', name: 'Kelp Commons' }] }
   const design = (coordinator?: string | null) => (id: string) => (id === 's_des' ? { name: 'OmegaDesign', ...(coordinator === undefined ? {} : { coordinator_id: coordinator }) } : undefined)
   const page = ctx('s_des')
   it('"has no coordinator" only when the coordinator is known to be empty; otherwise "can’t answer here"', () => {
@@ -119,7 +120,7 @@ describe('ask-fix r2: the words, the admin’s fix, and the mind it would answer
 })
 
 describe('ask-fix r2: answering through a mind of a swarm with no coordinator', () => {
-  const settingsNone: AskSettings = { swarm_id: null, thread_budget_usd: 1, eligible: [{ id: 's_lyra', name: 'Lyra' }] }
+  const settingsNone: AskSettings = { swarm_id: null, eligible: [{ id: 's_lyra', name: 'Lyra' }] }
   const minds = [{ id: 'a_luke', name: 'Luke core mind', swarm_id: 's_des', status: 'awake' }, { id: 'a_deck', name: 'Design deck maker (native)', swarm_id: 's_des', status: 'asleep' }]
   const app = { id: 'omegadesign', name: 'OmegaDesign' }
   const page = ctx('s_des', { program: 'omegadesign' })

@@ -1,3 +1,4 @@
+// Purpose: prove a live Studio session's bindings end to end through its store with a fake host.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -67,7 +68,7 @@ let submitFails: unknown[]
 const fsRead = ((await import(/* @vite-ignore */ 'node:' + 'fs')) as unknown as { readFileSync(p: string, e: 'utf8'): string }).readFileSync
 const store = new Map<string, string>()
 vi.stubGlobal('sessionStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) })
-const offer = (on: boolean) => useAskStore.setState({ settings: { swarm_id: null, thread_budget_usd: 5, capabilities: { conductor: false, memory: false, studio_sessions: on, studio_directions: on } } } as never)
+const offer = (on: boolean) => useAskStore.setState({ settings: { swarm_id: null, capabilities: { conductor: false, memory: false, studio_sessions: on, studio_directions: on } } } as never)
 function fakeClient() {
   return {
     mode: 'live',
@@ -1729,7 +1730,7 @@ describe('r1.10: the R7 setup card (POST /api/studio/setup)', () => {
 
 describe('r1.10 on R7.3 (a80972e1): the live capability shape, own key on setup-again, the way into the Ask', () => {
   /** GET /api/me/ask as R7.3's Ask.capabilities() answers it (both Studio flags together, or both absent) */
-  const r73 = (studio: boolean) => ({ swarm_id: null, thread_budget_usd: 5, capabilities: { conductor: true, memory: true, ...(studio ? { studio_sessions: true, studio_directions: true } : {}) } })
+  const r73 = (studio: boolean) => ({ swarm_id: null, capabilities: { conductor: true, memory: true, ...(studio ? { studio_sessions: true, studio_directions: true } : {}) } })
   it('studio_sessions + studio_directions as R7.3 publishes them: live Studio and steering are offered; absent: neither', async () => {
     const { studioCapable } = await import('./api')
     const c = fakeClient()
@@ -1743,7 +1744,7 @@ describe('r1.10 on R7.3 (a80972e1): the live capability shape, own key on setup-
     expect(studioCapable(c as never, { capabilities: { conductor: true, memory: true, studio_sessions: 'true' } } as never)).toBe(false)
   })
   it('studio_sessions without studio_directions (an older host): drawing yes, steering held with the words kept', async () => {
-    useAskStore.setState({ settings: { swarm_id: null, thread_budget_usd: 5, capabilities: { conductor: true, memory: true, studio_sessions: true } } } as never)
+    useAskStore.setState({ settings: { swarm_id: null, capabilities: { conductor: true, memory: true, studio_sessions: true } } } as never)
     await started()
     const { steerSession } = await import('./store')
     expect(await steerSession('bigger')).toBe(false)
@@ -2378,7 +2379,7 @@ describe('R5 pin: directions need their own host capability (host R3 has no O1 i
   it('without studio_directions a steer is never sent (it could buy a fresh paid turn); the words are kept', async () => {
     const { steerSession } = await import('./store')
     await started()
-    useAskStore.setState({ settings: { swarm_id: null, thread_budget_usd: 5, capabilities: { conductor: false, memory: false, studio_sessions: true, studio_directions: false } } } as never)
+    useAskStore.setState({ settings: { swarm_id: null, capabilities: { conductor: false, memory: false, studio_sessions: true, studio_directions: false } } } as never)
     expect(await steerSession('bigger headline', 'typed', null)).toBe(false)
     expect(log.filter((x) => x.startsWith('host:steer'))).toEqual([])
     expect(useStudioLive.getState().held.map((h) => h.text)).toEqual(['bigger headline'])

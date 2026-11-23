@@ -20,8 +20,9 @@ mind or what it does: editing it, starting, stopping, sleeping, waking or deleti
 changing who sees it, moving it to another hive, scheduling its wakeups and answering its approvals. Sight never grants
 it: a person a mind is shared with, or anyone when it is public, sees it and talks to it, and nothing more. A personal
 mind is its person's (personal_of, and personal.py makes them its owner too), and the hive's owner acts as owner only
-while an admin (ownhive.py), so both are covered. Narrower rules stay on top of it: some settings are an admin's alone (driver, tools, the Coffee Room,
-message rates, roles that carry approval rules), the hive's money is its owner's, a Remind on a personal mind is its
+while an admin (ownhive.py), so both are covered. Narrower rules stay on top of it: some settings are an admin's alone (driver, tools,
+message rates, roles that carry approval rules), a mind's place in the Coffee Room is its owner's alone (rooms.py
+set_coffee), the hive's money is its owner's, a Remind on a personal mind is its
 person's, and a mind set to owner_only approvals has its approvals answered by its owner alone. A person who sees a
 mind but may not act on it gets 403; one who does not see it gets 'not found', as above.
 
@@ -268,7 +269,7 @@ EVENT_RULES = {
         "goal.updated", "request.updated", "message", "room", "program.action", "program.attachment",
         "program.activation", "connection.updated", "wakeup.updated", "wakeup.fired", "belief.updated",
         "belief.published", "artifact.revision", "usage", "budget.refused", "budget.overrun", "approval.created",
-        "approval.updated", "mind.updated", "budget.slowed",
+        "approval.updated", "mind.updated",
         # media r2.2: a billed-but-refused image, and a mind's media breaker opening or being reset, reach whoever can
         # see that mind, like budget.overrun (omega-flagship/omegahive#36)
         "media.billed_refused", "media.breaker_tripped", "media.breaker_reset",
@@ -307,6 +308,7 @@ EVENT_RULES = {
     "notice": "person",
     # the stage (stage.py): a mind's Show, Recall or Compare reaches the one person its turn answers, the same way
     "stage.said": "person",
+    "spend.alert": "person",
     # a mind's offer to build in Create (create_offers.py): {principal, offer_id, agent_id, state}, to that person only
     "create.offer": "person",
     # a mind's draft report and its removal (feedback_drafts.py) go to the draft's person only, the same way
@@ -320,8 +322,11 @@ EVENT_RULES = {
     # row) follows its plan's person. Admins: the admin bypass.
     **{k: "code_run" for k in ("code.controller", "code.controller.status", "code.controller.ready",
                                "code.controller.applied")},
-    # repo maps 1.2 (assets.py): what was stored or deleted, never its bytes; as the asset is: whoever sees its owner swarm
-    # (and the mind that stored it, when a mind did); an asset with no owner swarm is operator business
+    # repo maps 1.2 (assets.py): what was stored or deleted, never its bytes; as the asset is: whoever sees its owner
+    # swarm
+    # (and the mind that stored it, when a mind did); an asset with no owner swarm is operator business. asset.deleted
+    # (assets.py, Files' delete) carries the same sha256, owner_swarm and by, so the same rule judges it. Only an
+    # admin deletes (DELETE /api/assets/{sha}), so asset.deleted's `by` names a person and its swarm alone decides.
     "asset.stored": "asset", "asset.deleted": "asset",
     # repo maps (repomap_sources.py, repomap_live.py): as RepoMaps reads the map itself, judged before the admin bypass:
     # an owner map reaches the hive's owner and the principals they granted, never another admin (Atlas/Truth code maps)

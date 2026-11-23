@@ -1,3 +1,4 @@
+// Purpose: prove the one decision of who answers that the Ask's chip, paid row and send share.
 import { describe, expect, it } from 'vitest'
 import type { AskContext, AskSettings, MyMind } from '../../api/ask'
 import { chipWords, planAsk, planName, type Carry, type PlanInputs } from './answerer'
@@ -11,7 +12,7 @@ import { chipWords, planAsk, planName, type Carry, type PlanInputs } from './ans
 const personal: MyMind = { id: 'a_fixture_own', name: 'Ember', swarm_id: 's_fixture_own', status: 'awake' } as MyMind
 const oldThread = { mind: { id: 'a_fixture_studio', name: 'Studio Maker' } }
 const carry: Carry = { mind: 'a_fixture_studio', swarm: 's_fixture_studio' }
-const settings: AskSettings = { swarm_id: null, thread_budget_usd: 0.25, eligible: [{ id: 's_fixture_own', name: 'Your mind' }] }
+const settings: AskSettings = { swarm_id: null, eligible: [{ id: 's_fixture_own', name: 'Your mind' }] }
 const swarms: Record<string, { name: string; coordinator_id?: string | null }> = { s_fixture_studio: { name: 'Studio', coordinator_id: null }, s_fixture_own: { name: 'Your mind', coordinator_id: 'a_fixture_own' } }
 const agents = { a_fixture_studio: { id: 'a_fixture_studio', name: 'Studio Maker', swarm_id: 's_fixture_studio' }, a_fixture_own: { id: 'a_fixture_own', name: 'Ember', swarm_id: 's_fixture_own' } }
 const plain: AskContext = { route: 'hive', experience: 'classic' }

@@ -79,7 +79,8 @@ import shutil
 from .create_plan_engine import PLAN_RULES, TERMINAL, goal_creator
 from .db import new_id, now
 from .goals import UNANSWERED, stored_proposal
-from .ui_parts import ascii_lower, frame_script, frame_tags
+from .ui_parts import (FRAME_CHECK_RULE, FRAME_LINK, FRAME_PLAN_RULE, FRAME_SCRIPT, ascii_lower, frame_csp,
+                       frame_script, frame_tags)
 
 # A later round of a made app's plan changes an app the person already uses. The host gives this rule to the round's
 # planner as its contract and to each of the round's builders in its trusted instructions, while the change's words,
@@ -273,8 +274,7 @@ def frame_document(files):
     if not isinstance(html0, str) or not isinstance(files.get("style.css"), str) or not isinstance(files.get("app.js"), str):
         raise ValueError("Unexpected app interface format")
     nonce = "00000000-0000-0000-0000-000000000000"
-    csp = (f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; style-src-attr 'unsafe-inline'; "
-           "connect-src 'none'; img-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'")
+    csp = frame_csp(nonce)
     css = _inline_assets(files["style.css"], files, True)
     html = _inline_assets(html0, files, False)          # other files' data: URIs change no tag boundary
     link, _module = frame_tags(html)
@@ -312,8 +312,7 @@ def page_problem(files):
     except ValueError:
         link, _module = frame_tags(files["index.html"])
         script, _kind = frame_script(files["index.html"])     # a module or a classic script both count, as in the frame
-        lacks = [tag for tag, found in (('<link rel="stylesheet" href="./style.css">', link),
-                                        ('<script type="module" src="./app.js"></script>', script)) if found is None]
+        lacks = [tag for tag, found in ((FRAME_LINK, link), (FRAME_SCRIPT, script)) if found is None]
         return ("the app frame can't show this page: index.html must load " + " and ".join(lacks or ["its style and script"])
                 + " (Unexpected app interface format)")
 
@@ -480,7 +479,8 @@ class Ports:
                         "every builder is given this probe and builds to its selectors. Work every expected number "
                         "out from the example's inputs. A case fails when an assertion doesn't hold, a step can't be "
                         "taken or the page throws, and its failure goes to the builders of the owned files it names "
-                        "in files (all the page's files when it names none). It must FAIL on the scaffold."}
+                        "in files (all the page's files when it names none). It must FAIL on the scaffold. "
+                        + FRAME_CHECK_RULE}
         if space.get("app_plan"):
             packet["change"] = run["sentence"]
             packet["contract"] += (" The scaffold is the app as it runs now: write cases for what the change asks, "
@@ -727,7 +727,10 @@ DESIGN_RULES = (f"Write the look itself as text: its layout, colours, type, each
                 f"on screen. Not a file, link or name: the hive keeps this text and gives every builder its first "
                 f"{DESIGN_CHARS:,} characters with their piece.")
 ANSWER_SHAPES = {
-    "plan": PLAN_SHAPE + " The plan check refuses a plan unless " + "; ".join(PLAN_RULES.values()) + ".",
+    # the frame's rule for a plan beside the plan's: a page's pieces and its acceptance are planned for the page the
+    # frame runs
+    "plan": PLAN_SHAPE + " The plan check refuses a plan unless " + "; ".join(PLAN_RULES.values()) + ". "
+            + FRAME_PLAN_RULE,
     "design": '{"design": "the look, as text"}',
     # the goal text's shape is what a test author answers with, whatever its contract says, so it names the probe: with
     # the Python file here a real author on 19 November wrote three Python checks before its fourth answer, a probe
@@ -737,9 +740,10 @@ ANSWER_SHAPES = {
 }
 PURPOSE = {"plan": "plan", "design": "design", "author-tests": "test-author", "review": "review"}
 FILE_ANSWERS = frozenset({"author-tests"})   # the steps whose answer holds files, which may come one command each
-# The most of a goal's detail every mind reads in one result: the Iter template's hive_goal_get DETAIL_CHARS (3500),
-# the smaller of it and the hive skill's GOAL_DETAIL_CHARS (4500); test_create_step_rules_in_goal rebuilds it from both.
-TASK_READ_CHARS = 3500
+# The most of a goal's detail every mind reads in one result: the Iter template's hive_goal_get DETAIL_CHARS (4000, all
+# a goal keeps: goals.MAX_DETAIL_CHARS), the smaller of it and the hive skill's GOAL_DETAIL_CHARS (4500);
+# test_create_step_rules_in_goal rebuilds it from both.
+TASK_READ_CHARS = 4000
 
 
 def _quote(sentence, room, most=200):

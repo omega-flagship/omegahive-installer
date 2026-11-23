@@ -304,6 +304,19 @@ def test_legacy_return_requires_departure_evidence_even_when_its_row_is_deleted(
         assert not (hive.settings.data_dir / "agents" / target).exists()
 
 
+@pytest.mark.parametrize("importer,kept", (("user:operator", True), ("user:u_someone_else", False)))
+def test_a_minds_own_coding_comes_with_it_only_when_its_owner_brings_it(client, home, importer, kept):
+    """A mind's own coding is its owner's switch (Jon on omega-flagship/omegahive#395): a bundle brought in by anyone
+    else lands with it off, the default."""
+    _, mind = mind_in_swarm(client)
+    hive = client.app.state.hive
+    hive.update_agent(mind["id"], {"options": {"own_coding": True}}, by=mind["owner"])
+    bundle = client.post(f"/api/agents/{mind['id']}/export").content
+    sw = home.post("/api/swarms", json={"name": "Home"}).json()
+    arrived = home.app.state.hive.placement.import_(bundle, sw["id"], owner=mind["owner"], by=importer)
+    assert (arrived["agent"]["options"].get("own_coding") is True) is kept
+
+
 def test_a_bundle_cannot_grant_authority_or_touch_other_minds(client, home):
     """Security fixes 2026-10-04: bundle rules are this mind's own only; rows are forced to this mind; memory is atoms only."""
     _, mind = mind_in_swarm(client)

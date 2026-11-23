@@ -17,6 +17,8 @@ function hash(s: string): number {
 }
 
 type SkillSeed = [id: string, module: string | null, status: InventorySkill['status'], decision: 'allow' | 'ask' | 'deny', help: string | null, route?: string]
+/** What the sim's left-out module needs, as the hive words it (module_requires.need). */
+const WORKSPACE_NEEDS = [{ requires: 'service:omegacode', needs: 'the OmegaCode client' }]
 const SKILLS: SkillSeed[] = [
   ['send', null, 'callable', 'allow', 'Send a message to a person or another mind'],
   ['query', null, 'callable', 'allow', 'Ask the swarm commons a question'],
@@ -32,6 +34,7 @@ const SKILLS: SkillSeed[] = [
   ['nal-step', 'nal', 'callable', 'allow', 'One step of NAL inference'],
   ['nal-revise', 'nal', 'imported', 'allow', 'Revise two truth values'],
   ['pln-step', 'pln', 'configured', 'allow', 'One step of PLN inference'],
+  ['code-open', 'code_workspace', 'left-out', 'allow', 'Open an isolated workspace of a repository for a task it holds'],
   ['image-gen', 'media', 'unknown', 'ask', null, 'media'],
   ['web-fetch', null, 'callable', 'deny', 'Fetch a URL'],
 ]
@@ -146,6 +149,7 @@ export class SimMinds {
       help, topic: null, effects: help ? (id.startsWith('hive-') || id === 'send' ? ['message'] : id === 'shell' ? ['process'] : null) : null,
       risk: id === 'shell' ? 'high' : id === 'web-fetch' || id === 'search' ? 'medium' : null,
       metadata: help ? 'verified-source' : 'unverified', status: attested ? status : 'unknown',
+      left_out: attested && status === 'left-out' ? WORKSPACE_NEEDS : null,
       policy: { decision, reason: decision === 'allow' ? 'role default' : decision === 'ask' ? 'asks a person each time' : 'hive rule: no direct fetches', snapshot_at: at },
       route: route ? { kind: route, note: 'the mind calls the vendor directly; no host metering route for media in this build' } : { kind: 'none-declared' },
     }))
@@ -159,6 +163,7 @@ export class SimMinds {
       modules: outside ? [] : [
         { id: 'nal', version: '0.4.2', source_digest: 'sha256:51c0…', configured: true, loaded: true, source_verified: true },
         { id: 'pln', version: '0.2.0', source_digest: 'sha256:a9e3…', configured: true, loaded: false, source_verified: false },
+        { id: 'code_workspace', version: '0.3.0', source_digest: 'sha256:7c2b…', configured: true, loaded: false, source_verified: true, left_out: WORKSPACE_NEEDS },
         { id: 'media', version: null, source_digest: null, configured: false, loaded: false, source_verified: false },
       ],
       core: outside ? null : { source_digest: 'sha256:0d7e…', source_verified: true },

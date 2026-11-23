@@ -8,6 +8,7 @@
 #   omegahive.sh link       the same start, then print its one-time sign-in link for the Omega Hive app to open
 #   omegahive.sh start      start the hive if it is not running
 #   omegahive.sh stop       stop it until the next start or open, logins included
+#   omegahive.sh safe-restart  replace this hive after its asleep-or-owner-approved check
 #   omegahive.sh status     what the running hive reports on its control socket
 #   omegahive.sh login      what its login item runs at each login: start it unless its owner stopped it or turned
 #                           starting at login off
@@ -104,18 +105,17 @@ running() { [ -n "$(control hello port)" ]; }
 # which macOS's bash 3.2 can misparse.
 # Studio, the app the hive shows as Create, is mounted and pinned the same way when setup-studio.sh put it in apps/
 # (its pin binds the page lock its page is checked against), may run its actions in the sandbox, and turns on Studio's
-# live sessions unless the owner's hive.env says otherwise. A Mac hive keeps them off by itself until its restart path
-# is reviewed (hive/core/studio_sessions.py names what is missing in the hive's log); Create's Make, Code and Flow work
-# either way.
+# live sessions unless the owner's hive.env says otherwise. A Mac names the delivered restart entry point; the hive
+# checks its reviewed digest before enabling sessions. An owner's explicit restart path is kept.
 # Make, on in every hive (config.py: Jon on #395), needs three things here whatever else is installed: the python runtime
 # its acceptance check runs on, that check in the sandbox list (a built-in app, so it needs no pin), and Create's apps
 # folder, <data>/create/apps, on the plugin path, where a plan's deploy puts what the person made.
 app_settings() {
   . "$OH/app/install/macos/pins.sh"
   "$OH/venv/bin/python" -I - "$OH" "$TOOLCHAIN" "$OMEGA_TOOLS_DIGEST" "$OMEGA_TOOLS_LOCK_SHA256" \
-    "$OMEGADESIGN_DIGEST" "$OMEGADESIGN_LOCK_SHA256" <<'PY'
+    "$OMEGADESIGN_DIGEST" "$OMEGADESIGN_LOCK_SHA256" "$OS" <<'PY'
 import json, os, re, shlex, subprocess, sys
-oh, toolchain, digest, lock, studio_digest, studio_lock = sys.argv[1:7]
+oh, toolchain, digest, lock, studio_digest, studio_lock, host_os = sys.argv[1:8]
 runtimes = {"node": {"exe": f"{toolchain}/bin/node", "reads": [f"{oh}/package.json"]}}
 # Create's acceptance check (hive/plugins/create_acceptance_check) runs a plan's checks on this folder's Python, and so do
 # Code's project tests where the Mac's setup turned them on (HIVE_CODE_SANDBOX_PROJECT_TESTS)
@@ -161,6 +161,8 @@ if pinned:
         out["HIVE_APP_PINS"] = json.dumps(pins)
 if "omegadesign" in pinned and not os.environ.get("HIVE_STUDIO_SESSIONS", "").strip():
     out["HIVE_STUDIO_SESSIONS"] = "on"
+if host_os == "Darwin" and not os.environ.get("HIVE_SAFE_RESTART_PATH"):
+    out["HIVE_SAFE_RESTART_PATH"] = os.path.join(oh, "app", "install", "macos", "safe-restart.py")
 out["HIVE_SANDBOX_RUNTIMES"] = json.dumps(runtimes)
 for key, value in out.items():
     print(f"export {key}={shlex.quote(value)}")
@@ -783,11 +785,12 @@ case "${1:-open}" in
   link) app_link ;;
   create) create ;;
   studio) studio ;;
+  safe-restart) "$OH/venv/bin/python" -I "$OH/app/install/macos/safe-restart.py" "$OH" ;;
   stop) stop ;;
   status) status ;;
   login) login_start ;;
   autostart) autostart "${2:-}" ;;
   register) register ;;
   uninstall) uninstall ;;
-  *) fail "usage: omegahive.sh [open|start|stop|status|login|autostart|register|uninstall|create|studio|run|serve|signin-url]" ;;
+  *) fail "usage: omegahive.sh [open|start|safe-restart|stop|status|login|autostart|register|uninstall|create|studio|run|serve|signin-url]" ;;
 esac

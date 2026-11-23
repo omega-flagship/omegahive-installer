@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { signinForm, signinWays, type SigninWays } from './signinForm'
+import { signinForm, signinWays, signinWho, type SigninWays } from './signinForm'
 
 /** The sign-in form's two ways in: a member reads only their own, the operator's is one small link away. */
 
@@ -76,5 +76,46 @@ describe('the ways in a hive’s sign-in methods give', () => {
       members: true,
       operator: true,
     })
+  })
+})
+
+/** acceptance-tests #15: the card says who Google lets in, and how anyone else gets an invitation. */
+describe('who may sign in (signinWho)', () => {
+  const sso = (over: { domains?: string[]; open?: boolean } = {}) => ({ enabled: true, login_url: GOOGLE, ...over })
+  const ASK = 'Anyone else needs an invitation: ask one of this hive’s admins to invite your email.'
+
+  it('one listed domain: names it, then says how anyone else gets in', () => {
+    expect(signinWho(sso({ domains: ['singularitynet.io'], open: false }))).toEqual({
+      line: `Anyone with a singularitynet.io Google account can sign in. ${ASK}`,
+      inviteOnly: false,
+    })
+  })
+
+  it('several domains: names each', () => {
+    expect(signinWho(sso({ domains: ['a.io', 'b.org', 'c.net'], open: false }))?.line).toBe(
+      `Anyone with a Google account at a.io, b.org or c.net can sign in. ${ASK}`,
+    )
+    expect(signinWho(sso({ domains: ['a.io', 'b.org'], open: false }))?.line).toMatch(/^Anyone with a Google account at a\.io or b\.org can/)
+  })
+
+  it('a public hive: any Google account, no invitation needed', () => {
+    expect(signinWho(sso({ domains: ['singularitynet.io'], open: true }))).toEqual({
+      line: 'Any Google account can sign in.',
+      inviteOnly: false,
+    })
+  })
+
+  it('no domains and not public: invite only, and whom to ask', () => {
+    expect(signinWho(sso({ domains: [], open: false }))).toEqual({
+      line: 'This hive is invite only: ask one of its admins to invite your email.',
+      inviteOnly: true,
+    })
+  })
+
+  it('an older hive that does not say, or no Google: nothing, the card stays as it was', () => {
+    expect(signinWho(sso())).toBeNull()
+    expect(signinWho(sso({ open: false }))).toBeNull()
+    expect(signinWho({ enabled: false, login_url: null, domains: ['a.io'], open: true })).toBeNull()
+    expect(signinWho({ enabled: true, login_url: null, domains: ['a.io'], open: false })).toBeNull()
   })
 })

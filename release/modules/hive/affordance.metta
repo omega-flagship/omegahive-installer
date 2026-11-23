@@ -48,9 +48,9 @@
 (SkillTopic "hive-create" "code")
 (SkillTopic "hive-create" "app")
 (SkillTopic "hive-create" "software")
-(PreferredWhen "hive-create" "build-or-change-software" 0.95 "the one way to build software here: Create's code minds build it once your person starts it")
+(PreferredWhen "hive-create" "build-or-change-software" 0.95 "the way to build software here: Create's code minds build it once your person starts it")
 (Effect "hive-create" "create-offered-to-person")
-(SkillCardLine "hive-create" "hive-create <what to build> is the one way to build software here (an app, page, game, tool, script or any change to code): say what to build in the asker's words and the hive offers it to your person in Create, whose code minds build it under its safeguards; never write the code yourself.")
+(SkillCardLine "hive-create" "hive-create <what to build> is the way to build software here (an app, page, game, tool, script or any change to code): say what to build in the asker's words and the hive offers it to your person in Create, whose code minds build it under its safeguards; code it yourself only if your owner switched your own coding on.")
 (SkillTopic "hive-create" "game")
 (SkillTopic "hive-create" "website")
 

@@ -1,6 +1,8 @@
 # Purpose: the personal-mind gateway: a person's own mind's model calls in their turn, admitted, held against their
 # limits and settled by the host.
-"""The personal-mind gateway, round r1c (PLATFORM_PERSONAL_MIND_GATEWAY_R1_PLAN §2.1, §2.2, r1.1 §A, §J, §K).
+"""Purpose: admit and settle browser personal-mind calls with their own authenticated, idempotent gateway.
+
+The personal-mind gateway, round r1c (PLATFORM_PERSONAL_MIND_GATEWAY_R1_PLAN §2.1, §2.2, r1.1 §A, §J, §K).
 
 Off unless HIVE_MIND_GATEWAY=1: with it unset both routes answer exactly as an unknown path does.
 
@@ -27,9 +29,10 @@ MindTokens.resolve (used only by the gateway; on every call, and again at the se
 So sign-out (the session row is deleted), disabling the person and deleting the mind revoke it with no hooks.
 
 The gateway (POST /api/me/mind/llm/v1/chat/completions): see MindGateway.chat. One browser turn's calls, billed to
-its person under the chat route's payer and key rules, reserved under the person's monthly total (turn_bound) plus
-the turn's and the thread's own caps, and sent only through the shared send gate (gated_call.py) with the whole
-resolution re-checked there.
+its person under the chat route's payer and key rules, reserved under the person's monthly total (turn_bound) with the
+turn and its thread recorded as labels that cap nothing (omegahive#294 item 2), stopped once the turn's spend reaches
+its person's expensive_usd with no go-ahead yet (as the conductor's unanswered question stops), and sent only through
+the shared send gate (gated_call.py) with the whole resolution re-checked there.
 """
 
 from __future__ import annotations
@@ -56,6 +59,7 @@ from .hive import HiveError, token_hash
 from .mind_idempotency import KeyTaken, MindIdempotency, Slot, call_id_for, expired as key_expired, in_progress
 from .refusals import spoken
 from .sessions import own_scope, thread_scope
+from .spend_monitor import SPEND_PAUSE_WORDS
 
 TOKEN_PREFIX = "mt_"
 TOKEN_BYTES = 32
@@ -359,18 +363,9 @@ class MindGateway:
         if call_id is not None:
             kind = detail.get("reason") if detail.get("reason") == "monthly_total_required" else detail.get("kind")
             _note(self.hive, "call_refused", call_id, kind)
+        if limit["kind"] in SPEND_PAUSE_WORDS:
+            return _err(402, limit["kind"], SPEND_PAUSE_WORDS[limit["kind"]], {"limit": limit})
         return _err(402, "spend_limit", "a spend limit refused this call", {"limit": limit})
-
-    def _remaining(self, t):
-        from .conductor import turn_cap_usd
-        hive, res = self.hive, self.reservations
-        label = "askturn:" + t["id"]
-        turn_left = turn_cap_usd() - res.settled(label) - res.pending(label) / 1_000_000
-        thread = hive.db.one("SELECT * FROM work_sessions WHERE id = ?", (t["thread_id"],))
-        lefts = [turn_left]
-        if own_scope(thread):
-            lefts.append(float(thread["budget_usd"]) - hive.sessions.thread_spent(thread) - hive.sessions.thread_held(thread))
-        return min(lefts)
 
     # ---- one call ------------------------------------------------------------------------------------------------------
 
@@ -415,7 +410,7 @@ class MindGateway:
         from starlette.concurrency import run_in_threadpool
         from starlette.responses import JSONResponse
 
-        from .conductor import check_detail, reserve_detail, turn_cap_usd
+        from .conductor import check_detail, reserve_detail
         hive, gw, res = self.hive, self.gateway, self.reservations
         public = request.scope.get("hive_public", False)
         raw = MindTokens.request_token(request, origins)
@@ -479,6 +474,15 @@ class MindGateway:
             if exc.status == 429:
                 raise _err(429, "rate_limited", "too many calls just now") from None
             raise
+        if paid:
+            # omegahive#294 item 2: no cap, but a turn whose settled spend reached its person's expensive_usd, with no
+            # go-ahead yet, stops here as the conductor's unanswered question does (its Go ahead asks again with
+            # go_ahead): a browser turn's loop runs in the person's browser, so the host cannot hold it to ask in place
+            above = None if t.get("go_ahead") else hive.ask.question_above(t["principal"])
+            spent = res.settled("askturn:" + t["id"])
+            if above is not None and spent >= above:
+                raise self._refuse_spend(t, {"kind": "expensive", "spent_usd": spent, "limit_usd": above,
+                                             "estimate_usd": None}, call_id) from None
 
         reservation = None
         if paid:
@@ -498,18 +502,18 @@ class MindGateway:
                 # preflight); its 402 rolls this transaction back, the key's record included: nothing reserved or sent
                 host_use_check(hive, row["mind_id"], key_id, payer, user=row["principal"])
                 rows = host_budget_snapshot(hive, row["mind_id"], key_id, payer, own_key, turn_bound=True)
-                rows.append((turn_label, turn_cap_usd(), res.settled(turn_label)))   # the interim per-turn guard
+                # the turn's and its thread's labels: what the call was for, capping nothing (omegahive#294 item 2)
+                rows.append((turn_label, None, None))
                 thread = hive.db.one("SELECT * FROM work_sessions WHERE id = ?", (t["thread_id"],))
-                if own_scope(thread):                                                # the interim per-thread guard
-                    rows.append((thread_scope(thread["id"]), float(thread["budget_usd"]), hive.sessions.thread_spent(thread)))
+                if own_scope(thread):
+                    rows.append((thread_scope(thread["id"]), None, None))
                 return rows
             try:
                 made = res.reserve(reservation, {"agent": row["mind_id"], "model": agent["model"], "body": body, "payer": payer,
                                           "key": key_id, "turn": t["id"]},
                             estimate, budgets, metadata={"agent": row["mind_id"], "model": agent["model"], "payer": payer,
                                                          "key": key_id, "kind": "browser-mind", "turn": t["id"]},
-                            dispatched=False, subjects=host_subjects(hive, row["mind_id"], key_id, payer, own_key, turn_bound=True),
-                            paced=False)   # the person's own turn: its limits alone hold it (Hive.present_for)
+                            dispatched=False, subjects=host_subjects(hive, row["mind_id"], key_id, payer, own_key, turn_bound=True))
             except KeyTaken:
                 raise in_progress() from None
             except BudgetExhausted as exc:
@@ -631,7 +635,6 @@ class MindGateway:
                 _note(hive, "call_reported", reservation, agent["model"], state == "settled")
         fresh = hive.ask._row(t["id"]) or t
         headers = {"X-Hive-Call-Cost-USD": _money(cost), "X-Hive-Call-Cost-State": state,
-                   "X-Hive-Turn-Remaining-USD": _money(self._remaining(t)),
                    "X-Hive-Turn-Calls-Remaining": str(max(0, turn_max_calls() - int(fresh["calls"]))),
                    "Cache-Control": "no-store"}
         return JSONResponse(response, headers=headers)

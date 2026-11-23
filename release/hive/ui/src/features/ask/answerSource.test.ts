@@ -1,6 +1,6 @@
 // Purpose: verify each Ask answer's source and the research held back for an asleep Research swarm: the intent frame as
 // the page reads it, the rows the store derives from a turn's frames, the ask-answer screen's facts and words, and what
-// MeTTa composes from them in every look.
+// MeTTa composes from them in every look, the press offered only where it can go through.
 import { describe, expect, it, vi } from 'vitest'
 import { checkAskEvent, readAsleepResearch, type AskEvent } from '../../api/ask'
 import { ScreensSpace } from '../../screens/screenSpace'
@@ -77,32 +77,45 @@ describe('the words and facts under an answer', () => {
     expect(answerSourceWords({ kind: 'model', of: 'mind' })).toBe('From your mind’s model alone, without a web search.')
     // a swarm turn spoken in the person's own mind's voice: the model is the Ask's, never called the mind's
     expect(answerSourceWords({ kind: 'model', of: 'ask' }, 'Vega')).toBe('From the Ask’s model alone, without a web search.')
-    const sources = [{ url: 'https://aquarium.example/', verified: true }, { url: 'https://example.org/', verified: false }, { url: 'https://example.net/', verified: true }]
-    expect(answerSourceWords({ kind: 'web', sources })).toBe('From the web: the researcher opened 2 pages it cites.')
-    expect(answerSourceWords({ kind: 'web', sources: [{ url: 'https://example.org/', verified: false }] })).toBe('From the web, though the researcher opened none of the pages it cites.')
   })
-  it('the intent’s own state wins over this page’s press, and each phase has its words', () => {
-    expect(waitPhase('refused', null)).toBe('ready')
+  it('the intent’s own state wins over this page’s press, a request not read yet is checking, and each phase has its words', () => {
+    expect(waitPhase('refused', null)).toBe('checking')
+    expect(waitPhase('refused', view({ phase: 'checking' }))).toBe('checking')
+    expect(waitPhase('refused', view({ phase: 'ready', press: 'wake' }))).toBe('ready')
     expect(waitPhase('dispatching', null)).toBe('working')
     expect(waitPhase('linked', null)).toBe('sent')
     expect(waitPhase('abandoned', view({ phase: 'failed' }))).toBe('closed')
     expect(waitPhase('refused', view({ phase: 'failed', unsent: 'gone' }))).toBe('closed')
     expect(waitPhase('refused', view({ phase: 'blocked', gate: 'authority' }))).toBe('blocked')
+    expect(researchWakeWords('checking', null)).toBe('')
     expect(researchWakeWords('ready', null)).toBe('')
     expect(researchWakeWords('working', view({ step: 'waking' }))).toBe('Waking Research controller…')
     expect(researchWakeWords('working', null)).toBe('Sending the research to the Research swarm…')
     expect(researchWakeWords('sent', view({ phase: 'sent' }))).toBe('Sent to Research controller. Its report comes back to this conversation.')
-    expect(researchWakeWords('blocked', view({ phase: 'blocked', gate: 'authority' }))).toBe('You can’t wake Research controller with your current access, so the research wasn’t sent.')
+    // who may wake it is the host's rule: its owner or a hive admin
+    expect(researchWakeWords('blocked', view({ phase: 'blocked', gate: 'authority' }))).toBe('Only Research controller’s owner or a hive admin can wake it, so the research wasn’t sent.')
+    expect(researchWakeWords('blocked', { phase: 'blocked', gate: 'authority' })).toBe('Only the Research swarm’s owner or a hive admin can wake it, so the research wasn’t sent.')
+    expect(researchWakeWords('blocked', view({ phase: 'blocked' }))).toBe('Research controller can’t be woken right now, so the research wasn’t sent.')
     expect(researchWakeWords('blocked', view({ phase: 'blocked', gate: 'spending' }))).toBe('Research controller has reached its spending limit, so it can’t wake for this research.')
     expect(researchWakeWords('failed', view({ phase: 'failed', reason: 'start refused: no model key' }))).toBe('Couldn’t wake Research controller. The hive says: start refused: no model key.')
     expect(researchWakeWords('failed', view({ phase: 'failed', unsent: 'send' }))).toBe('Research controller is awake, but the research wasn’t sent. Press again to send it.')
     expect(researchWakeWords('closed', null)).toBe('This research can’t be sent from here any more. Ask again to send it.')
   })
   it('states a value only for what the row holds, so nothing is decided for a row with neither', () => {
-    expect(answerScreen({ who: 'Vega', whoId: 'a_vega1' }, null).facts).toEqual({ flags: { 'answer.wait': false }, values: {} })
+    expect(answerScreen({ who: 'Vega', whoId: 'a_vega1' }, null).facts).toEqual({ flags: { 'answer.wait': false, 'answer.wait.awake': false }, values: {} })
     const both = answerScreen({ who: 'Vega', whoId: 'a_vega1', source: { kind: 'model', of: 'mind' }, wait: { intent: 'ai_res1', state: 'refused' } }, null)
-    expect(both.facts).toEqual({ flags: { 'answer.wait': true }, values: { 'answer.source': 'model', 'answer.wait.phase': 'ready' } })
+    expect(both.facts).toEqual({ flags: { 'answer.wait': true, 'answer.wait.awake': false }, values: { 'answer.source': 'model', 'answer.wait.phase': 'checking' } })
     expect(both.data).toEqual({ 'answer.source.text': 'From Vega’s model alone, without a web search.', 'answer.wait.say': '' })
+  })
+  it('says the Research swarm is awake when the check found it so, or a press woke it and the send then failed', () => {
+    const wait = { who: 'Vega', wait: { intent: 'ai_res1', state: 'refused' as const } }
+    const awake = (v: ResearchWakeView) => answerScreen(wait, v).facts.flags?.['answer.wait.awake']
+    expect(awake(view({ phase: 'ready', press: 'send' }))).toBe(true)
+    expect(awake(view({ phase: 'failed', unsent: 'send' }))).toBe(true)
+    expect(awake(view({ phase: 'ready', press: 'wake' }))).toBe(false)
+    expect(awake(view({ phase: 'failed', reason: 'start refused: no model key' }))).toBe(false)
+    // no request waits under this answer: nothing is awake for it
+    expect(answerScreen({ who: 'Vega' }, view({ phase: 'ready', press: 'send' })).facts.flags?.['answer.wait.awake']).toBe(false)
   })
 })
 
@@ -114,19 +127,29 @@ describe('what MeTTa composes under an answer, in every look', () => {
     compose(look, r, v).parts.map((p) => `${p.order}:${p.block}`)
   const alone = { who: 'Vega', source: { kind: 'model' as const, of: 'mind' as const } }
   const waiting = { ...alone, wait: { intent: 'ai_res1', state: 'refused' as const } }
-  it.each(LOOKS)('%s: the source line alone, the Wake press under a held-back request, and nothing for a row with neither', (look) => {
+  const ready = (press: 'wake' | 'send'): ResearchWakeView => ({ phase: 'ready', name: 'Research controller', press })
+  const button = (look: string, v: ResearchWakeView) => compose(look, waiting, v).parts.find((p) => p.block === 'buttons')?.props.items
+  it.each(LOOKS)('%s: the source line alone, the press once a check finds it can send, and nothing for a row with neither', (look) => {
     expect(kinds(look, alone)).toEqual(['10:note'])
-    expect(kinds(look, { who: 'Research', source: { kind: 'web', sources: [] } })).toEqual(['10:note'])
     expect(kinds(look, { who: 'Vega' })).toEqual([])
-    expect(kinds(look, waiting)).toEqual(['10:note', '21:buttons'])
-    expect(compose(look, waiting).parts.find((p) => p.order === 21)?.props.items).toEqual([['button', 'Wake Research and send', 'wake-research', [['variant', 'ghost']]]])
-    expect(compose(look, waiting).missing).toEqual([])
+    // not read yet: nothing offered, nothing said
+    expect(kinds(look, waiting)).toEqual(['10:note'])
+    expect(kinds(look, waiting, { phase: 'checking' })).toEqual(['10:note'])
+    expect(kinds(look, waiting, ready('wake'))).toEqual(['10:note', '21:buttons'])
+    expect(button(look, ready('wake'))).toEqual([['button', 'Wake Research and send', 'wake-research', [['variant', 'ghost']]]])
+    // the coordinator awake already: the same press only sends, and says so
+    expect(kinds(look, waiting, ready('send'))).toEqual(['10:note', '22:buttons'])
+    expect(button(look, ready('send'))).toEqual([['button', 'Send the research', 'wake-research', [['variant', 'ghost']]]])
+    expect(compose(look, waiting, ready('send')).missing).toEqual([])
+    // a person who may not wake it gets the reason and no press
+    expect(kinds(look, waiting, { phase: 'blocked', gate: 'authority', name: 'Research controller' })).toEqual(['10:note', '20:note'])
   })
   it.each(LOOKS)('%s: once pressed, its state is said, and the press comes back only after a wake or send that failed', (look) => {
     const v = (over: Partial<ResearchWakeView>): ResearchWakeView => ({ phase: 'working', name: 'Research controller', ...over })
     expect(kinds(look, waiting, v({ step: 'waking' }))).toEqual(['10:note', '20:note'])
     expect(kinds(look, waiting, v({ phase: 'blocked', gate: 'authority' }))).toEqual(['10:note', '20:note'])
     expect(kinds(look, waiting, v({ phase: 'failed' }))).toEqual(['10:note', '20:note', '21:buttons'])
+    expect(kinds(look, waiting, v({ phase: 'failed', unsent: 'send' }))).toEqual(['10:note', '20:note', '22:buttons'])
     expect(kinds(look, { ...waiting, wait: { intent: 'ai_res1', state: 'linked' } })).toEqual(['10:note', '20:note'])
     expect(kinds(look, waiting, v({ phase: 'failed', unsent: 'gone' }))).toEqual(['10:note', '20:note'])
   })

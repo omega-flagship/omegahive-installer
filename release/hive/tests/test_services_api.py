@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from hive.core.app import create_app
 from hive.core.config import load_settings
+from hive.tests.test_minds_code_through_create import bind_create_code
 
 PETTA = os.environ.get("PETTA_PATH", str(pathlib.Path.home() / "PeTTa"))
 pytestmark = pytest.mark.skipif(not pathlib.Path(PETTA, "src", "main.pl").exists(), reason="needs PeTTa")
@@ -64,6 +65,14 @@ def mind_with_goal(c):
     return swarm, mind, goal, agent
 
 
+def without_host_code_service(c):
+    """These tests are about the capabilities the hive mints, not about the Code service installed on the machine they
+    run on: require_intended_release reads that machine's Code user unit (code._linux_release_problem) and refused on
+    CI's runner and on a developer's PC alike (service_release_mismatch). Its own tests check it; here it is set aside,
+    as test_agent_code_relay does."""
+    c.app.state.hive.code.require_intended_release = lambda: None
+
+
 def test_enrolment_is_one_time_local_and_named(c):
     enrol, body, r = register(c)
     assert r.status_code == 200
@@ -87,6 +96,7 @@ def test_enrolment_is_one_time_local_and_named(c):
 
 
 def test_capabilities_are_signed_checked_and_revocable(c):
+    without_host_code_service(c)
     _, _, r = register(c)
     reg = r.json()
     svc = {"Authorization": f"Bearer {reg['service_token']}"}
@@ -124,6 +134,7 @@ def test_capabilities_are_signed_checked_and_revocable(c):
 
 
 def test_human_collaborator_grant(c):
+    without_host_code_service(c)
     _, _, r = register(c)
     reg = r.json()
     svc = {"Authorization": f"Bearer {reg['service_token']}"}
@@ -147,6 +158,8 @@ def test_exact_code_approvals_are_redeemed_once_by_the_service(c):
     _, _, r = register(c)
     svc = {"Authorization": f"Bearer {r.json()['service_token']}"}
     swarm, mind, goal, agent = mind_with_goal(c)
+    # Create · Code's own minds work in Code workspaces; any other mind is refused (the test after this one)
+    bind_create_code(c.app.state.hive, mind["id"], swarm["id"])
     command = f"(code-edit task={goal['id']} swarm={swarm['id']} workspace=ws_1 op=op-1 generation=3 digest={DIGEST})"
     first = c.post("/api/agent/authorize", json={"command": command}, headers=agent).json()
     assert first["decision"] == "pending" and first["approved"] is False
@@ -174,6 +187,25 @@ def test_exact_code_approvals_are_redeemed_once_by_the_service(c):
     assert bad["decision"] == "deny"
     assert c.post("/api/agent/authorize", json={"command": f"(code-publish {DIGEST})"}, headers=agent).json()["decision"] == "deny"
     assert c.post("/api/agent/authorize", json={"command": f'(code-read "{DIGEST}")'}, headers=agent).json()["decision"] == "allow"
+
+
+def test_a_code_approval_given_before_the_switch_off_is_refused_to_a_mind_outside_create_code(c):
+    """Jon's rule of 17 Nov (policy.own_code): a mind outside Create · Code is refused code-edit at the gate, and an
+    exact approval a person gave it before that rule is refused when OmegaCode tries to use it."""
+    _, _, r = register(c)
+    svc = {"Authorization": f"Bearer {r.json()['service_token']}"}
+    swarm, mind, goal, agent = mind_with_goal(c)
+    hive = c.app.state.hive
+    command = f"(code-edit task={goal['id']} swarm={swarm['id']} workspace=ws_1 op=op-1 generation=3 digest={DIGEST})"
+    assert c.post("/api/agent/authorize", json={"command": command}, headers=agent).json()["decision"] == "deny"
+    binding = {"task_id": goal["id"], "swarm_id": swarm["id"], "workspace_id": "ws_1", "operation_id": "op-1",
+               "expected_generation": 3, "payload_digest": DIGEST}
+    earlier = hive.policy._file(hive.agent(mind["id"]), "code-edit", command, "filed before the switch-off", binding)
+    c.post(f"/api/approvals/{earlier['id']}/approve", json={}, headers=c.admin)
+    refused = c.post(f"/api/agent/approvals/{earlier['id']}/redeem", json={"binding": binding}, headers=svc)
+    assert refused.status_code == 403 and refused.json()["error"]["code"] == "policy_refused"
+    assert "hive-create" in refused.text
+    assert c.get(f"/api/agent/approvals/{earlier['id']}", headers=svc).json()["status"] == "approved"   # not used
 
 
 def _enrol(c, name="omegacode"):

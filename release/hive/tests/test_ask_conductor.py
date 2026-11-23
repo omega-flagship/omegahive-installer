@@ -66,12 +66,12 @@ def script(client, s):
 
 def first_call_usd(client, coord):
     """What the gateway holds for a turn's first call to the fake priced model (the conductor's system prompt, a page,
-    the tools and MAX_TOKENS, every input byte counted as a token). A cap set from it, never from a fixed figure, still
+    the tools and max_tokens, every input byte counted as a token). A cap set from it, never from a fixed figure, still
     fits one call when the prompt grows. A turn's own first call runs a few hundred bytes longer than this probe (its
     page context)."""
     probe = {"model": "fakepaid/x", "messages": [{"role": "system", "content": [{"type": "text", "text": cmod.SYSTEM}]},
                                                  {"role": "system", "content": "x" * 300}, {"role": "user", "content": "what changed today?"}],
-             "tools": cmod.tools(), "tool_choice": "auto", "max_tokens": cmod.MAX_TOKENS}
+             "tools": cmod.tools(), "tool_choice": "auto", "max_tokens": 1024}
     return client.app.state.gateway.estimate({**coord, "model": "fakepaid/x", "options": {}}, probe)[1]
 
 
@@ -229,7 +229,7 @@ def test_the_act_limit(client, on):
     ask(client, on["ann"], "op-cond-acts", context=on["ctx"])
     fs = wait(on["hive"], "op-cond-acts", closed)
     deltas = [f for f in fs if f["phase"] == "answer" and f.get("delta")]
-    assert len(deltas) == cmod.MAX_ACTS == 32
+    assert len(deltas) == 32
     assert fs[-1]["phase"] == "done" and fs[-1]["outcome"] == "act_cap" and "limit" not in fs[-1]
     assert fs[-2]["text"].endswith(cmod.LIMIT_SAY["act_cap"])
 
@@ -238,7 +238,7 @@ def test_the_model_call_limit(client, on):
     s = script(client, Script([call("say", text="again")], repeat_last=True))
     ask(client, on["ann"], "op-cond-calls", context=on["ctx"])
     fs = wait(on["hive"], "op-cond-calls", closed)
-    assert len(s.bodies) == cmod.MAX_MODEL_CALLS == 12
+    assert len(s.bodies) == 12
     assert fs[-1]["outcome"] == "call_cap" and cmod.LIMIT_SAY["call_cap"] in fs[-2]["text"]
 
 
@@ -250,20 +250,22 @@ def test_the_time_limit(client, on):
     assert fs[-1]["outcome"] == "time_cap" and fs[-2]["text"] == cmod.LIMIT_SAY["time_cap"]
 
 
-def test_the_spend_cap_is_held_through_cost_reservations(client, on, monkeypatch):
+def test_a_limit_is_held_through_cost_reservations(client, on, monkeypatch):
     hive = on["hive"]
     hive.settings.providers["fakepaid"] = Provider("fakepaid", "http://127.0.0.1:9", prices={"*": {"in": 1, "out": 1}})
     monkeypatch.setenv("HIVE_ASK_CONDUCTOR_MODEL", "fakepaid/x")
-    # room for the first call's worst case and $0.002 more (the turn's page), never for the $0.004 it spent plus the
-    # second call's, which carries the first and so is no smaller
-    monkeypatch.setenv("HIVE_ASK_CONDUCTOR_TURN_USD", f"{first_call_usd(client, on['coord']) + 0.002:.6f}")
-    hive.db.execute("UPDATE agents SET budget_usd = 10 WHERE id = ?", (on["coord"]["id"],))
+    # the mind's own cap (an Ask turn has no cap of its own: omegahive#294 item 2): room for the first call's worst case
+    # and $0.002 more (the turn's page), never for the $0.004 it spent plus the second call's, which carries the first and
+    # so is no smaller
+    cap = round(first_call_usd(client, on["coord"]) + 0.002, 6)
+    hive.db.execute("UPDATE agents SET budget_usd = ? WHERE id = ?", (cap, on["coord"]["id"]))
     s = script(client, Script([call("say", text="one")], [call("say", text="two")], "never", cost=0.004))
     ask(client, on["ann"], "op-cond-spend", context=on["ctx"])
     fs = wait(hive, "op-cond-spend", closed)
-    # the first call fits; the second does not: refused by the reservation's askturn scope before any call is made
+    # the first call fits the mind's own cap; the second does not: refused by the reservation before any call is made
     assert len(s.bodies) == 1
     assert fs[-1]["outcome"] == "spend_cap" and fs[-1]["turn_spent_usd"] == 0.004
+    assert fs[-1]["limit"]["kind"] == "mind_total" and fs[-1]["limit"]["limit_usd"] == cap
     usage = hive.db.all("SELECT * FROM usage WHERE agent_id = ?", (on["coord"]["id"],))
     assert [(u["model"], u["payer"], u["cost_usd"]) for u in usage] == [("fakepaid/x", "user:u_ann", 0.004)]
     held = hive.db.all("SELECT r.state, d.metadata FROM cost_reservations r JOIN cost_reservation_details d ON d.reservation = r.id")
@@ -777,14 +779,15 @@ def test_act_result_views_get_the_initial_view_checks_and_the_2kb_cap(client, on
     assert client.post(url, headers=on["ann"], json=RESULT).status_code == 200   # still open for a good one
 
 
-def test_an_unknown_cost_counts_once_against_the_turn_cap(client, on, monkeypatch):
+def test_an_unknown_cost_counts_once_against_a_limit(client, on, monkeypatch):
     hive = on["hive"]
     hive.settings.providers["fakepaid"] = Provider("fakepaid", "http://127.0.0.1:9", prices={"*": {"in": 1, "out": 1}})
     monkeypatch.setenv("HIVE_ASK_CONDUCTOR_MODEL", "fakepaid/x")
     hive.db.execute("UPDATE agents SET budget_usd = 10 WHERE id = ?", (on["coord"]["id"],))
     first = first_call_usd(client, on["coord"])
-    # room for the first call's held worst case plus a second call, but not for that worst case counted twice
-    monkeypatch.setenv("HIVE_ASK_CONDUCTOR_TURN_USD", f"{first * 2.6:.6f}")
+    # the mind's own total: room for the first call's held worst case plus a second call, but not for that worst case
+    # counted twice
+    hive.db.execute("UPDATE agents SET budget_usd = ? WHERE id = ?", (round(first * 2.6, 6), on["coord"]["id"]))
     s = script(client, Script([call("say", text="one")], "done", cost=0.001, no_usage={0}))
     ask(client, on["ann"], "op-cond-unk", context=on["ctx"])
     fs = wait(hive, "op-cond-unk", closed)
@@ -797,7 +800,8 @@ def test_an_unknown_cost_counts_once_against_the_turn_cap(client, on, monkeypatc
 
 def test_a_page_sent_private_context_is_accepted_alone_and_resolves_to_private(client, on):
     hive = on["hive"]
-    hive.db.execute("INSERT INTO ask_prefs VALUES (?, ?, 0.25, ?)", ("user:u_ann", on["swarm"]["id"], "2026-10-07T00:00:00Z"))
+    hive.db.execute("INSERT INTO ask_prefs (principal, swarm_id, thread_budget_usd, updated_at) VALUES (?, ?, 0, ?)",
+                    ("user:u_ann", on["swarm"]["id"], "2026-10-07T00:00:00Z"))
     s = script(client, Script([call("point", target={"region": "list"})], "ok"))
     r = ask(client, on["ann"], "op-cond-pmark", context={"private": True})
     assert r.status_code == 202 and r.json()["context"] == {"private": True}

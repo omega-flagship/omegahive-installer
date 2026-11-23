@@ -1,3 +1,4 @@
+// Purpose: verify Coffee Room controls and linked conversations with invented data.
 import { isValidElement, type ReactElement, type ReactNode } from 'react'
 import { describe, expect, it } from 'vitest'
 import { SimClient } from '../../api/sim/SimClient'
@@ -6,7 +7,7 @@ import { Switch } from '../../ui/primitives'
 import {
   COFFEE_DISCLOSURE, HERE_CAP, HERE_HINT, HERE_TYPING, LINK_MISSING, linkState, pinFirst, roomMatches, talkPrivately, withDirect,
 } from './coffee'
-import { CoffeeMembershipView } from './CoffeeParts'
+import { CoffeeMembershipView, CoffeeMindsOutsideView, CoffeeOwnerRequest } from './CoffeeParts'
 
 // Coffee UI r3: stand-in coffeeui2 (P1–P3) and Kimi r2 (#1–#4) against host r4 (platform 1c6f47c, release 004176c).
 // INVENTED data, simulator only.
@@ -76,10 +77,11 @@ const text = (node: ReactNode): string => elements(node).map((e) => {
 
 describe("stand-in r2 P3: the control's real switch (CoffeeMembershipView, as CoffeeMembershipControl mounts it)", () => {
   const priv = { id: 'a_p', name: 'Quill', hue: 200, coffee: 'private', swarm_id: null, visibility: 'private' } as unknown as Agent
-  const run = (agent: Agent, admin: boolean, answer: boolean) => {
+  // no owner is recorded on these minds, so they are the hive owner's (user:operator); `owner` says whether that's the viewer
+  const run = (agent: Agent, owner: boolean, answer: boolean) => {
     const calls = { confirm: [] as string[], patch: [] as unknown[], done: [] as boolean[] }
     const tree = CoffeeMembershipView({
-      agent, admin, swarm: null,
+      agent, principal: owner ? 'user:operator' : 'user:u_observer', swarm: null,
       confirm: async (m) => { calls.confirm.push(m); return answer },
       patch: async (_id, body) => { calls.patch.push(body); return true },
       done: (on) => calls.done.push(on),
@@ -118,12 +120,68 @@ describe("stand-in r2 P3: the control's real switch (CoffeeMembershipView, as Co
     expect(b.calls.patch).toEqual([{ coffee: false }])
   })
 
-  it('members see the state but no switch and no disclosure; app modules show nothing', () => {
+  it('anyone but the owner sees the state and Ask its owner, but no switch and no disclosure; app modules show nothing', () => {
     const { sw, tree } = run(priv, false, true)
     expect(sw).toBeUndefined()
     expect(text(tree)).toContain('Not in the Coffee Room')
     expect(text(tree)).not.toContain(COFFEE_DISCLOSURE)
+    expect(elements(tree).filter((e) => e.type === CoffeeOwnerRequest)).toHaveLength(1)
     expect(run({ ...priv, coffee: 'not_a_mind' } as Agent, true, true).tree).toBeNull()
+  })
+})
+
+// Round 1: a tester's minds were all private, so the Coffee Room held none and nothing said why. Under the room's
+// members, everyone now sees the minds not in it: the owner with the switch that puts each in (asking first for a
+// private one), anyone else with Ask its owner.
+describe('the Coffee Room’s Members list the minds not in it, with the owner’s switch for each', () => {
+  const priv = { id: 'a_p', name: 'Invented Juniper', hue: 200, coffee: 'private', swarm_id: null, visibility: 'private' } as unknown as Agent
+  const out = { ...priv, id: 'a_o', name: 'Lyra', coffee: 'opted_out', visibility: 'public' } as Agent
+  const run = (outside: Agent[], owner: boolean, answer: boolean) => {
+    const calls = { confirm: [] as string[], patch: [] as unknown[], done: [] as string[] }
+    const tree = CoffeeMindsOutsideView({
+      outside, principal: owner ? 'user:operator' : 'user:u_observer', swarmOf: () => null,
+      confirm: async (m) => { calls.confirm.push(m); return answer },
+      patch: async (id, body) => { calls.patch.push([id, body]); return true },
+      done: (a) => calls.done.push(a.id),
+    })
+    const switches = elements(tree).filter((e) => e.type === Switch) as ReactElement<{ label: string; checked: boolean; onChange: (v: boolean) => Promise<void> | void }>[]
+    return { tree, switches, calls }
+  }
+
+  it('the owner gets one switch per mind; a private mind joins only after the disclosure is confirmed', async () => {
+    const { switches, calls, tree } = run([priv, out], true, true)
+    expect(text(tree)).toContain('Minds not in the Coffee Room')
+    expect(switches.map((s) => [s.props.label, s.props.checked])).toEqual([['Put Invented Juniper in the Coffee Room', false], ['Put Lyra in the Coffee Room', false]])
+    await switches[0].props.onChange(true)
+    expect(calls.confirm).toEqual([COFFEE_DISCLOSURE])
+    expect(calls.patch).toEqual([['a_p', { coffee: true }]])
+    expect(calls.done).toEqual(['a_p'])
+  })
+
+  it('cancelling the disclosure sends nothing', async () => {
+    const { switches, calls } = run([priv], true, false)
+    await switches[0].props.onChange(true)
+    expect(calls.patch).toEqual([])
+    expect(calls.done).toEqual([])
+  })
+
+  it('anyone else, an admin included, sees the minds and why with Ask its owner, but no switch; with every mind in the room there is no list', () => {
+    const { switches, tree } = run([priv], false, true)
+    expect(switches).toEqual([])
+    expect(text(tree)).toContain('Private minds join only if their owner chooses to add them.')
+    expect(elements(tree).filter((e) => e.type === CoffeeOwnerRequest)).toHaveLength(1)
+    expect(run([], true, true).tree).toBeNull()
+  })
+})
+
+describe('the simulator keeps the host’s rule: only a mind’s owner moves it in or out of the Coffee Room', () => {
+  it('an admin who does not own the mind is refused owner_only, and the owner is not', async () => {
+    const c = sim()
+    const mind = (await c.listAgents()).find((a) => a.coffee === 'member' && !a.owner)!   // a seeded public mind, the hive owner's
+    c.simSignInAs('person')                                                            // an admin who doesn't own it
+    await expect(c.patchAgent(mind.id, { coffee: false })).rejects.toMatchObject({ status: 403, code: 'owner_only' })
+    c.simSignInAs('operator')
+    expect((await c.patchAgent(mind.id, { coffee: false })).coffee).toBe('opted_out')
   })
 })
 

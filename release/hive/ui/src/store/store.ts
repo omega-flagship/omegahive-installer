@@ -1,6 +1,5 @@
-// Purpose: the page's store: the hive state, the actions that change it through the client, and its hooks.
 import { personStartedProgramAct } from '../lib/personSwarmAct'
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { create } from 'zustand'
 import { ApiError, Emitter, type ConnectionState, type HiveClient } from '../api/client'
 import { approvalRefusalWords, noteRefusal } from '../lib/approvalRefusal'
@@ -8,6 +7,7 @@ import type {
   Agent,
   AgentAction,
   Approval,
+  BudgetLine,
   Catalog,
   CreateAgentBody,
   KeyInfo,
@@ -32,6 +32,7 @@ import type { IconName } from '../ui/Icon'
 import { readContext } from '../lib/readContext'
 import { readResult, resultWords } from '../features/power/api'
 import { startingLimitWords } from '../features/keys/startingLimit'
+import { hiveCap } from '../features/usage/hiveCap'
 import { mayStart } from '../features/lab/labUtil'
 import { shown } from '../lib/displayName'
 import { askMemory } from '../lib/askMemory/store'
@@ -320,6 +321,10 @@ export interface Actions {
   resolveHealthAlerts(agentId?: string): void
   /** Hide a mind's spending-limit banner until the hive refuses it again. */
   dismissRefusal(agentId: string): void
+  /** Read the spending limits this person may see (GET /api/budgets, the hive's own among them for anyone) into
+   *  `budgets`, which budgets.updated keeps current only for admins: Create a mind and Start a swarm read it when they
+   *  open, so a member is told whether the hive has a limit that holds a mind with no cap of its own. */
+  loadBudgets(): Promise<void>
 }
 
 export type Store = HiveData & UIState & Actions
@@ -1694,6 +1699,14 @@ export const useHive = create<Store>()((set, get) => ({
     set((s) => (s.refusals[agentId] ? { refusals: omitKey(s.refusals, agentId) } : s))
   },
 
+  async loadBudgets() {
+    const live = bindSession(get)
+    const client = live.client
+    if (!client?.listBudgets) return
+    const budgets = await client.listBudgets()
+    if (live.ok()) set({ budgets })
+  },
+
   async loadKeys() {
     const live = bindSession(get)
     const client = live.client
@@ -1924,7 +1937,23 @@ export const useHealthAlertCount = (): number => useHive((s) => countHealthAlert
 
 /** Why a mind's model calls are being refused for spending, if they are. */
 export const useRefusal = (agentId: string | null | undefined) => useHive((s) => (agentId ? s.refusals[agentId] : undefined))
-export const useSlowed = (agentId: string | null | undefined) => useHive((s) => (agentId ? s.slowed[agentId] : undefined))
+
+/** The hive cap, the limit that holds a mind with no cap of its own (features/usage/hiveCap.ts: the hive month rule,
+ *  else its day rule, as Budgets.paid_without_cap needs), null when the hive has none, a total included, undefined until
+ *  the limits are read. A page using it reads them as it opens (loadBudgets), since budgets.updated reaches admins only;
+ *  one that couldn't read them claims neither. Create a mind says it and Start a swarm warns from it. */
+export function useHiveCap(): BudgetLine | null | undefined {
+  useEffect(() => {
+    void useHive.getState().loadBudgets().catch(() => undefined)
+  }, [])
+  return useHive((s) => (s.budgets ? hiveCap(s.budgets) : undefined))
+}
+
+/** Whether the hive cap holds a mind with no cap of its own (useHiveCap), undefined until the limits are read. */
+export function useHiveLimited(): boolean | undefined {
+  const cap = useHiveCap()
+  return cap === undefined ? undefined : cap !== null
+}
 
 /** Cross-swarm requests, newest first. */
 export function useRequestList() {

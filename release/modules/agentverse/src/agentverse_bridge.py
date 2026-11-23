@@ -1,4 +1,4 @@
-"""Agentverse/uAgents remote-agent membrane for OmegaClaw.
+"""Purpose: Connect OmegaClaw to remote agents through Agentverse and uAgents.
 
 This organ keeps Agentverse optional and traceable. Importing the module must
 not require the ``uagents`` dependency, because deployments may install the
@@ -16,17 +16,20 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from typing import Any
 
 
 CORE_ROOT = pathlib.Path(__file__).resolve().parents[3]
-TRACE_FILE = CORE_ROOT / "memory" / "runtime" / "agentverse" / "trace.jsonl"
-REGISTRY_FILE = CORE_ROOT / "memory" / "runtime" / "agentverse" / "agents.json"
+# the mind's memory folder: OMEGACLAW_MEMORY_DIR when a hive runs the mind, else the checkout's memory folder
+RUNTIME_DIR = pathlib.Path(os.environ.get("OMEGACLAW_MEMORY_DIR") or CORE_ROOT / "memory") / "runtime" / "agentverse"
+TRACE_FILE = RUNTIME_DIR / "trace.jsonl"
+REGISTRY_FILE = RUNTIME_DIR / "agents.json"
 LISTENER_FILE = CORE_ROOT / "modules" / "agentverse" / "src" / "agentverse_listener.py"
-LISTENER_STATE_FILE = CORE_ROOT / "memory" / "runtime" / "agentverse" / "listener.json"
-LISTENER_INBOX_FILE = CORE_ROOT / "memory" / "runtime" / "agentverse" / "inbox.jsonl"
-LISTENER_COMMAND_FILE = CORE_ROOT / "memory" / "runtime" / "agentverse" / "commands.jsonl"
+LISTENER_STATE_FILE = RUNTIME_DIR / "listener.json"
+LISTENER_INBOX_FILE = RUNTIME_DIR / "inbox.jsonl"
+LISTENER_COMMAND_FILE = RUNTIME_DIR / "commands.jsonl"
 LISTENER_SEED_FILE = CORE_ROOT / "memory" / "runtime" / "agentverse" / "local_seed.txt"
 
 AGENTVERSE_SEARCH_URL = os.environ.get(
@@ -132,7 +135,36 @@ def _workspace_python() -> str:
     return shutil.which("python3") or sys.executable
 
 
+def _hive_call(payload):
+    base = os.environ["HIVE_API_URL"].rstrip("/")
+    request = urllib.request.Request(
+        base + "/api/agent/connectors/agentverse/entries",
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    request.add_unredirected_header("Authorization", f"Bearer {os.environ['HIVE_WS_TOKEN']}")
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as exc:
+        try:
+            error = json.load(exc)["error"]
+            detail = f"{error['code']}: {error['message']}"
+        except (ValueError, KeyError, TypeError):
+            detail = exc.reason
+        raise RuntimeError(f"Hive HTTP {exc.code}: {detail}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Hive unreachable: {exc}") from exc
+
+
 def _listener_seed() -> str:
+    if os.environ.get("HIVE_API_URL") and os.environ.get("HIVE_WS_TOKEN"):
+        seed = _hive_call({"get": ["seed"]})["values"]["seed"]
+        if not isinstance(seed, str) or not seed.strip():
+            raise RuntimeError("The hive did not return an Agentverse seed")
+        return seed.strip()
+
     configured = os.environ.get("OMEGACLAW_AGENTVERSE_SEED") or os.environ.get("AGENTVERSE_SEED_PHRASE")
     if configured:
         return configured
@@ -140,11 +172,10 @@ def _listener_seed() -> str:
     if LISTENER_SEED_FILE.exists():
         return LISTENER_SEED_FILE.read_text(encoding="utf-8").strip()
     seed = "omega agentverse local listener " + secrets.token_hex(24)
-    LISTENER_SEED_FILE.write_text(seed + "\n", encoding="utf-8")
-    try:
-        LISTENER_SEED_FILE.chmod(0o600)
-    except Exception:
-        pass
+    # created 0600, so the seed is never readable by others while it is written
+    with os.fdopen(os.open(LISTENER_SEED_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w",
+                   encoding="utf-8") as handle:
+        handle.write(seed + "\n")
     return seed
 
 

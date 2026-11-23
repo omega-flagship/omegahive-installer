@@ -37,7 +37,8 @@ import { EXPERIENCES } from '../experiences/registry'
 import { featureById } from '../features/registry'
 import { domUnsaved, hasUnsaved } from '../features/ask/dirty'
 import type { KeySetup } from '../features/ownKey/addOwnKey'
-import { DONE_OFFERS, DONE_WORDS, doneErrorWords, readDoneLimit, refusalOf, refusedSay, RESEARCH_WORDS, setOwnMind, spendStop, spokenRefusal, THREAD_LIMIT_MAX_USD, type Offer } from '../features/ask/words'
+import { DONE_WORDS, doneErrorWords, readDoneLimit, refusalOf, refusedSay, RESEARCH_WORDS, setOwnMind, spendStop, spokenRefusal, type Offer } from '../features/ask/words'
+import { errorMessage } from '../lib/useResource'
 import { href, navigate, parse, type Route } from '../lib/router'
 import { asOwnChoice, DEFAULT_VARIANT, keepLook, lookName, lookState, previewLook, SEED_VARIANTS, withExperience, type Layout, type UiPrefs, type UiVariant } from '../shell/uiVariant'
 import { hiveBus, useHive } from './store'
@@ -81,6 +82,11 @@ export type AskOpts = {
   admission?: (a: AskAdmission) => void
   /** Memory-only correlation for this exact request; stripped from every kept/retried option. */
   onOperation?: (receipt: AskOperationReceipt) => void
+  /**
+   * The person said Go ahead after this request's words stopped as expensive: it carries go_ahead and never stops to
+   * ask. Only goAheadAgain sets it; stripped from every kept/retried option, so later words ask again.
+   */
+  goAhead?: true
 }
 /** Local correlation DATA, not a host grant or a serializable recovery capability. */
 export interface AskOperationReceipt { readonly op: string; readonly principal: string; readonly epoch: number }
@@ -101,8 +107,8 @@ export type AskAdmission =
   | { admitted: false; reason: 'not_available' | 'refused' | 'unknown' | 'held' | 'unsupported' | 'capped' | 'failed' | 'not_admitted'; receipt?: AskOperationReceipt }
 /** The opts as they may be kept (held or retried later): never with an admission callback. */
 const kept = (o: AskOpts): AskOpts => {
-  const { admission: _a, onOperation: _o, continues: _c, ...rest } = o
-  void _a; void _o; void _c
+  const { admission: _a, onOperation: _o, continues: _c, goAhead: _g, ...rest } = o
+  void _a; void _o; void _c; void _g
   return rest
 }
 
@@ -179,6 +185,11 @@ export function setConductor(fn: ((op: string, e: ActFrame) => void) | null): vo
 // ---------------------------------------------------------------- shapes
 
 export type RowState = 'preview' | 'kept' | 'undone' | 'replaced' | 'failed' | 'waiting' | 'confirmed' | 'declined' | 'applied' | 'back' | 'reverted' | 'sending' | 'sent'
+/** The person's answer to a turn's go-ahead question, as only the page knows it: in flight, taken (carrying on, or
+ *  stopping), not sent (failed: they may answer again), or no longer asked (gone: answered elsewhere, closed, timed out). */
+export type GoAheadState = 'sending' | 'went' | 'stopping' | 'failed' | 'gone'
+/** Frames after a go_ahead that mean the turn moved on (ai-interface point 4), a newer question included. */
+const MOVED_ON: ReadonlySet<AskEvent['phase']> = new Set(['thinking', 'act', 'answer', 'done', 'refused', 'go_ahead'])
 
 export interface AskRow {
   id: string
@@ -186,7 +197,7 @@ export interface AskRow {
   op?: string
   /** the host frame it comes from */
   seq?: number
-  kind: 'you' | 'steer' | 'step' | 'local' | 'answer' | 'nav' | 'go' | 'ui' | 'ui-change' | 'confirm' | 'refused' | 'note' | 'revert-offer' | 'gap' | 'checking' | 'research'
+  kind: 'you' | 'steer' | 'step' | 'local' | 'answer' | 'nav' | 'go' | 'ui' | 'ui-change' | 'confirm' | 'refused' | 'note' | 'revert-offer' | 'gap' | 'checking' | 'research' | 'go-ahead'
   /** plain text; rendered as text, never as HTML */
   text: string
   /** where it was asked ("on Goals") */
@@ -230,7 +241,7 @@ export interface AskRow {
   incomplete?: boolean
   /** an answer still arriving in pieces (`delta` frames) */
   streaming?: boolean
-  /** a stop's own way on (spend-stop r1: a spending stop offers New thread and the raise for new threads) */
+  /** a stop's own way on (spend-stop r1: a spending stop is never a dead end; an expensive one offers Go ahead) */
   offer?: Offer[]
   /**
    * the row of the frame that closed a request (its done or refusal): the facts its way on is composed from
@@ -238,6 +249,8 @@ export interface AskRow {
    * is the thread's latest request, `until` the time it is kept to (stoppedUntil)
    */
   ending?: { early: boolean; latest: boolean; until: number }
+  /** go-ahead rows: the turn's settled spend and the threshold it reached (null when unreadable), and the person's answer */
+  goAhead?: { spentUsd: number | null; limitUsd: number | null; state?: GoAheadState; error?: string }
   /** answer rows: where the answer came from, said under it (features/ask/answer.metta) */
   source?: AnswerSource
   /**
@@ -250,9 +263,9 @@ export interface AskRow {
 /**
  * Where an answer came from: a model alone (a conducted turn: the conductor's tools hold no web search), the asker's own
  * mind's model on a turn with that mind (`of: 'mind'`) or the model the Ask uses (`of: 'ask'`), as the host's accepted
- * frame says; or the web, with the pages a researcher cited and whether it opened each (a research report).
+ * frame says. Other kinds join this when an answer arrives that one describes, with the code that tells it.
  */
-export type AnswerSource = { kind: 'model'; of: 'mind' | 'ask' } | { kind: 'web'; sources: { url: string; title?: string; verified: boolean }[] }
+export type AnswerSource = { kind: 'model'; of: 'mind' | 'ask' }
 
 /** What the page did with a frame (only the page knows; the host's frame says what was asked). */
 export type Outcome =
@@ -268,6 +281,8 @@ export type Outcome =
   | { kind: 'act'; text: string; state: RowState; undo?: 'undo' | 'back' }
   /** a research report read by its id (a personal turn's stored frame keeps none of it); null when it could not be read */
   | { kind: 'research'; view: ResearchView | null }
+  /** the person's answer to the turn's go-ahead question (answerGoAhead), with why it did not reach the hive */
+  | { kind: 'go-ahead'; go: boolean; state: GoAheadState; error?: string }
 
 export interface PendingSteer {
   steer_id: string
@@ -295,6 +310,8 @@ export interface TurnMeta {
   op: string
   you: string
   where?: string
+  /** what was sent, so the Go ahead offer after an expensive stop sends the same words with the same context again */
+  asked?: { context: AskContext; opts: AskOpts }
   /** checking: sent, but whether the host admitted it is not known yet (Review B1, 45392df) */
   state: 'sending' | 'checking' | 'open' | 'done' | 'refused'
   /** The answering mind confirmed for this exact operation, independent of later threads. */
@@ -498,8 +515,19 @@ interface AskActions {
    * who answers) its same words are sent once more, only while the same person, sign-in and epoch still hold.
    */
   chooseAnswerer(swarmId: string | null, op?: string): Promise<'resent' | 'saved' | 'saved-not-sent' | 'failed'>
-  /** A new limit for new threads (the host says the most allowed); the current thread's cap never rises. */
-  setThreadLimit(usd: number): Promise<boolean>
+  /**
+   * The person's answer to the open turn's go-ahead question (POST /api/ask/{op}/go-ahead): sent once per question;
+   * go true carries the turn on, false stops it as Stop does (refused, stopped). Not waiting any more (409 not_waiting,
+   * or 404) says so and reads the turn back; any other failure leaves the question to answer again.
+   */
+  answerGoAhead(op: string, go: boolean): Promise<void>
+  /**
+   * The Go ahead offer after an expensive stop: that turn's own words and context, sent again with go_ahead (its turn
+   * never stops to ask). 'busy' while another request is running, 'gone' for a turn that cannot go ahead.
+   */
+  goAheadAgain(op: string): Promise<'sent' | 'busy' | 'gone'>
+  /** Ask before an answer that looks expensive, or not (PUT /api/me/ask ask_when_expensive); true once saved. */
+  setAskWhenExpensive(on: boolean): Promise<boolean>
   setThreadOpen(open: boolean): void
   setPinned(pinned: boolean): void
 }
@@ -595,25 +623,50 @@ export const ANSWER_MAX = 16_000
 
 const proposalLabel = (label: string | undefined, r: Route) => (label ?? '').replace(/[<>]/g, '').slice(0, 60) || routeLabel(r)
 
-/**
- * A turn's rows, derived from its frames and the page's outcomes: the person's words, then every frame in seq order
- * with the steers (echoed or still pending) and page notes in their places. Pure: the same turn gives the same rows.
- */
+/** Why a research request ended without a report, by the cause its task was stopped with (hive/core/goals.py
+ *  STOP_CAUSES); a cause not named here keeps the plain sentence. */
+/** Whose limit held a research and what the hive calls it, by the kind in its limit word (hive/core/research.py
+ *  Research.limit_word, kind_period), and how long that limit runs; any word outside these keeps the plain words. */
+const LIMIT_OF: Record<string, [owner: string, noun: string]> = {
+  hive: ["the hive's", 'cap'], swarm: ["the Research swarm's", 'cap'], mind: ["the researcher's own", 'cap'],
+  person: ['your', 'allowance'], key: ["the key's", 'limit'],
+}
+const LIMIT_PERIOD: Record<string, string> = { day: 'daily', month: 'monthly', total: 'total' }
+
+function limitWords(limit: string | null | undefined): string {
+  if (limit === 'unseen') return 'a spending limit you can\'t change'
+  const [kind, period] = (limit ?? '').split('_')
+  const of = LIMIT_OF[kind]
+  return of && LIMIT_PERIOD[period] ? `${of[0]} ${LIMIT_PERIOD[period]} ${of[1]}` : 'its spending limit'
+}
+
+const RESEARCH_ENDED: Record<string, string> = {
+  deadline: 'the time it was given ran out',
+  research_start: 'no researcher could be started',
+}
+
+/** The live row's words for a research that ended without a report, with its cause where the hive named one. */
+function researchFailed(reason: string | null | undefined): string {
+  const why = reason ? RESEARCH_ENDED[reason] : undefined
+  return why ? `The research couldn’t be finished because ${why}, so there is no report.` : RESEARCH_WORDS.failed
+}
+
 export function researchRow(e: Extract<AskEvent, { phase: 'research' }>, base: Pick<AskRow, 'id' | 'op' | 'seq'>): AskRow {
   if (e.state === 'held') {
     const reason = {
-      spend_rate: () => `its next call fits the monthly spending pace around ${new Date(e.until!).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
-      spending_limit: () => 'its next call needs room in its spending limit',
+      spending_limit: () => `its next call needs room in ${limitWords(e.limit)}`,
       asleep: () => 'the researcher is asleep',
+      stopped: () => 'the researcher is stopped',
       worker_error: () => 'the researcher stopped with an error',
     }[e.reason]()
     return { ...base, kind: 'note', text: `Research is waiting because ${reason}.` }
   }
   if (e.state === 'resumed') return { ...base, kind: 'note', text: 'Research has resumed.' }
-  if (e.state !== 'done') {
-    const text = e.state === 'failed' ? 'Research ended without a report.' : 'The research request was cancelled.'
-    return { ...base, kind: 'note', text }
+  if (e.state === 'failed') {
+    const why = e.reason ? RESEARCH_ENDED[e.reason] : undefined
+    return { ...base, kind: 'note', text: why ? `Research ended without a report: ${why}.` : 'Research ended without a report.' }
   }
+  if (e.state !== 'done') return { ...base, kind: 'note', text: 'The research request was cancelled.' }
   const report = e.research?.report
   if (!report) return { ...base, kind: 'note', text: 'Research finished. Its report could not be loaded.' }
   const sections = report.sections.flatMap(section => [
@@ -628,7 +681,11 @@ export function researchRow(e: Extract<AskEvent, { phase: 'research' }>, base: P
   return { ...base, kind: 'answer', who: 'Research', text: [report.summary, ...sections, ...questions].join('\n\n') }
 }
 
-export function turnRows(t: TurnMeta, mindName?: string, thread?: { spent_usd: number; budget_usd: number; mind?: { id: string } } | null): AskRow[] {
+/**
+ * A turn's rows, derived from its frames and the page's outcomes: the person's words, then every frame in seq order
+ * with the steers (echoed or still pending) and page notes in their places. Pure: the same turn gives the same rows.
+ */
+export function turnRows(t: TurnMeta, mindName?: string, thread?: { mind?: { id: string } } | null): AskRow[] {
   // an answer is named by the mind whose voice gave it (the hive's speaks_as): on a swarm turn of a person who has
   // their own mind that is their mind, never the coordinator the turn is routed to for money and limits; by id, so the
   // person's own mind keeps the name they gave it (words.shownMind)
@@ -671,6 +728,12 @@ export function turnRows(t: TurnMeta, mindName?: string, thread?: { spent_usd: n
       case 'steer':
         rows.push({ ...base, kind: 'steer', text: e.text, state: 'sent' })
         break
+      case 'go_ahead':
+        // the question stands while the turn is open and nothing has moved it on; the person's answer so far is the
+        // page's own outcome (sending, carrying on, stopping, failed, or no longer asked)
+        if (t.state === 'open' && !t.events.some((x) => x.seq > e.seq && MOVED_ON.has(x.phase)))
+          rows.push({ ...base, kind: 'go-ahead', text: '', goAhead: { spentUsd: e.spent_usd, limitUsd: e.limit_usd, ...(o?.kind === 'go-ahead' ? { state: o.state, ...(o.error ? { error: o.error } : {}) } : {}) } })
+        break
       case 'answer':
         if (e.delta) {
           if (streaming) streaming.text = (streaming.text + e.text).slice(0, ANSWER_MAX)
@@ -697,7 +760,7 @@ export function turnRows(t: TurnMeta, mindName?: string, thread?: { spent_usd: n
         // the report back at its turn: in the live frame (the host sends research.py's whole view), or read by its id
         // (outcome research), or not readable here
         const view = ('research' in e ? e.research : undefined) ?? (o?.kind === 'research' ? o.view : undefined)
-        if (e.state !== 'done') rows.push({ ...base, kind: 'research', text: RESEARCH_WORDS[e.state], state: 'failed' })
+        if (e.state !== 'done') rows.push({ ...base, kind: 'research', text: e.state === 'failed' ? researchFailed(e.reason) : RESEARCH_WORDS[e.state], state: 'failed' })
         else rows.push({ ...base, kind: 'research', text: view ? RESEARCH_WORDS.done : view === null ? RESEARCH_WORDS.unread : RESEARCH_WORDS.loading, state: view ? 'sent' : view === null ? 'failed' : 'waiting', ...(view ? { research: view } : {}) })
         break
       }
@@ -736,12 +799,14 @@ export function turnRows(t: TurnMeta, mindName?: string, thread?: { spent_usd: n
         // a turn the host stopped at a limit says so, in the page's words (never the host's); the person's own
         // j0-fixes r1: a spending stop names the limit that stopped it and offers only a remedy that helps (words.ts)
         // (ask-limits r1); a model with no price or a missing key is its own error, not a limit
-        const stop = e.outcome === 'spend_cap' ? spendStop(readDoneLimit(e.limit), thread) : null
+        // an expensive stop says no go-ahead came only when this turn asked (a browser mind's turn stops unasked)
+        const stop = e.outcome === 'spend_cap' ? spendStop(readDoneLimit(e.limit), t.events.some((x) => x.phase === 'go_ahead')) : null
         // a turn the page carried and stopped itself: where the words went, never "This request was stopped"
         // a refusal the hive spoke (done.remedy) is already the turn's answer, in the hive's words: read once, never twice
         const said = t.carried && e.outcome === 'cancelled' ? t.carried : stop ? stop.text : e.outcome === 'error' ? (spokenRefusal(e.remedy) ? null : doneErrorWords(e.error)) : e.outcome ? DONE_WORDS[e.outcome] : null
-        const offer = stop ? (stop.offer.length ? stop.offer : undefined) : e.outcome ? DONE_OFFERS[e.outcome] : undefined
-        if (said) rows.push({ ...base, kind: 'note', text: said, ...(offer ? { offer } : {}) })
+        // Go ahead sends this turn's own words again, so only a turn whose request this page kept offers it
+        const offer = stop?.offer.filter((x) => x.kind !== 'go-ahead' || !!t.asked)
+        if (said) rows.push({ ...base, kind: 'note', text: said, ...(offer?.length ? { offer } : {}) })
         break
       }
     }
@@ -1232,6 +1297,10 @@ export const useAskStore = create<AskStore>()((set, get) => {
       case 'research':
         if (e.state === 'done' && !e.research) void readResearch(op, e.seq, e.request_id)
         return
+      case 'go_ahead':
+        // the turn waits on the person's answer: the thread opens so the question is seen (a collapsed Ask, a quiet turn)
+        if (get().turns[op]?.state === 'open') set({ threadOpen: true })
+        return
       case 'memory': {
         // the live frame was kept once placed (accept, before this); a stub read back later that this browser never had
         // is said as lost, once
@@ -1657,10 +1726,10 @@ export const useAskStore = create<AskStore>()((set, get) => {
       // through convo"); never from a private app's page, and never on a carried turn, which no mind answers
       const conversation = privatePage || carried ? [] : askMemory.conversation()
       // the original request: kept as sent, so a check can send exactly it again under the same id (Review B1, 45392df)
-      const body: AskBody = { operation_id: op, text: words.slice(0, 4000), context, via: opts.via ?? 'typed', ...(opts.continues ? { continues: opts.continues } : {}), ...(recalled.notes.length ? { memory_notes: recalled.notes } : {}), ...(conversation.length ? { conversation } : {}), ...(carried ? { carry: true as const } : {}) }
+      const body: AskBody = { operation_id: op, text: words.slice(0, 4000), context, via: opts.via ?? 'typed', ...(opts.continues ? { continues: opts.continues } : {}), ...(recalled.notes.length ? { memory_notes: recalled.notes } : {}), ...(conversation.length ? { conversation } : {}), ...(carried ? { carry: true as const } : {}), ...(opts.goAhead ? { go_ahead: true } : {}) }
       // This is the original body kept for unknown-admission readback/retry, never a second request or a new owner.
       if (useBrowser) body.answer_in = 'browser'
-      const pendingTurn: TurnMeta = { ...newTurn(op, words, opts.where, opts.about), memorySince, privatePage, ...(pageSwarm ? { swarm: pageSwarm } : {}), ...(around.note ? { rerouted: around.note } : {}), ...(around.why ? { reroutedWhy: around.why } : {}), ...(around.fixSwarm ? { fixSwarm: around.fixSwarm } : {}), ...(carried ? { carried: opts.carried } : {}) }
+      const pendingTurn: TurnMeta = { ...newTurn(op, words, opts.where, opts.about), asked: { context, opts: kept(opts) }, memorySince, privatePage, ...(pageSwarm ? { swarm: pageSwarm } : {}), ...(around.note ? { rerouted: around.note } : {}), ...(around.why ? { reroutedWhy: around.why } : {}), ...(around.fixSwarm ? { fixSwarm: around.fixSwarm } : {}), ...(carried ? { carried: opts.carried } : {}) }
       set((s) => ({ open: op, threadOpen: opts.quiet ? s.threadOpen : true, turns: { ...s.turns, [op]: pendingTurn }, log: [...s.log, { kind: 'turn' as const, op }] }))
       if (!snap.ok()) {
         // A synchronous observer invalidated this turn before any POST or receipt: these words were not sent.
@@ -1719,7 +1788,7 @@ export const useAskStore = create<AskStore>()((set, get) => {
           current: () => snap.ok() && !!get().turns[op] && lastOp === op && (!get().open || get().open === op),
           send: () => { watch(op); return client.ask!(body) }, phase: () => {}, retry: deliver,
           reopen: () => { patchTurn(op, { state: 'sending' }); set({ open: op }) },
-          routeOwn: (next) => { body.context = next; if (lastOp === op && last) last = { ...last, context: next }; patchTurn(op, (t) => ({ rerouted: undefined, reroutedWhy: undefined, fixSwarm: undefined, held: t.held?.map((h) => ({ ...h, context: next })) })) },
+          routeOwn: (next) => { body.context = next; if (lastOp === op && last) last = { ...last, context: next }; patchTurn(op, (t) => ({ rerouted: undefined, reroutedWhy: undefined, fixSwarm: undefined, held: t.held?.map((h) => ({ ...h, context: next })), asked: t.asked && { ...t.asked, context: next } })) },
         })
         if (r === ASK_NOT_SENT) {
           if (snap.ok()) { opts.admission?.({ admitted: false, reason: 'failed' }); opts = kept(opts); closeTurn(op, 'refused') }
@@ -2353,19 +2422,57 @@ export const useAskStore = create<AskStore>()((set, get) => {
       }
     },
 
-    async setThreadLimit(usd) {
+    async setAskWhenExpensive(on) {
       const { client } = useHive.getState()
-      // never above $5 (Jon 2026-10-05), nor above the host's own maximum when it says one
-      const max = Math.min(get().settings?.max_thread_budget_usd ?? THREAD_LIMIT_MAX_USD, THREAD_LIMIT_MAX_USD)
-      if (!client?.setAskSettings || !(usd > 0) || !(usd <= max)) return false
+      if (!client?.setAskSettings) return false
       const snap = snapshot()
       try {
-        const st = await client.setAskSettings({ thread_budget_usd: usd })
+        const st = await client.setAskSettings({ ask_when_expensive: on })
         if (snap.ok()) settled(st)
         return snap.ok()
       } catch {
         return false
       }
+    },
+
+    async answerGoAhead(op, go) {
+      liveBound()
+      const t = get().turns[op]
+      const { client } = useHive.getState()
+      // the question this answers: the turn's latest go_ahead frame, while the turn is open and nothing moved it on
+      const asked = t?.state === 'open' ? [...t.events].reverse().find((x) => x.phase === 'go_ahead') : undefined
+      if (!t || !asked || t.events.some((x) => x.seq > asked.seq && MOVED_ON.has(x.phase)) || !client?.askGoAhead) return
+      // one answer per question: nothing more is sent while one is in flight or once the hive took it
+      const prior = t.outcomes[asked.seq]
+      if (prior?.kind === 'go-ahead' && prior.state !== 'failed') return
+      const snap = snapshot()
+      outcome(op, asked.seq, { kind: 'go-ahead', go, state: 'sending' })
+      try {
+        await client.askGoAhead(op, go)
+        if (snap.ok()) outcome(op, asked.seq, { kind: 'go-ahead', go, state: go ? 'went' : 'stopping' })
+      } catch (err) {
+        if (!snap.ok()) return
+        // no longer waiting (answered in another tab, closed, timed out) or not this person's: the question is over;
+        // a 409 reads the turn back for the frames that moved it on
+        if (err instanceof ApiError && (err.status === 404 || (err.status === 409 && err.code === 'not_waiting'))) {
+          outcome(op, asked.seq, { kind: 'go-ahead', go, state: 'gone' })
+          if (err.status === 409) void get().recover(op)
+          return
+        }
+        outcome(op, asked.seq, { kind: 'go-ahead', go, state: 'failed', error: errorMessage(err) })
+      }
+    },
+
+    async goAheadAgain(op) {
+      liveBound()
+      const t = get().turns[op]
+      const done = t?.events.find((x): x is Extract<AskEvent, { phase: 'done' }> => x.phase === 'done')
+      // only a closed turn that stopped as expensive, whose words and context this page kept
+      if (!t?.asked || t.state !== 'done' || done?.outcome !== 'spend_cap' || readDoneLimit(done.limit)?.kind !== 'expensive') return 'gone'
+      // never as a steer of another request that is running now: the person goes ahead once it finishes
+      if (get().open) return 'busy'
+      await get().send(t.you, t.asked.context, { ...t.asked.opts, goAhead: true })
+      return 'sent'
     },
 
     setThreadOpen(open) {

@@ -529,6 +529,9 @@ class Services:
             self.hive.person_swarms.require_current(row["agent_id"])
             if self.hive.policy._ceiling(row["agent_id"], row["skill"]) == "deny":
                 raise ServiceError(403, "policy_refused", "the app template no longer allows this approval")
+            refused = self.hive.policy.own_code(self.hive.agent(row["agent_id"]), row["skill"])
+            if refused:
+                raise ServiceError(403, "policy_refused", refused)
             cur = self.db.execute("UPDATE approvals SET status = 'used', redeemed_at = ? WHERE id = ? AND status = 'approved' AND redeemed_at IS NULL",
                                   (now(), approval_id))
         if cur.rowcount != 1:

@@ -1,11 +1,13 @@
-# Purpose: tests that the two Foundation bindings keep their explicit bounds under the one-allowance limits: no every-mind
-# cap or uncapped admission reaches them, their stored rules and caps bind, and a request to them is refused as before.
+# Purpose: tests that the two Foundation bindings get no special bounds under the one-allowance limits: the hive cap admits
+# and the every-mind rule holds a Foundation mind with no cap of its own as it does any mind, their stored rules bind, and
+# a request to them is refused as before.
 """R6 budget boundaries against the existing real app/DB test fixtures.
 
 FakeSupervisor and the existing invented-key/service currentness counterpart never execute a provider or native mind.
 All budget, reservation, request/grant/lease and read-model methods remain actual methods. Nothing is derived any more:
-the Foundation bindings keep their explicit caps, stored rules, spend and reservations, and neither the every-mind rule
-nor the hive cap's admission of uncapped minds reaches them.
+a Foundation mind is held by the hive cap, the every-mind rule and the rules stored on it like any other mind (Jon on
+#256, 23 Nov: after #679 Foundation minds have no caps of their own), and #679 took away the Code controller's
+seeded cap and its binding ceiling.
 """
 import asyncio
 import datetime
@@ -14,15 +16,13 @@ import pytest
 
 from hive.core.cost_reservations import Reservations, host_budget_snapshot
 from hive.core.db import new_id, now
-from hive.core.foundation import CODE, REVIEW, REVIEW_CAP_USD, CHILD_TEMPLATE, foundation_budget_ids
-from hive.core.hive import HiveError
+from hive.core.foundation import CODE, REVIEW, CHILD_TEMPLATE, foundation_budget_ids
 from hive.core.limits_view import limits, old_defaults
 from hive.tests.test_hive_foundation import (  # original real-app fixture and explicit external counterpart
     available, controller, controlled_environment, f,
 )
 from hive.tests.test_mind_control import person
 from hive.tests.test_model_route import hive_app
-from hive.tests.test_spend_rate_guard import MonthApart
 
 
 def ordinary(hive, name="Ordinary", count=1, budget=0):
@@ -48,7 +48,7 @@ def agree(hive, view, mind_id):
     assert effective == {label: round(limit, 6) for label, limit, _ in host_budget_snapshot(hive, mind_id)}
 
 
-def test_two_host_bindings_store_no_rules_and_keep_their_caps(f):
+def test_two_host_bindings_store_no_rules(f):
     team, actors = ordinary(f, count=3)
     f.budgets.set("hive", "month", 1000)
     before = f.budgets.rules()
@@ -57,10 +57,10 @@ def test_two_host_bindings_store_no_rules_and_keep_their_caps(f):
     ordinary(f, "Third")
     assert applicable(f, actors[0]) == {("hive", "month"): (1000, before[0]["id"])}
     assert f.budgets.rules() == before
-    assert controller(f)["budget_usd"] == .50 and controller(f, REVIEW)["budget_usd"] == REVIEW_CAP_USD
+    assert controller(f)["budget_usd"] == 0 and controller(f, REVIEW)["budget_usd"] == 0   # no caps of their own
 
 
-def test_limits_projection_keeps_ordinary_first_and_retains_host_caps(f):
+def test_limits_projection_keeps_ordinary_first_and_agrees_for_host_minds(f):
     team, (actor,) = ordinary(f, budget=1)
     assert f.budgets.overview() == []                                      # no swarm default row
     view = limits(f.budgets)
@@ -89,7 +89,9 @@ def test_explicit_host_rule_binds_only_the_host_team(f, period, amount):
 
 
 @pytest.mark.parametrize("which", ["controller", "member"])
-def test_zero_host_actor_cannot_gain_a_panel_allowance_after_exclusion(f, which):
+def test_a_zero_host_actor_is_admitted_and_held_like_any_mind(f, which):
+    """Jon on #256, 23 Nov: Foundation minds have no caps of their own, so the hive cap admits a host actor with no cap
+    and the every-mind rule holds it, exactly as it does an ordinary mind."""
     b = f.foundation._binding(CODE)
     if which == "controller":
         actor = controller(f)
@@ -101,22 +103,21 @@ def test_zero_host_actor_cannot_gain_a_panel_allowance_after_exclusion(f, which)
     f.budgets.set("hive", "month", 1000)
     f.budgets.set("every-mind", "month", 5)
     current = f.agent(actor["id"])
-    assert not f.budgets.paid_without_cap(current)
-    assert f.budgets.remaining_for(current) == 0
-    assert f.budgets.paid_without_cap(f.agent(normal["id"]))
-    assert f.budgets.every_mind_row(current) is None and f.budgets.every_mind_row(f.agent(normal["id"])) is not None
+    for mind in (current, f.agent(normal["id"])):
+        assert f.budgets.paid_without_cap(mind)
+        assert f.budgets.every_mind_row(mind)[:3] == ("agent:" + mind["id"], "month", 5)
     rows = {key: amount for key, amount, _ in host_budget_snapshot(f, actor["id"])}
-    assert rows["agent:" + actor["id"] + ":total"] == 0
-    with pytest.raises(ValueError):
-        Reservations(f.db).reserve("zero-host-actor", {"synthetic": 1}, .000001,
-                                    lambda: host_budget_snapshot(f, actor["id"]))
+    assert rows["agent:" + actor["id"] + ":month"] == 5 and rows["hive:month"] == 1000
+    assert "agent:" + actor["id"] + ":total" not in rows                      # no $0 lifetime row of its own
+    assert Reservations(f.db).reserve("zero-host-actor", {"synthetic": 1}, .000001,
+                                       lambda: host_budget_snapshot(f, actor["id"]))["new"]
 
 
 def test_original_person_allowance_and_own_key_gate_remain_explicit(f, monkeypatch):
     pid = "u_" + "a" * 32
     person(f, pid, role="member")
     principal = "user:" + pid
-    f.budgets.set("hive", "month", 1000)
+    # no hive cap: with one, every capless mind goes through on it, so the allowance gate shows only without
     f.budgets.set("person:" + pid, "month", .07)
     actor = dict(controller(f), budget_usd=0, personal_of=principal)
     # An interface input, not a conversion/admission of the actual controller
@@ -144,7 +145,7 @@ def test_host_usage_and_holds_still_exhaust_the_one_global_pool(f, state):
         "prompt_tokens": 0, "completion_tokens": 0, "cost_usd": .02,
         "created_at": now(), "swarm_id": ctl["swarm_id"]})
     f.db.execute("UPDATE agents SET spent_usd=.02 WHERE id=?", (ctl["id"],))
-    res = Reservations(f.db, clock=MonthApart())                          # the guard full at each call: admission alone
+    res = Reservations(f.db)
     res.reserve("host-held", {"synthetic": 1}, .20, lambda: host_budget_snapshot(f, ctl["id"]),
                 metadata={"agent": ctl["id"]})
     if state in ("dispatched", "unknown"):
@@ -174,7 +175,7 @@ def test_limits_projection_matches_snapshot_for_original_and_lower_host_caps(f, 
     assert row["budget_usd"] == cap
 
 
-def test_old_defaults_never_list_host_caps(f):
+def test_old_defaults_list_a_host_figure_like_anyone_s(f):
     team, (actor,) = ordinary(f, "First", budget=5)
     ordinary(f, "Second")
     ctl = controller(f)
@@ -182,9 +183,8 @@ def test_old_defaults_never_list_host_caps(f):
     f.budgets.set("swarm:" + ctl["swarm_id"], "month", 500)
     f.budgets.set("hive", "month", 1000)
     found = old_defaults(f.budgets)
-    assert [r["agent_id"] for r in found if r["kind"] == "mind"] == [actor["id"]]
-    swarms, minds = foundation_budget_ids(f.db)
-    assert not [r for r in found if r.get("agent_id") in minds or r.get("swarm_id") in swarms]
+    assert {r["agent_id"] for r in found if r["kind"] == "mind"} == {actor["id"], ctl["id"]}
+    assert [r["swarm_id"] for r in found if r["kind"] == "swarm"] == [ctl["swarm_id"]]
 
 
 def test_names_other_purposes_and_removed_bindings_are_not_exclusion_authority(f):
@@ -205,16 +205,17 @@ def test_names_other_purposes_and_removed_bindings_are_not_exclusion_authority(f
     assert old["swarm_id"] not in foundation_budget_ids(f.db)[0]
 
 
-def test_exact_bound_actor_drift_is_not_admission_or_an_every_mind_cap(f):
+def test_exact_bound_actor_drift_is_admitted_and_held_like_any_mind(f):
     team = f.create_swarm("Other membership", visibility="public")
     ctl = controller(f)
     f.db.execute("UPDATE agents SET swarm_id=?,budget_usd=0 WHERE id=?", (team["id"], ctl["id"]))
     f.budgets.set("hive", "month", 1000)
     f.budgets.set("every-mind", "month", 5)
-    assert not f.budgets.paid_without_cap(f.agent(ctl["id"]))
-    assert f.budgets.every_mind_row(f.agent(ctl["id"])) is None
-    with pytest.raises(HiveError, match="budget binding"):
-        host_budget_snapshot(f, ctl["id"])
+    assert f.budgets.paid_without_cap(f.agent(ctl["id"]))
+    assert f.budgets.every_mind_row(f.agent(ctl["id"])) is not None
+    rows = {label: limit for label, limit, _spent in host_budget_snapshot(f, ctl["id"])}
+    assert rows["agent:" + ctl["id"] + ":month"] == 5 and rows["hive:month"] == 1000
+    assert "agent:" + ctl["id"] + ":total" not in rows                       # no binding ceiling of its own
 
 
 def request_setup(hive_app, monkeypatch):

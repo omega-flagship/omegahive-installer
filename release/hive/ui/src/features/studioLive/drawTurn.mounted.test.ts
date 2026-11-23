@@ -1,3 +1,4 @@
+// Purpose: prove, mounted, that a live drawing turn is the one the Ask's receipt names, and gives up or cancels on time.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
@@ -135,7 +136,7 @@ beforeEach(() => {
     programs: [{ id: 'omegadesign', name: 'Create' }] as never,
   })
   useAskStore.getState().bind(useHive.getState().session, 'user:p_invented')
-  useAskStore.setState({ settings: { swarm_id: 's_own', thread_budget_usd: 5, eligible }, personal: C as never })
+  useAskStore.setState({ settings: { swarm_id: 's_own', eligible }, personal: C as never })
 })
 afterEach(() => {
   mounted.reverse().forEach((m) => m.unmount())

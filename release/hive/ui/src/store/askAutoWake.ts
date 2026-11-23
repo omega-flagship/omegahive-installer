@@ -40,6 +40,21 @@ class WakeBlocked extends Error {
 class Stopped extends Error {
   constructor(readonly causeKind: 'stale' | 'timeout') { super(causeKind) }
 }
+/**
+ * What a wake-before-send does first for a mind as inspected: send to an awake mind, wait for one already starting, wake
+ * an asleep one the person may wake, or stop, at the gate the host's facts name, at 'authority' for an asleep mind the
+ * person may not wake, or as unavailable. WakeBeforeSend acts on it, and askResearchWake reads it before any press, so a
+ * press is offered only where it can go through.
+ */
+export type WakeStep = { kind: 'send' | 'wait' | 'wake' | 'unavailable' } | { kind: 'gated'; gate: WakeGate }
+export function wakeStep(view: WakeInspection): WakeStep {
+  if (view.state === 'awake') return { kind: 'send' }
+  if (view.gate) return { kind: 'gated', gate: view.gate }
+  if (view.state === 'unavailable') return { kind: 'unavailable' }
+  if (view.state === 'starting') return { kind: 'wait' }
+  return view.canWake ? { kind: 'wake' } : { kind: 'gated', gate: 'authority' }
+}
+
 /** The host's words as one short line for the wake card; nothing when it gave none. */
 export function hostReason(text: unknown): string | undefined {
   if (typeof text !== 'string') return undefined
@@ -99,10 +114,10 @@ export class WakeBeforeSend<T> {
       this.assertCurrent()
       this.ports.phase('inspecting')
       let view = await inspect()
-      if (view.state !== 'awake' && view.gate) return { kind: 'gated', gate: view.gate }
-      if (view.state === 'unavailable') return { kind: 'wake-failed', reason: 'refused', requestSent: false, detail: view.error }
-      if (view.state === 'asleep') {
-        if (!view.canWake) return { kind: 'gated', gate: 'authority' }
+      const first = wakeStep(view)
+      if (first.kind === 'gated') return { kind: 'gated', gate: first.gate }
+      if (first.kind === 'unavailable') return { kind: 'wake-failed', reason: 'refused', requestSent: false, detail: view.error }
+      if (first.kind === 'wake') {
         this.assertCurrent()
         this.ports.phase('waking')
         this.assertCurrent()
@@ -110,7 +125,7 @@ export class WakeBeforeSend<T> {
           try { this.assertCurrent(); return true } catch { return false }
         }))
         view = await inspect()
-      } else if (view.state === 'starting') {
+      } else if (first.kind === 'wait') {
         // Someone has already asked for this start. Do not issue another wake.
         this.ports.phase('waking')
       }
@@ -154,7 +169,7 @@ export interface NativeWakeOptions<T> {
   current(): boolean
   send(): Promise<T>
   phase(phase: WakePhase): void
-  target?(mind: Pick<Agent, 'id' | 'name'>): void
+  target?(mind: Pick<Agent, 'id' | 'name' | 'status'>): void
   fallback?(mind: MyMind): void
   expectedOwn?: string
 }
@@ -262,8 +277,11 @@ export function nativeWakePorts<T>(o: NativeWakeOptions<T>): WakeAttemptPorts<T>
       if (!target || state.state !== 'asleep') throw new Error('wake no longer permitted')
       try { await fresh(() => o.client.agentAction(target!.id, 'wake')) }
       catch (error) {
-        // Only a typed native response; never infer spending from text or a stale budget.
+        // Only a typed native response; never infer spending from text or a stale budget. owner_only is the host's
+        // refusal of a person who neither owns the mind nor administers the hive (app.py control_refusal): the authority
+        // gate, which a retry doesn't lift.
         if (error instanceof ApiError && error.code === 'budget_exhausted') throw new WakeBlocked('spending')
+        if (error instanceof ApiError && error.code === 'owner_only') throw new WakeBlocked('authority')
         throw error
       }
     },

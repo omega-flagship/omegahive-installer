@@ -75,7 +75,7 @@ def test_real_api_budget_key_and_studio_readers_keep_legacy_rows_and_new_ids(cli
     agent = response.json()
     assert len(agent["id"][2:]) == width
     scope = "agent:" + agent["id"]
-    response = client.post("/api/budgets", json={"scope": scope, "period": "month", "limit_usd": 1})
+    response = client.post("/api/budgets", headers=owner, json={"scope": scope, "period": "month", "limit_usd": 1})   # its owner sets its cap
     assert response.status_code == 200, response.text
     reservations = cost_reservations.Reservations(hive.db)
     reservations.reserve("invented-hold", {}, .25, lambda: [(scope + ":month", 1, 0)])

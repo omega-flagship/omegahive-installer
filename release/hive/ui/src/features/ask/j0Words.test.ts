@@ -1,7 +1,8 @@
+// Purpose: prove the Ask's plain words for spending stops, refusals, the paid row and the person's open threads.
 import { describe, expect, it } from 'vitest'
-import { appShown, DONE_WORDS, doneErrorWords, MONTHLY_TOTAL_STOP, paysLine, readDoneLimit, refusalOf, REFUSAL_WORDS, SPEND_STOP_UNNAMED, spendRefusalOffers, spendStop, spokenRefusal, threadBinds, USAGE_AND_LIMITS, YOUR_KEYS } from './words'
+import { appShown, DONE_WORDS, doneErrorWords, GO_AHEAD, MONTHLY_TOTAL_STOP, paysLine, readDoneLimit, refusalOf, REFUSAL_WORDS, SPEND_STOP_UNNAMED, spendStop, spokenRefusal, USAGE_AND_LIMITS, YOUR_KEYS } from './words'
 import { limitDraft, limitToSave } from '../usage/limitsScreen'
-import { askThreadFigures, openThreadsOf, END_SAYS, withThreadFigures } from './threadList'
+import { openThreadsOf, END_SAYS } from './threadList'
 import type { WorkSession } from '../../api/types'
 
 /** j0-fixes r1 items 2-5, pure: honest limit words, the payer line, the limit editor's cents, own open threads. INVENTED data. */
@@ -9,40 +10,40 @@ const kinds = (o: { kind: string }[]) => o.map((x) => x.kind)
 
 describe('item 3: a spending stop offers only a remedy that helps', () => {
   const lim = (kind: string, current = 3.89, limit = 3.92) => readDoneLimit({ kind, current_usd: current, limit_usd: limit, estimate_usd: 0.25 })
-  it('today’s host (no `limit`): the plain fallback, with the thread’s own figures as a fact and no remedy offered', () => {
-    const s = spendStop(null, { spent_usd: 0, budget_usd: 5 })
-    expect(s.text).toBe('Stopped here: a spending limit stopped this request, and the hive did not say which one. Usage & limits shows every limit. This thread has used $0.00 of its $5.00.')
-    expect(s.offer).toEqual([])
-    // even when the thread looks spent: the host did not say so, so nothing is promised
-    expect(spendStop(null, { spent_usd: 4.99, budget_usd: 5 }).offer).toEqual([])
-    expect(spendStop(null, null).text).toBe(SPEND_STOP_UNNAMED)
+  it('a host that does not name the limit: the plain fallback, and no remedy offered', () => {
+    expect(spendStop(null)).toEqual({ text: SPEND_STOP_UNNAMED, offer: [] })
+    expect(SPEND_STOP_UNNAMED).toBe('Stopped here: a spending limit stopped this request, and the hive did not say which one. Usage & limits shows every limit.')
   })
   it('kind unknown (or one this page does not know): the plain fallback, no remedy', () => {
-    expect(spendStop(lim('unknown'), { spent_usd: 4.99, budget_usd: 5 }).offer).toEqual([])
-    expect(spendStop(readDoneLimit({ kind: 'galaxy' }), null)).toEqual({ text: SPEND_STOP_UNNAMED, offer: [] })
+    expect(spendStop(lim('unknown')).offer).toEqual([])
+    expect(spendStop(readDoneLimit({ kind: 'galaxy' }))).toEqual({ text: SPEND_STOP_UNNAMED, offer: [] })
   })
-  it('the raise for new threads is offered for the thread’s own cap only (the per-turn cap is the hive’s setting)', () => {
-    for (const kind of ['thread', 'per_turn', 'mind_total', 'session', 'swarm', 'hive', 'member_allowance', 'key', 'own_key_limit', 'own_key_required', 'no_key_grant', 'unknown']) {
-      const raise = kinds(spendStop(lim(kind), { spent_usd: 0, budget_usd: 5 }).offer).includes('raise-budget')
-      expect(raise, kind).toBe(kind === 'thread')
-    }
-    expect(kinds(spendStop(lim('thread', 5, 5), null).offer)).toEqual(['new-thread', 'raise-budget'])
-    const turn = spendStop(lim('per_turn', 0.25, 0.25), null)
-    expect(turn.text).toBe('Stopped here: this request reached the spending limit for one turn ($0.25 of $0.25). Each turn starts with a fresh limit, so you can ask again to carry on.')
-    expect(kinds(turn.offer)).toEqual(['retry'])
+  it('no stop offers a new thread or a raise: an Ask thread and turn have no cap of their own (Jon on #294)', () => {
+    for (const kind of ['expensive', 'mind_total', 'session', 'swarm', 'hive', 'member_allowance', 'key', 'own_key_limit', 'own_key_required', 'no_key_grant', 'own_key_needed', 'unknown'])
+      expect(kinds(spendStop(lim(kind)).offer).filter((k) => k === 'new-thread' || k === 'raise-budget'), kind).toEqual([])
+    // the retired kinds are no longer sent; one that arrives anyway is a limit the page does not know
+    for (const kind of ['thread', 'per_turn']) expect(spendStop(lim(kind)), kind).toEqual({ text: SPEND_STOP_UNNAMED, offer: [] })
+  })
+  it('an expensive stop says what it had spent, as the question did, and offers Go ahead', () => {
+    const stop = spendStop(readDoneLimit({ kind: 'expensive', current_usd: 1.2, limit_usd: 1, estimate_usd: null }))
+    expect(stop.text).toBe('Stopped here: this one looks expensive (about $1.20 so far), and no go-ahead came in time.')
+    expect(stop.offer).toEqual([GO_AHEAD])
+    expect(GO_AHEAD).toEqual({ kind: 'go-ahead', label: 'Go ahead' })
+    // its spend unreadable: said without a figure, never an invented one
+    expect(spendStop(readDoneLimit({ kind: 'expensive', current_usd: 'lots', limit_usd: 1 })).text).toBe('Stopped here: this one looks expensive, and no go-ahead came in time.')
   })
   it('mind_total, swarm and hive name that limit with its figures and link to Usage & limits', () => {
-    const mind = spendStop(lim('mind_total'), { spent_usd: 0, budget_usd: 5 })
-    expect(mind.text).toBe('Stopped here: this mind has reached its own spending limit ($3.89 of $3.92). Raising this thread’s limit would not help; an admin can raise the mind’s limit.')
+    const mind = spendStop(lim('mind_total'))
+    expect(mind.text).toBe('Stopped here: this mind has reached its own spending limit ($3.89 of $3.92). An admin can raise the mind’s limit.')
     expect(mind.offer).toEqual([USAGE_AND_LIMITS])
-    expect(spendStop(lim('swarm', 45.66, 45.66), null).text).toBe('Stopped here: this swarm has reached its spending limit ($45.66 of $45.66). An admin can raise the swarm’s limit.')
-    expect(spendStop(lim('hive', 1000, 1000), null).text).toContain('the hive has reached its spending limit ($1000.00 of $1000.00)')
-    for (const kind of ['swarm', 'hive', 'member_allowance']) expect(spendStop(lim(kind), null).offer, kind).toEqual([USAGE_AND_LIMITS])
+    expect(spendStop(lim('swarm', 45.66, 45.66)).text).toBe('Stopped here: this swarm has reached its spending limit ($45.66 of $45.66). An admin can raise the swarm’s limit.')
+    expect(spendStop(lim('hive', 1000, 1000)).text).toContain('the hive has reached its spending limit ($1000.00 of $1000.00)')
+    for (const kind of ['swarm', 'hive', 'member_allowance']) expect(spendStop(lim(kind)).offer, kind).toEqual([USAGE_AND_LIMITS])
     expect(USAGE_AND_LIMITS.label).toBe('Usage & limits')
   })
   it('the key kinds point to the person’s keys; a permission kind has no figures', () => {
-    for (const kind of ['key', 'own_key_limit', 'own_key_required', 'no_key_grant']) expect(spendStop(lim(kind), null).offer, kind).toEqual([YOUR_KEYS])
-    const grant = spendStop(readDoneLimit({ kind: 'no_key_grant', current_usd: null, limit_usd: null, estimate_usd: null }), null)
+    for (const kind of ['key', 'own_key_limit', 'own_key_required', 'no_key_grant']) expect(spendStop(lim(kind)).offer, kind).toEqual([YOUR_KEYS])
+    const grant = spendStop(readDoneLimit({ kind: 'no_key_grant', current_usd: null, limit_usd: null, estimate_usd: null }))
     expect(grant.text).toBe('Stopped here: you don’t have permission to spend on this hive’s key. Ask its owner, or add your own key.')
     expect(grant.text).not.toMatch(/\$/)
   })
@@ -52,25 +53,21 @@ describe('item 3: a spending stop offers only a remedy that helps', () => {
     expect(readDoneLimit('thread')).toBeNull()
     expect(readDoneLimit(null)).toBeNull()
     // figures missing: the sentence is said without them, never with an invented one
-    expect(spendStop(readDoneLimit({ kind: 'mind_total' }), null).text).toBe('Stopped here: this mind has reached its own spending limit. Raising this thread’s limit would not help; an admin can raise the mind’s limit.')
+    expect(spendStop(readDoneLimit({ kind: 'mind_total' })).text).toBe('Stopped here: this mind has reached its own spending limit. An admin can raise the mind’s limit.')
   })
   it('a missing monthly total is no limit reached: it says so and offers where that total is set', () => {
     const none = { current_usd: null, limit_usd: null, estimate_usd: null }
     const own = readDoneLimit({ kind: 'own_key_limit', ...none, reason: 'monthly_total_required' })
     expect(own).toEqual({ kind: 'own_key_limit', ...none, reason: 'monthly_total_required' })
-    expect(spendStop(own, null)).toEqual({ text: MONTHLY_TOTAL_STOP, offer: [YOUR_KEYS] })
+    expect(spendStop(own)).toEqual({ text: MONTHLY_TOTAL_STOP, offer: [YOUR_KEYS] })
     // the hive's money: an admin's own mind waits on a month rule set in Usage & limits (conductor waits_for_monthly_total)
     const hive = readDoneLimit({ kind: 'member_allowance', ...none, reason: 'monthly_total_required' })
-    expect(spendStop(hive, { spent_usd: 0, budget_usd: 5 })).toEqual({ text: MONTHLY_TOTAL_STOP, offer: [USAGE_AND_LIMITS] })
+    expect(spendStop(hive)).toEqual({ text: MONTHLY_TOTAL_STOP, offer: [USAGE_AND_LIMITS] })
     expect(MONTHLY_TOTAL_STOP).not.toMatch(/reached/)
     expect(readDoneLimit({ kind: 'member_allowance', reason: 'galaxy' })).toEqual({ kind: 'member_allowance', ...none })
   })
-  it('the HTTP spend refusal offers the thread raise only when the thread is visibly the block', () => {
-    expect(kinds(spendRefusalOffers({ spent_usd: 0, budget_usd: 5 }))).toEqual(['usage'])
-    expect(kinds(spendRefusalOffers({ spent_usd: 0.24, budget_usd: 0.25 }))).toContain('raise-budget')
-    expect(threadBinds({ spent_usd: 4.9, budget_usd: 5 })).toBe(true)
-    expect(threadBinds({ spent_usd: 1, budget_usd: 5 })).toBe(false)
-    expect(threadBinds(null)).toBe(false)
+  it('the HTTP spend refusal is a mind’s, swarm’s, hive’s or person’s limit, so it offers Usage & limits only', () => {
+    expect(REFUSAL_WORDS.spend_limit).toEqual({ say: 'This has reached its spending limit. Nothing more was spent.', offer: [USAGE_AND_LIMITS] })
   })
   it('the new error outcomes get their own words; anything else keeps the plain error words', () => {
     expect(doneErrorWords('unpriced_model')).toBe('Stopped here: the model the Ask uses has no price set, so the hive won’t spend money on it. An admin can set its price or choose another model.')
@@ -96,12 +93,13 @@ describe('item 3: the limit editor shows cents, and an unchanged figure saves no
 })
 
 describe('item 2: the paid row names who pays, and never invents an estimate', () => {
-  it('a new request, a steer, and no known limit', () => {
-    const thread = { spent_usd: 0.4, budget_usd: 5, mind: { id: 'a_kelp' } }
-    expect(paysLine({ steering: false, thread, answererId: 'a_other', newThreadUsd: 0.25 })).toBe('Paid by you · a new thread may spend up to $0.25 · no estimate before it starts')
-    expect(paysLine({ steering: true, thread, answererId: 'a_other', newThreadUsd: 0.25 })).toBe('Paid by you · this thread has used $0.40 of $5.00 · no estimate before it starts')
-    expect(paysLine({ steering: false, thread, answererId: 'a_kelp', newThreadUsd: 0.25 })).toContain('this thread has used $0.40 of $5.00')
-    expect(paysLine({ steering: false, thread: null, answererId: null, newThreadUsd: undefined })).toBe('Paid by you · no estimate before it starts')
+  it('a new request, a steer, the threshold it stops to ask at, and none known', () => {
+    const thread = { spent_usd: 0.4, mind: { id: 'a_kelp' } }
+    const on = { on: true, usd: 0.62 }
+    expect(paysLine({ steering: false, thread, answererId: 'a_other', expensive: on })).toBe('Paid by you · stops to ask past $0.62 · no estimate before it starts')
+    expect(paysLine({ steering: true, thread, answererId: 'a_other', expensive: on })).toBe('Paid by you · this thread has used $0.40 · stops to ask past $0.62 · no estimate before it starts')
+    expect(paysLine({ steering: false, thread, answererId: 'a_kelp', expensive: { on: false, usd: 0.62 } })).toBe('Paid by you · this thread has used $0.40 · no estimate before it starts')
+    expect(paysLine({ steering: false, thread: null, answererId: null, expensive: null })).toBe('Paid by you · no estimate before it starts')
   })
 })
 
@@ -121,33 +119,8 @@ describe('item 4: your own open threads on a mind, with End', () => {
     expect(openThreadsOf(all, 'user:me', {}).map((x) => x.id)).toEqual(['new', 'cur', 'elsewhere', 'old'])
     expect(openThreadsOf(all, null)).toEqual([])
   })
-  it('the limits payload’s ask_threads give each thread its own figures where present; else the session’s stand', () => {
-    const mine = [s('a', { spent_usd: 2.004, budget_usd: 5 }), s('b', { spent_usd: 0.5 })]
-    // today’s host: no ask_threads anywhere (or the person may not read it): the session list stands
-    expect(askThreadFigures({ minds: [{ agent_id: 'a_pd', limits: [] }] })).toBeNull()
-    expect(askThreadFigures(null)).toBeNull()
-    expect(withThreadFigures(mine, null)).toEqual(mine)
-    const f = askThreadFigures({ minds: [{ agent_id: 'a_pd', ask_threads: [
-      { id: 'a', owner: 'user:me', key: 'askthread:a', budget_usd: 5, spent_usd: 0.004, created_at: '' },
-      { id: 'b', owner: 'user:other', budget_usd: 5, spent_usd: 4 }, // someone else's row never changes mine
-      { id: 'bad<', owner: 'user:me', budget_usd: 5, spent_usd: 0 },
-      { id: 'c', owner: 'user:me', budget_usd: -1, spent_usd: 0 },
-    ] }, { agent_id: 'a_x', ask_threads: [] }] })!
-    expect([...f.keys()]).toEqual(['a', 'b'])
-    expect(withThreadFigures(mine, f).map((x) => [x.id, x.spent_usd, x.budget_usd])).toEqual([['a', 0.004, 5], ['b', 0.5, 5]])
-  })
   it('says what ending does', () => {
     expect(END_SAYS).toBe('Ends the thread; its words stay.')
-  })
-})
-
-describe('item 3: the raise note never says "$$"', () => {
-  it('the amount is money() alone (it carries its own $), in the rendered words', async () => {
-    const fsName = 'node:fs'
-    const { readFileSync } = (await import(/* @vite-ignore */ fsName)) as { readFileSync: (p: string, e: 'utf8') => string }
-    const src = readFileSync(decodeURIComponent(new URL('./Thread.tsx', import.meta.url).pathname), 'utf8')
-    expect(src).toContain('(up to {money(steps.at(-1) ?? 5)})')
-    expect(src).not.toMatch(/\$\$\{money\(|\$\{money\(steps/)
   })
 })
 

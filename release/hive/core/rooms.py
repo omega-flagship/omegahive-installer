@@ -1,4 +1,6 @@
-"""Rooms: DMs, groups, channels and projects as one thing (R15).
+"""Purpose: manage room membership, a mind owner's Coffee Room choice and message delivery.
+
+Rooms: DMs, groups, channels and projects as one thing (R15).
 
 A room has members (people `user:...`, minds `agent:a_...`) and one transcript. Its kind is a preset:
 - dm:      exactly two members; minds in it answer every message
@@ -24,8 +26,10 @@ Cost: every message a mind receives can cost a model call, so rooms deliver deli
 The Coffee Room (Jon, 2026-10-06; PLATFORM_COFFEE_ROOM_PLAN_20261006.md): one built-in room per hive
 (kind "coffee", alias "coffee") that every person and every eligible mind belongs to automatically, so everyone has
 somewhere to meet and then break off (a DM or group created with `origin` links back to the message it came from).
-- Public minds in public swarms join; a private or shared mind or swarm joins only if an admin opts it in; an admin may
-  opt any mind out; app modules never join.
+- Public minds in public swarms join until their owner takes them out; private or shared minds, and minds in private or
+  shared swarms, join only when their owner puts them in. Only a mind's owner changes this, an admin included only for
+  their own minds (Jon, 2026-11-21, #615: each person is their own admin, and no admin controls another person); an
+  admin keeps the room's own name, topic and turn cap. App modules never join.
 - It wakes no one by itself: @mentions as in any room; "@here" from a person also reaches up to HERE_MAX awake minds.
 - An awake mind may post an unprompted note (note=true) at most once per NOTE_SECONDS; a note never wakes anyone.
 - Everyone signed in to the hive can read it, and minds are told so on every delivery.
@@ -375,7 +379,7 @@ class Rooms:
         if self.is_team(r):
             raise self.hive.error(400, "bad_request", "a swarm's room holds its owner and its minds; it follows the swarm")
         if r["kind"] == COFFEE:
-            raise self.hive.error(400, "bad_request", "everyone is in the Coffee Room; an admin opts a mind in or out from the mind")
+            raise self.hive.error(400, "bad_request", "Coffee Room membership is changed on the mind, by its owner")
         if r["kind"] == "dm":
             raise self.hive.error(400, "bad_request", "a DM's members are fixed")
         if not (viewer.admin or r["owner"] == viewer.principal):
@@ -504,28 +508,55 @@ class Rooms:
             cols = ", ".join(row)
             self.hive.db.execute(f"INSERT OR IGNORE INTO rooms ({cols}) VALUES ({', '.join('?' * len(row))})", tuple(row.values()))
 
+    def _coffee_public(self, agent):
+        """Only a public mind in a public swarm joins without its owner's opt-in."""
+        swarm = self.hive.db.one("SELECT visibility FROM swarms WHERE id = ?", (agent["swarm_id"],)) if agent["swarm_id"] else None
+        return agent["visibility"] == "public" and (swarm is None or swarm["visibility"] == "public")
+
+    def _coffee_owners(self, agent):
+        """Who decides whether a mind is in the Coffee Room: its owner, and the person it is the personal mind of (personal.py
+        makes that person its owner too), the people Viewer.controls names apart from admins. A mind recorded with
+        neither, made before owners were recorded, is the hive owner's."""
+        return {p for p in (agent.get("owner"), agent.get("personal_of")) if p} or {"user:operator"}
+
     def coffee_status(self, agent):
-        """'member', 'opted_out', 'private' (private or shared mind or swarm; an admin may opt it in) or 'not_a_mind'."""
+        """'member', 'opted_out', 'private' (its owner's opt-in is needed) or 'not_a_mind'. An opt-out stays, whoever stored
+        it, until the mind's owner puts the mind back in, so a mind someone took out never rejoins unasked; that includes
+        an admin's opt-out from before only owners decided."""
         if agent["kind"] not in ("omega", "iter") or agent["deleted"]:
             return "not_a_mind"
-        pref = self.hive.db.one("SELECT choice FROM coffee_prefs WHERE agent_id = ?", (agent["id"],))
+        public = self._coffee_public(agent)
+        pref = self.hive.db.one("SELECT choice, by FROM coffee_prefs WHERE agent_id = ?", (agent["id"],))
         if pref:
-            return "member" if pref["choice"] == "in" else "opted_out"
+            if pref["choice"] != "in":
+                return "opted_out"
+            # An old administrator grant, or a previous owner's grant after ownership changes, is not consent.
+            return "member" if public or pref["by"] in self._coffee_owners(agent) else "private"
         # Joining by default only when both the mind and its swarm are public: the room is readable by the whole hive,
-        # so a private or shared mind (or one in a private or shared swarm) is never revealed without an admin's choice.
-        swarm = self.hive.db.one("SELECT visibility FROM swarms WHERE id = ?", (agent["swarm_id"],)) if agent["swarm_id"] else None
-        public = agent["visibility"] == "public" and (swarm is None or swarm["visibility"] == "public")
+        # so a private or shared mind (or one in a private or shared swarm) needs its owner's choice.
         return "member" if public else "private"
 
-    def set_coffee(self, agent_id, member, by):
-        agent = self.hive.db.one("SELECT * FROM agents WHERE id = ? AND deleted = 0", (agent_id,))
-        if agent is None:
-            raise self.hive.error(404, "not_found", f"no such mind {agent_id}")
-        if agent["kind"] not in ("omega", "iter"):
-            raise self.hive.error(400, "bad_request", "app modules do not join the Coffee Room")
-        self.hive.db.execute("INSERT INTO coffee_prefs VALUES (?, ?, ?, ?) ON CONFLICT(agent_id) DO UPDATE SET "
-                             "choice = excluded.choice, by = excluded.by, at = excluded.at",
-                             (agent_id, "in" if member else "out", by, now()))
+    def set_coffee(self, agent_id, member, viewer):
+        """Put a mind in (member=True) or take it out of the Coffee Room, public or private. Only its owner decides
+        (_coffee_owners), with the member role or the admin one; anyone else, an admin included, is refused 403
+        owner_only and may ask the owner, which the UI's Ask its owner does with an ordinary private message. An admin
+        keeps the room's own controls (update: name, topic, turn cap); stepping in when a mind breaks the hive's rules
+        waits for #615's governance design.
+
+        Authorization and the preference write share a transaction.
+        """
+        with self.hive.db.transaction():
+            agent = self.hive.db.one("SELECT * FROM agents WHERE id = ? AND deleted = 0", (agent_id,))
+            if agent is None or not viewer.sees(agent):
+                raise self.hive.error(404, "not_found", "no such mind")
+            if agent["kind"] not in ("omega", "iter"):
+                raise self.hive.error(400, "bad_request", "app modules do not join the Coffee Room")
+            if viewer.principal not in self._coffee_owners(agent):
+                raise self.hive.error(403, "owner_only", "Only this mind's owner puts it in or takes it out of the Coffee Room. "
+                                                         "You can ask its owner.")
+            self.hive.db.execute("INSERT INTO coffee_prefs VALUES (?, ?, ?, ?) ON CONFLICT(agent_id) DO UPDATE SET "
+                                 "choice = excluded.choice, by = excluded.by, at = excluded.at",
+                                 (agent_id, "in" if member else "out", viewer.principal, now()))
         self.ensure_coffee()
         return self.coffee_status(self.hive.db.one("SELECT * FROM agents WHERE id = ?", (agent_id,)))
 

@@ -86,6 +86,60 @@ class RequirementRulesTest(unittest.TestCase):
             with self.subTest(have=have, op=op, want=want):
                 self.assertIs(requires._meets(have, op, want), meets)
 
+    def test_a_manifest_that_cannot_be_read_counts_as_met_and_is_logged_once(self):
+        """Jon's first follow-up on #596: a malformed or unreadable module.toml raised while the parser was imported,
+        so no mind could boot. Each such manifest now counts as met, with its reason logged once per module."""
+        cases = {
+            "not_toml": ('requires = ["python>=3.10"\n', "isn't TOML"),
+            "not_a_list": ('requires = "invented-tool>=1"\n', "not a list"),
+            "a_folder": (None, "can't be read"),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, (text, why) in cases.items():
+                with self.subTest(name=name):
+                    module = pathlib.Path(tmp) / name
+                    module.mkdir()
+                    if text is None:
+                        (module / "module.toml").mkdir()          # read_text raises IsADirectoryError
+                    else:
+                        (module / "module.toml").write_text(text)
+                    with self.assertLogs("hive_modules", "WARNING") as logged:
+                        self.assertEqual(requires.unmet(module, {"PATH": ""}), [])
+                    self.assertIn(f"module {name}: ", logged.output[0])
+                    self.assertIn(why, logged.output[0])
+                    with self.assertNoLogs("hive_modules", "WARNING"):   # once per module and reason
+                        self.assertEqual(requires.unmet(module, {"PATH": ""}), [])
+
+    def test_a_python_without_a_toml_reader_reads_every_manifest_as_met(self):
+        """Python 3.10 has no tomllib, and the manifests ask for 3.10: without tomli every requires counts as met."""
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(requires, "tomllib", None):
+            module = pathlib.Path(tmp) / "invented"
+            module.mkdir()
+            (module / "module.toml").write_text('requires = ["invented-tool>=1"]\n')
+            with self.assertLogs("hive_modules", "WARNING") as logged:
+                self.assertEqual(requires.unmet(module, {"PATH": ""}), [])
+            self.assertIn("has no TOML reader", logged.output[0])
+
+    def test_need_words_what_a_left_out_module_lacks(self):
+        """Jon's third follow-up on #596: a left-out module is named with what it needs. The hive words each entry the
+        mind's receipt carries with this rule, so an entry no rule can show missing, or one that is not a single short
+        token, gets no words and the hive refuses it: a receipt never carries the mind's own text."""
+        for entry, words in [("service:omegacode", "the OmegaCode client"), ("python>=3.12", "Python 3.12 or newer"),
+                             ("websockets>=12", "websockets 12 or newer"), ("node==20", "node 20"),
+                             ("service:invented", None), ("npm:@openai/codex@0.133.0", None),
+                             ("needs you to paste a key", None), ("x" * 99 + ">=1", None)]:
+            with self.subTest(entry=entry):
+                self.assertEqual(requires.need(entry), words)
+
+    def test_every_entry_a_check_can_decide_has_words(self):
+        """Each requires entry in this tree's manifests that a rule can show met or missing, the only kind that leaves a
+        module out, is worded, so no left-out module's receipt is refused."""
+        for manifest in sorted((ROOT / "modules").glob("*/module.toml")):
+            for entry in requires.tomllib.loads(manifest.read_text(encoding="utf-8")).get("requires", []):
+                if requires.requirement_state(entry, {"PATH": ""})[0] != UNKNOWN:
+                    with self.subTest(module=manifest.parent.name, entry=entry):
+                        self.assertTrue(requires.need(entry))
+
     def test_unmet_lists_only_what_is_shown_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             module = pathlib.Path(tmp) / "invented"
@@ -121,6 +175,33 @@ class ModuleSelectionTest(unittest.TestCase):
                              "; two modules\n!(import! &self (library OmegaClaw-Core ./modules/plain/entry.metta))\n")
             paths = parser._module_declaration_paths("signatures.metta", tmp)
             self.assertEqual(paths, [modules / "plain" / "signatures.metta"])
+
+    def test_a_module_whose_manifest_is_malformed_stays_in_and_the_selection_goes_on(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"PATH": ""}):
+            modules, loader = self._core(tmp)
+            (modules / "plain" / "module.toml").write_text('id = "plain"\nrequires = [\n')   # unterminated
+            with self.assertLogs("hive_modules", "WARNING"):
+                running, off = parser.module_selection(loader, modules)
+            self.assertEqual(running, ["plain"])
+            self.assertEqual(list(off), ["needs_tool"])
+
+    def test_skill_help_names_a_left_out_module_and_what_it_needs(self):
+        """Jon's third follow-up on #596: a mind asked for a skill of a module it left out can say why it lacks it.
+        skill-help reads that module's own catalog for this; the catalog the prompt shows still holds none of it."""
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"PATH": ""}):
+            modules, _loader = self._core(tmp)
+            (modules / "plain" / "catalog.metta").write_text(
+                '(SkillCatalog "Plain: plain-skill")\n(SkillHelp "plain-skill" "plain-skill - does the plain thing")\n')
+            (modules / "needs_tool" / "catalog.metta").write_text(
+                '(SkillCatalog "Tool: tool-run")\n(SkillHelp "tool-run" "tool-run - runs the tool")\n')
+            everything = parser.skill_help("all", tmp)
+            self.assertIn("Plain: plain-skill", everything)
+            self.assertNotIn("Tool: tool-run", everything)
+            self.assertIn("Left out of this mind: needs_tool (tool-run), since it needs invented-tool 1 or newer.", everything)
+            self.assertEqual(parser.skill_help("tool-run", tmp),
+                             "tool-run is in needs_tool, which this mind left out: it needs invented-tool 1 or newer.")
+            self.assertEqual(parser.skill_help("plain-skill", tmp), "plain-skill - does the plain thing")
+            self.assertNotIn("Tool", parser.skill_catalog(tmp))
 
     def test_with_the_client_the_mind_imports_the_host_loader_itself(self):
         host = ROOT / "modules" / "loader.metta"

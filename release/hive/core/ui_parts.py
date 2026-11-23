@@ -1,3 +1,7 @@
+# Purpose: the rules an app's page must meet in the app frame: the r17 parts checks, the single-file frame's tags and
+# policy, and the rules that follow from them for Create's minds: FRAME_RULE for those that build a page, built on one
+# FRAME_DOCUMENT with FRAME_CHECK_RULE for the test author who writes its acceptance check, and FRAME_PLAN_RULE for the
+# planner.
 """r17 "app frame parts": the rules for an app interface whose ui/bundle.lock.json declares ``"scripts"``.
 
 Pure checks, each returning a refusal reason or None. ``hive/ui/src/lib/appFrame.ts`` applies the same rules before it
@@ -35,6 +39,54 @@ def ascii_lower(text):
 
 def tag(name):
     return f'<script type="module" src="./{name}"></script>'
+
+
+# The single-file app frame (hive/ui/src/lib/appFrame.ts appDocument, create_plan_ports.frame_document): the two tags by
+# which index.html loads its style and code, which the frame replaces with the files' text, and the policy it shows the
+# page under. FRAME_DOCUMENT is the page the frame shows, said once; FRAME_RULE says what follows for a page in the
+# words every Create mind that builds one is given, FRAME_PLAN_RULE what its planner needs of it, and FRAME_CHECK_RULE
+# what follows for its acceptance check, in the words its test author is given, so none of them can plan, check or
+# build a page the frame won't run: on staging (acceptance-tests#30, 21 Nov) a plan gave its one piece index.html alone
+# and its probe read "self-contained" as no link or script tags, and no page passed.
+FRAME_LINK = '<link rel="stylesheet" href="./style.css">'
+FRAME_SCRIPT = '<script type="module" src="./app.js"></script>'
+FRAME_DOCUMENT = (f"index.html, with the text of style.css and app.js put in place of the {FRAME_LINK} and "
+                  f"{FRAME_SCRIPT} that load them")
+
+
+def frame_csp(nonce):
+    """The frame's Content-Security-Policy for a document whose style and script carry `nonce`: the string appFrame.ts
+    frameCsp writes, which a test holds this one to."""
+    return (f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; style-src-attr 'unsafe-inline'; "
+            "connect-src 'none'; img-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'")
+
+
+FRAME_RULE = (
+    f"The app frame shows a page as one document: {FRAME_DOCUMENT}, under the Content-Security-Policy "
+    f"\"{frame_csp('<nonce>')}\". So a "
+    "page's style is written in style.css and its code in app.js, and a <style> or <script> written into index.html "
+    "itself never runs (a style attribute does). A page is self-contained when it loads nothing from another origin, "
+    "no http:, https: or // address: its style.css and app.js, and any image or font of the app that index.html or "
+    "style.css names as ./its-name, are part of it. The acceptance check plays the page as the frame composes it, with "
+    "those two tags already replaced.")
+
+# The test author reads its rules in its goal, of which a mind reads 4,000 characters in one result
+# (hive_goal_get.DETAIL_CHARS, all a goal keeps), and the whole FRAME_RULE took the author's goal to 4,070 (the gate of
+# 22 Nov, test_create_step_rules_in_goal): the check needs the document it plays and what self-contained counts, not
+# the policy or where a page's style and code are written, which are its builders'.
+FRAME_CHECK_RULE = (
+    f"The acceptance check plays a page as the app frame shows it, one document: {FRAME_DOCUMENT}. So a case for "
+    "self-contained counts what the page loads from another origin, such as [src^=\"http\"], [href^=\"http\"], "
+    "[src^=\"//\"] and [href^=\"//\"], never those two tags.")
+
+# The planner reads its plan's whole shape and rules in its goal too (create_plan_ports.task_text), and the 21 plan
+# rules leave no room there for the whole FRAME_RULE: with it the planner's goal ran to 4,448 characters with no room
+# for the person's words (v0.43's gate, 24 Nov). A plan needs where a page's style and code go and what self-contained
+# means, which acceptance-tests#30's planner misread, not the frame's policy or document, which are its builders'.
+FRAME_PLAN_RULE = (
+    "The app frame runs a page's style and code only from style.css and app.js, whose text it puts in place of the two "
+    "tags in index.html that load them. So a page's style goes in style.css and its code in app.js, and a "
+    "self-contained page loads nothing from another origin.")
 
 
 def lock_reason(lock):
@@ -112,9 +164,8 @@ def html_reason(html, scripts):
         return reason
     # The client writes the stylesheet over the first link, so that must be a real tag. (The CSP no longer depends
     # on index.html: the client writes it ahead of all app markup.)
-    link = '<link rel="stylesheet" href="./style.css">'
-    if starts.get(html.find(link)) != "link":
-        return f"index.html needs a real {link} tag before the part tags"
+    if starts.get(html.find(FRAME_LINK)) != "link":
+        return f"index.html needs a real {FRAME_LINK} tag before the part tags"
     return None
 
 

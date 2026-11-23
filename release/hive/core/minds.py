@@ -9,7 +9,8 @@ r2.13 and r2.13.1, 2026-10-05).
 - The controller (the team swarm's coordinator, or the mind the team swarm hangs under) spawns children from
   operator-registered templates, reserving each child's allocation from the request root in one conditional write with
   the child row, prompt revision 1 and the archived-swarm condition. The child's own hard cap is its allocation, so
-  every model call it makes is held against it by the existing per-call reservations.
+  every model call it makes is held against it by the existing per-call reservations. A helper the host-bound limits
+  give no cap (a Research researcher) is allocated 0, no allocation of its own: the limits above it hold its calls.
 - Gaining or using authority (spawn, prompt, resume) needs a live lease and an open request; reading and cleanup
   (status, interrupt, pause, stop, retire) need only identity. People who may clean up: an admin person, or the person
   who issued the request's lease.
@@ -287,14 +288,16 @@ class Minds:
     def is_child(self, agent_id):
         return self.db.one("SELECT 1 FROM mind_children WHERE id = ?", (agent_id,)) is not None
 
-    def require_startable(self, child_id):
+    def require_startable(self, child_id, *, resume_research=False):
         """Called by Hive.lifecycle under the per-mind lock before a child's process starts: the child must still be
         'starting' (spawned or resumed, nothing withdrawn since), its request open, its lease live, its allocation not
         spent and spawning switched on. Anything else refuses the start (409 start_withdrawn)."""
         child = self._child(child_id)
         self._foundation_limits(child["team_id"], child["controller_id"])
+        from .research import TEMPLATE
+        resuming = resume_research and child["template_id"] == TEMPLATE and child["state"] in LIVE
         reason = None
-        if child["state"] != "starting":
+        if child["state"] != "starting" and not resuming:
             reason = f"the child is {child['state']}"
         elif not self._spawn_enabled(child["team_id"]):
             reason = "spawning is off"
@@ -306,6 +309,11 @@ class Minds:
             reason = "the allocation is spent"
         if reason:
             raise self.err(409, "start_withdrawn", f"start withdrawn: {reason}")
+        if resuming and child["state"] != "starting":
+            cur = self.db.execute("UPDATE mind_children SET state = 'starting', updated_at = ? WHERE id = ? AND state = ?",
+                                  (now(), child_id, child["state"]))
+            if cur.rowcount != 1:
+                raise self.err(409, "start_withdrawn", "start withdrawn: the researcher's state changed")
 
     def _child(self, child_id):
         row = self.db.one("SELECT * FROM mind_children WHERE id = ?", (str(child_id or ""),))
@@ -607,7 +615,9 @@ class Minds:
         except Exception:
             limits = None
         if limits is not None:
-            out["request_limits"] = {"limit_usd": float(limits["request_usd"]), "max_children": int(limits["max_children"]),
+            request_usd = limits["request_usd"]   # None: the team's requests have no budget of their own (Research)
+            out["request_limits"] = {"limit_usd": None if request_usd is None else float(request_usd),
+                                     "max_children": int(limits["max_children"]),
                                      "lifetime_seconds": int(limits["lifetime_seconds"]),
                                      "template_ids": list(limits["template_ids"])}
         return out
@@ -657,8 +667,8 @@ class Minds:
                     raise self._bad("until is in the future and at most 30 days ahead")
                 limits = {**limits, "until": stamp(until)}
         allocation = body["allocation_usd"]
-        if not _number(allocation) or type(allocation) is bool or not 0 < allocation <= MAX_ALLOCATION_USD:
-            raise self._bad(f"allocation_usd is a number more than 0 and at most {MAX_ALLOCATION_USD:g}")
+        if not _number(allocation) or type(allocation) is bool or not 0 <= allocation <= MAX_ALLOCATION_USD:
+            raise self._bad(f"allocation_usd is a number from 0 to {MAX_ALLOCATION_USD:g}")
         return limits
 
     def _spawn_enabled(self, team_id):
@@ -696,8 +706,9 @@ class Minds:
                                                       (req["id"], lease["id"])):
             raise self.err(403, "foundation_limits", "the Research swarm spawns only for a research request's own lease")
         until = parse_time(lease["until"])
-        if (to_micros(body["allocation_usd"], up=True) > to_micros(limits["child_usd"]) or
-                to_micros(req["limit_usd"], up=True) > to_micros(limits["request_usd"]) or
+        child_cap, request_cap = limits["child_usd"], limits["request_usd"]   # None: no cap of its own (Research)
+        if ((child_cap is not None and to_micros(body["allocation_usd"], up=True) > to_micros(child_cap)) or
+                (request_cap is not None and to_micros(req["limit_usd"], up=True) > to_micros(request_cap)) or
                 lease["max_children"] > limits["max_children"] or
                 body["template_id"] not in limits["template_ids"] or
                 not set(json.loads(lease["template_ids"])) <= set(limits["template_ids"]) or
@@ -709,16 +720,19 @@ class Minds:
             raise self.err(403, "lease_required", "the host-bound Code request has used its child count", reason="max_children")
         return limits
 
-    def _check_controller_allocation(self, controller_id, allocation):
-        """Inside the shared reservation transaction, before the new child is inserted."""
+    def _check_controller_allocation(self, controller_id, allocation, need_room=False):
+        """Inside the shared reservation transaction, before the new child is inserted. need_room: a request with no
+        budget of its own (allocation 0) still needs room left under every row, or its helper's first call would be
+        refused at once, so it is refused here instead (402 spend_limit naming the row)."""
         rows = host_budget_snapshot(self.hive, controller_id)
         if not rows:
             raise self.err(402, "spend_limit", "the controller has no governing budget")
         for label, limit, spent in rows:
             held = pending_micros(self.db, label)
             remaining = max(0, to_micros(limit) - to_micros(spent, up=True) - held)
-            if to_micros(allocation, up=True) > remaining:
-                raise self.err(402, "spend_limit", "the controller's aggregate budget has no room for this allocation",
+            if to_micros(allocation, up=True) > remaining or (need_room and remaining == 0):
+                raise self.err(402, "spend_limit", "the controller's aggregate budget has no room left for a request"
+                               if need_room else "the controller's aggregate budget has no room for this allocation",
                                scope=label, remaining_usd=dollars(remaining))
 
     async def spawn(self, agent, data, acting=None):
@@ -765,6 +779,12 @@ class Minds:
             raise self.err(402, "spend_limit", f"the request has ${req['limit_usd'] - req['allocated_usd']:.2f} left",
                            remaining_usd=round(req["limit_usd"] - req["allocated_usd"], 6))
         foundation_limits = self._foundation_spawn_limits(agent["id"], body, req, lease)
+        # A helper has no allocation of its own (0) exactly where its host-bound limits give it no cap (a Research
+        # researcher, Jon on 23 Nov: "Helpers = sub agents"); every other child is allocated more than 0, as before.
+        uncapped = foundation_limits is not None and foundation_limits.get("child_usd") is None
+        if uncapped != (allocation == 0):
+            raise self._bad("allocation_usd is 0 for a helper with no allocation of its own (a Research researcher) "
+                            "and more than 0 for every other child")
         model = body["model_id"] or template["model_id"]
         shared = json.loads(team.get("shared_with") or "[]")
         foundation = getattr(self.hive, "foundation", None)
@@ -872,7 +892,7 @@ class Minds:
 
     # ---- r2.12 §3: prompt ----------------------------------------------------------------------------
 
-    async def prompt(self, agent, child_id, data, acting=None):
+    async def prompt(self, agent, child_id, data, acting=None, *, still_needed=None):
         self._host_only(agent, acting)
         op = self._operation(data if isinstance(data, dict) else {})
         self._fields(data, ("operation_id", "mode", "text", "expected_rev"))
@@ -902,6 +922,8 @@ class Minds:
         rev = body["expected_rev"] + 1
         try:
             with self.db.transaction():
+                if still_needed is not None and not still_needed():
+                    return None
                 cur = self.db.execute("UPDATE mind_children SET prompt_rev = ?, updated_at = ? WHERE id = ? AND prompt_rev = ?",
                                       (rev, now(), child_id, body["expected_rev"]))
                 if cur.rowcount != 1:
@@ -1007,10 +1029,16 @@ class Minds:
         return None
 
     def _exhausted(self, child):
+        """Whether the child's own allocation is spent, or its last refusal was a budget of its own. A helper spawned
+        with no allocation (0) has nothing of its own to spend: a limit above it holds its calls and clears when there is
+        room again, so it never counts as exhausted by its spend."""
         agent = self.db.one("SELECT budget_usd, spent_usd FROM agents WHERE id = ?", (child["id"],)) or {}
-        res = self.db.one("SELECT allocated_usd FROM mind_reservations WHERE child_id = ?", (child["id"],)) or {"allocated_usd": 0}
+        res = self.db.one("SELECT allocated_usd FROM mind_reservations WHERE child_id = ?", (child["id"],))
+        if res is None:
+            return True   # no reservation at all: nothing admits its spend
         refused = (self.hive.refusals.get(child["id"]) or {}).get("code") in ("budget_exhausted", "no_budget")
-        return float(agent.get("spent_usd") or 0) >= float(res["allocated_usd"]) - 1e-9 or refused
+        allocated = float(res["allocated_usd"])
+        return (allocated > 0 and float(agent.get("spent_usd") or 0) >= allocated - 1e-9) or refused
 
     def _limit_reached(self, child, permanent=False):
         """permanent=True asks only for limits no later event can clear: the time limit passed (time only grows) or the

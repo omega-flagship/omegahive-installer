@@ -1,5 +1,4 @@
-"""Linux mind isolation (namespaces + Landlock): the boundary the macOS profile proves in test_mind_sandbox.py, plus
-Review's 6f47d4c bypass probes (an /etc secret, UDP egress, an outside abstract socket, signalling an outside peer).
+"""Purpose: Verify Linux mind isolation and startup with namespaces and Landlock.
 
 The integration test runs only on Linux with Landlock and unprivileged user namespaces. On a Mac, run it in a Linux
 container (Docker's default seccomp profile blocks unshare, so the container needs seccomp=unconfined):
@@ -122,6 +121,19 @@ def test_an_unconfined_launcher_says_why_it_cannot_isolate(tmp_path):
     defaults = {k: p.default for k, p in inspect.signature(landlock.apparmor_refusal).parameters.items()}
     assert defaults == {"restrict": "/proc/sys/kernel/apparmor_restrict_unprivileged_userns",
                         "label": "/proc/self/attr/current", "status": "/proc/self/status"}
+
+
+def test_the_refusal_message_makes_no_os_call(tmp_path, monkeypatch):
+    """launch() asks apparmor_refusal on every launch, before unshare, so a test that fakes landlock's os reaches the
+    message wherever the restriction is 1 (test_workspace_no_network_relay.py, #626): the message calls nothing on os,
+    and names this file's real path, resolved at import."""
+    from types import SimpleNamespace
+    (tmp_path / "r").write_text("1\n")
+    (tmp_path / "l").write_text("unconfined\n")
+    (tmp_path / "s").write_text("Name:\tpython3\nCapEff:\t0000000000000000\n")
+    monkeypatch.setattr(landlock, "os", SimpleNamespace())
+    why = landlock.apparmor_refusal(str(tmp_path / "r"), str(tmp_path / "l"), str(tmp_path / "s"))
+    assert f"{os.path.realpath(landlock.__file__)} runs unconfined" in why
 
 
 @LAUNCHER_RUNS_HERE
@@ -354,6 +366,35 @@ def test_mind_reaches_only_its_folder_and_the_hive(tmp_path):
         if etc_secret.startswith(etc_dir):
             os.unlink(etc_secret)
             os.rmdir(etc_dir)
+
+
+@pytest.mark.skipif(not LINUX, reason="needs Linux namespaces and Landlock")
+@pytest.mark.parametrize("relative", ["linked", "memory/linked"])
+def test_linux_launcher_refuses_linked_workspace_files(tmp_path, relative):
+    mind, runtime = tmp_path / "mind", tmp_path / "runtime"
+    mind.mkdir()
+    runtime.mkdir()
+    outside = runtime / "fixture"
+    outside.write_text("read-only")
+    own = mind / "ordinary"
+    own.write_text("before")
+    os.link(own, mind / "internal")
+    alias = mind / relative
+    alias.parent.mkdir(parents=True, exist_ok=True)
+    os.link(outside, alias)
+    script = ('test "$(cat ordinary)" = before && printf after > ordinary && '
+              'test "$(cat "$1")" = read-only && ! (printf changed > "$1")')
+    command, _ = sandbox.wrap(
+        ["/bin/sh", "-c", script, "workspace-test", str(outside)], mind, [str(runtime)],
+        tmp_path / "profiles", "alias-test", ports=())
+    refused = subprocess.run(command, cwd=mind, capture_output=True, text=True)
+    assert refused.returncode == 78 and "hard link outside the writable workspace" in refused.stderr, refused
+    assert own.read_text() == "before"
+    alias.unlink()
+    accepted = subprocess.run(command, cwd=mind, capture_output=True, text=True)
+    assert accepted.returncode == 0, accepted
+    assert own.read_text() == "after" and outside.read_text() == "read-only"
+    assert (mind / "internal").samefile(own)
 
 
 def test_profile_drops_roots_reached_through_a_symlink(tmp_path):

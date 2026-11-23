@@ -133,6 +133,14 @@ export function priceLabel(inPerM: number | null, outPerM: number | null): strin
   return `${f(inPerM)} / ${f(outPerM)} per M`
 }
 
+/** Whether a mind on this model spends nothing a limit counts: a model on this computer, or one priced at nothing both
+ *  ways. A model the rows don't hold (no catalogue read yet) counts only by being local. Create a mind and Start a swarm
+ *  ask it before saying a mind with no cap of its own can't answer. */
+export function costsNothing(rows: PickRow[], models: ModelOption[], id: string): boolean {
+  const row = rows.find((r) => r.id === id)
+  return row ? row.local || (row.inPerM === 0 && row.outPerM === 0) : !!models.find((m) => m.id === id)?.local
+}
+
 /** A one-line summary of a mind's routing, for the create review and the mind panel. */
 export function routeSummary(options: AgentOptions | undefined, endpointsLabel?: (tag: string) => string): string {
   const route = options?.route

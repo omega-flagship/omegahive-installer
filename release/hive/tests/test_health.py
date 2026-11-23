@@ -55,6 +55,88 @@ def test_a_repeated_failure_is_a_loop_with_one_alert_and_a_hint(client):
     assert next(m for m in overview["minds"] if m["id"] == b["id"])["health"] == "ok"
 
 
+def alerts_of(hive):
+    """The health.alert events the hive publishes from now on, each event still published."""
+    alerts, original = [], hive.events.publish
+
+    def publish(kind, **kw):
+        if kind == "health.alert":
+            alerts.append(kw["alert"])
+        return original(kind, **kw)
+    hive.events.publish = publish
+    return alerts
+
+
+def test_the_same_command_with_the_same_result_four_times_is_a_repeat_with_one_alert(client):
+    _, (a, _) = make_swarm_and_agents(client)
+    alerts = alerts_of(client.app.state.hive)
+    for i in range(3):
+        trace(client, a, i, '(shell "ls /data")', "notes.txt")
+    assert alerts == []                                           # three times is not yet a repeat
+    for i in range(3, 6):
+        trace(client, a, i, '(shell "ls /data")', "notes.txt")
+    assert [(x["kind"], x["severity"], x["count"]) for x in alerts] == [("repeat", "medium", 4)]   # once, then quiet
+    report = client.get(f"/api/agents/{a['id']}/health").json()
+    repeat = next(i for i in report["issues"] if i["kind"] == "repeat")
+    assert report["health"] == "medium" and repeat["count"] >= 4 and repeat["example"]["command"] == '(shell "ls /data")'
+
+
+def test_a_repeat_alert_goes_out_even_if_the_presence_check_fails(client, monkeypatch):
+    _, (a, _) = make_swarm_and_agents(client)
+    hive = client.app.state.hive
+    alerts = alerts_of(hive)
+    command, result = '(shell "ls /data")', "notes.txt"
+
+    def unavailable(_agent):
+        raise RuntimeError("presence unavailable")
+
+    for i in range(3):
+        assert trace(client, a, i, command, result).status_code == 200
+    with monkeypatch.context() as fault:
+        fault.setattr(hive, "present_for", unavailable)
+        assert trace(client, a, 3, command, result).status_code == 200
+    assert [(alert["agent_id"], alert["kind"], alert["count"]) for alert in alerts] == [(a["id"], "repeat", 4)]
+
+    assert trace(client, a, 4, command, result).status_code == 200
+    assert len(alerts) == 1
+
+
+def test_a_repeat_alert_retries_after_publication_fails(client, monkeypatch):
+    _, (a, _) = make_swarm_and_agents(client)
+    hive = client.app.state.hive
+    alerts = alerts_of(hive)
+    publish = hive.events.publish
+    command, result = '(shell "ls /data")', "notes.txt"
+
+    def fail_alert(kind, **payload):
+        if kind == "health.alert":
+            raise RuntimeError("alert publication unavailable")
+        return publish(kind, **payload)
+
+    for i in range(3):
+        assert trace(client, a, i, command, result).status_code == 200
+    with monkeypatch.context() as fault:
+        fault.setattr(hive.events, "publish", fail_alert)
+        assert trace(client, a, 3, command, result).status_code == 200
+    assert alerts == []
+
+    assert trace(client, a, 4, command, result).status_code == 200
+    assert trace(client, a, 5, command, result).status_code == 200
+    assert [(alert["agent_id"], alert["kind"], alert["count"]) for alert in alerts] == [(a["id"], "repeat", 5)]
+
+
+def test_a_changing_result_or_a_wait_is_never_a_repeat(client):
+    _, (a, _) = make_swarm_and_agents(client)
+    alerts = alerts_of(client.app.state.hive)
+    for i in range(6):     # a job's progress: the same command, a result that moves
+        trace(client, a, i, '(code-status)', f"CODE-STATUS workspace ws_1 run run_2: running, {i * 10}% done")
+    for i in range(6, 12):   # a mind waiting
+        trace(client, a, i, '(wait "600")', "WAITING:600")
+    assert alerts == []
+    issues = client.get(f"/api/agents/{a['id']}/health").json()["issues"]
+    assert not [i for i in issues if i["kind"] in ("repeat", "loop")]
+
+
 def test_waiting_approvals_and_crashes_show_up(client):
     _, (a, _) = make_swarm_and_agents(client)
     client.post("/api/agent/authorize", headers=agent_headers(a), json={"command": '(shell-confirm "ls")'})

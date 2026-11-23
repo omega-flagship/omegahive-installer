@@ -269,7 +269,7 @@ def test_at_most_eight_memory_frames_a_turn_and_each_counts_as_an_act(client, me
     ask(client, mem["ann"], "op-mem-cap2", context=mem["ctx"])
     fs = wait(hive, "op-mem-cap2", closed)
     assert fs[-1]["outcome"] == "act_cap" and len(memory_frames(fs)) == 4
-    assert len([f for f in fs if f["phase"] == "answer" and f.get("delta")]) == cmod.MAX_ACTS - 4
+    assert len([f for f in fs if f["phase"] == "answer" and f.get("delta")]) == 32 - 4
 
 
 def test_under_quota_pressure_a_memory_frame_is_not_sent_and_answer_done_still_fit(client, mem, monkeypatch):

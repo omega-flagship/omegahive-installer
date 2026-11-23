@@ -12,7 +12,8 @@ import sys
 import time
 
 CORE_ROOT = pathlib.Path(__file__).resolve().parents[3]
-STATE_DIR = CORE_ROOT / "memory" / "runtime" / "body_container"
+# the mind's memory folder: OMEGACLAW_MEMORY_DIR when a hive runs the mind, else the checkout's memory folder
+STATE_DIR = pathlib.Path(os.environ.get("OMEGACLAW_MEMORY_DIR") or CORE_ROOT / "memory") / "runtime" / "body_container"
 TRACE_FILE = STATE_DIR / "trace.jsonl"
 DEFAULT_CONFIG = STATE_DIR / "host.json"
 MAX_TRACE_LINES = 5

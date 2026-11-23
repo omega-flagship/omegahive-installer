@@ -208,6 +208,8 @@ def test_research_start_failure_is_a_durable_person_receipt(client, on, monkeypa
     async def refuse(*args, **kwargs):
         raise HiveError(403, "spawn_disabled", "off")
     monkeypatch.setattr(on["hive"].minds, "spawn", refuse)
+    # research spends under the hive's total, the one cap its owner sets, as a hive with a key starts with one
+    on["hive"].budgets.set("hive", "month", 1000)
     dispatch_research(client, on)
     receipt, = stops(client, on["ann"])
     assert receipt["reason"] == STOP_CAUSES["research_start"]

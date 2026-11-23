@@ -9,8 +9,8 @@ goal's result data), the per-change engine the pieces are built by (FakePerChang
 helper is the piece assignee's FakeMinds answer; PerChangeBuilds, the adapter under test, is real) and the build
 workspace (MemorySpace, the OmegaCode space's interface in memory). Real members on the real OmegaCode are exercised in
 test_create_plan_engine_live_service.py. The acceptance check is REAL Python, written by the "test author"
-and run in a subprocess (SubprocessChecks; production runs it in sandbox_run): red on the scaffold, red again on a
-buggy app.js (routed to the code piece), then green.
+and run in a subprocess (SubprocessChecks; production runs it in sandbox_run, tested in test_create_plan_sandbox.py):
+red on the scaffold, red again on a buggy app.js (routed to the code piece), then green.
 """
 import asyncio
 import hashlib
@@ -633,6 +633,9 @@ def test_slice1_with_the_play_check_red_on_the_scaffold_red_on_the_bug_then_gree
     author = next(c for c in w.minds.calls if c[0] == "author-tests")[2]
     assert author["check_path"] == PROBE_PATH and author["owned_files"] == ["app.js", "index.html", "style.css"]
     assert "the check that plays the app" in author["contract"]
+    # the frame's own rule, so "self-contained" is read as nothing from another origin (acceptance-tests#30)
+    from hive.core.ui_parts import FRAME_CHECK_RULE
+    assert FRAME_CHECK_RULE in author["contract"] and '[src^="http"]' in author["contract"]
     checks = view["checks"]
     assert view["phase"] == "ready-to-deploy", (view["phase"], view["last_error"], [c["state"] for c in checks])
     assert [c["state"] for c in checks] == ["fail", "fail", "pass"]
@@ -824,6 +827,16 @@ BASE_PAGE = ('<!doctype html>\n<html><head><title>Moon</title></head>\n<body>\n<
 BASE_VIEW = '(Screen moon "Moon")\n(Part moon 10 header ((title "Moon") (body "Tonight the moon is full.")))\n'
 
 
+def _coding_on(w, agent_id):
+    """The mind, its own coding switched on: a mind writes an HTML page itself only when its owner switched that on
+    (Jon's line on omega-flagship/omegahive#395, policy.own_code_revision), so the saved pages these plans start from
+    are written by such a mind, as test_policy_review_299 tries a building head."""
+    row = w.hive.db.one("SELECT options FROM agents WHERE id = ?", (agent_id,))
+    options = {**json.loads(row["options"] or "{}"), "own_coding": True}
+    w.hive.db.execute("UPDATE agents SET options = ? WHERE id = ?", (json.dumps(options), agent_id))
+    return w.hive.db.one("SELECT * FROM agents WHERE id = ?", (agent_id,))
+
+
 def test_a_first_build_from_a_saved_creation_starts_from_what_the_person_has(world):
     """A plan started from a saved creation the person may read (plan_for's artifact, which a mind's change offer
     passes) gives the planner that creation as what they have now. An HTML view's page is the page the build starts
@@ -831,7 +844,7 @@ def test_a_first_build_from_a_saved_creation_starts_from_what_the_person_has(wor
     person can't read, or one that isn't there, is refused as not found, as an unknown plan is."""
     w = world
     w.minds.question = False
-    maker = w.hive.db.one("SELECT * FROM agents WHERE id = ?", (w.maker["id"],))
+    maker = _coding_on(w, w.maker["id"])
     page = w.hive.collab.create_artifact(maker, {"kind": "view", "title": "Moon page", "body": BASE_PAGE})
     assert w.engine.plan_for("user:u_jon", page["id"]) == {"artifact_id": page["id"], "revision": 1}
     view = w.client.portal.call(w.engine.start, "user:u_jon", SENTENCE, page["id"])
@@ -856,7 +869,7 @@ def test_a_first_build_from_a_saved_creation_starts_from_what_the_person_has(wor
     notes = w.client.post("/api/swarms", json={"name": "Jon's notes"}).json()
     w.hive.db.execute("UPDATE swarms SET owner = 'user:u_jon', visibility = 'private' WHERE id = ?", (notes["id"],))
     scribe = w.client.post("/api/agents", json={"name": "Scribe", "swarm_id": notes["id"]}).json()
-    private = w.hive.collab.create_artifact(w.hive.db.one("SELECT * FROM agents WHERE id = ?", (scribe["id"],)),
+    private = w.hive.collab.create_artifact(_coding_on(w, scribe["id"]),
                                             {"kind": "view", "title": "Notes", "body": BASE_PAGE})
     assert w.engine.plan_for("user:u_jon", private["id"]) and w.engine.plan_for("user:u_ada", private["id"]) is None
     for who, ref in (("user:u_ada", private["id"]), ("user:u_jon", "ar_nothing")):
@@ -873,7 +886,7 @@ def test_a_plan_begun_from_a_saved_creation_keeps_its_name_through_deploys_round
     (a dry run of 19 Nov)."""
     w = world
     w.minds.question = False
-    maker = w.hive.db.one("SELECT * FROM agents WHERE id = ?", (w.maker["id"],))
+    maker = _coding_on(w, w.maker["id"])
     page = w.hive.collab.create_artifact(maker, {"kind": "view", "title": "Moon page", "body": BASE_PAGE})
     view = w.client.portal.call(w.engine.start, "user:u_jon", SENTENCE, page["id"])
     pid = view["plan_id"]
@@ -1098,34 +1111,6 @@ def test_check_output_parsing_never_guesses_a_pass():
         frame_document({"index.html": "<p>no links</p>", "style.css": "", "app.js": ""})
 
 
-def test_the_authored_check_runs_in_the_hive_sandbox(monkeypatch):
-    """Production's runner: the pinned create-acceptance-check bundle under sandbox_run (no network, fresh job folder).
-    Red on the scaffold, green on the built page; a check that reaches for the network gets no network."""
-    from hive.core import sandbox_run
-    from hive.core.create_plan_ports import SandboxChecks
-    monkeypatch.setenv("HIVE_SANDBOX_RUN_APPS", "create-acceptance-check")
-    monkeypatch.setenv("HIVE_SANDBOX_RUNTIMES", json.dumps({"python": {"exe": str(pathlib.Path(sys.executable).absolute()),
-                                                                         "reads": sorted({sys.prefix, sys.base_prefix})}}))
-    if not sandbox_run.available():
-        pytest.skip("no OS sandbox on this host")
-    sandbox_run.verify_bundle(str(ROOT / "hive/plugins/create_acceptance_check"), "tools")
-    checks = SandboxChecks()
-    red = asyncio.run(checks.run({**SCAFFOLD, cpe.CHECK_PATH: CHECK}, cpe.CHECK_PATH))
-    assert red["outcome"] == "fail" and set(red["failing"]) == {"index.html", "style.css", "app.js"}, red
-    green = asyncio.run(checks.run({**SCAFFOLD, "index.html": PAGE, "style.css": STYLE, "app.js": APP_FIXED,
-                                    cpe.CHECK_PATH: CHECK}, cpe.CHECK_PATH))
-    assert green["outcome"] == "pass", green
-    net = ("import socket, json\ntry:\n    socket.create_connection(('1.1.1.1', 80), 2); ok = True\nexcept OSError:\n    ok = False\n"
-           "print('CREATE-CHECK ' + json.dumps({'passed': False, 'failing': ['net' if ok else 'nonet']}))\n")
-    out = asyncio.run(checks.run({cpe.CHECK_PATH: net}, cpe.CHECK_PATH))
-    assert out["failing"] == ["nonet"], out
-    # a build file named like a module the check imports is never imported (review F2): the check still judges
-    shadow = 'print("CREATE-CHECK " + %r)\nraise SystemExit(0)\n' % json.dumps({"passed": True, "failing": []})
-    out = asyncio.run(checks.run({**SCAFFOLD, "json.py": shadow, "html/__init__.py": shadow, "re.py": shadow,
-                                  cpe.CHECK_PATH: CHECK}, cpe.CHECK_PATH))
-    assert out["outcome"] == "fail", out
-
-
 RUNNER = ROOT / "hive/plugins/create_acceptance_check/tools/run.py"
 # Two ways a test author reads the app: by the check's own path (dirname(__file__)/..) and by the working directory.
 # Each passes on an app whose index.html says it is ready, and names index.html on the scaffold or when it isn't there.
@@ -1249,10 +1234,10 @@ def test_a_plan_waiting_on_a_mind_refused_for_spending_says_which_and_why(world)
                                 created_by=f"create-plan:{pid}", assignee=w.maker["id"], goal_id=effect["goal_id"])
     w.hive.db.execute("UPDATE agents SET status = 'awake', desired = 'awake' WHERE id = ?", (w.maker["id"],))
     mind = w.hive.agent(w.maker["id"])
-    said = "Spending faster than this month allows: a call this size fits again in about 999 minutes."
-    w.hive.note_refusal(mind, "spend_rate", said)
+    said = "A spending limit has no room for this call."
+    w.hive.note_refusal(mind, "spend_limit", said)
     assert w.engine.view(pid)["waiting"] == [{"mind": mind["id"], "name": mind["name"], "step": "the plan", "reason": "spending",
-                                              "code": "spend_rate", "message": said}]
+                                              "code": "spend_limit", "message": said}]
     w.hive.note_admitted(mind)                       # a call of its admitted again: nothing to say
     assert w.engine.view(pid)["waiting"] == []
 
@@ -1702,6 +1687,54 @@ def test_a_page_the_app_frame_cant_show_fails_the_check_naming_index_html(world)
     # an app without a page has no page verdict; a page missing a file names it
     assert page_problem({"main.py": "print(1)"}) is None and page_problem(page) is None
     assert page_problem({"index.html": PAGE, "style.css": STYLE}) == "the app frame can't show this page: app.js is missing"
+
+
+def test_a_page_piece_writes_the_frame_files_no_other_piece_writes():
+    """acceptance-tests#30 (staging, 21 Nov): a plan gave its one piece index.html alone, the scaffold's app.js and
+    style.css read-only, so no page it wrote could run under the app frame's CSP. The plan check gives the piece writing
+    index.html the frame files no piece writes; a file another piece writes stays that piece's; an app without a page
+    gets nothing; and a page piece with no room for them is refused in the rule's words, which the planner reads."""
+    from hive.core.create_plan_ports import ANSWER_SHAPES
+    plan = lambda *pieces: {"acceptance": ["a click adds one to the count"],   # noqa: E731
+                            "pieces": [{"id": i, "kinds": ["code"], "files": f} for i, f in pieces]}
+    got, why = cpe.validate_plan(plan(("page", ["index.html"])))
+    assert why is None and got["pieces"][0]["files"] == ["index.html", "style.css", "app.js"]
+    got, why = cpe.validate_plan(plan(("page", ["index.html"]), ("logic", ["app.js"])))
+    assert why is None and [p["files"] for p in got["pieces"]] == [["index.html", "style.css"], ["app.js"]]
+    got, why = cpe.validate_plan(plan(("logic", ["app.js"]), ("page", ["index.html", "icon.svg"]), ("look", ["style.css"])))
+    assert why is None and [p["files"] for p in got["pieces"]] == [["app.js"], ["index.html", "icon.svg"], ["style.css"]]
+    assert cpe.validate_plan(plan(("tool", ["main.py"])))[0]["pieces"][0]["files"] == ["main.py"]
+    full = ["index.html"] + [f"part{n}.js" for n in range(cpe.MAX_FILES_PER_PIECE - 1)]
+    assert cpe.validate_plan(plan(("page", full))) == (None, "page_files_over_limit")
+    assert cpe.validate_plan(plan(("page", full), ("look", ["style.css"]), ("logic", ["app.js"])))[1] is None
+    assert cpe.PLAN_RULES["page_files_over_limit"] in ANSWER_SHAPES["plan"]
+
+
+def test_every_mind_that_plans_checks_or_builds_a_page_reads_the_frames_own_rule():
+    """acceptance-tests#30: the planner read "a single self-contained HTML file" as no link or script tags, which are
+    the only way the frame runs a page's style and code. One statement of the document the frame shows
+    (ui_parts.FRAME_DOCUMENT), made from the tags the frame itself replaces, is in two rules: FRAME_RULE, with the
+    policy, reaches a page builder's own instructions, and FRAME_CHECK_RULE the test author's contract
+    (test_slice1_with_the_play_check_red_on_the_scaffold_red_on_the_bug_then_green). The planner's answer shape carries
+    FRAME_PLAN_RULE, where a page's style and code go and what self-contained means. The author's and planner's rules
+    are short enough for their goals (test_create_step_rules_in_goal). The policy is the one frame_document writes on
+    the server and appFrame.ts frameCsp writes in the browser."""
+    import re
+    from hive.core.code_controller_member import _packet
+    from hive.core.create_plan_ports import ANSWER_SHAPES
+    from hive.core.ui_parts import FRAME_CHECK_RULE, FRAME_DOCUMENT, FRAME_PLAN_RULE, FRAME_RULE, frame_csp
+    assert FRAME_PLAN_RULE in ANSWER_SHAPES["plan"] and "loads nothing from another origin" in FRAME_PLAN_RULE
+    assert "style.css" in FRAME_PLAN_RULE and "app.js" in FRAME_PLAN_RULE
+    assert "loads nothing from another origin" in FRAME_RULE
+    assert FRAME_DOCUMENT in FRAME_RULE and FRAME_DOCUMENT in FRAME_CHECK_RULE
+    page = {"member": json.dumps({"plan_id": "plan_x", "piece": "page", "paths": ["index.html", "style.css", "app.js"]})}
+    assert FRAME_RULE in _packet(None, page, {}, "build", None, "g_1").split("UNTRUSTED_DATA")[0]
+    doc = frame_document({"index.html": PAGE, "style.css": STYLE, "app.js": APP_FIXED})
+    assert f'content="{frame_csp("00000000-0000-0000-0000-000000000000")}"' in doc
+    assert frame_csp("<nonce>") in FRAME_RULE
+    ts = (ROOT / "hive/ui/src/lib/appFrame.ts").read_text()
+    browser = re.search(r"export function frameCsp\(nonce: string\): string \{\s*return `([^`]*)`", ts)
+    assert browser and browser.group(1).replace("${nonce}", "n0") == frame_csp("n0")
 
 
 def test_the_planner_is_told_every_rule_the_plan_check_refuses_for():

@@ -707,7 +707,7 @@ def test_a_heartbeat_racing_the_release_cannot_reclaim_the_task(client, monkeypa
     assert client.post(f"/api/agent/goals/{goal['id']}/claim", headers=agent_headers(b)).status_code == 200
     holder = dict(hive._agent_row(b["id"]))
     later = goals_module._later
-    def release_mid_heartbeat(minutes):                 # between the heartbeat's read and its write
+    def release_mid_heartbeat(minutes):                 # release before the heartbeat's guarded write
         hive._locked_soft_delete(b["id"], swarm["id"], "user:operator", "released: test")
         return later(minutes)
     monkeypatch.setattr(goals_module, "_later", release_mid_heartbeat)

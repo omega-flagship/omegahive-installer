@@ -48,7 +48,7 @@ import time
 from decimal import Decimal
 
 from . import jpeg_complete
-from .cost_reservations import BudgetExhausted, SpendRateLimited, exhausted_limit, host_use_check
+from .cost_reservations import BudgetExhausted, exhausted_limit, host_use_check
 from .db import now
 
 PROVIDER = "openrouter"
@@ -687,8 +687,7 @@ class MediaRoute:
         metadata = {"agent": agent["id"], "model": model_label, "payer": payer, "key": key_id, "kind": "media:" + op}
         try:
             if studio_call is None:
-                row = self.reservations.reserve(reservation, payload, usd, budgets, metadata=metadata, dispatched=True,
-                                                paced=self.hive.present_for(agent) is None)   # as the chat route
+                row = self.reservations.reserve(reservation, payload, usd, budgets, metadata=metadata, dispatched=True)
             else:
                 # J3 R4: bound to the maker's step and captured epoch, reserved undispatched (the send gate dispatches)
                 row = studio.reserve_call(studio_call, self.reservations, reservation, payload, usd, budgets, metadata)
@@ -699,9 +698,6 @@ class MediaRoute:
                 raise MediaError(409, "payer_changed", "who pays for this mind changed meanwhile; ask again") from None
             if "session changed" in str(exc):
                 raise MediaError(409, "session_changed", "a session on this mind started or ended meanwhile; ask again") from None
-            if isinstance(exc, SpendRateLimited):   # within its limits but faster than this month allows: nothing held
-                refused = self.hive.spend_rate_refusal(agent, exc)
-                raise MediaError(429, refused.code, refused.message, refused.details) from None
             if isinstance(exc, BudgetExhausted):   # recorded and announced like Budgets.check's refusal, naming its limit
                 say = self.hive.note_refusal(agent, "reservation_refused", str(exc), exhausted_limit(exc))
                 raise MediaError(402, "reservation_refused", str(exc), {"say": say}) from None

@@ -135,3 +135,31 @@ def test_the_skill_shows_the_schema_and_keeps_its_wire_format(monkeypatch):
     assert sent["data"]["proposal"] == {"text": "ar_1 1 sha256:x"} and set(sent["data"]) == {"binding_digest", "proposal"}   # wire unchanged
     hc.goal_propose("g_1", json.dumps(GOOD))
     assert sent["data"]["proposal"] == GOOD
+
+
+def test_the_native_skill_keeps_the_claim_reference_on_results(monkeypatch):
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "modules" / "hive" / "src" / "hive_commons.py"
+    spec = importlib.util.spec_from_file_location("hive_commons_claim_ref", path)
+    commons = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(commons)
+    reference = "g_1~claim_1"
+    calls = []
+
+    def call(method, route, body=None):
+        calls.append((method, route))
+        return {"id": "g_1", "title": "Research", "claim_ref": reference,
+                "status": (body or {}).get("status", "claimed")}, None
+
+    monkeypatch.setattr(commons, "_call", call)
+    assert reference in commons.goal_claim("g_1")
+    commons.goal_propose(reference, json.dumps(GOOD))
+    commons.goal_finish(reference, "failed", "source unavailable")
+    assert calls == [
+        ("POST", "/api/agent/goals/g_1/claim"),
+        ("GET", "/api/agent/goals/g_1"),
+        ("POST", f"/api/agent/goals/{reference}/result"),
+        ("POST", f"/api/agent/goals/{reference}/result"),
+    ]

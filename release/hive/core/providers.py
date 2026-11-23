@@ -638,6 +638,28 @@ class ProviderStore:
 ROUTE_SORTS = {"price", "throughput", "latency"}
 
 
+# The options only a mind's owner sets or clears (Hive.check_approval_options): its approval-answer policy (P3b) and its
+# own coding (Jon on omega-flagship/omegahive#395).
+OWNER_ONLY_OPTIONS = ("approvals", "own_coding")
+
+
+def owner_options(options):
+    """The owner-only options a mind's options set, {} for the default."""
+    return {name: options[name] for name in OWNER_ONLY_OPTIONS if options.get(name) is not None}
+
+
+def own_coding(agent):
+    """True when the mind's owner switched its own coding on (options.own_coding). The agent may be a view, its
+    options a dict, or a stored row, its options JSON text; anything else is off, the default."""
+    options = agent.get("options")
+    if isinstance(options, str):
+        try:
+            options = json.loads(options or "{}")
+        except ValueError:
+            return False
+    return isinstance(options, dict) and options.get("own_coding") is True
+
+
 def clean_options(value):
     """Validate model routing and bounded native output capacity (effective at next start)."""
     if value in (None, "", {}):
@@ -657,6 +679,13 @@ def clean_options(value):
         if value["approvals"] != "owner_only":
             raise ValueError("options.approvals is owner_only; omit it for the default approval policy")
         out["approvals"] = "owner_only"
+    if "own_coding" in value:
+        # Jon on omega-flagship/omegahive#395: a mind's own coding is off by default and its owner may switch it on
+        # (policy.own_coding reads it, Hive.check_approval_options keeps it the owner's); off is stored as no key
+        if type(value["own_coding"]) is not bool:
+            raise ValueError("options.own_coding is true or false")
+        if value["own_coding"]:
+            out["own_coding"] = True
     if "max_output_tokens" in value:
         capacity = value["max_output_tokens"]
         if type(capacity) is not int or not 256 <= capacity <= 32768:

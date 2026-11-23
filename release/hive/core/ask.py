@@ -50,6 +50,7 @@ import logging
 import os
 import re
 import secrets
+import statistics
 import threading
 import time
 
@@ -94,7 +95,7 @@ SAY = {
     "no_mind": "Choose a swarm to ask first.",
     "no_orchestrator": "That swarm has no coordinator to answer. An admin can choose one.",
     "mind_asleep": "The coordinator is asleep. Wake it first; waking spends money, so it is your call.",
-    "spend_limit": "This thread has reached its spend limit. Start a new thread to go on.",
+    "spend_limit": "A spending limit stopped this request.",
     "ask_busy": "The coordinator is still answering your last request. Wait, or stop it.",
     "coordinator_busy": "The coordinator is working for someone else right now. Try again in a moment.",
     "rate_limited": "Too many requests just now. Try again in a little while.",
@@ -117,12 +118,28 @@ MAX_SELECTION = 20
 MAX_VIEW_BYTES = 2048
 MAX_VIEW_REFS, MAX_VIEW_ACTS, MAX_SUMMARY = 50, 50, 500
 MAX_EVENTS = 64                       # per turn; thinking frames stop at MAX_EVENTS - 4 so the terminal ones always fit
+MAX_RESEARCH_NOTES = 8                # per request, including a resume for the last announced hold
 TERMINAL = ("answer", "done", "refused")
 TERMINAL_RESERVE = 2                  # answer + done (a refusal is one): kept free by every other phase while the turn is open
 PAGE_EVENTS = 100
-DEFAULT_BUDGET, MAX_BUDGET = 0.25, 5.0   # Jon 2026-10-05: $0.25 a thread, the person may raise it to $5; never raises a cap
-PER_MINUTE, PER_DAY, READS_PER_MINUTE = 10, 300, 60
-TIMEOUT = float(os.environ.get("HIVE_ASK_TIMEOUT_SECONDS", "120"))
+# Jon's design for the Ask (omegahive#294, item 2, moved from PhysixSNET #69): no per-answer cap and no per-thread cap;
+# "Only an outlier asks once ... about 10x the person's recent median answer cost, or over $1, and anyone can turn
+# that off." The numbers are the hive's settings, never this code's (settings.ask_expensive, hive/core/config.py
+# AskExpensive: HIVE_ASK_EXPENSIVE_* from the environment or hive/config.json). `medians` is how many of their latest paid
+# answers the median reads, and `fewest` how many it needs before it counts: a median of one or two answers would make
+# the third answer's question chance.
+
+def ask_limits(hive):
+    """The hive's AskLimits (settings.ask_limits, hive/core/config.py: HIVE_ASK_PER_MINUTE, _PER_DAY, _READS_PER_MINUTE,
+    _TIMEOUT_SECONDS and HIVE_ASK_CONDUCTOR_*, read by load_settings from the environment or the numbers' files). The
+    numbers are the hive's settings, never this code's: settings built by hand, not by load_settings, carry none, and
+    this refuses at use rather than guess a number."""
+    limits = getattr(hive.settings, "ask_limits", None)
+    if limits is None:
+        raise RuntimeError("settings.ask_limits is unset: load_settings reads HIVE_ASK_PER_* and HIVE_ASK_CONDUCTOR_*")
+    return limits
+
+
 EMPTY_THREAD_SECONDS = 600   # an Ask thread that never got a turn (a crash or race between thread and admission) ends after this
 # the turn states (gateway r1b, Kimi item 4: every inline tuple of them uses one of these two constants; T-LIT scans for any
 # other). OPEN: any open turn. conducting: a host-side conductor turn (conductor.py), never the mind's; browser: a turn the
@@ -143,6 +160,9 @@ BODY_KEYS = {"operation_id", "text", "context", "thread", "via", "continues"}
 # v0.39's Linux gate (19 Nov) "Make this a tip calculator" typed in the Code tab reached Code and, on the turn it rode
 # on, the conductor, whose make started a second app in Create from the same words.
 CARRY_KEY = "carry"
+# true only: the person already said go ahead for this request (the Go ahead offer after an expensive stop), so its turn
+# never asks "Go ahead?" (omegahive#294 item 2); stored as ask_turns.go_ahead
+GO_AHEAD_KEY = "go_ahead"
 # ---- gateway r1b (PLATFORM_PERSONAL_MIND_GATEWAY_R1_PLAN §2.3, r1.1 §E/§H/§I): the browser_mind route -------------------
 # Off unless HIVE_MIND_GATEWAY=1; off, an Ask is exactly as before (answer_in is not a key it accepts). On, a turn is a
 # browser turn when the request says "answer_in": "browser" (the page sends it only once its broker has booted), the
@@ -238,7 +258,7 @@ ID_SEGMENT = re.compile(r"[a-z]{1,4}_[0-9a-f]{6,}")
 CONVERSATION = "ask:"
 # what a personal turn's stored frame may keep (Ask.content_free): ids, phase, seq, time, host enums, money, flags, digests
 CONTENT_FREE_KEYS = frozenset({"operation_id", "turn_id", "principal", "seq", "phase", "at", "outcome", "reason", "state",
-                               "op", "spent_usd", "turn_spent_usd", "delta", "truncated", "message_id",
+                               "op", "spent_usd", "turn_spent_usd", "limit_usd", "delta", "truncated", "message_id",
                                "intent_id", "request_id", "dispatch_id", "links_rev", "digest", "error", "app_ask",
                                "until", "conducted"})
 # done.limit (ask-limits r1): an enum and money; reason (gateway r1a): the host enum monthly_total_required
@@ -354,6 +374,13 @@ class Ask:
             hive.db.execute("ALTER TABLE ask_turns ADD COLUMN calls INTEGER NOT NULL DEFAULT 0")
         if "last_call_at" not in turn_columns:
             hive.db.execute("ALTER TABLE ask_turns ADD COLUMN last_call_at REAL")
+        # omegahive#294 item 2: 1 once the turn's person said go ahead (asked with go_ahead, or answered its question)
+        if "go_ahead" not in turn_columns:
+            hive.db.execute("ALTER TABLE ask_turns ADD COLUMN go_ahead INTEGER NOT NULL DEFAULT 0")
+        # the person's switch for the "looks expensive" question, on unless they turned it off; thread_budget_usd stays
+        # only as an old column (it is never read or written now)
+        if "ask_when_expensive" not in {r["name"] for r in hive.db.all("PRAGMA table_info(ask_prefs)")}:
+            hive.db.execute("ALTER TABLE ask_prefs ADD COLUMN ask_when_expensive INTEGER NOT NULL DEFAULT 1")
         from .ask_intents import Intents
         self.intents = Intents(self)
         # Kimi ask-p1-r6 1: a database that ran 8716093 marked cleared turns by time only (cleared_at, no cleared_seq).
@@ -498,15 +525,38 @@ class Ask:
                 swarm, mind = self.orchestrator(viewer, row["swarm_id"])
                 current = {"id": swarm["id"], "name": swarm["name"], "orchestrator": {"id": mind["id"], "name": mind["name"], "status": mind["status"]}}
         return {"swarm_id": row["swarm_id"] if row else None, "swarm": current,
-                "thread_budget_usd": float(row["thread_budget_usd"]) if row else DEFAULT_BUDGET,
-                "max_thread_budget_usd": MAX_BUDGET, "eligible": self.eligible_swarms(viewer),
+                "ask_when_expensive": bool(row["ask_when_expensive"]) if row else True,
+                "expensive_usd": self.expensive_usd(viewer.principal), "eligible": self.eligible_swarms(viewer),
                 "capabilities": self.capabilities(viewer)}
+
+    def expensive_usd(self, principal):
+        """The answer cost at which this person's turn asks "Go ahead?" once (Jon on omegahive#294, item 2), from the
+        hive's settings.ask_expensive (e): the lower of e.times times the median cost of their latest e.medians paid
+        answers and e.over_usd, and e.over_usd alone until they have e.fewest. A paid answer is a closed turn with a cost
+        above nothing: a free model's answers say nothing of what this person's answers usually cost. A hive whose
+        settings carry no ask_expensive (built by hand, not by load_settings) fails here rather than guess a number.
+        Time: one indexed read of at most e.medians rows (ask_turns_principal) and a sort of them."""
+        e = self.hive.settings.ask_expensive
+        if e is None:
+            raise RuntimeError("settings.ask_expensive is unset: load_settings reads HIVE_ASK_EXPENSIVE_*")
+        rows = self.hive.db.all("SELECT spent_usd_approx AS usd FROM ask_turns WHERE principal = ? AND closed_at IS NOT NULL "
+                                "AND spent_usd_approx > 0 ORDER BY created_at DESC LIMIT ?", (principal, e.medians))
+        if len(rows) < e.fewest:
+            return e.over_usd
+        return round(min(e.over_usd, e.times * statistics.median(float(r["usd"]) for r in rows)), 6)
+
+    def question_above(self, principal):
+        """expensive_usd for a turn of this person's that may ask, or None when they switched the question off."""
+        row = self.hive.db.one("SELECT ask_when_expensive FROM ask_prefs WHERE principal = ?", (principal,))
+        return None if row is not None and not row["ask_when_expensive"] else self.expensive_usd(principal)
 
     def put_prefs(self, viewer, data):
         hive = self.hive
         if not named_person(viewer.principal):
             raise refusal(hive, "person_required")
-        if set(data) - {"swarm_id", "mind_id", "thread_budget_usd"} or ("swarm_id" in data and "mind_id" in data):
+        if set(data) - {"swarm_id", "mind_id", "ask_when_expensive"} or ("swarm_id" in data and "mind_id" in data):
+            raise refusal(hive, "invalid")
+        if "ask_when_expensive" in data and not isinstance(data["ask_when_expensive"], bool):
             raise refusal(hive, "invalid")
         current = hive.db.one("SELECT * FROM ask_prefs WHERE principal = ?", (viewer.principal,)) or {}
         swarm_id = current.get("swarm_id")
@@ -523,17 +573,12 @@ class Ask:
                 if not isinstance(swarm_id, str):
                     raise refusal(hive, "invalid")
                 self.orchestrator(viewer, swarm_id)
-        budget = float(current.get("thread_budget_usd") or DEFAULT_BUDGET)
-        if "thread_budget_usd" in data:
-            value = data["thread_budget_usd"]
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= MAX_BUDGET:
-                raise refusal(hive, "invalid", limit_usd=MAX_BUDGET)
-            budget = dollars(to_micros(value))   # floored to the micro-dollar, never rounded up (OmegaReview r8)
-            if budget <= 0:
-                raise refusal(hive, "invalid", limit_usd=MAX_BUDGET)
-        hive.db.execute("INSERT INTO ask_prefs VALUES (?, ?, ?, ?) ON CONFLICT(principal) DO UPDATE SET swarm_id = excluded.swarm_id, "
-                        "thread_budget_usd = excluded.thread_budget_usd, updated_at = excluded.updated_at",
-                        (viewer.principal, swarm_id, budget, now()))
+        asks = data["ask_when_expensive"] if "ask_when_expensive" in data else bool(current.get("ask_when_expensive", 1))
+        # thread_budget_usd is NOT NULL in the old table: 0 is stored and never read
+        hive.db.execute("INSERT INTO ask_prefs (principal, swarm_id, thread_budget_usd, updated_at, ask_when_expensive) "
+                        "VALUES (?, ?, 0, ?, ?) ON CONFLICT(principal) DO UPDATE SET swarm_id = excluded.swarm_id, "
+                        "ask_when_expensive = excluded.ask_when_expensive, updated_at = excluded.updated_at",
+                        (viewer.principal, swarm_id, now(), int(asks)))
         return self.prefs(viewer)
 
     # ---- the page's context: names, ids and statuses only ---------------------------------------------------------
@@ -668,7 +713,7 @@ class Ask:
         # memory_notes are accepted whatever the switches (Surface: the page may always send them) and validated for
         # shape; they reach a turn only while the conductor and HIVE_ASK_MEMORY are both on (Ask.memory_on), or on a
         # personal-mind turn with the conductor on (conductor.turn_notes, mind-voice r1)
-        if set(data) - BODY_KEYS - {NOTES_KEY, CONVERSATION_KEY, CARRY_KEY} - ({CONDUCTOR_KEY} if self._conducting() else set()) \
+        if set(data) - BODY_KEYS - {NOTES_KEY, CONVERSATION_KEY, CARRY_KEY, GO_AHEAD_KEY} - ({CONDUCTOR_KEY} if self._conducting() else set()) \
                 - ({ANSWER_IN_KEY} if gateway_enabled() else set()):
             raise refusal(hive, "invalid")
         # nothing answers a carried turn, so it takes no answerer, A/B pick or memory notes
@@ -676,6 +721,8 @@ class Ask:
         # an answer_in, #346's conversation or #394's continued request
         if CARRY_KEY in data and (data[CARRY_KEY] is not True
                                   or {NOTES_KEY, CONDUCTOR_KEY, ANSWER_IN_KEY, CONVERSATION_KEY, "continues"} & set(data)):
+            raise refusal(hive, "invalid")
+        if GO_AHEAD_KEY in data and data[GO_AHEAD_KEY] is not True:
             raise refusal(hive, "invalid")
         if ANSWER_IN_KEY in data and (data[ANSWER_IN_KEY] != "browser" or CONDUCTOR_KEY in data):
             raise refusal(hive, "invalid")   # r1.1 §E: one value only, and never with an A/B conductor pick
@@ -779,14 +826,15 @@ class Ask:
         t = time.time()
         rows = self.hive.db.one("SELECT SUM(created_at >= ?) AS minute, COUNT(*) AS day FROM ask_turns WHERE principal = ? AND created_at >= ?",
                                 (_iso(t - 60), principal, _iso(t - 86400)))
-        return (rows["minute"] or 0) < PER_MINUTE and (rows["day"] or 0) < PER_DAY
+        limits = ask_limits(self.hive)
+        return (rows["minute"] or 0) < limits.per_minute and (rows["day"] or 0) < limits.per_day
 
     def read_ok(self, principal):
         q = self._reads.setdefault(principal, collections.deque())
         t = time.monotonic()
         while q and q[0] < t - 60:
             q.popleft()
-        if len(q) >= READS_PER_MINUTE:
+        if len(q) >= ask_limits(self.hive).reads_per_minute:
             return False
         q.append(t)
         return True
@@ -868,12 +916,6 @@ class Ask:
             raise refusal(hive, "coordinator_busy")
         if self._studio_busy(mind["id"]):
             raise refusal(hive, "coordinator_busy")
-        if thread is not None and not write_free and not carried:
-            tv = hive.sessions.view(thread)
-            # r1.1 (Kimi P2): an own-scope thread is measured as its reservation measures it, spend plus open holds
-            held = hive.sessions.thread_held(thread) if thread.get("cap_scope") == "thread" else 0.0
-            if tv["spent_usd"] + held >= float(thread["budget_usd"]) - 1e-9:
-                raise refusal(hive, "spend_limit", thread=self._thread_brief(tv))
         return None, (swarm, mind, addressed, context, thread)
 
     async def create(self, viewer, data, *, app_binding=None):
@@ -912,12 +954,11 @@ class Ask:
                 model, whose_model = mind["model"], "mind"
         prepared_thread = None
         if thread is None:   # outside the lock; an empty thread left by a race or a crash is adopted next time, or swept
-            pref = hive.db.one("SELECT thread_budget_usd FROM ask_prefs WHERE principal = ?", (viewer.principal,))
-            budget = min(float(pref["thread_budget_usd"]) if pref else DEFAULT_BUDGET, MAX_BUDGET)
             try:
+                # no budget: an Ask thread has no cap of its own (omegahive#294 item 2, Sessions.create)
                 prepared_thread = await hive.sessions.create(
                     viewer, {"mind": mind["id"], "title": f"Ask with {mind['name']}" if mind.get("personal_of")
-                             else data["text"].strip()[:200], "budget_usd": budget}, purpose="ask",
+                             else data["text"].strip()[:200]}, purpose="ask",
                     # held by its own cap unless the mind answers it: a carried turn's thread under the mind's rule would
                     # cap the mind it never asks at the thread's budget
                     cap_scope="thread" if model is not None or browser or carried else None,
@@ -1014,18 +1055,13 @@ class Ask:
                 return None, existing["id"]
             self._check_continues(viewer, data, mind)
             if app_binding is not None:
-                # P1 preflight was write-free. Re-scope and re-read the actual
-                # held/spent measure only after final authority, atomically
-                # with this turn; any later refusal rolls the scope back too.
+                # P1 preflight was write-free. Re-scope only after final authority, atomically with this turn; any later
+                # refusal rolls the scope back too.
                 if model is not None:
                     hive.sessions.rescope(mind["id"], "thread")
                 elif not carried and thread.get("cap_scope") == "thread":   # a carried turn moves no thread's scope
                     hive.sessions.rescope(mind["id"], "mind", thread["id"])
                 thread = hive.db.one("SELECT * FROM work_sessions WHERE id = ?", (thread["id"],))
-                tv = hive.sessions.view(thread)
-                held = hive.sessions.thread_held(thread) if thread.get("cap_scope") == "thread" else 0.0
-                if tv["spent_usd"] + held >= float(thread["budget_usd"]) - 1e-9:
-                    raise refusal(hive, "spend_limit", thread=self._thread_brief(tv))
             if not self._quota_ok(viewer.principal):
                 raise refusal(hive, "rate_limited")
             busy = hive.db.one(f"SELECT operation_id FROM ask_turns WHERE thread_id = ? AND state IN {states_sql(OPEN)}", (thread["id"],))
@@ -1056,10 +1092,11 @@ class Ask:
                 "room_message_id": room_msg["id"] if room_msg else "",
                 "delivery_message_id": outbox["id"] if queued else "",
                 "answer_message_id": None,
-                "deadline": time.time() if carried else time.time() + (browser_turn_seconds() if browser else TIMEOUT) if model is None
+                "deadline": time.time() if carried else time.time() + (browser_turn_seconds() if browser else ask_limits(hive).timeout_seconds) if model is None
                             else self.conductor.deadline(),
                 "mind_spent_at_start": float(self._mind(mind["id"])["spent_usd"] or 0),
                 "next_seq": 1, "created_at": now(), "closed_at": None, "spent_usd_approx": None, "deleted_at": None,
+                "go_ahead": 1 if data.get(GO_AHEAD_KEY) is True else 0,
                 **({"conductor_model": model} if model is not None else {}),
                 **({"route": BROWSER_ROUTE, "calls": 0, "last_call_at": time.time()} if browser else {})})
             if app_binding is not None:
@@ -1091,16 +1128,36 @@ class Ask:
     def _row(self, turn_id):
         return self.hive.db.one("SELECT * FROM ask_turns WHERE id = ?", (turn_id,))
 
+    def _research_note_fits(self, turn_id, request_id, state):
+        if state == "resumed":
+            # Close what this conversation last showed of the request: a hold, or a failure its person then reopened,
+            # which the Research controller starts again. A hold that was never shown needs no resume note.
+            shown = self.hive.db.one(
+                "SELECT json_extract(frame, '$.state') AS state FROM ask_events "
+                "WHERE turn_id = ? AND json_extract(frame, '$.phase') = 'research' "
+                "AND json_extract(frame, '$.request_id') = ? AND json_extract(frame, '$.state') IN ('held', 'resumed', 'failed') "
+                "ORDER BY seq DESC LIMIT 1", (turn_id, request_id))
+            return shown is not None and shown["state"] in ("held", "failed")
+        notes = self.hive.db.all(
+            "SELECT json_extract(frame, '$.state') AS state FROM ask_events "
+            "WHERE turn_id = ? AND json_extract(frame, '$.phase') = 'research' "
+            "AND json_extract(frame, '$.request_id') = ? AND json_extract(frame, '$.state') IN ('held', 'resumed') "
+            "ORDER BY seq DESC LIMIT ?", (turn_id, request_id, MAX_RESEARCH_NOTES))
+        return len(notes) < MAX_RESEARCH_NOTES - 1
+
     def _frame(self, turn_id, phase, **fields):
         """Call inside a transaction: store the next frame of this turn and return it for publishing after commit, or
-        None when the turn's one shared quota has no place for it. The quota is MAX_EVENTS frames per turn: terminal
+        None when a quota has no place for it. The turn quota is MAX_EVENTS frames per turn: terminal
         frames (answer, done, refused) always fit, because every other phase stops short of them: while the turn is
         open, steer and intent frames keep the last TERMINAL_RESERVE places free, and thinking frames stop four short
         (the last one saying the rest were not kept). A dropped frame is a hint lost, never the record. A conductor
         turn's frames share the same quota: its acts, `dispatched` frames and `say` deltas (an `answer` with delta: true
         is a hint, not the terminal answer) keep the reserve too, so its final answer and done always fit."""
         t = self._row(turn_id)
-        # A dispatched task has its own lifecycle after the original turn uses its frame quota.
+        # Research can outlive the turn. Its wait notes have their own quota and its outcome always fits.
+        if phase == "research" and fields.get("state") in ("held", "resumed"):
+            if not self._research_note_fits(turn_id, fields["request_id"], fields["state"]):
+                return None
         if (phase not in TERMINAL or fields.get("delta")) and phase not in ("thinking", "research"):
             if t["next_seq"] > MAX_EVENTS - (TERMINAL_RESERVE if t["state"] in OPEN else 0):
                 return None
@@ -1223,14 +1280,10 @@ class Ask:
                 "budget_usd": view["budget_usd"], "spent_usd": view["spent_usd"],
                 "addressed": self._addressed(last["context_resolved"]) if last else None}
 
-    def _host_limit(self, thread, thread_spent):
-        """done.limit of a spend stop closed by the host (expiry, or a browser's /done spend_cap): the thread's own cap,
-        named with the host's figures, when the thread is spent by its own measure (spend plus open holds, as admission
-        measures it); otherwise the host cannot name it: kind unknown, figures null (ask-limits r1; gateway r1b)."""
-        held = self.hive.sessions.thread_held(thread) if thread.get("cap_scope") == "thread" else 0.0
-        if thread_spent is not None and thread_spent + held >= float(thread["budget_usd"]) - 1e-9:
-            return {"kind": "thread", "current_usd": thread_spent, "limit_usd": float(thread["budget_usd"]), "estimate_usd": None}
-        return {"kind": "unknown", "current_usd": None, "limit_usd": None, "estimate_usd": None}
+    HOST_LIMIT = {"kind": "unknown", "current_usd": None, "limit_usd": None, "estimate_usd": None}
+    """done.limit of a spend stop the host closes without the refusal's own figures (a browser's /done spend_cap): the
+    host cannot name that limit, so its kind is unknown and its figures null (gateway r1b). An Ask thread's cap, the one
+    such stop the host could once name, is gone (omegahive#294 item 2)."""
 
     def _close(self, turn_id, state, reason=None, answer=None, limit=None, error=None):
         """The one terminal transition: open -> done (with its answer) or refused. Whoever commits first wins.
@@ -1258,8 +1311,8 @@ class Ask:
                 extra = {}
                 if reason == "spend_limit" and limit is not None:   # gateway r1c: the limit that refused the call
                     extra["limit"] = limit
-                elif reason == "spend_limit" and thread:   # the host's own limit, never the page's (conductor.limit_frame)
-                    extra["limit"] = self._host_limit(thread, thread_spent)
+                elif reason == "spend_limit":   # the host's own word, never the page's (conductor.limit_frame)
+                    extra["limit"] = dict(self.HOST_LIMIT)
                 if error is not None:
                     extra["error"] = error
                 frames.append(self._frame(turn_id, "done", spent_usd=thread_spent, turn_spent_usd=spent,
@@ -1451,17 +1504,16 @@ class Ask:
     # ---- terminal transitions besides an answer --------------------------------------------------------------------
 
     def expire(self, moment=None):
-        """Open turns past their deadline close: spend_limit when the thread's cap is spent, otherwise timed_out. A browser
-        turn (gateway r1b) closes timed_out (outcome time_cap) at its absolute deadline, or once it has been idle
-        HIVE_ASK_BROWSER_IDLE_SECONDS since admission or its last call."""
+        """Open turns past their deadline close timed_out (an Ask thread has no cap to be spent: omegahive#294 item 2). A
+        browser turn (gateway r1b) closes timed_out (outcome time_cap) at its absolute deadline, or once it has been idle
+        HIVE_ASK_BROWSER_IDLE_SECONDS since admission or its last call. A conductor turn waiting on its person's go-ahead
+        has its deadline moved past that wait (Conductor._ask_go_ahead), so it is not one of these."""
         moment = time.time() if moment is None else moment
         for t in self.hive.db.all("SELECT * FROM ask_turns WHERE state = 'browser' AND (deadline <= ? OR COALESCE(last_call_at, 0) <= ?)",
                                   (moment, moment - browser_idle_seconds())):
             self._close(t["id"], "refused", "timed_out")
         for t in self.hive.db.all(f"SELECT * FROM ask_turns WHERE state IN {states_sql(OPEN)} AND deadline <= ?", (moment,)):
-            thread = self.hive.db.one("SELECT * FROM work_sessions WHERE id = ?", (t["thread_id"],))
-            spent = bool(thread) and self.hive.sessions.view(thread)["spent_usd"] >= float(thread["budget_usd"]) - 1e-9
-            self._close(t["id"], "refused", "spend_limit" if spent else "timed_out")
+            self._close(t["id"], "refused", "timed_out")
         for s in self.hive.db.all("SELECT id FROM work_sessions WHERE purpose = 'ask' AND status = 'active' AND created_at <= ? AND NOT EXISTS "
                                   "(SELECT 1 FROM ask_turns WHERE thread_id = work_sessions.id)", (_iso(moment - EMPTY_THREAD_SECONDS),)):
             with contextlib.suppress(Exception):   # a thread that never got a turn: end it, so its cap is released
@@ -1777,10 +1829,8 @@ class Ask:
             view["app_ask"] = True
         if t.get("conductor_model"):
             view["conductor"] = {"model": t["conductor_model"]}
-        if t.get("route") == BROWSER_ROUTE:   # gateway r1b: the route, the interim turn guard and the monthly total's room
-            from .conductor import turn_cap_usd
+        if t.get("route") == BROWSER_ROUTE:   # gateway r1b: the route and the monthly total's room
             view["route"] = BROWSER_ROUTE
-            view["cap_usd"] = turn_cap_usd()
             view["month_remaining_usd"] = self.month_remaining(t["mind_id"]) if t["state"] == "browser" else None
         # who the turn speaks as: the asker's own personal mind ({mind_id, name}), else null (a swarm's coordinator)
         mind_row = self.hive.db.one("SELECT * FROM agents WHERE id = ?", (t["mind_id"],))

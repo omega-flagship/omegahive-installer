@@ -2,14 +2,23 @@
 #
 # - core-tests:  the OmegaClaw Core unittest suite under tests/ (PeTTa-free), its packages the ones
 #                tests/ci-requirements.lock pins by hash, installed by .github/actions/core-python.
-# - hive-petta-smoke (pull_request) and hive-petta (workflow_dispatch, by hand): both use the
-#                toolchain in .github/actions/petta-toolchain; the smoke runs a fixed selection of hive/tests and then
-#                every hive test module the pull request adds or changes (scripts/ci/pr_hive_tests.py), hive-petta all
-#                of it. A change to conftest.py or a helper module adds no module to the smoke; the full run covers it.
+#                Node 22 from actions/setup-node too, for test_patch_contracts' node --check of the WhatsApp
+#                bridge, since not every omegahive-ci runner has node of its own.
+# - hive-petta-smoke (pull_request) and the full run (a merge to main, every night, or workflow_dispatch by hand):
+#                both use the toolchain in .github/actions/petta-toolchain; the smoke runs a fixed selection of
+#                hive/tests and then every hive test module the pull request adds or changes (scripts/ci/pr_hive_tests.py),
+#                the full run all of it, split by module across hive-petta's parallel shards (scripts/ci/hive_shard.py,
+#                with scripts/ci/hive_shards.py's split; their count is one number, HIVE_SHARDS below or the shards
+#                input) and one switch shard more, hive-switch, which runs the files that need the AppArmor userns
+#                switch (scripts/ci/hive-switch-files.txt). A change to conftest.py or a helper module adds no module
+#                to the smoke; the full run covers it.
 #                Both also run tests/'s runtime tests, which boot the core runtime and so skip in core-tests
 #                (scripts/ci/runtime-tests.sh): the smoke when the pull request touches the runtime or the CI that runs
-#                them (scripts/ci/pr_hive_tests.py --runtime), hive-petta always.
-#                Both end with the mind-sandbox tests under AppArmor's restriction. The notes below describe the toolchain.
+#                them (scripts/ci/pr_hive_tests.py --runtime), the full run always (hive-runtime).
+#                Both run the mind-sandbox tests under AppArmor's restriction (the full run in hive-switch, after its
+#                files at 0). hive-full is the full run's one result: green only when every shard, hive-switch and
+#                hive-runtime succeeded and the shards ran the whole of hive/tests once
+#                (scripts/ci/hive_shard_check.py). The notes below describe the toolchain.
 # - toolchain:   builds the pinned toolchain with scripts/dev/setup_petta_env.sh (the same pins as
 #                deploy/setup_runtime.sh: Python 3.12, SWI-Prolog 10.1.14 from swipl-devel built against that Python,
 #                PeTTa ae66fa8, janus-swi 1.5.3), caches it by pin, caches the Python it installs hive's requirements
@@ -19,7 +28,7 @@
 #                (omegafusion, omegasocial, ...) skip themselves and say why in the pytest summary (-rs).
 # - hive-ui:     Node 22.12+ (vitest 5 and vite 8 need it) and hive/ui's packages from .github/actions/ui-node, then
 #                the production build (npm run build, whose tsc -b is the typecheck), lint and vitest.
-# - warm-petta and warm (a push to main that changes what a cache is keyed by, and every day): build or confirm the
+# - warm-petta and warm (every run on main, a merge's and the nightly one): build or confirm the
 #                caches in main's scope, the toolchain and hive's Python on runner 1 and core-tests' wheels and
 #                hive-ui's npm cache on either runner. They run no test.
 #
@@ -31,10 +40,10 @@
 # folder a cache restores into starts empty and pip's cache is the job's own: no job installs, or saves for main,
 # a file an earlier pull request's job left.
 #
-# Runners: our own, not GitHub's (since 2026-11-05; GitHub-hosted until then). Two self-hosted org runners in the
-# runner group omegahive-ci, both Ubuntu 24.04 x86_64 on one machine. core-tests and hive-ui run on either
-# (label omegahive-ci). hive-petta-smoke and hive-petta run on runner 1 only (label omegahive-petta), so they never
-# run two at once: they share the kernel's AppArmor sysctl and /opt/omegahive.
+# Runners: our own (since 2026-11-05), and GitHub's for the pull requests' petta jobs (below). The CI machine has two
+# self-hosted org runners in the runner group omegahive-ci, both Ubuntu 24.04 x86_64; core-tests and hive-ui run on
+# any runner labelled omegahive-ci. Runner 1 there carries omegahive-petta as well; the full run's petta jobs share
+# machines and runners as described below, not runner 1 alone.
 # The machine is prepared once, as GitHub prepares its image, by ci-runner-setup (run by hand by an admin): build
 # packages, the launcher's AppArmor profile, a tmpfs for job files, the firewall, and root-owned job hooks that
 # start and end every job without the toolchain folders, setup-python's Python, caches and the release, with the
@@ -42,45 +51,78 @@
 # AppArmor restriction to 0 or 1 and run the release helper (scripts/ci/release-tests.sh); runner 2 has none.
 # The petta jobs end with scripts/ci/host-check.sh, which fails if the job changed the restriction,
 # /etc/apparmor.d or the installed packages.
+# Since 2026-11-19 (T-PETTA-HOSTED) the petta jobs (hive-petta-smoke, hive-petta, warm-petta) run on GitHub's
+# ubuntu-24.04 by default, one machine per job, so pull requests' smokes no longer queue for runner 1. The repository
+# variable PETTA_RUNS_ON, a JSON runs-on value, moves hive-petta-smoke and warm-petta onto our machines. Rule: it must
+# never name a label the full run's jobs use (omegahive-petta, or PETTA_FULL_RUNS_ON's). Those two jobs set the
+# restriction without the switch lock, so on a machine the full run uses they would set 1 under hive-switch's 0 and
+# remove its release. The full run's
+# shards and hive-runtime run only on our machines (Kabir, 2026-11-20), in parallel on the shared org runners that
+# carry the label omegahive-petta beside omegahive-ci (ci-runner-add-host in omega-flagship/.github-private registers
+# them several per server, so petta jobs and ordinary CI jobs share them); the variable PETTA_FULL_RUNS_ON, a JSON
+# runs-on value, overrides that label. There the restriction is the machine's, shared by its runners, so only the
+# switch shard (hive-switch) changes it, under the machine's switch lock (scripts/ci/switch-shard.sh); every other
+# full-run job leaves it alone (petta-toolchain's lift-userns: 'false'), and host-check.sh accepts 0 only while that
+# lock is held. On GitHub's machine
+# the job has general sudo and the machine is thrown away after it, so the scripts do there what ci-runner-setup does on
+# ours: the toolchain action installs the build packages, release-tests.sh loads the profile and makes the release,
+# job-tmp.sh puts TMPDIR on its disk, and host-check.sh checks nothing. The runner-1 marks in
+# hive/tests/known_failures.py do nothing there, so those tests fail there until their issues are fixed.
 #
 # First runs on GitHub Actions (2026-10-10): core-tests and hive-ui pass; hive-petta built the pinned toolchain and
 # passed 2402 hive tests. Its 19 failures were the Linux mind-sandbox tests, which need unprivileged user namespaces
 # (Ubuntu 24.04 blocks them by default through AppArmor), and one test that assumed SQLite's secure_delete default.
 name: hive-ci
 
-# Once per pull request commit (a newer commit on the same pull request cancels the run still in progress), and the full
-# suite on a dispatch by hand (after substantial merges). A push to main that changes what a cache is keyed by, and a
-# daily schedule, run only the warm jobs; no other push starts a run.
+# Once per pull request commit (a newer commit on the same pull request cancels the run still in progress). The full
+# suite runs after every merge to main, every night and on a dispatch by hand, and a full run in progress always
+# finishes: a newer full run of the same branch waits for it, and replaces any older one still waiting, since it covers
+# that one. Full runs could come faster than they finish (about 110 minutes each on runner 1 before the shards), so a
+# queue that kept every one would only grow. The warm jobs ride every run on main, a merge's and the nightly one, so a
+# cache whose key changed is rebuilt in main's scope when that run starts, and every night after a new Python 3.12
+# release changed every Python key with no file changing on main. A push to any other branch starts no run.
 on:
   pull_request:
   push:
-    branches: [main]
-    paths:   # what the caches are keyed by, and the files that build them
-      - .github/workflows/ci.yml
-      - .github/actions/**
-      - scripts/dev/setup_petta_env.sh
-      - hive/requirements.txt
-      - hive/google-constraints.txt
-      - hive/ci-constraints.txt
-      - tests/ci-requirements.lock
-      - hive/ui/package-lock.json
+    branches: [main]   # a merge: the full run, hive-petta, failure-notice if it fails, and the warm jobs
   schedule:
-    # Daily, since a new Python 3.12 release changes every Python key with no file changing on main. 00:17 UTC is off
-    # the hour, when GitHub delays scheduled runs the most.
-    - cron: '17 0 * * *'
-  workflow_dispatch:   # the full run: hive-petta, and failure-notice if it fails
+    # 05:17 UTC. From 1 to 13 Nov one of hive-ci's 354 runs started between 05:00 and 07:00 UTC, the quietest hours on
+    # runner 1. Not on the hour, when GitHub delays scheduled runs the most.
+    - cron: '17 5 * * *'
+  workflow_dispatch:   # the full run by hand, on any branch
+    inputs:
+      shards:
+        # Empty: HIVE_SHARDS below. A number here overrides it for this one run.
+        description: hive-petta plain shards (empty for HIVE_SHARDS; hive-switch is one more)
+        type: string
+        default: ''
+
+env:
+  # The full run's plain shard count, the one number to change as hive/tests grows: the target is HIVE_TARGET_MINUTES
+  # wall, and hive-full prints the HIVE_SHARDS to use next (one plain shard per HIVE_TARGET_MINUTES less
+  # HIVE_SHARD_OVERHEAD_MINUTES of the plain shards' serial test time, scripts/ci/hive_shard_check.py). The switch
+  # shard, hive-switch, is always one more. A merge's and the nightly run use it; a dispatch's shards input overrides
+  # it. 11 (T-SHARD-15MIN): hive-shard-weights.json's 84.4 minutes of plain-shard serial test time at 8 minutes per
+  # shard; balanced by that file, each plain shard holds about 7.7 minutes of tests, and 11 plain
+  # shards, the switch shard and hive-runtime's 2 parts are 14 of the 15 runners.
+  HIVE_SHARDS: '11'
+  # What hive-full's suggestion and warnings (scripts/ci/hive_shard_check.py) work from. The full run's wall target; a
+  # shard job's minutes outside its tests (run 44846142867: 6.5 minutes from the job's start to its test step, 6 of them
+  # the toolchain, plus collection); and the plain shards' longest over mean test time above which the weights file is
+  # due a refresh from hive-full's hive-shard-weights artifact.
+  HIVE_TARGET_MINUTES: '15'
+  HIVE_SHARD_OVERHEAD_MINUTES: '7'
+  HIVE_MAX_IMBALANCE: '1.3'
+  SWIPL_TAG: V10.1.14
+  PETTA_REF: ae66fa8
+  JANUS_VERSION: 1.5.3
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('full-{0}', github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
-
-env:
-  SWIPL_TAG: V10.1.14
-  PETTA_REF: ae66fa8
-  JANUS_VERSION: 1.5.3
 
 jobs:
   core-tests:
@@ -94,16 +136,21 @@ jobs:
         uses: ./.github/actions/core-python
       - name: Fetch and prepare the pinned Singnet dependency
         run: python scripts/setup_core.py
+      - name: Node 22 (test_patch_contracts checks the WhatsApp bridge's syntax with node --check)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: tests/ (OmegaClaw Core, unittest)
         run: python -m unittest discover -q -s tests
 
   hive-petta-smoke:
-    # On pull_request: the toolchain (cached; setup_petta_env.sh's MeTTa run), a fixed smoke selection of hive/tests,
-    # the hive test modules the pull request adds or changes, tests/'s runtime tests when it touches the core runtime,
-    # and the mind-sandbox tests with AppArmor's restriction on. The full hive/tests runs in hive-petta below.
+    # On pull_request: the toolchain (cached; setup_petta_env.sh's MeTTa run), a fixed smoke selection of hive/tests
+    # with the API contract and the live-event rule guard, the hive test modules the pull request adds or changes,
+    # tests/'s runtime tests when it touches the core runtime, and the mind-sandbox tests with AppArmor's restriction
+    # on. The full hive/tests runs in hive-petta below.
     if: github.event_name == 'pull_request'
-    runs-on: [self-hosted, omegahive-petta]
-    # 240, like hive-petta: minutes on our own machine cost nothing, a cold toolchain build (no self-hosted cache entry
+    runs-on: ${{ fromJSON(vars.PETTA_RUNS_ON || '"ubuntu-24.04"') }}
+    # 240: minutes on our own machine cost nothing, a cold toolchain build (no self-hosted cache entry
     # in this PR's or main's scope yet) must be able to finish, a pull request that changes most of hive/tests runs
     # most of it here (#82 changes 238 of its 312 test modules against main), and the runtime tests may follow.
     timeout-minutes: 240
@@ -124,22 +171,26 @@ jobs:
         id: petta
         run: |
           [ -d "${PETTA_PATH:-}" ] || { echo "PETTA_PATH unset or not a directory: the PeTTa tests would skip"; exit 1; }
-      - name: hive/tests, smoke selection (the mind-sandbox tests and one in-process PeTTa test)
+      - name: hive/tests, smoke selection (the mind-sandbox tests, one in-process PeTTa test, the API contract and the live-event rule guard)
         # A path list, so a renamed or deleted file fails the step (pytest exits 4). test_share_body_through_harness.py
         # runs MeTTa through PeTTa inside pytest; it skips without PETTA_PATH, which the step above checks.
+        # test_api_contract.py fails a pull request that adds a route outside HIVE_PREFIXES or changes the API without
+        # regenerating hive/api/openapi.json (#674), at the pull request rather than on main's full run.
+        # test_every_published_event_kind_has_a_rule reads every emitter under hive/, so a pull request that publishes
+        # a new event kind with no rule in visibility.py fails here, not first in a full run of main (asset.deleted, #408).
         # The step limit is below the job's, so the always() steps below get their time.
         id: smoke
         timeout-minutes: 20
         run: |
           python -m pytest -q -rs -p no:cacheprovider --basetemp="$TMPDIR/pytest" hive/tests/test_mind_sandbox_linux.py \
             hive/tests/test_sandbox_run.py hive/tests/test_mind_sandbox.py hive/tests/test_mind_sandbox_default.py \
-            hive/tests/test_share_body_through_harness.py
+            hive/tests/test_share_body_through_harness.py hive/tests/test_api_contract.py \
+            hive/tests/test_visibility.py::test_every_published_event_kind_has_a_rule
       - name: hive/tests the pull request adds or changes
         # Every hive test module the pull request adds, changes or renames to (scripts/ci/pr_hive_tests.py compares
         # HEAD^1, the base tip, with HEAD, the merge), with the full run's flags, so each failure, error, skip,
         # expected failure and unexpected pass is named. It runs when the fixed selection above failed too, so a pull
-        # request's own tests always get a result, but not when PeTTa is missing. The step limit is the full run's,
-        # below the job's.
+        # request's own tests always get a result, but not when PeTTa is missing. The step limit is below the job's.
         if: ${{ !cancelled() && steps.petta.outcome == 'success' }}
         timeout-minutes: 150
         run: |
@@ -151,8 +202,8 @@ jobs:
           mapfile -t files <<<"$files"
           echo "The ${#files[@]} hive test modules this pull request adds or changes:"
           printf '  %s\n' "${files[@]}"
-          python -m pytest -q -rfEsxX --durations=25 -o faulthandler_timeout=300 -o faulthandler_exit_on_timeout=true \
-            -p no:cacheprovider --basetemp="$TMPDIR/pytest-pr" "${files[@]}"
+          PYTHONPATH=scripts/ci HIVE_TEST_TIMEOUT_S=300 python -m pytest -v -rfEsxX --durations=25 \
+            -p hive_test_timeout -p no:cacheprovider --basetemp="$TMPDIR/pytest-pr" "${files[@]}"
       - name: tests/'s runtime tests, when the pull request touches the core runtime
         # The tests under tests/ that boot the core runtime through PeTTa, which core-tests skips, having no PeTTa. They
         # run when the pull request touches the runtime, those tests or the CI that runs them
@@ -178,7 +229,7 @@ jobs:
         if: always()
         run: |
           sudo -n /usr/sbin/sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
-          sudo -n /usr/local/sbin/omegahive-ci-release --remove
+          [ "$RUNNER_ENVIRONMENT" = github-hosted ] || sudo -n /usr/local/sbin/omegahive-ci-release --remove
       - name: Host compare against the baseline, and the tmpfs peak
         if: always()
         run: |
@@ -187,20 +238,57 @@ jobs:
           bash scripts/ci/job-tmp.sh peak || true
           exit "$rc"
 
+  shard-plan:
+    # The full run: the plain shard count (the shards input, else HIVE_SHARDS) as hive-petta's matrix, 0..N-1, and the
+    # switch shard as shard N (hive-switch), so the count is one number and never a list: count = N + 1.
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, omegahive-ci]
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      count: ${{ steps.plan.outputs.count }}
+      list: ${{ steps.plan.outputs.list }}
+      switch: ${{ steps.plan.outputs.switch }}
+    steps:
+      - id: plan
+        env:
+          SHARDS: ${{ inputs.shards || env.HIVE_SHARDS }}
+        run: |
+          case "$SHARDS" in ''|*[!0-9]*) echo "::error::shards must be a whole number, got '$SHARDS'"; exit 1;; esac
+          [ "$SHARDS" -ge 1 ] && [ "$SHARDS" -le 64 ] || { echo "::error::shards must be 1..64, got $SHARDS"; exit 1; }
+          echo "count=$((SHARDS + 1))" >> "$GITHUB_OUTPUT"
+          echo "list=[$(seq -s, 0 $((SHARDS - 1)))]" >> "$GITHUB_OUTPUT"
+          echo "switch=$SHARDS" >> "$GITHUB_OUTPUT"
+          echo "hive-petta: $SHARDS plain shards, 0..$((SHARDS - 1)); hive-switch: shard $SHARDS of $((SHARDS + 1))"
+
   hive-petta:
-    # workflow_dispatch (by hand, on any branch): the full hive/tests, tests/'s runtime tests, then the mind-sandbox
-    # tests with AppArmor's restriction on. If it fails or hits its time limit, failure-notice below reports it on the
-    # issue tracker.
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: [self-hosted, omegahive-petta]
-    # The full hive/tests ran 49% in 50 minutes on runner 1 (run 43104919549), so it gets room to finish: 150 minutes,
-    # then up to 30 for the runtime tests, with time left for the always() steps.
-    timeout-minutes: 240
+    # The full run, after a merge to main, every night, or by hand on any branch: the full hive/tests, split by module
+    # across HIVE_SHARDS plain jobs (or the shards input's count) and the switch shard (hive-switch below), one runner
+    # each, all at once (scripts/ci/hive_shard.py with the longest-processing-time split of scripts/ci/hive_shards.py,
+    # from omegahive#305; never by test, since module-scoped fixtures need their whole module in one process, and no
+    # pytest-xdist, under which a run held about 20 GB of deleted-but-open databases, hive/tests/conftest.py). Each
+    # shard collects the whole suite and keeps its own files, balanced by scripts/ci/hive-shard-weights.json (seconds
+    # per file, refreshed from hive-full's hive-shard-weights artifact; a file missing from it weighs its test count
+    # times the median seconds per test), and leaves a report and a junit file that
+    # hive-full checks. The files that need the AppArmor userns switch (scripts/ci/hive-switch-files.txt) leave the
+    # split for the switch shard, so a plain shard never touches the restriction (petta-toolchain's lift-userns:
+    # 'false') and runs at the machine's value: several runners share each machine, and the value is the machine's.
+    # The shards run on our machines only (omegahive-petta, or PETTA_FULL_RUNS_ON); the pull requests' smoke stays
+    # where PETTA_RUNS_ON puts it.
+    if: github.event_name != 'pull_request'
+    needs: shard-plan
+    name: hive-petta (${{ matrix.shard }}/${{ needs.shard-plan.outputs.count }})
+    runs-on: ${{ fromJSON(vars.PETTA_FULL_RUNS_ON || '["self-hosted","omegahive-petta"]') }}
+    # The serial hive/tests took 79 minutes (run 44654841525); at about 10 minutes of tests per shard, a shard, a cold
+    # toolchain and a slow machine fit in 60.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false   # every shard reports, so one red shard does not hide another's failures
+      matrix:
+        shard: ${{ fromJSON(needs.shard-plan.outputs.list) }}
     permissions:
       contents: read
     steps:
-      - name: AppArmor restriction on (repairs a run whose runner or machine died with it off)
-        run: sudo -n /usr/sbin/sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -209,39 +297,204 @@ jobs:
       - name: Job files on tmpfs (TMPDIR), with a peak-use sampler
         run: bash scripts/ci/job-tmp.sh start
       - uses: ./.github/actions/petta-toolchain
-        id: toolchain
-      - name: hive/tests
-        # The step limit is below the job's, so the always() steps below get their time. -rfEsxX names every failure,
-        # error, skip, expected failure and unexpected pass (hive/tests/known_failures.py gives each expected failure
-        # its issue), --durations the slowest tests, and faulthandler_timeout dumps every thread's stack when one test
-        # runs past 300 s (pytest-timeout is not installed), so a hang names itself. faulthandler_exit_on_timeout then ends
-        # the run: the tests after a hung one never run anyway, and waiting for the step limit holds the one petta runner
-        # every pull request's smoke queues for (a test deadlocked on 16 Nov held it 150 minutes). The slowest passing
-        # test took 161 s (test_newhive_r1a.py, run 43114903331), so 300 s ends only a hang.
-        timeout-minutes: 150
+        with:
+          lift-userns: 'false'
+      - name: hive/tests, this shard's files
+        # -v names each test as it ends (with -q a line came every 72 tests, so a stall hid which test it was in),
+        # -rfEsxX names every failure, error, skip, expected failure and unexpected pass (hive/tests/known_failures.py
+        # gives each expected failure its issue), and --durations the slowest tests. The per-test limit is
+        # scripts/ci/hive_test_timeout.py, not faulthandler_timeout: pytest cancels that one as soon as a test fails,
+        # so a test that failed and then hung in its teardown ran on to this step's limit (run 44793192701, shard 2).
+        # Past HIVE_TEST_TIMEOUT_S in its setup, call or teardown, a test is named with its phase, every thread's
+        # stack is dumped, the test's child processes are killed and the shard ends. The slowest passing test took
+        # 161 s (test_newhive_r1a.py, run 43114903331), so 300 s ends only a hang. The step limit is below the job's,
+        # so the always() steps get their time.
+        timeout-minutes: 45
+        env:
+          PYTHONPATH: scripts/ci
+          HIVE_TEST_TIMEOUT_S: 300
+          HIVE_SHARD: ${{ matrix.shard }}/${{ needs.shard-plan.outputs.count }}
+          HIVE_SHARD_WEIGHTS: scripts/ci/hive-shard-weights.json
+          HIVE_SWITCH_FILES: scripts/ci/hive-switch-files.txt
         run: |
-          python -m pytest -q -rfEsxX --durations=25 -o faulthandler_timeout=300 -o faulthandler_exit_on_timeout=true \
+          mkdir -p "$RUNNER_TEMP/hive-shard"
+          export HIVE_SHARD_REPORT="$RUNNER_TEMP/hive-shard/report.json"
+          python -m pytest -v -rfEsxX --durations=25 -p hive_test_timeout \
+            -p hive_shard -o junit_family=xunit1 --junitxml="$RUNNER_TEMP/hive-shard/junit.xml" \
             -p no:cacheprovider --basetemp="$TMPDIR/pytest" hive/tests
-      - name: tests/'s runtime tests
-        # Every test under tests/ that boots the core runtime through PeTTa (scripts/ci/runtime-tests.sh with no files
-        # runs them all), which core-tests skips, having no PeTTa. It runs when hive/tests failed too, so a full run
-        # always reports them, but not when the toolchain failed. 30 minutes, as in the smoke.
-        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
-        timeout-minutes: 30
-        run: bash scripts/ci/runtime-tests.sh
-      - name: Mind sandbox with AppArmor's restriction on, from a release with the launcher's profile loaded
-        run: bash scripts/ci/release-tests.sh
-      - name: Restriction back on and release removed (also after a failure, a cancel or the job timeout)
+      - name: This shard's report and junit file, for hive-full
         if: always()
-        run: |
-          sudo -n /usr/sbin/sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
-          sudo -n /usr/local/sbin/omegahive-ci-release --remove
+        uses: actions/upload-artifact@v4
+        with:
+          name: hive-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/hive-shard/
+          if-no-files-found: ignore   # hive-full names a shard that left none
+          retention-days: 14
       - name: Host compare against the baseline, and the tmpfs peak
         if: always()
         run: |
           rc=0
           bash scripts/ci/host-check.sh compare "$RUNNER_TEMP/host-check" || rc=$?
           bash scripts/ci/job-tmp.sh peak || true
+          exit "$rc"
+
+  hive-switch:
+    # The full run's switch shard, the last shard: the hive test files that need the AppArmor userns switch
+    # (scripts/ci/hive-switch-files.txt, the mind-sandbox tests) at restriction 0 from the checkout, then the
+    # mind-sandbox tests at 1 from a release under /opt/omegahive with the launcher's profile loaded
+    # (scripts/ci/release-tests.sh), all in one step, scripts/ci/switch-shard.sh. The only full-run job that changes
+    # the restriction or writes outside its job, so it holds the machine's switch lock, an flock on
+    # /run/lock/omegahive-switch, from before it sets 0 until it has set 1 and removed the release: at most one per
+    # machine at a time, waiting HIVE_SWITCH_LOCK_WAIT_S (the runner's .env) for it. Its report and junit file join
+    # the plain shards' for hive-full's coverage check.
+    if: github.event_name != 'pull_request'
+    needs: shard-plan
+    name: hive-switch (${{ needs.shard-plan.outputs.switch }}/${{ needs.shard-plan.outputs.count }})
+    runs-on: ${{ fromJSON(vars.PETTA_FULL_RUNS_ON || '["self-hosted","omegahive-petta"]') }}
+    # The shards' 60, with the lock wait inside the step's 45.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Host baseline (restriction, /etc/apparmor.d, installed packages)
+        run: bash scripts/ci/host-check.sh baseline "$RUNNER_TEMP/host-check"
+      - name: Job files on tmpfs (TMPDIR), with a peak-use sampler
+        run: bash scripts/ci/job-tmp.sh start
+      - uses: ./.github/actions/petta-toolchain
+        with:
+          lift-userns: 'false'   # switch-shard.sh sets it, under the lock
+      - name: Switch shard, under the machine's switch lock (the restriction is back at 1 when the step ends, however)
+        # The same pytest flags as hive-petta's shards. The step's trap sets 1 and removes the release on every exit
+        # but a kill -9 (scripts/ci/switch-shard.sh).
+        timeout-minutes: 45
+        env:
+          PYTHONPATH: scripts/ci
+          HIVE_SHARD: ${{ needs.shard-plan.outputs.switch }}/${{ needs.shard-plan.outputs.count }}
+          HIVE_TEST_TIMEOUT_S: 300
+          HIVE_SHARD_WEIGHTS: scripts/ci/hive-shard-weights.json
+          HIVE_SWITCH_FILES: scripts/ci/hive-switch-files.txt
+        run: |
+          export HIVE_SHARD_REPORT="$RUNNER_TEMP/hive-shard/report.json"
+          bash scripts/ci/switch-shard.sh
+      - name: This shard's report and junit file, for hive-full
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hive-shard-${{ needs.shard-plan.outputs.switch }}
+          path: ${{ runner.temp }}/hive-shard/
+          if-no-files-found: ignore   # hive-full names a shard that left none
+          retention-days: 14
+      - name: Host compare against the baseline, and the tmpfs peak
+        if: always()
+        run: |
+          rc=0
+          bash scripts/ci/host-check.sh compare "$RUNNER_TEMP/host-check" || rc=$?
+          bash scripts/ci/job-tmp.sh peak || true
+          exit "$rc"
+
+  hive-runtime:
+    # The full run: tests/'s runtime tests, every test under tests/ that boots the core runtime through PeTTa
+    # (scripts/ci/runtime-tests.sh with no files runs them all), which core-tests skips, having no PeTTa. Jobs of their
+    # own beside the shards, where the shards run, and like a plain shard they never touch the restriction. As one job
+    # (run 44869136739) its test step took 16.6 minutes: 7 of uncached pip (tests/ci-requirements.txt and chromadb) and
+    # 9.6 of pytest, 9.4 of them test_wait_quiet_runtime.py. So it is a matrix of parts (T-SHARD-15MIN): part N of
+    # job-total runs what scripts/ci/runtime_split.py deals it by scripts/ci/runtime-test-weights.json, that module
+    # split by test, about 290 s of tests each for 2 parts. The pip installs are cached with hive's Python
+    # (petta-toolchain's runtime-packages), so a part pays them only when its cache key moves. hive-full reads the
+    # matrix's one result.
+    if: github.event_name != 'pull_request'
+    name: hive-runtime (${{ matrix.part }}/${{ strategy.job-total }})
+    runs-on: ${{ fromJSON(vars.PETTA_FULL_RUNS_ON || '["self-hosted","omegahive-petta"]') }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Host baseline (restriction, /etc/apparmor.d, installed packages)
+        run: bash scripts/ci/host-check.sh baseline "$RUNNER_TEMP/host-check"
+      - name: Job files on tmpfs (TMPDIR), with a peak-use sampler
+        run: bash scripts/ci/job-tmp.sh start
+      - uses: ./.github/actions/petta-toolchain
+        with:
+          lift-userns: 'false'
+          runtime-packages: 'true'
+      - name: tests/'s runtime tests
+        # 30 minutes, as in the smoke.
+        timeout-minutes: 30
+        env:
+          RUNTIME_PART: ${{ matrix.part }}
+          RUNTIME_PARTS: ${{ strategy.job-total }}
+        run: bash scripts/ci/runtime-tests.sh
+      - name: Host compare against the baseline, and the tmpfs peak
+        if: always()
+        run: |
+          rc=0
+          bash scripts/ci/host-check.sh compare "$RUNNER_TEMP/host-check" || rc=$?
+          bash scripts/ci/job-tmp.sh peak || true
+          exit "$rc"
+
+  hive-full:
+    # The full run's one result: green only when every shard of hive-petta, hive-switch and hive-runtime succeeded
+    # and the shards ran the whole of hive/tests once. A skipped or cancelled job did not run, so it fails this job
+    # too; a run's own conclusion can read "success" with a job skipped, so a gate reads this job, never the run.
+    # scripts/ci/hive_shard_check.py checks the coverage over all count shards, the switch shard among them: one report
+    # per shard, one suite, every collected file in exactly one shard, so the selected counts sum to the collected
+    # count, and each shard's junit file as long as its selection; then it prints the HIVE_SHARDS to use next.
+    needs: [shard-plan, hive-petta, hive-switch, hive-runtime]
+    if: always() && github.event_name != 'pull_request'
+    runs-on: [self-hosted, omegahive-ci]
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read   # the shards' artifacts
+    steps:
+      - uses: actions/checkout@v4
+      - name: The shards' reports and junit files
+        uses: actions/download-artifact@v4
+        with:
+          pattern: hive-shard-*
+          path: ${{ runner.temp }}/hive-shards
+      - name: The shards covered hive/tests once (and the seconds per file, for hive-shard-weights.json)
+        id: cover
+        env:
+          SHARDS: ${{ needs.shard-plan.outputs.count }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/hive-shards"
+          [ -n "$SHARDS" ] || { echo "::error::shard-plan gave no shard count"; exit 1; }
+          python3 scripts/ci/hive_shard_check.py "$SHARDS" "$RUNNER_TEMP/hive-shards" \
+            --weights-out "$RUNNER_TEMP/hive-shard-weights.json" --target-minutes "$HIVE_TARGET_MINUTES" \
+            --overhead-minutes "$HIVE_SHARD_OVERHEAD_MINUTES" --max-imbalance "$HIVE_MAX_IMBALANCE"
+      - name: Seconds per test file, measured by this run
+        if: ${{ !cancelled() && steps.cover.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: hive-shard-weights
+          path: ${{ runner.temp }}/hive-shard-weights.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Every job of the full run succeeded
+        if: always()
+        env:
+          SHARDS: ${{ needs.hive-petta.result }}
+          SWITCH: ${{ needs.hive-switch.result }}
+          RUNTIME: ${{ needs.hive-runtime.result }}
+          COVER: ${{ steps.cover.outcome }}
+        run: |
+          rc=0
+          for pair in "hive-petta (every plain shard)=$SHARDS" "hive-switch=$SWITCH" "hive-runtime=$RUNTIME" \
+            "shard coverage=$COVER"; do
+            echo "${pair%=*}: ${pair##*=}"
+            [ "${pair##*=}" = success ] || { echo "::error::${pair%=*} ended ${pair##*=}"; rc=1; }
+          done
           exit "$rc"
 
   hive-ui:
@@ -265,15 +518,18 @@ jobs:
         # job 132982847447), since with noEmit tsc -b checks everything on every run.
         run: npm run build
       - run: npm run lint
-      - run: npx vitest run
+      - name: Unit tests
+        # At most 2 workers: the self-hosted runners share one machine, and vitest's default (one worker per core)
+        # under several parallel jobs pushed 31 test files past the 5 s timeout on 2026-11-18 (#458, #459, #462).
+        run: npx vitest run --maxWorkers=2
 
   warm-petta:
-    # A push to main that changes what a cache is keyed by, or the daily schedule: restores, or builds and saves, the
+    # Every run on main, a merge's or the nightly one: restores, or builds and saves, the
     # toolchain and the Python with hive's requirements in main's cache scope, so every pull request's smoke restores
-    # them instead of building its own. On runner 1, where the smoke runs, since both are bound to its folders, and
+    # them instead of building its own. Where the smoke runs (PETTA_RUNS_ON), since both are bound to its folders, and
     # guarded like the petta jobs above, since the toolchain lifts the AppArmor restriction. It runs no test.
     if: github.event_name == 'push' || github.event_name == 'schedule'
-    runs-on: [self-hosted, omegahive-petta]
+    runs-on: ${{ fromJSON(vars.PETTA_RUNS_ON || '"ubuntu-24.04"') }}
     # A cold build (SWI-Prolog, then every package from PyPI) took under 4 minutes on runner 1 (job 132973773919).
     timeout-minutes: 30
     steps:
@@ -299,8 +555,11 @@ jobs:
           exit "$rc"
 
   warm:
-    # As warm-petta, for core-tests' wheels and hive-ui's npm cache, which serve both runners. It runs no test.
-    if: github.event_name == 'push' || github.event_name == 'schedule'
+    # As warm-petta, for core-tests' wheels and hive-ui's npm cache, which serve both runners. It runs no test. After
+    # hive-full, whatever its result, so it does not hold one of the runners the full run's jobs share while they run
+    # (it took 5 minutes in run 44846142867); no full-run job needs what it saves.
+    needs: hive-full
+    if: always() && (github.event_name == 'push' || github.event_name == 'schedule')
     runs-on: [self-hosted, omegahive-ci]
     timeout-minutes: 30
     steps:
@@ -309,48 +568,65 @@ jobs:
       - uses: ./.github/actions/ui-node
 
   failure-notice:
-    # After a full run (workflow_dispatch) whose hive-petta did not succeed: a failure, or the job's time limit, opens
-    # or comments on the issue "hive-petta failed", naming the branch and linking the run. A job of its own, because
-    # GitHub ends a timed-out job as cancelled and skips its failure() steps. A timeout and a person's cancel both end
-    # the job cancelled; the job's check-run annotations tell them apart, and a person's cancel is not reported.
-    needs: hive-petta
-    if: always() && github.event_name == 'workflow_dispatch' && needs.hive-petta.result != 'success'
+    # After a full run (a merge, the nightly schedule or a dispatch) whose hive-full did not succeed: a failed job, or one that hit its time
+    # limit, opens or comments on the issue "hive-petta failed", naming the jobs and the branch and linking the run.
+    # A job of its own, because GitHub ends a timed-out job as cancelled and skips its failure() steps. It reads every
+    # job of the run (each shard is its own job, "hive-petta (3/8)"): a timeout, a person's cancel and a concurrency
+    # cancel all end a job cancelled, and the job's check-run annotations tell them apart. A cancel by a person or by a
+    # newer run is not reported; hive-full then fails only because its jobs did not run, so it does not count itself.
+    needs: hive-full
+    if: always() && github.event_name != 'pull_request' && needs.hive-full.result != 'success'
     runs-on: [self-hosted, omegahive-ci]
     timeout-minutes: 5
     permissions:
       contents: read  # gh issue list reads the repository's default branch
-      actions: read   # hive-petta's job id in this run
-      checks: read    # that job's annotations
+      actions: read   # this run's jobs
+      checks: read    # their annotations
       issues: write   # open or comment on the issue
     steps:
-      - name: Report a failed or timed-out hive-petta on the issue tracker
+      - name: Report a failed or timed-out full run on the issue tracker
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RESULT: ${{ needs.hive-petta.result }}
+          RESULT: ${{ needs.hive-full.result }}
         run: |
-          case "$RESULT" in
-            failure) why='failed' ;;
-            cancelled)
-              id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
-                --jq '.jobs[] | select(.name == "hive-petta") | .id')
-              notes=$(gh api "repos/$GITHUB_REPOSITORY/check-runs/${id:?no hive-petta job in this run}/annotations" \
-                --jq '.[] | select(.annotation_level == "failure") | .message')
-              if by=$(grep -m1 -o '^The run was canceled by @[^ ]*' <<<"$notes"); then
-                by=${by#The run was canceled by @}
-                echo "hive-petta was cancelled by ${by%.}: not reported."
-                exit 0
-              elif limit=$(grep -m1 -o 'exceeded the maximum execution time of [^ ]*' <<<"$notes"); then
-                limit=${limit##* }
-                why="hit its time limit (${limit%.})"
-              else
-                why='was cancelled (its annotations name no person)'
-              fi ;;
-            *) echo "hive-petta ended $RESULT: not reported."; exit 0 ;;
-          esac
+          run_api="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
+          jobs=$(gh api --paginate "$run_api/jobs" \
+            --jq '.jobs[] | select(.name != "failure-notice") | [.id, .conclusion // "none", .name] | @tsv')
+          failed=() timedout=() unnamed=() quiet=()
+          while IFS=$'\t' read -r id conclusion name; do
+            [ -n "$id" ] || continue
+            case "$conclusion" in
+              failure) [ "$name" = hive-full ] || failed+=("$name") ;;
+              cancelled)
+                notes=$(gh api "repos/$GITHUB_REPOSITORY/check-runs/$id/annotations" \
+                  --jq '.[] | select(.annotation_level == "failure") | .message')
+                if grep -q -o 'exceeded the maximum execution time' <<<"$notes"; then
+                  timedout+=("$name")
+                elif grep -q -e '^The run was canceled by @' -e 'higher priority waiting request' <<<"$notes"; then
+                  quiet+=("$name")
+                else
+                  unnamed+=("$name")
+                fi ;;
+            esac
+          done <<<"$jobs"
+          join() { local IFS=,; echo "$*" | sed 's/,/, /g'; }
+          why=()
+          [ "${#failed[@]}" -eq 0 ] || why+=("failed: $(join "${failed[@]}")")
+          [ "${#timedout[@]}" -eq 0 ] || why+=("hit its time limit: $(join "${timedout[@]}")")
+          [ "${#unnamed[@]}" -eq 0 ] || why+=("cancelled, its annotations name no person: $(join "${unnamed[@]}")")
+          if [ "${#why[@]}" -eq 0 ]; then
+            if [ "${#quiet[@]}" -gt 0 ]; then
+              echo "The full run was cancelled by a person or a newer run ($(join "${quiet[@]}")): not reported."
+              exit 0
+            fi
+            [ "$RESULT" = failure ] || { echo "hive-full ended $RESULT: not reported."; exit 0; }
+            why+=("failed: hive-full (the shard coverage check)")
+          fi
           title='hive-petta failed'
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          body="hive-petta $why on branch \`$GITHUB_REF_NAME\` at $GITHUB_SHA,"
+          reasons=$(IFS=';'; echo "${why[*]}" | sed 's/;/; /g')
+          body="The full run (hive-full) on branch \`$GITHUB_REF_NAME\` at $GITHUB_SHA: $reasons,"
           body+=" started by $GITHUB_TRIGGERING_ACTOR: $run_url"
           echo "$body"
           n=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "in:title \"$title\"" --json number,title \

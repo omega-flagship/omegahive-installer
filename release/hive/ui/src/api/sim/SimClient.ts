@@ -1,4 +1,6 @@
 // Purpose: SimClient, the HiveClient the page runs against with no hive: each read and write played in the browser on invented data.
+// Purpose: play the whole hive API in the browser with invented data, for the simulated hive and the tests.
+// Purpose: simulate the hive API and live events with invented local data.
 import { cachedLook, SEED_VARIANTS, type UiPrefs, type UiPrefsResponse, type UiPrefsWriteOptions } from '../../shell/uiVariant'
 import type { Board, Matches, Scope } from '../../features/boards/types'
 import { widens } from '../beliefLinkRule'
@@ -1722,7 +1724,7 @@ export class SimClient implements HiveClient {
       return a ? this.say(a, text, conversation, 'out', mind, false).id : undefined
     },
   })
-  /** Whether a mind joins the Coffee Room only when an admin adds it: it or its swarm is private or shared. */
+  /** Whether Coffee Room membership needs its owner's consent: it or its swarm is private or shared. */
   private coffeePrivate(a: Agent) {
     const s = a.swarm_id ? this.swarms.get(a.swarm_id) : undefined
     return (a.visibility ?? 'public') !== 'public' || (!!s && (s.visibility ?? 'public') !== 'public')
@@ -2522,6 +2524,9 @@ export class SimClient implements HiveClient {
       if (body.role_id) this.mustRole(body.role_id)
       const a: Agent = {
         id: this.id('a_'),
+        owner: this.simMe().principal,
+        visibility: body.visibility ?? 'private',
+        shared_with: body.shared_with ?? [],
         name: body.name.trim(),
         role_id: body.role_id ?? null,
         kind: body.kind,
@@ -2591,9 +2596,11 @@ export class SimClient implements HiveClient {
       }
       if (coffee !== undefined) {
         const me = this.simMe()
-        if (me.kind !== 'password' && me.role !== 'admin') throw new ApiError(403, 'forbidden', "an admin puts a mind in or out of the Coffee Room")
         if (a.coffee === 'not_a_mind') throw new ApiError(400, 'bad_request', 'an app module is not a mind; it never joins the Coffee Room')
-        a.coffee = coffee ? 'member' : this.coffeePrivate(a) ? 'private' : 'opted_out'
+        // the host's rule (rooms.py set_coffee): only the mind's owner moves it, an admin included only for their own
+        if (me.principal !== (a.owner || 'user:operator'))
+          throw new ApiError(403, 'owner_only', 'Only this mind’s owner puts it in or takes it out of the Coffee Room. You can ask its owner.')
+        a.coffee = coffee ? 'member' : 'opted_out'
         this.emit({ type: 'room', at: this.now(), room_id: this.roomsHost.coffee().id, what: 'members' } as HiveEvent)
       }
       Object.assign(a, rest)
@@ -3234,6 +3241,9 @@ export class SimClient implements HiveClient {
   }
   askStop(op: string) {
     return this.delay(() => this.askHost.stop(op))
+  }
+  askGoAhead(op: string, go: boolean) {
+    return this.delay(() => this.askHost.goAhead(op, { go }))
   }
   askConfirm(op: string, proposalId: string, digest: string) {
     return this.delay(() => this.askHost.confirm(op, proposalId, digest))

@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import type { Person } from '../api/client'
 import type { Visibility } from '../api/types'
+import { useAdminPeople } from '../lib/adminPeople'
 import { useEscape } from '../lib/hooks'
 import { useHive } from '../store/store'
 import { anchoredBox } from './anchoredBox'
@@ -22,12 +22,8 @@ const WORDS: Record<Visibility, string> = {
 
 /** Choose who can see a mind or swarm: private, shared with named people, or public. Admins always can. */
 export function VisibilityPicker({ value, onChange, label = 'Who can see it' }: { value: VisibilityValue; onChange: (v: VisibilityValue) => void; label?: string }) {
-  const client = useHive((s) => s.client)
-  const [people, setPeople] = useState<Person[] | null>(null)
-  useEffect(() => {
-    if (value.visibility !== 'shared' || people || !client?.listPeople) return
-    void client.listPeople().then((d) => setPeople(d.people)).catch(() => setPeople([]))
-  }, [value.visibility, client, people])
+  // only an admin may list the hive's people; a member sees the no-one line without asking (lib/adminPeople)
+  const people = useAdminPeople(value.visibility === 'shared')
   return (
     <fieldset className="space-y-2">
       <legend className="text-[12.5px] text-ink-3">{label}</legend>

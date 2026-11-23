@@ -1,3 +1,5 @@
+// Purpose: Create a mind, in four steps (what it helps with, its home, its details with its model, then making it),
+// saying what limit holds what it spends; a mind made here has no cap of its own.
 import { VisibilityPicker, type VisibilityValue } from '../../ui/Visibility'
 import { AnimatePresence, m } from 'framer-motion'
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
@@ -5,18 +7,17 @@ import type { AgentKind, AgentOptions, CreateAgentBody, IterVariant } from '../.
 import { ModelPicker } from '../models/ModelPicker'
 import { RoleSelect } from '../roles/RoleSelect'
 import { KeyPicker } from '../keys/KeyPicker'
-import { buildRows, readDefaultModel, routeSummary, writeDefaultModel } from '../models/modelUtil'
+import { buildRows, costsNothing, readDefaultModel, routeSummary, writeDefaultModel } from '../models/modelUtil'
 import { hsl } from '../../lib/color'
 import { useReducedMotion } from '../../lib/hooks'
 import { closeToHome, navigate } from '../../lib/router'
 import { useScene } from '../../scene/sceneStore'
-import { useHive } from '../../store/store'
+import { useHive, useHiveCap } from '../../store/store'
 import { Icon } from '../../ui/Icon'
 import { Button, IconButton, Orb } from '../../ui/primitives'
 import { cx } from '../../lib/cx'
 import { Sheet } from '../../ui/Sheet'
 import { shown } from '../../lib/displayName'
-import { money } from '../../lib/format'
 import { plural } from '../../lib/plural'
 import { useUnsaved } from '../ask/dirty'
 import { guardComposing } from '../../features/ask/keys'
@@ -74,7 +75,12 @@ export default function CreateFlow({ swarmId }: { swarmId?: string }) {
   const [options, setOptions] = useState<AgentOptions>(() => readDefaultModel()?.options ?? {})
   const [persona, setPersona] = useState('')
   const [roleId, setRoleId] = useState<string | null>(null)
-  const [budget, setBudget] = useState('10')
+  // no cap of its own: the hive's limit holds what it spends (Jon, 23 Nov: "ONE cap for the whole hive"), and the form
+  // offers no cap per mind; a cap someone sets through the API still holds
+  // the limit that holds a mind with no cap of its own (the hive cap: its month rule, else its day rule), null when the
+  // hive has none, a total included; undefined until the limits are read
+  const cap = useHiveCap()
+  const hiveLimited = cap === undefined ? undefined : cap !== null
   const [vis, setVis] = useState<VisibilityValue>({ visibility: 'private', shared_with: [] })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -97,7 +103,7 @@ export default function CreateFlow({ swarmId }: { swarmId?: string }) {
   const providerKeys = (keys ?? []).filter((k) => k.provider === model.split('/')[0])
   const paidKey = options.key ? providerKeys.find((k) => k.id === options.key) : providerKeys.find((k) => k.default)
   const paidBy = paidKey ? `${paidKey.label} ${paidKey.hint}${options.key ? '' : ' (hive default)'}` : 'No key yet'
-  const free = chosen ? chosen.local || (chosen.inPerM === 0 && chosen.outPerM === 0) : models.find((m) => m.id === model)?.local
+  const free = costsNothing(rows, models, model)
   // Create now finishes from any page with what the later pages already hold, their defaults unless changed; it is
   // open once every page is valid, and the line above the buttons says what it will make or what needs a change first.
   const canFinish = valid.every(Boolean)
@@ -107,7 +113,7 @@ export default function CreateFlow({ swarmId }: { swarmId?: string }) {
       ? nameErr ?? 'Give it a name to create it.'
       : firstInvalid === 1
         ? `Choose a model under ${STEPS[1]} to create it.`
-        : `Create now makes ${shown(name.trim())} ${swarm && swarms[swarm] ? `in ${shown(swarms[swarm].name)}` : 'on its own'}, on ${chosen?.name ?? model}, ${Number(budget) ? `with a ${money(Number(budget))} spending limit` : 'with no spending limit'}.`
+        : `Create now makes ${shown(name.trim())} ${swarm && swarms[swarm] ? `in ${shown(swarms[swarm].name)}` : 'on its own'}, on ${chosen?.name ?? model}.`
 
   // Esc or a phone drag: just this sheet; the visible X: home (closeToHome)
   const close = () => navigate({ name: 'hive' })
@@ -139,7 +145,7 @@ export default function CreateFlow({ swarmId }: { swarmId?: string }) {
       model,
       persona: persona.trim() || undefined,
       hue,
-      budget_usd: Number(budget) || 0,
+      budget_usd: 0,
       options: (() => {
         // the Iter loop choice belongs to Iter minds only
         const { iter_variant, ...rest } = options
@@ -336,37 +342,13 @@ export default function CreateFlow({ swarmId }: { swarmId?: string }) {
                 </div>
                 <VisibilityPicker value={vis} onChange={setVis} label="Who can see this mind" />
                 <div>
-                  <div className="eyebrow">Spending limit</div>
-                  <div className="mt-2 flex flex-wrap gap-1.5" role="radiogroup" aria-label="Budget presets">
-                    {['0', '5', '10', '25', '50'].map((b) => (
-                      <button
-                        key={b}
-                        role="radio"
-                        aria-checked={budget === b}
-                        onClick={() => setBudget(b)}
-                        className={cx('min-h-10 rounded-xl border px-3.5 font-mono text-[13px] transition-colors', budget === b ? 'border-transparent text-primary-ink' : 'border-line bg-tint/[0.04] text-ink-2 hover:border-line-2')}
-                        style={budget === b ? { background: hsl(hue, 100, 80) } : undefined}
-                      >
-                        {b === '0' ? 'No limit' : `$${b}`}
-                      </button>
-                    ))}
-                    <div className="flex min-h-10 items-center rounded-xl border border-line bg-shade/25 px-3 focus-within:border-line-2">
-                      <span className="text-ink-3">$</span>
-                      <input
-                        aria-label="Custom budget in dollars"
-                        inputMode="decimal"
-                        value={budget}
-                        onChange={(e) => setBudget(e.target.value.replace(/[^\d.]/g, ''))}
-                        className="w-16 bg-transparent px-1 font-mono text-ink outline-none"
-                      />
-                    </div>
-                  </div>
-                  {Number(budget) || free ? (
+                  <div className="eyebrow">Spending</div>
+                  {free || hiveLimited !== false ? (
                     <p className="mt-1.5 text-[12px] text-ink-4">
-                      {Number(budget) ? `It stops spending at $${budget}.` : 'No limit. What it spends shows under Usage.'}
+                      {!free && hiveLimited ? `The hive's ${cap?.period === 'day' ? 'daily' : 'monthly'} limit holds what it spends, and Usage shows it.` : 'What it spends shows under Usage.'}
                     </p>
                   ) : (
-                    <p className="mt-1.5 text-[12px] text-warn">A paid model needs a spending limit above $0, or it cannot answer. Pick one, or a model on this computer under How it thinks.</p>
+                    <p className="mt-1.5 text-[12px] text-warn">The hive has no monthly limit yet, so a mind on a paid model can't answer. Set the hive's on Usage and limits, or choose a model on this computer under How it thinks.</p>
                   )}
                 </div>
               </div>
@@ -392,7 +374,6 @@ export default function CreateFlow({ swarmId }: { swarmId?: string }) {
                     ],
                     ...(chosen?.provider === 'openrouter' ? [['Served by', routeSummary(options)]] : []),
                     ...(chosen && !chosen.local ? [['Paid by', paidBy]] : []),
-                    ['Limit', Number(budget) ? `$${budget}` : 'No limit'],
                     ['Helps with', persona.trim() ? <span className="line-clamp-2 text-ink-2">{persona}</span> : <span className="text-ink-4">Not said yet</span>],
                   ].map(([k, v]) => (
                     <div key={k as string} className="flex gap-4 px-3 py-2.5">

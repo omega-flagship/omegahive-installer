@@ -15,6 +15,7 @@ Anti-drift rules (docs/omegadots/DRIFT.md):
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import hashlib
 import inspect
@@ -44,7 +45,7 @@ BINDING_KEYS = ("request_id", "base_revision", "snapshot_digest")
 # inherits. A binding of these keys alone ties its task to no request, snapshot, share or session.
 CONTINUATION_KEYS = frozenset({"continued_from", "review", "result_schema", "validate", "from_swarm", "review_request_id"})
 
-WORK_SQL = "COALESCE(json_extract(binding, '$.kind'), '') != 'ask.thread'"
+WORK_SQL = "CASE WHEN json_valid(binding) THEN COALESCE(json_extract(binding, '$.kind'), '') ELSE '' END != 'ask.thread'"
 
 STOP_CAUSES = {
     "failed": "This task could not be finished.",
@@ -70,6 +71,21 @@ def continuation_only(binding):
     return bool(binding.get("continued_from")) and set(binding) <= CONTINUATION_KEYS
 
 
+def binding_object(value):
+    """The object stored for a goal binding, if it can be read."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return None
+    return value if isinstance(value, dict) else None
+
+
+def _claim_ref(reference):
+    goal_id, separator, receipt = reference.partition("~")
+    return goal_id, receipt if separator else None
+
+
 def proposal_of(data):
     """The structured result in a goal's result data: data["proposal"] when there is one, else the data as stored.
     A mind's hive-goal-propose stores {"binding_digest": ..., "proposal": {...}} (modules/hive/src/hive_commons.py
@@ -92,6 +108,16 @@ def stored_proposal(goal):
 def _later(minutes):
     moment = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=minutes)
     return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _minutes_between(start, end):
+    """Minutes from one stored stamp to a later one, or None where either is missing or unreadable."""
+    try:
+        begun, until = (datetime.datetime.fromisoformat(str(s).replace("Z", "+00:00")) for s in (start, end))
+    except ValueError:
+        return None
+    minutes = (until - begun).total_seconds() / 60
+    return minutes if minutes > 0 else None
 
 
 REVIEWS_SCHEMA = """CREATE TABLE IF NOT EXISTS goal_reviews (id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, at TEXT NOT NULL,
@@ -140,10 +166,7 @@ class Goals:
 
     @staticmethod
     def is_ask_thread(goal):
-        binding = goal.get("binding")
-        if isinstance(binding, str):
-            binding = json.loads(binding)
-        return isinstance(binding, dict) and binding.get("kind") == "ask.thread"
+        return (binding_object(goal.get("binding")) or {}).get("kind") == "ask.thread"
 
     def record_stop(self, goal_id, cause=None, detail=None):
         """Keep the person's receipt with the transition, without sending a message to the mind."""
@@ -195,8 +218,8 @@ class Goals:
     # ---- a task's own budget: a step the hive hands a mind spends at most this, whatever its turns ------------------
 
     def give_step_budget(self, goal_id, agent_id):
-        """Give a task handed to this mind (a Create plan's step) its own budget: Budgets.task_budget, what a work session
-        given none may spend, and at least STEP_BUDGET_FLOOR_USD. A mind holding a goal with its own budget gets its
+        """Give a task handed to this mind (a Create plan's step) its own budget: Budgets.task_budget, a tenth of what
+        the mind has left, and at least STEP_BUDGET_FLOOR_USD. A mind holding a goal with its own budget gets its
         turns back while it holds it (hive_helpers.held_goal reads step_budget_usd from list), so a builder whose tool
         calls keep failing would otherwise spend on until a limit for the whole hive or mind stopped it. The budget
         starts when a mind claims the task (_start_budget); the mind's own limits and the hive's still apply to every
@@ -267,7 +290,7 @@ class Goals:
         emitted: the goal's answer, when it comes, reads these (staged_files), and they go once nothing will read them
         (FILES_END_TRIGGER, drop_staged)."""
         goal = self.get(goal_id)
-        self._fence(agent, goal)
+        admission, _ = self._authorize(agent, goal)
         if goal["claimed_by"] != agent["id"] or goal["status"] != "claimed":
             raise self._unheld(agent, goal, 409, "not_claimed", "you do not hold this task")
         path = str(path or "").strip()
@@ -279,6 +302,10 @@ class Goals:
         if size > MAX_RESULT_DATA_BYTES:
             raise self.hive.error(413, "file_too_large", f"a staged file holds at most {MAX_RESULT_DATA_BYTES} bytes")
         with self.db.transaction():
+            current = self.get(goal_id)
+            self._recheck_admission(agent, current, admission)
+            if current["claimed_by"] != agent["id"] or current["status"] != "claimed":
+                raise self.hive.error(409, "not_claimed", "you do not hold this task")
             others = self.db.one("SELECT COUNT(*) AS n FROM goal_files WHERE goal_id = ? AND path != ?",
                                  (goal_id, path))["n"]
             if others >= MAX_STAGED_FILES:
@@ -333,7 +360,7 @@ class Goals:
 
     def _bound(self, goal, key):
         """A goal's own binding[key], else its request's constraints[key]."""
-        binding = json.loads(goal["binding"]) if goal.get("binding") else {}
+        binding = binding_object(goal.get("binding")) or {}
         if key in binding:
             return binding[key]
         if binding.get("request_id"):
@@ -354,7 +381,7 @@ class Goals:
         if isinstance(spec, dict):
             spec = spec.get("by")
         if spec in (None, ""):
-            binding = json.loads(goal["binding"]) if goal.get("binding") else {}
+            binding = binding_object(goal.get("binding")) or {}
             # only a real cross-swarm request (the hive wrote from_swarm into its binding), never an app's own request ids
             real = binding.get("from_swarm") and binding.get("request_id") and self.db.one("SELECT 1 FROM requests WHERE id = ?", (binding["request_id"],))
             return "requester" if real and binding.get("kind") != "review" else "none"
@@ -489,8 +516,8 @@ class Goals:
     @staticmethod
     def view(row):
         out = dict(row)
-        for key in ("binding", "result_data"):
-            out[key] = json.loads(row[key]) if row.get(key) else None
+        out["binding"] = binding_object(row.get("binding"))
+        out["result_data"] = json.loads(row["result_data"]) if row.get("result_data") else None
         out["binding_digest"] = binding_digest(out["binding"]) if out["binding"] else None
         return out
 
@@ -514,17 +541,37 @@ class Goals:
         return [{**self.view(r), "review_by": self.review_spec(r)}
                 for r in self.db.all(sql + " ORDER BY priority DESC, created_at", params)]
 
-    def _fence(self, agent, goal):
-        """Minds cannot work conversation bookkeeping; a research task belongs only to its own researcher."""
+    def _admission_facts(self, agent, goal, *, work=False):
         if self.is_ask_thread(goal):
             raise self.hive.error(409, "ask_thread", "this task belongs to an Ask conversation; it is not work to claim or finish")
         research = getattr(self.hive, "research", None)
         if research is not None:
-            research.fence(agent, goal)
+            admission, report = research.admission_facts(agent["id"], goal, work=work)
+            if admission is not None:
+                return admission, report
+        if goal.get("binding") and binding_object(goal["binding"]) is None:
+            raise self.hive.error(409, "invalid_binding", "this task's binding cannot be read")
+        return None, None
+
+    def _authorize(self, agent, goal, *, work=False):
+        admission, report = self._admission_facts(agent, goal, work=work)
+        if admission is not None:
+            self.hive.research.require_admission(admission)
+        return admission, report
+
+    def _recheck_admission(self, agent, goal, expected, *, work=False):
+        admission, report = self._admission_facts(agent, goal, work=work)
+        if admission != expected:
+            raise self.hive.error(409, "research_admission_changed",
+                                  "Research task access changed while it was checked. Try again.")
+        return report
 
     def for_agent(self, agent, goal_id):
         goal = self.get(goal_id)
-        self._fence(agent, goal)
+        admission, _ = self._authorize(agent, goal)
+        if admission is not None:
+            goal = self.get(goal_id)
+            self._recheck_admission(agent, goal, admission)
         if goal["swarm_id"] != agent["swarm_id"] and not (goal["status"] == "submitted" and self.may_review(goal, {"kind": "agent", "agent": agent})[0]):
             raise self.hive.error(403, "forbidden", "task is in another swarm")
         return {**self.view_full(goal), "result_schema": self.result_schema(goal)}
@@ -537,7 +584,8 @@ class Goals:
             raise self.hive.error(400, "bad_request", "offset must be nonnegative")
         if not agent.get("swarm_id"):
             return {"goals": [], "next_offset": None}
-        sql = f"SELECT id, binding FROM goals WHERE swarm_id = ? AND status = 'done' AND {WORK_SQL}"
+        sql = (f"SELECT id, binding, swarm_id, assignee, created_at, deadline_at "
+               f"FROM goals WHERE swarm_id = ? AND status = 'done' AND {WORK_SQL}")
         params = [agent["swarm_id"]]
         related = {row["goal_id"] for row in self.db.all(
             "SELECT goal_id FROM studio_sessions WHERE source_artifact_id = ? OR proposal_artifact_id = ?",
@@ -551,7 +599,9 @@ class Goals:
         # A fence runs before reading result text; pagination counts only visible matches.
         for row in rows:
             try:
-                self._fence(agent, row)
+                admission, _ = self._authorize(agent, row)
+                if admission is not None:
+                    self._recheck_admission(agent, self.get(row["id"]), admission)
             except HiveError as exc:
                 if exc.status == 403:
                     continue
@@ -602,12 +652,12 @@ class Goals:
     async def continue_goal(self, agent, goal_id, instruction):
         """Continue settled work as a fresh root held by the mind that asked, carrying the source's instructions and
         result and its result checks, never its grants. A research task is never continued."""
-        source = self.for_agent(agent, goal_id)
+        source = await asyncio.to_thread(self.for_agent, agent, goal_id)
         row = self.get(goal_id)
         research = getattr(self.hive, "research", None)
         # A follow-up's detail would copy the report into an ordinary task, outside the research route that keeps it to
         # its asker and admins (research.py), so this holds whoever can read the task. More research is a new request.
-        if research is not None and research.is_task(row):
+        if research is not None and research.scoped(row):
             raise self.hive.error(409, "research_task", "a research task can't be continued: more research is a new "
                                   "research request")
         if source["status"] != "done":
@@ -769,6 +819,11 @@ class Goals:
                 if changes["status"] == "open":
                     # Re-opening (e.g. a stalled goal) is a fresh start: no holder, no lapses.
                     values.update(claimed_by=None, lease_until=None, attempts=0)
+                    # A deadline already past is a lapse too: kept, the next expire would fail the task again before
+                    # anything could take it, so it gets a fresh one as long as its first (a 30-minute task: 30 more).
+                    first = _minutes_between(goal["created_at"], goal.get("deadline_at"))
+                    if first and goal["deadline_at"] <= now():
+                        values["deadline_at"] = _later(first)
             if "priority" in changes:
                 values["priority"] = max(0.0, min(1.0, float(changes["priority"])))
             for key in ("title", "detail"):
@@ -788,30 +843,34 @@ class Goals:
             return
         await self._close_bound(goal, "GOAL-CANCELLED", "goal_cancelled")
 
-    async def _close_bound(self, goal, tag, event):
+    async def _close_bound(self, goal, tag, event, *, notify_holder=True):
         """Revoke a bound goal's snapshot shares and tell its holder or assignee to stop."""
-        binding = json.loads(goal["binding"]) if goal.get("binding") else {}
+        binding = binding_object(goal.get("binding")) or {}
         for share_id in binding.get("share_ids") or []:
             try:
                 await self.hive.shares.revoke(share_id)   # the snapshot stops being readable
             except Exception as exc:  # already closed shares are fine
                 if getattr(exc, "status", None) not in (404, 409):
                     raise
-        for agent_id in {goal["claimed_by"], goal.get("assignee")} - {None}:
+        recipients = {goal["claimed_by"], goal.get("assignee")} - {None} if notify_holder else ()
+        for agent_id in recipients:
             await self.hive.send_to_agent(agent_id, f"[{tag} {goal['id']}] {goal['title']} - stop and "
                                                     f"acknowledge with cancel-ack", sender="hive:goals",
                                           extra={"event": event, "goal_id": goal["id"]})
 
     def cancel_ack(self, agent, goal_id):
         goal = self.get(goal_id)
-        self._fence(agent, goal)
-        expired = goal["status"] == "failed" and goal.get("deadline_at") and goal["deadline_at"] < now()
-        if goal["status"] != "cancelled" and not expired:
-            raise self.hive.error(409, "not_cancelled", f"task is {goal['status']}")
-        if agent["id"] not in (goal["claimed_by"], goal.get("assignee")):
-            raise self.hive.error(403, "forbidden", "only the holder or assignee acknowledges a cancellation")
-        if not goal.get("cancel_ack_at"):
-            self.db.update("goals", goal_id, {"cancel_ack_at": now(), "cancel_ack_by": agent["id"]})
+        admission, _ = self._authorize(agent, goal)
+        with self.db.transaction():
+            goal = self.get(goal_id)
+            self._recheck_admission(agent, goal, admission)
+            expired = goal["status"] == "failed" and goal.get("deadline_at") and goal["deadline_at"] < now()
+            if goal["status"] != "cancelled" and not expired:
+                raise self.hive.error(409, "not_cancelled", f"task is {goal['status']}")
+            if agent["id"] not in (goal["claimed_by"], goal.get("assignee")):
+                raise self.hive.error(403, "forbidden", "only the holder or assignee acknowledges a cancellation")
+            if not goal.get("cancel_ack_at"):
+                self.db.update("goals", goal_id, {"cancel_ack_at": now(), "cancel_ack_by": agent["id"]})
         return self._emit(goal_id)
 
     def claim(self, agent, goal_id):
@@ -820,28 +879,40 @@ class Goals:
         goal = self.get(goal_id)
         if goal["swarm_id"] != agent["swarm_id"]:
             raise self.hive.error(403, "forbidden", "task is in another swarm")
-        self._fence(agent, goal)
-        if goal.get("assignee") and goal["assignee"] != agent["id"]:
-            raise self.hive.error(403, "not_assigned", "this task is assigned to another mind")
-        # One conditional UPDATE, so two minds claiming at once cannot both win.
-        # ...and only by a live mind, in the same statement (stand-in r3): a claim authenticated before its mind's delete
-        # cannot land after the release that delete made.
-        cursor = self.db.execute(
-            "UPDATE goals SET status = 'claimed', claimed_by = ?, lease_until = ?, attempts = attempts + 1, "
-            "updated_at = ? WHERE id = ? AND status = 'open' "
-            "AND EXISTS (SELECT 1 FROM agents WHERE id = ? AND deleted = 0)",
-            (agent["id"], _later(self.hive.settings.goal_lease_minutes), now(), goal_id, agent["id"]))
-        if cursor.rowcount != 1:
-            if not self.db.one("SELECT 1 FROM agents WHERE id = ? AND deleted = 0", (agent["id"],)):
-                raise self.hive.error(409, "mind_deleted", "this mind was deleted; it cannot claim work")
+        admission, _ = self._authorize(agent, goal, work=True)
+        ordinary_lease = _later(self.hive.settings.goal_lease_minutes)
+        with self.db.transaction():
             goal = self.get(goal_id)
-            if goal["claimed_by"] == agent["id"] and goal["status"] in ("claimed", "waiting"):
-                return self.heartbeat(agent, goal_id)  # claiming a goal you already hold renews it
-            raise self.hive.error(409, "not_open", f"task is {goal['status']}"
-                                  + (f" by {goal['claimed_by']}" if goal["claimed_by"] else ""))
-        self._start_budget(agent["id"], goal_id)
+            if goal["swarm_id"] != agent["swarm_id"]:
+                raise self.hive.error(403, "forbidden", "task is in another swarm")
+            report = self._recheck_admission(agent, goal, admission, work=True)
+            if report is None and goal.get("assignee") and goal["assignee"] != agent["id"]:
+                raise self.hive.error(403, "not_assigned", "this task is assigned to another mind")
+            at = now()
+            research = getattr(self.hive, "research", None)
+            if report is not None and goal["deadline_at"] <= at:
+                raise self.hive.error(409, "goal_expired", "this task's deadline has passed")
+            lease = research.work_until(goal, at) if report is not None else ordinary_lease
+            cursor = self.db.execute(
+                "UPDATE goals SET status = 'claimed', claimed_by = ?, lease_until = ?, attempts = attempts + 1, "
+                "updated_at = ? WHERE id = ? AND status = 'open' "
+                "AND EXISTS (SELECT 1 FROM agents WHERE id = ? AND deleted = 0)",
+                (agent["id"], lease, at, goal_id, agent["id"]))
+            if cursor.rowcount != 1:
+                if not self.db.one("SELECT 1 FROM agents WHERE id = ? AND deleted = 0", (agent["id"],)):
+                    raise self.hive.error(409, "mind_deleted", "this mind was deleted; it cannot claim work")
+                if goal["claimed_by"] == agent["id"] and goal["status"] in ("claimed", "waiting"):
+                    receipt = report["claim_id"] if report is not None else None
+                    self._renew_held(agent, goal, report, receipt, ordinary_lease)
+                else:
+                    raise self.hive.error(409, "not_open", f"task is {goal['status']}"
+                                          + (f" by {goal['claimed_by']}" if goal["claimed_by"] else ""))
+            else:
+                receipt = research.claimed(report, at) if report is not None else None
+                self._start_budget(agent["id"], goal_id)
         self._mark_goal_input(agent["id"], goal_id)   # a claim is real input; it carries the goal's asking
-        return self._emit(goal_id)
+        view = self._emit(goal_id)
+        return {**view, "claim_ref": f"{goal_id}~{receipt}"} if receipt else view
 
     def _unheld(self, agent, goal, status, code, message):
         """The refusal for an action that needs a task the mind doesn't hold. An open task assigned to that mind names
@@ -934,37 +1005,54 @@ class Goals:
         self.hive.pass_asked(agent_id, self.asking(goal_id))
 
     def heartbeat(self, agent, goal_id):
-        """Renew the claimer's lease; also resumes a goal that was waiting on a person."""
-        goal = self.get(goal_id)
-        self._fence(agent, goal)
-        if goal["claimed_by"] != agent["id"] or goal["status"] not in ("claimed", "waiting"):
-            raise self._unheld(agent, goal, 409, "not_claimed", "you do not hold this task")
-        lease = _later(self.hive.settings.goal_lease_minutes)
-        if goal.get("deadline_at"):
-            # a heartbeat never outlives the hard deadline: past it the goal is expired, not renewable
-            if goal["deadline_at"] <= now():
-                raise self.hive.error(409, "goal_expired", "this task's deadline has passed")
-            lease = min(lease, goal["deadline_at"])
-        # Only while nothing changed since the read and the holder is a live mind, in the same statement (stand-in r4):
-        # a heartbeat racing a delete's release can never put the task back to claimed with no holder.
-        cur = self.db.execute(
-            "UPDATE goals SET status = 'claimed', updated_at = ?, lease_until = ? WHERE id = ? AND status = ? "
-            "AND claimed_by IS ? AND EXISTS (SELECT 1 FROM agents WHERE id = ? AND deleted = 0)",
-            (now(), lease, goal_id, goal["status"], agent["id"], agent["id"]))
-        if cur.rowcount != 1:   # released, reassigned or its mind deleted meanwhile: as if the lease had lapsed
-            raise self.hive.error(409, "not_claimed", "you do not hold this task")
+        """Resume a waiting claim. Research work time is renewed by audited progress."""
+        goal_id, receipt = _claim_ref(goal_id)
+        admission, _ = self._authorize(agent, self.get(goal_id), work=True)
+        ordinary_lease = _later(self.hive.settings.goal_lease_minutes)
+        with self.db.transaction():
+            goal = self.get(goal_id)
+            report = self._recheck_admission(agent, goal, admission, work=True)
+            self._renew_held(agent, goal, report, receipt, ordinary_lease)
         self._mark_goal_input(agent["id"], goal_id)   # the holder saying it is still on owed work
         return self._emit(goal_id)
 
+    def _renew_held(self, agent, goal, report, receipt, lease):
+        """Renew only the current holder after the caller has checked admission in its transaction."""
+        if report is None and receipt is not None:
+            raise self.hive.error(409, "stale_claim", "this task has no Research claim reference")
+        if goal["claimed_by"] != agent["id"] or goal["status"] not in ("claimed", "waiting"):
+            raise self._unheld(agent, goal, 409, "not_claimed", "you do not hold this task")
+        at = now()
+        if goal.get("deadline_at") and goal["deadline_at"] <= at:
+            raise self.hive.error(409, "goal_expired", "this task's deadline has passed")
+        if goal.get("deadline_at"):
+            lease = min(lease, goal["deadline_at"])
+        if report is not None:
+            self.hive.research.require_claim(report, receipt)
+            lease = self.hive.research.current_work_until(goal, report)
+            if lease <= at:
+                raise self.hive.error(409, "not_claimed", "this Research claim has expired")
+        cur = self.db.execute(
+            "UPDATE goals SET status = 'claimed', updated_at = ?, lease_until = ? WHERE id = ? AND status = ? "
+            "AND claimed_by IS ? AND EXISTS (SELECT 1 FROM agents WHERE id = ? AND deleted = 0)",
+            (at, lease, goal["id"], goal["status"], agent["id"], agent["id"]))
+        if cur.rowcount != 1:
+            raise self.hive.error(409, "not_claimed", "you do not hold this task")
+
     async def result(self, agent, goal_id, status, result, data=None, trusted_review=False, top_digest=None, strict_binding=False):
+        goal_id, receipt = _claim_ref(goal_id)
         goal = self.get(goal_id)
-        self._fence(agent, goal)
+        admission, report = await asyncio.to_thread(self._authorize, agent, goal, work=goal["status"] in ("claimed", "waiting"))
+        if report is None and receipt is not None:
+            raise self.hive.error(409, "stale_claim", "this task has no Research claim reference")
         if goal["status"] == "cancelled":
             raise self.hive.error(409, "goal_cancelled", "this task was cancelled; acknowledge with cancel-ack")
         if goal.get("deadline_at") and goal["deadline_at"] < now() and goal["status"] not in ("done", "failed"):
             raise self.hive.error(409, "goal_expired", "this task's deadline has passed")
         if goal["claimed_by"] != agent["id"]:
             raise self._unheld(agent, goal, 403, "forbidden", "only the mind that claimed a task can finish it")
+        if report is not None:
+            self.hive.research.require_claim(report, receipt)
         if data is not None:
             if not isinstance(data, dict):
                 raise self.hive.error(400, "bad_request", "data must be an object")
@@ -1029,7 +1117,7 @@ class Goals:
             values.update(submitted_at=now(), lease_until=None)
         if data is not None:
             values["result_data"] = json.dumps(data)
-        if status == "waiting":
+        if status == "waiting" and report is None:
             values["lease_until"] = None
         # Save only if nothing changed the goal while its result was being checked (a cancel or re-open during a slow
         # app validator must win, not be overwritten; race found by OmegaMatch).
@@ -1037,6 +1125,14 @@ class Goals:
         sql = f"UPDATE goals SET {sets} WHERE id = ? AND status = ? AND claimed_by IS ? AND updated_at = ?"
         params = (*values.values(), goal_id, goal["status"], goal["claimed_by"], goal["updated_at"])
         with self.db.transaction():
+            current = self.get(goal_id)
+            current_report = self._recheck_admission(agent, current, admission, work=True)
+            if report is not None:
+                if current["attempts"] != goal["attempts"] or current["status"] != goal["status"]:
+                    raise self.hive.error(409, "goal_changed", "this Research claim changed while its result was checked")
+                self.hive.research.require_claim(current_report, receipt)
+                if self.hive.research.current_work_until(current, current_report) <= now():
+                    raise self.hive.error(409, "not_claimed", "this Research claim has expired")
             cur = self.db.guarded_execute(sql, params, read_guards) if read_guards else self.db.execute(sql, params)
             if cur is not None and cur.rowcount == 1 and status == "failed":
                 self.record_stop(goal_id)
@@ -1093,17 +1189,24 @@ class Goals:
         """Release claims whose lease lapsed; stall goals that keep lapsing."""
         moment = moment or now()
         released = []
+        research = getattr(self.hive, "research", None)
         # A deadline is a hard time budget: past it the goal fails, its snapshot shares are revoked and the
         # holder is told, whatever state it is in.
-        for goal in self.db.all("SELECT * FROM goals WHERE deadline_at IS NOT NULL AND deadline_at < ? "
+        for goal in self.db.all("SELECT * FROM goals WHERE deadline_at IS NOT NULL AND deadline_at <= ? "
                                 "AND status IN ('open', 'claimed', 'waiting', 'stalled')", (moment,)):
             if self.stop(goal["id"], "failed", "deadline", emit=False, expected=goal) is None:
                 continue
-            await self._close_bound(goal, "GOAL-EXPIRED", "goal_expired")
+            # Research retires the worker on the goal event. An old claim may name a stranger or a stopped mind.
+            await self._close_bound(goal, "GOAL-EXPIRED", "goal_expired",
+                                    notify_holder=research is None or not research.scoped(goal))
             self._emit(goal["id"])
             released.append(goal["id"])
+        if research is not None:
+            released.extend(await research.reconcile_claims(moment))
         for goal in self.db.all("SELECT * FROM goals WHERE status = 'claimed' AND lease_until IS NOT NULL "
                                 "AND lease_until < ?", (moment,)):
+            if research is not None and research.scoped(goal):
+                continue
             if goal["attempts"] >= MAX_ATTEMPTS:
                 self.stop(goal["id"], "stalled", "leases", expected=goal)
             else:

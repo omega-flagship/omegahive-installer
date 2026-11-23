@@ -1,3 +1,4 @@
+// Purpose: render Coffee Room membership controls, owner requests and conversation details.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Words } from '../views/Words'
 import { plainText } from '../../lib/beliefSentence'
@@ -7,6 +8,7 @@ import { shown } from '../../lib/displayName'
 import { useEscape } from '../../lib/hooks'
 import { navigate } from '../../lib/router'
 import { useMe } from '../../lib/useAdmin'
+import { useAlive } from '../../lib/boundOperation'
 import { useHive } from '../../store/store'
 import { Icon } from '../../ui/Icon'
 import { Button, IconButton, Switch } from '../../ui/primitives'
@@ -14,8 +16,8 @@ import { useModalContainment } from '../../ui/useModalContainment'
 import { askConfirm, ConfirmHost } from '../../ui/confirm'
 import './coffee.css'
 import {
-  COFFEE_NAME, COFFEE_PUBLIC_NOTE, HERE_HINT, HERE_TYPING, coffeeState, coffeeSubtitle, groupCandidates, hereLabel, hereReached,
-  COFFEE_DISCLOSURE, isCoffee, isHere, isMind, memberName, needsDisclosure, setCoffeeMembership, noteLabel, originLabel, originOf, originRoute, saysHere, startGroup, suggestGroupName, talkPrivately,
+  COFFEE_NAME, COFFEE_PUBLIC_NOTE, coffeeState, coffeeSubtitle, groupCandidates, hereHintWords, hereLabel, hereReached, mindsIn, mindsOutside, namedOutside,
+  COFFEE_DISCLOSURE, canChangeCoffee, requestCoffeeMembership, isCoffee, isHere, isMind, memberName, needsDisclosure, setCoffeeMembership, noteLabel, originLabel, originOf, originRoute, saysHere, startGroup, suggestGroupName, talkPrivately,
 } from './coffee'
 
 /**
@@ -67,12 +69,21 @@ export function CoffeePublicNote() {
 }
 
 /** The line under the composer. It never promises a count: the host picks up to 5 of the most recently active awake
- *  minds when the message is sent, and the message then says exactly who it reached (Kimi r2 #3). */
-export function HereHint({ text }: { room?: Room; text: string }) {
+ *  minds when the message is sent, and the message then says exactly who it reached (Kimi r2 #3). A mind named with @
+ *  that is not in the room, or a room with no minds, is said first (hereHintWords). */
+export function HereHint({ room, text }: { room: Room; text: string }) {
+  const agents = useHive((s) => s.agents)
+  const outside = useMemo(() => mindsOutside(room, Object.values(agents)).map((a) => shown(a.name)), [room, agents])
+  return <HereHintView text={text} mindsHere={mindsIn(room)} named={namedOutside(text, outside)} />
+}
+
+/** The line itself (no store, no hooks), so tests read what a person reads. */
+export function HereHintView({ text, mindsHere, named }: { text: string; mindsHere: number; named: string[] }) {
   const typing = saysHere(text)
+  const alert = typing || named.length > 0
   return (
-    <p className={cx('mt-1.5 text-[11.5px]', typing ? 'text-ink-2' : 'text-ink-4')} aria-live={typing ? 'polite' : undefined}>
-      {typing ? HERE_TYPING : `Minds hear only messages that @mention them. ${HERE_HINT}`}
+    <p className={cx('mt-1.5 text-[11.5px]', alert ? 'text-ink-2' : 'text-ink-4')} aria-live={alert ? 'polite' : undefined}>
+      {hereHintWords(text, mindsHere, named)}
     </p>
   )
 }
@@ -81,7 +92,7 @@ export function HereHint({ text }: { room?: Room; text: string }) {
 export function HereReached({ message, room }: { message: RoomMessage; room: Room }) {
   if (!isCoffee(room) || !isHere(message)) return null
   const nameOf = (member: string) => memberName({ member, name: room.members.find((x) => x.member === member)?.name }, room.me)
-  return <span className="mt-0.5 flex items-center gap-1 text-[11px] text-ink-4"><Icon name="wave" size={11} />{hereLabel(hereReached(message), nameOf)}</span>
+  return <span className="mt-0.5 flex items-center gap-1 text-[11px] text-ink-4"><Icon name="wave" size={11} />{hereLabel(hereReached(message), nameOf, mindsIn(room))}</span>
 }
 
 /** "Talk privately" and "Start a group" on a message in the Coffee Room. Shown on hover and focus; always on touch. */
@@ -240,16 +251,33 @@ export function useFocusMessage(id: string | undefined, ready: boolean) {
   }, [id, ready])
 }
 
-/** A mind's Coffee Room membership, on its settings: the state for everyone, the switch for admins only. */
+/** Send a private request to the owner and show whether sending succeeded. */
+export function CoffeeOwnerRequest({ agent }: { agent: Agent }) {
+  const client = useHive((s) => s.client)
+  const alive = useAlive()
+  const [state, setState] = useState<'ready' | 'sending' | 'sent'>('ready')
+  const [error, setError] = useState('')
+  return <div className="min-w-0 space-y-1">
+    <Button disabled={state !== 'ready'} onClick={async () => {
+      setState('sending'); setError('')
+      try { await requestCoffeeMembership(agent, client, alive); if (alive()) setState('sent') }
+      catch (err) { if (alive()) { setError(err instanceof Error ? err.message : String(err)); setState('ready') } }
+    }}>{state === 'sent' ? 'Owner asked' : state === 'sending' ? 'Sending…' : 'Ask its owner'}</Button>
+    {state === 'sent' && <p role="status" className="text-meta text-ink-3">A private message asks its owner. It stays out until they add it.</p>}
+    {error && <p role="alert" className="text-meta text-warn">{error}</p>}
+  </div>
+}
+
+/** A mind's Coffee Room membership: its owner puts it in or takes it out; anyone else may ask the owner. */
 export function CoffeeMembershipControl({ agent }: { agent: Agent }) {
   const patch = useHive((s) => s.patchAgent)
   const toast = useHive((s) => s.toast)
   const swarms = useHive((s) => s.swarms)
-  const { admin } = useMe()
+  const { me } = useMe()
   return (
     <CoffeeMembershipView
       agent={agent}
-      admin={admin}
+      principal={me?.principal}
       swarm={agent.swarm_id ? swarms[agent.swarm_id] ?? null : null}
       confirm={(m, l) => askConfirm(m, l)}
       patch={async (id, body) => !!(await patch(id, body))}
@@ -258,10 +286,66 @@ export function CoffeeMembershipControl({ agent }: { agent: Agent }) {
   )
 }
 
+/**
+ * Under the Coffee Room's members: the hive's minds that are not in it and why, with the switch that puts each one in
+ * for its owner (anyone else, an admin included, sends the owner a private request). A tester's minds were
+ * all private, so @here and their names reached none of them there, and nothing said so.
+ */
+export function CoffeeMindsOutside({ room, onChanged }: { room: Room; onChanged: () => void }) {
+  const agents = useHive((s) => s.agents)
+  const swarms = useHive((s) => s.swarms)
+  const patch = useHive((s) => s.patchAgent)
+  const toast = useHive((s) => s.toast)
+  const { me } = useMe()
+  return (
+    <CoffeeMindsOutsideView
+      outside={mindsOutside(room, Object.values(agents))}
+      principal={me?.principal}
+      swarmOf={(a) => (a.swarm_id ? swarms[a.swarm_id] ?? null : null)}
+      confirm={(m, l) => askConfirm(m, l)}
+      patch={async (id, body) => !!(await patch(id, body))}
+      done={(a) => { toast({ tone: 'success', title: `${shown(a.name)} is in the Coffee Room` }); onChanged() }}
+    />
+  )
+}
+
+/** The list itself (no store, no hooks): what it shows and what each switch sends, so tests drive the real switch. */
+export function CoffeeMindsOutsideView({ outside, principal, swarmOf, confirm, patch, done }: {
+  outside: Agent[]
+  principal?: string
+  swarmOf: (a: Agent) => { visibility?: string | null } | null
+  confirm: (message: string, label: string) => Promise<boolean>
+  patch: (id: string, body: { coffee: boolean }) => Promise<boolean>
+  done: (a: Agent) => void
+}) {
+  if (!outside.length) return null
+  return (
+    <section aria-labelledby="coffee-outside-h" className="space-y-1.5">
+      <ConfirmHost />
+      <h3 id="coffee-outside-h" className="eyebrow">Minds not in the Coffee Room</h3>
+      <ul className="space-y-1.5">
+        {outside.map((a) => (
+          <li key={a.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 text-[13px]">
+            <Icon name="mind" size={14} className="shrink-0 text-ink-3" />
+            <span className="min-w-0">
+              <span className="block truncate">{shown(a.name)}</span>
+              <span className="block text-[11.5px] text-ink-4">{coffeeState(a)?.why}</span>
+            </span>
+            {canChangeCoffee(a, principal) ? (
+              <Switch checked={false} label={`Put ${shown(a.name)} in the Coffee Room`} hue={a.hue}
+                onChange={async (on) => { if (on && (await setCoffeeMembership(a, true, { swarm: swarmOf(a), confirm, patch }))) done(a) }} />
+            ) : principal ? <div className="col-span-3"><CoffeeOwnerRequest agent={a} /></div> : null}
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
 /** The control itself (no store, no hooks): what it shows and what its switch sends, so tests drive the real switch. */
-export function CoffeeMembershipView({ agent, admin, swarm, confirm, patch, done }: {
+export function CoffeeMembershipView({ agent, principal, swarm, confirm, patch, done }: {
   agent: Agent
-  admin: boolean
+  principal?: string
   swarm: { visibility?: string | null } | null
   confirm: (message: string, label: string) => Promise<boolean>
   patch: (id: string, body: { coffee: boolean }) => Promise<boolean>
@@ -270,28 +354,32 @@ export function CoffeeMembershipView({ agent, admin, swarm, confirm, patch, done
   const state = coffeeState(agent)
   if (!state) return null
   const disclose = !state.on && needsDisclosure(agent, swarm)
+  const change = canChangeCoffee(agent, principal)
   return (
     <section aria-labelledby="coffee-h">
       {/* askConfirm shows nothing without a host, and the mind's Model tab mounts none: the switch brings its own */}
-      {admin && <ConfirmHost />}
+      {change && <ConfirmHost />}
       <h3 id="coffee-h" className="eyebrow mb-2">Coffee Room</h3>
-      <div className="flex items-center gap-3 rounded-xl border border-line bg-tint/[0.02] px-3 py-2">
-        <CoffeeMark size={14} />
-        <div className="min-w-0 flex-1">
-          <p className="text-[13px] text-ink">{state.label}</p>
-          <p className="text-meta text-ink-4">{state.why}</p>
-          {admin && disclose && <p className="text-meta text-ink-3">{COFFEE_DISCLOSURE}</p>}
+      <div className="rounded-xl border border-line bg-tint/[0.02] px-3 py-2">
+        <div className="flex items-center gap-3">
+          <CoffeeMark size={14} />
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] text-ink">{state.label}</p>
+            <p className="text-meta text-ink-4">{state.why}</p>
+            {change && disclose && <p className="text-meta text-ink-3">{COFFEE_DISCLOSURE}</p>}
+          </div>
+          {change && (
+            <Switch
+              checked={state.on}
+              label="In the Coffee Room"
+              hue={agent.hue}
+              onChange={async (on) => {
+                if (await setCoffeeMembership(agent, on, { swarm, confirm, patch })) done(on)
+              }}
+            />
+          )}
         </div>
-        {admin && (
-          <Switch
-            checked={state.on}
-            label="In the Coffee Room"
-            hue={agent.hue}
-            onChange={async (on) => {
-              if (await setCoffeeMembership(agent, on, { swarm, confirm, patch })) done(on)
-            }}
-          />
-        )}
+        {!change && !!principal && !state.on && <div className="mt-2"><CoffeeOwnerRequest agent={agent} /></div>}
       </div>
     </section>
   )

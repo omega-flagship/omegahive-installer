@@ -236,7 +236,7 @@ def test_T_GW1_a_call_is_billed_reserved_and_answered_with_its_money_headers(gw)
     assert r.json()["choices"][0]["message"]["content"] == "fine" and r.json()["id"] == "r-1"     # the provider's body
     assert r.headers["x-hive-call-cost-state"] == "settled" and r.headers["x-hive-call-cost-usd"] == "0.001000"
     assert r.headers["x-hive-turn-calls-remaining"] == "49" and r.headers["cache-control"] == "no-store"
-    assert float(r.headers["x-hive-turn-remaining-usd"]) == pytest.approx(0.249, abs=1e-6)   # min(turn 0.25, thread 0.25) - 0.001
+    assert "x-hive-turn-remaining-usd" not in r.headers   # a turn has no money cap of its own (omegahive#294 item 2)
     assert gw["fake"].bodies[0]["model"] == "fakepaid/x" and "model" not in {k for k in gw["fake"].bodies[0] if k != "model"} - {"model"}
     assert gw["fake"].bodies[0]["max_tokens"] == 100
     usage = hive.db.one("SELECT * FROM usage")
@@ -313,15 +313,14 @@ def test_T_GW3_the_51st_call_is_call_cap_with_no_dispatch(gw):
     assert code(call(client, token, turn)) == "turn_closed"
 
 
-# ---- T-GW4: concurrent calls never exceed the turn's and the thread's guards ------------------------------------------
+# ---- T-GW4: concurrent calls never exceed the person's month, and a turn at its threshold stops once ------------------
 
-@pytest.mark.parametrize("guard", ["turn", "thread"])
-def test_T_GW4_concurrent_calls_never_exceed_the_turn_or_thread_cap(gw, monkeypatch, guard):
+def test_T_GW4_concurrent_calls_never_exceed_the_persons_month(gw):
+    """A browser turn has no cap of its own (omegahive#294 item 2): the person's month holds it, under concurrency too."""
     client, hive = gw["client"], gw["hive"]
-    if guard == "turn":
-        monkeypatch.setenv("HIVE_ASK_CONDUCTOR_TURN_USD", "0.01")
-    else:
-        assert client.put("/api/me/ask", headers=gw["ann"], json={"thread_budget_usd": 0.01}).status_code == 200
+    # the budgets route takes only hex person ids, so the fixture's u_ann gets her month as the other limit tests set it
+    hive.db.insert("budgets", {"id": "b_ann_gw4", "scope": "person:u_ann", "period": "month", "limit_usd": 0.01, "note": "",
+                               "created_at": "2026-01-01"})
     gw["fake"].delay, gw["fake"].cost = 0.2, 0.004
     token = mint(client, gw["ann"])
     turn = open_turn(client, gw["ann"], "op-gw4-0001")
@@ -337,16 +336,38 @@ def test_T_GW4_concurrent_calls_never_exceed_the_turn_or_thread_cap(gw, monkeypa
     ok = [r for r in out if r.status_code == 200]
     refused = [r for r in out if r.status_code != 200]
     t = hive.db.one("SELECT * FROM ask_turns WHERE id = ?", (turn,))
-    label = "askturn:" + turn if guard == "turn" else "askthread:" + t["thread_id"]
     total = hive.db.one("SELECT COALESCE(SUM(CASE WHEN r.state = 'settled' THEN r.actual ELSE r.maximum END), 0) AS n "
                         "FROM cost_reservations r JOIN cost_reservation_scopes c ON c.reservation = r.id WHERE c.scope = ? "
-                        "AND r.state != 'released'", (label,))["n"] / 1e6
+                        "AND r.state != 'released'", ("askturn:" + turn,))["n"] / 1e6
     assert ok and refused and total <= 0.01 + 1e-9
     kinds = {r.json()["error"].get("limit", {}).get("kind") for r in refused if code(r) == "spend_limit"}
-    assert kinds <= {"per_turn" if guard == "turn" else "thread"} and kinds
+    assert kinds == {"member_allowance"}
     assert all(code(r) in ("spend_limit", "turn_closed") and not hive_headers(r) for r in refused)
     frames = [json.loads(f["frame"]) for f in hive.db.all("SELECT frame FROM ask_events WHERE turn_id = ? ORDER BY seq", (turn,))]
     assert t["state"] == "refused" and frames[-1]["outcome"] == "spend_cap" and frames[-1]["limit"]["kind"] in kinds
+
+
+@pytest.mark.parametrize("go_ahead", [False, True])
+def test_T_GW4_a_turn_at_its_threshold_stops_as_expensive_unless_it_went_ahead(gw, monkeypatch, go_ahead):
+    """omegahive#294 item 2: the host can't hold a browser turn to ask, so a call made once the turn's settled spend
+    reached the person's threshold stops it as the conductor's unanswered question does; a turn asked with go_ahead
+    never stops there."""
+    client, hive = gw["client"], gw["hive"]
+    monkeypatch.setattr(hive.ask, "expensive_usd", lambda principal: 0.006)
+    gw["fake"].cost = 0.004
+    token = mint(client, gw["ann"])
+    r = ask(client, gw["ann"], f"op-gw4-exp-{int(go_ahead)}", **BROWSER, **({"go_ahead": True} if go_ahead else {}))
+    turn = r.json()["turn_id"]
+    assert call(client, token, turn).status_code == 200    # $0 spent
+    assert call(client, token, turn).status_code == 200    # $0.004 spent, under $0.006
+    r = call(client, token, turn)                          # $0.008 spent: past it
+    if go_ahead:
+        assert r.status_code == 200
+        return
+    assert (r.status_code, code(r)) == (402, "spend_limit") and len(gw["fake"].bodies) == 2
+    assert r.json()["error"]["limit"] == {"kind": "expensive", "current_usd": 0.008, "limit_usd": 0.006, "estimate_usd": None}
+    frames = [json.loads(f["frame"]) for f in hive.db.all("SELECT frame FROM ask_events WHERE turn_id = ? ORDER BY seq", (turn,))]
+    assert frames[-1]["outcome"] == "spend_cap" and frames[-1]["limit"]["kind"] == "expensive"
 
 
 def test_T_GW4_no_monthly_total_is_monthly_total_required_and_closes_the_turn(gw):
@@ -955,15 +976,15 @@ def test_r1de2_the_51st_call_is_one_call_cap_observation(gw, commons):
 
 
 def test_r1de2_a_refusal_at_the_reservation_records_its_limit_kind_once(gw, commons, monkeypatch):
-    """The per-turn guard refuses at the reservation, after check_budget passed: the call path records it by kind."""
+    """The expensive stop refuses on the call path, after check_budget passed: the call path records it by kind."""
     client, hive = gw["client"], gw["hive"]
-    monkeypatch.setenv("HIVE_ASK_CONDUCTOR_TURN_USD", "0.0000001")
+    monkeypatch.setattr(hive.ask, "question_above", lambda principal: 0.0)   # this turn stops at its first call
     token = mint(client, gw["ann"])
     turn = open_turn(client, gw["ann"], "op-ev8-0001")
     r = call(client, token, turn)
-    assert (r.status_code, code(r)) == (402, "spend_limit") and r.json()["error"]["limit"]["kind"] == "per_turn"
+    assert (r.status_code, code(r)) == (402, "spend_limit") and r.json()["error"]["limit"]["kind"] == "expensive"
     got = _evidence_rows(hive)
-    assert [x for x in got if x[0] == "refused"] == [("refused", commons.refused_statement("per_turn"), 1.0)]
+    assert [x for x in got if x[0] == "refused"] == [("refused", commons.refused_statement("expensive"), 1.0)]
     assert ("cap", commons.refused_statement("spend_cap"), 1.0) in got          # and the close's own cap hit
 
 
@@ -1001,7 +1022,7 @@ def test_r1de4_a_done_that_loses_to_the_hosts_close_is_not_recorded_again(gw, co
         assert code(call(client, token, turn)) == "call_cap"
         outcome = "call_cap"
     else:
-        monkeypatch.setenv("HIVE_ASK_CONDUCTOR_TURN_USD", "0.0000001")
+        monkeypatch.setattr(hive.ask, "question_above", lambda principal: 0.0)   # this turn stops at its first call
         assert code(call(client, token, turn)) == "spend_limit"
         outcome = "spend_cap"
     before = _evidence_rows(hive)

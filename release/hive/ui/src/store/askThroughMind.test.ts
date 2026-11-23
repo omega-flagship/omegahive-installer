@@ -1,3 +1,4 @@
+// Purpose: prove the Ask answers through a mind when a swarm has no coordinator, and keeps that for follow-ups.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const loc = { hash: '#/program/omegadesign/s_des', search: '', pathname: '/' }
@@ -48,7 +49,7 @@ function start(client: HiveClient) {
     programs: [{ id: 'omegadesign', name: 'OmegaDesign' }] as never,
   })
   useAskStore.getState().bind(useHive.getState().session, 'user:p_jon')
-  useAskStore.setState({ settings: { swarm_id: null, thread_budget_usd: 0.25, eligible: [{ id: 's_lyra', name: 'Lyra' }, { id: 's_kelp', name: 'Kelp Commons' }] }, personal: me })
+  useAskStore.setState({ settings: { swarm_id: null, eligible: [{ id: 's_lyra', name: 'Lyra' }, { id: 's_kelp', name: 'Kelp Commons' }] }, personal: me })
 }
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve() }
 const notes = () => threadRows(useAskStore.getState()).filter((r) => r.kind === 'note').map((r) => r.text)

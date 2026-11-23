@@ -25,6 +25,25 @@ def later(**delta):
     return (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(**delta)).isoformat(timespec="seconds")
 
 
+class At:
+    """later(**delta), read when the request is made: a parametrize list is built once at collection, and the suite can
+    run for hours before a case runs (build B: later(hours=25) was under the 24 h limit by then, so the hive rightly
+    accepted it). An instance, not a lambda, so the test ids stay index-based (over7, not <lambda>)."""
+    def __init__(self, **delta):
+        self.delta = delta
+
+
+def resolved(value):
+    """value with every At in it replaced by its time now."""
+    if isinstance(value, At):
+        return later(**value.delta)
+    if isinstance(value, dict):
+        return {k: resolved(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [resolved(v) for v in value]
+    return value
+
+
 def person(hive, pid, role="admin"):
     token = secrets.token_urlsafe(24)
     hive.db.insert("people", {"id": pid, "email": f"{pid}@example.test", "name": pid, "role": role, "created_at": now()})
@@ -234,8 +253,8 @@ def test_a_replay_that_crosses_a_second_boundary_is_still_byte_identical(w, monk
 @pytest.mark.parametrize("over,code", [
     ({"title": "x" * 201}, "bad_request"), ({"title": ""}, "bad_request"), ({"instruction": "é" * 4097}, "bad_request"),
     ({"kind": "review"}, "bad_request"), ({"budget": {"limit_usd": 0}}, "bad_request"), ({"budget": {"limit_usd": True}}, "bad_request"),
-    ({"lifetime": {"until": "2026-10-05T12:00:00"}}, "bad_request"), ({"lifetime": {"until": later(hours=25)}}, "bad_request"),
-    ({"lifetime": {"until": later(hours=-1)}}, "bad_request"),
+    ({"lifetime": {"until": "2026-10-05T12:00:00"}}, "bad_request"), ({"lifetime": {"until": At(hours=25)}}, "bad_request"),
+    ({"lifetime": {"until": At(hours=-1)}}, "bad_request"),
     ({"lease": {"template_ids": ["native-a"], "max_children": 5}}, "bad_request"),
     ({"lease": {"template_ids": ["native-a", "native-a"], "max_children": 1}}, "bad_request"),
     ({"lease": {"template_ids": [f"t{i}" for i in range(9)], "max_children": 1}}, "bad_request"),
@@ -243,7 +262,7 @@ def test_a_replay_that_crosses_a_second_boundary_is_still_byte_identical(w, monk
     ({"budget": {"limit_usd": 5.5}}, "spend_limit"), ({"extra": 1}, "bad_request")])   # 5.5: over the controller's own $5
 def test_instruction_wire_limits_and_refusals_create_nothing(w, over, code):
     before = counts(w.hive)
-    out = submit(w, **over)
+    out = submit(w, **resolved(over))
     assert out.json()["error"]["code"] == code, out.text
     assert counts(w.hive) == before
 
@@ -365,7 +384,7 @@ def test_operation_ids_are_scoped_to_the_controller(w):
     ({"lifecycle_mode": "bounded", "lifecycle_limits": {"until": None, "max_iterations": 10001, "idle_minutes": None}}, "bad_request"),
     ({"lifecycle_mode": "bounded", "lifecycle_limits": {"until": None, "max_iterations": None, "idle_minutes": 10081}}, "bad_request"),
     ({"lifecycle_mode": "bounded", "lifecycle_limits": {"until": "2026-12-01T00:00:00", "max_iterations": None, "idle_minutes": None}}, "bad_request"),
-    ({"lifecycle_mode": "bounded", "lifecycle_limits": {"until": later(days=31), "max_iterations": None, "idle_minutes": None}}, "bad_request"),
+    ({"lifecycle_mode": "bounded", "lifecycle_limits": {"until": At(days=31), "max_iterations": None, "idle_minutes": None}}, "bad_request"),
     ({"lifecycle_limits": {"until": None, "max_iterations": 3, "idle_minutes": None}}, "bad_request"),
     ({"allocation_usd": 0}, "bad_request"), ({"allocation_usd": 101}, "bad_request"), ({"allocation_usd": True}, "bad_request"),
     ({"allocation_usd": 0.6}, "spend_limit"), ({"template_id": "native-b", "allocation_usd": 0.1}, "lease_required"),
@@ -374,7 +393,7 @@ def test_spawn_validation_refuses_and_creates_nothing(w, over, code):
     enabled(w)
     rq = accepted(w)
     before = counts(w.hive)
-    out = spawn(w, rq["request_id"], **over)
+    out = spawn(w, rq["request_id"], **resolved(over))
     assert out.json()["error"]["code"] == code, out.text
     assert counts(w.hive) == before
 
@@ -812,6 +831,10 @@ def test_people_clean_up_children_admin_or_lease_issuer_only(w):
 # ---- r2.13.1: delegated capability ---------------------------------------------------------------------------
 
 def service(w):
+    # A stand-in Code service, so the release guard is told it loads the reviewed release, as test_copy_apply_claims and
+    # test_proposal_tests tell it. Left to read this machine, the guard checks nothing on a Mac without a Code
+    # LaunchAgent, but on Linux it asks systemd for the Code user unit, which a CI runner lacks, and answers 503.
+    w.hive.code._loaded_release_mismatch = lambda: None
     token = secrets.token_urlsafe(24)
     w.hive.db.insert("services", {"id": "svc_code", "name": "omegacode", "version": "1", "address": "http://127.0.0.1:8724",
                                   "contract": "omegacode/1", "surfaces": "[]", "capabilities": "[]",

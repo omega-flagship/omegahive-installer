@@ -1,0 +1,14 @@
+# The hive test files that need the AppArmor userns switch: the full run's switch shard (scripts/ci/switch-shard.sh)
+# runs them at restriction 0 from the checkout, then release-tests.sh runs the four mind-sandbox files at 1 from a
+# release. The
+# other shards run at the machine's 1 and never change it (Kabir, 2026-11-20). A file that fails at 1 in a plain shard
+# moves here. scripts/ci/hive_shard.py reads this list (HIVE_SWITCH_FILES); release-tests.sh names its four itself.
+hive/tests/test_mind_sandbox_linux.py
+hive/tests/test_sandbox_run.py
+hive/tests/test_mind_sandbox.py
+hive/tests/test_mind_sandbox_default.py
+# The PDF reader runs inside the hive's sandbox (webtools.pdf_text), which cannot start at 1: 503 pdf_unavailable.
+hive/tests/test_mind_reads_pdf.py
+hive/tests/test_web_tools_pdf.py
+# The Create plan's acceptance check under production's runner (SandboxChecks: sandbox_run): 'mind isolation failed' at 1.
+hive/tests/test_create_plan_sandbox.py

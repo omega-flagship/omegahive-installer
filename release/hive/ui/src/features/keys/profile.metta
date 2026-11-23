@@ -1,10 +1,12 @@
+; Purpose: compose the You page (#/me) for the look being worn: who you are, your keys and the Ask's money choice.
 ; The You page (#/me): who you are, your keys and which minds each key pays for, declared as atoms
 ; (screens/lib_screens.metta composes them). The page composes each provider's keys and each key for its own facts, and
 ; the profile screen stacks them.
 ;
 ; Facts the page states each time:
 ;   profile: the standard resource facts for your keys (screens/resourceFacts.ts: the value resource, resource.empty,
-;            the data resource.error); client.connected signout.busy keys.adding me.person; (count keys.all)
+;            the data resource.error); client.connected signout.busy keys.adding me.person; (count keys.all);
+;            ask.expensive_known ask.expensive_on ask.saving ask.save_failed
 ;   profile-provider: (count group.keys)
 ;   profile-key: key.env key.default key.editing key.confirming key.account_usage key.account_limit
 ;                key.account_error; (count key.minds) (count key.assigned)
@@ -32,6 +34,9 @@
 (Part profile 24 island ((name clock)))
 (Part profile 25 island ((name demo-ask)))
 (Part profile 26 island ((name ask-memory)))
+
+; ---------- your connectors: one panel composed by its own screens (connectors.metta), empty where the hive has none
+(Part profile 27 stack ((source connectors.panel) (frame card) (label "Your connectors")))
 
 ; ---------- your keys
 (Part profile 30 section ((tour your-keys) (title "Your keys") (body (bind keys.summary))))
@@ -64,6 +69,21 @@
 ; ---------- the monthly total on your own keys (a person's, not the operator's): the page's own panel
 (Part profile 70 island ((name own-limit)))
 (When profile 70 (on me.person))
+
+; ---------- the Ask's one money choice (Jon on omega-flagship/omegahive#294: no cap on an answer or a thread; an answer
+; that looks expensive asks once, and anyone can turn that off), with the person's threshold now (GET /api/me/ask)
+(Part profile 71 toggles ((source ask.expensive_choice) (label label) (checked on) (action ask-expensive)))
+(When profile 71 (on ask.expensive_known))
+(Part profile 72 note ((text (words "Right now it asks once an answer has spent " (bind ask.expensive_usd) "."))))
+(When profile 72 (on ask.expensive_known))
+(When profile 72 (on ask.expensive_on))
+(Part profile 73 note ((text "Off: answers carry on until one of your spending limits stops them.")))
+(When profile 73 (on ask.expensive_known))
+(When profile 73 (off ask.expensive_on))
+(Part profile 74 note ((text "Saving…")))
+(When profile 74 (on ask.saving))
+(Part profile 75 notice ((tone bad) (text "That change couldn’t be saved. Nothing changed.")))
+(When profile 75 (on ask.save_failed))
 
 (Screen profile-provider "A provider's keys")
 (Part profile-provider 10 line ((title (bind group.label))))

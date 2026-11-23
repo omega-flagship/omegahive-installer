@@ -1,27 +1,30 @@
+// Purpose: verify a mind's Coffee Room control gives its switch to the mind's owner alone and Ask its owner to anyone else.
 import { isValidElement, type ReactElement, type ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '../../api/types'
 import { ConfirmHost } from '../../ui/confirm'
 import { Switch } from '../../ui/primitives'
 import { COFFEE_DISCLOSURE } from './coffee'
-import { CoffeeMembershipControl } from './CoffeeParts'
+import { CoffeeMembershipControl, CoffeeOwnerRequest } from './CoffeeParts'
 
 // Coffee UI r3, stand-in coffeeui2 P3: CoffeeMembershipControl itself, as the mind's settings mount it. The store, the
 // signed-in person and the in-app confirmation are replaced at their modules, so the test goes through the control's own
-// wiring (useHive -> patchAgent/toast/swarms, useMe -> admin, askConfirm) and its real switch. INVENTED data only.
+// wiring (useHive -> patchAgent/toast/swarms, useMe -> principal, askConfirm) and its real switch. INVENTED data only.
 
 const h = vi.hoisted(() => ({
   askConfirm: vi.fn<(message: string, label?: string) => Promise<boolean>>(),
   patchAgent: vi.fn<(id: string, body: unknown) => Promise<unknown>>(),
   toast: vi.fn(),
   admin: true,
+  principal: 'user:operator',
   swarms: {} as Record<string, { id: string; visibility: string }>,
 }))
 vi.mock('../../ui/confirm', () => ({ askConfirm: h.askConfirm, ConfirmHost: function ConfirmHost() { return null } }))
-vi.mock('../../lib/useAdmin', () => ({ useMe: () => ({ me: undefined, admin: h.admin, loaded: true }) }))
-vi.mock('../../store/store', () => ({
-  useHive: (sel: (s: unknown) => unknown) => sel({ patchAgent: h.patchAgent, toast: h.toast, swarms: h.swarms }),
-}))
+vi.mock('../../lib/useAdmin', () => ({ useMe: () => ({ me: { principal: h.principal }, admin: h.admin, loaded: true }) }))
+vi.mock('../../store/store', () => {
+  const getState = () => ({ client: null, session: 'invented-control-session', inits: 0, patchAgent: h.patchAgent, toast: h.toast, swarms: h.swarms })
+  return { useHive: Object.assign((sel: (s: unknown) => unknown) => sel(getState()), { getState, subscribe: () => () => undefined }) }
+})
 
 /** Render the control one level down (to the view it mounts) and collect every element; Switch stays a leaf. */
 function render(agent: Agent): ReactNode {
@@ -48,6 +51,7 @@ beforeEach(() => {
   h.patchAgent.mockReset().mockResolvedValue({ id: 'a_q' })
   h.toast.mockReset()
   h.admin = true
+  h.principal = 'user:operator'
   h.swarms = {}
 })
 
@@ -82,14 +86,16 @@ describe('CoffeeMembershipControl: the switch asks before a private mind becomes
     expect(h.patchAgent).not.toHaveBeenCalled()
   })
 
-  it('admin only: a member gets no switch and can send nothing; the same mind gives an admin the asking switch', async () => {
+  it('a member who is not the owner gets no switch; the owner gets the asking switch', async () => {
     h.admin = false
+    h.principal = 'user:u_observer'
     expect(switchOf(privateMind)).toBeUndefined()
     expect(elements(render(privateMind)).some((e) => (e.props as { children?: unknown }).children === COFFEE_DISCLOSURE)).toBe(false)
     expect(h.askConfirm).not.toHaveBeenCalled()
     expect(h.patchAgent).not.toHaveBeenCalled()
-    // the contrast: the admin's switch on the same mind exists and goes through the confirmation
+    // the contrast: the operator owns this mind (no owner is recorded), so its switch exists and goes through the confirmation
     h.admin = true
+    h.principal = 'user:operator'
     h.askConfirm.mockResolvedValue(false)
     const sw = switchOf(privateMind)
     expect(sw).toBeDefined()
@@ -103,6 +109,39 @@ describe('CoffeeMembershipControl: the switch asks before a private mind becomes
     expect(h.askConfirm).not.toHaveBeenCalled()
     expect(h.patchAgent).toHaveBeenCalledWith('a_q', { coffee: false })
     expect(render(mind({ coffee: 'not_a_mind' } as Partial<Agent>))).toBeNull()
+  })
+
+  it('another admin can request consent but gets no switch for a private mind', () => {
+    h.principal = 'user:u_other_admin'
+    const tree = elements(render(privateMind))
+    expect(switchOf(privateMind)).toBeUndefined()
+    expect(tree.some((e) => e.type === CoffeeOwnerRequest)).toBe(true)
+    expect(h.patchAgent).not.toHaveBeenCalled()
+  })
+
+  it('an admin who is not the owner gets no switch for a public mind either; one taken out offers Ask its owner', () => {
+    h.principal = 'user:operator'
+    const inRoom = elements(render(mind({ owner: 'user:u_owner', visibility: 'public', coffee: 'member' } as Partial<Agent>)))
+    expect(inRoom.some((e) => e.type === Switch || e.type === CoffeeOwnerRequest)).toBe(false)
+    const out = elements(render(mind({ owner: 'user:u_owner', visibility: 'public', coffee: 'opted_out' } as Partial<Agent>)))
+    expect(out.some((e) => e.type === Switch)).toBe(false)
+    expect(out.some((e) => e.type === CoffeeOwnerRequest)).toBe(true)
+  })
+
+  it('a member who owns a public mind takes it out, with nothing to confirm', async () => {
+    h.admin = false
+    h.principal = 'user:u_owner'
+    await switchOf(mind({ owner: 'user:u_owner', visibility: 'public', coffee: 'member' } as Partial<Agent>))!.props.onChange(false)
+    expect(h.askConfirm).not.toHaveBeenCalled()
+    expect(h.patchAgent).toHaveBeenCalledWith('a_q', { coffee: false })
+  })
+
+  it('a member who owns the private mind can opt it in after confirming the disclosure', async () => {
+    h.admin = false
+    h.principal = 'user:u_owner'
+    h.askConfirm.mockResolvedValue(true)
+    await switchOf(mind({ owner: 'user:u_owner' }))!.props.onChange(true)
+    expect(h.patchAgent).toHaveBeenCalledWith('a_q', { coffee: true })
   })
 
   // Coffee UI r4, stand-in r3 P2: askConfirm only shows a dialog where a ConfirmHost is mounted, and nothing on the

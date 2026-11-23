@@ -111,11 +111,8 @@ def tools_unsupported(error):
     return bool(re.search(r'\b400\b', text)) and bool(_TOOLS_UNSUPPORTED.search(text))
 
 
-# The hive's own refusal of the latest model call, as (say, retry_after), or None: its gateway answers a call it refused
-# for spending or pace with `say`, its sentence for anyone who reads the mind, which names no key, account or person
-# (Hive.note_refusal, spend_rate_refusal), and with retry_after when waiting helps. Singnet keeps only the error's text
-# (AIProvider.chat), so the client's create notes it here (_ensure_client) and hive_services.chat takes it. A provider's
-# own refusal has no say: the gateway passes it on in a fixed sentence (gateway.upstream_refusal) and it stays out.
+# The gateway's 402 carries the hive's sentence for anyone who reads the mind (Hive.note_refusal). Singnet keeps
+# only the error's text (AIProvider.chat), so the client notes the sentence here for hive_services.chat.
 _REFUSAL = None
 
 
@@ -126,14 +123,7 @@ def note_refusal(error):
     say = body.get('say') if isinstance(body, dict) else None
     if not isinstance(say, str) or not say.strip():
         return
-    retry = body.get('retry_after')
-    if not isinstance(retry, (int, float)) or isinstance(retry, bool):
-        headers = getattr(getattr(error, 'response', None), 'headers', None)
-        try:
-            retry = float(headers.get('retry-after')) if hasattr(headers, 'get') else None
-        except (TypeError, ValueError):
-            retry = None
-    _REFUSAL = (re.sub(r'["\\()]', '', say.strip())[:300], retry)
+    _REFUSAL = re.sub(r'["\\()]', '', say.strip())[:300]
 
 
 def take_refusal():

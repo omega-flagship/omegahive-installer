@@ -1,35 +1,58 @@
+// Purpose: verify how Studio and Ask present own-key setup and when they offer the Keys page instead.
 import { describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import type { HiveClient } from '../../api/client'
 
-/**
- * The one add-your-key step where people meet own_key_needed: Studio's card (studioLive/refusals) and the Ask thread
- * (api/ask refusalDetails, the refused row). With the host's step details the sheet replaces "go to Keys"; without them
- * (an older host) the old way on stays. INVENTED data, no network.
- */
 const loc = { hash: '#/', search: '', pathname: '/' }
 const kv = new Map<string, string>()
 const storage = { getItem: (k: string) => kv.get(k) ?? null, setItem: (k: string, v: string) => void kv.set(k, v), removeItem: (k: string) => void kv.delete(k) }
 vi.stubGlobal('window', { location: loc, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), addEventListener() {}, removeEventListener() {}, innerWidth: 1440, innerHeight: 900, localStorage: storage })
 vi.stubGlobal('localStorage', storage)
 
-// a static render reads a zustand store's initial state, so the hive client the sheet needs is supplied here
-const hiveClient: { current: unknown } = { current: null }
-vi.mock('../../store/store', async () => {
-  const actual = await vi.importActual<typeof import('../../store/store')>('../../store/store')
-  const real = actual.useHive
-  const useHive = Object.assign((sel: (x: unknown) => unknown) => sel({ ...real.getState(), client: hiveClient.current ?? real.getState().client }), real)
-  return { ...actual, useHive }
+// Read the current store state when rendering to static markup.
+vi.mock('zustand', async (orig) => {
+  const z = await orig<typeof import('zustand')>()
+  const build = (init: never) => {
+    const api = z.createStore(init)
+    api.getInitialState = api.getState
+    return Object.assign((sel?: never) => z.useStore(api, sel as never), api)
+  }
+  return { ...z, create: ((init?: never) => (init ? build(init) : build)) as never }
 })
 
 const { ApiError } = await import('../../api/client')
-const { refusalDetails } = await import('../../api/ask')
+const { AskRefusal, refusalDetails } = await import('../../api/ask')
+const { useHive } = await import('../../store/store')
+const { threadRows, useAskStore } = await import('../../store/ask')
 const { studioRefusal, OWN_KEY_WORDS, OWN_KEY_SHEET_WORDS } = await import('../studioLive/refusals')
 const { ThreadLog } = await import('../ask/Thread')
 
 const STEP = { provider: 'openrouter', provider_label: 'OpenRouter', has_total: false, suggested_month_usd: 50 }
 const body = (extra: object) => ({ error: { code: 'own_key_needed', message: 'x', scope: 'studio_maker', pays: 'own-key', ...extra } })
 const refusal = (extra: object) => { const b = body(extra); return new ApiError(402, 'own_key_needed', 'x', { envelope: b.error, body: b }) }
+
+function bindAskClient({ details = STEP, canSetMonthlyTotal = true }: { details?: object; canSetMonthlyTotal?: boolean } = {}) {
+  const client: Partial<HiveClient> = {
+    mode: 'live',
+    ask: async () => { throw new AskRefusal(402, 'own_key_needed', 'x', refusalDetails(body(details))) },
+    addKey: async () => { throw new Error('Unexpected key write during static rendering') },
+    myKeyLimits: async () => ({ keys: [], own: [] }),
+    ...(canSetMonthlyTotal ? { setOwnKeyLimit: async () => ({}) } : {}),
+  }
+  const session = 'own-key-wiring'
+  useAskStore.getState().reset()
+  useHive.setState({ client: client as HiveClient, session })
+  useAskStore.getState().bind(session, 'user:p_ada')
+}
+
+function ask(words: string) {
+  return useAskStore.getState().send(words, { route: '#/swarm/s_lyra', experience: 'classic', swarm_id: 's_lyra' })
+}
+
+function renderAskThread(rows = threadRows(useAskStore.getState())) {
+  return renderToStaticMarkup(createElement(ThreadLog, { variant: 'glass', rows }))
+}
 
 describe('own_key_needed meets the one step', () => {
   it('Studio: the host names the step, so the card carries it and says so', () => {
@@ -57,32 +80,43 @@ describe('own_key_needed meets the one step', () => {
     expect(refusalDetails({ error: { code: 'spend_limit', ...STEP } }).keySetup).toBeUndefined()
   })
 
-  it('Ask: the refused row shows the sheet in place of "Add your own key", and asks again with her words', () => {
-    hiveClient.current = { mode: 'live', addKey: async () => ({}), myKeyLimits: async () => ({ keys: [], own: [] }), setOwnKeyLimit: async () => ({}) }
-    const keySetup = { provider: 'openrouter', providerLabel: 'OpenRouter', hasTotal: false, suggestedMonthUsd: 50 }
-    const rows = [
-      { id: 'o#you', op: 'o', kind: 'you' as const, text: 'Plan the picnic' },
-      { id: 'o#refused', op: 'o', kind: 'refused' as const, text: '', reason: 'own_key_needed' as const, keySetup },
-    ]
-    const html = renderToStaticMarkup(createElement(ThreadLog, { variant: 'glass', rows: rows as never }))
+  it('Ask: the latest refusal shows "Add key and ask" in place of "Add your own key"', async () => {
+    bindAskClient()
+    await ask('Plan the picnic')
+    const html = renderAskThread()
     expect(html).toContain('data-own-key-sheet="ask"')
     expect(html).toContain('Add your OpenRouter key')
     expect(html).toContain('Add key and ask')
     expect(html).not.toContain('>Add your own key<')
-    const old = renderToStaticMarkup(createElement(ThreadLog, { variant: 'glass', rows: [rows[0], { ...rows[1], keySetup: undefined }] as never }))
-    expect(old).not.toContain('data-own-key-sheet')
-    expect(old).toContain('Add your own key')
   })
 
-  it('sol R2 P3: a client that cannot set the monthly total keeps "Add your own key" (Keys) instead of a sheet', () => {
-    hiveClient.current = { mode: 'live', addKey: async () => ({}), myKeyLimits: async () => ({ keys: [], own: [] }) }   // no setOwnKeyLimit
-    const keySetup = { provider: 'openrouter', providerLabel: 'OpenRouter', hasTotal: false, suggestedMonthUsd: 50 }
-    const rows = [
-      { id: 'o#you', op: 'o', kind: 'you' as const, text: 'Plan the picnic' },
-      { id: 'o#refused', op: 'o', kind: 'refused' as const, text: '', reason: 'own_key_needed' as const, keySetup },
-    ]
-    const html = renderToStaticMarkup(createElement(ThreadLog, { variant: 'glass', rows: rows as never }))
+  it('Ask: an older refused request only offers the Keys page', async () => {
+    bindAskClient()
+    await ask('Plan the picnic')
+    const olderOp = threadRows(useAskStore.getState()).find((row) => row.kind === 'refused')?.op
+    expect(olderOp).toBeDefined()
+    await ask('Bring a blanket')
+    const rows = threadRows(useAskStore.getState())
+    expect(rows.filter((row) => row.kind === 'refused')).toHaveLength(2)
+    const html = renderAskThread(rows.filter((row) => row.op === olderOp))
     expect(html).not.toContain('data-own-key-sheet')
-    expect(html).toContain('Add your own key')
+    expect(html).not.toContain('>Try again<')
+    expect(html).toContain('>Add your own key<')
+  })
+
+  it('Ask: a host without key setup details still offers "Add your own key"', async () => {
+    bindAskClient({ details: {} })
+    await ask('Plan the picnic')
+    const html = renderAskThread()
+    expect(html).not.toContain('data-own-key-sheet')
+    expect(html).toContain('>Add your own key<')
+  })
+
+  it('Ask: a client that cannot set the monthly total still offers "Add your own key"', async () => {
+    bindAskClient({ canSetMonthlyTotal: false })
+    await ask('Plan the picnic')
+    const html = renderAskThread()
+    expect(html).not.toContain('data-own-key-sheet')
+    expect(html).toContain('>Add your own key<')
   })
 })

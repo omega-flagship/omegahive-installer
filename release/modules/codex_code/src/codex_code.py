@@ -22,9 +22,11 @@ from typing import Iterable
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 OMEGA_ROOT = ROOT.parents[1]
-TRACE_FILE = ROOT / "memory" / "runtime" / "codex_code" / "trace.jsonl"
-JOBS_DIR = ROOT / "memory" / "runtime" / "codex_code" / "jobs"
-EVENTS_FILE = ROOT / "memory" / "runtime" / "codex_code" / "events.metta"
+# the mind's memory folder: OMEGACLAW_MEMORY_DIR when a hive runs the mind, else the checkout's memory folder
+MEMORY = pathlib.Path(os.environ.get("OMEGACLAW_MEMORY_DIR") or ROOT / "memory")
+TRACE_FILE = MEMORY / "runtime" / "codex_code" / "trace.jsonl"
+JOBS_DIR = MEMORY / "runtime" / "codex_code" / "jobs"
+EVENTS_FILE = MEMORY / "runtime" / "codex_code" / "events.metta"
 DEFAULT_PROFILE = os.environ.get("OMEGACLAW_CODEX_PROFILE", "qwen-coder-next")
 DEFAULT_MODEL = os.environ.get("OMEGACLAW_CODEX_MODEL", "qwen/qwen3-coder-next")
 DEFAULT_CWD = pathlib.Path(os.environ.get("OMEGACLAW_CODEX_CWD", str(ROOT)))

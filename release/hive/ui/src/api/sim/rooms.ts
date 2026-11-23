@@ -238,7 +238,7 @@ export class SimRooms {
   removeMember(id: string, member: string): Room {
     const r = this.row(id)
     if (this.isTeam(r)) throw new ApiError(400, 'bad_request', "a swarm's team room holds its owner and its minds; it follows the swarm")
-    if (r.kind === 'coffee') throw new ApiError(400, 'bad_request', "the Coffee Room can't be left; an admin takes a mind out from its settings")
+    if (r.kind === 'coffee') throw new ApiError(400, 'bad_request', "the Coffee Room can't be left; a mind's owner takes it out from its settings")
     if (r.kind === 'dm') throw new ApiError(400, 'bad_request', "a DM's members are fixed")
     r.members = r.members.filter((m) => m.member !== member)
     this.d.emit(r.id, 'members')

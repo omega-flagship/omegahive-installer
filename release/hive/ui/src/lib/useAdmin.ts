@@ -1,7 +1,8 @@
+import { useEffect } from 'react'
 import type { Me } from '../api/client'
 import { useHive } from '../store/store'
 import { readMe } from './readMe'
-import { need, useResource } from './useResource'
+import { need, noteRights, useResource } from './useResource'
 
 /** An admin session: the hive password (the operator) or a person with the admin role, as the hive's admin() check. */
 export const isAdminMe = (me: Pick<Me, 'kind' | 'role'> | null | undefined): boolean => !!me && (me.kind === 'password' || me.role === 'admin')
@@ -14,6 +15,11 @@ export function useMe(): { me: Me | undefined; admin: boolean; loaded: boolean; 
   const client = useHive((s) => s.client)
   // a sign-in that changed mid-read is read again under the new one, never shown as a failure (readMe)
   const res = useResource(() => readMe({ me: need(client, 'me') }), { isEmpty: () => false })
+  // a change of who is signed in, or of their role, lets reads the hive refused with a 403 read again (noteRights)
+  const me = res.data
+  useEffect(() => {
+    if (me) noteRights(`${me.principal}|${me.kind}|${me.role ?? ''}`)
+  }, [me])
   return { me: res.data, admin: isAdminMe(res.data), loaded: res.status !== 'loading', failed: res.status === 'error' }
 }
 

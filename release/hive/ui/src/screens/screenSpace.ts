@@ -36,12 +36,14 @@ import program from '../features/programs/program.metta?raw'
 import studioRecent from '../forms/designCanvas/recent.metta?raw'
 import lifecycle from '../features/lifecycle/lifecycle.metta?raw'
 import profile from '../features/keys/profile.metta?raw'
+import connectors from '../features/keys/connectors.metta?raw'
 import explore from '../features/explore/explore.metta?raw'
 import flow from '../features/flow/flow.metta?raw'
 import conversations from '../features/dot/conversations.metta?raw'
 import createOffer from '../features/dot/createOffer.metta?raw'
 import refused from '../features/dot/refused.metta?raw'
 import askConnect from '../features/ask/connect.metta?raw'
+import ownCoding from '../features/dot/ownCoding.metta?raw'
 import setup from '../features/setup/setup.metta?raw'
 import firstLightFree from '../features/firstlight/free.metta?raw'
 import assetRemoval from '../features/assets/removal.metta?raw'
@@ -56,6 +58,7 @@ import beliefLink from '../features/minds/beliefLink.metta?raw'
 import askScreen from './ask.metta?raw'
 import askThread from '../features/ask/thread.metta?raw'
 import stopped from '../features/tasks/stopped.metta?raw'
+import askGoAhead from '../features/ask/goAhead.metta?raw'
 import askAnswer from '../features/ask/answer.metta?raw'
 
 export { readProps, ScreensError }
@@ -83,12 +86,14 @@ export const SCREEN_SOURCES: readonly (readonly [string, string])[] = [
   ['studio-recent', studioRecent],
   ['lifecycle', lifecycle],
   ['profile', profile],
+  ['connectors', connectors],
   ['explore', explore],
   ['flow', flow],
   ['conversations', conversations],
   ['create-offer', createOffer],
   ['refused', refused],
   ['ask-connect', askConnect],
+  ['own-coding', ownCoding],
   ['setup', setup],
   ['first-light-free', firstLightFree],
   ['asset-removal', assetRemoval],
@@ -103,6 +108,7 @@ export const SCREEN_SOURCES: readonly (readonly [string, string])[] = [
   ['ask', askScreen],
   ['ask-thread', askThread],
   ['stopped', stopped],
+  ['ask-go-ahead', askGoAhead],
   ['ask-answer', askAnswer],
 ]
 

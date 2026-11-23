@@ -1,3 +1,5 @@
+# Purpose: component tests of a controller's spawn admission: the request's budget, the lease, the Foundation's
+# host-bound limits and the books a child's allocation and calls are held on.
 # Purpose: component tests of a controller starting child minds within its request's lease, budget and caps.
 """Source-only bounded component tests: actual Minds/DB/budget code, inert host/process seams.
 
@@ -210,7 +212,6 @@ class InertHost:
                       binding=(PRINCIPAL, "code", TEAM, CONTROLLER, "synthetic-bound-version"))
         self.foundation_limits = limits
         self.foundation = SimpleNamespace(
-            controller_ceiling=lambda agent: .50 if agent == CONTROLLER else None,
             prepare_request=lambda team: None,
             admission_limits=lambda team, controller=None:
                 dict(self.foundation_limits) if team == TEAM else None,
@@ -377,16 +378,6 @@ def test_foundation_controller_cap_preserves_lower_actual_cap(world):
     assert exc.value.code == "spend_limit" and w.count_children() == 0
 
 
-def test_foundation_controller_ceiling_applies_when_stored_cap_is_higher(world):
-    w = world
-    w.bind_foundation()
-    w.db.execute("UPDATE agents SET budget_usd=1, spent_usd=.3 WHERE id=?", (CONTROLLER,))
-    rid, _ = w.seed_request(.25, 1)
-    with pytest.raises(ComponentError) as exc:
-        asyncio.run(w.spawn(w.spawn_body(rid)))
-    assert exc.value.code == "spend_limit" and w.count_children() == 0
-
-
 def test_foundation_one_child_count_is_per_request_not_reset_by_a_new_lease(world):
     w = world
     w.bind_foundation()
@@ -496,10 +487,10 @@ def test_zero_controller_uses_original_governing_auto_limits_when_present(world)
 
 
 @pytest.mark.parametrize("amount,accepted", [(.25, True), (.250001, False), (.60, False)])
-def test_foundation_ceiling_also_bounds_own_controller_reserve_after_child(world, amount, accepted):
+def test_a_foundation_controllers_own_cap_also_bounds_its_own_reserve_after_child(world, amount, accepted):
     w = world
     w.bind_foundation()
-    w.db.execute("UPDATE agents SET budget_usd=1 WHERE id=?", (CONTROLLER,))
+    w.db.execute("UPDATE agents SET budget_usd=.50 WHERE id=?", (CONTROLLER,))
     rid, _ = w.seed_request(.25, 1)
     assert asyncio.run(w.spawn(w.spawn_body(rid)))[0] == 201
     rows = w.modules.cost.host_budget_snapshot(w, CONTROLLER)

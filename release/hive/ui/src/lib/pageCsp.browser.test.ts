@@ -22,7 +22,7 @@ const OTHER_NONCE = 'aaaaaaaa-1111-2222-3333-444444444444'
 const CHANNEL = '12345678-1234-1234-1234-123456789abc'
 
 // hive/core/app.py page_csp(nonce), word for word
-const POLICY = (nonce: string) => `default-src 'self'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'nonce-${nonce}'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`
+const POLICY = (nonce: string) => `default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'nonce-${nonce}'; style-src 'self' 'nonce-${nonce}'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`
 
 const APP = {
   'index.html': '<html lang="en"><head><link rel="stylesheet" href="./style.css"></head><body><p id="p" style="font-weight:700">x</p><script type="module" src="./app.js"></script></body></html>',

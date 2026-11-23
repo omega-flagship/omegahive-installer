@@ -37,7 +37,9 @@ export { askFlags, hostAllows, notAllowedWords, readAskFlags } from '../api/idle
 /** The identity an act started under (Health idle r1.4): pass it to the store's checked Remind / Sleep. */
 export { storeIdentity } from '../store/store'
 
+import { readMe } from '../lib/readMe'
 import { navigate } from '../lib/router'
+import { isAdminMe } from '../lib/useAdmin'
 import { useHive } from '../store/store'
 /** Open a classic page over the experience (it closes back to the experience). */
 export const openClassic = navigate
@@ -100,10 +102,15 @@ const wrapped = (<T,>(selector?: (s: SdkState) => T) => useHive((s) => (selector
 const previewHive: SdkHive = Object.assign(wrapped, { ...useHive, getState: () => guarded(useHive.getState()) })
 export { previewHive as useHive }
 
-/** Read-only: this hive's people and invitations (null when the hive does not list them, e.g. a member's view). */
+/**
+ * Read-only: this hive's people and invitations (null when the hive does not list them, e.g. a member's view). GET
+ * /api/people is admin-only, so who is signed in is read first and a member's view never asks it (acceptance-tests#13
+ * N1: each ask was a 403 in the member's recent errors).
+ */
 export async function readPeople(): Promise<{ people: import('../api/client').Person[]; invites: import('../api/client').Invite[] } | null> {
   const c = useHive.getState().client
   if (!c?.listPeople) return null
+  if (typeof c.me === 'function' && !isAdminMe(await readMe(c))) return null
   const r = await c.listPeople()
   return { people: r.people, invites: r.invites }
 }

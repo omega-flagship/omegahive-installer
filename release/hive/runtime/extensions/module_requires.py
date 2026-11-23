@@ -18,19 +18,50 @@ entry                       met when                                            
 
 Unknown counts as met: a module is left out only when an entry is shown missing, never on a guess, so a service that
 is not up yet when the mind loads, or a tool whose version would take running it, keeps its module in.
+
+``need`` words an entry for a person and for the mind, as in "code_workspace needs the OmegaCode client": the
+mind's boot receipt carries a left-out module's unmet entries, and the hive words them with this same rule
+(hive/core/inventory.py), since the receipt never carries the mind's own words.
+
+A manifest that cannot be read counts the same way: unreadable, not TOML, a ``requires`` that is not a list, or a
+Python without a TOML reader (tomllib came in 3.11, and the manifests ask for 3.10; tomli serves where it is installed)
+gives no entry shown missing, so its module loads as it did before manifests were read, and the reason is logged once.
+A module.toml never stops the parser's import, and so a mind's boot.
 """
 
 import importlib.machinery
 import importlib.metadata
+import logging
 import os
 import pathlib
 import re
 import shutil
 import sys
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:          # Python 3.10
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        tomllib = None
 
 MET, MISSING, UNKNOWN = "met", "missing", "unknown"
 _ENTRY = re.compile(r"^\s*([A-Za-z0-9_.@/+-]+?)\s*(>=|==|:)\s*(\S.*?)\s*$")
+# An entry need() words: one short token, so the words a receipt's entry turns into are bounded
+_PLAIN = re.compile(r"[A-Za-z0-9_.@/+:=<>-]{1,100}\Z")
+# the logger hive_services.module_loader names left-out modules on, so a mind's log holds both
+_LOG = logging.getLogger("hive_modules")
+_WARNED = set()
+
+
+def _cannot_read(module_dir, why):
+    """Log once per module and reason that its requires can't be told, and count them as met."""
+    key = (str(module_dir), why)
+    if key not in _WARNED:
+        _WARNED.add(key)
+        _LOG.warning("module %s: %s, so its requires count as met", pathlib.Path(module_dir).name, why)
+    return []
 
 
 def _version(text):
@@ -74,9 +105,10 @@ def _omegacode(environ):
     return MISSING, f"no OmegaCode client for this mind: {where} and this Python's path has none"
 
 
-# The services a mind can be shown to reach or not at load, each by the client it would reach it with. A service with
-# no entry here cannot be told, so it counts as met.
-SERVICES = {"omegacode": _omegacode}
+# The services a mind can be shown to reach or not at load: each by the client it would reach it with, and what that
+# client is called where a module left out for want of it is named (need). A service with no entry here cannot be
+# told, so it counts as met.
+SERVICES = {"omegacode": (_omegacode, "the OmegaCode client")}
 
 
 def _installed(name, op, want, environ):
@@ -107,8 +139,8 @@ def requirement_state(entry, environ=None):
         return UNKNOWN, f"{entry!r} is not name>=version, name==version or kind:value"
     name, op, value = form.groups()
     if op == ":":
-        probe = SERVICES.get(value) if name == "service" else None
-        return probe(environ) if probe else (UNKNOWN, f"no check for {entry}")
+        service = SERVICES.get(value) if name == "service" else None
+        return service[0](environ) if service else (UNKNOWN, f"no check for {entry}")
     if name == "python":
         have = "{}.{}.{}".format(*sys.version_info[:3])
         meets = _meets(have, op, value)
@@ -118,16 +150,43 @@ def requirement_state(entry, environ=None):
     return _installed(name, op, value, environ)
 
 
+def need(entry):
+    """What ``entry`` asks for, in words that follow "needs": "the OmegaCode client" for service:omegacode, "Python
+    3.12 or newer" for python>=3.12, "websockets 12 or newer" for websockets>=12, "node 20" for node==20. None for an
+    entry no rule above can show missing (it never leaves a module out) and for one that isn't a single short token."""
+    text = str(entry)
+    form = _ENTRY.match(text) if _PLAIN.match(text) else None
+    if form is None:
+        return None
+    name, op, value = form.groups()
+    if op == ":":
+        service = SERVICES.get(value) if name == "service" else None
+        return service[1] if service else None
+    label = "Python" if name == "python" else name
+    return f"{label} {value} or newer" if op == ">=" else f"{label} {value}"
+
+
 def unmet(module_dir, environ=None):
     """[(entry, why)] for each requires entry of module_dir/module.toml shown missing here, in the manifest's order;
-    [] when every entry is met or cannot be told, or when the directory has no manifest."""
+    [] when every entry is met or cannot be told, when the directory has no manifest, and when the manifest can't be
+    read (logged once, see the module's docstring)."""
     manifest = pathlib.Path(module_dir) / "module.toml"
     try:
         text = manifest.read_text(encoding="utf-8")
     except FileNotFoundError:
         return []
+    except (OSError, UnicodeDecodeError) as exc:
+        return _cannot_read(module_dir, f"its module.toml can't be read ({type(exc).__name__}: {exc})")
+    if tomllib is None:
+        return _cannot_read(module_dir, f"Python {sys.version_info[0]}.{sys.version_info[1]} has no TOML reader (tomllib or tomli)")
+    try:
+        requires = tomllib.loads(text).get("requires", [])
+    except tomllib.TOMLDecodeError as exc:
+        return _cannot_read(module_dir, f"its module.toml isn't TOML ({exc})")
+    if not isinstance(requires, list):
+        return _cannot_read(module_dir, f"its requires is a {type(requires).__name__}, not a list")
     found = []
-    for entry in tomllib.loads(text).get("requires", []):
+    for entry in requires:
         state, why = requirement_state(entry, environ)
         if state == MISSING:
             found.append((entry, why))

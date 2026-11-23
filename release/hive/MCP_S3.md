@@ -202,7 +202,7 @@ One task (goal) in full: detail, binding and binding_digest, deadline, result sc
 
 ### `hive_goal_result`
 
-Report on a task (goal) you hold: done with a result, failed with why, or waiting on a person. A bound goal needs its binding_digest (top level, exactly as hive_goal_get shows it). data is the structured result; it is checked against the goal's result schema.
+Report on a task you hold: done with a result, failed with why, or waiting on a person. A bound task needs its binding_digest (top level, exactly as hive_goal_get shows it). For Research, pass the claim_ref from hive_goal_claim as goal_id. The task's result schema checks the structured result in data.
 
 ```json
 {
@@ -241,7 +241,7 @@ Report on a task (goal) you hold: done with a result, failed with why, or waitin
 
 ### `hive_goal_heartbeat`
 
-Renew the lease on a task (goal) you hold (also resumes it from waiting). Never reopens cancelled, expired or done work.
+Renew the lease on a task you hold and resume it if it is waiting. For Research, pass the claim_ref from hive_goal_claim as goal_id. Research leases renew only on recorded progress. Never reopens cancelled, expired or done work.
 
 ```json
 {

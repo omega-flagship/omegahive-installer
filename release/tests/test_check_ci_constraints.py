@@ -51,6 +51,25 @@ class CompareTests(unittest.TestCase):
         self.assertIn("not a name==version line", problems[0])
 
 
+class AllowExtraTests(unittest.TestCase):
+    def test_a_package_beyond_the_pins_passes(self):
+        self.assertEqual(check.compare(PIN, FREEZE + "chromadb==1.5.9\n", allow_extra=True), [])
+
+    def test_a_pin_not_installed_still_fails(self):
+        freeze = FREEZE.replace("anyio==4.16.0\n", "") + "chromadb==1.5.9\n"
+        problems = check.compare(PIN, freeze, allow_extra=True)
+        self.assertTrue(any("in PIN but not installed: anyio" in p for p in problems), problems)
+
+    def test_a_pin_at_another_version_still_fails(self):
+        freeze = FREEZE.replace("anyio==4.16.0", "anyio==4.15.1") + "chromadb==1.5.9\n"
+        problems = check.compare(PIN, freeze, allow_extra=True)
+        self.assertTrue(any("version differs: anyio" in p for p in problems), problems)
+
+    def test_an_unparsable_freeze_line_still_fails(self):
+        problems = check.compare(PIN, FREEZE + "local-pkg @ file:///tmp/local_pkg\n", allow_extra=True)
+        self.assertTrue(problems)
+
+
 class RequirementsTests(unittest.TestCase):
     def test_requirements_met_with_extras_stripped(self):
         requirements = "anyio>=4\nuvicorn[standard]>=0.27\nPyYAML\n"

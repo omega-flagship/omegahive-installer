@@ -5,6 +5,7 @@ import {
   countSkills,
   exportBlockers,
   filterSkills,
+  leftOutWords,
   parseTar,
   pendingExport,
   readBundle,
@@ -80,11 +81,22 @@ describe('tool inventory', () => {
   const skills = [skill('send', 'callable'), skill('query', 'callable'), skill('nal-step', 'imported', 'nal'), skill('shell', 'unknown')]
 
   it('counts and filters', () => {
-    expect(countSkills(skills)).toEqual({ callable: 2, imported: 1, configured: 0, unknown: 1 })
+    expect(countSkills(skills)).toEqual({ callable: 2, imported: 1, configured: 0, 'left-out': 0, unknown: 1 })
     expect(filterSkills(skills, 'callable').map((s) => s.id)).toEqual(['send', 'query'])
     expect(filterSkills(skills, 'not-callable').map((s) => s.id)).toEqual(['nal-step', 'shell'])
     expect(filterSkills(skills, 'all', 'message').map((s) => s.id)).toEqual(['send'])
     expect(filterSkills(skills, 'all', 'NAL').map((s) => s.id)).toEqual(['nal-step'])
+  })
+
+  it('counts a left-out skill as not callable and says what its module needs', () => {
+    const needs = [{ requires: 'service:omegacode', needs: 'the OmegaCode client' }]
+    const open = { ...skill('code-open', 'left-out', 'code_workspace'), left_out: needs }
+    expect(countSkills([...skills, open])['left-out']).toBe(1)
+    expect(filterSkills([...skills, open], 'not-callable').map((s) => s.id)).toContain('code-open')
+    expect(leftOutWords(needs)).toBe('needs the OmegaCode client')
+    expect(leftOutWords([...needs, { requires: 'node>=20', needs: 'node 20 or newer' }])).toBe('needs the OmegaCode client and node 20 or newer')
+    expect(leftOutWords([])).toBeNull()
+    expect(leftOutWords(null)).toBeNull()
   })
 
   it('says how far to trust the list', () => {

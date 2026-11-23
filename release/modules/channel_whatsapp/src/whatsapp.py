@@ -1,9 +1,12 @@
+# Purpose: Launch the WhatsApp bridge and relay channel messages through it.
 import base64
+import hmac
 import json
 import mimetypes
 import os
 import pathlib
 import re
+import secrets
 import stat
 import subprocess
 import time
@@ -16,12 +19,20 @@ _port = 3055
 _target_jid = ""
 _primary_jid = ""
 _prefix = ""
+_bridge_verified = False
 _bridge_dir = pathlib.Path(__file__).resolve().parent / "whatsapp_bridge"
 _last_events = []
 
 
 def _url(path):
     return f"http://127.0.0.1:{_port}{path}"
+
+
+def _bridge_key():
+    token = os.environ.get("HIVE_WS_TOKEN")
+    if token and os.environ.get("HIVE_API_URL"):
+        return hmac.digest(token.encode("utf-8"), b"omegahive whatsapp bridge/1", "sha256")
+    return None
 
 
 def _json_request(method, path, payload=None, timeout=10):
@@ -31,6 +42,11 @@ def _json_request(method, path, payload=None, timeout=10):
         data = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(_url(path), data=data, headers=headers, method=method)
+    key = _bridge_key()
+    if key:
+        if not _bridge_verified and not _bridge_alive():
+            raise RuntimeError(f"WhatsApp bridge is not listening on port {_port}")
+        req.add_unredirected_header("Authorization", f"Bearer {key.hex()}")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8", errors="ignore"))
@@ -46,6 +62,30 @@ def _json_request(method, path, payload=None, timeout=10):
 
 
 def _bridge_alive():
+    global _bridge_verified
+    key = _bridge_key()
+    if key:
+        # A one-use proof authenticates both ends without sending the bridge key to an unknown listener.
+        challenge = secrets.token_hex(16)
+        nonce = challenge.encode("ascii")
+        request_mac = hmac.digest(key, b"status-request:" + nonce, "sha256").hex()
+        response_mac = hmac.digest(key, b"status-response:" + nonce, "sha256").hex()
+        request = urllib.request.Request(_url("/status"), headers={"X-Hive-WhatsApp-Challenge": challenge})
+        request.add_unredirected_header("Authorization", f"Bearer {request_mac}")
+        try:
+            with urllib.request.urlopen(request, timeout=2) as response:
+                status = json.load(response)
+            if isinstance(status, dict) and status.get("ok") and isinstance(status.get("proof"), str):
+                if hmac.compare_digest(status["proof"].encode("utf-8"), response_mac.encode("ascii")):
+                    _bridge_verified = True
+                    return True
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, ConnectionRefusedError):
+                return False
+        except (OSError, ValueError):
+            pass
+        raise RuntimeError(f"Cannot use WhatsApp port {_port}: the existing bridge did not authenticate for this mind")
+
     try:
         payload = _json_request("GET", "/health", timeout=2)
         return bool(payload.get("ok"))
@@ -131,7 +171,8 @@ def _validate_reply_jid(jid):
 
 
 def start_whatsapp(target_jid="", port=3055, prefix="", primary_jid=""):
-    global _proc, _port, _target_jid, _prefix, _primary_jid
+    global _proc, _port, _target_jid, _prefix, _primary_jid, _bridge_verified
+    _bridge_verified = False
     _target_jid = str(target_jid or "").strip()
     _primary_jid = str(primary_jid or "").strip()
     _prefix = str(prefix or "")
@@ -140,9 +181,7 @@ def start_whatsapp(target_jid="", port=3055, prefix="", primary_jid=""):
     except Exception:
         _port = 3055
 
-    # Reuse an already-linked bridge on the requested port. This lets the
-    # standard OmegaClaw run command coexist with a bridge started for QR
-    # setup or manual testing.
+    # Standalone can reuse a manually paired bridge. Hive mode verifies the mind's bridge first.
     if _bridge_alive():
         if _primary_jid:
             try:
@@ -153,7 +192,12 @@ def start_whatsapp(target_jid="", port=3055, prefix="", primary_jid=""):
 
     env = os.environ.copy()
     env["OMEGACLAW_WA_PORT"] = str(_port)
-    env.setdefault("OMEGACLAW_WA_AUTH_DIR", str(_bridge_dir / "auth"))
+    if env.get("HIVE_API_URL") and env.get("HIVE_WS_TOKEN"):
+        env.pop("OMEGACLAW_WA_AUTH_DIR", None)
+        env["OMEGACLAW_WA_AUTH"] = "hive"
+    else:
+        env.pop("OMEGACLAW_WA_AUTH", None)
+        env.setdefault("OMEGACLAW_WA_AUTH_DIR", str(_bridge_dir / "auth"))
     env.setdefault("OMEGACLAW_WA_EXPECT_SELF_NAME", "")
     env.setdefault("OMEGACLAW_WA_FORBID_SELF_NAMES", "")
     env["OMEGACLAW_WA_TARGET_JID"] = _target_jid
@@ -172,7 +216,8 @@ def start_whatsapp(target_jid="", port=3055, prefix="", primary_jid=""):
 
 
 def stop_whatsapp():
-    global _proc
+    global _proc, _bridge_verified
+    _bridge_verified = False
     if _proc and _proc.poll() is None:
         _proc.terminate()
         try:

@@ -1,5 +1,6 @@
 """Purpose: an unlisted command asks; the pinned existing gate heads keep their reviewed default decisions, 6606's
-except the closed list of omega-flagship/omegahive#232, which asks (#230 step 5)."""
+except the closed list of omega-flagship/omegahive#232, which asks (#230 step 5), and the heads that build software,
+which a mind is refused until its owner switches its own coding on (omega-flagship/omegahive#395, own_code)."""
 import json
 from pathlib import Path
 
@@ -42,6 +43,22 @@ def test_existing_6606_command_heads_keep_their_reviewed_defaults(client, monkey
     for skill, expected in pinned['defaults'].items():
         assert command_skill(f'({skill})') == skill, skill
         assert hive.policy.decide(agent, skill)[0] == expected, skill
+
+
+def test_each_head_that_builds_software_is_explained_and_comes_back_with_its_owner_s_switch(client, monkeypatch):
+    """The fixture's own_code block explains every pinned default Jon's line on omega-flagship/omegahive#395 changed:
+    the wall refuses exactly the heads it lists, and once the mind's owner switches its own coding on each has the
+    default it had before."""
+    hive, agent = mind(client)
+    monkeypatch.setattr(hive.google_connector, 'mind_allowed', lambda _agent: True)
+    pinned = json.loads((Path(__file__).parent / 'fixtures/policy_defaults_6606.json').read_text())
+    was = pinned['own_code']['was']
+    assert {skill for skill in pinned['defaults'] if hive.policy.own_code(agent, skill)} == set(was)
+    assert {pinned['defaults'][skill] for skill in was} == {'deny'}
+    hive.db.execute('UPDATE agents SET owner = ? WHERE id = ?', ('user:u_owner', agent['id']))
+    hive.update_agent(agent['id'], {'options': {'own_coding': True}}, by='user:u_owner')
+    coding = hive.agent(agent['id'])
+    assert {skill: hive.policy.decide(coding, skill)[0] for skill in was} == was
 
 
 @pytest.mark.parametrize('skill', ['repo-query', 'generate-image', 'code-test-run', 'persistent-note'])

@@ -40,6 +40,9 @@ export type Statement =
   | { say: 'compare'; a: string; b: string; task: string | null }
   | { say: 'putAway'; key: string }
   | { say: 'clear' }
+  /** Everything older than the newest show, compare or clear, as `foldLog` keeps it: the keys it named since the newest
+   *  clear, newest first, and its newest task. */
+  | { say: 'before'; keys: string[]; task: string | null }
 export interface LearnedShares {
   dir: Dir
   kinds: string[]
@@ -141,6 +144,64 @@ function statementAtom(s: Statement): Atom {
     case 'compare': return E(S('Compare'), key(s.a), key(s.b), task(s.task))
     case 'putAway': return E(S('PutAway'), key(s.key))
     case 'clear': return E(S('Clear'))
+    case 'before': return E(S('Before'), E(...s.keys.map(key)), task(s.task))
+  }
+}
+
+/**
+ * The log as MeTTa reads it, and no longer: the newest show, compare or clear (the anchor), each item's newest recall
+ * or put-away after it, and everything older folded into one before statement, the keys it named since the newest
+ * clear and its newest task. That is all lib_arrange.metta reads: the view walks back only to the anchor, where a newer
+ * recall or put-away of an item undoes an older one, and the tray and the unknown keys are the keys named since the
+ * newest clear. So composing the folded log answers what the whole log answers, which arrange.test.ts checks on seeded
+ * logs, and the log stays at most the items named after the anchor plus two statements, where keeping only the newest
+ * 64 statements dropped the anchor in a long session and still cost a drag frame 50 to 60 ms.
+ * Time: O(l + k) for l statements naming k keys in all.
+ */
+export function foldLog(log: readonly Statement[]): Statement[] {
+  const after: Statement[] = []
+  const latest = new Set<string>()
+  let i = log.length - 1
+  for (; i >= 0; i--) {
+    const s = log[i]
+    if (s.say !== 'recall' && s.say !== 'putAway') break
+    if (!latest.has(s.key)) {
+      latest.add(s.key)
+      after.push(s)
+    }
+  }
+  after.reverse()
+  if (i < 0) return after
+  const anchor = log[i]
+  const keys: string[] = []
+  const named = new Set<string>()
+  let task: string | null = null
+  let naming = anchor.say !== 'clear'
+  const fold = (s: Statement) => {
+    if (s.say === 'clear') naming = false
+    if (naming) {
+      for (const k of statementKeys(s)) {
+        if (named.has(k)) continue
+        named.add(k)
+        keys.push(k)
+      }
+    }
+    if (task === null && (s.say === 'show' || s.say === 'compare' || s.say === 'before')) task = s.task
+  }
+  // a before met first ends the walk as the log's end does, but names what it holds and reads on past it, so what is
+  // older folds into it
+  if (anchor.say === 'before') fold(anchor)
+  for (let j = i - 1; j >= 0; j--) fold(log[j])
+  const before: Statement[] = keys.length > 0 || task !== null ? [{ say: 'before', keys, task }] : []
+  return anchor.say === 'before' ? [...before, ...after] : [...before, anchor, ...after]
+}
+
+function statementKeys(s: Statement): string[] {
+  switch (s.say) {
+    case 'show': case 'recall': case 'putAway': return [s.key]
+    case 'compare': return [s.a, s.b]
+    case 'before': return s.keys
+    case 'clear': return []
   }
 }
 
@@ -177,7 +238,11 @@ function stateAtoms(st: ArrangeState): Atom[] {
     atoms.push(E(S('Shares'), S(l.dir), E(...l.kinds.map(kind)), E(...l.shares.map((x) => n(x, 'share')))))
   }
   atoms.push(E(S('Log'), E(...[...st.log].reverse().map(statementAtom))))
-  if (st.dragging) atoms.push(E(S('Dragging'), groupPath(st.dragging.group), n(st.dragging.index, 'divider'), n(st.dragging.at, 'divider position')))
+  if (st.dragging) {
+    // a divider is named by its whole index in its group; whether the group still has it is MeTTa's to say
+    if (!Number.isInteger(st.dragging.index) || st.dragging.index < 0) throw new ArrangeError(`bad divider ${st.dragging.index}`)
+    atoms.push(E(S('Dragging'), groupPath(st.dragging.group), n(st.dragging.index, 'divider'), n(st.dragging.at, 'divider position')))
+  }
   return atoms
 }
 

@@ -1,5 +1,4 @@
-// Purpose: the WhatsApp bridge: a loopback HTTP service that links one WhatsApp account for the channel, keeps the files
-// people send in the mind's memory folder under inbox/whatsapp_<label>, and relays messages, read marks and sends.
+// Purpose: Link a WhatsApp account and relay channel messages through a loopback HTTP service.
 import makeWASocket, {
   DisconnectReason,
   downloadMediaMessage,
@@ -15,13 +14,18 @@ import { fileURLToPath } from 'node:url'
 import qrcodeTerminal from 'qrcode-terminal'
 import QRCode from 'qrcode'
 import pino from 'pino'
+import { useHiveAuthState } from './hive-auth.mjs'
 
 process.umask(0o077)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const coreDir = path.resolve(__dirname, '..', '..')
-const authDir = process.env.OMEGACLAW_WA_AUTH_DIR || path.join(__dirname, 'auth')
-const authLabel = path.basename(authDir).replace(/[^A-Za-z0-9_-]+/g, '_') || 'auth'
+const hiveAuth = process.env.OMEGACLAW_WA_AUTH === 'hive'
+const bridgeKey = hiveAuth
+  ? crypto.createHmac('sha256', process.env.HIVE_WS_TOKEN || '').update('omegahive whatsapp bridge/1').digest()
+  : null
+const authDir = hiveAuth ? null : process.env.OMEGACLAW_WA_AUTH_DIR || path.join(__dirname, 'auth')
+const authLabel = authDir ? path.basename(authDir).replace(/[^A-Za-z0-9_-]+/g, '_') || 'auth' : 'auth'
 // The mind's memory folder, where the files people send it land so the vision and audio senses can read them:
 // OMEGACLAW_MEMORY_DIR when a hive runs the mind, else the memory folder of the checkout this file runs from (the
 // nearest folder above it holding modules/).
@@ -33,9 +37,11 @@ function checkoutDir(start) {
 }
 const memoryDir = process.env.OMEGACLAW_MEMORY_DIR || path.join(checkoutDir(__dirname), 'memory')
 const inboxDir = path.join(memoryDir, 'inbox', `whatsapp_${authLabel}`)
-const inboxLog = path.join(coreDir, 'memory', `whatsapp_inbox_${authLabel}.jsonl`)
-const qrPng = path.join(coreDir, 'memory', `whatsapp_qr_${authLabel}.png`)
-const qrTxt = path.join(coreDir, 'memory', `whatsapp_qr_${authLabel}.txt`)
+// Standalone bridges still read their inbox logs from their original location.
+const stateDir = hiveAuth ? memoryDir : path.join(coreDir, 'memory')
+const inboxLog = path.join(stateDir, `whatsapp_inbox_${authLabel}.jsonl`)
+const qrPng = path.join(stateDir, `whatsapp_qr_${authLabel}.png`)
+const qrTxt = path.join(stateDir, `whatsapp_qr_${authLabel}.txt`)
 const port = Number(process.env.OMEGACLAW_WA_PORT || '3055')
 const targetJid = process.env.OMEGACLAW_WA_TARGET_JID || ''
 const outboundPrefix = Object.prototype.hasOwnProperty.call(process.env, 'OMEGACLAW_WA_PREFIX')
@@ -53,34 +59,38 @@ const listenJids = new Set((process.env.OMEGACLAW_WA_LISTEN_JIDS || '').split(',
 const includeOwnMessages = process.env.OMEGACLAW_WA_INCLUDE_OWN === '1'
 
 fs.mkdirSync(inboxDir, { recursive: true, mode: 0o700 })
-fs.mkdirSync(authDir, { recursive: true, mode: 0o700 })
-try {
-  fs.chmodSync(authDir, 0o700)
-} catch {}
 
-function assertExpectedIdentity() {
-  const credsPath = path.join(authDir, 'creds.json')
-  if (!fs.existsSync(credsPath)) return
-  try {
-    const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'))
-    const me = creds?.me || {}
-    const name = String(me.name || '')
-    const id = String(me.id || '')
-    const lid = String(me.lid || '')
-    const expected = (process.env.OMEGACLAW_WA_EXPECT_SELF_NAME || '').split(',').map(s => s.trim()).filter(Boolean)
-    const forbidden = (process.env.OMEGACLAW_WA_FORBID_SELF_NAMES || '').split(',').map(s => s.trim()).filter(Boolean)
-    if (forbidden.includes(name) && process.env.OMEGACLAW_WA_ALLOW_FORBIDDEN_IDENTITY !== '1') {
-      throw new Error(`Refusing WhatsApp bridge: auth identity name=${name} id=${id} lid=${lid}`)
-    }
-    if (expected.length && !expected.includes(name)) {
-      throw new Error(`Refusing WhatsApp bridge: expected identity ${expected.join('/')} but found name=${name} id=${id} lid=${lid}`)
-    }
-  } catch (err) {
-    console.error('[WHATSAPP] Identity guard failed:', err?.message || err)
-    process.exit(78)
+function assertExpectedIdentity(creds) {
+  const me = creds?.me || {}
+  const name = String(me.name || '')
+  const id = String(me.id || '')
+  const lid = String(me.lid || '')
+  const expected = (process.env.OMEGACLAW_WA_EXPECT_SELF_NAME || '').split(',').map(s => s.trim()).filter(Boolean)
+  const forbidden = (process.env.OMEGACLAW_WA_FORBID_SELF_NAMES || '').split(',').map(s => s.trim()).filter(Boolean)
+  if (forbidden.includes(name) && process.env.OMEGACLAW_WA_ALLOW_FORBIDDEN_IDENTITY !== '1') {
+    throw new Error(`Refusing WhatsApp bridge: auth identity name=${name} id=${id} lid=${lid}`)
+  }
+  if (expected.length && !expected.includes(name)) {
+    throw new Error(`Refusing WhatsApp bridge: expected identity ${expected.join('/')} but found name=${name} id=${id} lid=${lid}`)
   }
 }
-assertExpectedIdentity()
+
+async function prepareAuth() {
+  if (hiveAuth) return useHiveAuthState(assertExpectedIdentity)
+
+  fs.mkdirSync(authDir, { recursive: true, mode: 0o700 })
+  try {
+    fs.chmodSync(authDir, 0o700)
+  } catch {}
+  const credsPath = path.join(authDir, 'creds.json')
+  if (fs.existsSync(credsPath)) assertExpectedIdentity(JSON.parse(fs.readFileSync(credsPath, 'utf8')))
+  return null
+}
+
+const initialAuth = await prepareAuth().catch(err => {
+  console.error('[WHATSAPP] Identity guard failed:', err?.message || err)
+  process.exit(78)
+})
 
 let sock = null
 let connected = false
@@ -603,8 +613,8 @@ async function refreshChats() {
   return visible.sort((a, b) => String(a.name).localeCompare(String(b.name)))
 }
 
-async function startSocket() {
-  const { state, saveCreds } = await useMultiFileAuthState(authDir)
+async function startSocket(auth) {
+  const { state, saveCreds } = auth ?? await (hiveAuth ? prepareAuth() : useMultiFileAuthState(authDir))
   const { version } = await fetchLatestBaileysVersion()
   sock = makeWASocket({
     version,
@@ -648,7 +658,7 @@ async function startSocket() {
       const code = lastDisconnect?.error?.output?.statusCode
       status = `closed:${code || 'unknown'}`
       console.log(`[WHATSAPP] Closed ${code || ''}`)
-      if (code !== DisconnectReason.loggedOut) setTimeout(startSocket, 3000)
+      if (code !== DisconnectReason.loggedOut) setTimeout(() => startSocket().catch(onStartupError), 3000)
     }
   })
 
@@ -837,9 +847,30 @@ function sendJson(res, statusCode, body) {
   res.end(data)
 }
 
+function bridgeMac(label, challenge) {
+  return crypto.createHmac('sha256', bridgeKey).update(label + challenge).digest('hex')
+}
+
 async function handle(req, res) {
   const url = new URL(req.url, `http://127.0.0.1:${port}`)
   try {
+    if (hiveAuth) {
+      const statusProbe = req.method === 'GET' && url.pathname === '/status'
+      const challenge = statusProbe ? req.headers['x-hive-whatsapp-challenge'] : undefined
+      if (challenge !== undefined && !/^[a-f0-9]{32}$/.test(challenge)) {
+        return sendJson(res, 401, { ok: false, error: 'bridge authentication required' })
+      }
+      const key = challenge ? bridgeMac('status-request:', challenge) : bridgeKey.toString('hex')
+      const expected = Buffer.from(`Bearer ${key}`)
+      const provided = Buffer.from(req.headers.authorization || '')
+      if (provided.length !== expected.length || !crypto.timingSafeEqual(provided, expected)) {
+        return sendJson(res, 401, { ok: false, error: 'bridge authentication required' })
+      }
+      if (statusProbe) {
+        const proof = challenge ? bridgeMac('status-response:', challenge) : undefined
+        return sendJson(res, 200, { ok: true, proof })
+      }
+    }
     if (req.method === 'GET' && url.pathname === '/health') {
       return sendJson(res, 200, { ok: true, connected, status, targetJid, primaryJid, primaryOperatorRoute: primaryJid, primaryAliases: Array.from(primaryAliases), queue: queue.length, qrFile: qrPng, hasQr: Boolean(lastQr), pairingPhone, pairingCode })
     }
@@ -1004,13 +1035,16 @@ async function handle(req, res) {
   }
 }
 
-http.createServer(handle).listen(port, '127.0.0.1', () => {
-  console.log(`[WHATSAPP] Bridge listening on 127.0.0.1:${port}`)
+const server = http.createServer(handle)
+server.listen(port, '127.0.0.1', () => {
+  console.log(`[WHATSAPP] Bridge listening on 127.0.0.1:${server.address().port}`)
 })
 
 loadInboxTrace()
 
-startSocket().catch(err => {
+function onStartupError(err) {
   status = `failed:${err?.message || err}`
   console.error('[WHATSAPP] Startup failed:', err)
-})
+}
+
+startSocket(initialAuth).catch(onStartupError)

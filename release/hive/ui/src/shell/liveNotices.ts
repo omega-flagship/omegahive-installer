@@ -1,9 +1,9 @@
-// Purpose: turn live hive events no screen reads (a mind paused or slowed for spending, overruns, estimates,
-// connections, app access) into notices and the app-access record.
+// Purpose: turn live hive events no screen reads (a mind paused for spending, overruns, estimates, connections,
+// app access) into notices and the app-access record.
 import { useEffect } from 'react'
 import type { HiveEvent } from '../api/types'
 import { shown } from '../lib/displayName'
-import { clockTime, money } from '../lib/format'
+import { money } from '../lib/format'
 import { plural } from '../lib/plural'
 import { navigate } from '../lib/router'
 import { hiveBus, useHive, type Toast } from '../store/store'
@@ -11,11 +11,11 @@ import { refusedWords, UNSEEN_REFUSAL } from '../features/usage/settle'
 
 /**
  * Live events the hive already sent that no screen read (Surface missing-UI batch 1; UI_BACKEND_PARITY_AUDIT_20261007):
- * `budget.overrun`, `budget.estimated`, `budget.slowed`, `connection.updated` and the five `app.grants_*` kinds. The
- * host decides who receives each (visibility.py): `app.*` and `budget.estimated` reach admins only, `budget.overrun` in
- * practice admins only, `budget.slowed` anyone who sees that mind, `connection.updated` anyone who sees both swarms. Pages that show these things reload on them; this module keeps
- * the app-access record the App access dialog shows and raises one plain notice per event, the newest estimate notice
- * replacing the one on screen. `motivation.updated` belongs to the Motivations screens.
+ * `budget.overrun`, `budget.estimated`, `connection.updated` and the five `app.grants_*` kinds. The host decides who
+ * receives each (visibility.py): `app.*` and `budget.estimated` reach admins only, `budget.overrun` in practice admins
+ * only, `connection.updated` anyone who sees both swarms. Pages that show these things reload on them; this module
+ * keeps the app-access record the App access dialog shows and raises one plain notice per event, the newest estimate
+ * notice replacing the one on screen. `motivation.updated` belongs to the Motivations screens.
  */
 
 export type AppGrantsKind = 'revoked' | 'restored' | 'restore_applied' | 'renewed' | 'refused'
@@ -124,14 +124,6 @@ export function refusalNotice(e: Extract<HiveEvent, { type: 'budget.refused' }>,
   return { tone: 'error', icon: 'pause', title: `${name} is paused for spending`, body, action: { label: 'Open', run: () => navigate({ name: 'dot', id: e.agent_id }) }, ttl: 10000 }
 }
 
-/** The spend-rate guard pacing a mind (budget.slowed, once per pace): it carries on by itself at the month's pace, so
- *  the title says until when, in the person's own clock, since a notice with an action shows its body on one line
- *  (Hud.tsx) and the pill shows only what fits after the title. */
-export function slowedNotice(e: Extract<HiveEvent, { type: 'budget.slowed' }>, s: Pick<ReturnType<typeof useHive.getState>, 'agents'>): Omit<Toast, 'id'> {
-  const name = shown(s.agents[e.agent_id]?.name ?? 'A mind')
-  return { tone: 'info', icon: 'pause', title: `${name} is slowed until about ${clockTime(e.until)}`, body: 'It is spending faster than this month allows. It carries on by itself.', action: { label: 'Open', run: () => navigate({ name: 'dot', id: e.agent_id }) }, ttl: 10000 }
-}
-
 /** Mounted once (App): turn these events into notices and the app-access record. */
 export function useLiveNotices(): void {
   useEffect(
@@ -148,10 +140,6 @@ export function useLiveNotices(): void {
         if (e.type === 'budget.refused') {
           const notice = refusalNotice(e, s)
           if (notice) s.toast(notice)
-          return
-        }
-        if (e.type === 'budget.slowed') {
-          s.toast(slowedNotice(e, s))
           return
         }
         if (e.type === 'budget.overrun') {

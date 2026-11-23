@@ -1,4 +1,4 @@
-"""research.request and the Research swarm (hive/core/research.py; research route design, part a).
+"""Purpose: test research.request and the Research swarm (hive/core/research.py; research route design, part a).
 
 No network: deny_network, a scripted conductor model, fake web tools (test_web_tools' resolver, site and search
 provider) and fake researchers driven in process. Synthetic people and data, disposable hives."""
@@ -7,14 +7,18 @@ import datetime
 import json
 import secrets
 import time
+import threading
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 
 import pytest
 
 from hive.core import conductor as cmod
 from hive.core import research as rmod
+from hive.core.cost_reservations import BudgetExhausted, Reservations, host_budget_snapshot
 from hive.core.foundation import CODE, RESEARCH
 from hive.core.goals import binding_digest
 from hive.core.hive import HiveError
+from hive.core.minds import MAX_ALLOCATION_USD
 from hive.core.visibility import Viewer
 from hive.core.webtools import WebError
 from hive.tests.test_ask import ask, person
@@ -50,6 +54,14 @@ def coordinator(hive):
 
 
 researcher = coordinator   # the name an earlier probe imports
+
+
+@pytest.fixture(autouse=True)
+def hive_total(client):
+    """The hive's total, the one cap its owner sets: research spends under it and nothing of its own (Jon on 23 Nov:
+    "ONE cap for the whole hive - set by the user"), so every test hive has one, as a hive with a key starts with one
+    (HIVE_START_LIMIT_MONTH_USD). A test that needs a smaller one sets it."""
+    client.app.state.hive.budgets.set("hive", "month", 1000)
 
 
 def row_of(hive, who="user:u_ann"):
@@ -108,9 +120,14 @@ def _claim_and_fetch(client, hive, goal_id, urls, row=None):
     return mind, [fetch(client, hive, mind["id"], u) for u in urls]
 
 
-def _finish(hive, mind, goal_id, data):
+def claim_ref(hive, goal_id):
+    receipt = hive.db.one("SELECT claim_id FROM research_reports WHERE goal_id = ?", (goal_id,))["claim_id"]
+    return f"{goal_id}~{receipt}" if receipt else goal_id
+
+
+def _finish(hive, mind, goal_id, data, reference=None):
     goal = hive.db.one("SELECT * FROM goals WHERE id = ?", (goal_id,))
-    return run(hive.goals.result(agent(hive, mind["id"]), goal_id, "done", "Report ready",
+    return run(hive.goals.result(agent(hive, mind["id"]), reference or claim_ref(hive, goal_id), "done", "Report ready",
                                  {"proposal": data, "binding_digest": binding_digest(json.loads(goal["binding"]))}))
 
 
@@ -146,7 +163,7 @@ def test_ensure_provisions_the_research_swarm_its_researcher_template_and_offer_
     assert hive.collab.services(swarm["id"]) == []
     template = hive.minds.templates[rmod.TEMPLATE]
     assert template["teams"] == [swarm["id"]] and template["role_id"] == role["id"] and template["harness"] == "native"
-    assert template["max_allocation_usd"] == rmod.budget_usd()
+    assert template["max_allocation_usd"] == MAX_ALLOCATION_USD   # a researcher is allocated nothing (spawn: 0)
 
     def snapshot():
         return (hive.db.all("SELECT * FROM person_minds WHERE purpose = ?", (RESEARCH,)),
@@ -312,7 +329,8 @@ def test_a_research_task_is_never_continued_whoever_can_read_it(client, on, monk
 
     assert refused(mind) == "research_task"
     assert refused(coordinator(hive)) == "not_assigned"   # the fence: only the task's own researcher reads it
-    monkeypatch.setattr(hive.research, "fence", lambda agent, goal: None)
+    permitted = hive.goals.for_agent(agent(hive, mind["id"]), row["goal_id"])
+    monkeypatch.setattr(hive.goals, "for_agent", lambda agent, goal_id: permitted)
     assert refused(coordinator(hive)) == "research_task"
     assert hive.db.one("SELECT COUNT(*) AS n FROM goals")["n"] == tasks
 
@@ -356,7 +374,7 @@ def test_one_research_per_turn_and_at_most_three_running_per_person(client, on):
     assert hive.db.one("SELECT COUNT(*) AS n FROM research_reports WHERE principal = 'user:u_ann'")["n"] == 3
 
 
-# ---- budgets: a reservation per request -----------------------------------------------------------------------------------
+# ---- budgets: a researcher has no budget of its own; the asker's limits and the swarm's month cap hold research -------------
 
 def _person_rule(hive, period, limit):
     # the test person's id is not the shape the Limits route accepts, so the rule is written directly
@@ -364,52 +382,104 @@ def _person_rule(hive, period, limit):
                                "limit_usd": limit, "note": "", "created_at": "2026-11-01T00:00:00.000Z"})
 
 
-def test_each_researcher_holds_the_requests_reservation_as_its_hard_cap(client, on):
-    """P2-2: the request's budget is the researcher's allocation (reserved from the request root) and its own cap: its
-    web calls stop there."""
+def _spent(hive, row, usd):
+    """The request's researcher has spent usd, as its settled calls record it: its spend, and a usage row in the
+    Research swarm this month."""
+    hive.db.execute("UPDATE agents SET spent_usd = ? WHERE id = ?", (usd, row["child_id"]))
+    hive.db.insert("usage", {**{c["name"]: None for c in hive.db.all("PRAGMA table_info(usage)") if c["notnull"] == 0},
+                             **_usage_row(hive, row["child_id"], usd, now_stamp()), "swarm_id": row["swarm_id"]})
+
+
+def _hold(hive, child_id, key, usd):
+    """A researcher's call held against every row that limits it, as the chat route reserves one."""
+    return Reservations(hive.db).reserve(key, {"call": key}, usd, lambda: host_budget_snapshot(hive, child_id),
+                                         {"agent": child_id}, dispatched=True)
+
+
+def test_a_researcher_has_no_budget_of_its_own_and_the_hives_total_holds_its_calls(client, on):
+    """Jon, 23 Nov: "There should no limit per agent anymore - only a global limit", "Helpers = sub agents". The request
+    reserves nothing and its researcher is allocated nothing; the hive's total, the one cap its owner sets ("ONE cap for
+    the whole hive"), holds its calls, and once the total is raised it goes on, where a researcher that met a cap of its
+    own could never be woken again."""
     hive = on["hive"]
+    hive.budgets.set("hive", "month", 0.30)
+    hive.budgets.set("hive", "day", 0.30)            # the day the total would derive is smaller still
     dispatch_research(client, on)
     row = row_of(hive)
     req = hive.db.one("SELECT * FROM requests WHERE id = ?", (row["request_id"],))
     child = child_of(hive, row)
     res = hive.db.one("SELECT * FROM mind_reservations WHERE child_id = ?", (child["id"],))
-    assert req["limit_usd"] == req["allocated_usd"] == rmod.budget_usd() == res["allocated_usd"] == child["budget_usd"]
+    assert req["limit_usd"] == req["allocated_usd"] == res["allocated_usd"] == child["budget_usd"] == 0
+    rows = {label: limit for label, limit, _spent in host_budget_snapshot(hive, child["id"])}
+    assert rows["hive:month"] == 0.30 and f"agent:{child['id']}:total" not in rows
+    assert f"swarm:{row['swarm_id']}:month" not in rows                  # no row of the Research swarm's own
+    assert hive.budgets.paid_without_cap(child)
     fake_web(client)
-    hive.db.execute("UPDATE agents SET spent_usd = budget_usd WHERE id = ?", (child["id"],))
+    fetch(client, hive, child["id"], "https://example.org/cepheids")      # nothing of its own to run out of
+    _spent(hive, row, 0.30)
     with pytest.raises(WebError) as e:
-        fetch(client, hive, child["id"], "https://example.org/cepheids")
-    assert e.value.code == "budget_exhausted"
+        fetch(client, hive, child["id"], "https://example.org/leavitt")
+    assert e.value.code == "spend_limit"
+    live = hive.db.one("SELECT * FROM mind_children WHERE id = ?", (child["id"],))
+    assert not hive.minds._exhausted(live)                                 # held by the total above it, not spent out
+    hive.budgets.set("hive", "month", 5)
+    hive.budgets.set("hive", "day", 5)
+    fetch(client, hive, child["id"], "https://example.org/leavitt")       # the raised total: it goes on
 
 
-def test_a_month_allowance_counts_the_reservations_of_running_research(client, on):
+def test_two_researchers_share_the_hives_total_so_together_they_cant_overdraw_it(client, on):
+    """P2-2: with nothing reserved up front, the calls of every researcher are held against the hive's total, one row
+    they share, so a call that would take the two past it is refused."""
+    hive = on["hive"]
+    hive.budgets.set("hive", "month", 0.30)
+    hive.budgets.set("hive", "day", 0.30)            # the day the total would derive is smaller still
+    assert dispatch_research(client, on, op="op-res-m1")[2] == []
+    assert dispatch_research(client, on, who="jon", op="op-res-m2")[2] == []   # room left: nothing is reserved
+    ann, jon = row_of(hive, "user:u_ann"), row_of(hive, "user:u_jon")
+    _hold(hive, ann["child_id"], "res-ann", 0.20)
+    with pytest.raises(BudgetExhausted) as e:
+        _hold(hive, jon["child_id"], "res-jon", 0.20)
+    assert e.value.scope == "hive:month"
+    _hold(hive, jon["child_id"], "res-jon-small", 0.10)                        # what is left of it still goes
+
+
+def test_a_month_allowance_gates_new_research_on_what_research_has_spent(client, on):
+    """A new request needs room left under the person's month allowance, counting their own spend plus what their
+    research has spent or still holds; nothing is reserved for it up front."""
     hive = on["hive"]
     _person_rule(hive, "month", 0.40)
-    _s, _fs, said = dispatch_research(client, on, op="op-res-a1")
-    assert said == []
-    s, fs, said = dispatch_research(client, on, op="op-res-a2")   # 0.25 reserved + 0.25 > 0.40
+    assert dispatch_research(client, on, op="op-res-a1")[2] == []
+    _spent(hive, row_of(hive), 0.30)
+    assert dispatch_research(client, on, op="op-res-a2")[2] == []          # $0.10 left: it goes
+    _spent(hive, row_of(hive), 0.10)                                       # the two have used the whole $0.40
+    s, fs, said = dispatch_research(client, on, op="op-res-a3")
     assert said == [cmod.DISPATCH_REFUSED_SAY["member_allowance"]]
     result = tool_results(s.bodies[1])[0]
     assert result["ok"] is False and result["reason"] == "spend_limit" and result["detail"] == "member_allowance"
+    assert hive.db.one("SELECT COUNT(*) AS n FROM research_reports")["n"] == 2
+
+
+def test_a_day_rule_gates_new_research_too(client, on):
+    """P3-5: a person's day (or total) rule refuses as their month allowance does, once their research has used it."""
+    hive = on["hive"]
+    _person_rule(hive, "day", 0.10)
+    assert dispatch_research(client, on, op="op-res-day1")[2] == []
+    _spent(hive, row_of(hive), 0.10)
+    _s, _fs, said = dispatch_research(client, on, op="op-res-day2")
+    assert said == [cmod.DISPATCH_REFUSED_SAY["member_allowance"]]
     assert hive.db.one("SELECT COUNT(*) AS n FROM research_reports")["n"] == 1
 
 
-def test_a_day_rule_counts_too(client, on):
-    """P3-5: a person's day (or total) rule refuses as their month allowance does."""
+def test_the_hives_total_refuses_new_research_once_research_has_used_it(client, on):
+    """A new request needs room left under the hive's total, read from the coordinator's rows as a Code request's door
+    reads its controller's: research that would start with none left is refused, said plainly."""
     hive = on["hive"]
-    _person_rule(hive, "day", 0.10)
-    _s, _fs, said = dispatch_research(client, on, op="op-res-day")
-    assert said == [cmod.DISPATCH_REFUSED_SAY["member_allowance"]]
-    assert not hive.db.one("SELECT 1 FROM research_reports")
-    assert hive.db.one("SELECT state FROM ask_intents WHERE kind = 'research.request'")["state"] == "refused"
-
-
-def test_the_research_swarms_month_cap_counts_reservations_and_refuses(client, on, monkeypatch):
-    """P2-2: a month cap across requests, not the coordinator's lifetime: two running requests can't overdraw it."""
-    hive = on["hive"]
-    monkeypatch.setenv("HIVE_RESEARCH_MONTH_USD", "0.30")
-    assert dispatch_research(client, on, op="op-res-m1")[2] == []
-    _s, _fs, said = dispatch_research(client, on, who="jon", op="op-res-m2")
-    assert said == [cmod.DISPATCH_REFUSED_SAY["research_budget"]]
+    hive.budgets.set("hive", "month", 0.30)
+    hive.budgets.set("hive", "day", 0.30)            # the day the total would derive is smaller still
+    assert dispatch_research(client, on, op="op-res-c1")[2] == []
+    _spent(hive, row_of(hive), 0.30)
+    _s, _fs, said = dispatch_research(client, on, who="jon", op="op-res-c2")
+    assert said == [cmod.DISPATCH_REFUSED_SAY["spend_limit"]]
     assert hive.db.one("SELECT COUNT(*) AS n FROM research_reports")["n"] == 1
 
 
@@ -465,23 +535,21 @@ def test_a_researcher_finishes_with_a_cited_report_it_reaches_the_askers_thread_
                 if json.loads(r["frame"])["phase"] == "research"]) == 1
 
 
-def test_the_dispatching_mind_reads_a_paced_handoff_and_only_its_own(client, on):
+def test_the_dispatching_mind_reads_its_own_research_spending_refusal(client, on):
     hive = on["hive"]
     dispatch_research(client, on)
     row = row_of(hive)
-    until = rmod.stamp(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=20))
-    pace = {"scope": "hive", "period": "month", "limit_usd": 5.0, "retry_after": 1200,
-            "until": until, "say": "Spending faster than this month allows."}
-    hive.events.publish("budget.slowed", agent_id=coordinator(hive)["id"], **pace)
+    say = "A spending limit has no room for this call."
+    hive.note_refusal(coordinator(hive), "spend_limit", say)
     assert hive.research.status_for_turn(row["turn_id"])[0]["state"] == "open"
     from hive.core.ask import MAX_EVENTS
     while hive.ask._row(row["turn_id"])["next_seq"] <= MAX_EVENTS:
         assert hive.ask._frame(row["turn_id"], "answer", text="Part of the original turn.")
-    hive.events.publish("budget.slowed", agent_id=row["child_id"], **pace)
-    hive.events.publish("budget.slowed", agent_id=row["child_id"], **pace)
+    hive.note_refusal(hive._agent_row(row["child_id"]), "spend_limit", say)
+    hive.events.publish("budget.refused", agent_id=row["child_id"], code="spend_limit", count=20)
     page = client.get("/api/ask/op-res-001", headers=on["ann"]).json()
     held = [f for f in page["events"] if f["phase"] == "research"]
-    assert [(f["state"], f["reason"], f["until"]) for f in held] == [("held", "spend_rate", until)]
+    assert [(f["state"], f["reason"]) for f in held] == [("held", "spending_limit")]
     assert "research" not in held[0]
 
     def ask_for_status(who, op):
@@ -492,13 +560,13 @@ def test_the_dispatching_mind_reads_a_paced_handoff_and_only_its_own(client, on)
 
     assert ask_for_status("ann", "op-res-status") == {"ok": True, "research": [{
         "request_id": row["request_id"], "title": "Cepheid distances", "state": "held",
-        "reason": "spend_rate", "until": until,
+        "reason": "spending_limit",
     }]}
     assert ask_for_status("jon", "op-res-other-status") == {"ok": True, "research": []}
 
     hive.note_admitted(hive._agent_row(row["child_id"]))
     assert hive.research.status_for_turn(row["turn_id"])[0]["state"] == "open"
-    hive.events.publish("budget.slowed", agent_id=row["child_id"], **pace)
+    hive.note_refusal(hive._agent_row(row["child_id"]), "spend_limit", say)
     mind, _ = _claim_and_fetch(client, hive, row["goal_id"], [])
     _finish(hive, mind, row["goal_id"], report(None, None))
     assert ask_for_status("ann", "op-res-done")["research"][0]["state"] == "done"
@@ -517,6 +585,467 @@ def test_research_can_sleep_resume_and_sleep_again(client, on):
     assert [(f["state"], f.get("reason")) for f in page["events"] if f["phase"] == "research"] == [
         ("held", "asleep"), ("resumed", None), ("held", "asleep"),
     ]
+
+
+@pytest.mark.parametrize("missing", ["binding", "report"])
+def test_incomplete_research_refuses_claims_even_without_an_assignee(client, on, missing):
+    hive = on["hive"]
+    dispatch_research(client, on)
+    row = row_of(hive)
+    helper = hive.create_agent("Helper", swarm_id=row["swarm_id"])
+    hive.db.update("goals", row["goal_id"], {"assignee": None})
+    hive.db.execute("UPDATE research_reports SET child_id = NULL WHERE goal_id = ?", (row["goal_id"],))
+    with pytest.raises(HiveError, match="own researcher"):
+        hive.goals.claim(helper, row["goal_id"])
+    worker = child_of(hive, row)
+    assert hive.goals.claim(worker, row["goal_id"])["claimed_by"] == worker["id"]
+    hive.db.update("goals", row["goal_id"], {"status": "open", "claimed_by": None})
+    if missing == "binding":
+        hive.db.update("goals", row["goal_id"], {"binding": None})
+    else:
+        hive.db.execute("DELETE FROM research_reports WHERE goal_id = ?", (row["goal_id"],))
+    for claimant in (helper, worker):
+        with pytest.raises(HiveError, match="own researcher"):
+            hive.goals.claim(claimant, row["goal_id"])
+    if missing == "binding":
+        deadline = hive.goals.get(row["goal_id"])["deadline_at"]
+        assert row["goal_id"] in run(hive.goals.expire(deadline))
+        page = client.get("/api/ask/op-res-001", headers=on["ann"]).json()
+        assert [(f["request_id"], f["state"]) for f in page["events"] if f["phase"] == "research"] == [
+            (row["request_id"], "failed"),
+        ]
+
+
+def test_research_claim_requires_one_explicit_symbolic_allowance(client, on, monkeypatch):
+    hive = on["hive"]
+    dispatch_research(client, on)
+    row = row_of(hive)
+    worker = child_of(hive, row)
+    evaluate = hive.spaces.run
+
+    def equivocal(code, *args, **kwargs):
+        if code.startswith("!(research-goal-access "):
+            return ["Allow", "Allow"]
+        return evaluate(code, *args, **kwargs)
+
+    monkeypatch.setattr(hive.spaces, "run", equivocal)
+    with pytest.raises(HiveError, match="own researcher"):
+        hive.goals.claim(worker, row["goal_id"])
+    assert hive.goals.get(row["goal_id"])["status"] == "open"
+
+
+@pytest.mark.parametrize("release_reservation", [False, True])
+def test_busy_research_admission_leaves_the_event_loop_and_database_available(client, on, monkeypatch,
+                                                                            release_reservation):
+    hive = on["hive"]
+    dispatch_research(client, on)
+    row = row_of(hive)
+    worker_id, goal_id = row["child_id"], row["goal_id"]
+    auth = token_for(hive, worker_id)
+    evaluate = hive.spaces.run
+
+    loop_thread = client.portal.call(threading.get_ident)
+    entered = Future()
+    unblock = threading.Event()
+    evaluator_threads = []
+
+    def busy(code, *args, **kwargs):
+        if code.startswith("!(research-goal-access "):
+            current_thread = threading.get_ident()
+            evaluator_threads.append(current_thread)
+            if not entered.done():
+                entered.set_result(current_thread)
+            # A regression on the request loop must fail without deadlocking the test.
+            if current_thread != loop_thread:
+                unblock.wait()
+        return evaluate(code, *args, **kwargs)
+
+    monkeypatch.setattr(hive.spaces, "run", busy)
+    with ThreadPoolExecutor(max_workers=1) as requests:
+        pending = requests.submit(client.post, f"/api/agent/goals/{goal_id}/claim", headers=auth)
+        try:
+            wait((pending, entered), return_when=FIRST_COMPLETED)
+            if not entered.done():
+                pytest.fail(f"claim returned before checking Research policy: {pending.result().text}")
+            assert entered.result() != loop_thread
+            assert not pending.done()
+            assert client.portal.call(threading.get_ident) == loop_thread
+            assert hive.db._lock.acquire(blocking=False), "PeTTa was called while the database lock was held"
+            try:
+                assert not hive.db._conn.in_transaction
+                with hive.db.transaction():
+                    if release_reservation:
+                        hive.db.execute("UPDATE mind_reservations SET released_at = ? WHERE child_id = ?",
+                                        (rmod.now(), worker_id))
+                    else:
+                        hive.db.execute("UPDATE goals SET priority = ? WHERE id = ?", (0.8, goal_id))
+            finally:
+                hive.db._lock.release()
+        finally:
+            unblock.set()
+        response = pending.result()
+    if release_reservation:
+        assert response.status_code == 409 and response.json()["error"]["code"] == "research_admission_changed"
+        assert hive.goals.get(goal_id)["status"] == "open"
+    else:
+        assert response.status_code == 200 and response.json()["claimed_by"] == worker_id
+        assert hive.goals.get(goal_id)["priority"] == 0.8
+    assert len(evaluator_threads) == 1
+
+
+def test_unavailable_research_policy_does_not_imply_a_permission_denial(client, on, monkeypatch):
+    hive = on["hive"]
+    dispatch_research(client, on)
+    row = row_of(hive)
+    auth = token_for(hive, row["child_id"])
+    evaluate = hive.spaces.run
+
+    def busy(code, *args, **kwargs):
+        if code.startswith("!(research-goal-access "):
+            raise TimeoutError("the shared interpreter is busy")
+        return evaluate(code, *args, **kwargs)
+
+    monkeypatch.setattr(hive.spaces, "run", busy)
+    claim = client.post(f"/api/agent/goals/{row['goal_id']}/claim", headers=auth)
+    assert claim.status_code == 503 and claim.json()["error"]["code"] == "research_policy_unavailable"
+    assert hive.goals.get(row["goal_id"])["status"] == "open"
+
+
+@pytest.mark.parametrize(("action", "status"), [("sleep", "asleep"), ("stop", "stopped")])
+def test_research_stop_releases_the_claim_and_wake_reoffers_the_original_task(client, on, action, status):
+    hive = on["hive"]
+    dispatch_research(client, on)
+    row = row_of(hive)
+    worker = child_of(hive, row)
+    goal_id = row["goal_id"]
+    reservation = hive.db.one("SELECT * FROM mind_reservations WHERE child_id = ?", (worker["id"],))
+    claimed = hive.goals.claim(worker, goal_id)
+    hive.minds.acknowledge(worker["id"], 1)
+    assert hive.lifecycle(worker["id"], action)["status"] == status
+    assert hive.goals.get(goal_id)["status"] == "open"
+    assert hive.goals.get(goal_id)["claimed_by"] is None
+    assert hive.goals.get(goal_id)["assignee"] == worker["id"]
+    with pytest.raises(HiveError) as late:
+        hive.goals.heartbeat(worker, goal_id)
+    assert late.value.code == "not_assigned"
+    run(hive.goals.expire())
+    assert hive.agent(worker["id"])["status"] == status
+    assert hive.minds._child(worker["id"])["prompt_rev"] == 1
+    assert hive.lifecycle(worker["id"], "wake")["status"] == "starting"
+    hive.set_status(worker["id"], "awake")
+    run(hive.goals.expire())
+    run(hive.goals.expire())
+    assert hive.minds._child(worker["id"])["prompt_rev"] == 2
+    assert hive.db.one("SELECT text FROM mind_prompts WHERE child_id = ? AND rev = 2", (worker["id"],))["text"] == (
+        hive.research.brief(goal_id))
+    assert hive.db.one("SELECT * FROM mind_reservations WHERE child_id = ?", (worker["id"],)) == reservation
+    reclaimed = hive.goals.claim(worker, goal_id)
+    assert reclaimed["deadline_at"] == claimed["deadline_at"]
+    _finish(hive, worker, goal_id, report(None, None))
+    page = client.get("/api/ask/op-res-001", headers=on["ann"]).json()
+    assert [(f["state"], f.get("reason")) for f in page["events"] if f["phase"] == "research"] == [
+        ("held", status), ("resumed", None), ("done", None),
+    ]
+
+
+def test_a_legacy_stray_holder_is_removed_and_only_the_assigned_researcher_can_reclaim(client, on):
+    hive = on["hive"]
+    dispatch_research(client, on)
+    row = row_of(hive)
+    worker = child_of(hive, row)
+    helper = hive.create_agent("Helper", swarm_id=row["swarm_id"])
+    goal_id = row["goal_id"]
+    hive.db.update("goals", goal_id, {"status": "waiting", "assignee": helper["id"],
+                                     "claimed_by": helper["id"], "attempts": 1})
+    assert goal_id in run(hive.goals.expire())
+    goal = hive.goals.get(goal_id)
+    assert (goal["status"], goal["assignee"], goal["claimed_by"], goal["attempts"]) == ("open", worker["id"], None, 0)
+    assert hive.goals.claim(worker, goal_id)["status"] == "claimed"
+
+
+def test_an_ordinary_goal_still_accepts_its_swarm_members_and_renews_on_heartbeat(client, on, monkeypatch):
+    from hive.core import goals
+
+    hive = on["hive"]
+    swarm_id = on["swarm"]["id"]
+    member = hive.create_agent("Ordinary helper", swarm_id=swarm_id)
+    goal = hive.goals._create_record(swarm_id, "Ordinary work", "", 0.5)
+    assert hive.goals.claim(member, goal["id"])["claimed_by"] == member["id"]
+    old = hive.goals.get(goal["id"])["lease_until"]
+    monkeypatch.setattr(goals, "_later", lambda minutes: rmod.stamp(rmod._parse(old) + datetime.timedelta(minutes=1)))
+    hive.goals.heartbeat(member, goal["id"])
+    assert hive.goals.get(goal["id"])["lease_until"] > old
+
+
+def test_only_a_new_audited_fetch_advances_the_work_lease(client, on, monkeypatch):
+    from hive.core import webtools
+
+    hive = on["hive"]
+    dispatch_research(client, on)
+    row = row_of(hive)
+    worker = child_of(hive, row)
+    goal_id = row["goal_id"]
+    hive.goals.claim(worker, goal_id)
+    initial = hive.goals.get(goal_id)
+    assert initial["lease_until"] < initial["deadline_at"]
+    active = claim_ref(hive, goal_id)
+    hive.goals.heartbeat(worker, active)
+    assert hive.goals.get(goal_id)["lease_until"] == initial["lease_until"]
+    fake_web(client)
+    fetched_at = rmod._parse(initial["lease_until"]) - datetime.timedelta(minutes=1)
+    monkeypatch.setattr(webtools, "now", lambda: rmod.stamp(fetched_at))
+    url = "https://example.org/cepheids"
+    fetch(client, hive, worker["id"], url)
+    extended = hive.goals.get(goal_id)["lease_until"]
+    assert initial["lease_until"] < extended <= initial["deadline_at"]
+    fetched_at += datetime.timedelta(seconds=5)
+    fetch(client, hive, worker["id"], url)
+    assert hive.goals.get(goal_id)["lease_until"] == extended
+    assert goal_id not in run(hive.goals.expire(initial["lease_until"]))
+    assert goal_id in run(hive.goals.expire(extended))
+    with pytest.raises(HiveError) as late:
+        hive.goals.heartbeat(worker, active)
+    assert late.value.code == "not_claimed"
+    assert hive.goals.get(goal_id)["status"] == "open"
+    assert hive.minds._child(worker["id"])["prompt_rev"] == 2
+
+
+def test_fetch_keeps_its_audit_but_cannot_renew_a_lease_expired_during_admission(client, on, monkeypatch):
+    from hive.core import webtools
+
+    hive = on["hive"]
+    dispatch_research(client, on)
+    row = row_of(hive)
+    worker = child_of(hive, row)
+    goal_id = row["goal_id"]
+    hive.goals.claim(worker, goal_id)
+    lease = hive.goals.get(goal_id)["lease_until"]
+    clock = rmod._parse(lease) - datetime.timedelta(seconds=1)
+    monkeypatch.setattr(rmod, "now", lambda: rmod.stamp(clock))
+    monkeypatch.setattr(webtools, "now", lambda: rmod.stamp(clock))
+    evaluate = hive.spaces.run
+
+    def busy(code, *args, **kwargs):
+        nonlocal clock
+        result = evaluate(code, *args, **kwargs)
+        if code.startswith("!(research-goal-access "):
+            clock = rmod._parse(lease)
+        return result
+
+    monkeypatch.setattr(hive.spaces, "run", busy)
+    fake_web(client)
+    fetch(client, hive, worker["id"], "https://example.org/cepheids")
+    assert rmod.stamp(clock) == lease
+    audit = hive.db.one("SELECT at, outcome, research_progress FROM web_audit WHERE agent_id = ? AND tool = 'fetch'",
+                        (worker["id"],))
+    assert audit["outcome"] == "ok" and audit["at"] < lease and audit["research_progress"] == 0
+    assert hive.goals.get(goal_id)["lease_until"] == lease
+
+
+def test_heartbeat_only_attempts_eventually_fail_on_the_original_turn(client, on):
+    from hive.core.goals import MAX_ATTEMPTS
+
+    hive = on["hive"]
+    dispatch_research(client, on)
+    row = row_of(hive)
+    worker = child_of(hive, row)
+    for _ in range(MAX_ATTEMPTS):
+        hive.goals.claim(worker, row["goal_id"])
+        lease = hive.goals.get(row["goal_id"])["lease_until"]
+        hive.goals.heartbeat(worker, claim_ref(hive, row["goal_id"]))
+        assert hive.goals.get(row["goal_id"])["lease_until"] == lease
+        assert row["goal_id"] in run(hive.goals.expire(lease))
+    assert hive.goals.get(row["goal_id"])["status"] == "failed"
+    page = client.get("/api/ask/op-res-001", headers=on["ann"]).json()
+    assert [(f["request_id"], f["state"]) for f in page["events"] if f["phase"] == "research"] == [
+        (row["request_id"], "failed"),
+    ]
+
+
+def test_a_result_already_under_validation_cannot_finish_a_reclaimed_attempt(client, on, monkeypatch):
+    hive = on["hive"]
+    dispatch_research(client, on)
+    row = row_of(hive)
+    worker = child_of(hive, row)
+    goal_id = row["goal_id"]
+    hive.goals.claim(worker, goal_id)
+    first = hive.goals.get(goal_id)
+
+    async def release_while_validating(*args):
+        assert goal_id in await hive.goals.expire(first["lease_until"])
+        hive.goals.claim(worker, goal_id)
+        return []
+
+    monkeypatch.setattr(hive.goals, "_run_validator", release_while_validating)
+    with pytest.raises(HiveError) as late:
+        _finish(hive, worker, goal_id, report(None, None))
+    assert late.value.code == "goal_changed"
+    current = hive.goals.get(goal_id)
+    assert current["status"] == "claimed"
+    assert current["attempts"] == first["attempts"] + 1
+    assert row_of(hive)["state"] == "working"
+
+
+def test_a_persisted_research_retry_is_redelivered_after_a_transport_failure(client, on, monkeypatch):
+    hive = on["hive"]
+    dispatch_research(client, on)
+    row = row_of(hive)
+    worker = child_of(hive, row)
+    hive.goals.claim(worker, row["goal_id"])
+    hive.minds.acknowledge(worker["id"], 1)
+    sent = []
+
+    async def deliver(child_id, message):
+        assert child_id == worker["id"]
+        sent.append(message["id"])
+        if len(sent) == 1:
+            raise RuntimeError("transport disconnected after the prompt was stored")
+        hive.minds.delivered(child_id, message)
+        return True
+
+    monkeypatch.setattr(hive, "deliver", deliver)
+    deadline = hive.goals.get(row["goal_id"])["lease_until"]
+    run(hive.goals.expire(deadline))
+    assert row_of(hive)["reoffer_from_rev"] == 1
+    run(hive.goals.expire(deadline))
+    run(hive.goals.expire(deadline))
+    assert len(sent) == 2 and sent[0] == sent[1]
+    assert hive.minds._child(worker["id"])["prompt_rev"] == 2
+    assert row_of(hive)["reoffer_from_rev"] is None
+
+
+def test_a_result_that_arrives_after_reclaim_requires_the_new_claim_reference(client, on):
+    hive = on["hive"]
+    dispatch_research(client, on)
+    row = row_of(hive)
+    worker = child_of(hive, row)
+    auth = token_for(hive, worker["id"])
+    goal_id = row["goal_id"]
+    first = client.post(f"/api/agent/goals/{goal_id}/claim", headers=auth).json()["claim_ref"]
+    run(hive.goals.expire(hive.goals.get(goal_id)["lease_until"]))
+    second = client.post(f"/api/agent/goals/{goal_id}/claim", headers=auth).json()["claim_ref"]
+    assert first != second
+    for reference in (first, goal_id):
+        for status in ("done", "waiting", "failed"):
+            late = client.post(f"/api/agent/goals/{reference}/result", headers=auth,
+                               json={"status": status, "result": "From the earlier attempt"})
+            assert late.status_code == 409 and late.json()["error"]["code"] == "stale_claim"
+        late = client.post(f"/api/agent/goals/{reference}/heartbeat", headers=auth)
+        assert late.status_code == 409 and late.json()["error"]["code"] == "stale_claim"
+    assert hive.goals.get(goal_id)["status"] == "claimed"
+    assert _finish(hive, worker, goal_id, report(None, None), reference=second)["status"] == "done"
+
+
+def test_an_inflight_fetch_does_not_renew_or_use_up_progress_for_the_replacement_claim(client, on, monkeypatch):
+    from hive.core import webtools
+
+    hive = on["hive"]
+    dispatch_research(client, on)
+    row = row_of(hive)
+    worker = child_of(hive, row)
+    goal_id = row["goal_id"]
+    tools = fake_web(client)
+    read_page = tools._get
+    url = "https://example.org/cepheids"
+
+    async def scenario():
+        entered, allow_completion = asyncio.Event(), asyncio.Event()
+
+        async def delayed(*args, **kwargs):
+            entered.set()
+            await allow_completion.wait()
+            return await read_page(*args, **kwargs)
+
+        hive.goals.claim(worker, goal_id)
+        original = hive.goals.get(goal_id)
+        monkeypatch.setattr(tools, "_get", delayed)
+        pending = asyncio.create_task(tools.fetch(worker, {"url": url}))
+        await entered.wait()
+        await hive.goals.expire(original["lease_until"])
+        hive.goals.claim(worker, goal_id)
+        new = hive.goals.get(goal_id)
+        at = rmod._parse(new["lease_until"]) - datetime.timedelta(minutes=1)
+        monkeypatch.setattr(webtools, "now", lambda: rmod.stamp(at))
+        allow_completion.set()
+        await pending
+        assert hive.goals.get(goal_id)["lease_until"] == new["lease_until"]
+        await tools.fetch(worker, {"url": url})
+        assert hive.goals.get(goal_id)["lease_until"] > new["lease_until"]
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("binding", ["{broken", "[]"])
+@pytest.mark.parametrize("restart", [False, True])
+def test_terminal_research_with_malformed_binding_reaches_its_original_ask_once(client, on, binding, restart):
+    hive = on["hive"]
+    dispatch_research(client, on)
+    row = row_of(hive)
+    goal_id = row["goal_id"]
+    hive.db.update("goals", goal_id, {"binding": binding})
+    if restart:
+        hive.db.update("goals", goal_id, {"status": "failed"})
+    else:
+        assert goal_id in run(hive.goals.expire(hive.goals.get(goal_id)["deadline_at"]))
+    run(hive.research.recover())
+    run(hive.research.recover())
+    page = client.get("/api/ask/op-res-001", headers=on["ann"]).json()
+    assert [(f["request_id"], f["state"]) for f in page["events"] if f["phase"] == "research"] == [
+        (row["request_id"], "failed"),
+    ]
+
+
+def test_reoffer_does_not_enqueue_after_the_reservation_is_released(client, on, monkeypatch):
+    hive = on["hive"]
+    dispatch_research(client, on)
+    row = row_of(hive)
+    worker = child_of(hive, row)
+    hive.goals.claim(worker, row["goal_id"])
+    prompt = hive.minds.prompt
+
+    async def release_before_prompt(*args, **kwargs):
+        hive.db.execute("UPDATE mind_reservations SET released_at = ? WHERE child_id = ?", (rmod.now(), worker["id"]))
+        return await prompt(*args, **kwargs)
+
+    monkeypatch.setattr(hive.minds, "prompt", release_before_prompt)
+    run(hive.goals.expire(hive.goals.get(row["goal_id"])["lease_until"]))
+    assert hive.minds._child(worker["id"])["prompt_rev"] == 1
+    assert row_of(hive)["reoffer_from_rev"] == 1
+
+
+def test_repeated_research_holds_are_bounded_without_hiding_status_or_report(client, on):
+    hive = on["hive"]
+    dispatch_research(client, on)
+    row = row_of(hive)
+
+    def worker_status(status):
+        hive.db.update("agents", row["child_id"], {"status": status})
+        hive.events.publish("agent.updated", agent=hive.agent(row["child_id"]))
+
+    def research_frames():
+        page = client.get("/api/ask/op-res-001", headers=on["ann"]).json()
+        return [frame for frame in page["events"] if frame["phase"] == "research"]
+
+    # Changing a hold's reason also spends a note. The last announced hold still gets its resume.
+    worker_status("asleep")
+    worker_status("error")
+    worker_status("asleep")
+    worker_status("awake")
+    for _ in range(5):
+        worker_status("asleep")
+        worker_status("awake")
+    worker_status("asleep")
+    assert hive.research.status_for_turn(row["turn_id"])[0]["state"] == "held"
+    assert [frame["state"] for frame in research_frames()] == ["held", "held", "held", "resumed"] + ["held", "resumed"] * 2
+
+    worker_status("awake")
+    assert hive.research.status_for_turn(row["turn_id"])[0]["state"] == "open"
+    mind, _ = _claim_and_fetch(client, hive, row["goal_id"], [])
+    _finish(hive, mind, row["goal_id"], report(None, None))
+    frames = research_frames()
+    assert len(frames) == 9
+    assert frames[-1]["state"] == "done"
+    assert frames[-1]["research"]["report"]["summary"] == report(None, None)["summary"]
 
 
 def test_claims_with_no_fetched_source_are_flagged_uncited(client, on):
@@ -844,7 +1373,7 @@ def test_the_researcher_is_retired_after_its_result_call_answers_not_inside_it(c
     goal = hive.db.one("SELECT * FROM goals WHERE id = ?", (row["goal_id"],))
 
     async def finish():
-        await hive.goals.result(agent(hive, mind["id"]), row["goal_id"], "done", "Report ready",
+        await hive.goals.result(agent(hive, mind["id"]), claim_ref(hive, row["goal_id"]), "done", "Report ready",
                                 {"proposal": report({"url": "https://example.org/cepheids", "fetched_at": fetched[0]["fetched_at"]}, None),
                                  "binding_digest": binding_digest(json.loads(goal["binding"]))})
         alive_at_answer = not agent(hive, mind["id"])["deleted"]
@@ -914,7 +1443,7 @@ def test_a_researcher_can_give_up_on_its_own_task(client, on):
     mind = child_of(hive, row)
     assert hive.policy.decide(mind, "hive-goal-fail")[0] == "allow"
     hive.goals.claim(mind, row["goal_id"])
-    run(hive.goals.result(agent(hive, mind["id"]), row["goal_id"], "failed", "nothing reliable found"))
+    run(hive.goals.result(agent(hive, mind["id"]), claim_ref(hive, row["goal_id"]), "failed", "nothing reliable found"))
     assert row_of(hive)["state"] == "failed" and _retired(hive, row)
 
 
@@ -930,8 +1459,8 @@ def test_an_address_fetched_with_a_query_is_a_path_match_even_when_cited_without
 
 
 def test_research_keeps_working_after_more_than_the_coordinators_cap_was_spent_in_past_months(client, on):
-    """P3-8: researchers' past spend rolls into the coordinator's delegated books; its spawn ceiling is the Research
-    month cap, not a lifetime $5."""
+    """P3-8: researchers' past spend rolls into the coordinator's delegated books, but the coordinator has no cap of its
+    own for it to fill (no lifetime $5): only the hive's total holds research."""
     hive = on["hive"]
     dispatch_research(client, on, op="op-res-past")
     old = row_of(hive)
@@ -1048,17 +1577,19 @@ def test_a_failed_delete_leaves_the_erase_pending_and_retire_finished_completes_
     assert all(m["text"] == "" for m in hive.db.all("SELECT text FROM messages WHERE agent_id = ?", (row["child_id"],)))
 
 
-def test_the_coordinators_own_lower_cap_still_bounds_its_month_ceiling(client, on, monkeypatch):
-    """R3 P3 (d): min(month cap, budget_usd) when the coordinator has a cap of its own."""
+def test_the_coordinator_has_no_cap_of_its_own_and_an_old_seed_is_cleared(client, on):
+    """Jon, 23 Nov: "ONE cap for the whole hive - set by the user", so no default cap on a controller: the coordinator
+    is made with none, ensure clears the $5 it was once seeded with, and a cap its owner sets stays theirs."""
     hive = on["hive"]
     owned(hive)
     ctl = coordinator(hive)
-    monkeypatch.setenv("HIVE_RESEARCH_MONTH_USD", "50")
-    assert hive.research.controller_month(ctl["id"]) == rmod.CONTROLLER_BUDGET_USD
+    assert ctl["budget_usd"] == 0
+    hive.db.execute("UPDATE agents SET budget_usd = ? WHERE id = ?", (rmod.OLD_COORDINATOR_CAPS_USD[0], ctl["id"]))
+    hive.foundation.ensure()
+    assert coordinator(hive)["budget_usd"] == 0                           # the old seed goes
     hive.db.execute("UPDATE agents SET budget_usd = 1.5 WHERE id = ?", (ctl["id"],))
-    assert hive.research.controller_month(ctl["id"]) == 1.5
-    hive.db.execute("UPDATE agents SET budget_usd = 0 WHERE id = ?", (ctl["id"],))
-    assert hive.research.controller_month(ctl["id"]) == 50
+    hive.foundation.ensure()
+    assert coordinator(hive)["budget_usd"] == 1.5                         # its owner's own cap stays
 
 
 def _settles(predicate, timeout=8.0):

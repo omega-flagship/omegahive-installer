@@ -3,6 +3,7 @@
 # the Limits page shows the hive cap, the people and the caps set.
 """One allowance per payer and one hive cap (budgets.py, limits_view.py, Minds.instruct)."""
 import asyncio
+import json
 import logging
 import random
 
@@ -49,6 +50,23 @@ def world(client):
     person(client, MEMBER)
     person(client, ADMIN, role="admin")
     return [s1, s2], minds
+
+
+def test_a_minds_calls_can_spend_past_the_old_burst_and_a_limit_refusal_has_a_safe_sentence(client):
+    hive = hive_of(client)
+    _, (mind,) = make_swarm_and_agents(client, n=1, model=PAID)
+    set_rule(client, "hive", "month", 0.05)
+    for _ in range(2):
+        response = chat(client, mind, max_tokens=60)
+        assert response.status_code == 200, response.text
+
+    before = hive.db.one("SELECT COUNT(*) AS n FROM cost_reservations")["n"]
+    response = chat(client, mind, max_tokens=4096)
+    assert response.status_code == 402, response.text
+    error = response.json()["error"]
+    assert error["say"] == "A spending limit has no room for this call."
+    assert (error["scope"], error["period"]) == ("hive", "month")
+    assert hive.db.one("SELECT COUNT(*) AS n FROM cost_reservations")["n"] == before
 
 
 # ---- the rows a call is checked against ---------------------------------------------------------------------------------
@@ -170,16 +188,36 @@ def test_a_retired_setting_is_logged_once_and_changes_nothing(client, monkeypatc
     monkeypatch.setattr(config, "_RETIRED_NOTED", set())
     monkeypatch.setenv("HIVE_SWARM_MONTHLY_USD", "500")
     monkeypatch.setenv("HIVE_PERSON_REQUEST_CEILING_USD", "1")
+    monkeypatch.setenv("HIVE_ASK_CONDUCTOR_TURN_USD", "0.25")
     with caplog.at_level(logging.WARNING, logger="hive.config"):
         settings_ = config.load_settings(data_dir=tmp_path)
         config.load_settings(data_dir=tmp_path)
     retired = [r.getMessage() for r in caplog.records if "is retired" in r.getMessage()]
-    assert len(retired) == 2 and not hasattr(settings_, "swarm_monthly_usd") and "HIVE_SWARM_MONTHLY_USD" not in settings_.budget_env
+    assert len(retired) == 3 and not hasattr(settings_, "swarm_monthly_usd") and "HIVE_SWARM_MONTHLY_USD" not in settings_.budget_env
     h = hive_of(client)
     swarm, (a,) = make_swarm_and_agents(client, n=1, budget_usd=5)
     assert h.budgets.applicable(h.agent(a["id"])) == []              # no swarm month default
     assert {s["name"] for s in h.budgets.server_settings()} == {
-        "HIVE_BUDGET_USD", "HIVE_MEMBER_MONTHLY_USD", "HIVE_ASK_CONDUCTOR_TURN_USD", "HIVE_START_LIMIT_MONTH_USD"}
+        "HIVE_BUDGET_USD", "HIVE_MEMBER_MONTHLY_USD", "HIVE_START_LIMIT_MONTH_USD"}
+
+
+def test_a_retired_setting_in_the_deployment_file_is_logged_once_and_read_by_nothing(monkeypatch, tmp_path, caplog):
+    # the deployment's file (HIVE_CONFIG_FILE) is a layer of its own: a retired setting there is named once at startup,
+    # and no KEYS row reads it, so even a malformed value refuses nothing while the file's live keys still apply
+    from hive.core import config
+    monkeypatch.setattr(config, "_RETIRED_NOTED", set())
+    for name in config.RETIRED_ENV + config.BUDGET_ENV:
+        monkeypatch.delenv(name, raising=False)
+    deployment = tmp_path / "deployment.json"
+    deployment.write_text(json.dumps({"HIVE_SWARM_MONTHLY_USD": "lots", "HIVE_MEMBER_MONTHLY_USD": 20}))
+    monkeypatch.setenv("HIVE_CONFIG_FILE", str(deployment))
+    with caplog.at_level(logging.WARNING, logger="hive.config"):
+        settings_ = config.load_settings(data_dir=tmp_path / "data")
+        config.load_settings(data_dir=tmp_path / "data")
+    retired = [r.getMessage() for r in caplog.records if "is retired" in r.getMessage()]
+    assert len(retired) == 1 and retired[0].startswith(f"HIVE_SWARM_MONTHLY_USD, set in {deployment}, is retired"), retired
+    assert settings_.member_monthly_usd == 20 and settings_.budget_env == {"HIVE_MEMBER_MONTHLY_USD": "20.0"}
+    assert not set(config.RETIRED_ENV) & (set(config.KEYS) | set(json.loads(config.CONFIG_FILE.read_text())))
 
 
 # ---- a person's instruction: the asker's room, the hive cap and the caps set ----------------------------------------------

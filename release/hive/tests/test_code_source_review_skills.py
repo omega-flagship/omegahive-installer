@@ -108,9 +108,12 @@ def test_original_export_pending_is_mode_isolated_and_preserves_approved_source(
 
 
 def test_git_export_requires_default_approval_and_only_fixed_proxy_routes():
-    from hive.core.policy import Policy
+    from hive.core.policy import OWN_CODE_REASON, Policy
     from hive.core.code import PROXY_ROUTES
     policy=Policy.__new__(Policy);policy.all_rules=lambda:[]
+    # refused to a mind outside Create · Code (Jon, 17 Nov); Create · Code's own minds work under these defaults
+    assert policy.decide({'id':'a_one'},'code-git-export')==('deny',OWN_CODE_REASON)
+    policy.create_code_mind=lambda agent:True
     assert policy.decide({'id':'a_one'},'code-git-export')[0]=='ask'
     assert policy.decide({'id':'a_one'},'code-git-original-export')[0]=='ask'
     assert policy.decide({'id':'a_one'},'code-git-export-state')[0]=='allow'
@@ -158,9 +161,12 @@ def test_merge_apply_retries_exact_choices_and_does_not_downgrade_current_state(
 
 
 def test_merge_apply_asks_by_default_and_proxy_has_no_repository_mutation_route():
-    from hive.core.policy import Policy
+    from hive.core.policy import OWN_CODE_REASON, Policy
     from hive.core.code import PROXY_ROUTES
     policy=Policy.__new__(Policy);policy.all_rules=lambda:[]
+    # refused to a mind outside Create · Code (Jon, 17 Nov); Create · Code's own minds work under these defaults
+    assert policy.decide({'id':'a_one'},'code-merge-apply')==('deny',OWN_CODE_REASON)
+    policy.create_code_mind=lambda agent:True
     assert policy.decide({'id':'a_one'},'code-merge-apply')[0]=='ask'
     assert policy.decide({'id':'a_one'},'code-merge-preview')[0]=='allow'
     def allowed(method,path):return any(m==method and re.fullmatch(p,path) for m,p,_ in PROXY_ROUTES)

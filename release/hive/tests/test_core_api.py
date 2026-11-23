@@ -1,4 +1,4 @@
-"""hive-core API against the real app, spaces and gateway (fake process driver)."""
+"""Purpose: Verify the Hive API with the app, spaces and gateway."""
 
 import json
 import os
@@ -336,6 +336,42 @@ def test_a_start_that_fails_unexpectedly_leaves_the_mind_in_error_with_a_short_r
     assert client.post(f"/api/agents/{mind['id']}/start").json()["error"]["code"] == "start_refused"
     row = client.get(f"/api/agents/{mind['id']}").json()
     assert row["status"] == "error" and row["last_error"] == "start refused: synthetic: cannot run here"
+    assert client.app.state.hive.db.one("SELECT desired FROM agents WHERE id = ?", (mind["id"],))["desired"] == "stopped"
+
+
+def test_start_refuses_a_linked_workspace_file_and_shows_how_to_clear_it(client, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from hive.supervisor import drivers
+
+    _, (mind,) = make_swarm_and_agents(client, n=1)
+    root = tmp_path / "mind"
+    memory = root / "memory"
+    memory.mkdir(parents=True)
+    original = tmp_path / "original"
+    original.write_text("fixture")
+    os.link(original, memory / "notes.metta")
+    settings = SimpleNamespace(data_dir=tmp_path)
+    workspace = SimpleNamespace(path=lambda _: root, settings=settings, command=lambda *_: ["/bin/true"])
+    driver = drivers.LocalDriver(workspace, PETTA)
+    monkeypatch.setenv("HIVE_MIND_SANDBOX", "1")
+    monkeypatch.setattr(driver, "read_roots", lambda: [])
+    monkeypatch.setattr(drivers, "sandbox_available", lambda: True)
+    monkeypatch.setattr(drivers, "sandbox_wrap", lambda *_: (["/bin/true"], "unused"))
+
+    def unexpected_spawn(*args, **kwargs):
+        pytest.fail("a mind with an aliased file reached process spawn")
+
+    monkeypatch.setattr(drivers, "subprocess", SimpleNamespace(Popen=unexpected_spawn))
+    monkeypatch.setattr(client.supervisor, "start", lambda _: driver.start(mind, {}))
+    out = client.post(f"/api/agents/{mind['id']}/start")
+    assert out.status_code == 409
+    error = out.json()["error"]
+    assert error["code"] == "start_refused"
+    assert "'memory/notes.metta'" in error["message"]
+    assert "Replace it with an independent copy or remove the link" in error["message"]
+    row = client.get(f"/api/agents/{mind['id']}").json()
+    assert row["status"] == "error" and row["last_error"] == f"start refused: {error['message']}"
     assert client.app.state.hive.db.one("SELECT desired FROM agents WHERE id = ?", (mind["id"],))["desired"] == "stopped"
 
 

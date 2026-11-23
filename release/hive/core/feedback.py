@@ -12,6 +12,10 @@ it beside RELEASE_VERSION), so a release sets it for every hive that takes it an
   https://github.com/OWNER/REPO  a feedback board: the page opens its prefilled new-issue form for a person with a
                                  GitHub account, once the repository answers as public
   any other https address        a report service: the hive posts the report there (POST /api/feedback/send)
+  http://127.0.0.1 or localhost  a report service on this machine
+  http://<the service host>      the report service on the host HIVE_FEEDBACK_SERVICE_HOST names (one host; the
+                                 deploy sets feedback-relay, its relay on a private network), any other http host
+                                 stays invalid
   none                           no direct route: the person copies the report or saves it
 Whatever the destination, the page also offers the copy for the testers' group and the saved file.
 
@@ -136,16 +140,22 @@ def configured(env_value: str | None, root: pathlib.Path = RELEASE_ROOT) -> str 
         return None
 
 
-def destination(raw: str | None) -> dict:
+def destination(raw: str | None, service_host: str | None = None) -> dict:
     """Where reports go, from the setting as written (`configured`; None when nothing sets it). A value the hive cannot
-    use is said, never dropped: {"kind": "invalid", "reason": ...}, and the page offers the copy and the file meanwhile."""
+    use is said, never dropped: {"kind": "invalid", "reason": ...}, and the page offers the copy and the file meanwhile.
+    Plain http is allowed to this machine and to the one host `service_host` names (HIVE_FEEDBACK_SERVICE_HOST), and
+    to no other."""
     text = BOARD if raw is None else raw.strip()
     if text.lower() in ("", "none", "off"):
         return {"kind": "none"}
     parts = urlsplit(text)
-    local = parts.scheme == "http" and parts.hostname in LOOPBACK   # a report service on this machine
-    if parts.scheme != "https" and not local:
-        return {"kind": "invalid", "reason": "the feedback destination must be an https address, or none"}
+    named = (service_host or "").strip().lower() or None
+    # a report service on this machine, or the one the deploy runs beside the hive on a private network
+    plain = parts.scheme == "http" and parts.hostname is not None and (parts.hostname in LOOPBACK
+                                                                        or parts.hostname == named)
+    if parts.scheme != "https" and not plain:
+        return {"kind": "invalid", "reason": "the feedback destination must be an https address, an http address on "
+                                             "this machine or at HIVE_FEEDBACK_SERVICE_HOST, or none"}
     if not parts.hostname:
         return {"kind": "invalid", "reason": "the feedback destination names no host"}
     if parts.hostname == "github.com":
@@ -336,7 +346,7 @@ class Feedback:
 
     def __init__(self, hive, raw_destination: str | None):
         self.hive = hive
-        self.to = destination(configured(raw_destination))
+        self.to = destination(configured(raw_destination), getattr(hive.settings, "feedback_service_host", None))
         # the file holding the report service's token (HIVE_FEEDBACK_TOKEN_FILE), or None when it asks for none
         self.token_file: str | None = (getattr(hive.settings, "feedback_token_file", None) or "").strip() or None
         self._errors: collections.deque = collections.deque(maxlen=KEEP_ERRORS)

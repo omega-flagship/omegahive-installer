@@ -1,15 +1,13 @@
 # Purpose: cost reservations: each paid call's worst case held against its limits before it is sent, then settled by
 # itself, never by hand: at its real cost when it answers, released when its provider documents a refusal as unbilled,
 # from OpenRouter's record of it, or, when its outcome stays unknown, at its worst case (a free model's at $0) as an
-# estimate after an hour, which OpenRouter's record of the call, once it appears, or a person may correct for 30 days;
-# and the spend-rate guard that paces what a mind spends on its own against every monthly allowance and cap the call is
-# held against: the payer's, the hive's, and a team's or a mind's where one is set.
-"""Host integration candidate: durable shared liabilities, no provider dispatch.
+# estimate after an hour, which OpenRouter's record of the call, once it appears, or a person may correct for 30 days.
+"""Purpose: reserve, release and settle durable paid-call liabilities.
 
 The host supplies current budgets/spend inside the admission transaction and
 records actual usage inside settlement. This module grants no call authority.
 """
-import contextlib,datetime,hashlib,json,math,re,time
+import contextlib,datetime,hashlib,json,re,time
 from decimal import Decimal,InvalidOperation,ROUND_CEILING,ROUND_FLOOR
 from zoneinfo import ZoneInfo
 
@@ -146,79 +144,10 @@ def exhausted_limit(exc):
     return {'scope':scope or exc.scope,'period':period if scope else None,'limit_usd':exc.limit_usd,'spent_usd':round(exc.spent_usd,6),
             'held_usd':round(exc.held_usd,6),'call_usd':round(exc.estimate_usd,6)}
 
-# ---- the spend-rate guard (#107, PR B) ----------------------------------------------------------------------------------
-# GCRA, the one-number token bucket of ATM traffic control (ITU-T I.371 annex A; redis-cell's CL.THROTTLE and the Go
-# throttled library's GCRARateLimiter are the same algorithm): each guarded limit keeps one theoretical arrival time,
-# tat, in limit_rates. A month limit L refills at L / 30 days with a burst of L / 10, so a call of worst case c costs
-# c x 30 days / L of tat time and is admitted while max(tat, now) + that cost <= now + 3 days (a tenth of 30 days, the
-# burst's own time, whatever L is). A call bigger than the burst is admitted only when the guard is full (tat <= now),
-# so it is never blocked for good. A refused call holds nothing. With $50 a month that is $1.67 a day and a $5 burst.
-# Time ahead is money ahead at the limit's pace, so each row keeps the limit it was counted at (lim): when someone
-# raises or lowers the limit, the next reservation scales the time ahead and the open charges by old / new, so the money
-# ahead stays the same and a raised cap frees its larger burst at once instead of only shortening each wait.
-# It paces only what a mind spends on its own, the runaway Jon asked it to stop (#299). A call a person's live work holds
-# (Hive.present_for: their Studio session, Ask turn, Session, live Create plan or live Code request, or their message the
-# mind is answering) is held by its limits alone and charges no tat (reserve's paced=False): that person is there and
-# can stop it, and the work has its own budget or its person waits on it. Pacing it too held Make on a $1 month for 17
-# hours after one 2-cent planner call, since each call reserves nearly the whole $0.10 burst, a Code helper on a $2
-# month 13 hours after its first call, and a mind answering its person's chat once the burst was spent.
-GUARD_MONTH_SECONDS=30*86400
-GUARD_BURST_SECONDS=GUARD_MONTH_SECONDS/10
-
-def guarded(label):
-    """The limits the guard paces, every monthly figure someone set on spending: the payer's allowance
-    (person:<id>:month), the hive's cap (hive:month), and a team's or a mind's cap where one is set (swarm:<id>:month,
-    agent:<id>:month, the every-mind rule's month on a mind among them), so a runaway mind slows to the month's pace of
-    the tightest one it meets (Jon on #299). A day rule is a pace already, a total has no month to pace over and a key's
-    cap is its owner's own (OwnHive), so those are held by their limit alone."""
-    scope,_,period=label.rpartition(':')
-    return period=='month' and (scope=='hive' or scope.split(':',1)[0] in ('person','swarm','agent'))
-
-class SpendRateLimited(ValueError):
-    """A reservation the spend-rate guard refused: the guarded limit (its label and figure) and the whole seconds until
-    a call of that worst case fits (retry_after, rounded up). Nothing was held."""
-    def __init__(self,scope,limit,retry_after):
-        super().__init__('Spending faster than this month allows: '+scope)
-        self.scope,self.limit_usd,self.retry_after=scope,limit,max(1,math.ceil(retry_after))
-
-def guard_charges(db,rows,ceiling,now):
-    """Inside the reserve transaction: for each guarded row, (label, its new tat, the seconds this call charges, the limit
-    in micros it is counted at), or SpendRateLimited for the first row the call doesn't fit. A row last counted at another
-    limit first has its time ahead and its open charges scaled by old / new (the money ahead kept). Time: one tat read per
-    guarded row (four at most: the payer's, the hive's, the team's and the mind's), and one update of that row's open
-    charges when its limit changed."""
-    out=[]
-    for label,limit,_spent in rows:
-        lim=micros(limit,ROUND_FLOOR) if guarded(label) else 0
-        if lim<=0:continue
-        stored=db.one('SELECT tat,lim FROM limit_rates WHERE label=?',(label,))
-        tat=stored['tat'] if stored else now
-        if stored and stored['lim'] and stored['lim']!=lim:
-            scale=stored['lim']/lim
-            tat=now+max(0.0,tat-now)*scale
-            db.execute('UPDATE limit_rate_charges SET seconds=seconds*? WHERE label=?',(scale,label))
-        tat=max(tat,now)
-        cost=ceiling*GUARD_MONTH_SECONDS/lim
-        # within the burst: admitted while tat + cost <= now + the burst's time; bigger than it: only from a full guard
-        wait=tat+cost-GUARD_BURST_SECONDS-now if cost<=GUARD_BURST_SECONDS else tat-now
-        if wait>0:raise SpendRateLimited(label,float(limit),wait)
-        out.append((label,tat+cost,cost,lim))
-    return out
-
-# A reservation ends released (the whole charge back) or settled below its worst case (the difference back, in
-# proportion), and the guard gives that time back, so it counts what was actually spent. One trigger covers every
-# statement that ends a hold, here and in the Studio paths; a hold settled at its worst case (an expiry) gives nothing back.
-GUARD_REFUND=("CREATE TRIGGER IF NOT EXISTS limit_rate_refund AFTER UPDATE OF state ON cost_reservations "
-              "WHEN NEW.state IN ('released','settled') AND OLD.state IN ('reserved','dispatched','unknown') BEGIN "
-              "UPDATE limit_rates SET tat=tat-(SELECT c.seconds*CASE WHEN NEW.state='released' THEN 1.0 "
-              "WHEN NEW.actual IS NULL OR NEW.actual>=NEW.maximum THEN 0.0 ELSE (NEW.maximum-NEW.actual)*1.0/NEW.maximum END "
-              "FROM limit_rate_charges c WHERE c.reservation=NEW.id AND c.label=limit_rates.label) "
-              "WHERE label IN (SELECT label FROM limit_rate_charges WHERE reservation=NEW.id); "
-              "DELETE FROM limit_rate_charges WHERE reservation=NEW.id; END")
-
 class Reservations:
-    def __init__(self,db,clock=time.time):
-        self.db,self.clock=db,clock
+    def __init__(self,db,*,admission=None):
+        self.db=db
+        self.admission=admission
         db.execute('CREATE TABLE IF NOT EXISTS cost_reservations (id TEXT PRIMARY KEY, binding TEXT NOT NULL, maximum INTEGER NOT NULL, state TEXT NOT NULL, actual INTEGER)')
         db.execute('CREATE TABLE IF NOT EXISTS cost_reservation_scopes (reservation TEXT NOT NULL, scope TEXT NOT NULL, PRIMARY KEY(reservation,scope))')
         db.execute('CREATE TABLE IF NOT EXISTS cost_reservation_details (reservation TEXT PRIMARY KEY, metadata TEXT NOT NULL, observation TEXT)')
@@ -232,11 +161,6 @@ class Reservations:
             db.execute('ALTER TABLE cost_reservations ADD COLUMN unknown_at REAL')
         if 'reserved_at' not in {r[1] for r in db._conn.execute('PRAGMA table_info(cost_reservations)')}:
             db.execute('ALTER TABLE cost_reservations ADD COLUMN reserved_at REAL')
-        db.execute('CREATE TABLE IF NOT EXISTS limit_rates (label TEXT PRIMARY KEY, tat REAL NOT NULL, lim INTEGER)')
-        if 'lim' not in {r[1] for r in db._conn.execute('PRAGMA table_info(limit_rates)')}:
-            db.execute('ALTER TABLE limit_rates ADD COLUMN lim INTEGER')   # a row from before: counted at its next charge
-        db.execute('CREATE TABLE IF NOT EXISTS limit_rate_charges (reservation TEXT NOT NULL, label TEXT NOT NULL, seconds REAL NOT NULL, PRIMARY KEY(reservation,label))')
-        db.execute(GUARD_REFUND)
         # Schema only. Recovery of a previous process's calls is recover_startup, run once by the lifetime owner
         # (hive.core.exclusive.startup_recovery); constructing Reservations never rewrites a live liability (OPEN-17).
     @staticmethod
@@ -321,8 +245,11 @@ class Reservations:
     def pending(self,label):
         """Micro-USD open S5 and delegated commitments for the existing budget subject."""
         return pending_micros(self.db, label)
-    def reserve(self,key,payload,maximum,budgets,metadata=None,dispatched=False,subjects=None,paced=True):
+    def reserve(self,key,payload,maximum,budgets,metadata=None,dispatched=False,subjects=None):
         """budgets() -> [(scope+period identifier, limit USD, recorded spend USD)].
+        A row whose limit is None is a label only: recorded on the reservation like any row, so settled() and pending()
+        of that label count the call, and never checked (an Ask turn's askturn:<id> and its thread's askthread:<id>,
+        which name what the call was for and cap nothing: Jon's design for the Ask on omegahive#294, item 2).
         subjects: what the call spends against (host_subjects); recorded with the liability so every later row about
         any of them counts it. Without it, the subjects of the rows in force now (and the hive) are recorded.
 
@@ -330,9 +257,6 @@ class Reservations:
         must exclude reservations; outstanding liabilities are added here.
         dispatched=True admits and marks the call dispatched in that one transaction, so a crash can never strand
         a 'reserved' row. Only a hash of the payload is kept, never the call content.
-        The spend-rate guard (guard_charges) then paces each monthly allowance and cap it is held against (guarded): a call
-        that fits its limits but not their pace raises SpendRateLimited and holds nothing. paced=False is a call a
-        person's own live work holds (Hive.present_for): its limits alone hold it and it charges the guard nothing.
         """
         if not isinstance(key,str) or not key:raise ValueError('Request identity required')
         metadata={} if metadata is None else metadata
@@ -352,19 +276,18 @@ class Reservations:
                 return {**prior,'new':False}
             rows=list(budgets())
             if not rows or len({s for s,_,_ in rows})!=len(rows):raise ValueError('Exact shared budget scopes required')
+            if self.admission is not None:
+                self.admission(metadata.get('agent'),metadata.get('key'))
             for scope,limit,spent in rows:
+                if limit is None:continue   # a label only: recorded below, never a limit
                 held_now=self.pending(scope)
                 if micros(spent)+held_now+ceiling>micros(limit,ROUND_FLOOR):
                     raise BudgetExhausted(scope,float(limit),float(spent),held_now/1_000_000,ceiling/1_000_000)
-            charges=guard_charges(self.db,rows,ceiling,self.clock()) if paced else []
             held={'hive'}|{s for s in (subjects or ()) if s}|{s for s in (subject_of(l) for l,_,_ in rows) if s}
             self.db.execute("INSERT INTO cost_reservations(id,binding,maximum,state,dispatched_at,reserved_at) VALUES(?,?,?,?,?,?)",(key,binding,ceiling,'dispatched' if dispatched else 'reserved',time.time() if dispatched else None,time.time()))
             self.db.execute('INSERT INTO cost_reservation_details(reservation,metadata) VALUES(?,?)',(key,details))
             for scope,_,_ in rows:self.db.execute('INSERT INTO cost_reservation_scopes(reservation,scope) VALUES(?,?)',(key,scope))
             for subject in sorted(held):self.db.execute('INSERT INTO cost_reservation_subjects(reservation,subject) VALUES(?,?)',(key,subject))
-            for label,tat,seconds,lim in charges:
-                self.db.execute('INSERT INTO limit_rates(label,tat,lim) VALUES(?,?,?) ON CONFLICT(label) DO UPDATE SET tat=excluded.tat,lim=excluded.lim',(label,tat,lim))
-                self.db.execute('INSERT INTO limit_rate_charges(reservation,label,seconds) VALUES(?,?,?)',(key,label,seconds))
             return {**self.get(key),'new':True}
     def dispatch(self,key):
         with self.db.transaction():
@@ -484,29 +407,13 @@ def host_budget_snapshot(hive,agent_id,key_id=None,payer=None,own_key=False,turn
     a particular calendar window so unresolved prior liabilities stay held.
     turn_bound (gateway r1a, plan §2.6; only the personal-mind gateway passes True): the person's ONE monthly total
     (Budgets.monthly_total) is always a row, and without one nothing is reserved (ValueError monthly_total_required).
+    A call on its person's own key that nothing limits has one row, a label under their own keys' scope that caps
+    nothing.
     """
     fresh=hive._agent_row(agent_id)   # the stored spend, not the view's 6-place rounding (OmegaReview r6)
     rows={}
     if hive.budgets.lifetime_cap_applies(fresh,None,payer,own_key,key_id,turn_bound):   # a $0 mind under a hive cap is held by it, its payer's allowance and the caps set instead (a personal mind: its person's allowance)
         rows["agent:"+fresh["id"]+":total"]=(fresh["budget_usd"] or 0,fresh["spent_usd"] or 0)
-    foundation=getattr(hive,'foundation',None)
-    ceiling=foundation.controller_ceiling(agent_id) if foundation is not None else None
-    if ceiling is not None:
-        label='agent:'+fresh['id']+':total'
-        # The same pure host-bound ceiling governs own calls and delegated admission.
-        # Lower existing own caps, including a governing zero, remain effective.
-        prior=rows.get(label)
-        rows[label]=(min(prior[0],ceiling) if prior else ceiling,fresh['spent_usd'] or 0)
-    research=getattr(hive,'research',None)
-    month=research.controller_month(agent_id) if research is not None else None
-    if month is not None:
-        # The Research coordinator (research.py) never spends itself: its spawn ceiling is the Research month cap, so the
-        # researchers' past months (which _delegated_pending_micros counts against a lifetime row forever) never block it.
-        from .budgets import period_start
-        rows.pop('agent:'+fresh['id']+':total',None)
-        own=hive.db.one('SELECT COALESCE(SUM(cost_usd),0) AS s FROM usage WHERE agent_id=? AND created_at>=?',
-                        (fresh['id'],period_start('month')))['s']
-        rows['agent:'+fresh['id']+':month']=(month,own)
     cap=hive.budgets.hard_cap()   # HIVE_BUDGET_USD only seeds a hive with no total on the Limits page (Jon 2026-10-07)
     if cap:
         rows['hive:hard-total']=(cap,hive.budgets.hard_total_spent())
@@ -521,6 +428,11 @@ def host_budget_snapshot(hive,agent_id,key_id=None,payer=None,own_key=False,turn
         spent=hive.budgets.spent(scope,period)
         if label in rows:limit=min(limit,rows[label][0])
         rows[label]=(limit,spent)
+    if own_key and not rows:
+        # a person's own key that nothing limits is their money to spend (Jon on #650, "a person's own key should just
+        # work"): held under their own keys' scope as a label that caps nothing, as an Ask turn's label is
+        # (Reservations.reserve), so a limit they set there later counts the hold
+        rows[hive.ownhive.subjects(key_id,payer)[0]+':month']=(None,0.0)
     return [(scope,limit,spent) for scope,(limit,spent) in rows.items()]
 
 
@@ -529,7 +441,7 @@ def reservable_micros(hive,agent_id,key_id=None,payer=None,own_key=False):
     checked against (host_budget_snapshot), of the limit less recorded spend less what open reservations already hold
     (pending_micros), as Reservations.reserve checks it; None when no row limits the call. A read outside the
     reservation's transaction, so it sizes a call and admits nothing. Time: one pending read per row."""
-    rows=host_budget_snapshot(hive,agent_id,key_id,payer,own_key)
+    rows=[r for r in host_budget_snapshot(hive,agent_id,key_id,payer,own_key) if r[1] is not None]   # a label: no cap
     if not rows:return None
     return max(0,min(micros(limit,ROUND_FLOOR)-micros(spent)-pending_micros(hive.db,scope) for scope,limit,spent in rows))
 
@@ -550,6 +462,7 @@ def admission_rows(db,snapshot):
     Budgets.request_bound. Time: r rows, one held query each."""
     out=[]
     for label,limit,spent in snapshot:
+        if limit is None:continue   # a label that caps nothing (Reservations.reserve) has no room to show
         held=pending_micros(db,label)
         room=max(0,micros(limit,ROUND_FLOOR)-micros(spent)-held)
         scope,_,period=label.rpartition(':')

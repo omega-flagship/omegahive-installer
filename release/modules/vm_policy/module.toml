@@ -25,6 +25,12 @@ provides = [
 
 requires = [
   "python>=3.10",
+]
+
+# The module loads without these and reports which firewall tools it found (vm_policy.py's tool probe), so a mind
+# without them keeps its skills: they are recommended, never required (helper_command_parser.module_selection leaves a
+# module out only for a requires entry shown missing).
+recommends = [
   "nft>=1",
   "ufw>=0.36",
 ]

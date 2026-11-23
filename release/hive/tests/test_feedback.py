@@ -598,6 +598,45 @@ def test_the_setting_names_the_token_file(monkeypatch):
     assert load_settings().feedback_token_file is None
 
 
+@pytest.mark.parametrize("raw, host, kind", [
+    # the deploy's relay on its private network, named by HIVE_FEEDBACK_SERVICE_HOST (#674)
+    ("http://feedback-relay:8730/reports", "feedback-relay", "service"),
+    ("http://Feedback-Relay:8730/reports", " feedback-relay \n", "service"),   # a host is one host however it is cased
+    # any other plain http host stays invalid, the named one included when nothing names it
+    ("http://feedback-relay:8730/reports", None, "invalid"),
+    ("http://feedback-relay:8730/reports", "", "invalid"),
+    ("http://other-relay:8730/reports", "feedback-relay", "invalid"),
+    ("http://feedback-relay.example.org/reports", "feedback-relay", "invalid"),
+    ("http://reports.example.org/in", "reports.example.org.evil", "invalid"),
+    ("ftp://feedback-relay/reports", "feedback-relay", "invalid"),
+    # what was allowed before is unchanged by the setting
+    ("http://127.0.0.1:9000/in", "feedback-relay", "service"),
+    ("https://reports.example.org/in", "feedback-relay", "service"),
+    ("https://github.com/acme/board", "feedback-relay", "board"),
+])
+def test_plain_http_reaches_only_this_machine_and_the_one_service_host_named(raw, host, kind):
+    got = fb.destination(raw, host)
+    assert got["kind"] == kind, got
+    if kind == "invalid":
+        assert "HIVE_FEEDBACK_SERVICE_HOST" in got["reason"]   # said, with the setting that would allow it
+    if kind == "service":
+        assert got["url"] == raw.strip()
+
+
+def test_the_service_host_is_a_setting_the_hives_feedback_reads(monkeypatch):
+    import types
+    from hive.core.config import load_settings
+    monkeypatch.setenv("HIVE_FEEDBACK_SERVICE_HOST", "feedback-relay")
+    settings = load_settings()
+    assert settings.feedback_service_host == "feedback-relay"
+    to = fb.Feedback(types.SimpleNamespace(settings=settings), "http://feedback-relay:8730/reports").to
+    assert to == {"kind": "service", "url": "http://feedback-relay:8730/reports", "host": "feedback-relay"}
+    monkeypatch.delenv("HIVE_FEEDBACK_SERVICE_HOST")
+    settings = load_settings()
+    assert settings.feedback_service_host is None
+    assert fb.Feedback(types.SimpleNamespace(settings=settings), "http://feedback-relay:8730/reports").to["kind"] == "invalid"
+
+
 @pytest.mark.parametrize("make", ["missing", "empty", "folder", "two lines", "not text"])
 def test_a_token_file_that_cannot_be_read_sends_nothing_and_says_so_in_plain_words(client, echo, tmp_path, caplog, make):
     held = tmp_path / "relay.token"

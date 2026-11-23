@@ -1,0 +1,32 @@
+{
+ "by_test": [
+  "tests/test_wait_quiet_runtime.py"
+ ],
+ "seconds": {
+  "tests/test_app_action_skills.py": 0.1,
+  "tests/test_channel_hive_runtime.py": 4.1,
+  "tests/test_hive_goal_file_petta.py": 0.2,
+  "tests/test_memory_safety.py": 2.1,
+  "tests/test_multi_instance_memory.py": 6.5,
+  "tests/test_native_core_runtime.py": 11.8,
+  "tests/test_wait_quiet_runtime.py::ChosenWaitShapeTests::test_malformed_or_empty_batches_execute_no_prefix_commands": 0.0,
+  "tests/test_wait_quiet_runtime.py::ChosenWaitShapeTests::test_model_authored_format_wait_is_normal_and_transport_remains_sixty": 0.0,
+  "tests/test_wait_quiet_runtime.py::ChosenWaitShapeTests::test_only_a_pure_wait_ends_the_turns": 0.0,
+  "tests/test_wait_quiet_runtime.py::ChosenWaitShapeTests::test_the_loop_honors_the_choice_after_each_response": 0.0,
+  "tests/test_wait_quiet_runtime.py::WaitQuietRuntimeTests::test_a_chosen_wait_makes_no_calls_until_input_or_expiry": 56.8,
+  "tests/test_wait_quiet_runtime.py::WaitQuietRuntimeTests::test_a_clean_boot_with_no_input_makes_no_calls": 23.4,
+  "tests/test_wait_quiet_runtime.py::WaitQuietRuntimeTests::test_a_format_failure_keeps_the_last_results_in_the_next_prompt": 14.6,
+  "tests/test_wait_quiet_runtime.py::WaitQuietRuntimeTests::test_a_malformed_response_retries_soon_without_executing_its_valid_prefix": 11.5,
+  "tests/test_wait_quiet_runtime.py::WaitQuietRuntimeTests::test_a_message_after_another_command_waits_for_that_commands_result": 11.5,
+  "tests/test_wait_quiet_runtime.py::WaitQuietRuntimeTests::test_a_message_goes_out_on_the_turn_after_a_hold": 34.3,
+  "tests/test_wait_quiet_runtime.py::WaitQuietRuntimeTests::test_a_mind_holding_a_goal_keeps_its_turns_and_cannot_rest_on_it": 63.2,
+  "tests/test_wait_quiet_runtime.py::WaitQuietRuntimeTests::test_a_provider_error_wait_retries_after_a_short_back_off": 77.8,
+  "tests/test_wait_quiet_runtime.py::WaitQuietRuntimeTests::test_a_provider_failure_keeps_the_last_results_in_the_next_prompt": 72.1,
+  "tests/test_wait_quiet_runtime.py::WaitQuietRuntimeTests::test_a_provider_failure_while_holding_a_goal_keeps_its_back_off": 72.1,
+  "tests/test_wait_quiet_runtime.py::WaitQuietRuntimeTests::test_an_idle_mind_changes_no_file_in_its_memory_or_vector_store": 17.4,
+  "tests/test_wait_quiet_runtime.py::WaitQuietRuntimeTests::test_malformed_tool_call_retries_without_outage_delay": 11.6,
+  "tests/test_wait_quiet_runtime.py::WaitQuietRuntimeTests::test_model_authored_format_marker_does_not_grant_a_fast_wake": 20.1,
+  "tests/test_wait_quiet_runtime.py::WaitQuietRuntimeTests::test_persistent_incomplete_batches_exhaust_three_fast_retries_across_wakes": 38.2,
+  "tests/test_wait_quiet_runtime.py::WaitQuietRuntimeTests::test_the_quoted_wait_form_rests_the_same": 25.1
+ }
+}

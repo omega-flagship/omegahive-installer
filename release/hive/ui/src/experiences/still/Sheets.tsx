@@ -785,12 +785,14 @@ function People() {
   const client = useHive((s) => s.client)
   // Surface K1 audit: the list (or the refusal) belongs to the client it was read through
   const [read, setRead] = useState<Tagged<PeopleRead> | null>(null)
-  const state: PeopleRead = taggedFor(read, readContext(client)) ?? 'loading'
+  // GET /api/people is admin-only: a member is told so without asking (acceptance-tests#13 N1: each ask was a 403)
+  const { admin, loaded } = useMe()
+  const state: PeopleRead = !loaded ? 'loading' : !admin ? 'admins' : (taggedFor(read, readContext(client)) ?? 'loading')
   const now = useNow()
   useEffect(() => {
-    if (!client?.listPeople) return
-    let live = true
+    if (!client?.listPeople || !admin) return
     const ctx = readContext(client)
+    let live = true
     client.listPeople().then(
       (r) => live && setRead({ ctx, value: { people: r.people, invites: r.invites } }),
       (e: unknown) => live && setRead({ ctx, value: /403|forbidden|admin/i.test(e instanceof Error ? e.message : String(e)) ? 'admins' : 'error' }),
@@ -798,7 +800,7 @@ function People() {
     return () => {
       live = false
     }
-  }, [client])
+  }, [client, admin])
   const go = () => openClassic({ name: 'people' })
   if (!client?.listPeople || state === 'none')
     return (

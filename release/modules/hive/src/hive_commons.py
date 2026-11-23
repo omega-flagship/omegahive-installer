@@ -168,7 +168,8 @@ def goal_get(goal_id, reserve=0):
 
 def goal_propose(goal_id, text):
     """Finish a bound goal with a proposal; the binding digest is echoed so the hive can check it."""
-    goal, error = _call("GET", f"/api/agent/goals/{_text(goal_id)}")
+    reference = _text(goal_id)
+    goal, error = _call("GET", f"/api/agent/goals/{reference.partition('~')[0]}")
     if error:
         return error
     body = _text(text)
@@ -176,7 +177,8 @@ def goal_propose(goal_id, text):
         proposal = json.loads(body)
     except ValueError:
         proposal = {"text": body}   # wire format unchanged; with a result schema the hive refuses this and says why
-    result, error = _call("POST", f"/api/agent/goals/{goal['id']}/result", {
+    result_ref = reference if "~" in reference else goal["id"]
+    result, error = _call("POST", f"/api/agent/goals/{result_ref}/result", {
         "status": "done", "result": body[:4000],
         "data": {"binding_digest": goal.get("binding_digest"), "proposal": proposal}})
     return error or f"HIVE-GOAL-PROPOSED {result['id']}"
@@ -606,12 +608,22 @@ class _Staging:
             raise _Unsafe(f"{name} is not a plain staged file (a link, or linked elsewhere)")
         return st
 
+    def _names(self):
+        """The directory's entries, listed through a descriptor opened now: self.fd was opened before the parts were
+        renamed in, and POSIX leaves it unspecified whether readdir on it shows them; tmpfs on some Linux kernels does
+        not (omega-flagship/omegahive#623). "." relative to self.fd is the same directory, with no path lookup."""
+        fd = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), dir_fd=self.fd)
+        try:
+            return os.listdir(fd)
+        finally:
+            os.close(fd)
+
     def parts(self):
         """{n: size} of the staged parts; any entry that is not a plain part file is refused, never followed."""
         if self.fd is None:
             return {}
         out = {}
-        for name in os.listdir(self.fd):
+        for name in self._names():
             found = _PART_NAME.match(name)
             if found:
                 out[int(found.group(1))] = self._check_file(name).st_size
@@ -681,7 +693,7 @@ class _Staging:
                 done.append(f"removed part {k}")
 
     def remove_if_empty(self, artifact_id):
-        if self.fd is not None and not os.listdir(self.fd):
+        if self.fd is not None and not self._names():
             os.rmdir(artifact_id, dir_fd=self.fds[1])
 
 
@@ -1437,9 +1449,37 @@ def _toml_field(text, key):
     return found.group(1) if found else None
 
 
+def _module_entry(modules_root, directory, loaded):
+    """One module of the receipt: its directory, id, version, the digest of its .metta sources and the skill heads its
+    signatures.metta declares, and whether the space holds its module id (``loaded``, the ids the mind loaded)."""
+    toml = modules_root / directory / "module.toml"
+    text = toml.read_text(encoding="utf-8") if toml.exists() else ""
+    module_id = _toml_field(text, "id")
+    sources = sorted((modules_root / directory).glob("*.metta"))
+    heads = []
+    signatures = modules_root / directory / "signatures.metta"
+    if signatures.exists():
+        heads = sorted(set(re.findall(r"^\(SkillSignature\s+([^\s()]+)", signatures.read_text(encoding="utf-8"), re.M)))
+    entry = {"dir": directory, "configured": True, "loaded": module_id in loaded if module_id else False,
+             "signature_heads": heads}
+    if module_id:
+        entry["id"] = module_id
+    version = _toml_field(text, "version")
+    if version:
+        entry["version"] = version
+    if sources:
+        entry["source_digest"] = _source_digest(sources)
+    return entry
+
+
 def inventory_receipt(provides_text, modules_text, parser=None):
     """The boot receipt: the module ids this process loaded, the (module, skill) pairs its space holds, and the
-    skill heads its parser registered.  ``parser`` is the helper_command_parser module (injected for tests)."""
+    skill heads its parser registered.  ``parser`` is the helper_command_parser module (injected for tests).
+
+    Each module the loader names but this mind leaves out, because its manifest requires what the mind lacks
+    (module_selection), is listed too, never loaded, with ``left_out`` holding those unmet requires entries in the
+    manifest's order, for example ["service:omegacode"]: the hive words them ("needs the OmegaCode client"), so the
+    Tools page and the mind's own inventory read say why its skills are missing instead of leaving it out silently."""
     if parser is None:
         try:
             from hive.runtime.extensions import helper_command_parser as parser
@@ -1449,31 +1489,16 @@ def inventory_receipt(provides_text, modules_text, parser=None):
     modules_root = pathlib.Path(parser.MODULE_DECLARATIONS_ROOT)
     loaded = set(_atoms(modules_text))
     loaders = parser._active_module_loader_paths()
-    modules = []
-    # the modules this mind runs: its loader's, less those whose manifest requires what it lacks (module_selection),
-    # which it never imported, so none reads as set up but not loaded
-    directories = list(parser.module_selection(loaders[0])[0] if loaders else [])
+    # the modules this mind runs: its loader's, less those whose manifest requires what it lacks (module_selection)
+    running, off = parser.module_selection(loaders[0]) if loaders else ([], {})
+    directories = list(running)
     # J3 host R6.1: a module the host loaded into this mind beyond its loader (OMEGACLAW_EXTRA_MODULES); none when unset
     directories += [d for d in getattr(parser, "_extra_module_names", lambda: [])() if d not in directories]
-    for directory in directories:
-        toml = modules_root / directory / "module.toml"
-        text = toml.read_text(encoding="utf-8") if toml.exists() else ""
-        module_id = _toml_field(text, "id")
-        sources = sorted((modules_root / directory).glob("*.metta"))
-        heads = []
-        signatures = modules_root / directory / "signatures.metta"
-        if signatures.exists():
-            heads = sorted(set(re.findall(r"^\(SkillSignature\s+([^\s()]+)", signatures.read_text(encoding="utf-8"), re.M)))
-        entry = {"dir": directory, "configured": True, "loaded": module_id in loaded if module_id else False,
-                 "signature_heads": heads}
-        if module_id:
-            entry["id"] = module_id
-        version = _toml_field(text, "version")
-        if version:
-            entry["version"] = version
-        if sources:
-            entry["source_digest"] = _source_digest(sources)
-        modules.append(entry)
+    modules = [_module_entry(modules_root, directory, loaded) for directory in directories]
+    # a left-out module the host loads anyway is running, so it is listed once, above
+    for directory, missing in off.items():
+        if directory not in directories:
+            modules.append({**_module_entry(modules_root, directory, ()), "left_out": [str(e) for e, _why in missing]})
     commands = {}
     for name, args in dict(parser.SIGNATURE_COMMANDS).items():
         commands[str(name)] = [[str(kind), list(map(str, arg)) if isinstance(arg, (tuple, list)) else str(arg)] for kind, arg in args]
@@ -1635,7 +1660,7 @@ def rest_check():
 
 def goal_claim(goal_id):
     result, error = _call("POST", f"/api/agent/goals/{_text(goal_id)}/claim")
-    return error or f"HIVE-GOAL-CLAIMED {result['id']} {result['title']}"
+    return error or f"HIVE-GOAL-CLAIMED {result.get('claim_ref') or result['id']} {result['title']}"
 
 
 def goal_finish(goal_id, status, text):

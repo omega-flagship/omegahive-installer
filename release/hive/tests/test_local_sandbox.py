@@ -173,7 +173,8 @@ def test_mac_preflight_passes_with_a_package_json_above_the_data_folder(tmp_path
 @pytest.mark.skipif(not MAC, reason="the macOS rows run under sandbox-exec")
 def test_a_too_open_sandbox_fails_the_preflight_and_refuses_every_mind(tmp_path, monkeypatch):
     monkeypatch.delenv("HIVE_SANDBOX_RUNTIMES", raising=False)
-    monkeypatch.setattr(sandbox, "profile", lambda mind_dir, reads, ports=None: "(version 1)\n(allow default)\n")
+    monkeypatch.setattr(sandbox, "profile",
+                        lambda mind_dir, reads, ports=None, think=None: "(version 1)\n(allow default)\n")
     data = _data(tmp_path)
     receipt = preflight.run_and_record(data)
     rows = {r["id"]: r for r in receipt["rows"]}

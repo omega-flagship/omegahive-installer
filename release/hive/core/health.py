@@ -63,6 +63,10 @@ KINDS = {
     "refused-calls": ("high", "the mind's model calls are refused until someone acts", "Read the example: it says what to do (credit, a key or another model)."),
     "held-calls": ("medium", "the mind's model calls are held back for a while and tried again by themselves", "Nothing to do unless it lasts; the example says why. Another model goes on at once."),
     "loop": ("high", "the mind keeps getting the same failure", "Read the repeated result; tell the mind what to do differently, or fix the skill it is calling."),
+    # the same command with the same result over and over: a mind going round in a circle, each turn of which is a model
+    # call, though nothing failed (OpenHands' stuck detector stops an agent at four identical actions and observations)
+    "repeat": ("medium", "the mind keeps running the same command and getting the same result",
+               "Read what it repeats; tell the mind what to do differently, or let it sleep if it waits on something that will not change soon."),
     "unconnected": ("high", "the mind was started but never connected to the hive",
                     "Its process cannot reach the hive (address, port or sandbox): read its last log, fix the cause, then stop and start it."),
     "unreachable": ("medium", "a service the mind needs did not answer", "Check that the service is running (Code service, a program, the network)."),
@@ -115,6 +119,19 @@ def signature(command, result):
     return f"{_skill(command)} :: {text}"
 
 
+def repeat_key(command, result, kind):
+    """What makes commands the same for a loop, as (key, how many make one, alert kind), or None for a command that is
+    never part of one. A failure goes by its signature, Health.REPEAT times making a 'loop'; a command that succeeded goes
+    by its exact text and exact result, Health.SAME times making a 'repeat', since blurring a result's numbers would make
+    a job's changing progress read as a repeat. A wait, and a result waiting on a person or on a file someone else
+    changed, is never one: the mind is waiting, or working beside people."""
+    if kind in ("waiting", "stale") or (kind is None and _skill(command) == "wait"):
+        return None
+    if kind is None:
+        return ("repeat", f"{str(command or '').strip()}\n{str(result or '').strip()}"), Health.SAME, "repeat"
+    return ("loop", signature(command, result)), Health.REPEAT, "loop"
+
+
 def _stamp_ago(seconds):
     moment = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=seconds)
     return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -122,6 +139,7 @@ def _stamp_ago(seconds):
 
 class Health:
     REPEAT = 3          # the same failure this many times within WINDOW commands is a loop
+    SAME = 4            # the same command with the same result this many times within WINDOW commands is a repeat
     WINDOW = 12
     ALERT_QUIET_S = 1800
     RECENT_S = 3600     # problems older than this no longer count toward a mind's health
@@ -151,15 +169,16 @@ class Health:
             if kind is None:
                 continue
             self._add(issues, kind, item, row)
-        # loops: the same non-trivial failure repeated in a short stretch
+        # loops and repeats: the same failure, or the same command with the same result, in a short stretch (repeat_key)
         for i in range(len(recent)):
-            window = [r for r in recent[i:i + self.WINDOW] if r[0] not in (None, "waiting", "stale")]
             counts = {}
-            for kind, item, row in window:
-                counts.setdefault(signature(item.get("command"), item.get("result")), []).append((kind, item, row))
-            for sig, hits in counts.items():
-                if len(hits) >= self.REPEAT and ("loop", sig) not in issues:
-                    self._add(issues, "loop", hits[0][1], hits[0][2], key=("loop", sig), count=len(hits))
+            for kind, item, row in recent[i:i + self.WINDOW]:
+                found = repeat_key(item.get("command"), item.get("result"), kind)
+                if found:
+                    counts.setdefault(found, []).append((item, row))
+            for (key, needed, loop_kind), hits in counts.items():
+                if len(hits) >= needed and key not in issues:
+                    self._add(issues, loop_kind, hits[0][0], hits[0][1], key=key, count=len(hits))
         kept = (getattr(self.hive, "model_refusals", None) or {}).get(agent["id"])
         if kept and kept.get("model") == agent.get("model"):
             kind = "held-calls" if kept["remedy"] == "wait" else "refused-calls"
@@ -276,43 +295,58 @@ class Health:
         return raised
 
     def on_trace(self, agent, trace):
-        """After each trace: if a failure has now repeated, raise one alert for it (then stay quiet a while)."""
-        commands = [c for c in trace.get("commands", []) if classify(c.get("command"), c.get("result")) not in (None, "waiting", "stale")]
+        """After each trace: if a failure, or a command with the same result, has now repeated within the last WINDOW
+        commands (repeat_key), raise one alert for it, then stay quiet about it a while."""
+        agent_id = agent["id"]
+        commands = [(c, classify(c.get("command"), c.get("result"))) for c in trace.get("commands", [])]
+        commands = [(c, kind) for c, kind in commands if repeat_key(c.get("command"), c.get("result"), kind)]
         if not commands:
             return None
-        rows = self.db.all("SELECT commands FROM traces WHERE agent_id = ? ORDER BY id DESC LIMIT ?", (agent["id"], self.WINDOW))
+        # the last WINDOW commands, newest first, as the report counts them: a trace row holds one or more commands, so
+        # WINDOW rows always hold enough
+        rows = self.db.all("SELECT commands FROM traces WHERE agent_id = ? ORDER BY id DESC LIMIT ?", (agent_id, self.WINDOW))
+        latest = [item for row in rows for item in reversed(json.loads(row["commands"] or "[]"))][:self.WINDOW]
         seen = {}
-        for row in rows:
-            for item in json.loads(row["commands"] or "[]"):
-                if classify(item.get("command"), item.get("result")) not in (None, "waiting", "stale"):
-                    sig = signature(item.get("command"), item.get("result"))
-                    seen[sig] = seen.get(sig, 0) + 1
-        for c in commands:
-            sig = signature(c.get("command"), c.get("result"))
-            kind = classify(c.get("command"), c.get("result"))
-            repeated = seen.get(sig, 0) >= self.REPEAT
+        for item in latest:
+            found = repeat_key(item.get("command"), item.get("result"), classify(item.get("command"), item.get("result")))
+            if found:
+                seen[found[0]] = seen.get(found[0], 0) + 1
+        alert = repeat = None
+        for c, kind in commands:
+            key, needed, loop_kind = repeat_key(c.get("command"), c.get("result"), kind)
+            repeated = seen.get(key, 0) >= needed
             if not repeated and kind not in ("budget", "crash"):
                 continue
-            last = self.alerted.get((agent["id"], sig), 0)
-            if time.time() - last < self.ALERT_QUIET_S:
+            alert_key = (agent_id, key)
+            alert_due = time.time() - self.alerted.get(alert_key, 0) >= self.ALERT_QUIET_S
+            said = loop_kind if repeated else kind
+            # A repeat can prompt a question again once the earlier one was asked, even while its admin alert is quiet.
+            if repeated and (alert_due or (repeat is None and agent_id not in self.idle.repeats)):
+                repeat = {"kind": said, "command": str(c.get("command", ""))[:300], "count": seen[key], "at": now()}
+            if not alert_due:
                 continue
-            self.alerted[(agent["id"], sig)] = time.time()
-            alert = {"agent_id": agent["id"], "name": agent["name"], "kind": "loop" if repeated else kind,
-                     "severity": "high", "count": seen.get(sig, 1), "skill": _skill(c.get("command")),
-                     "result": str(c.get("result", ""))[:300], "hint": KINDS["loop" if repeated else kind][2]}
+            alert = {"agent_id": agent_id, "name": agent["name"], "kind": said,
+                     "severity": KINDS[said][0], "count": seen.get(key, 1), "skill": _skill(c.get("command")),
+                     "result": str(c.get("result", ""))[:300], "hint": KINDS[said][2]}
             self.hive.events.publish("health.alert", alert=alert)
-            if self.mind_id() and alert["agent_id"] != self.mind_id():
+            self.alerted[alert_key] = time.time()
+            health_mind = self.mind_id()
+            if health_mind and agent_id != health_mind:
                 self.pending.append(alert)   # delivered to the health mind on the next reconcile pass
-            return alert
-        return None
+            break
+        # Presence only decides the question. A failed lookup must leave the admin alert published.
+        if repeat is not None and self.hive.present_for(agent) is None:
+            self.idle.repeats[agent_id] = repeat
+        return alert
 
 
 # ---- idle minds: the hive noticing itself (owner 2026-10-10) -----------------------------------------------------------
 # "Health should notice an idle mind and take action to either tell it to sleep, or remind it of a task it owes" and
 # "The hive is supposed to monitor itself right - rather than strict rules for free minds". So nothing here limits a
-# mind: Health notices (model spend with no input, owed goals without a heartbeat, messages left unanswered), asks the
-# mind ONE question through the normal message path, and records the question and the answer. The mind decides. The
-# only hard limits stay the budgets and spend caps people set; an owner's idle_sleep_minutes stays the owner's choice.
+# mind: Health notices (a mind on its own going round in a loop, model spend with no input, owed goals without a
+# heartbeat, messages left unanswered), asks the mind ONE question through the normal message path, and records the
+# question and the answer. The mind decides. The only hard limits stay the budgets and spend caps people set; an
+# owner's idle_sleep_minutes stays the owner's choice.
 
 def _since_text(stamp):
     moment = parse_stamp(stamp)
@@ -345,6 +379,9 @@ class IdleWatch:
         self.hive = health.hive
         self.db = health.db
         self._last_pass = 0.0
+        # agent_id -> the loop Health noticed while the mind was on its own (Health.on_trace), until it is asked about,
+        # a person is there, or it is NOTICE_S old
+        self.repeats = {}
 
     # ---- what Health sees ------------------------------------------------------------------------------------------
 
@@ -400,17 +437,26 @@ class IdleWatch:
         awake = row.get("status") == "awake"
         owed = self.owed(row) if awake else []
         quiet = awake and quiet_s is not None and quiet_s > self.NOTICE_S
+        repeat = self.repeats.get(row["id"]) if awake else None
         # Two signals, neither a limit: model calls with no input (spend), and, for a mind that has stopped spending
         # (one answering only `wait`), awake with no input and no output at all for NOTICE_S (Kimi r1: the cheaper the
-        # wait, the less a stuck mind shows on spend; this is the non-cost signal).
-        kind = "owed" if owed else ("idle" if quiet and u["n"] else ("silent" if quiet else None))
+        # wait, the less a stuck mind shows on spend; this is the non-cost signal). A loop it is in now comes first.
+        kind = "repeat" if repeat else ("owed" if owed else ("idle" if quiet and u["n"] else ("silent" if quiet else None)))
         hours = min(self.DAY_S, quiet_s) / 3600 if quiet_s is not None and quiet_s > 0 else 0.0
         return {"last_input_at": last, "idle_calls_24h": int(u["n"]), "idle_spend_24h": round(float(u["usd"]), 6),
-                "idle_hours": round(hours, 2), "owed": owed, "kind": kind}
+                "idle_hours": round(hours, 2), "owed": owed, "repeat": repeat, "kind": kind}
 
     @staticmethod
     def question(facts):
-        """The one question Health asks. Owed work first; otherwise the spend with no input; otherwise the silence."""
+        """The one question Health asks. A loop the mind is in first; then owed work; otherwise the spend with no input;
+        otherwise the silence."""
+        repeat = facts.get("repeat")
+        if repeat:
+            if repeat["kind"] == "loop":
+                return (f"{repeat['command']} has failed the same way {repeat['count']} times while you worked on your own: "
+                        "try something different, sleep, or tell me what you need?")
+            return (f"You ran {repeat['command']} {repeat['count']} times on your own and got the same result each time: "
+                    "try something different, sleep, or tell me what you're waiting for?")
         owed = facts["owed"]
         if owed:
             first, more = owed[0], len(owed) - 1
@@ -493,6 +539,8 @@ class IdleWatch:
             self.db.execute("UPDATE health_idle SET status = 'unsent', closed_at = ? WHERE id = ?", (now(), qid))
             raise
         self.db.execute("UPDATE health_idle SET message_id = ? WHERE id = ?", (sent.get("id"), qid))
+        if facts.get("repeat"):
+            self.repeats.pop(row["id"], None)   # asked: the mind and its person have it now
         return qid
 
     async def run(self, force=False):
@@ -506,6 +554,9 @@ class IdleWatch:
         asked = []
         for row in self.db.all("SELECT * FROM agents WHERE deleted = 0 AND status = 'awake'"):
             try:
+                repeat = self.repeats.get(row["id"])
+                if repeat and ((_ago(repeat["at"]) or 0) > self.NOTICE_S or self.hive.present_for(row) is not None):
+                    self.repeats.pop(row["id"], None)   # a person is with it now, or it is old news: nothing to ask
                 facts = self.facts(row)
                 if not facts["kind"]:
                     continue

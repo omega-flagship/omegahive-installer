@@ -1,4 +1,4 @@
-"""Run a pinned tool bundle for an app inside the OS sandbox (capability ``sandbox:run``).
+"""Purpose: Run pinned Hive tools inside the host OS sandbox.
 
 Jon (2026-10-04): Studio is "another app within the hive app". The hive gives apps one generic, isolated way to run
 their own tools; apps keep their own operations. Design proved the boundary (studio_sandbox.py, studio_limits.sh);
@@ -11,7 +11,8 @@ this is the platform's version of it.
   the bundle and never reads a folder above it (see verify_tool_bundle).
 - Which runtime: by name from the operator's map (HIVE_SANDBOX_RUNTIMES, e.g. {"node": "/opt/homebrew/bin/node"}).
 - Boundary: sandbox-exec on macOS; existing namespace/Landlock wrapper with no relay ports on Linux. Deny by default; reads = the bundle, the runtime's install
-  prefix and system roots; writes = a fresh job folder only. A fixed launcher sets CPU and file-size limits.
+  prefix and system roots. Linux writes go to a private tmpfs, with declared inputs copied in and outputs read
+  through the original directory descriptor. A fixed launcher sets CPU and file-size limits.
   Scrubbed environment; on timeout or cancel the process group ends: on Linux SIGTERM first, so the launcher ends its
   namespace and removes its root, then SIGKILL after TERM_GRACE if its leader is still unreaped; on macOS SIGKILL
   (_term_grace). No sandbox → refuse (fail closed).
@@ -40,6 +41,7 @@ import sys
 import tempfile
 import time
 
+from ..supervisor import mindfs
 from ..supervisor.sandbox import MAC_SYSTEM_READ, backend, profile, safe_roots, tools_refused, wrap
 
 LAUNCHER = pathlib.Path(__file__).resolve().parents[1] / "supervisor" / "limits.sh"
@@ -386,12 +388,14 @@ async def _execute_process_phase(state, argv, *, job, env, work_until, cleanup_u
         if set(extra) - {"pass_fds"}:
             raise ValueError("resource bridge may supply only original inherited descriptors")
         if state.workspace is not None:
-            if state.bridge is None or type(extra.get("pass_fds")) is not tuple or len(extra["pass_fds"]) != 3:
-                raise ValueError("workspace requires original three placement descriptors")
-            fourth = state.workspace.transport
-            if fourth in extra["pass_fds"]:
+            inherited = extra.get("pass_fds", ())
+            if state.bridge is not None and (type(inherited) is not tuple or len(inherited) != 3):
+                raise ValueError("placed workspace requires three original placement descriptors")
+            workspace_fd = state.workspace.transport
+            if workspace_fd in inherited:
                 raise ValueError("workspace descriptor aliases placement control")
-            extra["pass_fds"] = extra["pass_fds"] + (fourth,)
+            extra["pass_fds"] = (*inherited, workspace_fd)
+            state.workspace.process_cleanup = cleanup
         if loop.time() >= work_until:
             raise TimeoutError("original sandbox deadline expired before phase spawn")
         state.spawn_attempted = True
@@ -612,8 +616,9 @@ def _artifacts(job, names, total_cap, deadline=None):
         primary = None
         try:
             before = os.fstat(fd)
-            if not stat.S_ISREG(before.st_mode) or before.st_size > min(MAX_OUTPUT, total_cap - total):
-                raise SandboxOutputLimit("sandbox artifact type or size refused")
+            if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                    or before.st_size > min(MAX_OUTPUT, total_cap - total)):
+                raise SandboxOutputLimit("sandbox artifact type, link count, or size refused")
             chunks, size = [], 0
             while True:
                 if deadline is not None and time.monotonic() >= deadline:
@@ -627,7 +632,7 @@ def _artifacts(job, names, total_cap, deadline=None):
                 chunks.append(chunk)
             after = os.fstat(fd)
             stamp = lambda s: (s.st_dev, s.st_ino, s.st_mode, s.st_uid, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
-            if stamp(before) != stamp(after) or size != before.st_size:
+            if stamp(before) != stamp(after) or after.st_nlink != 1 or size != before.st_size:
                 raise RuntimeError("sandbox artifact changed during read")
             raw = b"".join(chunks)
         except BaseException as error:
@@ -713,15 +718,17 @@ def available():
     return backend() in {"sandbox-exec", "landlock"} and LAUNCHER.is_file() and _launcher_works()
 
 
-def verify_bundle(app_dir, bundle):
-    """The bundle folder inside the app, exactly matching its lock file. Returns the resolved folder."""
+def _verified_bundle(app_dir, bundle):
     app_dir = pathlib.Path(app_dir).resolve()
     if not isinstance(bundle, str) or not re.fullmatch(r"[A-Za-z0-9._/-]{1,200}", bundle) or ".." in bundle.split("/"):
         raise ValueError("bundle is a plain relative folder inside the app")
     root = (app_dir / bundle).resolve()
     if app_dir not in root.parents or not root.is_dir():
         raise ValueError("bundle must be a folder inside the app")
-    lock = json.loads((root / "bundle.lock.json").read_text())
+    with os.fdopen(mindfs.open_source(root, "bundle.lock.json"), "rb") as lock_file:
+        lock = json.load(lock_file)
+        if os.fstat(lock_file.fileno()).st_nlink != 1:
+            raise ValueError("bundle lock is not a plain singly linked file")
     files = lock.get("files") if isinstance(lock, dict) else None
     if not isinstance(files, dict) or not files:
         raise ValueError("bundle.lock.json lists the bundle's files and their sha256")
@@ -729,9 +736,23 @@ def verify_bundle(app_dir, bundle):
     if present != set(files):
         raise ValueError("bundle files differ from its lock (extra or missing files)")
     for rel, digest in files.items():
-        p = root / rel
-        if p.is_symlink() or hashlib.sha256(p.read_bytes()).hexdigest() != digest:
+        try:
+            with os.fdopen(mindfs.open_source(root, rel), "rb") as source:
+                checked = hashlib.sha256()
+                for chunk in iter(lambda: source.read(65536), b""):
+                    checked.update(chunk)
+                if os.fstat(source.fileno()).st_nlink != 1:
+                    raise mindfs.UnsafeMindPath(f"{rel} is multiply linked")
+        except mindfs.UnsafeMindPath:
+            raise ValueError(f"bundle file is not a plain singly linked file: {rel}") from None
+        if checked.hexdigest() != digest:
             raise ValueError(f"bundle file changed: {rel}")
+    return root, files
+
+
+def verify_bundle(app_dir, bundle):
+    """The resolved bundle folder inside the app, exactly matching its lock file."""
+    root, _ = _verified_bundle(app_dir, bundle)
     return root
 
 
@@ -744,8 +765,7 @@ def verify_tool_bundle(app_dir, bundle):
     permitted") before the tool starts; where it is readable, its "type" would change how the tool runs. The bundle's
     own root package.json is where Node's search ends. ``.mjs`` and ``.cjs`` files carry their type in their name and
     need none. App interfaces (``ui``) are served to a browser, never run by Node, so verify_bundle alone checks them."""
-    root = verify_bundle(app_dir, bundle)
-    files = json.loads((root / "bundle.lock.json").read_text())["files"]
+    root, files = _verified_bundle(app_dir, bundle)
     if "package.json" not in files and any(rel.endswith(".js") for rel in files):
         raise ValueError("a tool bundle with .js files pins its own package.json at its root (Node reads none above it)")
     return root
@@ -1466,6 +1486,11 @@ async def _run_admitted(program, entry, args=(), inputs=None, outputs=(), runtim
     if sum(len(v) for v in inputs.values()) > MAX_INPUT:
         raise ValueError("inputs exceed 20 MiB")
     exe = pathlib.Path(runtimes[runtime]["exe"]).absolute()     # run as configured: a venv interpreter keeps its venv
+    if kind == "landlock":
+        from . import sandbox_workspace
+
+        if len(inputs) > sandbox_workspace.MAX_INPUT_FILES:
+            raise ValueError(f"at most {sandbox_workspace.MAX_INPUT_FILES} input names")
     real = pathlib.Path(os.path.realpath(exe))
     reads = [str(root)] + list(runtimes[runtime]["reads"])
     for e in {exe, real}:   # the runtime's own install prefix, both as configured and as resolved
@@ -1502,17 +1527,24 @@ async def _run_admitted(program, entry, args=(), inputs=None, outputs=(), runtim
               "limit_availability": {"memory": "per_process_virtual_address_space" if kind == "landlock" else "unavailable",
                                      "processes": "real_uid_not_job", "aggregate_cpu": False,
                                      "aggregate_memory": False, "aggregate_processes": False}}
-    cleanup_until = loop.time() + cleanup_seconds
+    started = loop.time()
+    work_until, cleanup_until = started + timeout, started + timeout + cleanup_seconds
     if absolute_until is not None:
+        work_until = min(work_until, absolute_until - cleanup_seconds)
         cleanup_until = min(cleanup_until, absolute_until)
-    original_job = tempfile.mkdtemp(prefix="sbx-")
+    original_job = job = workspace_job = None
     try:
-        # Retain the actual original return and cover resolve/initialization before
-        # any further fallible operation. Cleanup never needs resolve to succeed.
-        job = pathlib.Path(original_job).resolve()
-        for name, data in inputs.items():
-            (job / name).write_bytes(data if isinstance(data, bytes) else str(data).encode())
+        if work_until <= started:
+            raise TimeoutError("sandbox original deadline expired before spawn")
         if kind == "landlock":
+            workspace_job = sandbox_workspace.WorkspaceJob(loop_until=cleanup_until)
+            workspace_job.create(work_until)
+            original_job = workspace_job.path
+            workspace_job.raise_first()
+            job = pathlib.Path(original_job)
+            phase_state.workspace = sandbox_workspace.prepare_single_phase(
+                workspace_job, inputs, work_loop_until=work_until)
+            phase_state.workspace.raise_first()
             command = ["/bin/sh", str(LAUNCHER), str(cpu_seconds), str(file_bytes),
                        "--hive-resource-limits", "Linux", str(memory_bytes or 0), str(processes or 0), "--",
                        str(exe), str(entry_path), *args]
@@ -1520,8 +1552,9 @@ async def _run_admitted(program, entry, args=(), inputs=None, outputs=(), runtim
             # The wrapper reads this profile before executing the tool; no token or authority is stored here.
             # The runtime is exec'd by limits.sh, not as argv[0]: name it so the launcher mirrors its symlink chain
             # (a venv python -> uv's version alias -> the real interpreter; without it: "exec: ...: not found").
-            argv, written = wrap(command, job, reads + [str(LAUNCHER)], job / ".sandbox-profile",
-                                 "app-bundle", ports=(), programs=(str(exe),))
+            argv, written = wrap(command, job, reads + [str(LAUNCHER)], job / phase_state.workspace.profile_name,
+                "app-bundle", ports=(), programs=(str(exe),), _runner_workspace=phase_state.workspace.transport,
+                _runner_workspace_until=_sender_monotonic_until(loop, work_until))
             # No network: the profile the launcher will read must list no relay port (the namespace itself is
             # verified fresh and loopback-only by the launcher, which exits 78 otherwise).
             try:
@@ -1531,18 +1564,17 @@ async def _run_admitted(program, entry, args=(), inputs=None, outputs=(), runtim
             if ports != []:
                 raise RuntimeError("sandbox unavailable: the tool profile would allow network access; refusing")
         else:
+            original_job = tempfile.mkdtemp(prefix="sbx-")
+            job = pathlib.Path(original_job).resolve()
+            for name, data in inputs.items():
+                with (job / name).open("xb") as target:
+                    target.write(data)
+            mindfs.require_contained_links(job)
             argv = ["/usr/bin/sandbox-exec", "-p", sandbox_policy(job, reads, child_processes),
                     "/bin/sh", str(LAUNCHER), str(cpu_seconds), str(file_bytes),
                     "--hive-resource-limits", "Darwin", "0", str(processes or 0), "--",
                     str(exe), str(entry_path), *args]
         env = {"PATH": RUN_PATH, "TMPDIR": str(job), "HOME": str(job), "LANG": "en_US.UTF-8", "OPENSSL_CONF": "/dev/null"}
-        started = loop.time()
-        work_until, cleanup_until = started + timeout, started + timeout + cleanup_seconds
-        if absolute_until is not None:
-            work_until = min(work_until, absolute_until - cleanup_seconds)
-            cleanup_until = min(cleanup_until, absolute_until)
-        if work_until <= started:
-            raise TimeoutError("sandbox original deadline expired before spawn")
         await _execute_process_phase(phase_state, argv, job=job, env=env,
             work_until=work_until, cleanup_until=cleanup_until, streams=streams,
             cleanup=cleanup, observed_errors=observed_errors, term_grace=_term_grace(kind))
@@ -1566,7 +1598,11 @@ async def _run_admitted(program, entry, args=(), inputs=None, outputs=(), runtim
             primary = observed_errors[0]
         if primary is None and not cleanup["errors"]:
             try:
-                produced, digests, total = _artifacts(job, outputs, artifact_bytes, cleanup_until)
+                if workspace_job is None:
+                    produced, digests, total = _artifacts(job, outputs, artifact_bytes, cleanup_until)
+                else:
+                    produced, digests, total = await sandbox_workspace.read_outputs(
+                        phase_state.workspace, outputs, artifact_bytes, cleanup_loop_until=cleanup_until)
                 result.update(outputs=produced, output_digests=digests, artifacts_total_bytes=total,
                               missing_outputs=[n for n in outputs if n not in produced])
             except BaseException as error:
@@ -1580,7 +1616,26 @@ async def _run_admitted(program, entry, args=(), inputs=None, outputs=(), runtim
                     if phase_state.recording_error is None:
                         phase_state.recording_error = reporting
                     phase_state.observation_incomplete = True
-        if not spawn_attempted or (cleanup["original_process_reaped"] and cleanup["original_group_absent"]):
+        if workspace_job is not None:
+            try:
+                workspace_job.dispose(cleanup_until)
+                cleanup["job_removed"] = workspace_job.removed
+                cleanup["directory"] = {"job_removed": workspace_job.removed,
+                                        "quota_bytes": sandbox_workspace.BYTES,
+                                        "quota_inodes": sandbox_workspace.INODES}
+                if not workspace_job.disposed:
+                    raise SandboxCleanupError("private sandbox workspace cleanup incomplete")
+            except BaseException as error:
+                if (phase_state.workspace is not None and phase_state.workspace.mount_path is not None
+                        and not phase_state.workspace.rmdir_returned):
+                    cleanup["retained_mountpoint"] = phase_state.workspace.mount_path
+                cause = workspace_job.primary or error
+                if primary is None:
+                    primary = cause
+                phase_state.error("job-remove", cause, cleanup)
+        elif original_job is None:
+            cleanup["job_removed"] = True
+        elif not spawn_attempted or (cleanup["original_process_reaped"] and cleanup["original_group_absent"]):
             try:
                 cleanup["directory"] = _remove_job(original_job, cleanup_until, clock=loop.time)
                 cleanup["job_removed"] = cleanup["directory"]["job_removed"]
@@ -1595,7 +1650,7 @@ async def _run_admitted(program, entry, args=(), inputs=None, outputs=(), runtim
                         phase_state.recording_error = reporting
                     phase_state.observation_incomplete = True
                 phase_state.error("job-remove", error, cleanup)
-        if not cleanup["job_removed"]:
+        if original_job is not None and not cleanup["job_removed"]:
             result["retained_job"] = original_job
         if cleanup["original_process_reaped"] and cleanup["original_group_absent"]:
             cleanup["descendants"] = ("PID_NAMESPACE_TERMINATED" if kind == "landlock" else

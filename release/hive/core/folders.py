@@ -22,8 +22,9 @@
   *.key, *.p12, *.pfx) and keychain files. They are not listed, not read and not written.
 - Hard-denied whatever an admin asks: any path part starting "atlas" (case-insensitive), any OmegaTruth-named part,
   any root with a dot part (~/.omegadots, ~/.config...), Library trees (~/Library, /Library, /System/Library: browser
-  profiles, Keychains), credential stores (~/.ssh, ~/.claude*, ~/.gnupg, ~/.aws...), system configuration and the
-  hive's own data folder. A folder that is, is inside, or contains one of them cannot be linked; a path under one is
+  profiles, Keychains), credential stores (~/.ssh, ~/.claude*, ~/.gnupg, ~/.aws...), system configuration, the
+  hive's own data folder and its code folder, where a standalone run of the code keeps its memory and connector files.
+  A folder that is, is inside, or contains one of them cannot be linked; a path under one is
   refused at read and write as well (HIVE_FOLDER_DENY adds more). HIVE_LINKED_FOLDERS_ALLOW (absolute prefixes,
   separated by the path separator), when set, is the only place roots may be linked from.
 - Files with more than one hard link are refused on read and write (a hard link can alias a file outside the root).
@@ -52,7 +53,7 @@ import time
 
 from fastapi import Request
 
-from . import session_launch
+from . import session_launch, updates
 from .assets import CHUNK, INLINE, Spool, content_disposition, floor_guard, max_upload_bytes
 from .db import now
 
@@ -169,6 +170,9 @@ class Folders:
         home = os.path.realpath(os.path.expanduser("~"))
         roots = [os.path.join(home, d) for d in HOME_DENIED] + list(SYSTEM_DENIED)
         roots.append(os.path.realpath(str(self.hive.settings.data_dir)))
+        # the code folder: a standalone run keeps its memory, logins and session keys under it (.gitignore), which a
+        # linked folder must never show
+        roots.append(os.path.realpath(str(updates.ROOT)))
         roots += [p for p in os.environ.get("HIVE_FOLDER_DENY", "").split(os.pathsep) if p.strip()]
         out = set()
         for r in roots:

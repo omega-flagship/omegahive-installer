@@ -26,10 +26,11 @@ const PERSON_HUE = 160
 
 /** What a limit applies to, as its row names it: its kind, its name and its colour. */
 export interface Who { kind: string; label: string; hue: number }
-/** The names the limits are given: the hive's swarms, minds and keys. */
+/** The names the limits are given: the hive's swarms, minds and keys. may_cap is the host's word on whether this viewer
+ *  may cap a swarm or mind, its owner alone (hive/core/limits_view.py limit_refusal); absent from older hosts. */
 export interface Names {
-  swarms: Record<string, { name: string; hue: number }>
-  agents: Record<string, { name: string; hue: number }>
+  swarms: Record<string, { name: string; hue: number; may_cap?: boolean }>
+  agents: Record<string, { name: string; hue: number; may_cap?: boolean }>
   keys: Pick<KeyInfo, 'id' | 'label' | 'hint'>[]
 }
 
@@ -128,7 +129,8 @@ export function limitsScreen(res: ResourceLike, input: LimitsInput, compose: Com
   const row = (id: string, r: LimitRowView, who: Who, action: Omit<LimitAction, 'id' | 'current'>, pace?: number): StackItem => {
     actions[id] = { id, current: r.limit_usd, ...action }
     const editing = input.drafts[id] !== undefined
-    const badge = r.source === 'session' ? 'while a session runs' : ''
+    // a mind's or swarm's cap is its owner's alone (may_change, the hive's own rule): others see it, unchangeable
+    const badge = r.source === 'session' ? 'while a session runs' : r.may_change === false ? 'its owner’s to change' : ''
     return {
       id,
       plan: compose('usage-limit', {
@@ -176,12 +178,15 @@ export function limitsScreen(res: ResourceLike, input: LimitsInput, compose: Com
   const caps = (view?.caps ?? []).map((r) => {
     const who = whoOf(r.scope, people, input.names)
     return row(r.key + (r.rule_id ?? ''), r, who, {
-      ...(input.canSet && r.source === 'set' ? { save: { scope: r.scope, period: r.period, label: who.label } } : {}),
-      ...(r.source === 'set' && input.canRemove ? { remove: { row: r, label: who.label, after: 'The hive cap and each payer’s allowance still hold this spending.' } } : {}),
+      ...(input.canSet && r.source === 'set' && r.may_change !== false ? { save: { scope: r.scope, period: r.period, label: who.label } } : {}),
+      ...(r.source === 'set' && input.canRemove && r.may_change !== false ? { remove: { row: r, label: who.label, after: 'The hive cap and each payer’s allowance still hold this spending.' } } : {}),
     })
   })
   actions[HIVE_EDITOR] = { id: HIVE_EDITOR, current: null, ...(input.canSet ? { save: { scope: 'hive', period: 'month', label: 'Whole hive' } } : {}) }
   const olds = view?.old_defaults ?? []
+  // only a mind's or swarm's owner removes its old default (may_change): the one action covers the viewer's own
+  const mine = ownOldDefaults(view)
+  const all = mine.length === olds.length
   const canRemoveOld = input.canRemove && input.canPatchAgent
   const adding = input.adding
   const everyMind = adding?.scope === 'every-mind'
@@ -195,15 +200,19 @@ export function limitsScreen(res: ResourceLike, input: LimitsInput, compose: Com
         'limits.hive.draft': input.drafts[HIVE_EDITOR] ?? '',
         'limits.people': people.map(person),
         'limits.caps': caps,
-        'limits.old': olds.map((o) => ({ id: oldId(o), change: o.change, reasons: o.reasons.join('; '), action: canRemoveOld ? 'Remove' : '', aria: `Remove the old default on ${o.name}` })),
-        'limits.old.all': olds.length === 1 ? 'Remove it' : `Remove all ${olds.length}`,
+        'limits.old': olds.map((o) => ({
+          id: oldId(o), change: o.change, reasons: o.reasons.join('; ') + (o.may_change === false ? ' · its owner’s to remove' : ''),
+          action: canRemoveOld && o.may_change !== false ? 'Remove' : '', aria: `Remove the old default on ${o.name}`,
+        })),
+        'limits.old.all': all ? (mine.length === 1 ? 'Remove it' : `Remove all ${mine.length}`) : mine.length === 1 ? 'Remove yours' : `Remove your ${mine.length}`,
         'limits.add.scope': adding?.scope ?? '',
         'limits.add.period': everyMind ? 'month' : (adding?.period ?? 'month'),
         'limits.add.limit': adding?.limit ?? '',
         'limits.add.every-mind': everyMind,
         'limits.add.scopes': [
-          ...Object.entries(swarms).map(([id, s]) => ({ id: `swarm:${id}`, label: `Swarm · ${shown(s.name)}` })),
-          ...Object.entries(agents).map(([id, a]) => ({ id: `agent:${id}`, label: `Mind · ${shown(a.name)}` })),
+          // a cap on a swarm or a mind is its owner's alone (may_cap): only the viewer's own are offered
+          ...Object.entries(swarms).filter(([, s]) => s.may_cap !== false).map(([id, s]) => ({ id: `swarm:${id}`, label: `Swarm · ${shown(s.name)}` })),
+          ...Object.entries(agents).filter(([, a]) => a.may_cap !== false).map(([id, a]) => ({ id: `agent:${id}`, label: `Mind · ${shown(a.name)}` })),
           ...keys.map((k) => ({ id: `key:${k.id}`, label: `Key · ${k.label} ${k.hint}` })),
           { id: 'every-mind', label: 'Every mind with no cap of its own' },
           { id: 'hive', label: 'Whole hive' },
@@ -211,9 +220,10 @@ export function limitsScreen(res: ResourceLike, input: LimitsInput, compose: Com
         'limits.add.periods': [{ id: 'day', label: 'per day' }, { id: 'month', label: 'per month' }, { id: 'total', label: 'in total' }],
       },
       facts: {
-        counts: { 'limits.people': people.length, 'limits.caps': caps.length, 'limits.old': olds.length },
+        counts: { 'limits.people': people.length, 'limits.caps': caps.length, 'limits.old': olds.length, 'limits.old.mine': mine.length },
         flags: {
           'limits.adding': adding !== null, 'limits.can-set': input.canSet, 'limits.can-remove-old': canRemoveOld,
+          'limits.old.others': !all,
           'limits.hive-cap': cap !== null, 'limits.hive-all-time': allTime !== null, 'limits.hive.editing': input.drafts[HIVE_EDITOR] !== undefined,
         },
       },
@@ -225,3 +235,7 @@ export function limitsScreen(res: ResourceLike, input: LimitsInput, compose: Com
 /** The old form defaults as the page removes them: by the ids their rows carry. */
 export const oldDefaultsById = (view: LimitsView | undefined): Record<string, OldDefault> =>
   Object.fromEntries((view?.old_defaults ?? []).map((o) => [oldId(o), o]))
+
+/** The old form defaults this viewer may remove: those on their own minds and swarms (may_change). */
+export const ownOldDefaults = (view: LimitsView | undefined): OldDefault[] =>
+  (view?.old_defaults ?? []).filter((o) => o.may_change !== false)

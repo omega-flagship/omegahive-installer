@@ -162,8 +162,9 @@ def test_O1_a_direction_is_a_direct_trigger_for_the_next_step(r3):
 # ---- O1-d: limits (plan §4.6) ------------------------------------------------------------------------------------------
 
 def test_O1d_the_21st_unread_direction_is_429_and_its_words_are_not_stored(r3, monkeypatch):
-    from hive.core import ask as ASK
-    monkeypatch.setattr(ASK, "PER_MINUTE", 1000)
+    import dataclasses
+    settings = r3.hive.settings
+    monkeypatch.setattr(settings, "ask_limits", dataclasses.replace(settings.ask_limits, per_minute=1000))
     session, sid, m, ack, step = started(r3)
     for i in range(20):
         assert steer(r3, f"st-d{i:03d}", f"remark {i}").status_code == 202
@@ -180,14 +181,15 @@ def test_O1d_studio_steers_share_the_persons_per_minute_quota_with_ask_requests(
     used = r3.hive.db.one("SELECT COUNT(*) AS n FROM ask_turns WHERE principal = ? AND created_at >= ?",
                           (MIA, ASK._iso(minute_ago)))["n"]
     accepted = 0
-    for i in range(ASK.PER_MINUTE + 2):
+    per_minute = 10   # HIVE_ASK_PER_MINUTE in hive/config.json
+    for i in range(per_minute + 2):
         r = steer(r3, f"st-q{i:03d}", f"remark {i}")
         if r.status_code == 429:
             assert err(r)["code"] == "rate_limited"
             break
         assert r.status_code == 202
         accepted += 1
-    assert accepted == ASK.PER_MINUTE - used
+    assert accepted == per_minute - used
 
 
 def test_O1d_text_over_4000_characters_is_413(r3):

@@ -298,7 +298,8 @@ def test_for_p2_a_hidden_link_is_identical_to_no_link(client):
     a, b = goal(client, w["t1"], "same", 0.5), goal(client, w["t1"], "same", 0.5)
     link_db(hive, private["id"], a["id"])
     items = {i["id"]: i for i in ok(client.get("/api/tasks", headers=p2))["items"]}
-    strip = lambda i: {k: v for k, v in i.items() if k not in ("id", "created_at", "updated_at")}
+    # the creation stamps differ between two goals made a few ms apart; a person's goal's asked_at is its creation stamp
+    strip = lambda i: {k: v for k, v in i.items() if k not in ("id", "created_at", "updated_at", "asked_at")}
     assert strip(items[a["id"]]) == strip(items[b["id"]]) and items[a["id"]]["motivations"] == []
     unsorted = ok(client.get("/api/tasks", headers=p2, params={"motivation": "none"}))
     assert set(ids(unsorted["items"])) == {a["id"], b["id"]} and unsorted["counts"]["total"] == 2

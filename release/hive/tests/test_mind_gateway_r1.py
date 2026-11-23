@@ -150,15 +150,16 @@ def test_T_NB1_2_own_key_turn_bound_call_is_admitted_under_the_monthly_total(mon
     assert hive.ownhive.spent(scope_of(P, "*", "self")) == pytest.approx(0.04)
 
 
-def test_T_NB3_callers_without_turn_bound_are_unchanged(money):
-    """Control: every caller that does not pass turn_bound (the chat route, media, the conductor, the agent-token route)
-    meets the two live gates exactly as before, with or without a monthly total."""
+def test_T_NB3_callers_without_turn_bound_spend_the_persons_own_key_with_no_hive_total(money):
+    """Every caller that does not pass turn_bound (the chat route, media, the conductor, the agent-token route) is let
+    through on the person's own key with no hive total, with or without their monthly total, and reserves with no zero
+    lifetime row (Jon on #650: "a person's own key should just work"); the monthly total stays the turn-bound bound."""
     hive, mine, P = money["hive"], money["mine"], money["P"]
     for with_total in (False, True):
         if with_total:
             total(hive, P, 10.0)
-        assert refusal(hive.check_budget, mine, True, 0.05, KA, P, True).code == "no_budget"            # gate 1
-        assert f"agent:{mine['id']}:total" in labels(host_budget_snapshot(hive, mine["id"], KA, P, True))  # gate 2, at 0
+        hive.check_budget(mine, True, 0.05, KA, P, True)                                                   # gate 1
+        assert f"agent:{mine['id']}:total" not in labels(host_budget_snapshot(hive, mine["id"], KA, P, True))  # gate 2
         assert hive.budgets.own_key_bound(mine, P, True, KA, False) is None
     # the hive-money personal path (allowance_pays) is as it was: Pat's member allowance admits, no lifetime row
     hive.check_budget(mine, True, 0.05, None, P, False)
@@ -309,6 +310,14 @@ def test_T_MT2_browser_chat_and_media_on_two_keys_draw_down_one_total(money):
     assert hive.ownhive.spent(scope_of(P, KA, "self")) + res.pending(scope_of(P, KA, "self") + ":month") / 1e6 <= 3.0 + 1e-9
     refused = {s for st, _, _, s in outcomes if st == "refused"}
     assert star + ":month" in refused
+    # Calls still in flight when the last one was refused can settle after it, below their worst case, and free room no
+    # later call takes (0.1 a call here), so on a loaded host the burst alone can leave 0.6 or more of the total. A hold
+    # for all but a cent of what is left spends it, whatever the interleaving.
+    left = 10.0 - hive.ownhive.spent(star) - res.pending(star + ":month") / 1_000_000
+    if left > 0.01:
+        res.reserve("mt2-rest", {"z": 0}, left - 0.01,
+                    lambda: host_budget_snapshot(hive, vega["id"], KB, P, True), {"agent": vega["id"]}, dispatched=True)
+        res.unknown("mt2-rest")
     # spent: every route refuses now, on the same total
     for agent, bound in ((mine, True), (vega, False)):
         e = refusal(hive.check_budget, agent, True, 0.6, KB, P, True, turn_bound=bound) if settled + 0.6 > 10 else None
@@ -562,7 +571,8 @@ def test_r1ab2_kimi_first_key_auto_default_follows_the_same_rule(money_gw, monke
     non-default and becomes the default only after it is stored, like an explicit default. A first total is a raise
     (with none, turn-bound calls are refused), so it is written last. A failed switch: no key, no default, no total. A
     failed total: the key and its default stand, with no total (turn-bound refused). A member's key never becomes the
-    hive's default (test_key_entitlement.py), so the owner adds it."""
+    hive's default (test_key_entitlement.py), so the owner adds it. The hive's owner adds the key:
+    since #459 only an admin's first key becomes the default, and a member's never does (test_key_entitlement)."""
     client, hive, owner, O = money_gw["client"], money_gw["hive"], money_gw["owner"], money_gw["O"]
     _verify_stub(hive, [])
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
@@ -589,6 +599,7 @@ def test_r1ab2_kimi_first_key_auto_default_follows_the_same_rule(money_gw, monke
 
 
 def test_r1ab2_first_key_auto_default_control_becomes_the_default_on_success(money_gw, monkeypatch):
+    # the hive's owner adds the keys: since #459 a member's key never becomes the default
     client, hive, owner, O = money_gw["client"], money_gw["hive"], money_gw["owner"], money_gw["O"]
     _verify_stub(hive, [])
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
@@ -880,9 +891,9 @@ def test_r1ab5_kimi_5_a_refusal_in_the_last_write_is_not_retryable_and_the_503_t
 
 
 def test_r1ab2_flag_unset_month_usd_is_ignored_as_on_live(money, monkeypatch):
-    """Control (passes on 56b2dbfc): with HIVE_MIND_GATEWAY unset POST /api/keys ignores month_usd. No limit is written
-    and an existing lower total is untouched. A member's key never becomes the hive's default, not even a provider's
-    first (test_key_entitlement.py)."""
+    """Control: with HIVE_MIND_GATEWAY unset POST /api/keys ignores month_usd, as 56b2dbfc did. No limit is written and
+    an existing lower total is untouched. Pat is a member, so since #459 Pat's first key of a provider stays Pat's own
+    and never becomes the hive default (an admin's first key still does, test_providers_api)."""
     client, hive, pat, P = money["client"], money["hive"], money["pat"], money["P"]
     monkeypatch.delenv("HIVE_MIND_GATEWAY", raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
@@ -903,8 +914,8 @@ def test_the_limit_detail_helpers_are_module_level_and_shared(money):
     e = HiveError(402, "spend_limit", "x", {"scope": "person:" + PAT, "period": "month", "limit_usd": 5, "spent_usd": 4})
     assert c._check_detail(mine, e, 0.1) == cmod.check_detail(hive, mine, e, 0.1)
     assert cmod.check_detail(hive, mine, e, 0.1)["kind"] == "member_allowance"
-    b = BudgetExhausted("askturn:at_1", 0.25, 0.2, 0.05, 0.1)
-    assert c._reserve_detail(mine, b) == cmod.reserve_detail(hive, b) and cmod.reserve_detail(hive, b)["kind"] == "per_turn"
+    b = BudgetExhausted("person:" + PAT + ":month", 5, 4.8, 0.1, 0.2)
+    assert c._reserve_detail(mine, b) == cmod.reserve_detail(hive, b) and cmod.reserve_detail(hive, b)["kind"] == "member_allowance"
 
 
 class _Res:
@@ -1081,7 +1092,7 @@ def test_T_RT1_a_marked_ask_to_the_personal_mind_is_a_browser_turn(bw):
     r = ask(client, bw["ann"], "op-bw-rt1-01", text="private words", **BROWSER)
     assert r.status_code == 202, r.text
     body = r.json()
-    assert body["route"] == "browser_mind" and body["state"] == "browser" and body["cap_usd"] == 0.25
+    assert body["route"] == "browser_mind" and body["state"] == "browser" and "cap_usd" not in body   # no cap of its own
     assert body["acting_as"] == {"mind_id": mine["id"], "name": mine["name"]} and "conductor" not in body
     assert body["thread"]["mind"]["id"] == mine["id"] and body["text"] == ""
     t = turn(hive, "op-bw-rt1-01")
@@ -1235,13 +1246,15 @@ def test_T_DONE_each_close_word_maps_to_its_stored_outcome(bw, word, state, outc
     assert again.status_code == 200 and again.json()["state"] == state and len(stored_frames(hive, "op-bw-done-1")) == 2
 
 
-def test_T_DONE_spend_cap_names_the_hosts_thread_limit_when_the_thread_is_spent(bw):
+def test_T_DONE_spend_cap_from_the_browser_names_no_limit_the_host_cannot_see(bw):
+    """A browser's own spend_cap /done: the host has no refusal of its own to name (an Ask thread has no cap since
+    omegahive#294 item 2, so however much it spent, that isn't it), so the limit is unknown with null figures."""
     client, hive = bw["client"], bw["hive"]
     ask(client, bw["ann"], "op-bw-done-2", **BROWSER)
     t = turn(hive, "op-bw-done-2")
-    hive.db.execute("UPDATE work_sessions SET carried_usd = 0.25 WHERE id = ?", (t["thread_id"],))   # spent by its measure
+    hive.db.execute("UPDATE work_sessions SET carried_usd = 0.25 WHERE id = ?", (t["thread_id"],))
     done_post(client, bw["ann"], "op-bw-done-2", "spend_cap")
-    assert stored_frames(hive, "op-bw-done-2")[-1]["limit"] == {"kind": "thread", "current_usd": 0.25, "limit_usd": 0.25,
+    assert stored_frames(hive, "op-bw-done-2")[-1]["limit"] == {"kind": "unknown", "current_usd": None, "limit_usd": None,
                                                                 "estimate_usd": None}
 
 
@@ -1370,13 +1383,13 @@ def test_T_PRIV_no_table_holds_a_browser_turns_words(bw):
 
 # ---- the money view on the 202 ------------------------------------------------------------------------------------
 
-def test_the_202_carries_route_turn_guard_and_the_monthly_totals_room(bw):
+def test_the_202_carries_route_and_the_monthly_totals_room(bw):
     from hive.core.config import Provider
     client, hive, mine = bw["client"], bw["hive"], bw["mine"]
     hive.settings.providers["fakepaid"] = Provider("fakepaid", "http://127.0.0.1:9", prices={"*": {"in": 1, "out": 1}})
     hive.db.execute("UPDATE agents SET model = 'fakepaid/x' WHERE id = ?", (mine["id"],))
     r = ask(client, bw["ann"], "op-bw-money-1", **BROWSER).json()
-    assert r["cap_usd"] == 0.25 and r["month_remaining_usd"] == 50.0            # Ann's member allowance, nothing spent
+    assert "cap_usd" not in r and r["month_remaining_usd"] == 50.0             # Ann's member allowance, nothing spent
     hive.ask.conductor.reservations.reserve("m1", {"x": 1}, 2.0, lambda: [("person:u_ann:month", 50, 0)], {"agent": mine["id"]})
     assert client.get("/api/ask/op-bw-money-1", headers=bw["ann"]).json()["month_remaining_usd"] == 48.0
 

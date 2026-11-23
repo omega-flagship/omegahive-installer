@@ -113,3 +113,53 @@ def test_cli_accepts_the_wrappers_deadline_flag(release, capsys):
                                                         ri.nh.ENV_EXTRACTOR}
     # release_inputs_env.py only passes --deadline when it finds this literal in the generator's source.
     assert '"--deadline"' in pathlib.Path(ri.__file__).read_text(encoding="utf-8")
+
+
+def test_a_submodule_is_left_out_not_refused(release):
+    # flagship has third_party/* submodules (gitlinks, mode 160000): they used to refuse the whole release as
+    # unsupported_file, so no hive on main could build its self-map
+    root, _, ext = release
+    _git(root, "update-index", "--add", "--cacheinfo", "160000,%s,third_party/sub" % ("ab" * 20))
+    _git(root, "commit", "-q", "-m", "with a submodule")
+    sha = _git(root, "rev-parse", "HEAD").decode().strip()
+    paths = ri.write_release_inputs(str(root), sha, str(ext))
+    manifest = json.loads(pathlib.Path(paths[ri.nh.ENV_RELEASE_MANIFEST]).read_bytes())
+    listed = {f["path"] for f in manifest["files"]}
+    assert "hive/core/a.py" in listed and not any(p.startswith("third_party/") for p in listed)
+
+
+def test_a_symlink_still_refuses_the_release(release):
+    root, _, ext = release
+    os.symlink("a.py", root / "hive" / "core" / "link.py")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "with a symlink")
+    sha = _git(root, "rev-parse", "HEAD").decode().strip()
+    with pytest.raises(ri.nh.SourceRefused) as refused:
+        ri.write_release_inputs(str(root), sha, str(ext))
+    assert refused.value.code == "unsupported_file"
+
+
+def test_the_tuple_is_listed_through_a_descriptor_opened_after_its_entries(release, monkeypatch):
+    # POSIX leaves it unspecified whether readdir shows entries made after the folder was opened, and tmpfs on some
+    # Linux kernels does not (full run 44793192701 on kabir-flagship-2, omega-flagship/omegahive#621). Emulate that
+    # reader: a listing through a folder descriptor shows only the entries there when the descriptor was opened.
+    root, sha, ext = release
+    real_open, real_listdir, at_open = os.open, os.listdir, {}
+
+    def opened(path, flags, *args, **kwargs):
+        fd = real_open(path, flags, *args, **kwargs)
+        at_open.pop(fd, None)
+        if flags & os.O_DIRECTORY:
+            at_open[fd] = set(real_listdir(fd))
+        return fd
+
+    def listdir(path="."):
+        names = real_listdir(path)
+        if isinstance(path, int) and path in at_open:
+            return [name for name in names if name in at_open[path]]
+        return names
+
+    monkeypatch.setattr(ri.os, "open", opened)
+    monkeypatch.setattr(ri.os, "listdir", listdir)
+    paths = ri.write_release_inputs(str(root), sha, str(ext))
+    assert json.loads(pathlib.Path(paths[ri.nh.ENV_RELEASE_MANIFEST]).read_bytes())["sha"] == sha

@@ -1,3 +1,4 @@
+// Purpose: prove the You page's Sign out leaves the profile first and waits for the client's sign-out.
 /**
  * The visible Sign out control (pairs with host b203496): it is on You & your keys, it leaves the profile before the
  * session ends, and it waits for the client's sign-out. INVENTED clients only.
@@ -18,7 +19,7 @@ const space = ScreensSpace.open()
 const compose = (screen: string, facts: Parameters<ScreensSpace['compose']>[2]) => space.compose(screen, 'classic', facts)
 const input = (over: Partial<ProfileInput>): ProfileInput => ({
   me: { status: 'loading', data: undefined, error: undefined, refreshing: false }, keys: [], keysError: undefined, agents: [],
-  connected: true, signingOut: false, adding: false, work: { editing: new Set(), confirming: new Set() }, ...over,
+  connected: true, signingOut: false, adding: false, work: { editing: new Set(), confirming: new Set() }, ask: { settings: null, saving: false, failed: false }, ...over,
 })
 const html = (over: Partial<ProfileInput>) => {
   const { data, facts } = profileScreen(input(over), compose)

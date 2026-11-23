@@ -1,3 +1,4 @@
+# Purpose: Observe and control Home Assistant devices directly or through the hive.
 import json
 import os
 import pathlib
@@ -8,7 +9,9 @@ import urllib.parse
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
-ACTION_LOG = ROOT / "memory" / "runtime" / "home_assistant" / "actions.jsonl"
+# the mind's memory folder: OMEGACLAW_MEMORY_DIR when a hive runs the mind, else the checkout's memory folder
+MEMORY = pathlib.Path(os.environ.get("OMEGACLAW_MEMORY_DIR") or ROOT / "memory")
+ACTION_LOG = MEMORY / "runtime" / "home_assistant" / "actions.jsonl"
 CONFIG_FILE = ROOT / "memory" / "home_assistant.json"
 
 
@@ -33,7 +36,40 @@ def _config():
     return base_url, token
 
 
+def _hive_call(payload, timeout):
+    base = os.environ["HIVE_API_URL"].rstrip("/")
+    request = urllib.request.Request(
+        base + "/api/agent/connectors/home_assistant/request",
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    request.add_unredirected_header("Authorization", f"Bearer {os.environ['HIVE_WS_TOKEN']}")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as exc:
+        try:
+            error = json.load(exc)["error"]
+            detail = f"{error['code']}: {error['message']}"
+        except (ValueError, KeyError, TypeError):
+            detail = exc.reason
+        raise RuntimeError(f"Hive HTTP {exc.code}: {detail}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Hive unreachable: {exc}") from exc
+
+
 def _request(method, path, payload=None, timeout=10):
+    if os.environ.get("HIVE_API_URL") and os.environ.get("HIVE_WS_TOKEN"):
+        call = {"method": method, "path": path}
+        if payload is not None:
+            call["payload"] = payload
+        result = _hive_call(call, timeout)
+        status, text = result["status"], result["text"]
+        if status >= 400:
+            raise RuntimeError(f"Home Assistant HTTP {status}: {text[:300]}")
+        return json.loads(text) if text else None
+
     base_url, token = _config()
     url = base_url + path
     data = None

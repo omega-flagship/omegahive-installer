@@ -1,5 +1,4 @@
-# Purpose: the hive's settings, read once from the environment (and an optional providers file).
-"""Hive configuration from the environment (and an optional providers file)."""
+"""Purpose: hive configuration from the environment (and an optional providers file)."""
 
 from __future__ import annotations
 
@@ -15,11 +14,12 @@ from urllib.parse import urlsplit
 
 CORE_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-BUDGET_ENV = ("HIVE_BUDGET_USD", "HIVE_MEMBER_MONTHLY_USD", "HIVE_ASK_CONDUCTOR_TURN_USD", "HIVE_START_LIMIT_MONTH_USD")
-# Spending settings the one-allowance limits retired (budgets.py): a team's default month and one instruction's ceiling.
-# A request is bounded by the asker's allowance and the caps set instead, so a hive that still sets one is told once at
-# startup that it does nothing (_note_retired).
-RETIRED_ENV = ("HIVE_SWARM_MONTHLY_USD", "HIVE_PERSON_REQUEST_CEILING_USD")
+BUDGET_ENV = ("HIVE_BUDGET_USD", "HIVE_MEMBER_MONTHLY_USD", "HIVE_START_LIMIT_MONTH_USD")
+# Spending settings that do nothing now: a team's default month and one instruction's ceiling, retired by the
+# one-allowance limits (budgets.py), and the Ask conductor's turn cap, since an Ask answer has no cap of its own. A call
+# is held by its payer's allowance and the caps set instead, so a hive that still sets one is told once at startup that
+# it does nothing (_note_retired).
+RETIRED_ENV = ("HIVE_SWARM_MONTHLY_USD", "HIVE_PERSON_REQUEST_CEILING_USD", "HIVE_ASK_CONDUCTOR_TURN_USD")
 _RETIRED_NOTED: set = set()
 START_LIMIT_DEFAULT_USD = 50.0
 
@@ -264,6 +264,173 @@ def _subscription_providers():
     return out
 
 
+# The Ask's "this one looks expensive" question (Jon on omegahive#294, item 2; Ask.expensive_usd in hive/core/ask.py and
+# Conductor._ask_go_ahead in hive/core/conductor.py). Its numbers live in no code (Kabir's rule: defaults come from the
+# environment or config; staging's come from GitHub). Each key is read per key from three layers, first found wins: the
+# environment, the deployment's file (HIVE_CONFIG_FILE, when set), then the defaults in the tree (hive/config.json). A key
+# in no layer, or malformed in the layer that has it, refuses the hive's start naming the key and the layer. A JSON key
+# that is present is set: null or "" there is malformed, not absent. HIVE_CONFIG_FILE naming a file that is not there
+# refuses too: a deployment's file silently skipped would leave every key on the defaults. Never a guess.
+CONFIG_FILE_ENV = "HIVE_CONFIG_FILE"
+CONFIG_FILE = CORE_ROOT / "hive" / "config.json"
+
+
+class SettingsRefused(Exception):
+    """A required setting is missing or malformed; the message names each key and where its value came from."""
+
+
+@dataclasses.dataclass(frozen=True)
+class AskExpensive:
+    times: float        # HIVE_ASK_EXPENSIVE_TIMES: the question's threshold is this many times the person's median answer
+    over_usd: float     # HIVE_ASK_EXPENSIVE_OVER_USD: ... and never above this; this alone until they have `fewest`
+    medians: int        # HIVE_ASK_EXPENSIVE_MEDIANS: how many of their latest paid answers the median reads
+    fewest: int         # HIVE_ASK_EXPENSIVE_FEWEST: how many paid answers the median needs before it counts
+    wait_seconds: float # HIVE_ASK_GO_AHEAD_SECONDS: how long a turn that asked waits for the answer, outside its own limit
+
+
+@dataclasses.dataclass(frozen=True)
+class AskLimits:
+    max_acts: int                  # HIVE_ASK_CONDUCTOR_MAX_ACTS: the most acts one conductor turn may take
+    max_model_calls: int           # HIVE_ASK_CONDUCTOR_MAX_MODEL_CALLS: the most model calls one conductor turn may make
+    turn_seconds: float            # HIVE_ASK_CONDUCTOR_TURN_SECONDS: how long one conductor turn may run
+    result_timeout_seconds: float  # HIVE_ASK_CONDUCTOR_RESULT_TIMEOUT_SECONDS: how long the conductor waits for one result
+    max_tokens: int                # HIVE_ASK_CONDUCTOR_MAX_TOKENS: the most tokens one conductor model call may answer with
+    per_minute: int                # HIVE_ASK_PER_MINUTE: the most questions one person may ask in a minute
+    per_day: int                   # HIVE_ASK_PER_DAY: ... and in a day
+    reads_per_minute: int          # HIVE_ASK_READS_PER_MINUTE: the most reads of the Ask one person may make in a minute
+    timeout_seconds: float         # HIVE_ASK_TIMEOUT_SECONDS: how long one Ask answer may take
+
+
+# Every number read through the layers above. env key: (where it lands, field, whole number?, lowest, highest, lowest
+# allowed?). Where: "ask_expensive" (AskExpensive), "ask_limits" (AskLimits) or "settings" (a Settings field). Whole
+# numbers are inclusive at both ends; figures exclude `lowest` unless the last item is True, and include `highest`.
+# Money's highest, 1,000,000, is Budgets.set's bound. Every key here is in hive/config.json and nowhere in the code; the
+# retired spending settings (RETIRED_ENV) are in neither, since nothing reads them (_note_retired names one still set).
+KEYS = {
+    "HIVE_ASK_EXPENSIVE_TIMES": ("ask_expensive", "times", False, 0, 1000, False),
+    "HIVE_ASK_EXPENSIVE_OVER_USD": ("ask_expensive", "over_usd", False, 0, 1_000_000, False),
+    "HIVE_ASK_EXPENSIVE_MEDIANS": ("ask_expensive", "medians", True, 1, 1000, True),
+    "HIVE_ASK_EXPENSIVE_FEWEST": ("ask_expensive", "fewest", True, 1, 1000, True),
+    "HIVE_ASK_GO_AHEAD_SECONDS": ("ask_expensive", "wait_seconds", False, 0, 86_400, False),
+    "HIVE_ASK_CONDUCTOR_MAX_ACTS": ("ask_limits", "max_acts", True, 1, 1000, True),
+    "HIVE_ASK_CONDUCTOR_MAX_MODEL_CALLS": ("ask_limits", "max_model_calls", True, 1, 1000, True),
+    "HIVE_ASK_CONDUCTOR_TURN_SECONDS": ("ask_limits", "turn_seconds", False, 0, 86_400, False),
+    "HIVE_ASK_CONDUCTOR_RESULT_TIMEOUT_SECONDS": ("ask_limits", "result_timeout_seconds", False, 0, 86_400, False),
+    "HIVE_ASK_CONDUCTOR_MAX_TOKENS": ("ask_limits", "max_tokens", True, 1, 1_000_000, True),
+    "HIVE_ASK_PER_MINUTE": ("ask_limits", "per_minute", True, 1, 100_000, True),
+    "HIVE_ASK_PER_DAY": ("ask_limits", "per_day", True, 1, 10_000_000, True),
+    "HIVE_ASK_READS_PER_MINUTE": ("ask_limits", "reads_per_minute", True, 1, 100_000, True),
+    "HIVE_ASK_TIMEOUT_SECONDS": ("ask_limits", "timeout_seconds", False, 0, 86_400, False),
+    "HIVE_MEMBER_MONTHLY_USD": ("settings", "member_monthly_usd", False, 0, 1_000_000, True),
+    "HIVE_BUDGET_USD": ("settings", "hive_budget_usd", False, 0, 1_000_000, True),             # 0 = no cap
+    "HIVE_START_LIMIT_MONTH_USD": ("settings", "start_limit_month_usd", False, 0, 1_000_000, True),  # 0 = off
+}
+ASK_EXPENSIVE_KEYS = {key: row for key, row in KEYS.items() if row[0] == "ask_expensive"}
+
+
+def _read_config_file(path, required):
+    """The keys of one config file; SettingsRefused when it is not a JSON object, or is absent and `required`."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        if required:
+            raise SettingsRefused(f"{CONFIG_FILE_ENV}={str(path)!r}: no such file") from None
+        return {}
+    except (OSError, ValueError) as exc:
+        raise SettingsRefused(f"{path} is not readable JSON ({type(exc).__name__})") from None
+    if not isinstance(data, dict):
+        raise SettingsRefused(f"{path} is not a JSON object")
+    return data
+
+
+def _config_layers():
+    """[(layer name, its keys)] below the environment, highest first: the deployment's file (HIVE_CONFIG_FILE, when set),
+    then the tree's defaults (hive/config.json). Read once per load_settings."""
+    layers = []
+    deployment = os.environ.get(CONFIG_FILE_ENV, "").strip()
+    if deployment:
+        path = pathlib.Path(deployment)
+        layers.append((str(path), _read_config_file(path, required=True)))
+    layers.append((str(CONFIG_FILE), _read_config_file(CONFIG_FILE, required=False)))
+    return layers
+
+
+def _layered(key, layers):
+    """(raw value, the layer it came from) for one key, first layer found wins; (None, None) when in none."""
+    raw = os.environ.get(key, "").strip()
+    if raw:
+        return raw, "the environment"
+    for name, values in layers:
+        if key in values:
+            return values[key], name
+    return None, None
+
+
+def _parse(raw, whole, low, high, low_ok):
+    """The value of one raw setting within its bounds, or None. A JSON true/false is never a number."""
+    if isinstance(raw, bool):
+        return None
+    if whole:
+        if isinstance(raw, int) or (isinstance(raw, str) and re.fullmatch(r"[0-9]{1,9}", raw)):
+            value = int(raw)
+            return value if low <= value <= high else None
+        return None
+    if not isinstance(raw, (int, float, str)):
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    above = low <= value if low_ok else low < value
+    return value if math.isfinite(value) and above and value <= high else None
+
+
+def read_keys(keys=None):
+    """{key: (value, the layer it came from)} for every key of `keys` (default KEYS), each from its first layer (the
+    environment, HIVE_CONFIG_FILE, hive/config.json). One SettingsRefused names every key missing or malformed and the
+    layer it was read from, so an operator fixes them all at once."""
+    keys = KEYS if keys is None else keys
+    layers = _config_layers()
+    everywhere = ", ".join(["the environment"] + [name for name, _ in layers])
+    out, problems = {}, []
+    for key, (_, _, whole, low, high, low_ok) in keys.items():
+        raw, source = _layered(key, layers)
+        if source is None:
+            problems.append(f"{key} is set in none of: {everywhere}")
+            continue
+        value = _parse(raw, whole, low, high, low_ok)
+        if value is None:
+            if whole:
+                bound = f"a whole number from {low} to {high}"
+            else:
+                bound = f"a number from {low} to {high}" if low_ok else f"a number above {low}, at most {high}"
+            problems.append(f"{key}={str(raw)[:40]!r} in {source} is not {bound}")
+            continue
+        out[key] = (value, source)
+    fewest, medians = out.get("HIVE_ASK_EXPENSIVE_FEWEST"), out.get("HIVE_ASK_EXPENSIVE_MEDIANS")
+    if fewest and medians and fewest[0] > medians[0]:
+        problems.append(f"HIVE_ASK_EXPENSIVE_FEWEST ({fewest[0]}, in {fewest[1]}) is more than "
+                        f"HIVE_ASK_EXPENSIVE_MEDIANS ({medians[0]}, in {medians[1]}): the median would never count")
+    if problems:
+        raise SettingsRefused("; ".join(problems))
+    return out
+
+
+def _keyed_settings():
+    """The Settings values of KEYS: ask_expensive, ask_limits, each "settings" field, and budget_env (the money keys an
+    operator set: from the environment or the deployment's file, as text; a value from hive/config.json is a default)."""
+    read = read_keys()
+    groups = {"ask_expensive": {}, "ask_limits": {}, "settings": {}}
+    budget_env = {}
+    for key, (value, source) in read.items():
+        where, field = KEYS[key][:2]
+        groups[where][field] = value
+        if key in BUDGET_ENV and source != str(CONFIG_FILE):
+            budget_env[key] = os.environ[key].strip() if source == "the environment" else str(value)
+    return dict(groups["settings"], ask_expensive=AskExpensive(**groups["ask_expensive"]),
+                ask_limits=AskLimits(**groups["ask_limits"]), budget_env=budget_env)
+
+
 @dataclasses.dataclass
 class Settings:
     data_dir: pathlib.Path
@@ -314,7 +481,8 @@ class Settings:
     # Create plans: the MeTTa plan controller R4.0 host engine (create_plan_engine.py). On in every install (Jon on #395:
     # "Create should be fully deployed and working from setup"); HIVE_CREATE_PLAN_ENGINE=off turns it off.
     create_plan_engine: bool = True
-    # The spending settings this process found in its environment ({name: raw text}). They only seed a hive with no total
+    # The spending settings an operator set ({name: text}): from the environment or the deployment's file (HIVE_CONFIG_FILE),
+    # not hive/config.json's defaults (T-215). They only seed a hive with no total
     # on the Limits page (Jon 2026-10-07, "they should match the number I set in the admin panel"); the limits API
     # reports each one (hive/core/budgets.py Budgets.server_settings).
     budget_env: dict = dataclasses.field(default_factory=dict)
@@ -322,6 +490,13 @@ class Settings:
     # governs a paid call yet (POST /api/keys), so the first paid call after a fresh install is admitted. Changeable on
     # the Limits page like any total; HIVE_START_LIMIT_MONTH_USD, default 50, 0 = never set one.
     start_limit_month_usd: float = START_LIMIT_DEFAULT_USD
+    # The Ask's expensive question (AskExpensive above): load_settings always sets it, from the environment or the config
+    # file; a Settings built by hand has none, and an Ask turn on it fails rather than guess a number.
+    ask_expensive: AskExpensive | None = None
+    # The Ask's and its conductor's limits (AskLimits above): the same rule, None on a Settings built by hand.
+    ask_limits: AskLimits | None = None
+    # The month allowance of each member with no limit of their own (HIVE_MEMBER_MONTHLY_USD).
+    member_monthly_usd: float = 50.0
     proposal_test_argv_prefixes: list = dataclasses.field(default_factory=list)
     # P1 media route (hive/core/media.py): POST /llm/v1/media exists only when the operator sets HIVE_MEDIA_ROUTE=on, and
     # sessions.end then also refuses while the mind runs (open liabilities refuse it always). Off by default: route absent (404).
@@ -365,6 +540,12 @@ class Settings:
     # The file holding the token a report service asks for (HIVE_FEEDBACK_TOKEN_FILE; unset, no token is sent): each
     # report then goes with it as its bearer (feedback.py send). The token itself is never a setting.
     feedback_token_file: str | None = None
+    # The one host a report service may be reached at over plain http besides this machine (HIVE_FEEDBACK_SERVICE_HOST;
+    # unset, none): the deploy's feedback relay on a private network, feedback-relay (feedback.py destination, #674).
+    feedback_service_host: str | None = None
+    # The file holding the key that seals connector secrets (HIVE_SECRETS_KEY_FILE), for a container, a server or a Mac
+    # hive started outside a login session; unset, the platform's own key store holds it (hive/core/sealed.py).
+    secrets_key_file: pathlib.Path | None = None
 
     # Operator-only resource policy for Code's existing Linux sandbox owner.
     # These never turn on Linux admission; only actual runner-applied limits can.
@@ -479,31 +660,18 @@ def _code_resource_int(name, default):
 
 
 def _note_retired():
-    """Each retired spending setting (RETIRED_ENV) still in the environment, logged once per process: it does nothing."""
+    """Each retired spending setting (RETIRED_ENV) an operator still sets, in the environment or the deployment's file
+    (HIVE_CONFIG_FILE), logged once per process: it does nothing, and KEYS reads none of them. hive/config.json carries
+    none, so only those two layers can hold one."""
+    deployment = os.environ.get(CONFIG_FILE_ENV, "").strip()
+    in_file = _read_config_file(pathlib.Path(deployment), required=True) if deployment else {}
     for name in RETIRED_ENV:
-        if os.environ.get(name, "").strip() and name not in _RETIRED_NOTED:
+        where = "the environment" if os.environ.get(name, "").strip() else deployment if name in in_file else None
+        if where and name not in _RETIRED_NOTED:
             _RETIRED_NOTED.add(name)
             logging.getLogger("hive.config").warning(
-                "%s is retired and does nothing: a call is held by its payer's monthly allowance, the hive cap and the "
-                "caps set on the Limits page", name)
-
-
-def _start_limit():
-    """HIVE_START_LIMIT_MONTH_USD: a dollar figure from 0 (off) to 1,000,000 (Budgets.set's bound). Anything else is the
-    default ($50) with a warning at startup, never a guess at what was meant."""
-    raw = os.environ.get("HIVE_START_LIMIT_MONTH_USD", "").strip()
-    if not raw:
-        return START_LIMIT_DEFAULT_USD
-    try:
-        value = float(raw)
-    except ValueError:
-        value = math.nan
-    if not math.isfinite(value) or value < 0 or value > 1_000_000:
-        logging.getLogger("hive.config").warning(
-            "HIVE_START_LIMIT_MONTH_USD=%r is not a dollar figure from 0 to 1000000; using the default %s",
-            raw[:40], START_LIMIT_DEFAULT_USD)
-        return START_LIMIT_DEFAULT_USD
-    return value
+                "%s, set in %s, is retired and does nothing: a call is held by its payer's monthly allowance, the hive "
+                "cap and the caps set on the Limits page", name, where)
 
 
 def _asset_max_bytes():
@@ -557,7 +725,6 @@ def load_settings(**overrides) -> Settings:
         providers=_load_providers(),
         default_model=os.environ.get("HIVE_DEFAULT_MODEL", "mock/echo"),
         embedding_model=os.environ.get("HIVE_EMBEDDING_MODEL", "mock/hash"),
-        hive_budget_usd=float(os.environ.get("HIVE_BUDGET_USD", "0") or 0),
         max_llm_calls_per_minute=int(os.environ.get("HIVE_MAX_LLM_CALLS_PER_MINUTE", "60") or 0),
         allow_unpriced=os.environ.get("HIVE_ALLOW_UNPRICED", "") == "1",
         goal_lease_minutes=float(os.environ.get("HIVE_GOAL_LEASE_MINUTES", "60") or 60),
@@ -584,6 +751,9 @@ def load_settings(**overrides) -> Settings:
         linked_folders_remote=os.environ.get("HIVE_LINKED_FOLDERS_REMOTE", "off").strip().lower() == "on",
         feedback_to=os.environ.get("HIVE_FEEDBACK_TO"),
         feedback_token_file=os.environ.get("HIVE_FEEDBACK_TOKEN_FILE"),
+        feedback_service_host=os.environ.get("HIVE_FEEDBACK_SERVICE_HOST"),
+        secrets_key_file=(pathlib.Path(os.environ["HIVE_SECRETS_KEY_FILE"]).expanduser()
+                          if os.environ.get("HIVE_SECRETS_KEY_FILE") else None),
         code_cgroup_service_unit=os.environ.get("HIVE_CODE_CGROUP_SERVICE_UNIT", "omegahive.service"),
         code_sandbox_memory_bytes=_code_resource_int("HIVE_CODE_SANDBOX_MEMORY_BYTES", 1073741824),
         code_sandbox_pids=_code_resource_int("HIVE_CODE_SANDBOX_PIDS", 256),
@@ -597,8 +767,8 @@ def load_settings(**overrides) -> Settings:
         code_sandbox_host_pids=_code_resource_int("HIVE_CODE_SANDBOX_HOST_PIDS", None),
         code_sandbox_pool_pids=_code_resource_int("HIVE_CODE_SANDBOX_POOL_PIDS", None),
         code_sandbox_root_pids_reserve=_code_resource_int("HIVE_CODE_SANDBOX_ROOT_PIDS_RESERVE", None),
-        budget_env={k: os.environ[k] for k in BUDGET_ENV if os.environ.get(k, "").strip()},
-        start_limit_month_usd=_start_limit(),
+        # every number of KEYS, read once through its layers; SettingsRefused (exit 78) names each bad one
+        **_keyed_settings(),
         base_path=",".join("/" + p.strip("/") for p in os.environ.get("HIVE_BASE_PATH", "").split(",") if p.strip("/")),
     )
     values.update(overrides)

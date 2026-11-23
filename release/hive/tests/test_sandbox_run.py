@@ -1,4 +1,4 @@
-"""sandbox:run — apps run their own pinned tools inside the OS sandbox. Real sandbox-exec where available."""
+"""Purpose: Verify pinned tool execution inside the host OS sandbox."""
 import asyncio
 import contextlib
 import hashlib
@@ -49,11 +49,35 @@ def run(*a, **k):
 
 
 @SANDBOXED
-def test_runs_the_bundle_and_returns_declared_outputs(tmp_path):
+@pytest.mark.parametrize("data", [b"hello", "hello"])
+def test_runs_the_bundle_and_returns_declared_outputs(tmp_path, data):
     app = make_app(tmp_path, {"up.sh": 'tr a-z A-Z < in.txt > out.txt; echo done'})
-    r = run(app, "up.sh", inputs={"in.txt": b"hello"}, outputs=["out.txt", "nope.txt"], runtime="sh")
+    r = run(app, "up.sh", inputs={"in.txt": data}, outputs=["out.txt", "nope.txt"], runtime="sh")
     assert r["exit"] == 0 and r["outputs"]["out.txt"] == b"HELLO" and r["stdout"].strip() == b"done"
     assert r["missing_outputs"] == ["nope.txt"]
+
+
+@LINUX
+def test_linux_tool_workspace_is_private_tmpfs(tmp_path, monkeypatch):
+    jobs = _private_tempdir(tmp_path, monkeypatch)
+    app = make_app(tmp_path, {"inspect.sh": 'stat -f -c %T "$PWD"; stat -c %d "$PWD"; cat input > output'})
+    result = run(app, "inspect.sh", inputs={"input": b"copy"}, outputs=["output"], runtime="sh")
+    assert result["exit"] == 0
+    filesystem, device = result["stdout"].splitlines()
+    assert filesystem == b"tmpfs" and int(device) != jobs.stat().st_dev
+    assert result["outputs"] == {"output": b"copy"}
+    assert result["cleanup"]["complete"]
+    assert list(jobs.iterdir()) == []
+
+
+@LINUX
+def test_linux_private_workspace_refuses_multiply_linked_artifact(tmp_path):
+    app = make_app(tmp_path, {"inspect.sh": "printf fixture > output; ln output internal"})
+    with pytest.raises(sandbox_run.SandboxOutputLimit, match="link count") as refused:
+        run(app, "inspect.sh", outputs=["output"], runtime="sh")
+    result = refused.value.sandbox_result
+    assert result["exit"] == 0 and result["outputs"] == {}
+    assert result["cleanup"]["complete"], result
 
 
 @SANDBOXED
@@ -204,10 +228,8 @@ def test_the_launcher_refuses_without_exact_limits(tmp_path):
 
 @LINUX
 @pytest.mark.skipif(not NODE, reason="needs node")
-def test_rewriting_the_profile_from_inside_widens_nothing(tmp_path):
-    """r14 (stand-in review): the launcher's profile sits in the writable job folder. A tool that really rewrites it to
-    grant / and the port of a live host listener must still fail to read or write outside or connect, because the profile
-    was read before exec and the network namespace has no route out."""
+def test_tools_and_children_are_confined_without_the_launcher_profile(tmp_path):
+    """The private workspace keeps launcher metadata outside the tool's view."""
     import socket
     host = socket.socket()
     host.bind(("127.0.0.1", 0))
@@ -219,13 +241,9 @@ def test_rewriting_the_profile_from_inside_widens_nothing(tmp_path):
     child_net = (f"const s=require('net').connect({port},'127.0.0.1');"
                  "s.on('connect',()=>{console.log('CHILD_NET CONNECTED');process.exit(0)});"
                  "s.on('error',e=>{console.log('CHILD_NET DENIED '+e.code);process.exit(0)});")
-    wide = json.dumps({"version": 2, "mind_dir": "/", "read": ["/"], "dev_rw": [], "dev_read": [], "connect_ports": [port]})
     script = (
         "import fs from 'node:fs'; import net from 'node:net';"
-        "const out = {};"
-        "const dir = '.sandbox-profile'; const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));"
-        f"for (const f of files) {{ fs.writeFileSync(dir + '/' + f, {json.dumps(wide)}); }}"
-        f"out.rewritten = files.length > 0 && files.every(f => fs.readFileSync(dir + '/' + f, 'utf8') === {json.dumps(wide)});"
+        "const out = { profileVisible: fs.readdirSync('.').some(name => name.startsWith('.sandbox-profile')) };"
         f"try {{ out.read = fs.readFileSync({json.dumps(str(canary))}, 'utf8'); }} catch (e) {{ out.read = 'DENIED ' + e.code; }}"
         f"try {{ fs.writeFileSync({json.dumps(str(escaped))}, 'x'); out.write = 'WROTE'; }} catch (e) {{ out.write = 'DENIED ' + e.code; }}"
         "const { execFileSync } = await import('node:child_process');"
@@ -235,15 +253,16 @@ def test_rewriting_the_profile_from_inside_widens_nothing(tmp_path):
         f"const s = net.connect({port}, '127.0.0.1');"
         "s.on('connect', () => { out.net = 'CONNECTED'; console.log(JSON.stringify(out)); process.exit(0); });"
         "s.on('error', e => { out.net = 'DENIED ' + e.code; console.log(JSON.stringify(out)); process.exit(0); });")
-    app = make_app(tmp_path, {"widen.mjs": script})
+    app = make_app(tmp_path, {"profile.mjs": script})
     try:
-        r = run(app, "widen.mjs", runtime="node", timeout=30)
+        r = run(app, "profile.mjs", runtime="node", timeout=30)
     finally:
         host.close()
+    assert r["stdout"].strip(), r
     out = json.loads(r["stdout"].strip().splitlines()[-1])
-    assert out["rewritten"] is True, out                              # the mutation really happened
+    assert out["profileVisible"] is False, out
     assert out["read"].startswith("DENIED") and out["write"].startswith("DENIED") and out["net"].startswith("DENIED"), out
-    assert "CHILD_STARTED" in out["child"] and "CHILD_DONE" in out["child"], out   # the child really ran after the rewrite
+    assert "CHILD_STARTED" in out["child"] and "CHILD_DONE" in out["child"], out
     assert "secret" not in out["child"] and not pathlib.Path(str(escaped) + "2").exists(), out
     assert "CHILD_WRITE_DENIED" in out["child"] and "CHILD_WROTE" not in out["child"], out
     assert "CHILD_NET DENIED" in out["child_net"] and "CONNECTED" not in out["child_net"], out
@@ -489,49 +508,42 @@ def test_a_group_whose_leader_is_reaped_gets_no_signal_and_its_cleanup_fails_clo
                 os.kill(stayer, signal.SIGKILL)
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the stage driver runs the Linux launcher")
+@LINUX
 def test_a_cancelled_run_lets_the_launcher_remove_its_root(tmp_path, monkeypatch):
-    """omega-flagship/omegahive#8's review, end to end: a cancel, or a timeout through the same path, used to SIGKILL
-    the launcher, which left its root where it made it. The launcher is test_mind_sandbox_linux.py's stage driver,
-    every isolation step stubbed, and reports each directory it makes, so the test checks the root itself. A root the
-    launcher makes under TMPDIR goes to a folder of this test's own, never the job folder the run removes anyway. The
-    run is cancelled once its tool runs, so the root exists and the tool is in the group the SIGTERM goes to."""
+    """Cancel the real tool after copy-in and check the original mount coordinate and process."""
     import random
-    from hive.tests.test_mind_sandbox_linux import STAGE_DRIVER
-    repo = str(pathlib.Path(__file__).resolve().parents[2])
-    report, roots = tmp_path / "made", tmp_path / "roots"
-    roots.mkdir()
-    prof = tmp_path / "p.json"
-    prof.write_text(json.dumps({"mind_dir": str(tmp_path), "read": [], "connect_ports": []}))
-    driver = (f"import tempfile\ntempfile.tempdir = {str(roots)!r}\n_mkdtemp = tempfile.mkdtemp\n"
-              "def _report(*a, **k):\n    path = _mkdtemp(*a, **k)\n"
-              f"    open({str(report)!r}, 'a').write(path + '\\n')\n    return path\n"
-              "tempfile.mkdtemp = _report\n") + STAGE_DRIVER
+    from hive.core import sandbox_workspace
+
+    phases = []
+    prepare = sandbox_workspace.prepare_single_phase
     d = random.randint(900000, 999999)
 
-    def stage_wrap(command, job, reads, profile_dir, agent_id, ports=None, programs=()):
-        return [sys.executable, "-c", driver, repo, "none", str(prof), "--", "sleep", str(d)], str(prof)
+    def capture_phase(*args, **kwargs):
+        phase = prepare(*args, **kwargs)
+        phases.append(phase)
+        return phase
 
-    monkeypatch.setattr(sandbox_run, "backend", lambda: "landlock")
-    monkeypatch.setattr(sandbox_run, "available", lambda: True)
-    monkeypatch.setattr(sandbox_run, "_runtime_reachable", lambda kind, exe, reads: True)
-    monkeypatch.setattr(sandbox_run, "wrap", stage_wrap)
-    app = make_app(tmp_path, {"t.sh": "sleep 60"})
+    monkeypatch.setattr(sandbox_workspace, "prepare_single_phase", capture_phase)
+    app = make_app(tmp_path, {"t.sh": f"exec sleep {d}"})
 
     async def scenario():
         task = asyncio.ensure_future(sandbox_run.run(app, "t.sh", runtime="sh", timeout=60))
-        running = await asyncio.to_thread(_until, lambda: _sleep_alive(d) and report.exists(), 20)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(asyncio.shield(task), 30)
-        return running
+        try:
+            assert await asyncio.to_thread(_until, lambda: _sleep_alive(d) or task.done(), 20)
+            if task.done():
+                await task
+                pytest.fail("the tool exited before cancellation")
+            assert len(phases) == 1 and pathlib.Path(phases[0].mount_path).is_dir()
+        finally:
+            if not task.done():
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(asyncio.shield(task), 30)
 
-    assert asyncio.run(scenario()), "the launcher never made its root and started the tool"
-    made = report.read_text().split()
-    left = [path for path in made if os.path.exists(path)]
-    for path in left:
-        os.rmdir(path)
-    assert len(made) == 1 and left == [], (made, left)
+    asyncio.run(scenario())
+    assert phases[0].disposed
+    assert not pathlib.Path(phases[0].mount_path).exists()
+    assert not pathlib.Path(phases[0].job.path).exists()
     assert _until(lambda: not _sleep_alive(d), 5)
 
 
@@ -611,6 +623,29 @@ def test_bundle_integrity_is_checked_on_every_host(tmp_path):
         sandbox_run.verify_bundle(app2["path"], "tools")
 
 
+@pytest.mark.parametrize("name", ["a.sh", "bundle.lock.json"])
+def test_bundle_admission_rejects_multiply_linked_files(tmp_path, name):
+    app = make_app(tmp_path, {"a.sh": "echo a"})
+    tools = pathlib.Path(app["path"]) / "tools"
+    outside = tmp_path / "linked"
+    os.link(tools / name, outside)
+    with pytest.raises((ValueError, OSError), match="plain"):
+        sandbox_run.verify_tool_bundle(app["path"], "tools")
+    outside.unlink()
+    assert sandbox_run.verify_tool_bundle(app["path"], "tools") == tools.resolve()
+
+
+def test_host_artifact_admission_rejects_multiply_linked_regular_output(tmp_path):
+    produced = tmp_path / "output"
+    produced.write_bytes(b"ordinary output")
+    alias = tmp_path / "linked"
+    os.link(produced, alias)
+    with pytest.raises(sandbox_run.SandboxOutputLimit, match="link count"):
+        sandbox_run._artifacts(tmp_path, ["output"], 100)
+    alias.unlink()
+    assert sandbox_run._artifacts(tmp_path, ["output"], 100)[0] == {"output": b"ordinary output"}
+
+
 def test_a_tool_bundle_with_js_files_pins_its_own_package_json(tmp_path):
     """Node takes a .js file's module type from the nearest package.json above it; a tool bundle states its own, so
     Node reads nothing above the bundle. .mjs and .cjs name their type and need none. An app interface folder, which
@@ -661,8 +696,33 @@ def test_a_failed_isolation_setup_never_starts_the_tool(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="sandbox unavailable: mind isolation failed, not starting: bad profile"):
         run(app, "ran.sh", runtime="sh")                     # the runtime probe's launcher refuses the same profile
     monkeypatch.setattr(sandbox_run, "_runtime_reachable", lambda kind, exe, reads: True)
-    r = run(app, "ran.sh", runtime="sh")                     # past the probe, the launcher still refuses
+    incomplete = wrap_writing('{"connect_ports": []}')
+    driver = """
+import os
+import signal
+import sys
+sys.path.insert(0, sys.argv[1])
+from hive.supervisor import landlock
+workspace = landlock._workspace_module()
+close = workspace.ChildWorkspace.close
+def close_and_signal(self):
+    close(self)
+    os.kill(os.getpid(), signal.SIGTERM)
+workspace.ChildWorkspace.close = close_and_signal
+sys.exit(landlock.main(sys.argv[2:]))
+"""
+
+    def refuse_while_signalled(*args, **kwargs):
+        argv, path = incomplete(*args, **kwargs)
+        repo = str(pathlib.Path(__file__).resolve().parents[2])
+        return [sys.executable, "-c", driver, repo, *argv[3:]], path
+
+    monkeypatch.setattr(sandbox_run, "wrap", refuse_while_signalled)
+    with pytest.raises((RuntimeError, OSError)) as failed:
+        run(app, "ran.sh", runtime="sh")                     # the private workspace never reaches readiness
+    r = failed.value.sandbox_result
     assert r["exit"] == 78 and b"TOOL_RAN" not in r["stdout"], r
+    assert b"bad profile" in r["stderr"] and r["cleanup"]["job_removed"], r
 
 
 def test_the_runtime_probe_passes_on_the_launchers_reason(tmp_path, monkeypatch):

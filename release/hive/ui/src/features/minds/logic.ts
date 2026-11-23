@@ -1,6 +1,6 @@
 /** Pure logic for the minds-side surfaces (sharing, tools, moving, the health mind). No React, so it is tested in node. */
 import type { Agent } from '../../api/types'
-import type { InventorySkill, MindInventory, Share, SkillStatus } from './types'
+import type { InventorySkill, LeftOutNeed, MindInventory, Share, SkillStatus } from './types'
 
 // ---- memory shares ---------------------------------------------------------------------------
 
@@ -108,7 +108,7 @@ export function revokeEffect(s: Share): string {
 export type SkillView = 'callable' | 'not-callable' | 'all'
 
 export function countSkills(skills: InventorySkill[]): Record<SkillStatus, number> {
-  const c: Record<SkillStatus, number> = { callable: 0, imported: 0, configured: 0, unknown: 0 }
+  const c: Record<SkillStatus, number> = { callable: 0, imported: 0, configured: 0, 'left-out': 0, unknown: 0 }
   for (const s of skills) c[s.status] = (c[s.status] ?? 0) + 1
   return c
 }
@@ -127,7 +127,13 @@ export const SKILL_STATUS_WORDS: Record<SkillStatus, string> = {
   callable: 'Callable: loaded, and its parser accepts it',
   imported: 'Imported: its module loaded and declares it, but the parser did not report it',
   configured: 'Configured: its module is set up but did not load',
+  'left-out': 'Left out: its module needs something this mind lacks, so the mind never loaded it',
   unknown: 'Unknown: no current boot receipt vouches for it',
+}
+
+/** "needs the OmegaCode client", or "needs node 20 or newer and websockets 12 or newer", from the hive's words. */
+export function leftOutWords(left: LeftOutNeed[] | null | undefined): string | null {
+  return left?.length ? `needs ${left.map((l) => l.needs).join(' and ')}` : null
 }
 
 /** How far to trust the list, from the mind's boot receipt. */

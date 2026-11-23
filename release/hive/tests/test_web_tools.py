@@ -15,7 +15,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from hive.core import run_backends, webtools
+from hive.core import webtools
 from hive.core.app import create_app
 from hive.core.config import load_settings
 from hive.core.webtools import BODY_CAP, HttpxConnector, address_refusal
@@ -886,41 +886,6 @@ def test_review6_a_unicode_full_stop_cannot_dodge_the_local_name_check():
         webtools.parse_url("https://localhost。/")
 
 
-# The PDF reader runs inside the hive's sandbox (webtools.pdf_text): these need the OS sandbox the run backend uses.
-SANDBOX = pytest.mark.skipif(not run_backends.get().available(), reason="needs the OS sandbox the hive reads PDFs in")
-
-
-def _pdf_reader():
-    for name in ("pypdf", "pymupdf", "fitz"):
-        if importlib.util.find_spec(name):
-            return name
-    return None
-
-
-@pytest.mark.skipif(_pdf_reader() not in ("pymupdf", "fitz"), reason="needs PyMuPDF to make a PDF")
-def test_review7_a_pdf_is_read_in_a_child_process(w):
-    try:
-        import pymupdf
-    except ImportError:
-        import fitz as pymupdf
-    doc = pymupdf.open()
-    doc.new_page().insert_text((72, 72), "Invented PDF words")
-    w.site.page("example.org", "/d.pdf", doc.tobytes(), ctype="application/pdf")
-    r = fetch(w, "https://example.org/d.pdf")
-    assert r.status_code == 200 and "Invented PDF words" in r.json()["text"]
-
-
-@SANDBOX
-def test_review7_a_slow_pdf_reader_is_killed_at_the_deadline(w, monkeypatch):
-    import time as _time
-    monkeypatch.setattr(webtools, "TOTAL_SECONDS", 3.0)
-    monkeypatch.setattr(webtools, "PDF_SCRIPT", "while True: pass")
-    w.site.page("example.org", "/d.pdf", b"%PDF-1.4 invented", ctype="application/pdf")
-    started = _time.monotonic()
-    r = fetch(w, "https://example.org/d.pdf")
-    assert r.status_code == 504 and _time.monotonic() - started < 5
-
-
 def test_review8_a_busy_search_pool_refuses_once_its_deadline_passes(w, monkeypatch):
     # review 8: a provider that hangs can't pile searches up behind it. A search waits for a busy worker only until
     # its own deadline and is refused then, and the provider never gets more than SEARCH_WORKERS calls at once.
@@ -1007,34 +972,12 @@ def test_rereview1_no_strike_rows_while_paused(w, monkeypatch):
     assert w.hive.db.one("SELECT COUNT(*) AS n FROM web_strikes")["n"] == 1
 
 
-@SANDBOX
-def test_rereview2_pdf_output_is_capped_and_the_child_stopped(w, monkeypatch):
-    # the reader writes far past its cap: the sandbox's file-size limit stops it there, and the text is cut at the cap
-    monkeypatch.setattr(webtools, "PDF_OUTPUT_CAP", 1000)
-    monkeypatch.setattr(webtools, "PDF_SCRIPT", "open('text.txt', 'w').write('a' * 10 ** 7)\n")
-    w.site.page("example.org", "/d.pdf", b"%PDF-1.4 invented", ctype="application/pdf")
-    r = fetch(w, "https://example.org/d.pdf")
-    assert r.status_code == 200 and r.json()["text"] == "a" * 1000
-
-
 def test_rereview3_a_mind_reads_one_pdf_at_a_time(w, monkeypatch):
     # the cap is per mind (Jon's second review, omega-flagship/omegahive#299): this mind is already reading one
     monkeypatch.setattr(webtools, "_pdf_readers", {w.mind["id"]})
     w.site.page("example.org", "/d.pdf", b"%PDF-1.4 invented", ctype="application/pdf")
     r = fetch(w, "https://example.org/d.pdf")
     assert r.status_code == 503 and "already reading a PDF" in message(r)
-
-
-@SANDBOX
-def test_rereview4_the_sandbox_sets_the_pdf_readers_limits(w, monkeypatch):
-    import inspect
-    # the run backend starts the reader under the sandbox's launcher, which sets its limits; the hive starts no process
-    source = inspect.getsource(webtools.pdf_text)
-    assert "preexec_fn" not in source and "create_subprocess" not in source and "run_hive_tool" in source
-    monkeypatch.setattr(webtools, "PDF_SCRIPT", "import resource\nopen('text.txt', 'w').write(str(resource.getrlimit(resource.RLIMIT_CPU)[0]))\n")
-    w.site.page("example.org", "/d.pdf", b"%PDF-1.4 invented", ctype="application/pdf")
-    r = fetch(w, "https://example.org/d.pdf")
-    assert r.status_code == 200 and r.json()["text"] == str(webtools.PDF_CPU_SECONDS)
 
 
 def test_rereview5_the_audit_keeps_only_the_start_of_a_search(w):

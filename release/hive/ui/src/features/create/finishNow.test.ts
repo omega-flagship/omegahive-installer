@@ -122,7 +122,7 @@ describe('Create a mind: Create now on the first page', { timeout: 30_000 }, () 
     type(find(draw(), (e) => e.props?.id === 'dot-name'), 'Test mind')
     const first = draw()
     expect(textOf(find(first, (e) => e.type === 'h2'))).toBe('What should it help you with?') // still the first page
-    expect(textOf(find(first, (e) => e.props?.id === 'create-now-note'))).toBe('Create now makes Test mind on its own, on Invented Sonnet, with a $10 spending limit.')
+    expect(textOf(find(first, (e) => e.props?.id === 'create-now-note'))).toBe('Create now makes Test mind on its own, on Invented Sonnet.')
     expect(find(first, button('Create now')).props!.disabled).toBe(false)
     press(first, 'Create now')
     // the review page shows what is being made while it is made
@@ -130,7 +130,7 @@ describe('Create a mind: Create now on the first page', { timeout: 30_000 }, () 
     expect(textOf(find(review, (e) => e.type === 'h2'))).toBe('Bring it to life')
     await vi.runAllTimersAsync()
     expect(made).toEqual([
-      { name: 'Test mind', kind: 'omega', swarm_id: null, model: model.id, persona: undefined, hue: expect.any(Number), budget_usd: 10, options: undefined, role_id: null, visibility: 'private', shared_with: undefined },
+      { name: 'Test mind', kind: 'omega', swarm_id: null, model: model.id, persona: undefined, hue: expect.any(Number), budget_usd: 0, options: undefined, role_id: null, visibility: 'private', shared_with: undefined },
     ])
     // made and started, so it answers the first message without anyone finding Start
     expect(started).toEqual([['a_Test mind', 'start']])
@@ -172,7 +172,7 @@ describe('Create a mind: Create now on the first page', { timeout: 30_000 }, () 
       const page = draw()
       expect(textOf(find(page, (e) => e.type === 'h2'))).toBe(title)
       expect(has(page, button('Create now'))).toBe(true)
-      expect(textOf(find(page, (e) => e.props?.id === 'create-now-note'))).toBe('Create now makes Test mind on its own, on Invented Sonnet, with a $10 spending limit.')
+      expect(textOf(find(page, (e) => e.props?.id === 'create-now-note'))).toBe('Create now makes Test mind on its own, on Invented Sonnet.')
     }
     press(draw(), 'Continue')
     const review = draw()
@@ -208,7 +208,7 @@ describe('Create a mind: everyday words, homes the hive accepts, and a mind that
   it('keeps a home the page it came from names, but never a personal swarm named that way', async () => {
     const named = await mindWizard({})
     type(find(named.draw({ swarmId: 's_lyre' }), (e) => e.props?.id === 'dot-name'), 'Test mind')
-    expect(textOf(find(named.draw({ swarmId: 's_lyre' }), (e) => e.props?.id === 'create-now-note'))).toBe('Create now makes Test mind in Invented Lyre, on Invented Sonnet, with a $10 spending limit.')
+    expect(textOf(find(named.draw({ swarmId: 's_lyre' }), (e) => e.props?.id === 'create-now-note'))).toBe('Create now makes Test mind in Invented Lyre, on Invented Sonnet.')
     rt.cur = []
     const personal = await mindWizard({})
     type(find(personal.draw({ swarmId: 's_own' }), (e) => e.props?.id === 'dot-name'), 'Test mind')
@@ -226,7 +226,48 @@ describe('Create a mind: everyday words, homes the hive accepts, and a mind that
   })
 })
 
-async function swarmWizard(agents: Record<string, unknown>) {
+// the hive's own month limit, as GET /api/budgets lists it to anyone (limits_view.scope_visible)
+const hiveMonth = { id: 'r_hive', scope: 'hive', period: 'month', limit_usd: 50, spent_usd: 0, note: '', origin: 'rule' }
+// the hive cap is the hive's month rule, else its day rule (Budgets.hive_cap); a total holds no mind with no cap of its own
+const hiveDay = { ...hiveMonth, id: 'r_hive_day', period: 'day' }
+const hiveTotal = { ...hiveMonth, id: 'r_hive_total', period: 'total' }
+
+describe('Create a mind: what holds a mind with no cap of its own', { timeout: 30_000 }, () => {
+  it('a mind made on its own or in a team starts with no cap of its own', async () => {
+    const { made, draw } = await mindWizard({ swarms: { s_lyre: lyre }, budgets: [hiveMonth] })
+    type(find(draw({ swarmId: 's_lyre' }), (e) => e.props?.id === 'dot-name'), 'Test mind')
+    press(draw(), 'Create now')
+    await vi.runAllTimersAsync()
+    expect(made).toMatchObject([{ swarm_id: 's_lyre', budget_usd: 0 }])
+  })
+
+  it('calls the hive’s limit the mind’s bound only once the limits are read and hold one, and warns when they hold none', async () => {
+    const details = async (budgets: unknown) => {
+      rt.cur = []
+      const w = await mindWizard({ budgets })
+      type(find(w.draw(), (e) => e.props?.id === 'dot-name'), 'Test mind')
+      press(w.draw(), 'Continue')
+      press(w.draw(), 'Continue')
+      return all(w.draw()).map(textOf).join(' ')
+    }
+    expect(await details([hiveMonth])).toContain('The hive\'s monthly limit holds what it spends, and Usage shows it.')
+    expect(await details([hiveDay])).toContain('The hive\'s daily limit holds what it spends, and Usage shows it.')
+    expect(await details([])).toContain('The hive has no monthly limit yet, so a mind on a paid model can\'t answer.')
+    expect(await details([hiveTotal])).toContain('The hive has no monthly limit yet, so a mind on a paid model can\'t answer.')
+    const unread = await details(null)   // limits not read (yet): neither claimed
+    expect(unread).toContain('What it spends shows under Usage.')
+    expect(unread).not.toContain('The hive\'s monthly limit holds')
+    expect(unread).not.toContain('The hive has no monthly limit yet')
+  })
+
+  it('reads the limits this person may see as a page opens, a member included, whom budgets.updated never reaches', async () => {
+    const { useHive } = await mindWizard({ budgets: null, client: { listBudgets: async () => [hiveMonth] } })
+    await (useHive.getState() as unknown as { loadBudgets: () => Promise<void> }).loadBudgets()
+    expect((useHive.getState() as unknown as { budgets: unknown }).budgets).toEqual([hiveMonth])
+  })
+})
+
+async function swarmWizard(agents: Record<string, unknown>, state: Record<string, unknown> = {}) {
   b = fakeBrowser('#/swarms/new')
   const { useHive } = await import('../../store/store')
   const calls: [string, ...unknown[]][] = []
@@ -243,7 +284,7 @@ async function swarmWizard(agents: Record<string, unknown>) {
     createGoal: async (swarm: string, body: unknown) => void calls.push(['createGoal', swarm, body]),
     setBudget: async (body: unknown) => void calls.push(['setBudget', body]),
   }
-  useHive.setState({ client, models: [model], catalog: null, agents, roles: null } as never)
+  useHive.setState({ client, models: [model], catalog: null, agents, roles: null, ...state } as never)
   const { default: LaunchSwarm } = await import('../launch/LaunchSwarm')
   const draw = () => render(LaunchSwarm as never, {}) as unknown
   const nameField = (tree: unknown) => find(tree, (e) => e.type === 'input' && e.props?.placeholder === 'e.g. Market Watch, Bridge Build, Reading Group')
@@ -251,11 +292,11 @@ async function swarmWizard(agents: Record<string, unknown>) {
 }
 
 describe('Start a swarm: Launch now on the first page', { timeout: 30_000 }, () => {
-  it('a typed name and one click launch the Research swarm awake, with its first task and per-mind caps', async () => {
+  it('a typed name and one click launch the Research swarm awake, with its first task and no cap on any mind', async () => {
     const { calls, draw, nameField } = await swarmWizard({})
     type(nameField(draw()), 'Test swarm')
     const first = draw()
-    expect(textOf(find(first, (e) => e.props?.id === 'launch-now-note'))).toBe('Launch now starts 3 minds on Invented Sonnet, each capped at $5.00.')
+    expect(textOf(find(first, (e) => e.props?.id === 'launch-now-note'))).toBe('Launch now starts 3 minds on Invented Sonnet.')
     expect(find(first, button('Launch now')).props!.disabled).toBe(false)
     press(first, 'Launch now')
     await vi.runAllTimersAsync()
@@ -263,9 +304,9 @@ describe('Start a swarm: Launch now on the first page', { timeout: 30_000 }, () 
     expect(calls[0][1]).toEqual({ name: 'Test swarm', description: '', hue: 196, visibility: 'private', shared_with: undefined })
     const minds = calls.filter((c) => c[0] === 'createAgent').map((c) => c[1] as { name: string; swarm_id: string; model: string; budget_usd: number })
     expect(minds.map((m) => [m.name, m.swarm_id, m.model, m.budget_usd])).toEqual([
-      ['Scout', 's_new', model.id, 5],
-      ['Analyst', 's_new', model.id, 5],
-      ['Sceptic', 's_new', model.id, 5],
+      ['Scout', 's_new', model.id, 0],
+      ['Analyst', 's_new', model.id, 0],
+      ['Sceptic', 's_new', model.id, 0],
     ])
     expect(calls.at(-1)).toEqual(['createGoal', 's_new', { title: 'Research a question and report what the evidence supports, with sources and honest confidence', priority: 0.7 }])
     // the Launch page, with what was made and where to go next
@@ -289,5 +330,40 @@ describe('Start a swarm: Launch now on the first page', { timeout: 30_000 }, () 
     const empty = draw()
     expect(find(empty, button('Launch now')).props!.disabled).toBe(true)
     expect(textOf(find(empty, (e) => e.props?.id === 'launch-now-note'))).toBe('Name the swarm to launch it.')
+  })
+})
+
+describe('Start a swarm: what holds minds with no cap of their own', { timeout: 30_000 }, () => {
+  const limits = async (budgets: unknown, removed: string[] = []) => {
+    rt.cur = []
+    const w = await swarmWizard({}, { budgets })
+    type(w.nameField(w.draw()), 'Test swarm')
+    press(w.draw(), 'Continue')
+    removed.forEach((name) => (find(w.draw(), (e) => e.props?.['aria-label'] === `Remove ${name}`).props!.onClick as () => void)())
+    press(w.draw(), 'Continue')
+    return all(w.draw()).map(textOf).join(' ')
+  }
+
+  it('warns, naming them, when the hive has no limit and its minds are on a paid model', async () => {
+    const words = await limits([])
+    expect(words).toContain('What these minds spend comes out of the hive\'s limits, which its owner sets on Usage and limits')
+    expect(words).toContain('The hive has no monthly limit yet, so a mind on a paid model can\'t answer (Scout, Analyst, Sceptic). Set the hive\'s on Usage and limits, or pick a model on this computer for it under Minds.')
+    expect(words).not.toContain('Budget for')
+  })
+
+  it('names only the minds still in the swarm', async () => {
+    expect(await limits([], ['Analyst', 'Sceptic'])).toContain('can\'t answer (Scout).')
+  })
+
+  it('warns of nothing when the hive has a limit, or when its limits are not read yet', async () => {
+    for (const budgets of [[hiveMonth], [hiveDay], null]) {
+      const words = await limits(budgets)
+      expect(words).toContain('What these minds spend comes out of the hive\'s limits')
+      expect(words).not.toContain('The hive has no monthly limit yet')
+    }
+  })
+
+  it('warns when the hive’s only limit is a total, which holds no mind with no cap of its own', async () => {
+    expect(await limits([hiveTotal])).toContain('The hive has no monthly limit yet')
   })
 })

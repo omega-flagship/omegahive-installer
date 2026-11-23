@@ -1,5 +1,6 @@
-"""The owner's AI subscriptions through local CLI bridges (subscription_cli.py, CLI route R3 §I/§M): every test that
-takes `sub` runs for each instance of the family, subscription-cli (Claude) and subscription-codex (ChatGPT/Codex).
+"""Purpose: tests of the owner's AI subscriptions through local CLI bridges (subscription_cli.py, CLI route R3 §I/§M):
+every test that takes `sub` runs for each instance of the family, subscription-cli (Claude) and subscription-codex
+(ChatGPT/Codex).
 
 Synthetic only: a fake bridge transport, invented ids and an invented bridge key; no network, no CLI."""
 
@@ -8,6 +9,8 @@ import dataclasses
 import json
 import pathlib
 import sqlite3
+import subprocess
+import sys
 import tempfile
 
 import httpx
@@ -184,14 +187,17 @@ def test_providers_file_entry_on_either_bridge_port_refused_when_both_run(monkey
 def test_builtin_local_slot_on_the_bridge_port_is_switched_off(monkeypatch, sub):
     configure(monkeypatch, sub)
     monkeypatch.setenv("HIVE_LOCAL_LLM_URL", f"http://127.0.0.1:{sub.port}/v1")
-    import importlib
-    from hive.core import config
-    importlib.reload(config)   # DEFAULT_PROVIDERS reads HIVE_LOCAL_LLM_URL at import
-    try:
-        assert config._load_providers()["local"].base_url == ""
-    finally:
-        monkeypatch.delenv("HIVE_LOCAL_LLM_URL")
-        importlib.reload(config)
+    # The URL is read at import time. A fresh interpreter keeps pytest's config classes intact.
+    check = """
+from hive.core.config import _load_providers
+
+url = _load_providers()["local"].base_url
+if url != "":
+    raise SystemExit(f"the local provider still has a base URL: {url!r}")
+"""
+    result = subprocess.run([sys.executable, "-c", check], cwd=pathlib.Path(__file__).resolve().parents[2],
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 # ---- the one owner-scope policy -----------------------------------------------------------------------------------

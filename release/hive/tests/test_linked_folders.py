@@ -204,6 +204,21 @@ def test_a_hive_that_is_not_local_refuses(client, tree, monkeypatch):
     assert client.get(f"/api/folders/{f['id']}/file?path=readme.txt").status_code == 403
 
 
+def test_the_hives_code_folder_cannot_be_linked(client, tree, monkeypatch):
+    """A standalone run keeps its memory, logins and session keys under the code folder (.gitignore), so no linked
+    folder may be it, sit inside it or hold it."""
+    from hive.core import updates
+    code = tree["home"] / "work" / "hive-code"
+    (code / "memory").mkdir(parents=True)
+    (code / "memory" / "home_assistant.json").write_text('{"token": "invented"}')
+    monkeypatch.setattr(updates, "ROOT", code)
+    s = swarm(client)["id"]
+    for bad in (code, code / "memory", tree["home"] / "work"):
+        r = link(client, bad, s)
+        assert r.status_code == 403 and r.json()["error"]["code"] == "folder_denied", (bad, r.text)
+    assert link(client, tree["proj"], s).status_code == 200   # a folder beside it still links
+
+
 def test_the_hard_deny_list_cannot_be_linked(client, tree):
     s = swarm(client)["id"]
     home = tree["home"]

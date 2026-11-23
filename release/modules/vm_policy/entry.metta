@@ -32,8 +32,8 @@
 (BoundaryPrinciple vm-policy "Maintenance windows are temporary reviewed exit affordances, not permanent broad access.")
 
 (RuntimeDependency omegaclaw.immune.vm-policy python ">=3.10")
-(RuntimeDependency omegaclaw.immune.vm-policy nft ">=1")
-(RuntimeDependency omegaclaw.immune.vm-policy ufw ">=0.36")
+(RecommendedDependency omegaclaw.immune.vm-policy nft ">=1")
+(RecommendedDependency omegaclaw.immune.vm-policy ufw ">=0.36")
 
 (TraceWrites omegaclaw.immune.vm-policy VMPolicyObserved)
 (TraceWrites omegaclaw.immune.vm-policy VMPolicyAudit)

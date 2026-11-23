@@ -90,6 +90,7 @@ const isPlan = (v: unknown): v is ScreenPlan => typeof v === 'object' && v !== n
 /**
  * The host for one item of a stack: the item's own data over the page's, and every press and every input carried up
  * with the item's id at the front of `scope`, so the page knows which item (and which item inside it) it came from.
+ * An item marked busy holds its own buttons as a busy page does (a spend alert while its pause is being written).
  */
 export function scopedHost(host: ScreenHost, item: ScreenItem): ScreenHost {
   const id = str(item.id)
@@ -98,6 +99,7 @@ export function scopedHost(host: ScreenHost, item: ScreenItem): ScreenHost {
   return {
     ...host,
     data: { ...host.data, ...own },
+    busy: host.busy === true || item.busy === true,
     onOpen: host.onOpen && ((target, it) => host.onOpen!(target, scoped(it))),
     onAction: host.onAction && ((action, it, value) => host.onAction!(action, scoped(it), value)),
     onInput: host.onInput && ((bind, value, scope) => host.onInput!(bind, value, [id, ...(scope ?? [])])),

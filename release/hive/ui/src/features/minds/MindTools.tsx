@@ -8,7 +8,7 @@ import { errorMessage, has, need, useResource } from '../../lib/useResource'
 import { useHive } from '../../store/store'
 import { Icon } from '../../ui/Icon'
 import { ModeChip, Segmented, Skeleton } from '../../ui/primitives'
-import { availabilityWords, countSkills, filterSkills, SKILL_STATUS_WORDS, type SkillView } from './logic'
+import { availabilityWords, countSkills, filterSkills, leftOutWords, SKILL_STATUS_WORDS, type SkillView } from './logic'
 import type { InventorySkill, MindActivity, MindInventory } from './types'
 
 const TONE = { good: 'border-good/30 bg-good/[0.06] text-good', warn: 'border-warn/35 bg-warn/[0.07] text-warn', muted: 'border-line bg-tint/[0.03] text-ink-3' }
@@ -136,7 +136,11 @@ function Inventory({ inv, name }: { inv: MindInventory; name: string }) {
                   {i > 0 && ', '}
                   {mod.id}
                   {mod.version ? ` ${mod.version}` : ''}
-                  <span className="text-ink-4"> ({mod.loaded ? 'loaded' : mod.configured ? 'set up, not loaded' : 'not set up'}{mod.loaded && !mod.source_verified ? ', source not verified' : ''})</span>
+                  <span className="text-ink-4">
+                    {' '}
+                    ({leftOutWords(mod.left_out) ? `left out: ${leftOutWords(mod.left_out)}` : mod.loaded ? 'loaded' : mod.configured ? 'set up, not loaded' : 'not set up'}
+                    {mod.loaded && !mod.source_verified ? ', source not verified' : ''})
+                  </span>
                 </span>
               ))}
             </dd>
@@ -151,11 +155,13 @@ const STATUS_CHIP: Record<InventorySkill['status'], string> = {
   callable: 'border-good/30 text-good',
   imported: 'border-line-2 text-ink-2',
   configured: 'border-line text-ink-3',
+  'left-out': 'border-dashed border-line-2 text-ink-3',
   unknown: 'border-line text-ink-4',
 }
 
 function SkillRow({ skill: s, first }: { skill: InventorySkill; first: boolean }) {
   const decision = s.policy.decision
+  const needs = s.status === 'left-out' ? leftOutWords(s.left_out) : null
   return (
     <li className={cx('flex items-start gap-2 px-3 py-1.5 text-[12.5px]', !first && 'border-t border-line')}>
       <div className="min-w-0 flex-1">
@@ -164,6 +170,7 @@ function SkillRow({ skill: s, first }: { skill: InventorySkill; first: boolean }
           {s.module && s.module !== 'core' && <span className="text-meta text-ink-4">{s.module}</span>}
         </div>
         {s.help && <div className="text-meta text-ink-3">{s.help}</div>}
+        {needs && <div className="text-meta text-ink-3">Left out of this mind: its module {needs}.</div>}
         {s.route.note && <div className="text-meta text-ink-4">{s.route.note}</div>}
       </div>
       <span title={SKILL_STATUS_WORDS[s.status]} className={cx('shrink-0 rounded-full border px-1.5 py-px text-[10.5px]', STATUS_CHIP[s.status])}>

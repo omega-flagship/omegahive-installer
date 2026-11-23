@@ -12,7 +12,7 @@ difference is what merging the pull request changes, with no history fetched bey
 Without --runtime it prints the hive test modules the pull request adds, changes or renames to: test_*.py under
 hive/tests, at any depth, that exist in the working tree. A deleted file is not printed. A change to conftest.py, a
 helper module or test data selects nothing, since which tests it reaches is not known here; the full run (hive-petta,
-by dispatch) covers it.
+after every merge to main, every night or by dispatch) covers it.
 
 With --runtime it prints every runtime test, the tests/test_*.py modules that boot the core runtime through PeTTa
 (those that read HIVE_TEST_PETTA, so a new one joins by itself), when the pull request touches what they run: the
@@ -45,7 +45,8 @@ RUNTIME = (
     "core-dependency.json", "third_party/Omega", "hive/runtime/*", "modules/*", "channels/*", "lib_*.metta",
     "run.metta", "src/*", "scripts/setup_core.py", "tests/*.metta",
     # the Python packages it runs on
-    "requirements.txt", "hive/requirements.txt", "tests/ci-requirements.txt", "hive/ci-constraints.txt",
+    "requirements.txt", "hive/requirements.txt", "tests/ci-requirements.txt", "tests/ci-runtime-requirements.txt",
+    "hive/ci-constraints.txt",
     # the CI that runs it
     ".github/workflows/ci.yml", ".github/actions/petta-toolchain/*", "scripts/ci/*", "scripts/dev/setup_petta_env.sh",
 )

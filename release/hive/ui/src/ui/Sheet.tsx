@@ -4,6 +4,7 @@ import { useEscape, useIsDesktop, useReducedMotion } from '../lib/hooks'
 import { useScene } from '../scene/sceneStore'
 import { cx } from '../lib/cx'
 import { ASK_RESERVE, useOverlay } from './overlays'
+import { setSideSheetRoom } from './sideSheetRoom'
 
 export type Snap = 'peek' | 'full'
 
@@ -54,6 +55,8 @@ export function Sheet({
     if (!el) return
     const report = () => {
       const r = el.getBoundingClientRect()
+      // toasts stand left of a desktop side sheet, with the inset's 8 px gap, not over its foot (ui/sideSheetRoom; pr-79 #16)
+      setSideSheetRoom(id, desktop ? window.innerWidth - r.left + 8 : null)
       if (desktop) setInset(id, { right: window.innerWidth - r.left + 8 })
       else setInset(id, { bottom: Math.min(window.innerHeight * 0.6, window.innerHeight - r.top) })
     }
@@ -66,6 +69,7 @@ export function Sheet({
       ro.disconnect()
       window.removeEventListener('resize', report)
       setInset(id, null)
+      setSideSheetRoom(id, null)
     }
   }, [desktop, id, setInset, snap])
 

@@ -406,7 +406,7 @@ def test_R21_a_member_on_the_hive_key_is_admitted_under_the_member_default_allow
 
 def test_R21_a_cap_that_does_not_fit_the_remaining_allowance_is_refused_with_its_figures(s, monkeypatch):
     _hive_key_maker(s)
-    monkeypatch.setenv("HIVE_MEMBER_MONTHLY_USD", "1.5")
+    monkeypatch.setattr(s.hive.settings, "member_monthly_usd", 1.5)   # HIVE_MEMBER_MONTHLY_USD, read at load_settings
     iid = record(s, key_id="env:openrouter", monthly=("member_allowance", 1.5)).json()["intent_id"]
     before = counts(s.hive)
     r = submit(s, iid)

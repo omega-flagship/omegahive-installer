@@ -10,7 +10,7 @@ import { Screen } from '../../screens/Screen'
 import { ScreensSpace, type ScreenFacts, type ScreenPlan } from '../../screens/screenSpace'
 import type { ResourceLike } from '../../screens/resourceFacts'
 import { heldCallsScreen } from './heldCallsScreen'
-import { HIVE_EDITOR, limitsScreen, type AddingCap } from './limitsScreen'
+import { HIVE_EDITOR, limitsScreen, ownOldDefaults, type AddingCap } from './limitsScreen'
 import type { LimitsView } from './limitsView'
 import { joinScreens, mySpendScreen, spendScreen, type Group, type Range, type View } from './usageScreen'
 
@@ -174,6 +174,33 @@ describe('the Usage screen MeTTa composes (usage.metta)', () => {
     expect(readOnly.html).not.toContain('aria-label="Remove the old default on Wisp"')
   })
 
+  it('limits, owners: a cap on someone else’s mind or swarm stays theirs, and Remove covers only your own old defaults (#704)', () => {
+    const forge = row('swarm:s_forge:month', { limit_usd: 20, spent_usd: 19, held_usd: 0.5, room_usd: 0.5, rule_id: 'r_forge', may_change: false })
+    const theirs = { kind: 'swarm' as const, id: 's_forge', name: 'Forge', change: 'Forge: $20.00 month cap -> no cap of its own', reasons: ['a round figure'],
+      reset: { kind: 'rule' as const, rule_id: 'r_forge' }, may_change: false }
+    const view: LimitsView = { ...VIEW, caps: [forge, VIEW.caps[1]], old_defaults: [{ ...VIEW.old_defaults[0], may_change: true }, theirs] }
+    const own = { ...names, swarms: { s_forge: { name: 'Forge', hue: 30, may_cap: false } } }
+    const parts = limitsScreen(ready(view), { view, names: own, canSet: true, canRemove: true, canPatchAgent: true, drafts: {}, adding: null }, compose)
+    // someone else's cap: no editor, no removal, and its row says whose it is
+    expect(parts.actions['swarm:s_forge:monthr_forge']).toEqual({ id: 'swarm:s_forge:monthr_forge', current: 20 })
+    const forgeRow = (parts.data['limits.caps'] as { id: string; data: Record<string, unknown> }[]).find((r) => r.id === 'swarm:s_forge:monthr_forge')
+    expect(forgeRow?.data['limit.badge']).toBe('its owner’s to change')
+    // the old defaults: yours carries Remove, theirs says whose it is, and the one action names only yours
+    expect(parts.data['limits.old']).toMatchObject([{ id: 'mind:a_wisp', action: 'Remove' }, { id: 'swarm:s_forge', action: '', reasons: 'a round figure · its owner’s to remove' }])
+    expect(parts.data['limits.old.all']).toBe('Remove yours')
+    expect(parts.facts.flags?.['limits.old.others']).toBe(true)
+    expect(parts.facts.counts?.['limits.old.mine']).toBe(1)
+    expect(ownOldDefaults(view).map((o) => o.id)).toEqual(['a_wisp'])
+    const plan = compose('usage', parts.facts)
+    expect(orders(plan, 350, 360)).toEqual([350, 351, 352, 353])
+    // Add a cap offers only your own swarms and minds
+    expect((parts.data['limits.add.scopes'] as { id: string }[]).map((s) => s.id)).not.toContain('swarm:s_forge')
+    // with only someone else's old default, there is no Remove at all
+    const none = { ...view, old_defaults: [theirs] }
+    const only = limitsScreen(ready(none), { view: none, names: own, canSet: true, canRemove: true, canPatchAgent: true, drafts: {}, adding: null }, compose)
+    expect(orders(compose('usage', only.facts), 350, 360)).toEqual([350, 352, 353])
+  })
+
   it('limits, changing: an open editor in place of the figures, a monthly hive cap to set, and the Add a cap form', () => {
     const editing = draw({ drafts: { 'swarm:s_forge:monthr_forge': '25.00' } })
     expect(rowOrders(editing.data, 'limits.caps', 'swarm:s_forge:monthr_forge')).toEqual([9, 14, 15, 20, 21])
@@ -228,13 +255,21 @@ describe('the Usage screen MeTTa composes (usage.metta)', () => {
       draw({ held: loading, limits: loading, spend: { status: 'loading' } }), draw({ held: failed('x'), limits: failed('x'), spend: { status: 'error', error: new Error('x') } }),
       draw({ held: { ...ready([]), error: new Error('x') }, limits: { ...ready(VIEW), error: new Error('x') } }), draw({ limits: refused }), draw({ limits: unsupported }),
       draw({ limits: ready({ ...VIEW, hive: { ...VIEW.hive, cap: null, all_time: row('hive:all-time', { scope: 'hive', source: 'server-settings' }) }, people: [], caps: [] }), drafts: { [HIVE_EDITOR]: '' }, adding: { scope: 'hive', period: 'day', limit: '1' } }),
-      draw({ limits: ready({ ...VIEW, hive: { ...VIEW.hive, cap: null } }) }), draw({ usage: [] }), draw({ view: 'table', sim: true }),
+      draw({ limits: ready({ ...VIEW, hive: { ...VIEW.hive, cap: null } }) }),
+      // someone else's old default beside the viewer's own: the note that it stays theirs (#704)
+      draw({ limits: ready({ ...VIEW, old_defaults: [...VIEW.old_defaults, { kind: 'swarm', id: 's_forge', name: 'Forge', change: 'Forge: $20.00 month cap -> no cap of its own', reasons: ['a round figure'], reset: { kind: 'rule', rule_id: 'r_forge' }, may_change: false }] }) }),
+      draw({ usage: [] }), draw({ view: 'table', sim: true }),
       draw({ drafts: { 'person:p_ada': '', 'hive:month': '9' } }),
     ]
     const screenOrders = new Set(plans.flatMap((x) => orders(x.plan)))
     // the in-flight list needs its row open: the page states that flag itself
     const open = compose('usage', { ...heldCallsScreen(ready([{ ...unknown('f1'), state: 'dispatched' }]), undefined, undefined, (_k, id) => id, now, true).facts, values: { held: 'ready' } })
     for (const o of orders(open)) screenOrders.add(o)
+    // the spend alerts (#706): each state of their read, with an alert this viewer may control and a press that failed
+    for (const read of ['loading', 'error', 'empty', 'ready']) {
+      const alerts = { counts: { 'alerts.controls': 1 }, flags: { 'alerts.available': true, 'alerts.action-failed': true }, values: { 'alerts.read': read } }
+      for (const o of orders(compose('usage', alerts))) screenOrders.add(o)
+    }
     expect(space.orders('usage').filter((o) => !screenOrders.has(o))).toEqual([])
     const rowPlans = plans.flatMap((x) => ['limits.hive', 'limits.hive.all-time', 'limits.people', 'limits.caps'].flatMap((k) => (x.data[k] as { plan: ScreenPlan }[]).map((r) => r.plan)))
     const rowSeen = new Set(rowPlans.flatMap((p) => orders(p)))

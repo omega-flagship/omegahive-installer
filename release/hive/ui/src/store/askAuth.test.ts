@@ -1,3 +1,4 @@
+// Purpose: prove the Ask store takes a credential change on the same client as a new person: nothing of the earlier thread acts after it.
 import { currentEpoch } from '../lib/identityEpoch'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -61,7 +62,7 @@ function authHost() {
       throw new AskRefusal(404, 'not_available', `no such turn ${op}`)
     },
     askSteer: async (op: string, b: { steer_id: string; text: string }): Promise<{ steer_id: string; operation_id: string }> => ({ steer_id: b.steer_id, operation_id: op }),
-    askSettings: async () => ({ swarm_id: 'sw_ann_private', thread_budget_usd: 0.25 }),
+    askSettings: async () => ({ swarm_id: 'sw_ann_private' }),
     askConfirm: async () => ({ ok: true }),
     me: async () => ({ principal: who, kind: 'sso', role: 'member', expires_at: null, person: null }),
   }
@@ -259,7 +260,7 @@ describe('Ask: a credential-only change on the same client is an identity change
   it('late settings and confirm answers from the earlier sign-in do not land', async () => {
     const h = authHost()
     start(h)
-    const settings = defer<{ swarm_id: string; thread_budget_usd: number }>()
+    const settings = defer<{ swarm_id: string }>()
     h.on.askSettings = () => settings.promise
     const loading = useAskStore.getState().loadSettings()
     useAskStore.setState({ confirm: { op: 'ask:x', proposal: { id: 'p1', digest: 'd1' } as never, seq: 1 } })
@@ -268,7 +269,7 @@ describe('Ask: a credential-only change on the same client is an identity change
     const confirming = useAskStore.getState().confirmAct()
     await flush()
     h.signIn('user:bea')
-    settings.resolve({ swarm_id: 'sw_ann_private', thread_budget_usd: 0.25 })
+    settings.resolve({ swarm_id: 'sw_ann_private' })
     confirmed.resolve({ ok: true })
     await loading
     expect(useAskStore.getState().settings).toBeNull()

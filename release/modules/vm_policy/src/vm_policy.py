@@ -17,7 +17,8 @@ import re
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
-TRACE_FILE = ROOT / "memory" / "runtime" / "vm_policy" / "trace.jsonl"
+# the mind's memory folder: OMEGACLAW_MEMORY_DIR when a hive runs the mind, else the checkout's memory folder
+TRACE_FILE = pathlib.Path(os.environ.get("OMEGACLAW_MEMORY_DIR") or ROOT / "memory") / "runtime" / "vm_policy" / "trace.jsonl"
 MAX_OUTPUT = 5000
 VALID_EXIT_DECISIONS = {
     "allowed",

@@ -59,3 +59,27 @@ export function signinForm(ways: SigninWays, operator: boolean): SigninForm {
     other: ways.members ? 'Sign in with your email instead' : null,
   }
 }
+
+/**
+ * acceptance-tests #15: who the hive's own Google sign-in lets in, said on the card. `line`: Google accounts at the
+ * listed domains, or any on a public hive, and how anyone else gets in (an admin invites their email). `inviteOnly`:
+ * Google lets in only those invited. null where the hive does not say (older hives) or offers no Google sign-in: the
+ * card stays as it was.
+ */
+export interface SigninWho {
+  line: string
+  inviteOnly: boolean
+}
+
+export function signinWho(sso: Pick<AuthMethods['sso'], 'enabled' | 'login_url' | 'domains' | 'open'>): SigninWho | null {
+  if (!sso.enabled || !sso.login_url || sso.open === undefined || sso.domains === undefined) return null
+  if (sso.open) return { line: 'Any Google account can sign in.', inviteOnly: false }
+  const ask = 'Anyone else needs an invitation: ask one of this hive’s admins to invite your email.'
+  const d = sso.domains
+  if (d.length === 1) return { line: `Anyone with a ${d[0]} Google account can sign in. ${ask}`, inviteOnly: false }
+  if (d.length > 1) {
+    const listed = `${d.slice(0, -1).join(', ')} or ${d[d.length - 1]}`
+    return { line: `Anyone with a Google account at ${listed} can sign in. ${ask}`, inviteOnly: false }
+  }
+  return { line: 'This hive is invite only: ask one of its admins to invite your email.', inviteOnly: true }
+}

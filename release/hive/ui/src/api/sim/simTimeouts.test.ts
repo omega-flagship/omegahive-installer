@@ -67,15 +67,18 @@ const SCREEN_CAPPED: Record<string, number> = {
   'features/artifacts/artifacts.test.ts': 531,
   'features/ask/askStopped.screen.test.ts': 146, // the Ask's Continue (thread.metta), measured two passes at load 36-41
   'features/artifacts/creationReader.test.ts': 1066, // the Artifacts reader composed by MeTTa, measured two passes at load 135-175
+  'features/ask/goAhead.mounted.test.ts': 952, // the Ask's go-ahead question in every look, measured two passes at load 76-106 (19 Nov)
   'features/createPlan/plan.screen.test.ts': 619, // r1.6: the Create plan view, measured two passes at load 4-7
   'features/dot/conversations.screen.test.ts': 1011,
   'features/dot/createOffer.mounted.test.ts': 3205, // a mind's Create offer in every look (its guards test), two passes, 3 workers (Linux, 12 threads)
   'features/dot/refused.mounted.test.ts': 5785, // a mind's refusal notice in every look (its guards test), two passes (Linux, 12 threads)
+  'features/dot/ownCoding.screen.test.ts': 1956, // a mind's own-coding part, measured on CI's runner (one pass)
   'features/explore/explore.screen.test.ts': 2333,
   'features/feedback/feedback.screen.test.ts': 2027, // the feedback area, measured two passes at load 136-149 (16 Nov)
   'features/firstlight/free.test.ts': 3048, // First Light's free inference (its guards test), two passes at load 40 (Linux, 32 threads)
   'features/flow/flow.screen.test.ts': 1123,
   'features/health/health.screen.test.ts': 649,
+  'features/keys/connectors.screen.test.ts': 1087, // the You page's connectors, two passes, 3 workers, load 26 (Linux, 32 threads, 18 Nov)
   'features/keys/profile.screen.test.ts': 1513,
   'features/keys/signOut.test.ts': 211,
   'features/lifecycle/lifecycle.screen.test.ts': 1573,

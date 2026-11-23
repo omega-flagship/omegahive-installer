@@ -1,0 +1,7 @@
+# The Python packages the runtime tests (scripts/ci/runtime-tests.sh) need: tests/ci-requirements.txt, and chromadb,
+# petta_lib_chromadb's module, which only the tests that boot the core runtime import, at the version run 43150069790
+# passed tests/test_wait_quiet_runtime.py with. Installed under hive/ci-constraints.txt, by petta-toolchain's
+# runtime-packages input into the cached Python (hive-ci's hive-runtime) and by runtime-tests.sh, which finds them
+# installed there and installs them in hive-petta-smoke.
+-r ci-requirements.txt
+chromadb==1.5.9

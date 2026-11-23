@@ -37,6 +37,13 @@ Everything lives in one place, run by one service account:
   on the interpreter `HIVE_SANDBOX_PYTHON` names when the hive's environment sets it (an absolute path), else on the
   hive's own interpreter.
 - **What isolation does.** Each mind runs in private user, network, process, IPC and mount namespaces. Landlock limits it to its own folder plus the runtime. Its only way out is a relay to the hive's own ports.
+- **Workspace admission.** A mind can start when all hard links to its regular files stay within its writable
+  workspace. For a Docker PeTTa mind, that workspace is its `memory/` folder. If a link crosses the boundary,
+  Start names the affected file. Remove the workspace link or replace that entry with an independent copy,
+  then start the mind again. Hive file imports and exports require singly linked files. Keep host tools that
+  create hard links across this boundary out of running mind workspaces.
+- **Temporary tool runs.** On Linux, each run has its own bounded tmpfs. The hive copies in declared inputs
+  and collects declared outputs through the opened workspace descriptor.
 - **If either requirement is missing,** the hive still runs, but it refuses to start minds (fail closed).
 - **Tested on the target server.** The isolation tests passed on the SingularityNET server (Ubuntu 22.04, kernel 5.15, Landlock ABI 1) as a normal user, with no root needed.
 - **Not included:**

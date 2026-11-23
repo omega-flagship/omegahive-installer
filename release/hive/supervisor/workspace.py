@@ -16,6 +16,7 @@ import os
 import contextlib
 import importlib.util
 import pathlib
+import re
 import shutil
 import site
 import stat
@@ -36,9 +37,15 @@ RUN_METTA = """!(import! &self (library lib_import))
 """
 
 # J3 host R6.1: the Studio maker skills (modules/hive_studio) enter an omega mind only while Studio sessions are on: this
-# one line in its run.metta and OMEGACLAW_EXTRA_MODULES in its environment (Supervisor.start). Off, neither exists.
+# one line in its run.metta and OMEGACLAW_EXTRA_MODULES in its environment (Supervisor.start). Off, neither exists. A
+# connector's module (hive/core/connectors.py) enters a mind its owner installed it on the same way.
 STUDIO_MODULE = "hive_studio"
 STUDIO_IMPORT = "!(import! &self (library OmegaClaw-Core ./modules/hive_studio/entry.metta))"
+
+
+def module_import(module):
+    """The run.metta line that loads one optional module into an omega mind."""
+    return f"!(import! &self (library OmegaClaw-Core ./modules/{module}/entry.metta))"
 
 CHROMADB_LIB_URL = "https://github.com/patham9/petta_lib_chromadb.git"
 ITER_TEMPLATE = pathlib.Path(__file__).resolve().parents[1] / "templates" / "iter"
@@ -52,9 +59,30 @@ HIVE_BASE_PROMPT = pathlib.Path(__file__).resolve().parents[1] / "templates" / "
 ITER_NOTE_CHARS = 2300
 # Iter is a pinned external dependency like Omega (core-dependency.json "iter", cloned to third_party/iter). A worker
 # gets the whole clone, less its Git metadata and the channels that would connect it to outside chats.
-ITER_SKIP = {".git", "irc.py", "mattermost.py"}
-# Upstream MAX_TOOLS (30) is below its own tools plus the hive kit; raised in the worker's copy only.
-ITER_MAX_TOOLS = 40
+# Iter's own tools that run code a mind writes, tools/shell.py any shell command, tools/python.py any Python and
+# tools/metta.py any MeTTa (which reaches every Prolog predicate and Python), run in the worker and never through the
+# hive's gate, so any of them could rewrite the tools the loop loads. A mind builds no software itself unless its owner
+# switched its own coding on (policy.OWN_CODE_REASON, Jon on omega-flagship/omegahive#395), while its thinking in code
+# stays: a worker gets Iter's own three only while its mind's own coding is on, a self-modifying Iter, and otherwise
+# the kit's tools/shell.py, which asks the gate each time, and the kit's tools/metta.py, which runs free in a sandbox
+# that writes only a scratch folder (tools/_think_sandbox.py). The revision a worker is stamped with names which it
+# has, so a worker changes over at its next start after its owner switches.
+ITER_CODE_TOOLS = ("shell.py", "python.py", "metta.py")
+ITER_SKIP = {".git", "irc.py", "mattermost.py", *ITER_CODE_TOOLS}
+
+
+def iter_code_tools_stamp(coding):
+    """The part of a worker's revision stamp that says which code tools it has: Iter's own (its mind's own coding
+    on) or the kit's, a shell that asks and a sandboxed metta."""
+    return ("+own-coding:" if coding else "+asks:") + ",".join(ITER_CODE_TOOLS)
+
+
+def iter_tool_count(root):
+    """How many tools an Iter loop loads from a worker: tools/*.py but those starting with an underscore (iter.py
+    load_tools, utils.metta python-files), read through mindfs like the rest of the worker."""
+    return sum(1 for name in mindfs.listdir(root, "tools") if name.endswith(".py") and not name.startswith("_"))
+
+
 ITER_STAMP = ".iter_revision"
 # Iter variants (agent options.iter_variant). "omega": iter.py of the omega branch, everything from it. "metta": the
 # metta-omega compromise, the MeTTa loop (iter.metta, utils.metta, utils.py) of the metta branch run by PeTTa, with
@@ -299,29 +327,47 @@ class Workspace:
         transformations, prompt, channels) with the MeTTa loop of the metta clone in place of iter.py.
         The Iter may write anything in its folder, links included, so every read and write here goes through mindfs:
         nothing is read or written through a link it planted."""
+        from ..core.providers import own_coding
         from ..runtime.core import specification
         root = mindfs.ensure_root(self.path(agent["id"]))
         variant = iter_variant(agent)
+        coding = own_coding(agent)
         spec = specification(self.settings.core_root)
         revision = spec["iter"]["revision"] + ("+" + spec["iter_metta"]["revision"] + "+" + ",".join(ITER_METTA_OVERRIDES)
-                                               if variant == "metta" else "") + "+kit:" + iter_kit_digest()
+                                               if variant == "metta" else "") + "+kit:" + iter_kit_digest() \
+            + iter_code_tools_stamp(coding)
         try:
             if mindfs.read_text(root, ITER_STAMP).strip() == revision:
                 return root
         except OSError:          # missing, or not a plain file the hive may read (UnsafeMindPath): copy afresh
             pass
         source = self.iter_source()
+        loop_source = self.iter_source("iter_metta") if variant == "metta" else None
         mindfs.copy_tree(source, root, skip=ITER_SKIP | ({"iter.py"} if variant == "metta" else set()))
         if variant == "metta":
-            loop_source = self.iter_source("iter_metta")
             for name in ITER_METTA_LOOP + ITER_METTA_OVERRIDES:
                 mindfs.copy_file(loop_source / name, root, name)
             mindfs.unlink(root, "iter.py")         # a worker switched from omega runs only the MeTTa loop
         mindfs.copy_tree(ITER_TEMPLATE, root)
-        loop, old, new = (("iter.metta", "\n(= (MAX_TOOLS) 30)\n", f"\n(= (MAX_TOOLS) {ITER_MAX_TOOLS})\n")
-                          if variant == "metta" else
-                          ("iter.py", "\nMAX_TOOLS = 30\n", f"\nMAX_TOOLS = {ITER_MAX_TOOLS}\n"))
-        mindfs.write_text(root, loop, mindfs.read_text(root, loop).replace(old, new),
+        if coding:   # Iter's own shell, python and metta (a MeTTa-loop worker's own) in place of the kit's
+            for name in ITER_CODE_TOOLS:
+                own = loop_source if f"tools/{name}" in ITER_METTA_OVERRIDES and loop_source else source
+                mindfs.copy_file(own / "tools" / name, root, f"tools/{name}")
+        else:        # the kit's shell and metta have replaced any an earlier copy left; Iter's python goes too
+            mindfs.unlink(root, "tools/python.py")
+        # Iter loads only its first MAX_TOOLS tools, and its own tools plus the hive kit pass upstream's value, so the
+        # worker's copy sets it to the tools this worker holds, never below upstream's: no tool is cut however the kit
+        # or upstream grows. A fixed 40 cut two once the code tools and Create's tool joined the kit.
+        loop, pattern, form = (("iter.metta", r"\n\(= \(MAX_TOOLS\) (\d+)\)\n", "\n(= (MAX_TOOLS) {})\n")
+                               if variant == "metta" else
+                               ("iter.py", r"\nMAX_TOOLS = (\d+)\n", "\nMAX_TOOLS = {}\n"))
+        text = mindfs.read_text(root, loop)
+        found = re.search(pattern, text)
+        if found is None:
+            raise RuntimeError(f"the pinned Iter's {loop} no longer sets MAX_TOOLS, so a worker can't make room for its "
+                               "tools")
+        limit = max(int(found[1]), iter_tool_count(root))
+        mindfs.write_text(root, loop, text[:found.start()] + form.format(limit) + text[found.end():],
                           mode=stat.S_IMODE(mindfs.lstat(root, loop).st_mode))
         self._iter_home(root)
         mindfs.write_text(root, ITER_STAMP, revision)
@@ -478,12 +524,16 @@ class Workspace:
         mindfs.write_text(root, 'run.metta', RUN_METTA.replace('!(omegaclaw)',fragment+'!(omegaclaw)') if selected else RUN_METTA)
 
     def write_studio_skills(self, agent, on):
-        with self._namespace(agent["id"]):
-            return self._write_studio_skills(agent, on)
+        return self.write_module_imports(agent, {STUDIO_MODULE: on})
 
-    def _write_studio_skills(self, agent, on):
-        """Add (on) or remove (off) the Studio module's import in an omega mind's run.metta, before !(omegaclaw). A file
-        already in that state, a mind of another kind or a mind without a run.metta is left untouched (no write)."""
+    def write_module_imports(self, agent, wanted):
+        with self._namespace(agent["id"]):
+            return self._write_module_imports(agent, wanted)
+
+    def _write_module_imports(self, agent, wanted):
+        """For each optional module named in `wanted` (module -> on), add (on) or remove (off) its import in an omega
+        mind's run.metta, before !(omegaclaw). A file already in that state, a mind of another kind or a mind without a
+        run.metta is left untouched (no write)."""
         if agent.get("kind") != "omega":
             return
         root = self.path(agent["id"])
@@ -492,16 +542,19 @@ class Workspace:
             text = mindfs.read_text(root, "run.metta")
         except FileNotFoundError:
             return
-        has = STUDIO_IMPORT + "\n" in text
-        other = [line for line in text.splitlines() if f"modules/{STUDIO_MODULE}/" in line and line != STUDIO_IMPORT]
-        if other or text.count(STUDIO_IMPORT) > (1 if has else 0):
-            # R6.2 (Kimi #4): never add a second import next to a hand-edited one, nor leave one loading with Studio off
-            raise ValueError(f"{run} has a hand-edited {STUDIO_MODULE} import; restore it or remove it, then start again")
-        if on and not has and "!(omegaclaw)" in text:
-            text = text.replace("!(omegaclaw)", STUDIO_IMPORT + "\n!(omegaclaw)", 1)
-        elif not on and has:
-            text = text.replace(STUDIO_IMPORT + "\n", "")
-        else:
+        before = text
+        for module, on in sorted(wanted.items()):
+            line = module_import(module)
+            has = line + "\n" in text
+            other = [x for x in text.splitlines() if f"modules/{module}/" in x and x != line]
+            if other or text.count(line) > (1 if has else 0):
+                # R6.2 (Kimi #4): never add a second import next to a hand-edited one, nor leave one loading switched off
+                raise ValueError(f"{run} has a hand-edited {module} import; restore it or remove it, then start again")
+            if on and not has and "!(omegaclaw)" in text:
+                text = text.replace("!(omegaclaw)", line + "\n!(omegaclaw)", 1)
+            elif not on and has:
+                text = text.replace(line + "\n", "")
+        if text == before:
             return
         mindfs.write_text(root, "run.metta", text)
 
@@ -522,6 +575,8 @@ class Workspace:
             return {"LANG": "C.UTF-8", "HIVE_API_URL": api_url, "HIVE_TOKEN": token, "HIVE_AGENT_ID": agent["id"],
                     "BASE_URL": api, "AI_API_KEY": token, "LLM_MODEL": "hive",
                     "OPENAI_BASE_URL": api, "OPENAI_API_KEY": token, "HOME": str(self.path(agent["id"])),
+                    # the kit's metta sandboxes itself with the hive's own Landlock helpers (tools/_think_sandbox.py)
+                    "HIVE_THINK_SANDBOX_LIB": str(pathlib.Path(__file__).resolve().with_name("landlock.py")),
                     "PYTHONUSERBASE": site.getuserbase(),   # HOME moved: keep the real user site (openai, chromadb, ddgs)
                     # the MeTTa loop starts its workers as python3 from PATH and loads utils.py through janus: both
                     # follow the interpreter that has Iter's packages (iter_environment)

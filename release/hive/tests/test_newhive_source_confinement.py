@@ -43,7 +43,8 @@ def real(path):
 
 @pytest.fixture()
 def work():
-    root = real(tempfile.mkdtemp(prefix="nh-", dir="/tmp" if os.path.isdir("/tmp") else None))
+    # TMPDIR first (the CI job's tmpfs; /tmp is the runner machine's shared, slow disk), else /tmp, kept short for sockets
+    root = real(tempfile.mkdtemp(prefix="nh-", dir=os.environ.get("TMPDIR") or ("/tmp" if os.path.isdir("/tmp") else None)))
     yield root
     shutil.rmtree(root, ignore_errors=True)
 

@@ -1,3 +1,4 @@
+// Purpose: prove the Ask store reads the person's own mind and its browser-mind advertisement from one authenticated read, never a stale or earlier person's.
 import { afterEach, expect, it, vi } from 'vitest'
 import type { HiveClient } from '../api/client'
 import { readBrowserMindRoute } from '../api/ask'
@@ -8,7 +9,7 @@ vi.stubGlobal('window', Object.assign(new EventTarget(), {
 const { useHive } = await import('./store')
 const { useAskStore } = await import('./ask')
 const body = () => ({ mind: { id: 'a_personal', name: 'Invented personal mind', browser_mind: true }, capabilities: { gateway: true, browser_mind: true } })
-const settings = { swarm_id: null, thread_budget_usd: 1, eligible: [] }
+const settings = { swarm_id: null, eligible: [] }
 let sequence = 0
 function start(over: Partial<HiveClient> = {}) {
   const gateway = vi.fn()

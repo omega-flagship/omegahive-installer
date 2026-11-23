@@ -1,6 +1,7 @@
 // Purpose: HiveClient, every read and write the page makes of a hive, which the live client and the simulator both implement.
 import type { Board, Matches, Scope } from '../features/boards/types'
 import type { Exchange } from '../lib/askMemory/types'
+import type { SpendAlert, SpendControl } from './spendAlerts'
 import type {
   PersonAsk,
   ActionResult,
@@ -137,6 +138,10 @@ export interface HiveClient {
   roomBecomeSwarm?(id: string, moveMinds: string[]): Promise<{ room: import('./types').Room; swarm: Swarm }>
   swarmRoom?(swarmId: string): Promise<import('./types').Room>
   usageMe?(): Promise<import('./types').MySpendSummary>
+  /** The current recipient's spend alerts. */
+  spendAlerts?(): Promise<SpendAlert[]>
+  /** Apply the current owner's explicit choice. */
+  controlSpendAlert?(id: string, action: SpendControl): Promise<SpendAlert>
   /** G2: the signed-in person's own notices (held ones are counted, not shown) and their budget settings. */
   myNotices?(): Promise<unknown>
   /** What minds said to the signed-in person's stage after `after` (GET /api/me/stage): what a dropped socket missed. */
@@ -164,15 +169,23 @@ export interface HiveClient {
   setGoogleConnectorMind?(mind: string, allowed: boolean): Promise<unknown>
   /** Host admins only; the secret is write-only and never part of a status. */
   configureGoogleConnector?(clientId: string, clientSecret: string): Promise<unknown>
+  /** The person's own connectors (GET /api/connectors): which fields are entered, never their values, and which of
+   *  their minds have each; api/connectors.ts reads it. */
+  connectors?(): Promise<unknown>
+  /** Enter the person's own login for a connector the hive calls (Home Assistant, LibreLinkUp); write-only. */
+  setConnectorSettings?(id: string, settings: Record<string, string>): Promise<unknown>
+  /** Remove the person's entries for a connector and take it off their minds. */
+  disconnectConnector?(id: string): Promise<unknown>
+  /** Switch a connector on or off for one of the person's own minds. */
+  installConnector?(id: string, mind: string, installed: boolean): Promise<unknown>
   rotatePassword?(): Promise<{ password: string; ended_password_sessions: number; note: string }>
   // sessions
   sessions?(): Promise<import('./types').WorkSession[]>
-  createSession?(body: { mind: string; title: string; detail?: string; budget_usd: number }): Promise<import('./types').WorkSession>
+  createSession?(body: { mind: string; title: string; detail?: string; budget_usd?: number }): Promise<import('./types').WorkSession>
   sessionTimeline?(id: string): Promise<{ session: import('./types').WorkSession; items: import('./types').SessionItem[] }>
   endSession?(id: string): Promise<import('./types').WorkSession>
   /** GET /api/budgets/limits (admins only): the Limits page's read model, the hive cap, each person's allowance, the caps
-   *  set and the old form defaults (features/usage/limitsView readLimitsView), and minds[].ask_threads (ask-limits r1,
-   *  features/ask/threadList askThreadFigures). Read as untrusted. */
+   *  set and the old form defaults (features/usage/limitsView readLimitsView). Read as untrusted. */
   budgetLimitsView?(): Promise<unknown>
   /** GET /api/agents/{id}/limits: what the mind's next paid call is admitted against, least room first. */
   agentLimits?(id: string): Promise<import('./types').CallLimits>
@@ -637,11 +650,17 @@ export interface HiveClient {
   research?(requestId: string): Promise<unknown>
   /** POST /api/ask/{operation_id}/stop: close the turn (the mind's later reply stays in the room). */
   askStop?(operationId: string): Promise<unknown>
+  /**
+   * POST /api/ask/{operation_id}/go-ahead {go}: the turn's asker answers its expensive-answer question. go true: the
+   * turn carries on and asks nothing more; false: it ends (cancelled). 409 not_waiting when it is not waiting; 404 for
+   * an operation the caller cannot see.
+   */
+  askGoAhead?(operationId: string, go: boolean): Promise<import('./ask').AskGoAheadResult>
   /** Close this person's existing browser-owned operation; no new admission or automatic retry. */
   askBrowserDone?(operationId: string, outcome: import('./ask').BrowserOutcome): Promise<import('./ask').BrowserAskClosed>
   /** POST /api/ask/{operation_id}/proposals/{proposal_id}/confirm {digest}: the person confirmed exactly what was shown. */
   askConfirm?(operationId: string, proposalId: string, digest: string): Promise<{ ok: boolean; outcome?: string }>
-  /** GET/PUT /api/me/ask: the default swarm (its coordinator answers), a new thread's limit and the eligible swarms. */
+  /** GET/PUT /api/me/ask: the default swarm (its coordinator answers), the expensive-answer question and the eligible swarms. */
   askSettings?(): Promise<import('./ask').AskSettings>
   setAskSettings?(body: import('./ask').AskSettingsPut): Promise<import('./ask').AskSettings>
   /** GET /api/me/mind (Platform P1/P2): {mind} or {mind: null}; 404 on a host without it. Read with api/personalMind readPersonalMind (the #/me/mind page) or api/ask readMyMind (who answers the Ask). */
@@ -768,7 +787,17 @@ export interface AuthMethods {
   /** The operator's hive password counts here: on the hive's own machine only, never from outside. */
   password: boolean
   public: boolean
-  sso: { enabled: boolean; provider: string; login_url: string | null; invite_login_url?: string | null; invites?: boolean }
+  sso: {
+    enabled: boolean
+    provider: string
+    login_url: string | null
+    invite_login_url?: string | null
+    invites?: boolean
+    /** #15: Google accounts at these domains join without an invitation (absent on older hives). */
+    domains?: string[]
+    /** #15: a public hive: any verified Google account joins (absent on older hives). */
+    open?: boolean
+  }
   /** J1b: a local-owner hive (the installer's): its events socket signs in with its first frame, never ?token= */
   local_owner?: boolean
   /**

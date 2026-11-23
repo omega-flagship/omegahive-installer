@@ -51,7 +51,7 @@ def _turn(client, monkeypatch, op, s):
 def test_a_cut_off_step_is_asked_again_with_twice_the_room_and_runs_whole(client, monkeypatch):
     s = CutScript([HALF], [call("say", text=FULL, done=True)], cut=[0])
     said, whole, done = _turn(client, monkeypatch, "op-cut-01", s)
-    assert [b["max_tokens"] for b in s.bodies] == [cmod.MAX_TOKENS, 2 * cmod.MAX_TOKENS]
+    assert [b["max_tokens"] for b in s.bodies] == [1024, 2048]
     # the half-written say reached neither the person nor the model's history
     assert said == [FULL] and whole == [FULL] and done == ["complete"]
     assert not any(m.get("tool_calls") for m in s.bodies[1]["messages"])
@@ -60,12 +60,12 @@ def test_a_cut_off_step_is_asked_again_with_twice_the_room_and_runs_whole(client
 def test_the_room_doubles_while_answers_stop_at_it_and_the_next_step_starts_small(client, monkeypatch):
     s = CutScript([HALF], [HALF], [call("say", text=FULL)], "", cut=[0, 1])
     said, whole, done = _turn(client, monkeypatch, "op-cut-02", s)
-    assert [b["max_tokens"] for b in s.bodies] == [cmod.MAX_TOKENS, 2 * cmod.MAX_TOKENS, 4 * cmod.MAX_TOKENS, cmod.MAX_TOKENS]
+    assert [b["max_tokens"] for b in s.bodies] == [1024, 2048, 4096, 1024]
     assert said == [FULL] and whole == [FULL] and done == ["complete"]
 
 
 def test_the_turns_own_limits_end_a_model_that_never_finishes(client, monkeypatch):
-    s = CutScript([HALF], cut=range(cmod.MAX_MODEL_CALLS + 1), repeat_last=True)
+    s = CutScript([HALF], cut=range(12 + 1), repeat_last=True)
     said, whole, done = _turn(client, monkeypatch, "op-cut-03", s)
-    assert len(s.bodies) <= cmod.MAX_MODEL_CALLS
+    assert len(s.bodies) <= 12
     assert said == [] and done and done[0] != "complete"   # a limit's own words end it; nothing half written was said

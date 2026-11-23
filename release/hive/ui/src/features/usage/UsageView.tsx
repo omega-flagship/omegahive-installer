@@ -1,3 +1,4 @@
+// Purpose: load the hive's metered calls and draw the MeTTa-composed Usage page.
 // Purpose: the Usage page, a screen MeTTa composes (usage.metta): the person's month, the held calls and estimates, the spending limits, and spend and tokens over time by mind or model. This file loads the lists and keeps them current, states their facts (usageScreen.ts, heldCallsScreen.ts, limitsScreen.ts), draws the plan and carries out its presses, and hosts the money decisions and the confirmation a removal asks for.
 import { AnimatePresence } from 'framer-motion'
 import { useEffect, useRef, useState } from 'react'
@@ -18,14 +19,16 @@ import { PlanUsage } from '../plans/PlanUsage'
 import { CorrectAllDialog, CorrectDialog } from './EstimateDialogs'
 import { seenEstimate, useNamer } from './estimates'
 import { correctable, heldCallsScreen } from './heldCallsScreen'
-import { HIVE_EDITOR, limitDraft, limitsScreen, limitToSave, oldDefaultsById, PERIOD, whoOf, type AddingCap } from './limitsScreen'
+import { usageAlertFacts } from './spendAlertDisplay'
+import type { SpendAlertsView } from './useSpendAlerts'
+import { HIVE_EDITOR, limitDraft, limitsScreen, limitToSave, oldDefaultsById, ownOldDefaults, PERIOD, whoOf, type AddingCap } from './limitsScreen'
 import { readLimitsView, type OldDefault } from './limitsView'
 import { joinScreens, mySpendScreen, RANGES, spendScreen, type Group, type Range, type View } from './usageScreen'
 
 /** Only what a person types into a dollar field: digits and a decimal point. */
 const dollars = (v: string) => v.replace(/[^\d.]/g, '')
 
-export default function UsageView() {
+export default function UsageView({ spendAlerts }: { spendAlerts: SpendAlertsView }) {
   const client = useHive((s) => s.client)
   const usage = useHive((s) => s.usage)
   const agents = useHive((s) => s.agents)
@@ -97,7 +100,11 @@ export default function UsageView() {
   const names = { swarms, agents, keys: keys ?? [] }
   const lim = limitsScreen(limits, { view: limits.data, names, canSet, canRemove, canPatchAgent: has(client, 'patchAgent'), drafts, adding }, compose)
   const nameOf = (k: string) => (group === 'agent' ? (agents[k]?.name ?? k) : (models.find((m) => m.id === k)?.label ?? modelLabel(k)))
+  // the hive's spend alerts (#706): each alert's details are composed on their own, with Pause and Resume only where the
+  // hive says this viewer may control that alert
+  const alerts = usageAlertFacts(spendAlerts, compose)
   const screen = joinScreens(
+    alerts,
     mySpendScreen(mine),
     heldCallsScreen(heldList, estimates, over.data, namer, now, inFlightOpen),
     lim,
@@ -203,7 +210,9 @@ export default function UsageView() {
     else if (action === 'save' && row) void saveDraft(row)
     else if (action === 'remove' && row) void removeRow(row)
     else if (action === 'see-held') seeHeld()
-    else if (action === 'remove-old') void removeOld(limits.data?.old_defaults ?? [])
+    else if (action === 'remove-old') void removeOld(ownOldDefaults(limits.data))
+    else if (action === 'reload-spend-alerts') spendAlerts.reload()
+    else if ((action === 'pause' || action === 'resume') && row) void spendAlerts.change(row, action)
   }
   const onOpen = (target: string, item: ScreenItem) => {
     if (target === 'correct') {

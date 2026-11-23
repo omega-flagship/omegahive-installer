@@ -61,7 +61,8 @@ class RuntimeRuleTests(unittest.TestCase):
         for path in ("core-dependency.json", "third_party/Omega", "hive/runtime/native_core.py",
                      "hive/runtime/extensions/loop_hooks.metta", "modules/vm/policy.metta", "channels/hive.py",
                      "lib_omegaclaw.metta", "run.metta", "src/loop.metta", "scripts/setup_core.py", "requirements.txt",
-                     "hive/requirements.txt", "tests/ci-requirements.txt", "hive/ci-constraints.txt",
+                     "hive/requirements.txt", "tests/ci-requirements.txt",
+                     "tests/ci-runtime-requirements.txt", "hive/ci-constraints.txt",
                      "tests/wait_quiet_runtime_smoke.metta", ".github/workflows/ci.yml",
                      ".github/actions/petta-toolchain/action.yml", "scripts/ci/runtime-tests.sh",
                      "scripts/dev/setup_petta_env.sh"):

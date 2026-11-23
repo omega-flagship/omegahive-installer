@@ -37,10 +37,10 @@ import shutil
 import stat
 
 __all__ = [
-    "UnsafeMindPath", "ensure_root", "open_root", "open_dir", "ensure_dir", "require_dir", "lstat", "lexists",
-    "listdir", "read_bytes", "read_text", "tail_bytes", "open_read", "open_write", "open_rw", "write_bytes",
+    "UnsafeMindPath", "LinkedWorkspaceFile", "ensure_root", "open_root", "open_dir", "ensure_dir", "require_dir", "lstat", "lexists",
+    "listdir", "read_bytes", "read_text", "tail_bytes", "open_read", "open_source", "open_write", "open_rw", "write_bytes",
     "write_text", "symlink", "readlink", "unlink", "remove_tree", "replace", "copy_file", "copy_tree", "iter_files",
-    "require_file",
+    "require_file", "require_contained_links",
 ]
 
 _CLOEXEC = getattr(os, "O_CLOEXEC", 0)
@@ -57,6 +57,13 @@ class UnsafeMindPath(OSError):
 
     def __init__(self, message):
         super().__init__(errno.ELOOP, message)
+
+
+class LinkedWorkspaceFile(UnsafeMindPath):
+    """A regular workspace file has another name outside the writable tree."""
+
+    def __init__(self, relative):
+        super().__init__(f"{str(relative)!r} has a hard link outside the writable workspace")
 
 
 def _parts(rel):
@@ -103,17 +110,21 @@ def open_root(root, create=False):
             os.mkdir(root, 0o700)
         except FileExistsError:
             pass
-    try:
-        fd = os.open(os.fspath(root), _DIR_FLAGS)
-    except OSError as exc:
-        if exc.errno in _LINK_ERRNOS:
-            raise UnsafeMindPath(f"{root} is not a real directory") from None
-        raise
+    fd = _open_directory_path(root)
     st = os.fstat(fd)
     if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid():
         os.close(fd)
         raise UnsafeMindPath(f"{root} is not a directory owned by the hive user")
     return fd
+
+
+def _open_directory_path(path):
+    try:
+        return os.open(path, _DIR_FLAGS)
+    except OSError as exc:
+        if exc.errno in _LINK_ERRNOS:
+            raise UnsafeMindPath(f"{path} is not a real directory") from None
+        raise
 
 
 def _child_dir(parent_fd, name, create, replace_links=False):
@@ -169,8 +180,8 @@ def open_dir(root, rel="", create=False, replace_links=False):
 
 
 @contextlib.contextmanager
-def _dir(root, parts, create=False, replace_links=False):
-    rfd = open_root(root, create)
+def _dir(root, parts, create=False, replace_links=False, *, source=False):
+    rfd = _open_directory_path(root) if source else open_root(root, create)
     try:
         fd = _walk(rfd, parts, create, replace_links)
     finally:
@@ -213,7 +224,6 @@ def listdir(root, rel=""):
 def _check_read(fd, name):
     st = os.fstat(fd)
     if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
-        os.close(fd)
         raise UnsafeMindPath(f"{name} is not a plain file inside the mind folder")
     return st
 
@@ -225,8 +235,12 @@ def _open_read_at(dirfd, name, flags=os.O_RDONLY):
         if exc.errno in _LINK_ERRNOS:
             raise UnsafeMindPath(f"{name} is not a plain file inside the mind folder") from None
         raise
-    _check_read(fd, name)
-    _blocking(fd)
+    try:
+        _check_read(fd, name)
+        _blocking(fd)
+    except BaseException:
+        os.close(fd)
+        raise
     return fd
 
 
@@ -240,6 +254,13 @@ def open_read(root, rel):
     """A read-only fd for a regular, singly linked file root/rel (the caller closes it)."""
     parents, name = _split(rel)
     with _dir(root, parents) as d:
+        return _open_read_at(d, name)
+
+
+def open_source(root, rel):
+    """Open a plain, singly linked input below a trusted, possibly root-owned source directory."""
+    parents, name = _split(rel)
+    with _dir(root, parents, source=True) as d:
         return _open_read_at(d, name)
 
 
@@ -454,10 +475,14 @@ def _file_mode(source_mode):
 
 
 def copy_file(source, root, rel, replace_links=True):
-    """Copy a trusted source file to root/rel (written whole, never through what is at the destination; a symlinked
-    destination directory is replaced, not descended)."""
+    """Copy a singly linked source into a fresh file, replacing linked destination entries."""
     source = pathlib.Path(source)
-    write_bytes(root, rel, source.read_bytes(), mode=_file_mode(source.stat().st_mode), replace_links=replace_links)
+    with os.fdopen(open_source(source.parent, source.name), "rb") as opened:
+        data = opened.read()
+        observed = os.fstat(opened.fileno())
+        if observed.st_nlink != 1:
+            raise UnsafeMindPath(f"{source} is multiply linked")
+    write_bytes(root, rel, data, mode=_file_mode(observed.st_mode), replace_links=replace_links)
 
 
 def copy_tree(source, root, rel="", skip=frozenset()):
@@ -536,3 +561,70 @@ def _iter_files(dfd, prefix, skip):
 def require_file(root, rel):
     """root/rel is a regular, singly linked file reached without links (refused otherwise)."""
     os.close(open_read(root, rel))
+
+
+def require_contained_links(root, rel=""):
+    """Check a stopped workspace before exposing it. Every regular file's names must stay in its writable tree."""
+    parts = _parts(rel)
+    links = {}
+    with contextlib.ExitStack() as opened:
+        root_fd = open_root(root)
+        opened.callback(os.close, root_fd)
+        device = os.fstat(root_fd).st_dev
+        directory = root_fd
+        if parts:
+            directory = _walk(root_fd, parts, create=False)
+            opened.callback(os.close, directory)
+        workspace = os.fstat(directory)
+        relative = pathlib.PurePosixPath(*parts)
+        if workspace.st_dev != device:
+            raise UnsafeMindPath(f"{relative} crosses a workspace mount")
+        _check_entries(directory, device, relative, {workspace.st_ino}, links)
+    for (total, _changed), count, example in links.values():
+        if count != total:
+            raise LinkedWorkspaceFile(example)
+
+
+# Time: one walk and one descriptor check per regular file or directory.
+# Space: one descriptor per level and one record per directory or multiply linked inode.
+def _check_entries(directory, device, relative, seen_dirs, links):
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            child = relative / entry.name
+            before = entry.stat(follow_symlinks=False)
+            if stat.S_ISDIR(before.st_mode):
+                fd = _child_dir(directory, entry.name, create=False)
+                try:
+                    current = os.fstat(fd)
+                    if (current.st_dev != device or current.st_ino != before.st_ino
+                            or current.st_ino != entry.inode() or current.st_ino in seen_dirs):
+                        raise UnsafeMindPath(f"{child} crosses a workspace mount or changed during admission")
+                    seen_dirs.add(current.st_ino)
+                    _check_entries(fd, device, child, seen_dirs, links)
+                finally:
+                    os.close(fd)
+            elif stat.S_ISREG(before.st_mode):
+                flags = getattr(os, "O_PATH", os.O_RDONLY) | os.O_NOFOLLOW | os.O_NONBLOCK | _NOCTTY | _CLOEXEC
+                try:
+                    fd = os.open(entry.name, flags, dir_fd=directory)
+                except OSError as exc:
+                    if exc.errno in _LINK_ERRNOS:
+                        raise UnsafeMindPath(f"{child} changed during workspace admission") from None
+                    raise
+                try:
+                    current = os.fstat(fd)
+                finally:
+                    os.close(fd)
+                stamp = current.st_nlink, current.st_ctime_ns
+                if (not stat.S_ISREG(current.st_mode) or current.st_dev != device
+                        or current.st_ino != before.st_ino or stamp != (before.st_nlink, before.st_ctime_ns)
+                        or current.st_nlink < 1):
+                    raise UnsafeMindPath(f"{child} crossed a workspace mount or changed during admission")
+                if current.st_nlink > 1 or current.st_ino in links:
+                    # A mounted name must not count as a second link to its underlying inode.
+                    if current.st_ino != entry.inode():
+                        raise UnsafeMindPath(f"{child} crosses a workspace mount or changed during admission")
+                    expected, count, example = links.get(current.st_ino, (stamp, 0, child))
+                    if stamp != expected:
+                        raise UnsafeMindPath(f"{child} changed during workspace admission")
+                    links[current.st_ino] = expected, count + 1, example

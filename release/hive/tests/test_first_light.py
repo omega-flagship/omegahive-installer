@@ -186,7 +186,7 @@ def test_setup_list_is_derived_from_live_state(hive_app):
     c.patch("/api/me/onboarding", headers=ana, json={"monthly_spend_usd": 25})
     assert items()[1]["monthly_limit"]["done"] is True and items()[1]["monthly_limit"]["detail"]["chosen_usd"] == 25.0
 
-    assert c.put("/api/me/ask", headers=ana, json={"thread_budget_usd": 0.5}).status_code == 200
+    assert c.put("/api/me/ask", headers=ana, json={"ask_when_expensive": True}).status_code == 200
     assert items()[1]["ask_prefs"]["done"] is True
 
     assert c.post("/api/me/personal-mind/hello", headers=ana).status_code == 200

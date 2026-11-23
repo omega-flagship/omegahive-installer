@@ -37,6 +37,7 @@ import json
 
 from .create_plan_engine import goal_creator
 from .db import new_id, now
+from .ui_parts import FRAME_RULE
 
 PROFILE = "plan-member"
 POLICIES = ("plan-reviewed", "review-required")
@@ -351,8 +352,7 @@ def _packet(engine, run, files, purpose, failing, goal_id, read_only=None):
         text += (" The app's other files, as they stand on your copy, are under read_only: read them and build on them "
                  "(their names, ids and functions), and never write them.")
     if "index.html" in m["paths"]:   # the app frame loads these two tags (ui_parts.frame_tags and frame_script)
-        text += (' index.html loads ./style.css with <link rel="stylesheet" href="./style.css"> and ./app.js with '
-                 '<script type="module" src="./app.js"></script>: keep both tags when you write it.')
+        text += f" {FRAME_RULE} Keep both tags when you write index.html."
     if m.get("contract"):
         text += " " + m["contract"]                   # the plan's rule for this piece, trusted like the lines above
     if failing and failing.get("refused"):

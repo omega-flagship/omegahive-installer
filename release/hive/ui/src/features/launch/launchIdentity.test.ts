@@ -5,7 +5,7 @@ import { IDENTITY_CHANGED_WORDS } from '../../api/client'
 
 /**
  * professional-release r1.1 (stand-in P1): LaunchSwarm MOUNTED (react-dom on ui/miniDom.testkit). A launch is a chain of
- * hive writes: the swarm, its spending limit, each mind and its start, the first task. A sign-in change (or closing the
+ * hive writes: the swarm, each mind and its start, the first task. A sign-in change (or closing the
  * wizard) while ANY of them is in flight stops the launch there: no later write is sent, and the step it stopped at
  * says so honestly. Each await point is tried in turn. The fake client answers success, so this is the per-step
  * binding in LaunchSwarm itself (api/identityChanged.test.ts covers the live client's own refusal). INVENTED data only.
@@ -94,11 +94,10 @@ async function mountWizard(client: object) {
   const root = createRoot(host as unknown as Element)
   await act(async () => root.render(createElement(LaunchSwarm)))
   const change = async (input: MiniNode, value: string) => act(async () => { (reactProps(input).onChange as (e: unknown) => void)({ target: { value } }) })
-  // step 0: a name; then Continue to Minds, Limits (set a limit, so the budget write happens), Launch
+  // step 0: a name; then Continue to Minds, Settings, Launch
   await change(inputs().find((i) => (i.getAttribute('placeholder') ?? '').startsWith('e.g.'))!, 'Invented swarm')
   await act(async () => press(button(/^Continue$/)))
   await act(async () => press(button(/^Continue$/)))
-  await change(inputs().find((i) => i.getAttribute('aria-label') === 'Monthly limit in dollars')!, '100')
   await act(async () => press(button(/^Continue$/)))
   return { act, root, host, useHive }
 }
@@ -128,7 +127,7 @@ describe('a launch belongs to the sign-in and the open wizard it began under', (
     const w = await launch(c, () => undefined)
     full = [...c.calls]
     expect(full[0]).toBe('createSwarm')
-    expect(full[1]).toBe('setBudget')
+    expect(full[1]).toMatch(/^createAgent:/)
     expect(full.filter((x) => x.startsWith('createAgent:')).length).toBeGreaterThan(1)
     expect(full.filter((x) => x.startsWith('agentAction:')).length).toBe(full.filter((x) => x.startsWith('createAgent:')).length)
     expect(full.at(-1)).toBe('createGoal')

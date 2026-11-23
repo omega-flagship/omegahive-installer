@@ -1,3 +1,4 @@
+// Purpose: prove the Ask's voice input: on-device speech becomes a request or a steer through the field's own path.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
@@ -397,7 +398,7 @@ function liveHost() {
     askTurn: vi.fn(async () => {
       throw new Error('no read in this test')
     }),
-    askSettings: vi.fn(async () => ({ swarm_id: 'sw_x', thread_budget_usd: 0.25 })),
+    askSettings: vi.fn(async () => ({ swarm_id: 'sw_x' })),
   } as unknown as HiveClient
   return {
     client,

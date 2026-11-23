@@ -1,3 +1,4 @@
+// Purpose: prove the You page composed by MeTTa end to end: who you are, your keys, and the Ask's money choice.
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
@@ -7,7 +8,7 @@ import type { ResourceState } from '../../lib/useResource'
 import { DRAWN_BLOCKS, Screen, type ScreenHost } from '../../screens/Screen'
 import { ScreensSpace, type Compose } from '../../screens/screenSpace'
 import profileSource from './profile.metta?raw'
-import { profileScreen, type KeyWork, type ProfileInput } from './data'
+import { ASK_EXPENSIVE_LABEL, profileScreen, type KeyWork, type ProfileInput } from './data'
 
 // each file opens real MeTTa spaces: allow for a loaded machine
 vi.setConfig({ testTimeout: 20_000 })
@@ -41,8 +42,9 @@ const ME_PERSON: ResourceState<Me> = { status: 'ready', refreshing: false, error
 const ME_OPERATOR: ResourceState<Me> = { status: 'ready', refreshing: false, error: undefined,
   data: { principal: 'operator', kind: 'password', role: 'admin', expires_at: null, person: null, signin: 'password' } }
 const none: KeyWork = { editing: new Set(), confirming: new Set() }
+const ASK_OFF = { settings: null, saving: false, failed: false }
 const input = (over: Partial<ProfileInput> = {}): ProfileInput => ({
-  me: ME_PERSON, keys: KEYS, keysError: undefined, agents: AGENTS, connected: true, signingOut: false, adding: false, work: none, ...over,
+  me: ME_PERSON, keys: KEYS, keysError: undefined, agents: AGENTS, connected: true, signingOut: false, adding: false, work: none, ask: ASK_OFF, ...over,
 })
 const ISLANDS = Object.fromEntries(['personal-mind', 'google-connector', 'person-notices', 'look', 'clock', 'demo-ask', 'ask-memory', 'plan-usage', 'own-limit', 'add-key']
   .map((n) => [n, createElement('p', null, `[${n}]`)]))
@@ -193,6 +195,27 @@ describe('the You page, composed by MeTTa', () => {
     const text = JSON.stringify(data)
     expect(text).not.toMatch(/\bsk-/)
     expect(text).toContain('…rden')
+  })
+  it('the Ask’s money choice: one switch with the threshold now, the words for off, a save in flight, a refused save', () => {
+    const ask = (on: boolean, over: Partial<ProfileInput['ask']> = {}): ProfileInput['ask'] => ({ settings: { swarm_id: null, ask_when_expensive: on, expensive_usd: 0.62 }, saving: false, failed: false, ...over })
+    const asked = (p: ReturnType<typeof page>) => p.plan.parts.filter((x) => x.order > 70).map((x) => x.order)
+    const on = page({ ask: ask(true) })
+    expect(asked(on)).toEqual([71, 72])
+    expect(on.plan.parts.find((x) => x.order === 71)?.props).toMatchObject({ action: 'ask-expensive', checked: 'on' })
+    expect(on.html).toContain(ASK_EXPENSIVE_LABEL)
+    expect(on.html).toContain('aria-checked="true"')
+    expect(on.html).toContain('Right now it asks once an answer has spent $0.62.')
+    const off = page({ ask: ask(false) })
+    expect(asked(off)).toEqual([71, 73])
+    expect(off.html).toContain('aria-checked="false"')
+    expect(off.html).toContain('Off: answers carry on until one of your spending limits stops them.')
+    expect(asked(page({ ask: ask(true, { saving: true }) }))).toEqual([71, 72, 74])
+    const failed = page({ ask: ask(false, { failed: true }) })
+    expect(asked(failed)).toEqual([71, 73, 75])
+    expect(failed.html).toContain('That change couldn’t be saved. Nothing changed.')
+    // none read yet, an older host without the switch, or a threshold that is not a figure: nothing of it shows
+    for (const settings of [null, { swarm_id: null }, { swarm_id: null, ask_when_expensive: true, expensive_usd: Number.NaN }, { swarm_id: null, ask_when_expensive: 'yes', expensive_usd: 1 }])
+      expect(asked(page({ ask: { settings: settings as never, saving: false, failed: false } })), JSON.stringify(settings)).toEqual([])
   })
   it('Cosmos draws the same atoms on a 3D stage', () => {
     const { data, facts } = profileScreen(input(), compose)

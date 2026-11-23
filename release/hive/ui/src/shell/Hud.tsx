@@ -1,4 +1,5 @@
 // Purpose: the classic top bar: the brand, the hive's stats with the frame's usage region (the battery MeTTa composes there) right after Spend, the inbox, search and menu, and the toasts and notices it places.
+// Purpose: draw the hive's brand, top bar, and shared notice lane.
 import { animate, AnimatePresence, m, useMotionValue, useTransform } from 'framer-motion'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { hsl } from '../lib/color'
@@ -217,27 +218,28 @@ function ToastFrame({ quiet, ...props }: { quiet: boolean; className: string; ro
   return quiet ? <div {...props} /> : <m.div layout initial={{ opacity: 0, y: 16, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.98 }} transition={{ type: 'spring', stiffness: 500, damping: 34 }} {...props} />
 }
 
-export function Toasts() {
+export function Toasts({ children }: { children?: ReactNode } = {}) {
   const toasts = useHive((s) => s.toasts)
   const dismiss = useHive((s) => s.dismissToast)
   const stage = useAppStage()
   const route = useRoute()
   const phase = usePhase((s) => s.phased ? s.phase : 'pro')
   const quiet = !stage && route.name === 'hive' && phase !== 'pro'
-  // The chosen rest draws only the invitation. Notices remain in their existing store; the native urgent owner
-  // wakes an idle-begun rest before presenting them, and keeps chosen rests quiet.
-  if (quiet && phase === 'rest') return null
+  // Transient toasts wait through rest. The current spend notice stays in the shared lane.
+  const resting = quiet && phase === 'rest'
+  if (resting && !children) return null
   if (stage) {
     // an app's own interface is mounted: the notices move out of its way (the same live region, the same inert-behind-modals rule)
     const place = stagePlace(stage)
     const newest = toasts[toasts.length - 1]
     return (
-      <div className={place.className} style={place.style} aria-live="polite" data-toast-place={stage.mode}>
+      <div className={cx(place.className, 'gap-2')} style={place.style} aria-live="polite" data-toast-place={stage.mode}>
+        {children}
         <AnimatePresence>{newest && <ToastPill key={newest.id} t={newest} more={toasts.length - 1} dismiss={dismiss} />}</AnimatePresence>
       </div>
     )
   }
-  const items = toasts.map((t) => (
+  const items = (resting ? [] : toasts).map((t) => (
     <ToastFrame
       key={t.id}
       quiet={quiet}
@@ -289,6 +291,7 @@ export function Toasts() {
   return (
     // Bottom, never over a page's header or controls: right-hand corner on desktop, above the tab bar on phones.
     <div className="toast-stack pointer-events-none fixed inset-x-0 bottom-0 z-[70] flex flex-col-reverse items-center gap-2 p-3 md:left-auto md:items-end md:p-4" aria-live="polite">
+      {children}
       {quiet ? items : <AnimatePresence>{items}</AnimatePresence>}
     </div>
   )

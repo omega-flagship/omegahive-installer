@@ -440,6 +440,11 @@ html[data-ui-density] {
 /* Toasts sit above the phone tab bar (and the home indicator); on desktop, the bottom-right corner. */
 .toast-stack { padding-bottom: calc(var(--sab) + 84px); }
 @media (min-width: 768px) { .toast-stack { padding-bottom: 16px; } }
+/* An open desktop side sheet (ui/Sheet) publishes the room it takes (ui/sideSheetRoom): toasts stand left of it, never
+   over its foot, where a form keeps its last rows (pr-79 #16). The Ask's own side sheet has its rule in ask.css. */
+@media (min-width: 768px) {
+  html[data-side-sheet] .toast-stack { right: var(--side-sheet-room, 0px); }
+}
 
 /* Navigation entries open their own menu on a touch long-press (shell/longPress.ts): no system callout competes. */
 [data-nav-key][aria-haspopup='menu'] { -webkit-touch-callout: none; }

@@ -10,7 +10,7 @@ import uvicorn
 from .core import exclusive
 from .core.app import create_app
 from .core.code_aggregate import close_app_resources
-from .core.config import load_settings
+from .core.config import SettingsRefused, load_settings
 from .core.mind_gateway import scrub_logged
 
 
@@ -50,11 +50,15 @@ def main():
             localowner.check_environment()
             settings = load_settings()
             localowner.check_data_dir(settings.data_dir)
-        except localowner.LocalOwnerRefused as exc:
+        except (localowner.LocalOwnerRefused, SettingsRefused) as exc:
             print(f"[hive] not starting: {exc}", file=sys.stderr)
             raise SystemExit(78)
     else:
-        settings = load_settings()
+        try:
+            settings = load_settings()
+        except SettingsRefused as exc:   # a required setting missing or malformed (hive/core/config.py names it)
+            print(f"[hive] not starting: {exc}", file=sys.stderr)
+            raise SystemExit(78)
     # §L: one process owns the data directory for its lifetime (exit 75 in use, 78 cannot establish); held until exit.
     exclusive.acquire_or_exit(settings.data_dir, exclusive.HELD)
     app = None

@@ -114,7 +114,11 @@ def test_gatea_idem_the_record_commits_with_the_reservation_or_not_at_all(gw, mo
     """A reservation refused after the key was written takes the record with it: the retry is a fresh attempt, not
     a stored refusal, and nothing was sent."""
     client, hive = gw["client"], gw["hive"]
-    monkeypatch.setenv("HIVE_ASK_CONDUCTOR_TURN_USD", "0.0000001")
+    # a row that refuses at the reservation and nowhere before it: since omegahive#294 item 2 no Ask row does (the turn's
+    # cap was one), so one stands in for it; what this test holds is the key's record and the reservation together
+    from hive.core import mind_gateway as mg
+    real = mg.host_budget_snapshot
+    monkeypatch.setattr(mg, "host_budget_snapshot", lambda *a, **k: [*real(*a, **k), ("swarm:s_00000000:month", 0.0000001, 0)])
     token = mint(client, gw["ann"])
     turn = open_turn(client, gw["ann"], "op-idem-0004")
     r = keyed(client, token, turn, "op-idem-0004:1")

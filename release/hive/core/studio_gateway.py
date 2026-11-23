@@ -1,5 +1,5 @@
 # Purpose: a Studio maker's paid calls, each bound to one step and one execution and checked and held at call time.
-"""J3 host round R4 (money at call time): a Studio maker's paid calls, bound to one step and one execution.
+"""Purpose: bind a Studio maker's paid calls to one step and one execution.
 
 Plan: PLATFORM_J3R4_HOST_O1_O2_G1_PLAN.md §3.6 "Gateway", §6, r1.1 S1 (the monthly total at
 every reservation), S2/E2 (the fence after Stop), S5 (drift at call time and the change routes), K5/E6.3 (O2-e'), r1.2
@@ -223,9 +223,8 @@ class StudioGateway:
         from .hive import HiveError
         call.reservation = key
         try:
-            # a maker's call is its session's person's own live work (Hive.present_for): its limits alone hold it
             return reservations.reserve(key, payload, estimate, call.budgets(budgets), metadata=call.metadata(metadata),
-                                        dispatched=False, subjects=subjects, paced=False)
+                                        dispatched=False, subjects=subjects)
         except StudioRefused as exc:
             self.gateway_refused(call, exc.after)
             raise exc.error from None
@@ -233,7 +232,7 @@ class StudioGateway:
             self.gateway_refused(call, ("paused", "budget_exhausted", "refused_budget"))
             raise self._err(402, "reservation_refused", str(exc), scope=exc.scope) from None
         except HiveError as exc:
-            if exc.status == 402:   # money port r1.2: use refused in the transaction (host_use_check), as studio_check
+            if exc.status == 402 and exc.code not in ("hive_spend_paused", "mind_spend_paused"):
                 self.gateway_refused(call, ("paused", "budget_exhausted", "refused_budget"))
             raise
         except ValueError as exc:

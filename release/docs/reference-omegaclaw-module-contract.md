@@ -49,8 +49,10 @@ OMEGACLAW_WA_AUTH_DIR = { required = false, runtime_state = true }
 
 `requires` lists what the module can't work without, and a mind holds it to that. Before anything imports, each
 module the loader names whose `requires` has an entry shown missing where the mind runs is left out of that mind:
-it isn't imported, its signatures and catalogue aren't read, its boot receipt doesn't list it, and the mind's log
-names the module and the entry it lacks (`hive/runtime/extensions/module_requires.py`):
+it isn't imported, its signatures and catalogue aren't read, and the mind's log names the module and the entry it
+lacks (`hive/runtime/extensions/module_requires.py`). Its boot receipt lists it as left out with the entries it
+lacks, which the hive words ("needs the OmegaCode client") for the mind's Tools page, and `skill-help` names it and
+what it needs, for `all` and for any of its skills:
 
 | Entry | Met when | Can't tell |
 |---|---|---|
@@ -60,9 +62,12 @@ names the module and the entry it lacks (`hive/runtime/extensions/module_require
 | any other `kind:value` | no rule | always |
 
 An entry no rule can check counts as met, so a module is only left out when something is shown missing. What a
+`module.toml` the mind can't read counts the same way, logged once: unreadable, not TOML, a `requires` that isn't a
+list, or a Python with no TOML reader (`tomllib` came in 3.11, and `tomli` serves where it's installed). What a
 module works better with but can do without goes under `recommends` instead, which nothing holds a mind to: assume
-recommends FabricPC, jax and optax and runs its dense step without them. `entry.metta` declares each entry as a
-`(RuntimeDependency ...)` or `(RecommendedDependency ...)` atom.
+recommends FabricPC, jax and optax and runs its dense step without them, vm_policy recommends nft and ufw and reports
+which it found, and agentverse recommends uagents. `entry.metta` declares each entry as a `(RuntimeDependency ...)` or
+`(RecommendedDependency ...)` atom.
 
 `entry.metta` is the important part. It declares the module into `&self`:
 

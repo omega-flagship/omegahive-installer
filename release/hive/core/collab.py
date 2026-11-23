@@ -701,6 +701,14 @@ class Collab:
                 views.view_of("view", body)
             except views.NotAView as exc:
                 raise self.hive.error(400, "bad_view", f"this view can't be drawn: {exc}") from None
+        # A mind builds no app itself unless its owner switched its own coding on (policy.own_code_revision): an HTML
+        # document a mind puts in an artifact through its own skills is refused here, where every transport's revision
+        # arrives. A Studio maker's proposal, which Studio's fence bound, is Create's; an app's write, made under the
+        # principal the app acts as, is the app's.
+        policy = getattr(self.hive, "policy", None)
+        refused = policy.own_code_revision(agent, art["kind"], body, principal) if policy and bind is None else None
+        if refused:
+            raise self.hive.error(403, "policy_denied", refused)
         last = self.db.one("SELECT * FROM artifact_revisions WHERE artifact_id = ? ORDER BY n DESC LIMIT 1", (artifact_id,))
         expected = data.get("parent")
         if (last["n"] if last else None) != expected:

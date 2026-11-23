@@ -16,7 +16,7 @@ import { useHive } from '../../store/store'
 import { currentEpoch, onIdentityChange } from '../../lib/identityEpoch'
 import { currentView, isPrivateHash } from './view'
 import { askContext, expectedAnswerer, routeSwarm, routingContext, SCOPED, useAskWorld, whereOf } from './context'
-import { readCapabilities } from '../../api/ask'
+import { readCapabilities, readExpensive } from '../../api/ask'
 import { planAsk, planRecipient, speaker, type AnswererChip } from './answerer'
 import { shown } from '../../lib/displayName'
 import { askMind } from './mind'
@@ -400,13 +400,13 @@ export function useAskField({ experience, onAct, forcedAsk, onDispatch, draft, a
   const decision: Decision = useMemo(() => (forced !== null ? { kind: 'mind' } : decide(cands, { orchestrator: canAsk })), [forced, cands, canAsk])
   // while it answers, the words go to it first (a steer): the field never locks (Jon, 2026-10-05). When the policy will
   // ask a mind, its row is first too, so the highlighted row is what Enter does (enter.ts, UI review ST1)
-  const newThreadUsd = settings?.thread_budget_usd
+  const expensive = useMemo(() => readExpensive(settings), [settings])
   const shownList = useMemo(() => {
     const rows = forced !== null ? askRows([], forced, answererName, decision, !!open, answererVoiceId) : askRows(cands, value, answererName, decision, !!open, answererVoiceId)
     // j0-fixes r1: the paid row says who pays and what limit holds (never an invented estimate)
-    const pays = paysLine({ steering: !!open, thread, answererId, newThreadUsd })
+    const pays = paysLine({ steering: !!open, thread, answererId, expensive })
     return rows.map((c) => (c.key === 'mind' || c.key === 'steer' ? { ...c, pays } : c))
-  }, [forced, cands, value, answererName, answererId, answererVoiceId, open, decision, thread, newThreadUsd])
+  }, [forced, cands, value, answererName, answererId, answererVoiceId, open, decision, thread, expensive])
   const active = highlighted(shownList, sel)
 
   useEffect(() => {

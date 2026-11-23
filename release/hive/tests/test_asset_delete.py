@@ -33,6 +33,40 @@ def test_delete_removes_copies_owners_and_storage_history(client, cloud):
     assert client.delete(f"/api/assets/{sha}").status_code == 404
 
 
+@pytest.mark.parametrize("place, expected", [
+    ("private", (True, False, True)),
+    ("shared", (True, True, True)),
+    ("public", (True, True, True)),
+    ("personal", (True, False, False)),
+    ("ownerless", (False, False, True)),
+])
+def test_delete_event_keeps_its_audience_after_the_asset_is_gone(client, place, expected):
+    ann = person(client, "u_delete_event_ann", role="admin")
+    hive = client.app.state.hive
+    swarm = None
+    if place != "ownerless":
+        swarm = hive.create_swarm("Files", owner="user:u_delete_event_ann",
+                                  visibility="private" if place == "personal" else place,
+                                  shared_with=["user:u_delete_event_bob"] if place == "shared" else [])["id"]
+        if place == "personal":
+            hive.db.execute("UPDATE swarms SET personal_of = ? WHERE id = ?", ("user:u_delete_event_ann", swarm))
+    sha = hive.assets.put(b"a deleted private file", "text/plain", "user:u_delete_event_ann",
+                          owner_swarm=swarm)["sha256"]
+    events = []
+    hive.events.listen(lambda kind, payload: events.append(dict(type=kind, **payload)))
+    response = client.delete(f"/api/assets/{sha}", headers=ann)
+    assert response.status_code == 200, response.text
+    assert hive.db.one("SELECT * FROM assets WHERE sha256 = ?", (sha,)) is None
+    assert hive.db.all("SELECT * FROM asset_owners WHERE sha256 = ?", (sha,)) == []
+    deleted = [event for event in events if event["type"] == "asset.deleted"]
+    assert deleted == [{"type": "asset.deleted", "sha256": sha, "owner_swarm": swarm,
+                        "by": "user:u_delete_event_ann"}]
+    frame = json.dumps(deleted[0])
+    viewers = (Viewer("user:u_delete_event_ann", False), Viewer("user:u_delete_event_bob", False),
+               Viewer("user:operator", True))
+    assert tuple(hive.visibility.event_visible(viewer, frame) for viewer in viewers) == expected
+
+
 def test_delete_requires_an_admin_even_for_the_visible_owner(client):
     member = person(client, "u_file_owner")
     swarm = client.post("/api/swarms", headers=member, json={"name": "My files"}).json()["id"]

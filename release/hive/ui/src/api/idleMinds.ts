@@ -17,7 +17,7 @@
  * Every reader here takes the host's answer as unknown and keeps only what is well formed.
  */
 
-export type IdleKind = 'owed' | 'idle' | 'silent'
+export type IdleKind = 'repeat' | 'owed' | 'idle' | 'silent'
 export type IdleStatus = 'quiet' | 'noticed' | 'asked' | 'replied' | 'resolved' | 'slept' | 'superseded' | 'unsent'
 
 export type Owed =
@@ -95,7 +95,7 @@ export const HISTORY_MAX = 20
 export const REMIND_ONCE_MS = 60_000
 
 const STATUSES: readonly IdleStatus[] = ['quiet', 'noticed', 'asked', 'replied', 'resolved', 'slept', 'superseded', 'unsent']
-const KINDS: readonly IdleKind[] = ['owed', 'idle', 'silent']
+const KINDS: readonly IdleKind[] = ['repeat', 'owed', 'idle', 'silent']
 const ID = /^[A-Za-z0-9_.:~-]{1,160}$/
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
@@ -223,6 +223,7 @@ export const STATUS_LABEL: Record<IdleStatus, string> = {
 /** What Health noticed, in plain words. */
 export function noticedSentence(m: Pick<IdleMind, 'noticed' | 'kind' | 'owed' | 'idle_calls_24h' | 'idle_spend_24h'>, money: (n: number) => string): string {
   if (!m.noticed || !m.kind) return 'Nothing noticed.'
+  if (m.kind === 'repeat') return 'Going round on its own: the same command with the same result, again and again.'
   if (m.kind === 'silent') return 'Awake with no input and no output.'
   if (m.kind === 'idle') return `Making model calls with no input: ${m.idle_calls_24h} call${m.idle_calls_24h === 1 ? '' : 's'}, ${money(m.idle_spend_24h)}.`
   const first = m.owed[0]

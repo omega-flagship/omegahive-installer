@@ -1,16 +1,17 @@
+// Purpose: display conversations, room membership and room settings.
 import { healthCheck } from '../../lib/healthQuestion'
 import { HealthCheckLabel } from '../../ui/HealthCheckLabel'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Words } from '../views/Words'
-import type { Person } from '../../api/client'
 import type { Room, RoomKind, RoomMessage, WorkSession } from '../../api/types'
 import { SessionView } from './SessionView'
 import { askThreadTitle } from './sessionTitle'
 import { useAskStore } from '../../store/ask'
 import { useOnResync } from '../../lib/resync'
-import { BreakOff, CoffeeListEntry, CoffeeMark, CoffeePublicNote, HereHint, HereReached, NoteBody, OriginBackLink, StartGroup, useFocusMessage } from './CoffeeParts'
+import { BreakOff, CoffeeListEntry, CoffeeMark, CoffeeMindsOutside, CoffeePublicNote, HereHint, HereReached, NoteBody, OriginBackLink, StartGroup, useFocusMessage } from './CoffeeParts'
 import { COFFEE_NAME, LINK_MISSING, coffeeSubtitle, heardBy, linkState, linkTarget, withDirect, isCoffee, isNote, memberName, roomMatches, roomSections } from './coffee'
 import { useMe } from '../../lib/useAdmin'
+import { useAdminPeople } from '../../lib/adminPeople'
 import { cx } from '../../lib/cx'
 import { shown } from '../../lib/displayName'
 import { useEscape, useIsDesktop } from '../../lib/hooks'
@@ -492,7 +493,8 @@ function Members({ room, onChanged }: { room: Room; onChanged: () => void }) {
           </Button>
         </div>
       )}
-      {fixed && <p className="text-[12px] text-ink-4">{coffee ? 'Everyone in the hive is here automatically: every person, and every mind unless an admin took it out or it is private. An admin changes a mind\'s place from its settings.' : 'A DM is fixed to its two members. Turn it into a group in Settings to add more.'}</p>}
+      {fixed && <p className="text-[12px] text-ink-4">{coffee ? 'People and public minds join automatically. A private mind joins only when its owner adds it, and only a mind\'s owner takes it out. Below, you can add your own or ask another owner.' : 'A DM is fixed to its two members. Turn it into a group in Settings to add more.'}</p>}
+      {coffee && <CoffeeMindsOutside room={room} onChanged={onChanged} />}
     </div>
   )
 }
@@ -702,26 +704,25 @@ export function NewRoom({ onClose, onCreated }: { onClose: () => void; onCreated
   const [kind, setKind] = useState<RoomKind>('dm')
   const [name, setName] = useState('')
   const [chosen, setChosen] = useState<string[]>([])
-  const [people, setPeople] = useState<Person[]>([])
+  // people to add only for an admin: GET /api/people is admin-only, so a member's dialog never asks (lib/adminPeople)
+  const people = useAdminPeople(true) ?? []
   const [visibility, setVisibility] = useState('public')
   const [detail, setDetail] = useState('')
-  const [budget, setBudget] = useState('2')
   const box = useRef<HTMLDivElement>(null)
   useEscape(onClose)
   useModalContainment(box)
-  useEffect(() => { void client?.listPeople?.().then((r) => setPeople(r.people)).catch(() => undefined) }, [client])
   const options = [
     ...Object.values(agents).filter((a) => kind !== 'session' || a.swarm_id).map((a) => ({ id: `agent:${a.id}`, label: shown(a.name), sub: 'mind' })),
     ...(kind === 'session' ? [] : people.map((p) => ({ id: `user:${p.id}`, label: p.name || p.email, sub: 'person' }))),
   ]
   const single = kind === 'dm' || kind === 'session'
   const toggle = (id: string) => setChosen((xs) => (single ? [id] : xs.includes(id) ? xs.filter((x) => x !== id) : [...xs, id]))
-  const budgetOk = Number(budget) > 0 && Number(budget) <= 100
-  const ready = kind === 'dm' ? chosen.length === 1 : kind === 'session' ? chosen.length === 1 && !!name.trim() && budgetOk : !!name.trim()
+  const ready = kind === 'dm' ? chosen.length === 1 : kind === 'session' ? chosen.length === 1 && !!name.trim() : !!name.trim()
   const create = async () => {
     try {
       if (kind === 'session') {
-        const se = await client!.createSession!({ mind: chosen[0].slice(6), title: name.trim(), detail: detail.trim(), budget_usd: Number(budget) })
+        // no cap of its own: the hive's limits hold what the session spends (Jon on #256, one cap for the whole hive)
+        const se = await client!.createSession!({ mind: chosen[0].slice(6), title: name.trim(), detail: detail.trim() })
         onCreated(se.room_id, 'session')
         return
       }
@@ -739,23 +740,15 @@ export function NewRoom({ onClose, onCreated }: { onClose: () => void; onCreated
         <Segmented<RoomKind> label="Kind" value={kind} dense onChange={(k) => { setKind(k); setChosen([]) }}
           options={[{ value: 'session', label: 'Session' }, { value: 'dm', label: 'Direct' }, { value: 'group', label: 'Group' }, { value: 'channel', label: 'Channel' }, { value: 'project', label: 'Project' }]} />
         <p className="text-[12px] text-ink-3">
-          {kind === 'session' ? 'A focused piece of work with one mind: a task, a spend cap, and its steps and approvals as it works.' : kind === 'dm' ? 'One to one with a mind or a person.' : kind === 'group' ? 'Invite-only, for the people and minds you pick.' : kind === 'channel' ? 'A topic room others can find and join.' : 'A group with work attached; it can become a swarm later.'}
+          {kind === 'session' ? "A focused piece of work with one mind: a task, and its steps and approvals as it works. The hive's limits hold what it spends." : kind === 'dm' ? 'One to one with a mind or a person.' : kind === 'group' ? 'Invite-only, for the people and minds you pick.' : kind === 'channel' ? 'A topic room others can find and join.' : 'A group with work attached; it can become a swarm later.'}
         </p>
         {kind !== 'dm' && (
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder={kind === 'session' ? 'What is this session for?' : 'Name'} aria-label="Name"
             className="min-h-10 w-full rounded-xl border border-line bg-shade/25 px-3 text-[14px] text-ink" />
         )}
         {kind === 'session' && (
-          <>
-            <textarea value={detail} onChange={(e) => setDetail(e.target.value)} rows={3} placeholder="Details for the mind (optional)" aria-label="Details"
-              className="w-full rounded-xl border border-line bg-shade/25 px-3 py-2 text-[13.5px] text-ink" />
-            <label className="flex items-center gap-2 text-[13px] text-ink-2">
-              Spend cap $
-              <input value={budget} onChange={(e) => setBudget(e.target.value.replace(/[^0-9.]/g, ''))} inputMode="decimal" aria-label="Spend cap in dollars"
-                className="min-h-9 w-24 rounded-lg border border-line bg-shade/25 px-2 text-ink" />
-              <span className="text-[11.5px] text-ink-4">hard limit while the session runs</span>
-            </label>
-          </>
+          <textarea value={detail} onChange={(e) => setDetail(e.target.value)} rows={3} placeholder="Details for the mind (optional)" aria-label="Details"
+            className="w-full rounded-xl border border-line bg-shade/25 px-3 py-2 text-[13.5px] text-ink" />
         )}
         {kind === 'channel' && (
           <select value={visibility} onChange={(e) => setVisibility(e.target.value)} aria-label="Who can find it"

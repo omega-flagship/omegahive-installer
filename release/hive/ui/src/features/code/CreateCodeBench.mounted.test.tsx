@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles for the client, the canvas, the panel and the mocked components */
 // @vitest-environment node
+// Purpose: prove, mounted, that Create opens straight into a project and its Workbench, with client, canvas and panel as doubles.
 /** Real ReactDOM mounts/effects on the existing MiniDOM; presentation/transport are doubles.
  * No browser gesture, live admission, service or sandbox qualification. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -105,7 +106,7 @@ beforeEach(async () => {
       return { ...(await workspace()), id: path.split('/').at(-1) }
     }) }
   useHive.setState({ client: T.client, session: 'invented-create-session', inits: useHive.getState().inits + 1 })
-  useAskStore.setState({ settings: { swarm_id: null, thread_budget_usd: 1, capabilities: { conductor: true, memory: false, code_test_intents: true } } })
+  useAskStore.setState({ settings: { swarm_id: null, capabilities: { conductor: true, memory: false, code_test_intents: true } } })
 })
 afterEach(async () => { await act(async () => root.unmount()); container.parentNode?.removeChild(container); for (const [k,v] of Object.entries(savedGlobals)) (globalThis as any)[k] = v })
 
@@ -144,7 +145,7 @@ describe('Create opens straight into a project and the original Workbench', () =
   })
   it('does not mistake installed client methods for the host capability advertisement', async () => {
     await openProject()
-    await act(async () => { useAskStore.setState({ settings: { swarm_id: null, thread_budget_usd: 1, capabilities: { conductor: true, memory: false } } }) })
+    await act(async () => { useAskStore.setState({ settings: { swarm_id: null, capabilities: { conductor: true, memory: false } } }) })
     expect(T.canvas.sandboxTestAvailable).toBe(false)
     expect(container.textContent).toContain("Testing isn't available on this hive yet")
     expect(T.admit).not.toHaveBeenCalled()

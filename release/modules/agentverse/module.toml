@@ -26,6 +26,11 @@ provides = [
 
 requires = [
   "python>=3.10",
+]
+
+# The bridge imports uagents only when a call needs it (agentverse_bridge._uagents) and says when it is missing, so a
+# mind without it keeps the module's skills: it is recommended, never required.
+recommends = [
   "uagents>=0.22",
 ]
 

@@ -24,7 +24,8 @@ from uagents_core.contrib.protocols.chat import (
 
 
 CORE_ROOT = pathlib.Path(__file__).resolve().parents[3]
-RUNTIME_DIR = CORE_ROOT / "memory" / "runtime" / "agentverse"
+# the mind's memory folder: OMEGACLAW_MEMORY_DIR when a hive runs the mind, else the checkout's memory folder
+RUNTIME_DIR = pathlib.Path(os.environ.get("OMEGACLAW_MEMORY_DIR") or CORE_ROOT / "memory") / "runtime" / "agentverse"
 STATE_FILE = RUNTIME_DIR / "listener.json"
 INBOX_FILE = RUNTIME_DIR / "inbox.jsonl"
 COMMAND_FILE = RUNTIME_DIR / "commands.jsonl"

@@ -106,6 +106,7 @@ export class Resource<T> {
   private listeners = new Set<() => void>()
   private seq = 0
   private timer: ReturnType<typeof setInterval> | null = null
+  private running = false
   private offVisible: (() => void) | null = null
   private fetcher: () => Promise<T>
   private readonly opts: ResourceOptions<T>
@@ -191,31 +192,76 @@ export class Resource<T> {
     this.set({ status: empty ? 'empty' : 'ready', data, error: undefined, refreshing: this.state.refreshing })
   }
 
+  /**
+   * Whether polling skips its turn: the hive does not offer this read, or its last answer was a 403. Being forbidden
+   * changes only with who is signed in or their role: a sign-in change rebinds and restarts the read, and a role change
+   * reads it again (noteRights); an explicit `load` still reads, and polling resumes once one succeeds
+   * (acceptance-tests#13: a member's page kept polling admin-only reads).
+   */
+  private pollIdle = (): boolean => this.state.status === 'unsupported' || isForbidden(this.state.error)
+
   /** Begin: fetch, then poll while visible. */
   start() {
     this.stop()
+    this.running = true
     void this.load()
     const vis = this.opts.visibility ?? documentVisibility
     if (this.opts.poll && this.opts.poll > 0) {
       this.timer = setInterval(() => {
-        if (!vis.hidden() && this.state.status !== 'unsupported') void this.load()
+        if (!vis.hidden() && !this.pollIdle()) void this.load()
       }, this.opts.poll)
       this.offVisible = vis.onChange(() => {
-        if (!vis.hidden() && this.state.status !== 'unsupported') void this.load()
+        if (!vis.hidden() && !this.pollIdle()) void this.load()
       })
     }
+  }
+
+  /**
+   * Read again if the last answer was a 403 and the read is running: the signed-in person's rights changed (noteRights),
+   * so what was forbidden may not be any more. Still forbidden, it idles again; allowed, its poll resumes.
+   */
+  resumeForbidden() {
+    if (this.running && isForbidden(this.state.error)) void this.load()
   }
 
   /** Stop polling and ignore any fetch still in flight. */
   stop() {
     this.seq++
     flight(this, false)
+    this.running = false
     if (this.timer) clearInterval(this.timer)
     this.timer = null
     this.offVisible?.()
     this.offVisible = null
     if (this.state.refreshing) this.state = { ...this.state, refreshing: false }
   }
+}
+
+// Who is signed in, and as what (useMe reports it). Rights change mid-session (made admin, an owner's grant), so a read
+// stopped by a 403 reads again when they do (Dot's read of omegahive#635).
+let rightsKey: string | null = null
+let rightsCount = 0
+const rightsListeners = new Set<() => void>()
+
+/** How many times the signed-in person's rights have changed on this page. */
+export const rightsEpoch = (): number => rightsCount
+
+/**
+ * Report who is signed in and as what (`principal|kind|role`, from /me). The first report sets it; each later change
+ * tells every running read stopped by a 403 to read again.
+ */
+export function noteRights(key: string): void {
+  if (key === rightsKey) return
+  const first = rightsKey === null
+  rightsKey = key
+  if (first) return
+  rightsCount++
+  for (const fn of [...rightsListeners]) fn()
+}
+
+const onRightsChange = (fn: () => void): (() => void) => {
+  rightsListeners.add(fn)
+  return () => rightsListeners.delete(fn)
 }
 
 const noAuthChanges = () => () => undefined
@@ -348,6 +394,7 @@ export function useResource<T>(fetcher: () => Promise<T>, opts: ReadOptions<T> =
     res.start()
     return () => res.stop()
   }, [res, entry, key, ctx, resyncs])
+  useEffect(() => onRightsChange(() => res.resumeForbidden()), [res])
   const raw = useSyncExternalStore(res.subscribe, res.getState, res.getState)
   // between a change of identity and the effect that rebinds, the old answer is already not this identity's
   const state: ResourceState<T> = res.isBoundTo(ctx) ? raw : PENDING

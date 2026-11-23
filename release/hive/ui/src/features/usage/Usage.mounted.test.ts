@@ -1,6 +1,6 @@
 // @vitest-environment node
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles for the store */
-// Purpose: a mounted test of the Usage page, the screen MeTTa composes, on the simulator: your spend, the held calls, the limits (the hive cap once, one row per person, the caps set) with the old form defaults removed in one action after one confirmation that lists each change, and the spend view's filters and its empty state.
+// Purpose: a mounted test of the Usage page, the screen MeTTa composes, on the simulator: your spend, the held calls, the limits (the hive cap once, one row per person, the caps set) with the old form defaults removed in one action after one confirmation that lists each change, and the spend view's filters and its empty state; a cap on someone else's mind or swarm stays its owner's to change or remove; and the held calls' admin-only reads are asked once by a member, whose polls stop at the hive's 403.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement, type ReactElement, type ReactNode } from 'react'
 import type { Root } from 'react-dom/client'
@@ -27,10 +27,18 @@ vi.mock('../plans/PlanUsage', () => ({ PlanUsage: () => null }))
 vi.mock('../../ui/confirm', () => ({ askConfirm: async (message: string) => (T.asked.push(message), true), ConfirmHost: () => null }))
 // the page's frame (its header and the battery) is the shell's: here only what the page draws inside it
 vi.mock('../../ui/Page', () => ({ Page: ({ children }: { children: ReactNode }) => children }))
+import { ApiError } from '../../api/client'
 import { SimClient } from '../../api/sim/SimClient'
 import { money } from '../../lib/format'
 import UsageView from './UsageView'
+import type { SpendAlertsView } from './useSpendAlerts'
 
+// App gives the page the signed-in spend alerts it reads (#706, useSpendAlerts); these tests read the limits and held
+// calls, so the page gets a feed with no alerts that asks the hive nothing
+const noAlerts: SpendAlertsView = {
+  status: 'empty', readError: undefined, refreshing: false, reload: () => undefined, alerts: [], canControl: false,
+  pending: null, actionError: undefined, change: async () => undefined,
+}
 let doc: MiniDocument, host: MiniNode, root: Root, saved: Record<string, unknown>
 const flush = async () => { await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve() }) }
 const render = async (el: ReactElement) => { await act(async () => root.render(el)); await flush() }
@@ -60,7 +68,7 @@ describe('the Usage page', () => {
     const c = new SimClient({ seed: 3, latency: false, autoStart: false, historyDays: 3 })
     await c.patchAgent('a_nori06', { budget_usd: 10 })              // an old form's pre-filled cap on a mind
     T.client = c
-    await render(createElement(UsageView))
+    await render(createElement(UsageView, { spendAlerts: noAlerts }))
     const text = host.textContent
     for (const part of ['Spending limits', 'The hive cap', 'People', 'Caps set', 'Old form defaults']) expect(text).toContain(part)
     expect(text).toContain('Tomás Reyes')
@@ -89,7 +97,7 @@ describe('the Usage page', () => {
   it('changes a cap in place: its figures open the editor, Enter saves the new figure, and the row reads it again', async () => {
     const c = new SimClient({ seed: 3, latency: false, autoStart: false, historyDays: 3 })
     T.client = c
-    await render(createElement(UsageView))
+    await render(createElement(UsageView, { spendAlerts: noAlerts }))
     const forge = (await c.listBudgets()).find((b) => b.scope === 'swarm:s_forge')!
     const figures = host.findAll((n) => n.tagName === 'BUTTON' && (n.textContent ?? '').includes(` / ${money(forge.limit_usd)} per month`))
     expect(figures.length).toBeGreaterThan(0)
@@ -105,5 +113,73 @@ describe('the Usage page', () => {
     expect((await c.listBudgets()).find((b) => b.scope === 'swarm:s_forge')!.limit_usd).toBe(75)
     expect(T.toasts.at(-1)).toMatchObject({ tone: 'success', title: 'Limit saved', body: 'Forge: $75 per month' })
     expect(editors()).toHaveLength(0)   // the editor closed
+  })
+
+  it("leaves a cap on someone else's mind to its owner, and the one action removes only the viewer's own old defaults", async () => {
+    // the hive's may_change: Nori is someone else's mind, so its cap and its old default are its owner's (limit_refusal)
+    const cap = (scope: string, may_change: boolean) => ({ key: `${scope}:month`, scope, period: 'month', limit_usd: 5, spent_usd: 0, held_usd: 0, room_usd: 5, source: 'set', rule_id: `b_${scope.slice(-6)}`, may_change })
+    const old = (id: string, name: string, may_change: boolean) => ({ kind: 'mind', agent_id: id, name, change: `${name}: $10.00 lifetime cap -> the hive cap and its payer's allowance`, reasons: ["equals a form's pre-filled $10.00"], reset: { method: 'PATCH', path: `/api/agents/${id}`, body: { budget_usd: 0 } }, may_change })
+    const c = new SimClient({ seed: 3, latency: false, autoStart: false, historyDays: 3 })
+    const patched: string[] = []
+    const patch = c.patchAgent.bind(c)
+    Object.assign(c, {
+      budgetLimitsView: async () => ({ hive: { cap: null, all_time: null, month_spent_usd: 0, pace_usd_per_day: 0 }, people: [],
+        caps: [cap('agent:a_nori06', false), cap('swarm:s_forge', true)], old_defaults: [old('a_nori06', 'Nori', false), old('a_deneb2', 'Deneb', true)] }),
+      patchAgent: async (id: string, body: Parameters<SimClient['patchAgent']>[1]) => (patched.push(id), patch(id, body)),
+    })
+    T.client = c
+    await render(createElement(UsageView, { spendAlerts: noAlerts }))
+    // Nori's cap reads as its owner's, with nothing to change it; Forge's, the viewer's own, keeps its remover
+    expect(host.textContent).toContain('its owner’s to change')
+    expect(host.findAll((n) => n.tagName === 'BUTTON' && n.getAttribute?.('aria-label') === 'Remove this limit')).toHaveLength(1)
+    expect(host.textContent).toContain('A cap on someone else’s mind or swarm is theirs to remove.')
+    expect(host.textContent).toContain('its owner’s to remove')
+    expect(button('Remove all 2')).toBeUndefined()
+    await act(async () => press(button('Remove yours')))
+    await flush()
+    expect(T.asked.at(-1)).toContain('Deneb: $10.00 lifetime cap')
+    expect(T.asked.at(-1)).not.toContain('Nori')
+    expect(patched).toEqual(['a_deneb2'])
+  })
+})
+
+// acceptance-tests#13 (#635): GET /api/budgets/reservations and /overruns are admin-only on the hive today (each
+// `admin(request)` in hive/core/app.py), and the page polled them for anyone every 15 s and 60 s, filling a member's
+// recent errors with 403s. The page doesn't decide who reads them, the hive does: it asks once, and a 403 stops the
+// polls (useResource). Only setInterval, the polls, is faked.
+describe('the held calls: the hive decides who reads them', () => {
+  const as = (admin: boolean) => {
+    const c = new SimClient({ seed: 3, latency: false, autoStart: false, historyDays: 3 })
+    const adminOnly = <T,>(read: () => Promise<T>) => vi.fn(async () => {
+      if (!admin) throw new ApiError(403, 'forbidden', 'admin only')
+      return read()
+    })
+    const reads = { listReservations: adminOnly(c.listReservations.bind(c)), listOverruns: adminOnly(c.listOverruns.bind(c)) }
+    Object.assign(c, reads)
+    return { client: c, ...reads }
+  }
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] }) })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('a member asks each once, and ten minutes of polls ask nothing more', async () => {
+    const { client, listReservations, listOverruns } = as(false)
+    T.client = client
+    await render(createElement(UsageView, { spendAlerts: noAlerts }))
+    expect(listReservations).toHaveBeenCalledTimes(1)
+    expect(listOverruns).toHaveBeenCalledTimes(1)
+    await act(async () => { vi.advanceTimersByTime(10 * 60_000) })
+    await flush()
+    expect(listReservations).toHaveBeenCalledTimes(1)
+    expect(listOverruns).toHaveBeenCalledTimes(1)
+  })
+
+  it('an admin reads both and keeps polling', async () => {
+    const { client, listReservations, listOverruns } = as(true)
+    T.client = client
+    await render(createElement(UsageView, { spendAlerts: noAlerts }))
+    await act(async () => { vi.advanceTimersByTime(60_000) })
+    await flush()
+    expect(listReservations.mock.calls.length).toBeGreaterThan(1)
+    expect(listOverruns.mock.calls.length).toBeGreaterThan(1)
   })
 })

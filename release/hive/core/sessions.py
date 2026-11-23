@@ -4,19 +4,22 @@
 A session is a room of kind ``session`` (you and one mind; the mind hears every message) bound to:
 - a task assigned to that mind for ordinary work, or unassigned conversation bookkeeping for Ask;
 - an optional code workspace (OmegaCode), whose changes keep their exact-approval gates;
-- a spend cap: from the mind's spend when the session starts. The cap is enforced with the mind's hard total budget
-  rule, which a session only ever tightens (never raises); ending the session puts the previous rule back.
+- a spend cap, only when the session is given one: from the mind's spend when the session starts. A session given no
+  budget has no cap of its own and runs under the hive cap and its payer's allowance, as an Ask thread does (Jon on
+  omega-flagship/omegahive#256, 23 Nov: a session with no cap set runs under those only). A cap is enforced with the
+  mind's hard total budget rule, which a session only ever tightens (never raises); ending the session puts the
+  previous rule back.
   Several sessions on one mind (Ask threads with a swarm's coordinator, ordinary sessions) compose: one record per mind
   (session_caps) owns the rule, which is always min(the rule before any session, every active session's cap). It is
   recomputed atomically on every start and end, so ends in any order restore exactly; a rule someone else set since the
   last install becomes the new base and is never overwritten by a restore (OmegaReview Ask design review, item 4).
-ask-limits r1: an Ask thread answered by the host's conductor (cap_scope 'thread') is the exception. Each of its paid calls
-is reserved under the thread's own scope (askthread:<id>, thread_scope below), counted against that thread's own spend
-(thread_spent), so it never installs or tightens the mind's total rule: before, a stale thread with a small cap held
-every later thread on the mind (from any person) under min(its cap), and raising the mind's limit changed nothing.
-An Ask thread whose turns the mind itself answers (conductor off) still composes into the mind's rule as above
-(cap_scope 'mind'), because that mind's calls cannot be told apart by thread; rescope() moves a thread between the two
-with its spend carried over.
+An Ask thread is the exception: it has no cap of its own and never installs or tightens the mind's total rule (Jon's
+design on omegahive#294, item 2: limits come from the monthly allowance and the spend-rate guard; before it, a stale
+thread with a small cap held every later thread on the mind under min(its cap)). Its cap_scope only says how its spend
+is counted: 'thread' (a conductor or browser turn's thread), the settled cost of every reservation labelled with the
+thread's own scope (askthread:<id>, thread_scope below, a label with no limit), thread_spent; 'mind' (a turn the mind
+itself answers, conductor off), the mind's spend since the thread started, since those calls cannot be told apart by
+thread. rescope() moves a thread between the two with its spend carried over.
 Its timeline merges the room's messages with the mind's own steps since the session started (what it ran, read or
 changed, from its traces) and its approval requests, so a person can follow the work and decide approvals in place.
 """
@@ -143,19 +146,25 @@ class Sessions:
         title = str(data.get("title") or "").strip()[:200]
         if not title:
             raise self.hive.error(400, "bad_request", "say what the session is for")
-        raw = data.get("budget_usd")
-        if raw is None or raw == "":
-            # none given: a tenth of what the mind has left once the hive has a total (plan H5); $1 as before without one
-            auto = self.hive.budgets.session_default(agent)
-            if auto is not None and auto <= 0:
-                raise self.hive.error(402, "spend_limit", f"{agent['name']} has nothing left under its limits")
-            raw = 1.0 if auto is None else auto
-        try:
-            budget = float(raw)
-        except (TypeError, ValueError):
-            raise self.hive.error(400, "bad_request", "budget_usd is a number") from None
-        if not 0 < budget <= 100:
-            raise self.hive.error(400, "bad_request", "a session budget is more than $0 and at most $100")
+        if purpose == "ask":
+            budget = 0.0   # an Ask thread has no cap of its own (omegahive#294 item 2): its spend is counted, never capped
+        else:
+            raw = data.get("budget_usd")
+            if raw is None or raw == "":
+                # none given: no cap of its own, so the hive cap and its payer's allowance hold it, as they hold an Ask
+                # thread (Jon on #256, 23 Nov); once the hive has a cap it starts only while its limits leave the mind
+                # something, and without one each paid call is refused or not as it goes (402 no_budget)
+                left = self.hive.budgets.headroom(agent) if self.hive.budgets.hive_cap() is not None else None
+                if left is not None and left <= 0:
+                    raise self.hive.error(402, "spend_limit", f"{agent['name']} has nothing left under its limits")
+                budget = 0.0
+            else:
+                try:
+                    budget = float(raw)
+                except (TypeError, ValueError):
+                    raise self.hive.error(400, "bad_request", "budget_usd is a number") from None
+                if not 0 < budget <= 100:
+                    raise self.hive.error(400, "bad_request", "a session budget is more than $0 and at most $100")
         self.studio_free(agent["id"])
         self.payer_free(agent["id"], viewer.principal, purpose)   # early, before the goal: the check that counts is below
         if _prepare_ask:
@@ -236,15 +245,14 @@ class Sessions:
             # Ending restores the outer cap, which must not fund an uncertain call or a call still being admitted. Checked
             # inside the same write transaction a reservation takes (BEGIN IMMEDIATE), so a reservation either commits
             # first and is seen here, or sees this end and refuses (media.py re-checks the sessions in its transaction).
-            fresh = self.hive.db.one("SELECT status, cap_scope FROM work_sessions WHERE id = ?", (s["id"],))
+            fresh = self.hive.db.one("SELECT status, purpose FROM work_sessions WHERE id = ?", (s["id"],))
             if fresh["status"] != "active":
                 return self.view(self.hive.db.one("SELECT * FROM work_sessions WHERE id = ?", (s["id"],)))
-            # An own-scope Ask thread is no part of the mind's rule (_compose leaves it out), so ending it restores no
-            # outer cap, and its own holds stay counted under its own label however late they settle (thread_spent,
-            # thread_held). Its scope is read in this transaction, as rescope() writes it in one. Refusing it for the
-            # mind's open calls, which may belong to any other work, left a person whose thread had reached its spend
-            # limit unable to start a new one.
-            held = [] if own_scope(fresh) else open_liabilities(self.hive.db, s["agent_id"])
+            # No Ask thread is part of the mind's rule, whichever answers it (_compose leaves every one out, since
+            # omegahive#294 item 2 took the thread's cap away), so ending one restores no outer cap, and its calls stay
+            # labelled with it however late they settle (thread_spent). Refusing it for the mind's open calls, which may
+            # belong to any other work, left a person unable to leave a thread and start a new one.
+            held = [] if fresh["purpose"] == "ask" else open_liabilities(self.hive.db, s["agent_id"])
             if held:
                 raise self.hive.error(409, "liabilities_open", "this mind has calls whose cost is not settled yet; each "
                                       "settles by itself, from its answer, the provider's record, or its worst case an "
@@ -337,9 +345,10 @@ class Sessions:
         ours = own is not None and own["installed"] is not None and _same(current, own["installed"])
         base = own["base_limit"] if ours else current   # a rule changed by anyone else since our install is the base now
         # integer micro-dollars, each input floored once: a cap never exceeds its exact inputs (OmegaReview r7)
+        # an Ask thread: never, by either measure (omegahive#294 item 2: no per-thread cap), nor a session given no cap
         caps = [to_micros(r["spent_at_start"]) + to_micros(r["budget_usd"])
                 for r in db.all("SELECT spent_at_start, budget_usd FROM work_sessions WHERE agent_id = ? AND status = 'active' "
-                                "AND (cap_scope IS NULL OR cap_scope != 'thread')", (agent_id,))]   # an own-scope thread: never
+                                "AND (purpose IS NULL OR purpose != 'ask') AND budget_usd > 0", (agent_id,))]
         if not caps:
             if ours:
                 self._write_cap(agent_id, base, "restored after session")
@@ -357,26 +366,14 @@ class Sessions:
                    "installed = excluded.installed, updated_at = excluded.updated_at", (agent_id, base, installed, now()))
         return base, installed
 
-    # ---- ask-limits r1: an Ask thread's own cap ------------------------------------------------------------------------
+    # ---- ask-limits r1: an Ask thread's own spend (counted, never capped since omegahive#294 item 2) ---------------------
 
     def thread_spent(self, s):
-        """An own-scope thread's settled spend: the settled cost of every reservation under its scope (the one
+        """An own-scope thread's settled spend: the settled cost of every reservation labelled with its scope (the one
         authoritative source, in whatever state it settled: a call settled late after a release counts the same), plus
-        carried_usd, only what no reservation accounts for (_carried). Open holds are not spend; a reservation counts them against the scope
-        itself (Reservations.pending), so a cap is never exceeded by calls still in flight."""
+        carried_usd, only what no reservation accounts for (_carried). Open holds are not spend."""
         from .cost_reservations import settled_usd   # gateway r1a: Reservations.settled, the one source (T-SET)
         return float(s.get("carried_usd") or 0) + settled_usd(self.hive.db, thread_scope(s["id"]))
-
-    def thread_held(self, s):
-        """An own-scope thread's open holds (reserved, dispatched or unknown calls under its scope), in USD: what a
-        reservation counts beside its spend (Reservations.pending of the exact label). r1.1 (Kimi P2): admission measures
-        spend plus these, the same quantity the reservation does."""
-        db = self.hive.db
-        if not db.one("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cost_reservation_scopes'"):
-            return 0.0
-        return db.one("SELECT COALESCE(SUM(r.maximum), 0) AS n FROM cost_reservations r JOIN cost_reservation_scopes c "
-                      "ON c.reservation = r.id WHERE c.scope = ? AND r.state IN ('reserved', 'dispatched', 'unknown')",
-                      (thread_scope(s["id"]),))["n"] / 1_000_000
 
     def rescope(self, agent_id, to, session_id=None):
         """Move active Ask threads on this mind to their own scope ('thread') or back to the mind's rule ('mind'), spend
@@ -486,23 +483,17 @@ class Sessions:
 
     def adopt_ask_threads(self):
         """At boot (r1.1: whether or not the conductor is on; a turn the mind answers moves its own thread back): every
-        mind's active Ask threads move to their own scope (rescope 'thread'), so a
-        stale thread's rule left by an earlier build stops holding the mind and a person's own limit is back in force."""
+        mind's active Ask threads move to their own scope (rescope 'thread'), and every mind holding a composed cap is
+        composed again, so a rule an Ask thread installed under an earlier build (before omegahive#294 item 2 took the
+        thread's cap away) stops holding the mind, even while a turn the mind answers keeps that thread where it is."""
         moved = []
         for r in self.hive.db.all("SELECT DISTINCT agent_id FROM work_sessions WHERE status = 'active' AND purpose = 'ask' "
                                   "AND (cap_scope IS NULL OR cap_scope != 'thread')"):
             moved += self.rescope(r["agent_id"], "thread")
+        for r in self.hive.db.all("SELECT agent_id FROM session_caps"):
+            with self.hive.db.transaction():
+                self._compose(r["agent_id"])
         return moved
-
-    def ask_threads(self, agent_id):
-        """The mind's active own-scope Ask threads with their caps and spend, for the Limits page (reported apart from the
-        mind's own limit, which they never change)."""
-        out = []
-        for s in self.hive.db.all("SELECT * FROM work_sessions WHERE agent_id = ? AND status = 'active' AND purpose = 'ask' "
-                                  "AND cap_scope = 'thread' ORDER BY created_at", (agent_id,)):
-            out.append({"id": s["id"], "owner": s["owner"], "key": thread_scope(s["id"]), "budget_usd": float(s["budget_usd"]),
-                        "spent_usd": round(self.thread_spent(s), 6), "created_at": s["created_at"]})
-        return out
 
     def timeline(self, viewer, session_id):
         """Messages, the mind's steps and its approval requests since the session began, oldest first."""

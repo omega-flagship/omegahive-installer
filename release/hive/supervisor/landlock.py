@@ -1,5 +1,5 @@
 #!/usr/bin/env -S ${HIVE_SANDBOX_PYTHON} -I -B -S
-"""Linux mind isolation: unprivileged namespaces + Landlock. The Linux counterpart of the macOS sandbox-exec profile.
+"""Purpose: Isolate Linux minds and tools with unprivileged namespaces and Landlock.
 
 A mind on Linux runs as:  /usr/bin/env HIVE_SANDBOX_PYTHON=<python> landlock.py <profile.json> -- <command...>
 (sandbox.launcher, spawned by sandbox.wrap). Without the variable the shebang has no interpreter and env refuses.
@@ -169,6 +169,11 @@ def available():
     return abi_version() >= 1 and namespaces_available()
 
 
+# This file's real path, for apparmor_refusal's message: resolved at import, so the message needs no call at launch
+# time (a test that fakes this module's os reaches it at restriction 1; omega-flagship/omegahive#626).
+_LAUNCHER_PATH = os.path.realpath(__file__)
+
+
 def apparmor_refusal(restrict="/proc/sys/kernel/apparmor_restrict_unprivileged_userns",
                      label="/proc/self/attr/current", status="/proc/self/status"):
     """Why AppArmor would refuse this process a usable user namespace, or None. With apparmor_restrict_unprivileged_userns
@@ -191,7 +196,7 @@ def apparmor_refusal(restrict="/proc/sys/kernel/apparmor_restrict_unprivileged_u
     if caps & (1 << CAP_SYS_ADMIN):
         return None
     return (f"AppArmor refuses unprivileged user namespaces here (apparmor_restrict_unprivileged_userns=1) and "
-            f"{os.path.realpath(__file__)} runs unconfined: load deploy/apparmor/omegahive-mind-launcher and start "
+            f"{_LAUNCHER_PATH} runs unconfined: load deploy/apparmor/omegahive-mind-launcher and start "
             "the launcher from a path it attaches to (deploy/RUNBOOK.md, section 0)")
 
 
@@ -222,6 +227,23 @@ def _programs_list(programs):
 
 # ---- Landlock -------------------------------------------------------------------------------------------------
 
+def _allow_beneath(libc, rs, path, access, handled):
+    """Add a path_beneath rule granting access (within handled) under path; a file gets its file rights only, and a
+    path that doesn't exist gets no rule."""
+    try:
+        fd = os.open(path, os.O_PATH | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return
+    try:
+        if not os.path.isdir(path):
+            access &= FILE_RIGHTS
+        rule = _PathBeneath(access & handled, fd)
+        _check(libc.syscall(SYS_ADD_RULE, ctypes.c_int(rs), ctypes.c_int(RULE_PATH_BENEATH), ctypes.byref(rule),
+                            ctypes.c_uint32(0)), f"landlock add_rule {path}")
+    finally:
+        os.close(fd)
+
+
 def restrict_files(prof, abi=None):
     """Landlock: the filesystem rules (any ABI) and, with ABI 4+, TCP connect to the allowed ports only. Irreversible."""
     abi = abi_version() if abi is None else abi
@@ -236,18 +258,7 @@ def restrict_files(prof, abi=None):
                 "landlock create_ruleset")
     try:
         def allow(path, access):
-            try:
-                fd = os.open(path, os.O_PATH | os.O_CLOEXEC)
-            except FileNotFoundError:
-                return
-            try:
-                if not os.path.isdir(path):
-                    access &= FILE_RIGHTS
-                rule = _PathBeneath(access & fs_all, fd)
-                _check(libc.syscall(SYS_ADD_RULE, ctypes.c_int(rs), ctypes.c_int(RULE_PATH_BENEATH), ctypes.byref(rule),
-                                    ctypes.c_uint32(0)), f"landlock add_rule {path}")
-            finally:
-                os.close(fd)
+            _allow_beneath(libc, rs, path, access, fs_all)
 
         for path in effective_read(prof["read"]):   # never a rule for a listed symlink that leads outside
             allow(path, READ)
@@ -264,6 +275,33 @@ def restrict_files(prof, abi=None):
                 rule = _NetPort(NET_CONNECT_TCP, int(port))
                 _check(libc.syscall(SYS_ADD_RULE, ctypes.c_int(rs), ctypes.c_int(RULE_NET_PORT), ctypes.byref(rule),
                                     ctypes.c_uint32(0)), f"landlock add_rule port {port}")
+        _check(libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), "no_new_privs")
+        _check(libc.syscall(SYS_RESTRICT_SELF, ctypes.c_int(rs), ctypes.c_uint32(0)), "landlock restrict_self")
+    finally:
+        os.close(rs)
+
+
+def restrict_writes(writable, abi=None):
+    """Landlock for thinking in code, the sandbox an Iter worker's metta runs in (hive/templates/iter/tools/
+    _think_sandbox.py): it writes only beneath the writable folders and to the /dev/null-like devices, and with ABI 4+
+    it may neither connect nor bind any TCP port. Reads and execution are not handled, so they stay as the mind's own
+    sandbox allows, and nothing it starts can change a file the worker's loop loads. Irreversible, and stacked on
+    whatever Landlock the process already runs under."""
+    abi = abi_version() if abi is None else abi
+    if abi < 1:
+        raise OSError("Landlock is not available: refusing to run without file isolation")
+    writes = ABI_FS[min(abi, 5)] & ~(READ | FS_IOCTL_DEV)
+    net = (NET_BIND_TCP | NET_CONNECT_TCP) if abi >= NET_ABI else 0
+    libc = _libc()
+    attr = _RulesetAttr(writes, net)
+    size = ctypes.sizeof(attr) if net else 8
+    rs = _check(libc.syscall(SYS_CREATE_RULESET, ctypes.byref(attr), ctypes.c_size_t(size), ctypes.c_uint32(0)),
+                "landlock create_ruleset")
+    try:
+        for path in writable:
+            _allow_beneath(libc, rs, os.path.realpath(str(path)), writes, writes)
+        for path in DEV_RW:
+            _allow_beneath(libc, rs, path, FS_WRITE_FILE, writes)
         _check(libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), "no_new_privs")
         _check(libc.syscall(SYS_RESTRICT_SELF, ctypes.c_int(rs), ctypes.c_uint32(0)), "landlock restrict_self")
     finally:
@@ -665,6 +703,7 @@ def _private_root(prof):
     for path, writable in _devices(prof):
         if os.path.exists(path):
             _bind(root, path, writable=writable)
+    _mindfs_module().require_contained_links(prof["mind_dir"])
     _bind(root, prof["mind_dir"], writable=True)
     _mkdirs(root + "/proc")
     try:
@@ -827,11 +866,13 @@ def _setup_failed(exc, root, listeners):
     return 78
 
 
-def launch(prof, argv, *, _runner_until=None, _runner_workspace=None):
+def launch(prof, argv, *, _runner_until=None, _runner_workspace=None, _original_signal_mask=None):
     import shutil
     import tempfile
     # SIGTERM waits, blocked, for _reap_ending_on_sigterm (see "Stopping" above); a setup failure exits 78 before then.
     original_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+    if _original_signal_mask is not None:
+        original_mask = _original_signal_mask
     if (_runner_until is not None
             and (type(_runner_until) is not float or not math.isfinite(_runner_until) or _runner_until <= 0)):
         return _setup_failed(OSError("invalid original runner deadline"), None, [])
@@ -971,19 +1012,26 @@ _RUNNER_WORKSPACE_FLAG = "--hive-runner-workspace-v1"
 _WORKSPACE_MODULE = None
 
 
+def _load_source(name, relative_path):
+    """Load launcher code by its trusted source path in the isolated interpreter."""
+    import importlib.util
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), *relative_path)
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise OSError(f"sandbox launcher source unavailable: {name}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _mindfs_module():
+    return _load_source("_hive_mindfs", ("supervisor", "mindfs.py"))
+
+
 def _workspace_module():
-    """One reviewed sibling Source; -I/-S never falls back to installed Hive."""
     global _WORKSPACE_MODULE
     if _WORKSPACE_MODULE is None:
-        import importlib.util
-        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "core", "sandbox_workspace.py")
-        spec = importlib.util.spec_from_file_location("_hive_runner_workspace_v1", path)
-        if spec is None or spec.loader is None:
-            raise OSError("original workspace Source unavailable")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        _WORKSPACE_MODULE = module
+        _WORKSPACE_MODULE = _load_source("_hive_runner_workspace_v1", ("core", "sandbox_workspace.py"))
     return _WORKSPACE_MODULE
 
 
@@ -1168,8 +1216,10 @@ def main(argv=None):
     os.environ.pop("HIVE_SANDBOX_PYTHON", None)
     argv = sys.argv[1:] if argv is None else argv
     placement_state = None
+    until = None
     workspace = None
     workspace_fd = None
+    original_signal_mask = None
     if len(argv) >= 2 and argv[1] == _RUNNER_PLACEMENT_FLAG:
         # No valid legacy invocation uses this second argument (legacy requires --).
         # Gate before even opening the profile, availability probes or launch setup.
@@ -1187,8 +1237,9 @@ def main(argv=None):
                 raise ValueError("invalid runner placement invocation")
             descriptors = _runner_descriptor_words(argv[2:5])
             placement_state = _runner_placement_gate(descriptors, argv[5])
+            until = placement_state["until"]
             if workspace_fd is not None:
-                workspace = _workspace_module().child_prepare(workspace_fd, placement_state["until"])
+                workspace = _workspace_module().child_prepare(workspace_fd, until)
                 workspace.raise_first()
                 workspace.adjust_oom_score()
         except BaseException:
@@ -1202,6 +1253,31 @@ def main(argv=None):
             sys.stderr.write("mind isolation failed, not starting: runner placement refused before fork\n")
             return 78
         argv = [argv[0], "--", *argv[command_index:]]
+    elif len(argv) >= 2 and argv[1] == _RUNNER_WORKSPACE_FLAG:
+        try:
+            # A refused setup closes the handshake before returning status 78.
+            # Keep cleanup's TERM pending until the launcher handles it or exits.
+            original_signal_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+            if (len(argv) < 6 or argv[4] != "--" or not argv[2].isascii() or not argv[2].isdigit()
+                    or str(int(argv[2])) != argv[2] or not 3 <= int(argv[2]) <= 2**31 - 1):
+                raise ValueError("invalid standalone workspace invocation")
+            workspace_fd = int(argv[2])
+            until = float.fromhex(argv[3])
+            if not math.isfinite(until) or time.monotonic() >= until:
+                raise ValueError("invalid standalone workspace deadline")
+            workspace = _workspace_module().child_prepare(workspace_fd, until)
+            workspace.raise_first()
+        except BaseException:
+            if workspace is not None:
+                workspace.close()
+            elif workspace_fd is not None:
+                try:
+                    os.close(workspace_fd)
+                except OSError:
+                    pass
+            sys.stderr.write("mind isolation failed, not starting: standalone workspace refused before fork\n")
+            return 78
+        argv = [argv[0], "--", *argv[5:]]
     if len(argv) < 3 or argv[1] != "--":
         if workspace is not None:
             workspace.close()
@@ -1221,16 +1297,19 @@ def main(argv=None):
             workspace.close()
         sys.stderr.write("mind isolation failed, not starting: Landlock or unprivileged namespaces unavailable\n")
         return 78
-    if placement_state is not None:
+    if until is not None:
         try:
-            if not time.monotonic() < placement_state["until"]:
-                raise TimeoutError("original runner placement deadline expired before launch")
+            if not time.monotonic() < until:
+                raise TimeoutError("original runner deadline expired before launch")
         except BaseException:
             if workspace is not None:
                 workspace.close()
             sys.stderr.write("mind isolation failed, not starting: runner deadline expired before launch\n")
             return 78
-        return launch(prof, argv[2:], _runner_until=placement_state["until"], _runner_workspace=workspace)
+        if original_signal_mask is not None:
+            return launch(prof, argv[2:], _runner_until=until, _runner_workspace=workspace,
+                          _original_signal_mask=original_signal_mask)
+        return launch(prof, argv[2:], _runner_until=until, _runner_workspace=workspace)
     return launch(prof, argv[2:])
 
 

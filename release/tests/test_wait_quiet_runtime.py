@@ -473,24 +473,11 @@ class WaitQuietRuntimeTests(unittest.TestCase):
                 sent.append(frame.get("text"))
         self.assertEqual(sent, ["SENT_AFTER_RESULTS"], self._tail("the person got a held message, or not the later one"))
 
-    def test_a_hive_refusal_waits_in_the_hive_s_words_for_its_retry_after(self):
-        """A tester's Code controller waited "LLM-PROVIDER-ERROR retry after 60 seconds" when the hive's spend-rate guard
-        had refused its call, so she asked whether her key was broken. The hive's own refusal carries say, its sentence
-        for anyone who reads the mind, and retry_after: the mind's wait says that sentence and the next turn comes after
-        that long, here 30 s, not the provider error's 60 s."""
-        say = "Spending faster than this month allows: a call this size fits again in about 1 minute."
-        refusal = (429, {"code": "spend_rate", "message": say, "say": say, "retry_after": 30})
-        model = FakeModel([refusal, refusal, refusal, 'wait 900 done'])   # Singnet's client tries a 429 three times
-        self.addCleanup(model.shutdown)
-        self._boot(model)
-        self._message(1, "alphabetize the list")
-        responses = lambda: self._response_shapes()[0]
-        self._await_runtime(lambda: len(responses()) >= 1, "the message never got a turn", 120)
-        first = time.monotonic()
-        self.assertTrue(responses()[0].startswith('((wait "Spending faster than this month allows'),
-                        self._tail("the wait does not say the hive's sentence"))
-        self.assertTrue(wait_for(lambda: model.count() >= 4, timeout=60), self._tail("no turn after the refusal"))
-        self.assertLess(time.monotonic() - first, 55, self._tail("waited the provider error's 60 s, not retry_after"))
+    def test_a_spending_refusal_keeps_the_results_and_says_why(self):
+        say = "A spending limit has no room for this call."
+        refusal = (402, {"code": "spend_limit", "message": "The hive has reached its monthly cap.",
+                         "say": say, "scope": "hive"})
+        self._assert_failure_keeps_last_results(refusal, say, 120)
 
     def test_a_message_goes_out_on_the_turn_after_a_hold(self):
         # Jon on omega-flagship/omegahive#334: "Could a message that was held once go out the next time it's written?

@@ -1,5 +1,6 @@
 // Purpose: LiveClient, the HiveClient that makes each read and write as a request to a running hive.
 import { personSwarmCardRoute, readPersonSwarmCard, type PersonSwarmShown } from './personSwarms'
+import { readSpendAlert, readSpendAlerts, type SpendControl } from './spendAlerts'
 import type { UiPrefs, UiPrefsResponse, UiPrefsWriteOptions } from '../shell/uiVariant'
 import type { Exchange } from '../lib/askMemory/types'
 import { FRAME_WIRE } from '../lib/frameWire'
@@ -795,6 +796,12 @@ export class LiveClient implements HiveClient {
   roomBecomeSwarm = (id: string, moveMinds: string[]) => this.request<{ room: import('./types').Room; swarm: Swarm }>('POST', `/api/rooms/${enc(id)}/swarm`, { move_minds: moveMinds })
   swarmRoom = (swarmId: string) => this.request<import('./types').Room>('POST', `/api/swarms/${enc(swarmId)}/room`)
   usageMe = () => this.request<import('./types').MySpendSummary>('GET', '/api/usage/me')
+  spendAlerts = () => this.request<unknown>('GET', '/api/usage/spend-alerts').then(readSpendAlerts)
+  controlSpendAlert = async (id: string, action: SpendControl) => {
+    const alert = readSpendAlert(await this.request<unknown>('POST', `/api/usage/spend-alerts/${enc(id)}/control`, { action }))
+    if (alert.id !== id) throw new Error('The hive did not confirm the requested spend control.')
+    return alert
+  }
   myNotices = () => this.request<unknown>('GET', '/api/me/notices')
   myStage = (after: number) => this.request<import('./types').StageSaid[]>('GET', `/api/me/stage?after=${enc(String(after))}`)
   setNoticeSettings = (body: Partial<Pick<import('./notices').NoticePrefs, 'cap' | 'quiet_start' | 'quiet_end' | 'tz'>>) => this.request<unknown>('PUT', '/api/me/notices/settings', body)
@@ -811,9 +818,13 @@ export class LiveClient implements HiveClient {
   disconnectGoogleConnector = () => this.request<unknown>('POST', '/api/connectors/google/disconnect', {})
   setGoogleConnectorMind = (mind: string, allowed: boolean) => this.request<unknown>('PUT', `/api/connectors/google/minds/${enc(mind)}`, googleMindConsent(mind, allowed))
   configureGoogleConnector = (clientId: string, clientSecret: string) => this.request<unknown>('POST', '/api/connectors/google/config', { client_id: clientId, client_secret: clientSecret })
+  connectors = () => this.request<unknown>('GET', '/api/connectors')
+  setConnectorSettings = (id: string, settings: Record<string, string>) => this.request<unknown>('PUT', `/api/connectors/${enc(id)}/settings`, settings)
+  disconnectConnector = (id: string) => this.request<unknown>('DELETE', `/api/connectors/${enc(id)}`)
+  installConnector = (id: string, mind: string, installed: boolean) => this.request<unknown>('PUT', `/api/connectors/${enc(id)}/minds/${enc(mind)}`, { installed })
   rotatePassword = () => this.request<{ password: string; ended_password_sessions: number; note: string }>('POST', '/api/settings/password/rotate')
   sessions = () => this.request<import('./types').WorkSession[]>('GET', '/api/sessions')
-  createSession = (body: { mind: string; title: string; detail?: string; budget_usd: number }) => this.request<import('./types').WorkSession>('POST', '/api/sessions', body)
+  createSession = (body: { mind: string; title: string; detail?: string; budget_usd?: number }) => this.request<import('./types').WorkSession>('POST', '/api/sessions', body)
   sessionTimeline = (id: string) => this.request<{ session: import('./types').WorkSession; items: import('./types').SessionItem[] }>('GET', `/api/sessions/${enc(id)}/timeline`)
   sessionWorkspaces = (id: string) => this.request<{ workspaces: { id: string; repository_id: string; status?: string; base_commit?: string }[] }>('GET', `/api/sessions/${enc(id)}/workspaces`)
   endSession = (id: string) => this.request<import('./types').WorkSession>('POST', `/api/sessions/${enc(id)}/end`)
@@ -831,6 +842,7 @@ export class LiveClient implements HiveClient {
   askTurn = (op: string, after = 0) => this.askRequest<import('./ask').AskTurnState>('GET', `/api/ask/${enc(op)}?after=${Math.max(0, Math.floor(after))}&limit=100`)
   research = (requestId: string) => this.request<unknown>('GET', `/api/research/${enc(requestId)}`)
   askStop = (op: string) => this.askRequest<unknown>('POST', `/api/ask/${enc(op)}/stop`, {})
+  askGoAhead = (op: string, go: boolean) => this.askRequest<import('./ask').AskGoAheadResult>('POST', `/api/ask/${enc(op)}/go-ahead`, { go })
   askBrowserDone = async (op: string, outcome: import('./ask').BrowserOutcome): Promise<import('./ask').BrowserAskClosed> => {
     const r = await this.askRequest<import('./ask').BrowserAskClosed>('POST', `/api/ask/${enc(op)}/done`, { outcome })
     // A malformed successful close is unknown, not permission to delete the original pending records.

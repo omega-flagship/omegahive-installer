@@ -1,3 +1,5 @@
+// Purpose: state the You page's facts and values (profile.metta): who you are, your keys, and the Ask's money choice.
+import { readExpensive, type AskSettings } from '../../api/ask'
 import type { Me } from '../../api/client'
 import type { Agent, KeyInfo } from '../../api/types'
 import { shown } from '../../lib/displayName'
@@ -8,6 +10,7 @@ import type { ResourceLike } from '../../screens/resourceFacts'
 import { withResource } from '../../screens/resourceFacts'
 import type { Compose, ScreenFacts, ScreenPlan } from '../../screens/screenSpace'
 import type { ResourceState } from '../../lib/useResource'
+import { connectorsPanel, type ConnectorsInput } from './connectors'
 
 /**
  * What the You page's screens are told (profile.metta): the values they draw (bound by path) and this moment's facts
@@ -37,7 +40,14 @@ export interface ProfileInput {
   signingOut: boolean
   adding: boolean
   work: KeyWork
+  /** the Ask's settings (null until read, or on a hive without them), and the switch's save in flight or refused */
+  ask: { settings: AskSettings | null; saving: boolean; failed: boolean }
+  /** the person's connectors (connectors.ts); left out where the client has none, as in the demo */
+  connectors?: ConnectorsInput
 }
+
+/** The switch's words (Jon on #294: an answer that looks expensive asks once; anyone can turn that off). */
+export const ASK_EXPENSIVE_LABEL = 'Ask before an answer that looks expensive'
 
 /** The orb hue of the person signed in. */
 export const ME_HUE = 150
@@ -99,9 +109,10 @@ export function keysResource(keys: KeyInfo[] | null, error: unknown): ResourceLi
   return error !== undefined ? { status: 'error', error } : { status: 'loading', error: undefined }
 }
 
-/** The profile screen: who you are, the panels the page draws itself, and your keys. */
+/** The profile screen: who you are, the panels the page draws itself, your connectors and your keys. */
 export function profileScreen(input: ProfileInput, compose: Compose): Composed {
-  const { me, keys, keysError, agents, connected, signingOut, adding, work } = input
+  const { me, keys, keysError, agents, connected, signingOut, adding, work, ask } = input
+  const expensive = readExpensive(ask.settings)
   const all = keys ?? []
   const total = all.reduce((t, k) => t + k.spent_usd, 0)
   const groups = groupItems(all, work, compose)
@@ -113,10 +124,14 @@ export function profileScreen(input: ProfileInput, compose: Compose): Composed {
       'signout.busy': signingOut,
       'keys.summary': `${money(total)} spent through this hive · ${plural(paidMinds(agents), 'mind')} on paid models`,
       'keys.groups': groups,
+      'ask.expensive_choice': expensive ? [{ id: 'ask-expensive', label: ASK_EXPENSIVE_LABEL, on: expensive.on }] : [],
+      'ask.expensive_usd': expensive ? money(expensive.usd) : '',
+      'connectors.panel': input.connectors ? [connectorsPanel(input.connectors, compose)] : [],
     },
     facts: {
       counts: { 'keys.all': all.length },
-      flags: { 'client.connected': connected, 'signout.busy': signingOut, 'keys.adding': adding, 'me.person': !!me.data?.person },
+      flags: { 'client.connected': connected, 'signout.busy': signingOut, 'keys.adding': adding, 'me.person': !!me.data?.person,
+        'ask.expensive_known': !!expensive, 'ask.expensive_on': !!expensive?.on, 'ask.saving': ask.saving, 'ask.save_failed': ask.failed },
     },
   })
 }

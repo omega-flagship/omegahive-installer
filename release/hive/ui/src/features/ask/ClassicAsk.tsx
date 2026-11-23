@@ -232,7 +232,8 @@ export function FloatingAsk({ place, experience, inputRef, look, displayedOrigin
       release()
     }
   }, [popOpen])
-  const spend = f.thread ? `${money(f.thread.spent_usd)} / ${money(f.thread.budget_usd)}` : null
+  // a thread has no cap of its own (Jon on #294): what it has spent, only
+  const spend = f.thread ? `${money(f.thread.spent_usd)} spent` : null
   // the button beside the microphone says what it does in plain words, on hover too (round 1: an icon with no label),
   // and what waits on the person in the thread while it's folded
   const threadButtonWords = threadOpen ? 'Hide the thread' : withWaiting(`Show the thread${rows ? ` (${rows} rows)` : ''}`, waiting)

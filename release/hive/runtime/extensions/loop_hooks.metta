@@ -148,7 +148,6 @@
 ; across wake cycles; the fourth and later failures rest until the normal wake. A successful response or new input
 ; starts a fresh stretch. Model-authored marker text has ordinary wait semantics, never the runtime's retry credit.
 ; A rest past the retries is reported like a chosen wait (hive-complete's restCheckDue).
-; A hive refusal's wait lasts its retry_after (hive_services.last_wait_seconds), passed in beside the retry kind.
 (= (honor-chosen-wait $sexpr)
    (honor-chosen-wait $sexpr normal))
 
@@ -156,8 +155,7 @@
    (let* (($_ (change-state! &lastReplyKind $retryKind))
           ($attempts (py-call (hive_helpers.next_format_retry_count $retryKind (get-state &formatRetries))))
           ($_ (change-state! &formatRetries $attempts))
-          ($seconds (py-call (hive_helpers.chosen_wait_seconds (repr $sexpr) $retryKind $attempts
-                                                                (py-call (hive_services.last_wait_seconds))))))
+          ($seconds (py-call (hive_helpers.chosen_wait_seconds (repr $sexpr) $retryKind $attempts))))
          (if (< $seconds 0)
              wait-not-chosen
              (progn (change-state! &loops 0)

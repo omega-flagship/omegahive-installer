@@ -1,4 +1,4 @@
-# Purpose: tests of the host foundation's teams, offers, templates, roles and the Create · Code controller's ceiling.
+# Purpose: tests of the host foundation's teams, offers, templates, roles and the hive total holding their controllers.
 """Foundation records against the real app/DB. Fake process driver; no provider or mind starts.
 
 These are new, unrun controls. Matching Code-service availability is modeled only
@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from hive.core.config import load_settings
+from hive.core.cost_reservations import host_budget_snapshot
 from hive.core.db import new_id, now
 from hive.core.foundation import CODE, REVIEW, CHILD_TEMPLATE, FLOW_TEMPLATE, RULE_ORIGIN, WRITE_SKILLS, READ_SKILLS, NATIVE_SKILLS, HELPER_DENIED, OMEGACODE_AUTHORIZE_SKILLS
 from hive.core.hive import HiveError
@@ -68,6 +69,9 @@ def available(hive, monkeypatch):
     provider = hive.keyring.provider("openrouter")
     name = HEAD.partition("/")[2]
     monkeypatch.setattr(provider,"prices",{**provider.prices,name:{"in":3,"out":15}})
+    # the hive's total, the one cap its owner sets, is what funds a controller with no cap of its own, as a hive with a
+    # key starts with one (HIVE_START_LIMIT_MONTH_USD); a test that needs another sets it
+    hive.budgets.set("hive","month",1000)
     hive.foundation.prepare_request(hive.foundation._binding(CODE)["swarm_id"])
 
 
@@ -118,8 +122,8 @@ def test_fresh_start_has_two_bound_asleep_teams_without_start_or_usage(f):
         assert (a["kind"], a["driver"], a["status"], a["desired"]) == ("omega", "local", "asleep", "asleep")
         assert a["id"] not in f.supervisor.starts
         assert f.db.all("SELECT * FROM usage WHERE agent_id = ?", (a["id"],)) == []
-    assert controller(f)["budget_usd"] == .50
-    assert controller(f, REVIEW)["budget_usd"] == 2.00      # enough for about fifteen Sonnet reviews, not one or two
+    assert controller(f)["budget_usd"] == 0                 # no cap of its own: the hive's total holds it
+    assert controller(f, REVIEW)["budget_usd"] == 0
     # Dot's R6 contract: unavailable Code and held Review are not catalogue offers.
     assert f.collab.services(b["swarm_id"]) == []
     assert f.collab.services(r["swarm_id"]) == []
@@ -178,16 +182,18 @@ def test_existing_spend_lower_caps_stops_and_other_offers_are_preserved(f):
     assert not f.foundation.spawn_enabled(b["swarm_id"])
 
 
-@pytest.mark.parametrize("stored, owners", [(.25, False), (5.0, True), (.10, True), (.30, True)])
-def test_ensure_raises_only_an_untouched_old_default_review_cap(f, stored, owners):
-    """A hive made before REVIEW_CAP_USD keeps its Review controller at the old $0.25 default until ensure runs after
-    the update, which raises exactly that to $2.00. Any other cap is its owner's and stays (the Create hive's reviewer
-    was raised to $2.00 by hand to finish a review). An owner's own $0.25 cannot be told apart, so it rises too."""
-    reviewer = controller(f, REVIEW)
-    f.db.execute("UPDATE agents SET budget_usd=? WHERE id=?", (stored, reviewer["id"]))
+@pytest.mark.parametrize("purpose, stored, owners", [(REVIEW, .25, False), (REVIEW, 2.00, False), (REVIEW, .30, True),
+                                                     (CODE, .50, False), (CODE, 1.0, True)])
+def test_ensure_clears_only_a_cap_the_foundation_once_seeded(f, purpose, stored, owners):
+    """Jon, 23 Nov: "ONE cap for the whole hive - set by the user", so no controller keeps a cap of its own by default.
+    A hive made before this keeps the cap the foundation seeded its controller with until ensure runs after the update,
+    which clears exactly that (Review's $0.25, later $2.00; Code's $0.50). Any other cap is its owner's and stays. An
+    owner's own cap equal to a seed cannot be told apart, so it goes too."""
+    ctl = controller(f, purpose)
+    f.db.execute("UPDATE agents SET budget_usd=? WHERE id=?", (stored, ctl["id"]))
     for _ in range(2):                                      # a second start changes nothing more
         f.foundation.ensure()
-        assert controller(f, REVIEW)["budget_usd"] == (stored if owners else 2.00)
+        assert controller(f, purpose)["budget_usd"] == (stored if owners else 0)
 
 
 def test_person_refusal_expires_only_host_allows_and_remains_effective(f, monkeypatch):
@@ -205,7 +211,7 @@ def test_exact_controller_and_registered_template_limits_not_generic_team(f, mon
     b = f.foundation._binding(CODE)
     limits = f.foundation.admission_limits(b["swarm_id"], b["agent_id"])
     assert {k: limits[k] for k in ("controller_usd","request_usd","child_usd","max_children","lifetime_seconds")} == {
-        "controller_usd":.50,"request_usd":.25,"child_usd":.25,"max_children":1,"lifetime_seconds":600}
+        "controller_usd":0,"request_usd":.25,"child_usd":.25,"max_children":1,"lifetime_seconds":600}
     assert limits["template_ids"] == (CHILD_TEMPLATE,)
     assert limits["binding"] == tuple(b[k] for k in ("principal","purpose","swarm_id","agent_id","updated_at"))
     assert f.foundation.spawn_enabled(b["swarm_id"])
@@ -356,17 +362,18 @@ def test_explicit_controller_and_template_models_are_never_silently_replaced(f,m
     assert f.minds.templates[CHILD_TEMPLATE]["model_id"] == "mock/template-choice"
 
 
-def test_bound_controller_ceiling_is_its_stored_cap_as_its_owner_sets_it(f):
-    a = controller(f)
-    assert f.foundation.controller_ceiling(a["id"]) == .50          # the cap the foundation gives a new team
-    f.db.execute("UPDATE agents SET budget_usd=1.0 WHERE id=?",(a["id"],))
-    assert f.foundation.controller_ceiling(a["id"]) == 1.0          # raised by its owner: more requests fit
-    f.db.execute("UPDATE agents SET budget_usd=.06,status='stopped',desired='stopped' WHERE id=?",(a["id"],))
-    assert f.foundation.controller_ceiling(a["id"]) == .06          # lowered: the lower cap governs
-    f.db.execute("UPDATE agents SET budget_usd=0 WHERE id=?",(a["id"],))
-    assert f.foundation.controller_ceiling(a["id"]) == 0            # a stored zero still governs
-    assert controller(f)["budget_usd"] == 0
-    assert f.foundation.controller_ceiling(controller(f,REVIEW)["id"]) is None
+def test_the_hives_total_alone_holds_a_controller_and_a_cap_its_owner_sets_still_binds(f):
+    """Jon, 23 Nov: "ONE cap for the whole hive - set by the user". A Foundation controller has no cap of its own, so
+    the hive's total holds its calls; a cap its owner sets is theirs and binds beside it."""
+    f.budgets.set("hive","month",1000)
+    for purpose in (CODE, REVIEW):
+        a = controller(f, purpose)
+        rows = {label: limit for label, limit, _ in host_budget_snapshot(f, a["id"])}
+        assert a["budget_usd"] == 0 and f.budgets.paid_without_cap(a) and rows["hive:month"] == 1000
+        assert "agent:" + a["id"] + ":total" not in rows
+        f.db.execute("UPDATE agents SET budget_usd=.06 WHERE id=?",(a["id"],))
+        rows = {label: limit for label, limit, _ in host_budget_snapshot(f, a["id"])}
+        assert rows["agent:" + a["id"] + ":total"] == .06            # its owner's own cap holds it too
 
 
 @pytest.mark.parametrize("purpose,stage", [
@@ -435,6 +442,9 @@ def test_authorized_owner_own_key_is_funded_without_becoming_host_paid(f,monkeyp
         "id":kid,"provider":"openrouter","label":"Invented own key","owner":principal,"secret":"sk-invented-own-key"})
     monkeypatch.setitem(f.keyring.ring["defaults"],"openrouter",kid)
     f.keyring._apply_defaults()  # original in-memory paying route; no save, verify, or HTTP call
+    # the owner's key added on the keys page brings the hive's starting total (the keys route's seed_start_total), the
+    # one cap that holds the controller's calls on that key, as it holds every call: the controller has none of its own
+    assert f.budgets.seed_start_total() is not None
     service_available(f,monkeypatch)
     b = f.foundation._binding(CODE)
     out = f.foundation.prepare_request(b["swarm_id"])
@@ -442,6 +452,7 @@ def test_authorized_owner_own_key_is_funded_without_becoming_host_paid(f,monkeyp
     fact = f.budgets.settlement(a,HEAD,user=principal,turn_bound=False)
     assert a["model"] == HEAD and fact["bounded"] and fact["own_key"] and not fact["host_paid"]
     assert fact["payer"] == fact["key_owner"] == principal
+    assert a["budget_usd"] == 0 and {g[0] for g in fact["governing_limits"]} == {"hive"}, fact["governing_limits"]
     assert out["max_children"] == 1 and out["child_usd"] == .25
     # The original personal policy stays host-only on the exact same settlement.
     answer = model_route.choose("personal-mind:dialogue",f.keyring,f.ownhive,pins="check",
@@ -977,7 +988,7 @@ def test_atomic_foundation_admission_never_invokes_readiness_socket(f,monkeypatc
         raise AssertionError("network observation entered atomic admission")
     monkeypatch.setattr(f.foundation,"_code_reachable",forbidden)
     assert f.foundation.admission_limits(code)["request_usd"] == .25
-    assert f.foundation.controller_ceiling(controller(f)["id"]) == .50
+    assert controller(f)["budget_usd"] == 0
 
 
 def test_held_review_has_no_same_owner_service_or_role_capability_offer(f):

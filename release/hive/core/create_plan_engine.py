@@ -1,5 +1,7 @@
 # Purpose: the Create plan engine: journals each plan, runs the MeTTa plan controller over it, performs the effects
 # it decides, and says which person's live plan waits on a mind.
+# Purpose: the host engine for Create's MeTTa plan controller: it checks a planner's plan, journals what it observes,
+# replays the journal through the reducer and performs each next action through the ports.
 """Create plans: the host engine for the MeTTa plan controller R4.4 (slice 1: "make me a small web page that shows X").
 
 Every decision lives in the vendored reducer modules/create/controller/create_plan_controller_r4_4.metta (R4.4, sha-pinned
@@ -105,6 +107,7 @@ AWAITED = tuple(s for s in UNFINISHED if s != "submitted")
 
 def goal_creator(plan_id):
     return GOAL_CREATOR + plan_id
+
 
 SCHEMA = [
     """CREATE TABLE IF NOT EXISTS create_plan_runs (plan_id TEXT PRIMARY KEY, person TEXT NOT NULL, sentence TEXT NOT NULL,
@@ -229,6 +232,10 @@ PLAN_RULES = {
     # (create_plan_ports.task_text, TASK_READ_CHARS), and the host adds the dependencies it can itself
     "design_piece_before_its_page": "no piece writing index.html depends on a design piece, even through others, "
                                     "since a design review renders the page",
+    "page_files_over_limit": f"the piece writing index.html has room among its {MAX_FILES_PER_PIECE} files for "
+                             "style.css and app.js when no other piece writes them, since the app frame takes a page's "
+                             "style only from style.css and its code only from app.js, and the host gives that piece "
+                             "the ones no piece writes",
     "no-review-for-artifact-kind": "every kind a piece has is reviewed, by one of the hive's own reviews (hive_reviews) "
                                    "or by one the plan adds",
 }
@@ -244,7 +251,8 @@ def plan_rule(code):
 
 def validate_plan(plan):
     """A planner result -> (normalised plan, None) or (None, why). The reducer validates the graph again (its
-    validate_plan codes); this only checks the types the host must translate."""
+    validate_plan codes); this checks the types the host must translate, and gives the piece writing index.html the
+    frame files no piece writes (page_files_over_limit when it has no room for them)."""
     if not isinstance(plan, dict):
         return None, "plan_not_an_object"
     pieces = plan.get("pieces")
@@ -272,6 +280,17 @@ def validate_plan(plan):
             return None, "piece_file_shadows_a_stdlib_module"
         out.append({"id": p["id"], "kinds": kinds, "assignee": assignee, "deps": deps, "files": files,
                     "title": str(p.get("title") or p["id"])[:120], "brief": str(p.get("brief") or "")[:4000]})
+    # The app frame takes a page's style and code only from style.css and app.js (ui_parts.FRAME_RULE), so the piece
+    # writing index.html writes whichever of them no piece writes: on staging (acceptance-tests#30, 21 Nov) a plan gave
+    # its one piece index.html alone, the scaffold's app.js and style.css read-only, and no page it wrote could run.
+    from .create_plan_ports import UI_FILES          # imported here as page_before_design does
+    page = next((x for x in out if "index.html" in x["files"]), None)
+    if page is not None:
+        written = {f for x in out for f in x["files"]}
+        add = [f for f in UI_FILES if f not in written]
+        if len(page["files"]) + len(add) > MAX_FILES_PER_PIECE:
+            return None, "page_files_over_limit"
+        page["files"] = page["files"] + add
     acceptance = [str(a)[:500] for a in plan.get("acceptance", []) if isinstance(a, str)][:20]
     if not acceptance:
         return None, "no_acceptance_criteria"

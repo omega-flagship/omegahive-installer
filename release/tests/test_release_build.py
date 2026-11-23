@@ -155,7 +155,8 @@ class ReleaseBuildTest(unittest.TestCase):
         for script, name in ((MAC_BUILD, "mac-bad.zip"), (WINDOWS_BUILD, "win-bad.zip")):
             done, out = self.build(script, name, UPDATE_PUBKEY=KEY, FEEDBACK_TO="ftp://reports.example.org")
             self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
-            self.assertIn("FEEDBACK_TO: the feedback destination must be an https address, or none", done.stderr)
+            self.assertIn("FEEDBACK_TO: the feedback destination must be an https address, an http address on this machine "
+                          "or at HIVE_FEEDBACK_SERVICE_HOST, or none", done.stderr)
             self.assertFalse(out.exists())
 
 

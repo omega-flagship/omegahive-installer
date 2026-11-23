@@ -1,3 +1,4 @@
+// Purpose: prove the Ask's own memory through the Ask store: kept by the browser, never by the hive.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
@@ -273,7 +274,7 @@ describe('the simulator plays the host memory contract', () => {
 })
 
 describe('conductor-live: the host says its switches; the memory state follows them, bound to the identity', () => {
-  const settingsWith = (capabilities: unknown) => vi.fn(async () => ({ swarm_id: 'sw_x', thread_budget_usd: 0.25, capabilities }))
+  const settingsWith = (capabilities: unknown) => vi.fn(async () => ({ swarm_id: 'sw_x', capabilities }))
   it('memory on: never "unknown" before the first Ask once the switches are read', async () => {
     const client = fakeClient({ askSettings: settingsWith({ conductor: true, memory: true }) as never })
     await start(client)
@@ -314,7 +315,7 @@ describe('conductor-live: the host says its switches; the memory state follows t
     await start(client)
     const pending = useAskStore.getState().loadSettings()
     await start(client, 'user:p_bea')
-    release({ swarm_id: 'sw_x', thread_budget_usd: 0.25, capabilities: { conductor: true, memory: false } })
+    release({ swarm_id: 'sw_x', capabilities: { conductor: true, memory: false } })
     await pending
     expect(askMemory.getView().owner?.principal).toBe('user:p_bea')
     expect(askMemory.getView().capabilities).toBeNull()

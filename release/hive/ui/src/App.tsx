@@ -1,5 +1,6 @@
 // Purpose: the page's root: it mounts the open look and the shell's layers over it, among them the one Ask and the one
 // stage that every look shares.
+// Purpose: mount the signed-in hive, its routes, and the shared notices that travel across them.
 import { AnimatePresence, LazyMotion, MotionConfig } from 'framer-motion'
 import { Suspense, useEffect } from 'react'
 import { lazyRoute } from './lib/lazyRoute'
@@ -12,6 +13,8 @@ import { ActivityTicker, BootScreen, DotDirectory, EmptyHive, Login, SceneContro
 import { SetupNudge } from './features/setup/SetupChecklist'
 import { useApprovalToasts } from './shell/approvalToasts'
 import { useLiveNotices } from './shell/liveNotices'
+import { SpendAlertNotice } from './features/usage/SpendAlertNotice'
+import { useSpendAlerts } from './features/usage/useSpendAlerts'
 import { Toasts, TopBar } from './shell/Hud'
 import { Nav } from './shell/Nav'
 import { useRailExpanded } from './shell/rail'
@@ -200,6 +203,7 @@ export function App() {
   }, [route, ready])
 
   const needsLogin = !!client && (connection === 'unauthorized' || (client.needsAuth() && !ready))
+  const spendAlerts = useSpendAlerts(Boolean(client) && ready && !needsLogin)
 
   return (
     <LazyMotion features={loadMotion} strict>
@@ -255,7 +259,7 @@ export function App() {
               )}
               {route.name === 'usage' && (
                 <Lazy key="usage">
-                  <UsageView />
+                  <UsageView spendAlerts={spendAlerts} />
                 </Lazy>
               )}
               {route.name === 'approvals' && (
@@ -454,7 +458,9 @@ export function App() {
           </>
         )}
         <div className="xc-dress contents">
-          <Toasts />
+          <Toasts>
+            {ready && !needsLogin && <SpendAlertNotice alerts={spendAlerts.alerts} onUsage={route.name === 'usage'} look={experience} />}
+          </Toasts>
         </div>
         <IntroLayer />
         {/* hive power: Off over every view and experience (sign-in stays above it), and Quiet when idle */}

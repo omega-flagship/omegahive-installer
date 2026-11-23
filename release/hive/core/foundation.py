@@ -41,19 +41,21 @@ REVIEW_MANDATE = {"id": "code-proposal-second-opinion", "version": "1"}
 # code-read has no workspace to read. Allowed and untouched: code-proposal-*, code-propose, hive goals.
 OMEGACODE_AUTHORIZE_SKILLS = ("code-workspace", "code-read", "code-search", "code-edit", "code-run", "code-cancel",
                               "code-verify", "code-events", "code-artifact", "code-checkpoint")
-HELPER_DENIED = ("code-open", "code-replace", "code-exec", "code-create", "code-move", "code-remove", "code-git*",
-                 "code-status", "code-changes", "code-check", "code-runs", "code-verifications", "code-output",
-                 "code-diagnostics", "code-review", "code-hunk*", "code-select", "code-merge-*", "code-retrieve",
-                 "code-proof-*", "code-tools", "code-repos", "code-diff", "code-test-*")
+# The heads that work directly in a Code workspace: open one, then edit, run, test, check, review, select, merge and
+# export in it. A request helper is refused them (HELPER_DENIED), and so is every mind outside Create · Code
+# (policy.OWN_CODE_SKILLS), which builds software only by asking Create.
+WORKSPACE_HEADS = ("code-open", "code-replace", "code-exec", "code-create", "code-move", "code-remove", "code-git*",
+                   "code-status", "code-changes", "code-check", "code-runs", "code-verifications", "code-output",
+                   "code-diagnostics", "code-review", "code-hunk*", "code-select", "code-merge-*", "code-retrieve",
+                   "code-proof-*", "code-tools", "code-repos", "code-diff", "code-test-*")
+HELPER_DENIED = WORKSPACE_HEADS
 HELPER_NOTE = "Foundation request helper: proposal path only"
-# Where the Review controller's whole-life cap starts; its owner changes it like any mind's total and ensure keeps it,
-# unless it still holds one of the foundation's earlier defaults (OLD_REVIEW_CAPS_USD), which ensure raises to this.
-# Each Sonnet review call reserves about $0.10 (every input byte counted as a token, plus 4096 output tokens) and costs
-# $0.02-0.03, so $0.25 admitted about six calls, one or two reviews, after which every review was unavailable.
-REVIEW_CAP_USD = 2.00
-# The Review controller's earlier defaults. A stored cap equal to one is taken as untouched, since the store cannot tell
-# an owner's own $0.25 from the default; raising it is the low-risk direction.
-OLD_REVIEW_CAPS_USD = (0.25,)
+# The caps the foundation once seeded its controllers with, which ensure clears: no mind, helper or controller has a cap
+# of its own by default, the hive's total holds them all (Jon on 23 Nov: "ONE cap for the whole hive - set by the user").
+# A stored cap equal to one is taken as untouched, since the store cannot tell an owner's own $0.50 from the seed.
+# Review's $0.25 admitted about six Sonnet review calls (each reserves about $0.10), so it rose to $2, now gone too.
+OLD_CODE_CAPS_USD = (0.50,)
+OLD_REVIEW_CAPS_USD = (0.25, 2.00)
 HELPER_ORIGIN = "hive:foundation:code-helper:v1"   # the seeded per-agent rules before the helper role; migrated away
 HELPER_ROLE = "Foundation request helper"
 HELPER_ROLE_PURPOSE = "foundation_code_helper"
@@ -251,16 +253,17 @@ class HiveFoundation:
             self.hive.events.publish("policy.updated", **self.hive.policy.rule_views())
         return moved
 
-    def _raise_old_review_cap(self, agent_id):
-        """On update, a Review controller whose stored cap is still an old default (OLD_REVIEW_CAPS_USD) moves to
-        REVIEW_CAP_USD; any other cap is its owner's and stays. True when it rose. Idempotent."""
-        marks = ",".join("?" for _ in OLD_REVIEW_CAPS_USD)
+    def _clear_old_seed(self, agent_id, old_seeds):
+        """On update, a controller whose stored cap is still one the foundation once seeded it with (old_seeds) goes to
+        0, no cap of its own: the hive's total holds it. Any other cap is its owner's and stays. True when it moved.
+        Idempotent."""
+        marks = ",".join("?" for _ in old_seeds)
         with self.db.transaction():
-            raised = self.db.execute(f"UPDATE agents SET budget_usd = ? WHERE id = ? AND budget_usd IN ({marks})",
-                                     (REVIEW_CAP_USD, agent_id, *OLD_REVIEW_CAPS_USD)).rowcount
-            if raised:
+            moved = self.db.execute(f"UPDATE agents SET budget_usd = 0 WHERE id = ? AND budget_usd IN ({marks})",
+                                    (agent_id, *old_seeds)).rowcount
+            if moved:
                 self.db.after_commit(lambda: self.hive.emit_agent(agent_id))
-        return bool(raised)
+        return bool(moved)
 
     def _review_role(self):
         role = self.db.one("SELECT * FROM roles WHERE name = ?", ("Foundation proposal reviewer",))
@@ -660,15 +663,16 @@ class HiveFoundation:
                 else "Code is unavailable: a matching reachable service and a real supported funded route are required.")
 
     def ensure(self, principal=None):
-        """One host step; existing spends, stops, refusals and caps are untouched, except a Review controller cap still
-        at an old default, which rises to REVIEW_CAP_USD (_raise_old_review_cap)."""
+        """One host step; existing spends, stops, refusals and caps are untouched, except a controller cap still at one
+        the foundation once seeded, which goes (_clear_old_seed): its controllers have no cap of their own."""
         with self._lock:
             owner = self.hive.ownhive.owner()  # existing user:operator, then actual first admin
-            code_b, code, ctl = self._ensure_team(CODE, "Create · Code", owner, 0.50)
+            code_b, code, ctl = self._ensure_team(CODE, "Create · Code", owner, 0)
+            self._clear_old_seed(ctl["id"], OLD_CODE_CAPS_USD)
             self.helper_role()
             self.migrate_helpers()
-            review_b, review, reviewer = self._ensure_team(REVIEW, "Review", owner, REVIEW_CAP_USD)
-            self._raise_old_review_cap(reviewer["id"])
+            review_b, review, reviewer = self._ensure_team(REVIEW, "Review", owner, 0)
+            self._clear_old_seed(reviewer["id"], OLD_REVIEW_CAPS_USD)
             self._refresh_model(CODE)
             self._refresh_model(REVIEW)
             ctl = self.db.one("SELECT * FROM agents WHERE id=?", (ctl["id"],))
@@ -728,9 +732,13 @@ class HiveFoundation:
         that person (through Ask) and admins. Its coordinator owns it and is the spawn controller; the researcher template
         (the researcher role: everything denied but web search, web fetch and its own task) is what each request's fresh
         researcher is spawned from; the research offer lets a person's mind dispatch to it."""
-        from .research import CONTROLLER_BUDGET_USD, TEMPLATE as RESEARCH_TEMPLATE, budget_usd
-        binding, team, coordinator = self._ensure_team(RESEARCH, "Research", owner, CONTROLLER_BUDGET_USD,
+        from .minds import MAX_ALLOCATION_USD
+        from .research import OLD_COORDINATOR_CAPS_USD, TEMPLATE as RESEARCH_TEMPLATE
+        # no cap of its own: the hive's total holds research (Jon on 23 Nov: "ONE cap for the whole hive - set by the
+        # user"), and an old seed it still holds goes
+        binding, team, coordinator = self._ensure_team(RESEARCH, "Research", owner, 0,
                                                        visibility="private")
+        self._clear_old_seed(coordinator["id"], OLD_COORDINATOR_CAPS_USD)
         self._refresh_model(RESEARCH)
         role = self.hive.research.role()
         with self.db.transaction():
@@ -744,7 +752,9 @@ class HiveFoundation:
             self._sync_offer(team["id"], "research", False)
         with self.db.transaction():
             _, fresh = self._checked_binding(RESEARCH, binding, binding["principal"])
-            self._template(RESEARCH_TEMPLATE, team["id"], fresh, role=role["id"], cap=budget_usd())
+            # a researcher spawns with no allocation of its own (Minds.spawn: 0), so the template sets no ceiling below
+            # the registry's own maximum
+            self._template(RESEARCH_TEMPLATE, team["id"], fresh, role=role["id"], cap=MAX_ALLOCATION_USD)
         return team["id"], coordinator["id"]
 
     def _ensure_research_quietly(self, owner):
@@ -760,8 +770,11 @@ class HiveFoundation:
 
     def research_limits(self, team_id, controller_id=None):
         """The host-bound limits a Research request's spawn is admitted within (Minds.spawn, as Code's
-        admission_limits): None for any other swarm; a stale Research binding refuses, never falls through."""
-        from .research import CONTROLLER_BUDGET_USD, TEMPLATE as RESEARCH_TEMPLATE, budget_usd, lifetime_minutes
+        admission_limits): None for any other swarm; a stale Research binding refuses, never falls through. A research
+        request and its researcher have no budget of their own (request_usd and child_usd None, Jon on 23 Nov: "There
+        should no limit per agent anymore - only a global limit", "Helpers = sub agents"): the hive's total holds the
+        researcher's calls, the one cap its owner sets."""
+        from .research import MAX_RESEARCHERS, TEMPLATE as RESEARCH_TEMPLATE, lifetime_minutes
         with self.db.transaction():
             b = self._binding(RESEARCH)
             if b is None or b["swarm_id"] != team_id:
@@ -785,9 +798,11 @@ class HiveFoundation:
             if agent.get("desired") in ("stopped", "paused"):
                 raise self.hive.error(409, "foundation_unavailable", "The Research swarm's coordinator is stopped.",
                                       {"reason": "coordinator_stopped", "mind_id": agent["id"]})
-            budget = budget_usd()
-            return {"research": True, "controller_usd": CONTROLLER_BUDGET_USD, "request_usd": budget, "child_usd": budget,
-                    "max_children": 1, "lifetime_seconds": lifetime_minutes() * 60 + 60,
+            # one researcher at a time (each lease admits one child), and over the request's life as many as staffing
+            # may give it (research.MAX_RESEARCHERS): Minds.spawn counts every child a request has had against this
+            return {"research": True, "controller_usd": float(agent.get("budget_usd") or 0), "request_usd": None,
+                    "child_usd": None,
+                    "max_children": MAX_RESEARCHERS, "lifetime_seconds": lifetime_minutes() * 60 + 60,
                     "template_ids": (RESEARCH_TEMPLATE,),
                     "binding": (b["principal"], b["purpose"], b["swarm_id"], b["agent_id"], b["updated_at"])}
 
@@ -874,33 +889,10 @@ class HiveFoundation:
                 raise self._error("The current helper template has no real supported funded route.")
             if any(self._blocked_rule(agent["id"], team_id, skill) for skill in NATIVE_SKILLS):
                 raise self._error("A person's current native-control refusal remains effective.")
-            # the controller's cap is its stored one (controller_ceiling)
+            # controller_usd: the controller's stored cap, 0 unless its owner set one; the hive's total holds it
             return {"controller_usd": float(agent.get("budget_usd") or 0), "request_usd": 0.25, "child_usd": 0.25,
                     "max_children": 1, "lifetime_seconds": 600, "template_ids": (CHILD_TEMPLATE,),
                     "binding": (b["principal"], b["purpose"], b["swarm_id"], b["agent_id"], b["updated_at"])}
-
-    def controller_ceiling(self, agent_id):
-        """Canonical budget snapshot input; no pickup/producer/mind lock.
-
-        Lifecycle stops do not enlarge a stored liability's ceiling. Currentness
-        of execution, service, route, lease and policy is checked by admission.
-        """
-        b = self._binding(CODE)
-        if b is None or b["agent_id"] != agent_id:
-            return None
-        team = self.db.one("SELECT * FROM swarms WHERE id=?", (b["swarm_id"],))
-        agent = self.db.one("SELECT * FROM agents WHERE id=?", (agent_id,))
-        owner = self._owner_read()
-        if (not team or not agent or b["principal"] != owner or team.get("owner") != owner
-                or agent.get("owner") != owner or team.get("archived_at") or agent["deleted"]
-                or team.get("coordinator_id") != agent_id or agent["swarm_id"] != team["id"]
-                or agent["kind"] != "omega" or agent["driver"] != "local"):
-            raise self._error("The foundation controller budget binding is not current.")
-        # The controller's own stored cap, which the foundation sets to 0.50 when it makes the team (_ensure_team) and
-        # which its owner changes like any mind's total (budget_usd is editable). A fixed 0.50 was the controller's
-        # whole-life total, so after two requests had spent or still held it, Create · Code refused every request
-        # (402 spend_limit) and no setting could change that. A stored zero still governs (no paid admission).
-        return float(agent.get("budget_usd") or 0)
 
     def spawn_enabled(self, team_id):
         if getattr(self.hive.settings, "mind_spawn_operator_off", False):

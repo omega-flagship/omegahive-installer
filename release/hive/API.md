@@ -73,6 +73,10 @@ URL-safe strings.
   it gets `404 not_found`. A personal mind is also its person's. Narrower rules stay on top: some settings are an
   admin's alone, a Remind on a personal mind is its person's, and a mind set to `owner_only` approvals is answered by its
   owner alone (`403 approval_owner_only`). Agent views carry `may_control`, the same answer, beside `may_sleep`.
+  A cap on what a mind or a swarm spends is narrower still: only its owner (its owner or its person; one made before
+  owners were recorded is an admin's) sets or removes it, and anyone else, an admin included, gets `403 owner_only`
+  (Jon on #615 and #256). The limit law decides it (`hive/spaces/lib_limits.metta`, below). Agent and swarm views
+  carry `may_cap`, that answer.
 - **People (Google sign-in)** (`hive/core/people.py`)
   - Invite only by default: an admin invites an address (`POST /api/invites`), and that Google account accepts it
     through `GET /api/auth/google/start?invite=…` → Google → `GET /api/auth/google/callback`. Admins come only from
@@ -268,7 +272,7 @@ interface ModelOption { id: string; provider: string; label: string; local: bool
 | `GET /api/auth/me` | → `{principal, auth_session_ref, kind, expires_at, role, person, person_kind, local_operator}`. `auth_session_ref` is `"as1_"` + lowercase hex HMAC-SHA256, keyed with this deployment's secret (`HIVE_DATA_DIR/auth-session-ref.key`, 32 random bytes as 64 hex, mode 0600, created atomically on first use; a missing or malformed key is replaced, never skipped), over the ASCII string `hive-auth-session-reference/2`, a NUL byte, then the verified session's `token_hash`. It is stable within one session and across restarts with the same key, different across sessions and principals, changes if the key is replaced, and cannot be computed from the bearer or the sessions table without the key. **No consumer yet: attribution only, not a bound identity.** No route accepts it as authentication or capability authority, and nothing binds actions to it today. |
 | `GET /api/hive` | → `{name, version, agents, swarms, awake, beliefs, spent_usd}`. `beliefs` counts the statements of the swarms this person may see, as `GET /api/swarms/{id}/beliefs` lists them |
 | `GET /api/models` | → `ModelOption[]` |
-| `GET /api/swarms` | → `Swarm[]`, each with this person's `may_control`: whether they may act on it (its owner, its person or an admin), as the vocabulary route below decides. A hint for the UI; the routes still enforce. |
+| `GET /api/swarms` | → `Swarm[]`, each with this person's `may_control`: whether they may act on it (its owner, its person or an admin), as the vocabulary route below decides, and `may_cap`: whether they may set or remove its cap (its owner or its person alone). Hints for the UI; the routes still enforce. |
 | `POST /api/swarms` | `{name, description?, hue?}` → `Swarm` |
 | `GET /api/swarms/{id}` | → `Swarm`, with `may_control` as above |
 | `POST /api/swarms/{id}/archive` · `/restore` | Admin only. → `Swarm`. Archive hides a swarm with history, deletes nothing and is restorable; refused (409 `swarm_busy`) while a mind there is awake, starting or wants to wake, or a flow is still running. |
@@ -299,6 +303,8 @@ interface ModelOption { id: string; provider: string; label: string; local: bool
 | `POST /api/agents/{id}/messages` | `{text, conversation_id?, from_ask?}` → `Message`. `from_ask`: the Ask exchanges this mind's own chat has not heard, as the person's browser keeps them, in the Ask's `conversation` shape (at most 8 `{said, answer, by, at}`, 8 KB). Taken only from a named person in their own chat with the mind, else 400 `bad_request`. The mind's envelope carries them as `ask_earlier`, one line per exchange naming who answered ("they said “…”; you answered “…”"), shown before the person's words in the same channel event, so no model call is added; an exchange naming a private app is dropped, and the person's own view of the chat shows only their words. |
 | `GET /api/agents/{id}/logs?tail=200` | → `{lines: string[]}` |
 | `GET /api/usage?agent_id=&since=` | → `Usage[]` |
+| `GET /api/usage/spend-alerts` | → `{alerts: SpendAlert[]}`: the open spending alerts this person receives, the hive's to its owner and a mind's to that mind's own person, and any still paused. The hive's totals and its cap forecast count only the hive's money, its keys and its owner's own key; a member's own-key spend counts only in their mind's alert (`spend_monitor.py`) |
+| `POST /api/usage/spend-alerts/{id}/control` | `{action: "pause" \| "resume"}` → `SpendAlert`. Only the scope's owner: the hive owner for the hive, the mind's own person for a mind (403 `owner_only`; 404 for an alert they don't receive; 409 `spend_alert_closed` to pause one that cleared). A hive pause holds new paid calls on the hive's money (402 `hive_spend_paused`); calls a member makes on their own key go on, and only their mind's own pause (402 `mind_spend_paused`) holds those. Calls already admitted finish |
 
 Errors are `{"error": {"code", "message"}}` with a 4xx/5xx status. Every error answer also carries an id in its
 `X-Hive-Error-Id` header (`e-` and 8 hex digits), and the hive keeps the most recent ones with the person who met them
@@ -647,9 +653,10 @@ interface MemoryAtom { index: number; text: string }
   evidence, the publish inherits the stamp it read. It is an echo and does not
   revise the belief.
 - **LLM spend is checked before the call.**
-  - 402 `no_budget`: a paid model with `budget_usd` 0 while the hive has no cap
-    on the Limits page. Once it has one, a `budget_usd` 0 mind is held by the
+  - 402 `no_budget`: a paid model with `budget_usd` 0 on the hive's money while
+    the hive has no cap on the Limits page. Once it has one, a `budget_usd` 0 mind is held by the
     hive cap, its payer's allowance and the caps set (see "Spending limits" below).
+    A call the person it is for pays on their own key needs no cap.
   - 402 `unpriced_model`: a remote model with no price; `HIVE_ALLOW_UNPRICED=1`
     allows it.
   - 402 `budget_exhausted`: spent plus the call's worst-case cost would pass
@@ -736,12 +743,26 @@ id, `member-default`, `grant`, `invite` or `every-mind`).
 **A mind with no cap of its own.** Without a hive cap, a paid mind with `budget_usd` 0 is refused 402 `no_budget`; an
 every-mind rule alone doesn't change that. Once the hive has a cap, such a mind is admitted within the hive cap, its
 payer's allowance and the caps set (its `$0` lifetime row is then not one of its reservation rows). A personal mind its
-person pays for from their allowance is admitted without a hive cap. Neither the every-mind rule nor this admission
-reaches the two Foundation bindings, which keep their explicit caps.
+person pays for from their allowance is admitted without a hive cap. A Foundation mind is admitted and held the same
+way, the every-mind rule included: it gets no exception (Jon on #256, 23 Nov: after #679 Foundation minds have no caps
+of their own).
 
-**Sized defaults.** A session given no `budget_usd` gets `clamp(10% of the mind's headroom, $0.25, $100)`, never above
-the headroom, once the hive has a cap ($1 without one); 402 `spend_limit` with nothing left. A lifecycle lease suggestion
-is `min(what the coordinator may hand on, its session default)`.
+**A call its person pays on their own key needs no total** (Jon on #650: "a person's own key should just work"). When
+the person the call is for (`Hive.user_for`) pays, on a key that is theirs (`Hive.payer_for` → `(them, true)`), a
+`budget_usd` 0 mind is admitted with or without a hive total, held by the limits that person set on their keys, a limit
+on its team or the key, and the total when there is one; its `$0` lifetime row is not one of its reservation rows. With
+nothing limiting it, not even a limit of their own, it is held under their own keys' scope with a label that caps
+nothing, as an Ask turn's is, so a limit they set later counts the hold. That is a person's own mind on their key, and
+also their call to someone else's mind once `OwnHive.own_key_for` has moved it onto their key. So the loosening above is
+about the hive's money. A person's key paying for a hive mind with no person behind it still needs a total, and a call
+for anyone else on a person's own key never spends (see "Who may use a key at all" below). A Foundation-bound mind goes
+through either way like any other, with no automatic share.
+
+**A session given no `budget_usd`** has no cap of its own: it runs under the hive cap and its payer's allowance, as
+an Ask thread does (Jon on #256, 23 Nov), and is refused 402 `spend_limit` at start only when its mind has nothing left
+under its limits. A session given a budget still caps the mind while it runs. A lifecycle lease suggestion is what the
+coordinator may hand on. A step a Create plan hands a mind still gets its own budget (`Goals.give_step_budget`): a tenth
+of the mind's headroom from $0.25 to $100, never above it, at least $1, and $1 while the hive has no cap.
 
 **A person's instruction** (`POST /api/requests`) is bounded by `Budgets.request_bound`: the asker's monthly allowance
 (the instruction is theirs to pay), every hive rule, `HIVE_BUDGET_USD` while the hive has no cap, the caps set on the
@@ -759,11 +780,22 @@ receiving team, and the team controller's own caps. The row with the least room 
 
 **Server settings only seed a hive with no cap** (Jon 2026-10-07: "surely they should match the number I set in the
 admin panel"). `HIVE_BUDGET_USD` applies only while the hive has no cap; once it has one it is reported and unused, and
-`GET /api/hive` `limits.hive_budget_usd` is the cap in force (0 then). `HIVE_MEMBER_MONTHLY_USD` and
-`HIVE_ASK_CONDUCTOR_TURN_USD` have no panel setting above them and always apply (a person's own month rule still replaces
-the member allowance). `HIVE_SWARM_MONTHLY_USD` and `HIVE_PERSON_REQUEST_CEILING_USD` are retired: a hive that still sets
-one logs once at startup that it does nothing. Every live setting is listed in `server_settings` below.
-**Starting limit** (Jon 2026-11-09): `HIVE_START_LIMIT_MONTH_USD` (default 50, 0 = off, anything unreadable = 50 with a startup warning). When an admin or the owner adds a key (`POST /api/keys`) while nothing governs a paid call yet, the hive sets that month limit: gateway off, the hive cap (only while it has none and `HIVE_BUDGET_USD` is not set non-zero, checked and written in one transaction; always the setting, never a request's `month_usd`); gateway on with no `month_usd`, the owner's all-keys total through the `month_usd` path. The 200 then carries `starting_limit: {"usd", "scope": "hive"|"own"}`; never for a member, never over an existing limit.
+`GET /api/hive` `limits.hive_budget_usd` is the cap in force (0 then). `HIVE_MEMBER_MONTHLY_USD` has no panel setting
+above it and always applies (a person's own month rule still replaces the member allowance). `HIVE_SWARM_MONTHLY_USD` and `HIVE_PERSON_REQUEST_CEILING_USD` are retired: a hive that still sets
+one logs once at startup that it does nothing. Every live setting is listed in
+`server_settings` below, with whether the operator set it (`set`: in the environment or the deployment's file; a
+figure from `hive/config.json` alone is not set). An Ask turn and an Ask thread have no cap of their own
+(see "Ask money" below).
+
+**Where the numbers come from** (T-215). The money settings above and the Ask's (its expensive question, its
+conductor's limits, its rates and timeout: the 19 keys of `hive/core/config.py` `KEYS`) are the hive's settings, never
+the code's. Each key is read on its own, first layer found wins: the environment, else the deployment's JSON file that
+`HIVE_CONFIG_FILE` names (when set), else `hive/config.json` in the tree, which carries every one. A deployment file
+needs only the keys it changes. A variable set but empty (or blank) counts as unset and falls back to the files; in a
+file, a key that is present is set, so `null` or `""` there is malformed. A key in no layer, or malformed or out of
+range in the layer that has it, refuses the hive's start (`python -m hive` exits 78) with one message naming every such
+key and its layer. `deploy/hive.env.example` lists them with the figures `hive/config.json` holds.
+**Starting limit** (Jon 2026-11-09): `HIVE_START_LIMIT_MONTH_USD` (50 in `hive/config.json`, 0 = off; a value that is not a number of dollars refuses the hive's start, see "Where the numbers come from" above). When an admin or the owner adds a key (`POST /api/keys`) while nothing governs a paid call yet, the hive sets that month limit: gateway off, the hive cap (only while it has none and `HIVE_BUDGET_USD` is not set non-zero, checked and written in one transaction; always the setting, never a request's `month_usd`); gateway on with no `month_usd`, the owner's all-keys total through the `month_usd` path. The 200 then carries `starting_limit: {"usd", "scope": "hive"|"own"}`; never for a member, never over an existing limit.
 
 **Notices at 50, 80 and 100%** (`hive/core/limit_notices.py`). Once a paid call's usage commits, the payer's monthly
 allowance on the hive's money and the hive's monthly cap are each compared with this month's spend. Crossing 50, 80 or
@@ -775,30 +807,9 @@ allowance's notices, the admins get the hive cap's and any person's 100%. A pers
 cap is that limit's 100% notice too. The marks are the table `limit_notices(label, month, threshold, limit_micros)`, so a
 restart never repeats one. A hive cap that is a day rule has no monthly notice.
 
-**The spend-rate guard** (`cost_reservations.guard_charges`). What a mind spends on its own is paced: the payer's monthly
-allowance, the hive's monthly cap and a team's or a mind's monthly cap where one is set (`cost_reservations.guarded`; a
-day or total rule and a key's cap are held by their limit alone) each refill at a thirtieth of the month a day with a
-burst of a tenth (GCRA, ITU-T I.371 annex A, one theoretical arrival time per limit in `limit_rates`): with $50 a month
-that is $1.67 a day and a $5 burst. A call a person's own live work holds (`Hive.present_for`: their Studio session, the
-Ask turn open on the mind, an active Session with it, a child mind a team spawned for their request until its allocation
-goes back, such as a Code request's helper, their live Create plan waiting on a goal it gave the mind, their live Code
-request waiting on the mind's second opinion, or their message to the mind, in its chat or a room that delivered it to
-the mind, that it hasn't answered yet, for an Ask turn's `TIMEOUT` (120 s) from when they sent it; and every call of the
-Ask conductor and the personal-mind gateway) is held by its limits alone and charges the guard nothing, so Make can
-spend a small month in one sitting: paced, a $1 month held Make's planner about 17 hours after one 2-cent call, since
-each call's worst case was nearly the whole $0.10 burst, and a $2 month held a Code helper's second call about 13 hours.
-A month limit someone raises or lowers keeps the money the guard counts ahead: each `limit_rates` row keeps the limit it
-was counted at, and the next call scales its time ahead and its open charges by old over new, so a raised cap frees its
-larger burst at once.
-A call is admitted while its worst case fits the burst left, inside the reservation's own transaction; a call bigger
-than the burst only when the guard is full. A call settled below its worst case gives the difference back and a released
-call all of it (a trigger on `cost_reservations`, so every path that ends a hold does), so the guard counts what was
-actually spent. A refused call holds nothing and is answered 429 `spend_rate` with `scope`, `period`, `limit_usd`,
-`retry_after` (whole seconds, also the `Retry-After` header) and `until`, the same shape as a provider's rate limit;
-`budget.slowed` announces it once until a call is admitted again. Every refusal of a mind's call for spending or pace
-also carries `say`, the hive's sentence for anyone who reads the mind, which names no limit (a spending limit's 402 says
-"A spending limit has no room for this call."): the mind's own wait shows it and lasts `retry_after` where the refusal
-gives one, else 60 s, and the mind's page keeps it slowed or paused until a call is billed again.
+A spending-limit 402 for a mind's call carries `say` for anyone who reads the mind. When the refusal names a limit,
+the sentence is "A spending limit has no room for this call." The details still identify the limit to the caller.
+The mind's wait shows that sentence and retries after 60 s. Its page keeps the spending notice until a call is billed.
 
 ### `GET /api/budgets/limits` (admins only; 403 `admin_only` otherwise)
 
@@ -828,14 +839,11 @@ it runs, not removed from the page), `member-default` or `visitor` (a person's d
   "minds": [{"agent_id": "a_72b7ff60", "name": "Dot0", "swarm_id": "s_c9a64dee", "kind": "omega", "budget_usd": 0.0,
              "spent_usd": 3.0, "paid_calls": "allowed", "limits": [],
              "checked": ["hive:month", "swarm:s_c9a64dee:month"], "ask_threads": [],
-             "headroom_usd": 37.6, "session_default_usd": 3.76, "lease_default_usd": 3.76}],
-  "rulings": [{"name": "ask_thread", "limit_usd": 0.25, "max_usd": 5.0, "source": "jon-ruling"},
-              {"name": "conductor_turn", "limit_usd": 0.25, "source": "jon-ruling", "setting": "HIVE_ASK_CONDUCTOR_TURN_USD"},
-              {"name": "member_month", "limit_usd": 50.0, "source": "jon-ruling", "setting": "HIVE_MEMBER_MONTHLY_USD"}],
+             "headroom_usd": 37.6, "lease_default_usd": 37.6}],
+  "rulings": [{"name": "member_month", "limit_usd": 50.0, "source": "jon-ruling", "setting": "HIVE_MEMBER_MONTHLY_USD"}],
   "server_settings": [
     {"name": "HIVE_BUDGET_USD", "value": 0.0, "set": false, "applies": false, "effect": "not used: the hive cap on the Limits page replaces it", "until_total": true},
     {"name": "HIVE_MEMBER_MONTHLY_USD", "value": 50.0, "set": false, "applies": true, "effect": "the month allowance of each member with no limit of their own", "until_total": false},
-    {"name": "HIVE_ASK_CONDUCTOR_TURN_USD", "value": 0.25, "set": false, "applies": true, "effect": "the most one Ask conductor turn may spend", "until_total": false},
     {"name": "HIVE_START_LIMIT_MONTH_USD", "value": 50.0, "set": false, "applies": false, "effect": "not used: the hive already has a cap on the Limits page", "until_total": false}]
 }
 ```
@@ -851,16 +859,26 @@ it runs, not removed from the page), `member-default` or `visitor` (a person's d
   the cap, a person's day or total rule.
 - `old_defaults` lists stored values that look like an old form's pre-filled figure rather than one someone chose: a
   mind whose `budget_usd` equals a form pre-fill ($5 or $10) or its role's `default_budget`, and a swarm month rule of
-  exactly $500 with no note. Never listed: work-session caps and other agent rules, $0 swarm rules (deliberately inert)
-  and the Foundation bindings' caps. Each carries the `change` its removal makes and the `reset` that makes it; the page
-  removes them in one action after one confirmation that lists every `change`.
+  exactly $500 with no note, a Foundation mind's or team's included. Never listed: work-session caps and other agent
+  rules, and $0 swarm rules (deliberately inert). Each carries the `change` its removal makes, the `reset` that makes
+  it and `may_change`; the page removes the viewer's own in one action after one confirmation that lists every
+  `change`, and leaves one on someone else's mind or swarm to its owner.
 - `minds[].checked` lists every key a paid call by that mind is checked against; taking the lowest `limit_usd` per key
   over `hive`, `caps` and the mind's own `limits` gives exactly the reservation snapshot (tested). `paid_calls` is
-  `allowed` or `no_budget`. `ask_threads` are the mind's active Ask threads, each held by its own cap.
+  `allowed` or `no_budget` (`allowed` for a mind its person pays for on their own key, hive cap or not). `ask_threads` are the mind's active Ask threads, each held by its own cap.
 
 `GET /api/budgets` (the flat list) holds the stored rules only, each with `spent_usd`, `held_usd` and `origin: "rule"`.
 For a non-admin it leaves out every row about a team or mind they cannot see, any key's row and other people's
 allowance rows. The admin route also passes rows through the viewer's visibility, as defence in depth.
+
+Who may change a limit is the limit law's to decide, in MeTTa (`hive/spaces/lib_limits.metta`, loaded when the hive's
+PeTTa starts), and `limits_view.limit_refusal` enforces its verdict: a mind's or a swarm's cap, an `agent:` or `swarm:`
+rule or a mind's own `budget_usd` (`PATCH /api/agents/{id}`), is its owner's alone, and anyone else, an admin included,
+gets `403 owner_only` and can ask the owner; every other limit (the hive cap, a person's allowance, the every-mind rule,
+a key's) is a hive admin's (`403 admin_only` otherwise). A scope of the wrong shape is `400 bad_scope` first, for
+anyone, and a mind or swarm the person doesn't see is `404 not_found`. Only a changed `budget_usd` is refused: sending
+back the one a mind has changes nothing. `POST` and `DELETE /api/budgets` follow it, and each row of `GET /api/budgets`
+and of the Limits page's `caps` and `old_defaults` carries `may_change`, the same answer.
 
 **Reservations count liabilities by subject.** Each reservation records what the call spends against (the hive, the
 mind, its team, the paying person off their own key, the key), whether or not a rule on it existed then. A budget row
@@ -1104,7 +1122,7 @@ An unknown billable or unit is refused, and so is a price that is missing, non-n
 - released: 409 `operation_released`;
 - the same id with a different request: 409 `operation_conflict`.
 
-**Session close.** `POST /api/sessions/{id}/end` is 409 `liabilities_open` (`reservations[]`) while the mind has a reserved, dispatched or unknown liability on its own cap, whatever the switch, for a session whose cap is part of the mind's rule: an ordinary session, or an Ask thread the mind answers itself. Ending one restores the outer cap, so it waits until they settle by themselves, an unknown one at the latest an hour after its outcome went unknown. An Ask thread with its own cap (the conductor's or a browser's) is never part of the mind's rule, so ending it restores nothing and is not refused for the mind's open calls; its own holds stay counted against it however late they settle. The check runs inside the same write transaction a reservation takes, and the media admission re-checks the mind's active sessions inside its reservation transaction, so either order is safe. With the route on, ending an ordinary (non-Ask) session is also 409 `mind_running` while the mind is awake or starting.
+**Session close.** `POST /api/sessions/{id}/end` is 409 `liabilities_open` (`reservations[]`) while the mind has a reserved, dispatched or unknown liability on its own cap, whatever the switch, for a session whose cap is part of the mind's rule: an ordinary session. Ending one restores the outer cap, so it waits until they settle by themselves, an unknown one at the latest an hour after its outcome went unknown. An Ask thread has no cap and is never part of the mind's rule, whichever answers it, so ending it restores nothing and is not refused for the mind's open calls; its calls stay labelled with it however late they settle. The check runs inside the same write transaction a reservation takes, and the media admission re-checks the mind's active sessions inside its reservation transaction, so either order is safe. With the route on, ending an ordinary (non-Ask) session is also 409 `mind_running` while the mind is awake or starting.
 
 **Mind side.** Inside a hive (`HIVE_LLM_URL` set), `generate-image` and `generate-image-quality` (`modules/media_imagegen`) call this route and return `IMAGE-GENERATED sha256=… WxH operation=… artifact-ready`. Without an id, a retry reuses the derived operation. A deliberate new attempt starts the prompt with `op=<new-id> ` (or passes `operation_id` from Python). They never fall back to the direct vendor. The inventory reports these skills as `host_metered: true`, with `budget_route: "reservations"`, while the route is on and the op is pinned.
 
@@ -1182,7 +1200,7 @@ rate_limited | too_large | timed_out | operation_conflict | invalid | stopped`, 
 - `POST /api/ask` creates one turn and returns **202** with the turn view (below).
   - Body (exact keys, 32 KB at most):
     `{operation_id: [A-Za-z0-9_.:-]{8,120}, text: 1–4000 chars, context?, thread?: <Ask thread id>, via?: "typed"|"voice", continues?: <ended turn id>,
-    carry?: true}`.
+    carry?: true, go_ahead?: true}`.
   - Continue names its stopped turn with `continues` (the accepted frame's `turn_id`). Typed requests omit it.
     It must name an undeleted, ended turn of the same person and answering mind, created within the last 24 hours
     (`ask_intents.TURN_MAX_AGE`); otherwise admission returns 400 `invalid`. The field is stored on the turn and
@@ -1195,6 +1213,8 @@ rate_limited | too_large | timed_out | operation_conflict | invalid | stopped`, 
     at once as `refused/stopped`: no conductor, model or mind answers it, nothing reaches the mind's outbox, and the
     intent is recorded and submitted on the closed turn as on an open one. It takes no `memory_notes`, `answer_in`,
     conductor pick, `conversation` or `continues` (400 `invalid`).
+    `go_ahead` is `true` or absent (anything else is 400 `invalid`): the person already said go ahead, so this turn never
+    asks "Go ahead?" (see "Ask money").
   - `context` (exact keys): `{route?: ≤120, experience?: slug, program?: app id, swarm_id?, mind?: <mind id>,
     with?: <mind id>, chosen?: true, selection?: [≤20 {kind, ref}], view?: ≤2 KB {refs?: [≤50 {kind, ref}], acts?: [≤50 act ids],
     summary?: ≤500}}`. The `kind` of a ref is one of `mind|swarm|goal|room|artifact|item|feature`.
@@ -1229,6 +1249,10 @@ rate_limited | too_large | timed_out | operation_conflict | invalid | stopped`, 
   10 s in all to settle before the provider client closes; the turns' rows then close by expiry, as on any restart.
   Best effort: a call that fails, outlasts its window or is still out at the end of that grace keeps its worst case
   held unknown, as any unknown outcome, logged once by turn and exception type; a failed shutdown drain is logged too.
+- `POST /api/ask/{operation_id}/go-ahead {go: true|false}` answers the turn's "Go ahead?" (see "Ask money"): the asker
+  only (anyone else 404 `not_available`), a conductor turn only. `go: true` carries the waiting turn on and it asks
+  nothing more, `go: false` stops it as `POST .../stop` does; either answers `{ok: true, go}`. A turn that isn't waiting
+  on a go-ahead (never asked, already answered, or closed) answers 409 `not_waiting`; any other body is 400 `invalid`.
 - The person's own use of the page (a click, a scroll, a key that moves the page, Back) never ends a turn. The page
   holds the mind's moves of the page itself for the rest of that turn, until the person steers it: an `act` it is sent
   then is answered `stale_origin` and not applied, and a move the mind proposes becomes a Go card. The turn runs on to
@@ -1236,7 +1260,7 @@ rate_limited | too_large | timed_out | operation_conflict | invalid | stopped`, 
   answers 404 `not_available` and changes nothing, which such a page reads as nothing for the host to do.
 - `GET /api/ask?limit=50` lists the caller's own turns, admins included.
 - `DELETE /api/ask/threads/{thread_id}` is for the thread's owner only. It returns `{deleted, turns}`, and it:
-  - ends the thread, which restores the cap and stops any open turn;
+  - ends the thread, which stops any open turn;
   - archives and empties its room;
   - removes the request and answer text from its turns, frames and hub messages;
   - resets the thread, room and bookkeeping task titles to `Ask with <mind>`.
@@ -1249,10 +1273,13 @@ rate_limited | too_large | timed_out | operation_conflict | invalid | stopped`, 
   only**. They return every person's turns (text, resolved context, state and frames). A personal mind's turn shows
   metadata only (ids, times, state, money, `acting_as`, content-free frames): the host keeps no words for it.
 - `GET /api/me/ask` returns
-  `{swarm_id, swarm: {id, name, orchestrator {id, name, status}} | null, thread_budget_usd, max_thread_budget_usd: 5, eligible: [swarm…], capabilities: {conductor: bool, memory: bool}}`.
+  `{swarm_id, swarm: {id, name, orchestrator {id, name, status}} | null, ask_when_expensive: bool, expensive_usd, eligible: [swarm…], capabilities: {conductor: bool, memory: bool}}`.
+  `ask_when_expensive` is the person's switch for the "Go ahead?" question, on unless they turned it off;
+  `expensive_usd` is the answer cost at which a turn of theirs asks it now (see "Ask money").
   `capabilities` is the hive's on/off signal for the page and nothing else: `conductor` is `HIVE_ASK_CONDUCTOR=1`,
   `memory` is the conductor on and `HIVE_ASK_MEMORY=on` (memory_notes reach the model, and the `remember` tool exists).
-- `PUT /api/me/ask` takes `{swarm_id? | mind_id?, thread_budget_usd?: >0 and ≤5}`. A `mind_id` is stored as its swarm.
+- `PUT /api/me/ask` takes `{swarm_id? | mind_id?, ask_when_expensive?: bool}`; any other key, the retired
+  `thread_budget_usd` included, is 400 `invalid`. A `mind_id` is stored as its swarm.
   The swarm must pass the same gate as a turn.
 
 **Turn view:** `{operation_id, turn_id, state: accepted|thinking|done|refused, reason, thread: {id, mind {id, name}, budget_usd, spent_usd, addressed}, text, via, context, addressed, answer_message_id, created_at, closed_at, turn_spent_usd, acting_as: {mind_id, name} | null, speaks_as: {mind_id, name} | null}`. `acting_as` marks a turn routed to the asker's personal mind, whose words stay in the browser. `speaks_as` names the mind whose voice answers. On a conductor turn routed through a swarm, the person's own mind may speak while `thread.mind` remains the coordinator used for routing and accounting. Clients without `speaks_as` use `thread.mind` for the name.
@@ -1311,10 +1338,13 @@ An Ask thread is a Session with `purpose: "ask"`:
 - The bookkeeping task has binding kind `ask.thread`, no assignee and no claim lease. It is omitted from task
   lists and task events. A mind cannot claim or finish it; ending the thread closes it as done.
 
-The thread's cap is the coordinator's spend at creation plus `thread_budget_usd`. The default is **$0.25**, as Jon
-decided on 2026-10-05. The person may raise it up to $5 without an admin. Session caps on one mind compose: the mind's total rule is min(the rule before any session, every
-active session's cap). It is recomputed on every start and end, so the rule that was there before comes back exactly
-whatever order the sessions end in. A rule set by anyone else in the meantime is kept. A session never raises a cap.
+An Ask thread has no cap of its own (Jon's design for the Ask on omegahive#294, item 2, which replaced his $0.25 thread
+of 2026-10-05): its turns are held by the person's monthly allowance and every other limit someone set, and its
+`budget_usd` is 0. It never touches its mind's total rule. Ordinary Sessions' caps on one mind still compose: the
+mind's total rule is min(the rule before any session, every active ordinary session's cap). It is recomputed on every
+start and end, so the rule that was there before comes back exactly whatever order the sessions end in. A rule set by
+anyone else in the meantime is kept. A session never raises a cap. At startup every mind's composed rule is computed
+again, so a cap an Ask thread installed under an earlier build goes.
 The model calls are paid through the existing payer chain (`Hive.payer_for`), bound to the turn:
 - **One payer person per coordinator at a time.** A turn is refused with 409 `coordinator_busy` while another person
   has an open turn, or an active ordinary Session, on that coordinator.
@@ -1327,14 +1357,12 @@ The model calls are paid through the existing payer chain (`Hive.payer_for`), bo
   approximate. They measure the mind's spend over a window, which includes anything else the coordinator did in it,
   such as its own goals, or late work on an earlier person's timed-out turn.
 
-- A thread at or over its cap refuses the next turn with 402 `spend_limit`.
 - `POST /api/sessions/{id}/end` ends the thread. Any open turn closes as `stopped`, and the next request starts a new
-  thread. A thread with its own cap ends even while its mind has calls whose cost is not settled (Session close).
+  thread. A thread ends even while its mind has calls whose cost is not settled (Session close).
 
 **One turn in flight per thread.** Another request gets 409 `ask_busy`, carrying the open turn's `operation_id`.
 - A coordinator that is not `awake` or `starting` is refused with 409 `mind_asleep`. Ask never wakes it.
-- A turn with no answer within 120 s (`HIVE_ASK_TIMEOUT_SECONDS`) closes as `timed_out`, or as `spend_limit` if the
-  thread's cap is spent.
+- A turn with no answer within 120 s (`HIVE_ASK_TIMEOUT_SECONDS`) closes as `timed_out`.
 - Rate limit per person: 10 turns per minute and 300 per day, enforced inside the admission transaction.
 - The per-person admission lock is never held across an await. The thread is created between two short locked steps.
   An Ask thread that exists without a turn, left by a race or a crash, is adopted by the person's next turn, or ended
@@ -1420,6 +1448,39 @@ body is 409 `operation_conflict`.
   reuse on another turn or with any changed field is 409 `operation_conflict`. That binding answers first, so the same
   body replays the same fresh turn even after the source turn's thread is deleted. **202** `{steer_id, operation_id, turn_id, new_turn: true, thread, state, via}`. Refusals are
   `POST /api/ask`'s.
+
+### Ask money: no per-answer cap, and one question when an answer looks expensive
+
+Jon's design for the Ask (omegahive#294, item 2, moved from PhysixSNET #69): "Money: no per-answer cap, and the
+per-thread $0.25 scope (`askthread:<id>`) goes. Limits come from the monthly allowance and the spend-rate guard (#107).
+Only an outlier asks once, "this one looks expensive (about $X), go ahead?": about 10× the person's recent median answer
+cost, or over $1, and anyone can turn that off."
+
+- **No cap of the Ask's own.** A conductor turn's and a browser turn's model calls are held by the person's monthly
+  allowance and every limit someone set on the hive, its swarms, the mind or the key, as any call is. Each reservation
+  also records the turn (`askturn:<turn_id>`) and its thread (`askthread:<thread_id>`) as labels with no limit, so the
+  turn's and the thread's spend are still counted. `HIVE_ASK_CONDUCTOR_TURN_USD` and the person's `thread_budget_usd`
+  are gone, and no done frame names a `per_turn` or `thread` limit.
+- **The threshold.** `expensive_usd` (on `GET /api/me/ask`) is the lower of `HIVE_ASK_EXPENSIVE_TIMES` × the median
+  cost of the person's latest `HIVE_ASK_EXPENSIVE_MEDIANS` paid Ask answers and `HIVE_ASK_EXPENSIVE_OVER_USD`, and
+  `HIVE_ASK_EXPENSIVE_OVER_USD` alone until they have `HIVE_ASK_EXPENSIVE_FEWEST`. A paid answer is a closed turn that
+  cost more than nothing. The numbers are the hive's settings, never the code's, each read on its own from the environment,
+  the deployment's file or `hive/config.json` (see "Where the numbers come from" above). `hive/config.json` holds Jon's 10 ×
+  and $1 (PhysixSNET #69), a median over the latest 20 paid answers, and 5 answers before that median counts.
+- **The question.** Before a conductor turn's next model call, once its settled spend has reached `expensive_usd`, the
+  turn pauses and stores and sends one frame `{phase: "go_ahead", spent_usd, limit_usd}` (its spend so far and the
+  threshold). The page asks "This one looks expensive (about $X so far). Go ahead?" and answers through
+  `POST /api/ask/{operation_id}/go-ahead`. Go ahead carries the same turn on, with nothing redone, and it asks nothing
+  more; Stop stops it as `POST .../stop` does. The wait is the person's time: it doesn't count toward the turn's 120 s.
+  With no answer within `HIVE_ASK_GO_AHEAD_SECONDS` (300 in `hive/config.json`) the turn ends `spend_cap` with `limit: {kind: "expensive", current_usd, limit_usd,
+  estimate_usd: null}` and the answer "I stopped here: this one looks expensive (about $X so far), and no go-ahead
+  came in time. Press Go ahead to run it again without stopping."; asking again with `go_ahead: true` runs the
+  request without the question.
+- **Who never asks.** A turn asked with `go_ahead: true`, a turn already answered with Go ahead, and every turn of a
+  person who set `ask_when_expensive: false`.
+- **Browser turns** (`HIVE_MIND_GATEWAY=1`): the person's browser runs the loop, so the host cannot hold it to ask in
+  place. A call made once the turn's settled spend reached `expensive_usd`, with no go-ahead, is refused 402 and closes
+  the turn with that same `expensive` limit. No question came first, so the page's stop names none.
 
 ### Conductor memory: kept by the person's browser
 
@@ -1592,13 +1653,19 @@ decides). The swarm's coordinator is refused every skill and sees no task; its c
 control) is the host's alone. A researcher of research asked from another person's personal mind is hidden from an
 admin's default view (its messages, traces and message reads) unless they audit, and its messages, prompts, search
 queries and memory are erased when it is retired. When the task ends (done, failed, cancelled, or failed at its deadline) the researcher is retired:
-lease ended, allocation released, role rules removed, the mind stopped and deleted. Defaults: budget
-`HIVE_RESEARCH_BUDGET_USD` ($0.25), lifetime `HIVE_RESEARCH_MINUTES` (30), the swarm's month cap `HIVE_RESEARCH_MONTH_USD`
-($5, or a lower month rule on that swarm). The submit answer is `{request_id, receiving_goal, lease_id, state:
-"accepted", budget: {root, limit_usd}, until}`. The Ask conductor sends a research intent as soon as it records it.
+lease ended, allocation released, role rules removed, the mind stopped and deleted. A researcher has no budget of its
+own (Jon, 23 Nov: "There should no limit per agent anymore - only a global limit", "Helpers = sub agents"): it is
+spawned with no allocation (`allocation_usd` 0, its request's `limit_usd` 0), and the hive's total, the one cap its
+owner sets (Jon, 23 Nov: "ONE cap for the whole hive - set by the user"), holds each of its calls; the coordinator has
+no cap of its own either. A call the total refuses holds the research (a `held` frame) until there is room. Lifetime
+`HIVE_RESEARCH_MINUTES` (30). `HIVE_RESEARCH_BUDGET_USD` and `HIVE_RESEARCH_MONTH_USD` are no longer read.
+The submit answer is
+`{request_id, receiving_goal, lease_id, state: "accepted", budget: {root, limit_usd: null}, until}`. The Ask conductor
+sends a research intent as soon as it records it.
 Refusals: 409 `research_turn_used` (one per Ask turn), 409 `research_busy` (three running per person), 402 `spend_limit`
-(`reason: "member_allowance"`: the person's day, month or total limit, counting their spend plus what their research
-reserves; `reason: "research_budget"`: the Research swarm's month cap), 404 `not_available` (`reason:
+(`reason: "member_allowance"`: the person's day, month or total limit has no room left, counting their spend plus what
+their research has spent or still holds; with `scope`: a row of the hive's total has no room left),
+404 `not_available` (`reason:
 "no_research_swarm"` or `"web_off"`), 409 `not_available` (`reason: "no_researcher"`, or `reason: "researcher_asleep"`
 with the coordinator's `mind_id` when its stopped state is the only refusal: once the person wakes it, submitting the
 same refused intent sends it as it was stored).
@@ -1801,7 +1868,11 @@ false)`), so the grant (or visitor limit) holds it. For anyone else it is exactl
 their own key.
 
 **Who may use a key at all** (`OwnHive.use_check`, run by `Budgets.check` before any limit; 402):
-- the key's owner; anyone the owner granted; anyone who was in the hive before H1 (`people.access` null): today's rules;
+- a person's own key pays only for that person, someone they granted, or a hive mind with no person behind it, whether
+  it is assigned to the mind or is the provider default; anyone else is refused `own_key_needed` before any reservation
+  (`OwnHive.person_key_check`, OI-13 r1.1; Jon: "everyone needs studio, they just need to use their own keys");
+- the key's owner; anyone the owner granted; anyone who was in the hive before H1 (`people.access` null): today's rules,
+  on the hive's own keys;
 - a guest or public visitor with no grant: on a public mind, swarm or hive (the first public one of the three, in that
   order) whose `pays` is `hive-key`, the hive owner's key pays (the visitor limit applies); where it is `own-key`, only
   their own key may pay: `own_key_required`. Anything else: `no_key_grant`. The model route picks a guest's or public
@@ -1931,3 +2002,76 @@ Details: `G2_G4_NOTICES_SPEND.md`.
 | `GET /api/me/spend?days=N` (1 to 31) | the caller | `{principal, tz, days: [{date, total_usd, own_keys_usd, hive_paid_usd, by_mind, by_app}], total_usd}` |
 
 P1 frame ops: `{"op": "notices", "after"?}` and `{"op": "spend", "days"?}`. Event `notice` goes to its person only.
+
+## Coffee Room membership: the mind's owner decides
+
+`PATCH /api/agents/{id}` accepts `{coffee: true | false}` from the mind's owner only: its `owner`, or the person it is
+the personal mind of. A mind recorded with neither, made before owners were recorded, is the hive owner's. Anyone else,
+admins included, gets 403 `owner_only`, and a person who can't see the mind gets 404. A public mind in a public swarm is
+in the room until its owner takes it out. A private or shared mind, or any mind in a private or shared swarm, is out
+until its owner puts it in. App modules cannot join.
+
+An admin keeps the room's own controls: `PATCH /api/rooms/{id}` on the Coffee Room changes its name, its topic and its
+turn cap. A way for an admin to step in when a mind breaks the hive's rules isn't built here; it waits for the
+governance design in #615.
+
+The UI's **Ask its owner**, shown to anyone who sees a mind they don't own, sends an ordinary private message with
+`POST /api/rooms` and `POST /api/rooms/{id}/messages`. The request grants no membership. The owner opens the mind's
+Model tab and turns on **In the Coffee Room**, after reading the disclosure for a private mind.
+
+An existing opt-in made by anyone but the owner doesn't count as consent for a private mind, so the next membership
+sync removes those minds until their owners opt in. A previous owner's opt-in also stops counting when the mind changes
+owner. An existing opt-out stays, whoever made it, until the mind's owner puts the mind back in. No schema change is
+needed.
+
+## Connector secrets: each person's, for the minds they install a connector on (`hive/core/connectors.py`)
+
+A connector's secret belongs to the person who entered it. A mind gets its own owner's, only for connectors its owner
+installed on it, and is refused otherwise, never lent another person's. Home Assistant and LibreLinkUp: the hive makes
+the calls with the owner's secret, so no mind holds it. WhatsApp's session and the Agentverse listener's seed: the hive
+serves them to the installed mind, since the bridge and the listener need the bytes. Installing a connector also loads
+its module into the mind when it next starts (`OMEGACLAW_EXTRA_MODULES`), unless the host's module loader loads it
+already. WhatsApp is on one of an owner's minds at a time. No mind or container is given a connectors folder.
+
+| Route | Who | → |
+|---|---|---|
+| `GET /api/connectors` | a signed-in person or the operator | `{store: {open, home, made?, warning?, reason?}, connectors: [{id, module, kind: "calls" \| "served", exclusive, set, fields, minds}], minds: [{id, name, running}]}`: `fields` names the entered fields, never their values; `minds` are the person's own Omega minds |
+| `PUT /api/connectors/{id}/settings` | the same | `home_assistant`: `{url, token}`; `librelinkup`: `{username, password, url?, version?, unit?, connections?}` → the connector's row; 400 `bad_request` for anything else or a served connector |
+| `DELETE /api/connectors/{id}` | the same | the row: the person's entries go and the connector comes off their minds |
+| `PUT /api/connectors/{id}/minds/{agent_id}` `{installed}` | the mind's owner (404 for a mind the person can't see, 403 `not_your_mind`, 409 `kind_cannot_load` for a mind that loads no modules) | the row and `restart`: the minds running now, whose module changes at their next start |
+| `POST /api/agent/connectors/home_assistant/request` `{method, path, payload?}` | a mind it's installed on | `{status, text}`: Home Assistant's own status and text; only GET `/api/states`, GET `/api/states/<entity_id>`, POST `/api/template` and POST `/api/services/<domain>/<service>` (400 `path_not_allowed`); no redirect is followed |
+| `POST /api/agent/connectors/librelinkup/request` `{op: "settings" \| "connections" \| "graph", patient_id?}` | the same | `settings`: `{unit, connections, version}`, never the login; `connections`: `{data}`; `graph`: LibreLinkUp's answer. The hive logs in, keeps the session and logs in again once when a read fails |
+| `POST /api/agent/connectors/{whatsapp \| agentverse}/entries` `{get?, set?, delete?}` | the same | `{values: {name: text \| null}}`, applied delete, set, get in one transaction; Agentverse serves only its `seed`, made on its first read, and takes no `set` or `delete` |
+
+Every mind route answers 403 `connector_not_installed` unless the mind's current owner installed the connector on it
+(checked again after an outbound call), 409 `connector_not_set` before the owner entered it, 502 `connector_unreachable`
+with the service's own words when the service fails, and 503 `connector_store_locked` when the key store doesn't answer.
+
+The entries are sealed with a Fernet key (`hive/core/sealed.py`) kept outside the data folder: the login Keychain on a
+Mac (written through `security -i`, so never in a command line), `systemd-creds --user` on Linux and in WSL (systemd 256
+or later; older systemd keeps a 0600 file under `~/.config/omegahive` and the store says it protects less), or the file
+`HIVE_SECRETS_KEY_FILE` names (a container, a server, a Mac hive started outside a login session). A key store that
+doesn't answer leaves the store shut; the hive never makes a new key over sealed entries. Each entry is bound to its
+owner, connector and name, and named by an HMAC, so a WhatsApp key file's phone number isn't kept.
+
+At its first start, the hive imports what a checkout or an earlier release's connectors folder holds in plain files as
+the first admin's entries (the operator's in a password-only hive), each checked to open to the same bytes before its
+file goes. A connector whose module the host's loader imports into every mind is installed on that person's own minds,
+so it keeps working (WhatsApp on the oldest); one it doesn't import stays uninstalled. A person's own minds are the ones
+they made, not the ones the hive keeps for a purpose (the foundation's Create · Code, Review and Research minds, a
+Studio maker, an app's minds, their personal mind). A link is never followed and a copy that differs from the one
+imported is kept and reported. While the store is shut, every file stays where it is, the hive still starts, and the
+next start that opens the store imports them.
+
+Every pairing folder a WhatsApp bridge kept (`*auth*`, as the repository's `.gitignore` names them: `auth`,
+`auth_<label>`) is imported or reported: the one the hive's minds used (the folder `OMEGACLAW_WA_AUTH_DIR` names, else
+`auth`), else the one whose `creds.json` Baileys wrote last, becomes the person's live pairing, each other pairing is sealed aside whole under its folder's name (`pairings/<folder>`, which no mind's
+request can name), and a folder holding no `creds.json` is kept and reported. A `.<name>.moving` copy an interrupted
+earlier move left in the connectors folder is removed, since its original is still in the code folder and is imported
+from there. Before the import, a mind a hive that died left running, started under an older start contract (its
+sandbox, container mount or environment still giving it the connectors folder) is stopped, and the reconcile pass
+starts it again under this one; a child mind or a Studio maker runs on until it ends, when that folder holds only the
+sealed key. Each start records its contract beside the sandbox profiles (`<data>/sandbox/<mind>.contract`).
+
+A hive whose data folder is in a temporary folder, as a test hive's is, seals with a plain key file in that folder and
+imports nothing; it says so in its log as it starts and in the store's `warning`.

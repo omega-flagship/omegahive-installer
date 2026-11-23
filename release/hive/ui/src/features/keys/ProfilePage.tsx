@@ -1,3 +1,4 @@
+// Purpose: draw the You page (profile.metta): who you are, your keys, and the Ask's money choice, and carry out presses.
 import { useEffect, useMemo, useState } from 'react'
 import { experienceById } from '../../experiences/registry'
 import { need, useResource } from '../../lib/useResource'
@@ -6,6 +7,7 @@ import { Screen, type ScreenHost, type ScreenItem } from '../../screens/Screen'
 import { useCompose } from '../../screens/useCompose'
 import { ClockPref, LookSection } from '../../shell/LookSection'
 import { useLook } from '../../shell/uiVariant'
+import { useAskStore } from '../../store/ask'
 import { useHive } from '../../store/store'
 import { Page } from '../../ui/Page'
 import { PersonalMindLink } from '../mind/PersonalMindLink'
@@ -17,6 +19,7 @@ import { onAddKeyRequest, takeAddKeyRequest } from './addKeyIntent'
 import { profileScreen } from './data'
 import { DemoAskCard } from './DemoAskCard'
 import { OwnMonthlyLimit } from './OwnMonthlyLimit'
+import { useConnectors } from './useConnectors'
 import { PlanUsage } from '../plans/PlanUsage'
 
 const scopeOf = (item: ScreenItem): string[] => (Array.isArray(item.scope) ? item.scope.map(String) : [])
@@ -45,6 +48,9 @@ const PANELS = {
  * (profile.metta) that MeTTa composes for the look being worn; this page loads the data, states the facts, and carries
  * out a press.
  *
+ * The Ask's one money choice, whether an answer that looks expensive asks first, is atoms too, read from the Ask's
+ * settings and saved through the Ask store.
+ *
  * Islands: the panels above the keys (your personal mind, Google, notices, the look and clock, the demo card, the Ask's
  * memory) and the monthly total on your own keys are their own components, used elsewhere too, each loading its own
  * data and holding its own form. The add-key form is one as well (AddKeyForm.tsx): what is pasted never enters the
@@ -67,6 +73,9 @@ export default function ProfilePage() {
   const [signingOut, setSigningOut] = useState(false)
   const [editing, setEditing] = useState<ReadonlySet<string>>(() => new Set())
   const [confirming, setConfirming] = useState<ReadonlySet<string>>(() => new Set())
+  // the Ask's settings (GET /api/me/ask, read by the Ask itself) and the switch's save
+  const askSettings = useAskStore((s) => s.settings)
+  const [askSave, setAskSave] = useState<'idle' | 'saving' | 'failed'>('idle')
   const reloadKeys = () => {
     setKeysError(undefined)
     loadKeys().catch((e) => setKeysError(e))
@@ -74,14 +83,17 @@ export default function ProfilePage() {
   useEffect(() => {
     loadKeys().catch((e) => setKeysError(e))
   }, [loadKeys, client])
+  const connectors = useConnectors(client)
 
   const compose = useCompose(look)
   const { plan, data } = useMemo(() => {
     const { data, facts } = profileScreen({
       me, keys, keysError, agents: Object.values(agents), connected: !!client, signingOut, adding, work: { editing, confirming },
+      ask: { settings: askSettings, saving: askSave === 'saving', failed: askSave === 'failed' },
+      connectors: connectors.input,
     }, compose)
     return { plan: compose('profile', facts), data }
-  }, [me, keys, keysError, agents, client, signingOut, adding, editing, confirming, compose])
+  }, [me, keys, keysError, agents, client, signingOut, adding, editing, confirming, askSettings, askSave, compose, connectors.input])
 
   const signOut = async () => {
     if (signingOut || !client) return
@@ -91,6 +103,12 @@ export default function ProfilePage() {
     } finally {
       setSigningOut(false)
     }
+  }
+  // one save at a time; the switch shows what the hive answered once it is saved
+  const saveExpensive = async (on: boolean) => {
+    if (askSave === 'saving') return
+    setAskSave('saving')
+    setAskSave((await useAskStore.getState().setAskWhenExpensive(on)) ? 'idle' : 'failed')
   }
   const remove = async (id: string) => {
     await removeKey(id)
@@ -106,7 +124,9 @@ export default function ProfilePage() {
       if (target === 'mind' && typeof item.id === 'string') navigate({ name: 'dot', id: item.id, tab: 'model' })
       else if (target === 'rename' && id) setEditing((s) => toggled(s, id, true))
     },
-    onAction: (action, item) => {
+    onAction: (action, item, value) => {
+      if (action === 'ask-expensive') return void saveExpensive(value === true)
+      if (connectors.act(action, item, value)) return
       if (action === 'retry') return reloadKeys()
       if (action === 'sign-out') return void signOut()
       if (action === 'add-key') return setAdding(true)
@@ -125,6 +145,7 @@ export default function ProfilePage() {
       else if (action === 'keep') setConfirming((s) => toggled(s, k.id, false))
       else if (action === 'remove') void remove(k.id)
     },
+    onInput: (bind, value, scope) => connectors.type(bind, String(value), scope),
   }
 
   return (

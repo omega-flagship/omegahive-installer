@@ -28,6 +28,9 @@ export interface LimitRowView {
   source: string
   rule_id?: string
   note?: string
+  /** whether this viewer may change or remove it: a mind's or swarm's cap is its owner's alone, every other limit an
+   *  admin's (hive/core/limits_view.py limit_refusal); absent from older hosts, when the page offers what the hive allows */
+  may_change?: boolean
 }
 
 export interface PersonLimits {
@@ -51,6 +54,8 @@ export interface OldDefault {
   reasons: string[]
   /** the one change that removes it: a mind's cap set to $0, or the swarm rule removed */
   reset: { kind: 'mind'; agent_id: string } | { kind: 'rule'; rule_id: string }
+  /** whether this viewer may remove it: only the mind's or swarm's owner may (limit_refusal) */
+  may_change?: boolean
 }
 
 export interface LimitsView {
@@ -63,6 +68,8 @@ export interface LimitsView {
 const rec = (v: unknown): Record<string, unknown> | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null)
 const usd = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null)
 const text = (v: unknown, max = 200): string | null => (typeof v === 'string' && v.length <= max ? v : null)
+// the host's may_change, kept only when it is a boolean
+const mayChange = (r: Record<string, unknown>) => (typeof r.may_change === 'boolean' ? { may_change: r.may_change } : {})
 
 function row(v: unknown): LimitRowView | null {
   const r = rec(v)
@@ -70,7 +77,7 @@ function row(v: unknown): LimitRowView | null {
   const [key, scope, period, source] = [text(r.key), text(r.scope), text(r.period, 20), text(r.source, 40)]
   const [limit, spent, held, room] = [usd(r.limit_usd), usd(r.spent_usd), usd(r.held_usd), usd(r.room_usd)]
   if (key === null || scope === null || period === null || source === null || limit === null || spent === null || held === null || room === null) return null
-  return { key, scope, period, limit_usd: limit, spent_usd: spent, held_usd: held, room_usd: room, source, ...(text(r.rule_id, 80) ? { rule_id: r.rule_id as string } : {}), ...(text(r.note) ? { note: r.note as string } : {}) }
+  return { key, scope, period, limit_usd: limit, spent_usd: spent, held_usd: held, room_usd: room, source, ...(text(r.rule_id, 80) ? { rule_id: r.rule_id as string } : {}), ...(text(r.note) ? { note: r.note as string } : {}), ...mayChange(r) }
 }
 
 function person(v: unknown): PersonLimits | null {
@@ -87,8 +94,8 @@ function oldDefault(v: unknown): OldDefault | null {
   const reset = rec(r?.reset)
   if (!r || !reset || !text(r.name) || !text(r.change, 400)) return null
   const reasons = Array.isArray(r.reasons) ? r.reasons.filter((x): x is string => typeof x === 'string') : []
-  if (r.kind === 'mind' && text(r.agent_id, 80) && reset.method === 'PATCH') return { kind: 'mind', id: r.agent_id as string, name: r.name as string, change: r.change as string, reasons, reset: { kind: 'mind', agent_id: r.agent_id as string } }
-  if (r.kind === 'swarm' && text(r.swarm_id, 80) && text(r.rule_id, 80) && reset.method === 'DELETE') return { kind: 'swarm', id: r.swarm_id as string, name: r.name as string, change: r.change as string, reasons, reset: { kind: 'rule', rule_id: r.rule_id as string } }
+  if (r.kind === 'mind' && text(r.agent_id, 80) && reset.method === 'PATCH') return { kind: 'mind', id: r.agent_id as string, name: r.name as string, change: r.change as string, reasons, reset: { kind: 'mind', agent_id: r.agent_id as string }, ...mayChange(r) }
+  if (r.kind === 'swarm' && text(r.swarm_id, 80) && text(r.rule_id, 80) && reset.method === 'DELETE') return { kind: 'swarm', id: r.swarm_id as string, name: r.name as string, change: r.change as string, reasons, reset: { kind: 'rule', rule_id: r.rule_id as string }, ...mayChange(r) }
   return null
 }
 

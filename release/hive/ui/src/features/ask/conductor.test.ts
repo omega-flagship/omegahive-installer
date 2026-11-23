@@ -153,9 +153,12 @@ describe('executor', () => {
   it('shows a spending hold and then the actual research result in the closed originating turn', async () => {
     const op = await turn()
     deliver(op, { phase: 'done', outcome: 'answered' })
-    deliver(op, { phase: 'research', request_id: 'rq_storm', state: 'held', reason: 'spend_rate', until: '2026-10-07T11:00:00Z' })
-    expect(rows().find(row => row.kind === 'note' && row.text.includes('Research is waiting'))?.text).toContain('monthly spending pace')
+    deliver(op, { phase: 'research', request_id: 'rq_storm', state: 'held', reason: 'spending_limit' })
+    expect(rows().find(row => row.kind === 'note' && row.text.includes('Research is waiting'))?.text).toContain('needs room in its spending limit')
     expect(rows().some(row => row.kind === 'answer')).toBe(false)
+    deliver(op, { phase: 'research', request_id: 'rq_storm', state: 'held', reason: 'stopped' })
+    expect(rows().some(row => row.kind === 'note' && row.text.includes('the researcher is stopped'))).toBe(true)
+    deliver(op, { phase: 'research', request_id: 'rq_storm', state: 'resumed' })
     expect(rows().some(row => row.kind === 'research')).toBe(false)
     // the host's frame at delivery (research.py deliver): research.view whole, each citation as research.check matched it
     const done = { phase: 'research', request_id: 'rq_storm', state: 'done', research: {
@@ -180,7 +183,42 @@ describe('executor', () => {
     expect(said).toContain('https://weather.example/storm')
     expect(said).not.toContain('https://weather.example/unread')
     expect(checkAskEvent({ type: 'ask', operation_id: op, seq: 5, phase: 'research', request_id: 'rq_storm',
-      state: 'held', reason: 'spend_rate', until: 'some time' })).toBeNull()
+      state: 'held', reason: 'spending_limit', until: 'some time' })).toBeNull()
+  })
+
+  it('says why research ended without a report when its task names the cause', async () => {
+    const op = await turn()
+    deliver(op, { phase: 'done', outcome: 'answered' })
+    deliver(op, { phase: 'research', request_id: 'rq_hugo', state: 'failed', reason: 'deadline' })
+    // the turn's own row, and the same frame said again as an earlier turn's words (Earlier reads researchRow)
+    expect(rows().find(row => row.kind === 'research')?.text)
+      .toBe('The research couldn’t be finished because the time it was given ran out, so there is no report.')
+    const said = (reason: string) => researchRow(checkAskEvent({ type: 'ask', operation_id: op, seq: 4, phase: 'research',
+      request_id: 'rq_hugo', state: 'failed', reason }) as Parameters<typeof researchRow>[0], { id: 'rq_hugo' }).text
+    expect(said('deadline')).toBe('Research ended without a report: the time it was given ran out.')
+    expect(said('another_cause')).toBe('Research ended without a report.')   // a cause the page has no words for
+    expect(checkAskEvent({ type: 'ask', operation_id: op, seq: 4, phase: 'research', request_id: 'rq_hugo',
+      state: 'failed', reason: 'Out of time!' })).toBeNull()
+  })
+
+  it('names the limit that holds research, and only one its asker may see', async () => {
+    const held = (limit?: string) => ({ phase: 'research' as const, request_id: 'rq_hugo', state: 'held' as const,
+      reason: 'spending_limit' as const, ...(limit ? { limit } : {}) })
+    const waiting = () => rows().filter(row => row.kind === 'note' && row.text.startsWith('Research is waiting')).slice(-1)[0]?.text
+    const op = await turn()
+    deliver(op, { phase: 'done', outcome: 'answered' })
+    deliver(op, held('hive_day'))
+    expect(waiting()).toBe("Research is waiting because its next call needs room in the hive's daily cap.")
+    deliver(op, { phase: 'research', request_id: 'rq_hugo', state: 'resumed' })
+    deliver(op, held('person_month'))
+    expect(waiting()).toBe('Research is waiting because its next call needs room in your monthly allowance.')
+    deliver(op, { phase: 'research', request_id: 'rq_hugo', state: 'resumed' })
+    deliver(op, held('unseen'))
+    expect(waiting()).toBe("Research is waiting because its next call needs room in a spending limit you can't change.")
+    deliver(op, { phase: 'research', request_id: 'rq_hugo', state: 'resumed' })
+    deliver(op, held())
+    expect(waiting()).toBe('Research is waiting because its next call needs room in its spending limit.')
+    expect(checkAskEvent({ type: 'ask', operation_id: op, seq: 12, ...held('the hive cap!') })).toBeNull()
   })
 
   it('applies acts in seq order and answers each one, with the page view after it', async () => {

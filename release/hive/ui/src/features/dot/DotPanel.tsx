@@ -1,6 +1,8 @@
-// Purpose: a mind's panel: its header, status and spending notices (paused or slowed), and its tabs.
+// Purpose: a mind's own panel: its chat, its program, its controls, why it is unwell, its spending against the limits
+// that hold it, its model settings with its cap (which only its owner sets or removes) and its log.
 import { plural } from '../../lib/plural'
 import { SwarmMove } from './SwarmMove'
+import { OwnCodingSetting } from './OwnCodingSetting'
 import { AnimatePresence, m } from 'framer-motion'
 import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { lazyRoute } from '../../lib/lazyRoute'
@@ -17,7 +19,7 @@ import { useIsDesktop } from '../../lib/hooks'
 import { DOT_PHONE_PEEK } from './phoneLayout'
 import { closeToHome, navigate, type DotTab } from '../../lib/router'
 import { useScene } from '../../scene/sceneStore'
-import { useHive, useRefusal, useSlowed } from '../../store/store'
+import { useHive, useRefusal } from '../../store/store'
 import { bindingElsewhere, budgetMeter, useCallLimits } from './callLimits'
 import { scopeWords, UNSEEN_LIMIT } from '../usage/settle'
 import { useUnsaved } from '../ask/dirty'
@@ -35,7 +37,7 @@ import { Schedule } from './Schedule'
 import { IsolationChip } from './IsolationChip'
 import { VisibilityControl } from '../../ui/Visibility'
 import { OWN_BUDGET_CODES } from './mindStatus'
-import { PausedPill, SpendingPause, SpendingSlowed } from './SpendingPause'
+import { PausedPill, SpendingPause } from './SpendingPause'
 import { RefusedNotice } from './RefusedNotice'
 import { LabGuards } from '../../shell/LabBadge'
 import { OpenIn } from '../programs/OpenIn'
@@ -203,7 +205,6 @@ function PanelHeader({ agent, onCloseX, tab, setTab, onBudget, onConnect }: { ag
   })
   const swarm = useHive((s) => (agent.swarm_id ? s.swarms[agent.swarm_id] : undefined))
   const refusal = useRefusal(agent.id)
-  const slowed = useSlowed(agent.id)
   const limits = useCallLimits(agent.id, agent.spent_usd, refusal?.at)
   const lastError = describeLlmError(agent.last_error)
   // the spending banner already says why; do not repeat a budget error under it
@@ -255,7 +256,6 @@ function PanelHeader({ agent, onCloseX, tab, setTab, onBudget, onConnect }: { ag
       <UsageRegion covering className="mt-1.5 ml-auto w-[96px]" />
       <AnimatePresence initial={false}>
         {refusal && <SpendingPause key="refused" agent={agent} refusal={refusal} onFixBudget={() => setTab('model')} />}
-        {!refusal && slowed && <SpendingSlowed key="slowed" slowed={slowed} />}
       </AnimatePresence>
       {/* why its own model calls are refused, composed in MeTTa (refused.metta), which shows nothing while they are answered */}
       <RefusedNotice agent={agent} onChooseModel={() => setTab('model')} />
@@ -569,6 +569,10 @@ function ModelSettings({ agent }: { agent: Agent }) {
         )}
       </section>
 
+      <section aria-label="Its own coding">
+        <OwnCodingSetting agent={agent} />
+      </section>
+
       <button onClick={() => navigate({ name: 'code', target: `mind:${agent.id}` })} className="flex w-full items-center gap-3 rounded-xl border border-line bg-tint/[0.02] px-3 py-2.5 text-left text-[13px] text-ink-2 transition-colors hover:border-line-2 hover:bg-tint/[0.04]">
         <Icon name="terminal" size={16} className="text-ink-3" />
         <span className="min-w-0 flex-1">
@@ -647,6 +651,12 @@ function ModelSettings({ agent }: { agent: Agent }) {
 
       <section aria-labelledby="budget-h" data-tour="model-budget">
         <h3 id="budget-h" className="eyebrow mb-2">Budget cap</h3>
+        {/* its cap is its owner's alone (may_cap, the hive's own rule): anyone else, an admin included, sees it */}
+        {agent.may_cap === false ? (
+          <p className="text-[12.5px] text-ink-2">
+            {agent.budget_usd > 0 ? `${money(agent.budget_usd)} cap of its own.` : 'No cap of its own.'} Only its owner sets or removes it.
+          </p>
+        ) : (
         <div className="flex items-center gap-2">
           <div className="flex min-h-11 flex-1 items-center rounded-xl border border-line bg-shade/25 px-3 focus-within:border-line-2">
             <span className="text-ink-3">$</span>
@@ -668,8 +678,9 @@ function ModelSettings({ agent }: { agent: Agent }) {
             Save
           </Button>
         </div>
+        )}
         <p className="mt-1.5 text-[12px] text-ink-4">
-          0 means unlimited for local models; a paid model with a $0 cap is refused (402 no_budget). The gateway checks each call’s worst-case cost against the cap before it runs.
+          0 is no cap of its own: the hive’s limit holds what it spends, and until the hive has one a paid model can’t answer. The gateway checks each call’s worst-case cost against the cap before it runs.
         </p>
       </section>
 

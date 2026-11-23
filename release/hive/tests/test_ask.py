@@ -2,6 +2,7 @@
 """Universal Ask, phase 1 (hive/core/ask.py): admission, coordinator routing, reply binding, frames, caps and audit."""
 import asyncio
 import contextlib
+import dataclasses
 import json
 import pathlib
 import threading
@@ -239,12 +240,13 @@ def test_a_swarm_the_person_cannot_see_is_refused_as_not_available(client):
 def test_default_swarm_rules_on_me_ask(client):
     w = world(client)
     me = client.get("/api/me/ask", headers=w["ann"]).json()
-    assert me["swarm_id"] is None and me["thread_budget_usd"] == 0.25
+    assert me["swarm_id"] is None and me["ask_when_expensive"] is True and me["expensive_usd"] == 1.0
     assert [s["id"] for s in me["eligible"]] == [w["swarm"]["id"]]
     assert me["eligible"][0]["orchestrator"]["id"] == w["coord"]["id"]
-    put = client.put("/api/me/ask", headers=w["ann"], json={"mind_id": w["worker"]["id"], "thread_budget_usd": 0.1}).json()
-    assert put["swarm_id"] == w["swarm"]["id"] and put["thread_budget_usd"] == 0.1             # a mind stands for its swarm
-    assert client.put("/api/me/ask", headers=w["ann"], json={"thread_budget_usd": 6}).json()["error"]["code"] == "invalid"
+    put = client.put("/api/me/ask", headers=w["ann"], json={"mind_id": w["worker"]["id"], "ask_when_expensive": False}).json()
+    assert put["swarm_id"] == w["swarm"]["id"] and put["ask_when_expensive"] is False          # a mind stands for its swarm
+    # the thread budget retired with the thread's cap (omegahive#294 item 2): an unknown key now
+    assert client.put("/api/me/ask", headers=w["ann"], json={"thread_budget_usd": 1}).json()["error"]["code"] == "invalid"
     assert client.put("/api/me/ask", headers=w["ann"], json={"model": "x"}).json()["error"]["code"] == "invalid"
     assert client.put("/api/me/ask", headers=w["bob"], json={"swarm_id": w["swarm"]["id"]}).status_code == 404   # Bob can't see it
     assert client.put("/api/me/ask", headers=w["jon"], json={"swarm_id": w["swarm"]["id"]}).status_code == 200   # an admin can
@@ -511,7 +513,9 @@ def test_an_asleep_coordinator_is_refused_and_never_woken(client):
     assert counts(hive) == before
 
 
-def test_a_spent_thread_refuses_with_spend_limit(client):
+def test_a_thread_past_the_old_quarter_still_takes_the_next_ask(client):
+    """omegahive#294 item 2: an Ask thread has no money cap of its own, so one whose mind has spent past the $0.25 that
+    used to stop it takes the next ask in the same thread, and what it has spent is still shown."""
     w = world(client)
     hive = w["hive"]
     ctx = {"swarm_id": w["swarm"]["id"]}
@@ -519,7 +523,7 @@ def test_a_spent_thread_refuses_with_spend_limit(client):
     reply(hive, w["coord"], a["turn_id"])
     hive.db.execute("UPDATE agents SET spent_usd = spent_usd + 0.3 WHERE id = ?", (w["coord"]["id"],))
     r = ask(client, w["ann"], "op-spend-002", context=ctx)
-    assert r.status_code == 402 and r.json()["error"]["code"] == "spend_limit" and r.json()["error"]["thread"]["spent_usd"] >= 0.25
+    assert r.status_code == 202 and r.json()["thread"]["id"] == a["thread"]["id"] and r.json()["thread"]["spent_usd"] >= 0.25
 
 
 # ---- durability (OmegaReview item 5) ----------------------------------------------------------------------------------
@@ -607,7 +611,8 @@ def test_parallel_requests_cannot_pass_the_quota(client):
 def test_recovery_reads_are_rate_limited(client, monkeypatch):
     w = world(client)
     ask(client, w["ann"], "op-read-0001", context={"swarm_id": w["swarm"]["id"]})
-    monkeypatch.setattr(askmod, "READS_PER_MINUTE", 3)
+    settings = client.app.state.hive.settings
+    monkeypatch.setattr(settings, "ask_limits", dataclasses.replace(settings.ask_limits, reads_per_minute=3))
     codes = [client.get("/api/ask/op-read-0001", headers=w["ann"]).status_code for _ in range(4)]
     assert codes == [200, 200, 200, 429]
 
@@ -637,7 +642,9 @@ def test_an_ask_conversation_cannot_be_addressed_from_outside(client):
 
 # ---- caps: a thread only tightens, and caps on one mind compose (OmegaReview item 4) ------------------------------------
 
-def test_a_thread_cap_only_tightens_and_two_people_compose_in_either_end_order(client):
+def test_an_ask_thread_never_touches_its_minds_rule_in_either_end_order(client):
+    """An Ask thread has no cap of its own (Jon's design on omegahive#294, item 2), so two people's threads on one mind,
+    ended in either order, leave the mind's rule as it was, and a rule someone set stays."""
     w = world(client)
     hive = w["hive"]
     jon_share = client.put(f"/api/swarms/{w['swarm']['id']}/visibility", json={"visibility": "shared", "shared_with": ["user:u_ann"]})
@@ -645,16 +652,15 @@ def test_a_thread_cap_only_tightens_and_two_people_compose_in_either_end_order(c
     ctx = {"swarm_id": w["swarm"]["id"]}
     for first, second in (("ann", "jon"), ("jon", "ann")):
         assert cap(hive, w["coord"]) is None
-        client.put("/api/me/ask", headers=w["jon"], json={"thread_budget_usd": 0.1})
         a = ask(client, w["ann"], f"op-cap-{first}-a", context=ctx).json()
         ta = a["thread"]
-        assert cap(hive, w["coord"]) == 0.25                                                    # spent 0 + the $0.25 default
+        assert cap(hive, w["coord"]) is None and ta["budget_usd"] == 0                          # no cap of its own
         reply(hive, w["coord"], a["turn_id"])                                                   # one open turn per coordinator
         tj = ask(client, w["jon"], f"op-cap-{first}-j", context=ctx).json()["thread"]
-        assert cap(hive, w["coord"]) == 0.1                                                     # the tighter one holds
+        assert cap(hive, w["coord"]) is None
         threads = {"ann": ta, "jon": tj}
         client.post(f"/api/sessions/{threads[first]['id']}/end", headers=w[first])
-        assert cap(hive, w["coord"]) == (0.1 if first == "ann" else 0.25)                    # the other's cap still holds
+        assert cap(hive, w["coord"]) is None
         client.post(f"/api/sessions/{threads[second]['id']}/end", headers=w[second])
         assert cap(hive, w["coord"]) is None                                                    # exactly as before
     client.post("/api/budgets", json={"scope": f"agent:{w['coord']['id']}", "period": "total", "limit_usd": 0.05})
@@ -827,14 +833,14 @@ def test_an_empty_thread_is_adopted_raced_duplicates_end_and_old_empty_threads_a
     jon = Viewer("user:u_jon", True)
     reply(hive, w["coord"], r["turn_id"])
     stale = client.portal.call(lambda: hive.sessions.create(jon, {"mind": w["coord"]["id"], "title": "Ask thread", "budget_usd": 0.1}, purpose="ask"))
-    assert cap(hive, w["coord"]) == 0.1
+    assert cap(hive, w["coord"]) is None   # an Ask thread never caps its mind (omegahive#294 item 2), live or swept
     hive.ask.expire()
     assert hive.db.one("SELECT status FROM work_sessions WHERE id = ?", (stale["id"],))["status"] == "active"   # young: kept
     hive.db.execute("UPDATE work_sessions SET created_at = '2000-01-01T00:00:00.000Z' WHERE id = ?", (stale["id"],))
     hive.ask.expire()
     assert hive.db.one("SELECT status FROM work_sessions WHERE id = ?", (stale["id"],))["status"] == "ended"
     assert hive.db.one("SELECT status FROM work_sessions WHERE id = ?", (first["id"],))["status"] == "active"  # has a turn
-    assert cap(hive, w["coord"]) == 0.25
+    assert cap(hive, w["coord"]) is None
 
 
 def test_an_answer_is_truncated_once_to_8000(client):
@@ -1365,14 +1371,37 @@ def test_a_reconcile_restart_of_a_crashed_mind_is_a_boundary_but_a_running_one_i
     assert hive.ask.trace_scope(w["coord"]["id"]) is None
 
 
-def test_the_production_drivers_report_no_new_execution_for_a_noop_start(tmp_path):
-    """LocalDriver and DockerDriver return early when the mind runs, so their identity cannot change on a no-op start."""
-    from hive.supervisor.drivers import DockerDriver, LocalDriver
-    import inspect
-    for cls in (LocalDriver, DockerDriver):
-        src = inspect.getsource(cls.start)
-        assert 'if self.status(agent["id"]) == "running":\n            return' in src, cls.__name__
-        assert "def execution" in inspect.getsource(cls), cls.__name__
+def test_the_production_drivers_report_no_new_execution_for_a_noop_start(monkeypatch):
+    """A start of an already running mind preserves its Ask execution identity."""
+    from types import SimpleNamespace
+
+    from hive.supervisor import drivers
+
+    agent = {"id": "a_running", "kind": "omega"}
+    agent_id = agent["id"]
+    local = drivers.LocalDriver(object(), "/unused")
+    local.procs[agent_id] = SimpleNamespace(pid=1234, poll=lambda: None)
+    local.isolation[agent_id] = {"started_at": 1.0}
+
+    def unexpected_policy():
+        raise AssertionError("a no-op start reached sandbox configuration")
+
+    monkeypatch.setattr(drivers, "mind_sandbox_requested", unexpected_policy)
+    docker = drivers.DockerDriver(object())
+
+    def inspect_container(*args):
+        command, flag, fields, container = args
+        assert (command, flag, container) == ("inspect", "-f", docker.container(agent_id))
+        return SimpleNamespace(returncode=0, stdout={
+            "{{.State.Running}}": "true",
+            "{{.State.Running}} {{.Id}} {{.State.StartedAt}}": "true container started",
+        }[fields])
+
+    monkeypatch.setattr(docker, "_docker", inspect_container)
+    for driver, identity in ((local, "local:1234:1.0"), (docker, "docker:container:started")):
+        assert driver.execution(agent_id) == identity
+        driver.start(agent, {})
+        assert driver.execution(agent_id) == identity
 
 
 def test_the_elapsed_time_and_unbound_call_rule_stays_fail_closed_with_the_fixture_supervisor(client):

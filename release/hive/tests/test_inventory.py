@@ -108,28 +108,55 @@ def test_a_module_the_mind_did_not_load_is_configured_not_callable(client):
     assert skill(view, "hive-publish")["status"] == "callable"
 
 
-def test_a_module_left_out_for_a_missing_requirement_is_not_in_the_receipt(client, monkeypatch, tmp_path):
+def test_a_module_left_out_for_a_missing_requirement_is_listed_with_what_it_needs(client, monkeypatch, tmp_path):
     """code_workspace requires the OmegaCode client, which no standard install gives its minds. Such a mind never
-    imports it, so its receipt leaves it out and the mind's Tools list neither the module nor its skills, instead of
-    showing them set up but not loaded. A mind that has the client lists it."""
+    imports it, and its receipt lists it, not loaded, with the requires entry it lacks, so the Tools page and the
+    mind's own inventory read show the module and each of its skills left out, needing the OmegaCode client, instead
+    of leaving them out silently or showing them set up but not loaded (Jon's third follow-up on #596). A mind that
+    has the client runs it."""
     import sys
     monkeypatch.delenv("OMEGACODE_SRC", raising=False)
     monkeypatch.setattr(sys, "path", [p for p in sys.path if not (pathlib.Path(p or ".") / "omegacode").exists()])
     mind = make_mind(client)
     awake(client, mind)
     receipt, ids = real_receipt()
-    assert "code" in [m["dir"] for m in receipt["modules"]]
-    assert "code_workspace" not in [m["dir"] for m in receipt["modules"]]
+    workspace = next(m for m in receipt["modules"] if m["dir"] == "code_workspace")
+    assert workspace["left_out"] == ["service:omegacode"] and workspace["loaded"] is False
+    assert "code-open" in workspace["signature_heads"]
+    assert "left_out" not in next(m for m in receipt["modules"] if m["dir"] == "code")
     assert post(client, mind, receipt).status_code == 200
-    view = client.get(f"/api/agents/{mind['id']}/inventory").json()
-    assert ids["code_workspace"] not in [m["id"] for m in view["modules"]]
-    assert not [s for s in view["skills"] if s["id"] == "code-open" or s["module"] == ids["code_workspace"]]
+    needs = [{"requires": "service:omegacode", "needs": "the OmegaCode client"}]
+    for view in (client.get(f"/api/agents/{mind['id']}/inventory").json(),           # the owner's read
+                 client.get("/api/agent/inventory", headers=agent_headers(mind)).json()):   # the mind's own
+        assert next(m for m in view["modules"] if m["id"] == ids["code_workspace"])["left_out"] == needs
+        assert next(m for m in view["modules"] if m["id"] == ids["code"])["left_out"] == []
+        opened = skill(view, "code-open")
+        assert opened["status"] == "left-out" and opened["module"] == ids["code_workspace"] and opened["left_out"] == needs
+        assert {s["status"] for s in view["skills"] if s["module"] == ids["code_workspace"]} == {"left-out"}
+        assert skill(view, "hive-publish")["status"] == "callable" and skill(view, "hive-publish")["left_out"] is None
     package = tmp_path / "omegacode"
     package.mkdir()
     (package / "__init__.py").write_text("")
     (package / "client.py").write_text("")
     monkeypatch.setenv("OMEGACODE_SRC", str(tmp_path))
-    assert "code_workspace" in [m["dir"] for m in real_receipt()[0]["modules"]]
+    running = next(m for m in real_receipt()[0]["modules"] if m["dir"] == "code_workspace")
+    assert "left_out" not in running and running["loaded"] is True
+
+
+def test_a_left_out_module_never_takes_a_skill_a_running_module_declares(client):
+    """Two modules declaring one head is a packaging mistake, but it must not make a callable skill read left out,
+    wherever the receipt lists the left-out module."""
+    for first in (True, False):
+        mind = make_mind(client, "Shadow" + str(first))
+        awake(client, mind)
+        receipt, _ = real_receipt()
+        shadow = {"dir": "shadow", "id": "invented.shadow", "configured": True, "loaded": False,
+                  "signature_heads": ["hive-publish", "shadow-only"], "left_out": ["service:omegacode"]}
+        receipt["modules"] = [shadow] + receipt["modules"] if first else receipt["modules"] + [shadow]
+        assert post(client, mind, receipt).status_code == 200
+        view = client.get(f"/api/agents/{mind['id']}/inventory").json()
+        assert skill(view, "hive-publish")["status"] == "callable" and skill(view, "hive-publish")["left_out"] is None
+        assert skill(view, "shadow-only")["status"] == "left-out"
 
 
 def test_a_signature_without_a_loaded_module_is_not_callable(client):
@@ -182,9 +209,16 @@ def test_a_restart_or_stop_makes_the_receipt_stale(client):
 def test_receipts_are_validated(client):
     mind = make_mind(client)
     receipt, _ = real_receipt()
+    workspace = {"dir": "code_workspace", "configured": True, "loaded": False, "signature_heads": ["code-open"]}
+    # left_out names requires entries the hive words itself, never the mind's own words, on a module not loaded
+    left_out = [{**receipt, "modules": [{**workspace, "left_out": left}]} for left in
+                ([], "service:omegacode", [7], ["needs you to paste your key"], ["npm:@openai/codex@0.133.0"],
+                 ["service:omegacode"] * 17)]
+    left_out.append({**receipt, "modules": [{**workspace, "loaded": True, "left_out": ["service:omegacode"]}]})
     for broken in ({**receipt, "note": "free text"}, {**receipt, "boot_id": "a b"}, {**receipt, "pid": "1"},
                    {**receipt, "parser": {"x y": []}}, {**receipt, "provides": [["a"]]},
-                   {**receipt, "modules": [{"dir": "../x"}]}, {**receipt, "core": {"source_digest": "nope"}}, []):
+                   {**receipt, "modules": [{"dir": "../x"}]}, {**receipt, "core": {"source_digest": "nope"}}, [],
+                   *left_out):
         assert post(client, mind, broken).status_code == 400, broken
     assert post(client, mind, receipt).status_code == 200
     assert client.post("/api/agent/inventory", json=receipt).status_code == 401

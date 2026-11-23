@@ -750,7 +750,7 @@ class CodeControllerEngine:
         goal = self.hive.goals.get(req["receiving_goal"])
         if goal["claimed_by"] != run["controller_id"]:
             try:
-                self.hive.goals.claim(self._controller(run), req["receiving_goal"])
+                await asyncio.to_thread(self.hive.goals.claim, self._controller(run), req["receiving_goal"])
             except Exception as exc:
                 return self.accepted(await self.observe(run, "open-refused", "refused", [],
                                                         {"reason": getattr(exc, "code", "claim_failed")}))

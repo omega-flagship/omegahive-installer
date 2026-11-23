@@ -32,6 +32,8 @@ KIT = {"hive_goals": [], "hive_goal_history": ["query", "offset"], "hive_goal_co
        "hive_publish": ["statement", "f", "c"], "hive_query": ["pattern"],
        "hive_send_to": ["conversation_id", "content"],   # flagship #75 9c393205: answer another conversation
        "hive_create": ["sentence"],   # Jon, 17 Nov: a mind builds software only by asking Create
+       "shell": ["cmd"],   # Jon on #395: thinking in code asks per use, so the kit's shell asks the gate each time
+       "metta": ["code"],  # Jon on #395: the mind's own MeTTa is thinking in code, run in a sandbox (QA's F1)
        # J3 R5 (OI-7): the Studio maker's three tools
        "hive_studio_context": ["session_id", "execution_id", "after_dir"],
        "hive_studio_publish": ["artifact_id", "body", "execution_id", "parent"],
@@ -135,7 +137,7 @@ def test_the_role_reaches_the_iter_note_bounded_and_follows_role_changes(tmp_pat
     root = w.create(agent, "tok")
     note = (root / "memory" / "hive.txt").read_text(encoding="utf-8")
     assert note.startswith("Your name is Ivy.\n") and "Your role: You find primary sources." in note and "Persona: Curious." in note
-    assert {p.name for p in (root / "tools").glob("hive_*.py")} == {f"{n}.py" for n in KIT}
+    assert {p.name for p in (root / "tools").glob("hive_*.py")} == {f"{n}.py" for n in KIT if n.startswith("hive_")}
     w.write_prompt(dict(agent, role_prompt="R" * 5000, persona="P" * 5000))   # a reconfigure: long role and persona
     note = (root / "memory" / "hive.txt").read_text(encoding="utf-8")
     assert len(note) <= ws.ITER_NOTE_CHARS and "R [cut: 5000 characters in all]" in note and "Persona" not in note

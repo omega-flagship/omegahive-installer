@@ -28,6 +28,15 @@ export interface Agent {
   /** What its owner chose for its belief link (BeliefLinkDomains; null for the mind's default). It moves on every
    *  change, so a page showing the link reads it again when this does. Absent on older hosts. */
   belief_link?: BeliefLinkDomains
+  /** The host's answer to "may this viewer set or remove this mind's cap": its owner alone, never an admin over someone
+   *  else's mind (hive/core/limits_view.py cap_refusal). Absent on events and older hosts: the UI hides the control
+   *  only when this is false. */
+  may_cap?: boolean
+  /**
+   * Whether this viewer may switch the mind's own coding (options.own_coding): its owner alone, as Jon asked on
+   * omega-flagship/omegahive#395 (the host's Hive.check_approval_options). Absent on events and older hosts.
+   */
+  may_switch_own_coding?: boolean
   /** Who created it, who can see it, and with whom it is shared (R13). */
   owner?: string | null
   visibility?: Visibility
@@ -61,7 +70,8 @@ export interface Agent {
   role_id?: string | null
   role_prompt?: string
   /** Coffee Room membership (hive/core/rooms.py, Coffee Room plan r1): automatic for a public mind in a public swarm unless
-   *  an admin took it out; private or shared minds (or swarms) join only if an admin adds them; app modules never join.
+   *  it was taken out; private or shared minds (or swarms) join only if their owner opts in; only the mind's owner changes
+   *  it, and app modules never join.
    *  Absent on hives without a Coffee Room. */
   coffee?: CoffeeMembership
 }
@@ -107,6 +117,8 @@ export interface AgentOptions {
   key?: string
   /** Which Iter loop a kind=iter mind runs: iter.py (omega, the default) or iter.metta on PeTTa (metta). */
   iter_variant?: IterVariant
+  /** Its owner switched its own coding on: it may build software itself, without Create. Absent means off. */
+  own_coding?: true
   route?: {
     /** Preferred upstream providers, by OpenRouter tag, in order. */
     order?: string[]
@@ -249,6 +261,9 @@ export interface Swarm {
   /** Request kinds this swarm accepts from other swarms (C39). */
   services?: string[]
   owner?: string | null
+  /** May this viewer set or remove this swarm's cap: its owner alone (hive/core/limits_view.py cap_refusal); absent on
+   *  events and older hosts, when the UI hides the control only if this is false. */
+  may_cap?: boolean
   visibility?: Visibility
   shared_with?: string[]
   /** A person's personal-mind swarm: that person's principal (hive/core/personal.py swarms.personal_of); else null/absent. */
@@ -438,7 +453,7 @@ export type PatchAgentBody = Partial<
 > & {
   /** Admin: the mind's mind-to-mind messages an hour; null returns to the hive default. */
   messages_per_hour?: number | null
-  /** Admin only: put the mind in (true) or take it out of (false) the Coffee Room. */
+  /** The mind's owner only: put it in (true) or take it out of (false) the Coffee Room; anyone else gets 403 owner_only. */
   coffee?: boolean
 }
 
@@ -1060,6 +1075,8 @@ export type HiveEvent =
   | (EventBase<'belief.published'> & { swarm_id: string; assertion: Assertion })
   | (EventBase<'belief.updated'> & { belief: Belief; outcome?: 'adopted' | 'revised' | 'chosen' })
   | (EventBase<'usage'> & { usage: Usage })
+  /** A recipient-scoped hint to reread the alert list. */
+  | (EventBase<'spend.alert'> & { principal: string; alert_id: string | null })
   | (EventBase<'log'> & { agent_id: string; line: string })
   // Phase 2
   | (EventBase<'approval.created'> & { approval: Approval })
@@ -1084,9 +1101,6 @@ export type HiveEvent =
   | (EventBase<'providers.updated'> & { providers: ProviderStatus[] })
   // Spending, cross-swarm work, app actions, outside agents, sharing
   | (EventBase<'budget.refused'> & { agent_id: string; code: string; count: number; hidden?: boolean } & Partial<RefusedLimit>)
-  /** the spend-rate guard is pacing a mind's paid calls (once per pace): when a call fits again (`until`, ISO), and the
-   *  limit it paces for whoever may see it */
-  | (EventBase<'budget.slowed'> & { agent_id: string; retry_after: number; until: string; hidden?: boolean; scope?: string; period?: string; limit_usd?: number })
   | (EventBase<'budgets.updated'> & { budgets: BudgetLine[] })
   | (EventBase<'request.updated'> & { request: CollabRequest })
   | (EventBase<'program.action'> & { record: ProgramActionRecord })
@@ -1158,15 +1172,6 @@ export interface BudgetRefusal {
   limit?: RefusedLimit
   /** the limit that refused it is one this viewer may not see (another person's allowance or key spending): the hive
    *  sends the refusal with no limit, and the page says a spending limit it can't change stopped the mind */
-  hidden?: boolean
-}
-
-/** A mind the spend-rate guard is pacing (budget.slowed): when its next call of that size fits again, and the limit
- *  pacing it for whoever may see it. */
-export interface BudgetSlowed {
-  until: string
-  at: string
-  limit?: { scope: string; period: string; limit_usd: number }
   hidden?: boolean
 }
 

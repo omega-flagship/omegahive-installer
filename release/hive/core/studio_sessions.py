@@ -1,3 +1,4 @@
+# Purpose: admit and track live Studio sessions and verify the host's required restart implementation.
 """J3 host round R2 (G1): the `studio.session` intent kind on the Ask intent plane, and its session record.
 
 Plan: PLATFORM_J3R4_HOST_O1_O2_G1_PLAN.md §3.1-3.2 (R2 row of §9); contract of record
@@ -69,10 +70,14 @@ CONSENT_SCHEMA = "omega-studio-consent-1"
 # dropped; each step starts from its context read), and keeps access to the unsaved piece while the session is live
 DISCLOSURES = ("maker_restarts_between_steps", "maker_reads_unsaved_piece_while_live")
 SETTING = "HIVE_STUDIO_SESSIONS"
-# handoff spec r2.4 §8.8 activation prerequisite (Mac): the sha256 of every reviewed hive-local/safe-restart.sh that carries
-# the exact-commit awake override (ALLOW_AWAKE=<SHA>; adopted in OI-12). On a Mac host whose script is not one of these the
+# handoff spec r2.4 §8.8 activation prerequisite (Mac): the sha256 of each restart implementation that carries
+# the exact-commit awake override (ALLOW_AWAKE=<SHA>; adopted in OI-12). On a Mac host whose entry point is not one of these the
 # self-check keeps Studio off whatever HIVE_STUDIO_SESSIONS says. The cloud's gate (ALLOW_AWAKE=<SHA>) already satisfies it.
-MAC_SAFE_RESTART_OVERRIDE_HASHES = ('de8c80c4cb7240a6b83f9657145c059461c0bcf95c387f4de7724c44eee24429',)
+# The second artifact is the standalone installer's proposed replacement, submitted for acceptance on #392's question.
+MAC_SAFE_RESTART_OVERRIDE_HASHES = (
+    'de8c80c4cb7240a6b83f9657145c059461c0bcf95c387f4de7724c44eee24429',
+    'd1fdb7f8a8ba5f8d3159943f418e137424f79537301467873ec959d5108590aa',
+)
 SAFE_RESTART_PATH = "HIVE_SAFE_RESTART_PATH"
 
 
@@ -115,7 +120,7 @@ def safe_restart_path():
 
 
 def mac_restart_override_adopted():
-    """True off a Mac; on a Mac only when the adopted safe-restart.sh hashes to a reviewed override-carrying version."""
+    """True off a Mac; on a Mac only when the selected restart entry point has an accepted override-carrying digest."""
     if host_platform() != "darwin":
         return True
     try:
@@ -252,7 +257,7 @@ class StudioSessions(StudioSteps):
         """What this build has of the Studio path, by name. R3 built the step plane, the fence table and token rotation;
         R4 the gateway execution hook and SEND_GATE wiring (studio_gateway.py); R5 pause and resume. Off a Mac every part
         is present, so HIVE_STUDIO_SESSIONS alone decides (default off). On a Mac the reviewed exact-commit safe-restart
-        override is still missing (none adopted), so the switch cannot turn on there."""
+        override must be present at its checked digest, from the host or the standalone installer."""
         db = self.hive.db
         tables = {r["name"] for r in db.all("SELECT name FROM sqlite_master WHERE type = 'table'")}
         return {"studio_sessions table": "studio_sessions" in tables,

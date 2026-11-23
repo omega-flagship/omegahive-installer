@@ -4,16 +4,15 @@ import { useMemo, useState } from 'react'
 import type { AgentKind, AgentOptions, CreatedAgent, Swarm } from '../../api/types'
 import { hsl } from '../../lib/color'
 import { cx } from '../../lib/cx'
-import { money } from '../../lib/format'
 import { plural } from '../../lib/plural'
 import { navigate } from '../../lib/router'
-import { useHive } from '../../store/store'
+import { useHive, useHiveLimited } from '../../store/store'
 import { Icon, type IconName } from '../../ui/Icon'
 import { Page } from '../../ui/Page'
 import { Button, Orb, Segmented } from '../../ui/primitives'
 import { KeyPicker } from '../keys/KeyPicker'
 import { ModelPicker } from '../models/ModelPicker'
-import { buildRows, priceLabel, readDefaultModel } from '../models/modelUtil'
+import { buildRows, costsNothing, priceLabel, readDefaultModel } from '../models/modelUtil'
 import { RoleSelect } from '../roles/RoleSelect'
 import { shown } from '../../lib/displayName'
 import { useUnsaved } from '../ask/dirty'
@@ -32,7 +31,6 @@ interface Slot {
   kind: AgentKind
   model: string
   options: AgentOptions
-  budget: string
   hue: number
 }
 
@@ -97,7 +95,7 @@ const TEMPLATES: Template[] = [
   },
 ]
 
-const STEPS = ['Purpose', 'Minds', 'Limits', 'Launch'] as const
+const STEPS = ['Purpose', 'Minds', 'Settings', 'Launch'] as const
 let slotSeq = 0
 
 function defaultModel(models: { id: string; provider: string; local: boolean }[]) {
@@ -107,7 +105,7 @@ function defaultModel(models: { id: string; provider: string; local: boolean }[]
   return { model: pick?.id ?? 'mock/echo', options: {} }
 }
 
-/** #/swarms/new: from an idea to a working swarm: purpose, minds, limits, first task, launch. */
+/** #/swarms/new: from an idea to a working swarm: purpose, minds, settings, first task, launch. */
 export default function LaunchSwarm() {
   const client = useHive((s) => s.client)
   const models = useHive((s) => s.models)
@@ -124,7 +122,6 @@ export default function LaunchSwarm() {
   const [hue, setHue] = useState(TEMPLATES[0].hue)
   const [goal, setGoal] = useState(TEMPLATES[0].goal)
   const [slots, setSlots] = useState<Slot[]>(() => slotsFor(TEMPLATES[0], models))
-  const [limit, setLimit] = useState('500')
   const [vis, setVis] = useState<VisibilityValue>({ visibility: 'private', shared_with: [] })
   const [startAwake, setStartAwake] = useState(true)
   const [open, setOpen] = useState<number | null>(null)
@@ -140,7 +137,7 @@ export default function LaunchSwarm() {
 
   function slotsFor(t: Template, list = models): Slot[] {
     const d = defaultModel(list)
-    return t.roles.map((r, i) => ({ key: ++slotSeq, name: r.name, role: r.role, roleId: null, persona: '', kind: 'omega', model: d.model, options: d.options, budget: '5', hue: (t.hue + i * 47) % 360 }))
+    return t.roles.map((r, i) => ({ key: ++slotSeq, name: r.name, role: r.role, roleId: null, persona: '', kind: 'omega', model: d.model, options: d.options, hue: (t.hue + i * 47) % 360 }))
   }
 
   const pickTemplate = (t: Template) => {
@@ -153,14 +150,16 @@ export default function LaunchSwarm() {
 
   const taken = useMemo(() => new Set(Object.values(agents).map((a) => a.name.toLowerCase())), [agents])
   const nameClash = slots.find((s, i) => taken.has(s.name.trim().toLowerCase()) || slots.findIndex((x) => x.name.trim().toLowerCase() === s.name.trim().toLowerCase()) !== i)
-  const valid = [!!name.trim(), slots.length > 0 && slots.every((s) => s.name.trim() && s.model) && !nameClash, Number(limit) >= 0, true]
-  const totalBudget = slots.reduce((t, s) => t + (Number(s.budget) || 0), 0)
+  const valid = [!!name.trim(), slots.length > 0 && slots.every((s) => s.name.trim() && s.model) && !nameClash, true, true]
+  // minds that can't answer while the hive has no monthly limit: every mind on a model that costs something, since none
+  // has a cap of its own here and a swarm's own limit never stands in for the hive's (Budgets.paid_without_cap)
+  const hiveLimited = useHiveLimited()
+  const unanswering = hiveLimited === false ? slots.filter((s) => !costsNothing(rows, models, s.model)) : []
   // Launch now finishes from any page with what the later pages already hold, their defaults unless changed; it is
   // open once every page is valid, and the line above the buttons says what it will start or what needs a change first.
   const canFinish = valid.every(Boolean)
   const firstInvalid = valid.findIndex((v) => !v)
   const modelNames = [...new Set(slots.map((s) => rows.find((r) => r.id === s.model)?.name ?? s.model))]
-  const caps = [...new Set(slots.map((s) => Number(s.budget) || 0))]
   const finishNote =
     firstInvalid === 0
       ? 'Name the swarm to launch it.'
@@ -168,9 +167,7 @@ export default function LaunchSwarm() {
         ? nameClash?.name.trim()
           ? `Rename ${shown(nameClash.name.trim())} under ${STEPS[1]}: each mind needs a name not used anywhere else in the hive.`
           : `Each mind needs a name and a model under ${STEPS[1]}.`
-        : firstInvalid === 2
-          ? `The monthly limit under ${STEPS[2]} needs a number.`
-          : `Launch now ${startAwake ? 'starts' : 'makes'} ${plural(slots.length, 'mind')}${startAwake ? '' : ', asleep,'} on ${modelNames.length === 1 ? modelNames[0] : plural(modelNames.length, 'model')}, ${caps.length > 1 ? `capped at ${money(totalBudget)} between them` : caps[0] ? `each capped at ${money(Number(caps[0]))}` : 'with no budget cap'}.`
+        : `Launch now ${startAwake ? 'starts' : 'makes'} ${plural(slots.length, 'mind')}${startAwake ? '' : ', asleep,'} on ${modelNames.length === 1 ? modelNames[0] : plural(modelNames.length, 'model')}.`
 
   const update = (key: number, patch: Partial<Slot>) => setSlots((list) => list.map((s) => (s.key === key ? { ...s, ...patch } : s)))
 
@@ -195,12 +192,6 @@ export default function LaunchSwarm() {
       let i = push(`Creating the swarm “${name.trim()}”`)
       swarm = await op.write(() => client.createSwarm({ name: name.trim(), description: purpose.trim(), hue, visibility: vis.visibility, shared_with: vis.visibility === 'shared' ? vis.shared_with : undefined }))
       finish(i)
-      if (Number(limit) !== 500 && client.setBudget) {
-        i = push(`Setting its spending limit to ${money(Number(limit))} a month`)
-        const setBudget = client.setBudget
-        await op.write(() => setBudget({ scope: `swarm:${swarm.id}`, period: 'month', limit_usd: Number(limit) }))
-        finish(i)
-      }
       for (const s of slots) {
         i = push(`Bringing ${s.name.trim()} to life`)
         try {
@@ -208,7 +199,7 @@ export default function LaunchSwarm() {
           const purposeLine = purpose.trim() ? ` The swarm's purpose: ${purpose.trim()}` : ''
           // with a role, the role writes the prompt (and knows the swarm); without one, say who the mind is
           const persona = roleId ? s.persona.trim() : `You are ${s.name.trim()}, the ${(s.role.trim() || 'member').toLowerCase()} in ${name.trim()}.${purposeLine} ${s.persona}`.trim()
-          const created = await op.write(() => client.createAgent({ name: s.name.trim(), kind: s.kind, swarm_id: swarm.id, model: s.model, persona, hue: s.hue, budget_usd: Number(s.budget) || 0, options: Object.keys(s.options).length ? s.options : undefined, role_id: roleId, visibility: vis.visibility, shared_with: vis.visibility === 'shared' ? vis.shared_with : undefined }))
+          const created = await op.write(() => client.createAgent({ name: s.name.trim(), kind: s.kind, swarm_id: swarm.id, model: s.model, persona, hue: s.hue, budget_usd: 0, options: Object.keys(s.options).length ? s.options : undefined, role_id: roleId, visibility: vis.visibility, shared_with: vis.visibility === 'shared' ? vis.shared_with : undefined }))
           minds.push(created)
           if (startAwake && s.kind !== 'module') await op.write(() => client.agentAction(created.id, 'start'))
           finish(i, 'done', startAwake && s.kind !== 'module' ? 'waking' : undefined)
@@ -297,7 +288,7 @@ export default function LaunchSwarm() {
 
             {step === 1 && (
               <div className="space-y-3">
-                <p className="text-[13px] text-ink-3">Each mind gets a name, a role, a model and a budget. Tap one to change its model or who pays for it.</p>
+                <p className="text-[13px] text-ink-3">Each mind gets a name, a role and a model. Tap one to change its model or who pays for it.</p>
                 {slots.map((s) => {
                   const row = rows.find((r) => r.id === s.model)
                   const clash = taken.has(s.name.trim().toLowerCase())
@@ -306,14 +297,10 @@ export default function LaunchSwarm() {
                       <div className="flex flex-wrap items-center gap-3 p-3">
                         <Orb hue={s.hue} size={34} />
                         {/* shrinkable tracks (minmax(0, 1fr)): the role list's longest option no longer sets the column's
-                            width; below 14rem of room the budget and remove move to a line of their own */}
+                            width; below 14rem of room the remove button moves to a line of its own */}
                         <div className="grid min-w-0 grow basis-56 grid-cols-1 gap-1.5 sm:grid-cols-2">
                           <input value={s.name} onChange={(e) => update(s.key, { name: e.target.value })} aria-label="Mind name" maxLength={32} className={cx('min-h-10 rounded-lg border bg-shade/25 px-2.5 font-display text-[15px] text-ink outline-none focus:border-line-2', clash ? 'border-bad/60' : 'border-line')} />
                           <RoleSelect compact value={roleIdOf(s)} onChange={(roleId) => update(s.key, { roleId, role: library?.find((r) => r.id === roleId)?.name ?? '' })} />
-                        </div>
-                        <div className="ml-auto flex items-center rounded-lg border border-line bg-shade/25 px-2" title="Budget cap for this mind">
-                          <span className="text-ink-3">$</span>
-                          <input inputMode="decimal" value={s.budget} onChange={(e) => update(s.key, { budget: e.target.value.replace(/[^\d.]/g, '') })} aria-label={`Budget for ${shown(s.name)}`} className="min-h-10 w-12 bg-transparent px-1 font-mono text-[13px] text-ink outline-none" />
                         </div>
                         <button onClick={() => setSlots((l) => l.filter((x) => x.key !== s.key))} disabled={slots.length === 1} aria-label={`Remove ${shown(s.name)}`} className="flex size-9 items-center justify-center rounded-lg text-ink-4 hover:bg-tint/[0.06] hover:text-ink disabled:opacity-30">
                           <Icon name="x" size={14} />
@@ -351,7 +338,7 @@ export default function LaunchSwarm() {
                     icon="plus"
                     onClick={() => {
                       const d = defaultModel(models)
-                      setSlots((l) => [...l, { key: ++slotSeq, name: '', role: 'Generalist', roleId: null, persona: '', kind: 'omega', model: d.model, options: d.options, budget: '5', hue: (hue + l.length * 47) % 360 }])
+                      setSlots((l) => [...l, { key: ++slotSeq, name: '', role: 'Generalist', roleId: null, persona: '', kind: 'omega', model: d.model, options: d.options, hue: (hue + l.length * 47) % 360 }])
                     }}
                   >
                     Add a mind
@@ -367,17 +354,14 @@ export default function LaunchSwarm() {
                 </section>
                 <section className="rounded-2xl border border-line bg-tint/[0.03] p-4">
                   <h2 className="eyebrow">Spending</h2>
-                  <div className="mt-3 flex flex-wrap items-center gap-3">
-                    <span className="text-[13.5px] text-ink-2">The whole swarm may spend at most</span>
-                    <div className="flex items-center rounded-xl border border-line bg-shade/25 px-3">
-                      <span className="text-ink-3">$</span>
-                      <input inputMode="decimal" value={limit} onChange={(e) => setLimit(e.target.value.replace(/[^\d.]/g, ''))} aria-label="Monthly limit in dollars" className="min-h-10 w-20 bg-transparent px-1 font-mono text-ink outline-none" />
-                    </div>
-                    <span className="text-[13.5px] text-ink-2">a month.</span>
-                  </div>
-                  <p className="mt-2 text-[12px] text-ink-4">
-                    Each mind also stops at its own cap ({money(totalBudget)} across the {slots.length} of them). Every paid call is checked against both before it is made; change them any time on the Usage page.
+                  <p className="mt-2 text-[13px] leading-relaxed text-ink-2">
+                    What these minds spend comes out of the hive's limits, which its owner sets on Usage and limits, and Usage shows it. Every paid call is checked against them before it is made.
                   </p>
+                  {unanswering.length > 0 && (
+                    <p className="mt-2 text-[12px] text-warn">
+                      The hive has no monthly limit yet, so a mind on a paid model can't answer ({unanswering.map((s) => shown(s.name)).join(', ')}). Set the hive's on Usage and limits, or pick a model on this computer for it under {STEPS[1]}.
+                    </p>
+                  )}
                 </section>
                 <section className="rounded-2xl border border-line bg-tint/[0.03] p-4">
                   <h2 className="eyebrow">Safety</h2>

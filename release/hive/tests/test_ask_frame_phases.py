@@ -65,7 +65,7 @@ def page_phases():
     source = CHECKER.read_text()
     body = source[source.index("export function checkAskEvent"):]
     body = body[:body.index("\nexport function", 1)]
-    return set(re.findall(r"case '([a-z-]+)':", body))
+    return set(re.findall(r"case '([a-z_-]+)':", body))
 
 
 def test_every_phase_the_host_stores_in_a_turn_is_one_the_page_reads():
@@ -104,6 +104,9 @@ def hand_over(client, on, monkeypatch):
     researcher finishes with one cited claim and one uncited. Its frames as the bus delivers them to Ann's page (live:
     Events.publish adds type and its own at) and as stored, in seq order."""
     hive = on["hive"]
+    # research spends under the hive's total, the one cap its owner sets, and nothing of its own, as a hive with a key
+    # starts with one (HIVE_START_LIMIT_MONTH_USD): test_research_request's hive_total, which this module doesn't run
+    hive.budgets.set("hive", "month", 1000)
     published, real = [], hive.events.publish
     monkeypatch.setattr(hive.events, "publish", lambda kind, **f: (published.append((kind, f)), real(kind, **f))[1])
     dispatch_research(client, on)

@@ -39,7 +39,7 @@ from .services import Services
 from .roles import Roles
 from .mcp import Harnesses
 from .policy import Policy
-from .providers import clean_options
+from .providers import clean_options, owner_options
 from .schedule import Scheduler
 
 log = logging.getLogger("hive")
@@ -168,10 +168,11 @@ class Hive:
             if column not in columns:
                 self.db.execute(f"ALTER TABLE swarms ADD COLUMN {column} TEXT")
         self.refusals = {}  # agent_id -> {count, last_at, code, message}: model calls refused for spending
-        self.slowed = {}  # agent_id -> until: paid calls the spend-rate guard is pacing (spend_rate_refusal)
         self.model_refusals = {}  # agent_id -> the refusal its own model calls last met (note_model_refusal), until one is answered
         from .visibility import Visibility
         self.visibility = Visibility(self)
+        from .limit_policy import LimitPolicy
+        self.limit_policy = LimitPolicy(self.spaces.run)   # who may set or remove a limit (lib_limits.metta)
         from .personal import PersonalMinds
         self.personal = PersonalMinds(self)   # one personal mind per named person (personal.py)
         from .ownhive import OwnHive
@@ -867,11 +868,21 @@ class Hive:
                 raise HiveError(403, "own_key_only", "a key-locked mind runs only on its owner's own key; choose one of your keys")
 
     @staticmethod
+    def is_mind_owner(owner, principal):
+        """True when principal is the mind's owner, the one person who sets its owner-only options."""
+        return bool(owner) and principal == owner
+
+    @staticmethod
     def check_approval_options(owner, old, new, by):
-        """P3b: only this mind's owner changes its optional approval-answer policy.
-        Full options replacement is also a clear when it omits an existing owner_only flag."""
-        if (old or {}).get("approvals") != (new or {}).get("approvals") and (not owner or by != owner):
+        """P3b: only this mind's owner changes its optional approval-answer policy, and, as Jon asked on
+        omega-flagship/omegahive#395, its own coding (providers.OWNER_ONLY_OPTIONS). Full options replacement is also a
+        clear when it omits an existing flag."""
+        old, new = owner_options(old or {}), owner_options(new or {})
+        if old == new or Hive.is_mind_owner(owner, by):
+            return
+        if old.get("approvals") != new.get("approvals"):
             raise HiveError(403, "approval_owner_only", "only this mind's owner can set or clear its approval policy")
+        raise HiveError(403, "own_coding_owner_only", "only this mind's owner can switch its own coding on or off")
 
     @staticmethod
     def check_key_use(key, may_use, current=None):
@@ -979,9 +990,9 @@ class Hive:
             # gets only a role carrying no rules. Re-checked under the roles lock through the insert, so a role edit that
             # adds rules lands either before (refused here) or after (the edit then applies to this mind as the admin's act).
             approval_options = json.loads(row.get("options") or "{}")
-            atomic = approval_options.get("approvals") == "owner_only" or host_need
+            atomic = bool(owner_options(approval_options)) or host_need
             with self.roles.lock, (self.db.transaction() if atomic else contextlib.nullcontext()):
-                if approval_options.get("approvals") == "owner_only":
+                if owner_options(approval_options):
                     actor = approval_guard() if approval_guard is not None else by
                     self.check_approval_options(row.get("owner"), {}, approval_options, actor)
                 if role and not privileged and self.roles.carries_rules(role["id"]):
@@ -1015,7 +1026,7 @@ class Hive:
             from .free_inference import check_model
             check_model(self.settings.providers, model)
         options = self._options(options, model or self.settings.default_model)
-        if options.get("approvals") == "owner_only":
+        if owner_options(options):
             actor = approval_guard() if approval_guard is not None else by
             self.check_approval_options(owner, {}, options, actor)
         if options.get("key_locked"):   # app platform P3a: every creation path, host-made minds included (by: the owner)
@@ -1175,7 +1186,7 @@ class Hive:
             hidden = bool(cleaned.get('key') and may_use_key is not None and not may_use_key(cleaned['key']))
             options = self._options(cleaned, changes.get('model') or row['model'], hidden_key=hidden)
             old_options = json.loads(row['options'] or '{}')
-            approval_change = old_options.get("approvals") != options.get("approvals")
+            approval_change = owner_options(old_options) != owner_options(options)
             if approval_change:
                 actor = approval_guard() if approval_guard is not None else by
                 self.check_approval_options(row.get("owner"), old_options, options, actor)
@@ -1525,7 +1536,7 @@ class Hive:
         if self.minds.is_child(agent_id):
             # Under this mind's lock, immediately before the effect: a cancel, lease loss or stop that won before this
             # queued start refuses it here (OmegaReview B1, 1986fd8/a0a27a0), never later by reconcile.
-            self.minds.require_startable(agent_id)
+            self.minds.require_startable(agent_id, resume_research=row["desired"] in ("asleep", "stopped"))
         self.require_open_swarm(row.get("swarm_id"))   # early, readable refusal; the write below is the guard
         # The reservation and the open-swarm condition are one statement, so it is atomic with archive_swarm:
         # either archive sees 'starting' and refuses, or this sees the archive and refuses (OmegaReview race).
@@ -2873,15 +2884,16 @@ class Hive:
         """The person whose message this mind is answering now, or None: a named person's message to it, in its chat or
         in a room that delivered it (rooms.py: a person's post reaches the minds it @mentions, or a DM's mind), that it
         hasn't answered in that conversation yet, which is when the hive's reply binding counts a conversation as
-        waiting (FeedbackDrafts.answering), sent at most an Ask turn's TIMEOUT ago, the time the hive gives a host mind
-        to answer a person's Ask. Past it the person is no longer waiting on this answer, so a mind still looping on it
-        is on its own again (#299's runaway) and the guard's burst bounds the tail. Another mind's message or the hive's
-        own never holds it. Messages are ordered by rowid, as the reply binding orders them. Time: a range read of the
-        mind's messages from the last TIMEOUT seconds (messages_agent), then one index seek per person's message among
+        waiting (FeedbackDrafts.answering), sent at most the Ask's answer time ago (ask_limits: timeout_seconds,
+        HIVE_ASK_TIMEOUT_SECONDS), the time the hive gives a host mind to answer a person's Ask. Past it the person is
+        no longer waiting on this answer, so a mind still looping on it is on its own again. Another mind's message or
+        the hive's own never holds it. Messages are ordered by rowid, as the reply binding orders them. Time: a range
+        read of the mind's messages from that window (messages_agent), then one index seek per person's message among
         them for the mind's answer (messages_agent_dir_conv)."""
-        from .ask import TIMEOUT
+        from .ask import ask_limits
         from .db import stamp_of
-        since = stamp_of(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=TIMEOUT))
+        window = datetime.timedelta(seconds=ask_limits(self).timeout_seconds)
+        since = stamp_of(datetime.datetime.now(datetime.timezone.utc) - window)
         row = self.db.one("SELECT i.sender FROM messages i WHERE i.agent_id = ? AND i.created_at >= ? AND i.direction = 'in' "
                           "AND i.sender GLOB 'user:u_*' AND NOT EXISTS (SELECT 1 FROM messages o WHERE o.agent_id = i.agent_id "
                           "AND o.direction = 'out' AND o.conversation_id = i.conversation_id AND o.created_at >= i.created_at "
@@ -2893,9 +2905,8 @@ class Hive:
         whose session holds it (_session_person), else the person whose request a team spawned it for
         (_request_person), else the person whose live Create plan waits on it (CreatePlanEngine.waiting_on), else the
         person whose live Code request waits on its second opinion (CodeControllerEngine.waiting_on), else the person
-        whose message it is answering (_answering_person). The spend-rate guard paces only a call with no one present
-        (cost_reservations.Reservations.reserve, paced): a person's own work is held by its limits, and by its own
-        budget or the time its person waits."""
+        whose message it is answering (_answering_person). Health asks a mind it finds going round in a loop about it
+        only while no one is present (Health.on_trace): with a person there, the person sees the loop themselves."""
         return (self._session_person(agent) or self._request_person(agent) or self.create_plans.waiting_on(agent["id"])
                 or self.code_controller.waiting_on(agent["id"]) or self._answering_person(agent))
 
@@ -3083,30 +3094,10 @@ class Hive:
 
     def note_admitted(self, agent):
         """A paid call admitted again, by Budgets.check and its reservation both: the mind is no longer paused for
-        spending, so its refusal record goes and the next refusal is announced as the first of a new pause; the same for
-        a pace the spend-rate guard set (spend_rate_refusal). A research request its researcher's spending held resumes
+        spending, so its refusal record goes and the next refusal is announced as the first of a new pause. A research request its researcher's spending held resumes
         (Research.worker_admitted)."""
         self.refusals.pop(agent["id"], None)
-        self.slowed.pop(agent["id"], None)
         self.research.worker_admitted(agent["id"])
-
-    def spend_rate_refusal(self, agent, exc):
-        """A paid call the spend-rate guard refused (cost_reservations.SpendRateLimited): the 429 spend_rate a mind reads
-        as a provider's rate limit, with the guarded limit, retry_after (whole seconds) and until (when a call of that size
-        fits) in its details and the Retry-After header. budget.slowed is announced once until a call is admitted again
-        (note_admitted), so a page says once that the mind is slowed and when it can carry on. Nothing was held."""
-        scope, _, period = exc.scope.rpartition(":")
-        until = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=exc.retry_after)) \
-            .isoformat(timespec="seconds").replace("+00:00", "Z")
-        minutes = -(-exc.retry_after // 60)
-        say = (f"Spending faster than this month allows: a call this size fits again in about {minutes} "
-               f"minute{'s' if minutes != 1 else ''}.")
-        details = {"scope": scope, "period": period, "limit_usd": exc.limit_usd, "retry_after": exc.retry_after,
-                   "until": until, "say": say}
-        if agent["id"] not in self.slowed:
-            self.slowed[agent["id"]] = until
-            self.events.publish("budget.slowed", agent_id=agent["id"], **details)
-        return HiveError(429, "spend_rate", say, details)
 
     def _check_budget(self, agent, paid=False, estimate=0.0, key_id=None, payer=None, own_key=False, turn_bound=False):
         """Refuse an LLM call before it is made when it could overspend.
@@ -3166,11 +3157,12 @@ class Hive:
                "payer": payer or self.payer_for(agent)[0], "payer_mode": usage.get("payer_mode"),
                "estimated": 1 if usage.get("estimated") else 0, "reservation": usage.get("reservation")}
         row["key_grantee"] = self.ownhive.grantee_for(row["key_id"], row["payer"])   # H1.1: the key-limit scope it counts in
+        row["key_person"] = self.ownhive.key_person(row["key_id"])   # whose own key paid it, None for the hive's keys
         self.db.insert("usage", row)
         # the allowance and hive cap notices, once this spend commits and outside the transaction's lock (limit_notices)
         self.db.after_commit(lambda paid_by=row["payer"]: self.limit_notices.after_usage(paid_by))
         row = {k: v for k, v in row.items() if k not in ("key_id", "swarm_id", "resolved_model", "payer", "key_grantee",
-                                                         "payer_mode", "reservation")}  # the event keeps its published shape, plus estimated
+                                                         "key_person", "payer_mode", "reservation")}  # the event keeps its published shape, plus estimated
         # Spend is not activity: it moves neither last_active_at nor last_input_at (a mind calling its model with no
         # input is exactly what Health's idle pass notices; see mark_input).
         self.db.execute("UPDATE agents SET spent_usd = spent_usd + ? WHERE id = ?", (usage["cost_usd"], agent["id"]))

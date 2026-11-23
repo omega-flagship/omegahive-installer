@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import type { Person } from '../../api/client'
 import type { Goal, Visibility } from '../../api/types'
 import { experienceById } from '../../experiences/registry'
+import { useAdminPeople } from '../../lib/adminPeople'
 import { cx } from '../../lib/cx'
 import { shown } from '../../lib/displayName'
 import { useNow } from '../../lib/hooks'
@@ -61,21 +61,10 @@ function useScreenLook() {
   return experienceById(useLook().current?.experience).id
 }
 
-/** Everyone signed in to this hive, read while a people box is open (null until the first read lands). */
+/** Everyone signed in to this hive, read while a people box is open, and only for an admin (lib/adminPeople). */
 function usePeople(active: boolean): PeopleRead {
   const client = useHive((s) => s.client)
-  const [read, setRead] = useState<Person[] | null>(null)
-  useEffect(() => {
-    if (!active || !client?.listPeople) return
-    let alive = true
-    client.listPeople().then(
-      (d) => alive && setRead(d.people),
-      () => alive && setRead([]),
-    )
-    return () => {
-      alive = false
-    }
-  }, [active, client])
+  const read = useAdminPeople(active)
   const canList = !!client?.listPeople
   return useMemo(() => ({ read, canList }), [read, canList])
 }

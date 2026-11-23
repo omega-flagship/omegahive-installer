@@ -25,9 +25,9 @@ except Exception:
         test_metta_expression,
     )
 try:
-    from .module_requires import unmet as _module_unmet
+    from .module_requires import need as _module_need, unmet as _module_unmet
 except Exception:
-    from module_requires import unmet as _module_unmet
+    from module_requires import need as _module_need, unmet as _module_unmet
 
 class SignatureParseError(Exception):
     pass
@@ -202,7 +202,7 @@ def _active_module_loader_paths(declaration_root=CORE_ROOT):
 
 def _module_declaration_paths(filename, declaration_root=CORE_ROOT):
     root = pathlib.Path(declaration_root)
-    modules_root = root / "modules" if root != CORE_ROOT else pathlib.Path(MODULE_DECLARATIONS_ROOT)
+    modules_root = _declaration_modules_root(root)
     if not modules_root.exists():
         return []
     paths = []
@@ -220,6 +220,28 @@ def _module_declaration_paths(filename, declaration_root=CORE_ROOT):
     if root == CORE_ROOT and os.environ.get('OMEGACLAW_EXTRA_LOADER') and filename in ('signatures.metta','affordance.metta'):
         paths.append(pathlib.Path(os.environ['OMEGACLAW_EXTRA_LOADER']).with_name('tools-'+filename))
     return sorted(paths, key=lambda candidate: (candidate.parent.name, candidate.name))
+
+
+def _declaration_modules_root(root):
+    """Where a declaration root's modules live: its own modules folder, or MODULE_DECLARATIONS_ROOT for this checkout."""
+    return root / "modules" if root != CORE_ROOT else pathlib.Path(MODULE_DECLARATIONS_ROOT)
+
+
+def _left_out_modules(declaration_root=CORE_ROOT):
+    """{name: [(entry, why)]} for each module a declaration root's loaders name but leave out (module_selection), less
+    any the host loads into this mind anyway (OMEGACLAW_EXTRA_MODULES). Only skill-help reads it: nothing of these
+    modules is parsed, catalogued in the prompt or authorized."""
+    root = pathlib.Path(declaration_root)
+    modules_root = _declaration_modules_root(root)
+    if not modules_root.exists():
+        return {}
+    extra = set(_extra_module_names(modules_root)) if root == CORE_ROOT else set()
+    off = {}
+    for loader in _active_module_loader_paths(root):
+        for name, missing in module_selection(loader, modules_root)[1].items():
+            if name not in extra:
+                off.setdefault(name, missing)
+    return off
 
 
 def _signature_declaration_paths(path=SIGNATURE_DECLARATIONS_PATH):
@@ -653,9 +675,14 @@ def _catalog_decl_string(text):
 
 
 def _load_skill_catalog(path=SKILL_CATALOG_DECLARATIONS_PATH):
+    return _read_skill_catalogs(_skill_catalog_declaration_paths(path))
+
+
+def _read_skill_catalogs(paths):
+    """(catalog lines, {topic: help lines}) from the SkillCatalog and SkillHelp atoms of these files, in order."""
     catalog = []
     help_by_topic = {}
-    for catalog_path in _skill_catalog_declaration_paths(path):
+    for catalog_path in paths:
         try:
             text = pathlib.Path(catalog_path).read_text(encoding="utf-8")
         except Exception:
@@ -680,16 +707,47 @@ def skill_catalog(path=SKILL_CATALOG_DECLARATIONS_PATH):
 
 
 def skill_help(topic, path=SKILL_CATALOG_DECLARATIONS_PATH):
-    """Render MeTTa-declared help for one catalog topic."""
+    """Render MeTTa-declared help for one catalog topic.
+
+    A module this mind leaves out because it lacks what the module requires (module_selection) has no catalog lines or
+    help here, so "all" ends with a line naming each such module and what it needs, and a topic of one answers which
+    module it is in and why this mind lacks it, read from that module's own catalog: a mind asked for code-open
+    without the OmegaCode client can say so instead of not knowing the skill."""
     topic = str(topic or "").strip()
     catalog, help_by_topic = _load_skill_catalog(path)
+    left_out = _left_out_help(path)
     if topic == "all":
-        return "\n".join(catalog)
+        return "\n".join(catalog + [f"Left out of this mind: {name} ({_first_few(topics)}), since it needs {needs}."
+                                    for name, needs, topics in left_out])
     lines = help_by_topic.get(topic, [])
     if lines:
         return "\n".join(lines)
+    for name, needs, topics in left_out:
+        if topic in topics:
+            return f"{topic} is in {name}, which this mind left out: it needs {needs}."
     known = ", ".join(sorted(help_by_topic))
     return f"Unknown skill-help topic {topic}. Known topics: {known}"
+
+
+def _left_out_help(path=SKILL_CATALOG_DECLARATIONS_PATH):
+    """[(module, what it needs in words, its catalog's help topics)] for each module this mind leaves out, from the same
+    declaration root as the catalog at ``path``. An entry need() can't word is named as written."""
+    p = pathlib.Path(path)
+    root = CORE_ROOT if p == SKILL_CATALOG_DECLARATIONS_PATH else p if p.is_dir() else p.parent
+    modules_root = _declaration_modules_root(root)
+    out = []
+    for name, missing in _left_out_modules(root).items():
+        needs = " and ".join(_module_need(entry) or str(entry) for entry, _why in missing)
+        out.append((name, needs, list(_read_skill_catalogs([modules_root / name / "catalog.metta"])[1])))
+    return out
+
+
+def _first_few(names, shown=2):
+    """"code-repos, code-open and 32 more" for a module's topics; "no skills listed" for none."""
+    if not names:
+        return "no skills listed"
+    head = ", ".join(names[:shown])
+    return head + (f" and {len(names) - shown} more" if len(names) > shown else "")
 
 
 def signature_quote(text):

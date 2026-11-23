@@ -148,6 +148,24 @@ def utc_now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def fit_text(text, max_bytes):
+    """The longest start of text that, escaped as a JSON string twice over (the tool's answer, then that answer inside
+    the mind's next request), is at most max_bytes of UTF-8: a researcher's page cut to what its next call can carry.
+    Time: about log2(len(text)) encodes of up to len(text) characters."""
+    def size(n):
+        return len(json.dumps(json.dumps(text[:n], ensure_ascii=False), ensure_ascii=False).encode("utf-8"))
+    if size(len(text)) <= max_bytes:
+        return text
+    low, high = 0, len(text)
+    while low < high:   # the largest n whose start fits: size grows with n
+        mid = (low + high + 1) // 2
+        if size(mid) <= max_bytes:
+            low = mid
+        else:
+            high = mid - 1
+    return text[:low]
+
+
 class WebError(Exception):
     """A refusal or failure, in plain words. ``safety`` marks the refusals that count toward the breaker; ``audit`` is
     the fuller reason kept for admins when the mind is told less (a name that does not resolve and one that resolves
@@ -671,7 +689,7 @@ class WebTools:
         # final_query: 1 when the page a fetch ended on had a query or fragment the audit does not keep (research.py
         # then calls a citation of it a "path" match, never "exact")
         for column, ddl in (("count", "INTEGER NOT NULL DEFAULT 1"), ("last_at", "TEXT"),
-                            ("final_query", "INTEGER NOT NULL DEFAULT 0")):
+                            ("final_query", "INTEGER NOT NULL DEFAULT 0"), ("research_progress", "INTEGER NOT NULL DEFAULT 0")):
             if column not in columns:      # a table made by the first version of this file
                 hive.db.execute(f"ALTER TABLE web_audit ADD COLUMN {column} {ddl}")
 
@@ -796,9 +814,20 @@ class WebTools:
                            "next turn")
         turn[tool] += 1
 
+    def _research_room(self, agent):
+        """For a researcher, the bytes its next web result may add (Research.fit_fetch), or None for any other mind, an
+        unpriced model or calls no limit holds. Below MIN_FETCH_BYTES the limits on its calls leave room only for its
+        report: it is told to write it now."""
+        from .research import MIN_FETCH_BYTES   # at call time: research.py reads this module's audit
+        research = getattr(self.hive, "research", None)
+        room = research.fit_fetch(agent) if research is not None else None
+        if room is not None and room < MIN_FETCH_BYTES:
+            raise WebError(402, "research_budget_low", research.report_now(agent), safety=False)
+        return room
+
     # -- audit --
 
-    def _audit(self, agent_id, turn, tool, outcome, started, **fields):
+    def _audit(self, agent_id, turn, tool, outcome, started, *, research_claim=None, **fields):
         """One row per call. URLs keep scheme, host and path only. A refusal with the same reason as one this mind had
         in the last AUDIT_COLLAPSE_SECONDS adds to that row's count instead of a new row, so refused calls cannot grow
         the table without bound."""
@@ -830,7 +859,15 @@ class WebTools:
             except ValueError:
                 row["final_query"] = 1
         row["urls"] = json.dumps([audit_url(u) for u in list(fields.get("urls") or [])[: MAX_REDIRECTS + 2]])
-        db.insert("web_audit", row)
+        research = getattr(self.hive, "research", None)
+        admission = (research.prepare_fetch_credit(agent_id, research_claim, stamp)
+                     if research_claim is not None and row.get("final_url") else None)
+        if admission is not None:
+            with db.transaction():
+                audit_id = db.insert("web_audit", row)
+                research.fetched(agent_id, research_claim, audit_id, row["final_url"], stamp, admission)
+        else:
+            db.insert("web_audit", row)
 
     def audit(self, agent_id=None, limit=100):
         try:
@@ -913,6 +950,7 @@ class WebTools:
             if provider is None:
                 raise WebError(503, "search_unavailable", "this hive has no web search service set up")
             self._admit(agent, "search", "web-search", f"(web-search {json.dumps(query)})", provider.cost_usd)
+            room = self._research_room(agent)
             turn = self.turn_label(agent["id"])
             try:
                 rows = await self._run_search(provider, query, n)
@@ -940,6 +978,9 @@ class WebTools:
                 continue
             results.append({"title": str(r.get("title") or "")[:300], "url": url[:MAX_URL],
                             "snippet": str(r.get("snippet") or "")[:600]})
+        if room is not None:   # a researcher reads only the results its next call can carry
+            while results and len(json.dumps(json.dumps(results, ensure_ascii=False), ensure_ascii=False).encode()) > room:
+                results.pop()
         searched_at = utc_now()
         self._audit(agent["id"], turn, "search", "ok", started, query=query, results=len(results), provider=provider.name,
                     urls=[r["url"] for r in results])
@@ -1062,6 +1103,9 @@ class WebTools:
                 raise WebError(400, "bad_request", f"max_chars is 100 to {MAX_CHARS}")
             parse_url(url)          # a malformed or non-https address is refused before anything is counted
             self._admit(agent, "fetch", "web-fetch", f"(web-fetch {json.dumps(url[:500])})", 0.0)
+            room = self._research_room(agent)
+            research = getattr(self.hive, "research", None)
+            claim = research.fetch_claim(agent["id"]) if research is not None else None
             turn = self.turn_label(agent["id"])
             rules, resolved = self.settings(), {}
             deadline = self.clock() + TOTAL_SECONDS
@@ -1108,9 +1152,14 @@ class WebTools:
             self._refused(agent, turn, "fetch", error, started, urls=urls or ([url[:MAX_URL]] if isinstance(url, str) else []),
                           **fields)
             raise error from None
-        cut = len(text) > max_chars
+        kept = fit_text(text[:max_chars], room) if room is not None else text[:max_chars]
+        cut = len(text) > len(kept)
         result = {"url": url, "final_url": final, "title": title, "content_type": ctype, "fetched_at": utc_now(),
                   "status": status, "bytes": len(body), "truncated": truncated or cut, "redirects": len(urls) - 1,
-                  "text": text[:max_chars]}
-        self._audit(agent["id"], turn, "fetch", "ok", started, urls=urls, **fields)
+                  "text": kept}
+        if claim is None:
+            self._audit(agent["id"], turn, "fetch", "ok", started, urls=urls, **fields)
+        else:
+            await asyncio.to_thread(self._audit, agent["id"], turn, "fetch", "ok", started,
+                                    urls=urls, research_claim=claim, **fields)
         return result

@@ -72,11 +72,6 @@ ALLOWED = {
                     "it lapses."): TASK_GOAL,
     ("core/mcp.py", "One task (goal) in full: detail, binding and binding_digest, deadline, result schema and review spec."):
         TASK_GOAL,
-    ("core/mcp.py", "Report on a task (goal) you hold: done with a result, failed with why, or waiting on a person. A bound "
-                    "task needs its binding_digest (top level, exactly as hive_goal_get shows it). data is the structured "
-                    "result; it is checked against the task's result schema."): TASK_GOAL,
-    ("core/mcp.py", "Renew the lease on a task (goal) you hold (also resumes it from waiting). Never reopens cancelled, "
-                    "expired or done work."): TASK_GOAL,
     ("core/mcp.py", "Acknowledge that a task (goal) you held was cancelled or expired, and stop work on it."): TASK_GOAL,
     ("core/mcp.py", "Propose a new task (goal), or a subtask of one you hold, for your swarm."): TASK_GOAL,
 }

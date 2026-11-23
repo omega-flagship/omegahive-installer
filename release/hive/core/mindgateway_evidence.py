@@ -48,7 +48,7 @@ COMMONS = "mindgateway"
 CAP_OUTCOMES = ("spend_cap", "call_cap", "time_cap")  # a turn that closed on one of these was not within its caps
 CAP_HITS = ("spend_cap", "call_cap", "time_cap")     # outcomes that are a limit refusing the turn at close
 # the only words a refusal's kind may be (conductor.limit_kind's enum, the gateway's own words); anything else: other
-KINDS = frozenset({"monthly_total_required", "own_key_limit", "member_allowance", "per_turn", "thread", "session",
+KINDS = frozenset({"monthly_total_required", "own_key_limit", "member_allowance", "expensive", "session",
                    "mind_total", "swarm", "hive", "key", "own_key_required", "no_key_grant", "rate_limited",
                    "spend_cap", "call_cap", "time_cap", "unknown"})
 MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/\-]{0,95}$")

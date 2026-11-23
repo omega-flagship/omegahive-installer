@@ -1,6 +1,8 @@
 # Purpose: tests that a mind lacking an explicit-only skill files the request itself, one per skill, that a hive admin's
 # answer applies it with a rule (For a time, Always) or ends it (No, Never), that Once is refused for it and only an
-# admin answers one, and that every refusal someone chose stays a plain refusal with nothing filed.
+# admin answers one, and that every refusal someone chose stays a plain refusal with nothing filed. The skill they ask
+# for makes a code mind, so they ask as minds whose owner switched their own coding on, the only minds #395's wall
+# lets build software.
 """A mind asks for a permission it lacks, and a hive admin only approves it (Jon, testers' chat, 13 Nov).
 
 "when a permission is needed the agent should essentially create it and then just get us to approve to apply". A
@@ -11,6 +13,7 @@ the hive's own design, stays a refusal the mind reports.
 
 Invented lives: Rosa runs a bakery swarm whose mind Juno looks things up; Ines is a member with a mind of her own.
 """
+import json
 import time
 
 import pytest
@@ -22,10 +25,20 @@ from hive.tests.test_visibility import person
 SPAWN = '(code-mind-spawn "{}")'   # an explicit-only skill (policy.EXPLICIT_ONLY): an admin grants it mind by mind
 
 
+def _coding_on(hive, agent):
+    """agent, its own coding switched on as its owner does (options.own_coding). A code mind is software a mind builds,
+    so the wall refuses code-mind-spawn to any other mind before a rule or a request is read (Jon's line on
+    omega-flagship/omegahive#395, policy.own_code), and nothing is filed for it: no admin's answer could lift it."""
+    row = hive.db.one("SELECT options FROM agents WHERE id = ?", (agent["id"],))
+    options = {**json.loads(row["options"] or "{}"), "own_coding": True}
+    hive.db.execute("UPDATE agents SET options = ? WHERE id = ?", (json.dumps(options), agent["id"]))
+    return {**agent, "options": options}
+
+
 def _juno(client):
     hive = client.app.state.hive
     bakery = client.post("/api/swarms", json={"name": "Bakery"}).json()
-    return hive, hive.create_agent("Juno", "omega", bakery["id"], "mock/echo", "", None, 0, None, None)
+    return hive, _coding_on(hive, hive.create_agent("Juno", "omega", bakery["id"], "mock/echo", "", None, 0, None, None))
 
 
 def _try(client, agent, command):
@@ -114,7 +127,7 @@ def test_only_a_hive_admin_answers_a_permission_request(client):
                     (time.time() + 3600, token_hash(ines["Authorization"].split(" ", 1)[1])))
     made = client.post("/api/agents", headers=ines, json={"name": "Ines's mind", "kind": "module", "visibility": "public"})
     assert made.status_code == 200, made.text
-    mind = made.json()
+    mind = _coding_on(hive, made.json())
     request = _try(client, mind, SPAWN)
     assert request["decision"] == "pending"
     listed = [a for a in client.get("/api/approvals", headers=ines).json() if a["id"] == request["approval_id"]]

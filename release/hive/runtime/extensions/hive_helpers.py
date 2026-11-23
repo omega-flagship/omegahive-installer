@@ -270,7 +270,7 @@ FORMAT_RETRY_SECONDS = 2
 PROVIDER_RETRY_SECONDS = 60   # a provider-error wait (hive_services.chat: wait "LLM-PROVIDER-...") retries after this long
 
 
-def chosen_wait_seconds(sexpr_repr, retry_kind="normal", format_attempts=0, hive_wait=0):
+def chosen_wait_seconds(sexpr_repr, retry_kind="normal", format_attempts=0):
     """How a response that is nothing but `wait` sets the mind's next wake, read from the parsed commands' repr.
 
     -1: the response is not a pure wait (the mind acted, or wrote nothing), so its turns go on as before.
@@ -283,11 +283,6 @@ def chosen_wait_seconds(sexpr_repr, retry_kind="normal", format_attempts=0, hive
     60: the wait is the runtime's own provider error (hive_services.chat answers wait "LLM-PROVIDER-..." when
         the provider is unknown or unavailable): not the mind's choice, so a short fixed back-off, never the full wake
         interval (Kimi r1 K8), and a recovering provider is tried again within a minute.
-     r: the hive itself refused the call for spending or pace (retry kind hive, hive_services.chat): the wait says the
-        hive's sentence and lasts its retry_after, hive_wait, clamped like any chosen length; 60 when it gave none (0),
-        as a provider error, since waiting longer helps only once someone raises the limit. The loop passes hive_wait
-        from hive_services.last_wait_seconds beside the retry kind: the loop loads that module as hive_services, so an
-        import of hive.runtime.hive_services here would be a second copy whose wait is never set.
     """
     import re
     global _WAIT_ONLY, _WAIT_SECONDS, _WAIT_PROVIDER
@@ -303,9 +298,6 @@ def chosen_wait_seconds(sexpr_repr, retry_kind="normal", format_attempts=0, hive
         return FORMAT_RETRY_SECONDS if runtime_retry_due("format", format_attempts) else 0
     if retry_kind == "provider":
         return PROVIDER_RETRY_SECONDS
-    if retry_kind == "hive":
-        seconds = float(hive_wait) if isinstance(hive_wait, (int, float)) and not isinstance(hive_wait, bool) else 0.0
-        return PROVIDER_RETRY_SECONDS if seconds <= 0 else int(min(86400, max(30, seconds)))
     if _WAIT_PROVIDER.match(text):
         return PROVIDER_RETRY_SECONDS
     if held_goal():
@@ -412,8 +404,8 @@ def _model_response(response, provider_failure="normal", last_reply="clear"):
     import re
     # The host has already classified its own unavailable/exception result. Never reclassify an outage as malformed
     # model output, including when a later syntax guard is tightened. Model text cannot supply this argument.
-    if provider_failure in ("provider", "hive"):
-        return signature_balance_parentheses(response), provider_failure
+    if provider_failure == "provider":
+        return signature_balance_parentheses(response), "provider"
     failed = (provider_failure == "format" or not signature_raw_batch_complete(response)
               or not signature_raw_batch_complete(_signature_source_text(response)))
     parsed = "" if failed else signature_balance_parentheses(response)
@@ -535,7 +527,7 @@ def prepared_response_commands(envelope):
 def prepared_response_kind(envelope):
     import json
     kind = json.loads(envelope)["retry_kind"]
-    if kind not in ("normal", "format", "provider", "hive"):
+    if kind not in ("normal", "format", "provider"):
         raise ValueError("invalid runtime retry kind")
     return kind
 

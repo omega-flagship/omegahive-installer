@@ -50,8 +50,10 @@ def local_env(monkeypatch):
 
 
 def short_dir():
-    """Unix socket paths are limited to ~100 bytes: the data folder lives under /tmp (mode 0700 from mkdtemp)."""
-    return pathlib.Path(tempfile.mkdtemp(prefix="j1b-", dir="/tmp"))
+    """Unix socket paths are limited to ~100 bytes: the data folder lives directly under TMPDIR, else /tmp (mode 0700
+    from mkdtemp), not under pytest's longer temp path. TMPDIR first: on the CI runners it is the job's tmpfs, and /tmp
+    is the machine's shared disk, where each boot of the hive took 43-117 s instead of under 1 s (T-SHARD-15MIN)."""
+    return pathlib.Path(tempfile.mkdtemp(prefix="j1b-", dir=os.environ.get("TMPDIR") or "/tmp"))
 
 
 def make_app(data=None):
@@ -405,17 +407,33 @@ def test_an_open_data_folder_refuses_start(local_env):
         shutil.rmtree(data, ignore_errors=True)
 
 
+def _dumpable():
+    """PR_GET_DUMPABLE (3) of this process on Linux; None elsewhere."""
+    if not sys.platform.startswith("linux"):
+        return None
+    import ctypes
+    return ctypes.CDLL(None, use_errno=True).prctl(3, 0, 0, 0, 0)
+
+
+def _set_dumpable(value):
+    import ctypes
+    ctypes.CDLL(None, use_errno=True).prctl(4, value, 0, 0, 0)   # PR_SET_DUMPABLE
+
+
 def test_prepare_process_sets_umask_077_and_no_core_dumps(monkeypatch):
     import resource
-    import sys
+    monkeypatch.setattr(localowner, "_EXE_AT_START", localowner._EXE_AT_START)
     old_umask = os.umask(0o022)
     old_core = resource.getrlimit(resource.RLIMIT_CORE)
+    old_dumpable = _dumpable()
     out, err = sys.stdout, sys.stderr
     try:
         localowner.prepare_process()
         assert os.umask(0o077) == 0o077
         assert resource.getrlimit(resource.RLIMIT_CORE)[0] == 0
         assert redact.REDACTOR.enabled
+        if old_dumpable is not None:
+            assert _dumpable() == 0
     finally:
         os.umask(old_umask)
         sys.stdout, sys.stderr = out, err
@@ -423,6 +441,10 @@ def test_prepare_process_sets_umask_077_and_no_core_dumps(monkeypatch):
             resource.setrlimit(resource.RLIMIT_CORE, old_core)
         except (ValueError, OSError):
             pass
+        if old_dumpable is not None:
+            _set_dumpable(old_dumpable)
+    # the pytest process runs every later test: it must leave as dumpable as it came in
+    assert _dumpable() == old_dumpable
 
 
 # ---- F: one redactor -------------------------------------------------------------------------------------------------

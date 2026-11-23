@@ -1,3 +1,4 @@
+// Purpose: prove a browser-owned Ask turn is admitted once by its own operation, recovered without a second admission, and dropped on an identity change.
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { AskAccepted, AskBody, AskContext, AskEvent } from '../api/ask'
 import { AskRefusal } from '../api/ask'
@@ -28,7 +29,7 @@ let sequence = 0
 function bind(client: HiveClient) {
   useHive.setState({ client, session: `browser-owner-${++sequence}`, inits: sequence, agents: {}, swarms: {} })
   state().bind(useHive.getState().session, 'user:invented')
-  useAskStore.setState({ settings: { swarm_id: null, thread_budget_usd: 1, eligible: [] }, personal,
+  useAskStore.setState({ settings: { swarm_id: null, eligible: [] }, personal,
     browserMind: { mindId: personal.id, gateway: true, available: true, preference: true } })
 }
 async function setup(options: { over?: Partial<HiveClient>; ready?: boolean; restored?: string; attach?: boolean } = {}) {
@@ -106,7 +107,7 @@ it.each(['gateway', 'available', 'preference', 'worker', 'missing', 'wrong-perso
 it.each([{ ...context, swarm_id: 's_other' }, { private: true, route: 'private' }] as AskContext[])('preserves the existing recipient without browser history: %j', async ctx => {
   const s = await setup()
   useHive.setState({ swarms: { s_other: { id: 's_other', name: 'Other', coordinator_id: 'a_other' } } } as never)
-  useAskStore.setState({ settings: { swarm_id: null, thread_budget_usd: 1, eligible: [{ id: 's_other', name: 'Other', orchestrator: { id: 'a_other', name: 'Other coordinator' } }] } })
+  useAskStore.setState({ settings: { swarm_id: null, eligible: [{ id: 's_other', name: 'Other', orchestrator: { id: 'a_other', name: 'Other coordinator' } }] } })
   await state().send('Host request', ctx)
   expect(JSON.parse(s.posts[0])).not.toHaveProperty('answer_in')
   expect(s.owner.entered).not.toHaveBeenCalled()

@@ -29,17 +29,20 @@ CORE_ROOT = pathlib.Path(__file__).resolve().parents[3]
 MODULE_ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_FABRICPC_REPO = CORE_ROOT.parent / "FabricPC"
 DEFAULT_FABRICPC_PYTHON = DEFAULT_FABRICPC_REPO / ".venv/bin/python"
+# the mind's memory folder: OMEGACLAW_MEMORY_DIR when a hive runs the mind (its own folder in the hive's data folder),
+# else the checkout's memory folder; a hive mind's traces never go under the code folder, which every mind shares
+MEMORY = pathlib.Path(os.environ.get("OMEGACLAW_MEMORY_DIR") or CORE_ROOT / "memory")
 TRACE_PATH = pathlib.Path(
-    os.environ.get("OMEGACLAW_ASSUME_TRACE_PATH", str(CORE_ROOT / "memory" / "assume_trace.metta"))
+    os.environ.get("OMEGACLAW_ASSUME_TRACE_PATH", str(MEMORY / "assume_trace.metta"))
 )
 ASSUME_PATH = pathlib.Path(
-    os.environ.get("OMEGACLAW_ASSUME_PATH", str(CORE_ROOT / "memory" / "assume.metta"))
+    os.environ.get("OMEGACLAW_ASSUME_PATH", str(MEMORY / "assume.metta"))
 )
 DEMO_DIR = pathlib.Path(
     os.environ.get("OMEGACLAW_ASSUME_DEMO_DIR", str(CORE_ROOT / "demos" / "assume"))
 )
 STDERR_PATH = pathlib.Path(
-    os.environ.get("OMEGACLAW_ASSUME_STDERR_PATH", str(CORE_ROOT / "memory" / "assume_fabricd.stderr.log"))
+    os.environ.get("OMEGACLAW_ASSUME_STDERR_PATH", str(MEMORY / "assume_fabricd.stderr.log"))
 )
 
 _current_module = sys.modules.get(__name__)

@@ -205,7 +205,9 @@ def test_T_EV4_callers_that_are_not_turn_bound_record_nothing(gw):
     """Control (passes on r1ab too): no caller but the gateway's turn-bound one writes evidence."""
     hive = gw["hive"]
     P, mine = f"user:{PAT}", gw["pats"]
-    assert refusal(hive.check_budget, mine, True, 0.05, KA, P, True).code == "no_budget"
+    hive.check_budget(mine, True, 0.05, KA, P, True)                                 # admitted on Pat's own key: nothing
+    hive.ownhive._write_limit(P, KA, "self", 0.01, None, "owner", "", P)              # Pat's own limit on that key
+    assert refusal(hive.check_budget, mine, True, 0.05, KA, P, True).code == "spend_limit"   # refused: nothing either
     hive.check_budget(mine, True, 0.05, None, P, False)                              # admitted: nothing either
     assert rows(hive) == [] and hive.spaces.beliefs(COMMONS) == []
     assert ask(gw["client"], gw["ann"], "op-ev4-ord", context={"swarm_id": gw["swarm"]["id"]}).status_code == 202
@@ -401,7 +403,7 @@ def _decisions(gw, tag):
         out[f"bound-{label}"] = hive.budgets.own_key_bound(pats, P, True, KA, True)
     out["payer"] = hive.payer_for(pats, f"user:{PAT}")
     r = ask(client, gw["ann"], f"op-{tag}-1", **BROWSER)
-    out["admit"] = (r.status_code, r.json().get("state"), r.json().get("route"), r.json().get("cap_usd"))
+    out["admit"] = (r.status_code, r.json().get("state"), r.json().get("route"))
     out["browser_turn"] = hive.ask.browser_turn(Viewer("user:u_ann", False), gw["mine"])
     r = ask(client, gw["ann"], f"op-{tag}-2", **BROWSER)                              # busy: one turn at a time
     out["busy"] = (r.status_code, r.json()["error"]["code"])

@@ -3,6 +3,7 @@ any other run of code is approved one at a time, never "Always"; every skill tha
 it inside the mind's own folder; the private-data reads and body-container-launcher ask a person (persistent-expression
 is decided by what it writes, test_metta_reach);
 reboot-self exists only where the hive is the mind's own VM; and test-metta, which only checks syntax, stays allowed."""
+import json
 import pathlib
 import re
 
@@ -27,8 +28,13 @@ PRIVATE_READS = ("read-whatsapp-chat", "read-whatsapp-chat-full", "read-whatsapp
 
 @pytest.mark.parametrize("skill", CODE_RUNS)
 def test_a_shell_or_any_other_code_run_is_approved_one_at_a_time(client, skill):
-    """Jon's rule: shell asks every time, so one "Always" must not let it, or any other run of code, through for good."""
+    """Jon's rule: shell asks every time, so one "Always" must not let it, or any other run of code, through for good.
+    A head that builds software is refused to a mind unless its owner switched its own coding on (Jon's line on
+    omega-flagship/omegahive#395), so it is tried on such a mind."""
     _, (a, _) = make_swarm_and_agents(client)
+    if any(policy._matches(p, skill) for p in policy.OWN_CODE_SKILLS):
+        client.app.state.hive.db.execute("UPDATE agents SET options = ? WHERE id = ?",
+                                         (json.dumps({"own_coding": True}), a["id"]))
     pending = authorize(client, a, f'({skill} "invented argument")')
     assert pending["decision"] == "pending"
     always = decide(client, pending["approval_id"], "always")

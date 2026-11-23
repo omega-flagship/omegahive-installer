@@ -1,5 +1,6 @@
 // Purpose: First Light's reading of the host: each setup item's truth, the person's monthly limit with its spend and holds, and the mind's hello.
 /**
+ * Purpose: read and write what First Light needs on the host, each answer read strictly.
  * What First Light reads and writes on the host (live 81c8b9d, hive/API.md "First Light" and "Own hive, round H1").
  * Every answer is read strictly from unknown: what is not well formed is left out (never guessed into a claim).
  *
@@ -425,7 +426,8 @@ export function liveHost(c: FlClient, otherMinds: (mindId: string | null) => num
       const named = await write(() => call(c.renameMyMind && (() => c.renameMyMind!(shape.name)), (v) => (isObj(v) ? readMindRef(v.mind) : null)))
       if (named.id !== mindId) throw new FlRefusal(409, 'mind_changed', 'Your mind changed in another window. Here it is as it stands now.')
       if (shape.how !== null) await write(() => call(c.patchAgent && (() => c.patchAgent!(mindId, { persona: shape.how! })), (v) => (isObj(v) ? true : null)))
-      // the Ask prefs as they stand (who answers, what a conversation may spend): unchanged, now recorded as set up.
+      // the Ask prefs as they stand (who answers, and whether it asks before an answer that looks expensive): unchanged,
+      // now recorded as set up.
       // Its own refusal is not the person's problem; a stop (another person signed in) still ends the chain.
       await write(() => call(c.setAskSettings && (() => c.setAskSettings!({})), (v) => (isObj(v) ? true : null))).catch((e: unknown) => {
         if (stopped(e)) throw e

@@ -5,6 +5,7 @@ argument limit: each turn ended at exactly maxOutputToken (usage completion_toke
 parts in the mind's own memory folder and posted whole, byte for byte, by one hive-revision."""
 import importlib.util
 import json
+import os
 import pathlib
 import sys
 
@@ -108,3 +109,29 @@ def test_the_skill_is_declared_reviewed_local_and_parses_with_its_text_intact():
     assert "hive-revision-part" in REVIEWED_HIVE_SKILLS and "hive-revision-part" in hc.LOCAL_ALLOW and "revision_part" in hc.SKILLS
     parsed = parser.signature_balance_parentheses('hive-revision-part ar_3c4d 2 {"text": "Join your neighbours", "x": 80}')
     assert parsed == '((hive-revision-part "ar_3c4d" 2 "{\\"text\\": \\"Join your neighbours\\", \\"x\\": 80}"))', parsed
+
+
+def test_parts_are_listed_through_a_descriptor_opened_after_they_were_made(memory, monkeypatch):
+    # POSIX leaves it unspecified whether readdir shows entries made after the folder was opened, and tmpfs on some
+    # Linux kernels does not (full run 44793192701 on kabir-flagship-2, omega-flagship/omegahive#623). Emulate that
+    # reader: a listing through a folder descriptor shows only the entries there when the descriptor was opened.
+    real_open, real_listdir, at_open = os.open, os.listdir, {}
+
+    def opened(path, flags, *args, **kwargs):
+        fd = real_open(path, flags, *args, **kwargs)
+        at_open.pop(fd, None)
+        if flags & os.O_DIRECTORY:
+            at_open[fd] = set(real_listdir(fd))
+        return fd
+
+    def listdir(path="."):
+        names = real_listdir(path)
+        if isinstance(path, int) and path in at_open:
+            return [name for name in names if name in at_open[path]]
+        return names
+
+    monkeypatch.setattr(hc.os, "open", opened)
+    monkeypatch.setattr(hc.os, "listdir", listdir)
+    assert hc.revision_part("ar_e", 1, "a").startswith("HIVE-REVISION-PART")
+    assert hc.revision_part("ar_e", 2, "b").startswith("HIVE-REVISION-PART")
+    assert "held for ar_e: [1, 2]" in hc.revision("ar_e", json.dumps({"parent": 1, "body_parts": 3}))

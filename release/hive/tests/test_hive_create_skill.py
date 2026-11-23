@@ -1,7 +1,7 @@
-"""Purpose: test hive-create, the one way a mind builds software (Jon in the testers' group, 17 Nov: "Route them only
-through create"): every mind may use it without asking, its words reach the hive's create route as one sentence with
-the conversation the mind is answering, an Omega mind and an Iter mind both make the offer, and the mind reads what
-happened, the hive's refusal included."""
+"""Purpose: test hive-create, the way a mind builds software unless its owner switched its own coding on (Jon in the
+testers' group, 17 Nov: "Route them only through create"): every mind may use it without asking, its words reach the
+hive's create route as one sentence with the conversation the mind is answering, an Omega mind and an Iter mind both
+make the offer, and the mind reads what happened, the hive's refusal included."""
 import importlib.util
 import pathlib
 import sys

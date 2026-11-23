@@ -30,6 +30,49 @@ and are not repeated here.
 
 ## Unreleased
 
+### Changed (every pull request checks each live event has a rule)
+- Every pull request's smoke tests now include the check that each live event kind has a rule, so an event can't
+  reach main without one. asset.deleted (#408) reached main without one, and every full run failed on it until #606
+  gave it the rule asset.stored has.
+
+### Changed (connector secrets leave the code folder, each person's and sealed)
+- A connector's login, token or session key belongs to the person who entered it, and reaches only the minds that
+  person installed the connector on, from You, Your connectors. A mind is refused another person's. The hive makes Home
+  Assistant's and LibreLinkUp's calls itself with the owner's secret, so no mind holds those; it serves WhatsApp's
+  session and the Agentverse listener's seed to the mind they're installed on, since those processes need the bytes.
+  Installing a connector also loads its module into that mind at its next start. WhatsApp is on one mind at a time.
+- The hive keeps these secrets sealed in its database under a key kept outside its data folder: the login Keychain on
+  a Mac, `systemd-creds --user` on Linux and in WSL (systemd 256 or later; older systemd keeps a private key file and
+  says it protects less), or the file `HIVE_SECRETS_KEY_FILE` names, for containers and servers. No mind or container
+  is given a connectors folder any more.
+- When a hive starts, it imports what a checkout still holds (the Home Assistant URL and token, the LibreLinkUp login
+  and session, the Agentverse listener's seed, WhatsApp's pairing) as its first admin's, each checked to open to the
+  same bytes before its file goes, so a pairing or a token carries over with nothing entered again. A connector the
+  host's module loader gives every mind stays installed on the minds that person made (WhatsApp on the oldest), not on
+  the hive's own Create · Code, Review, Research, Studio, app or personal minds. A link is never followed, and a copy
+  that differs from the one imported is kept and logged. A test hive imports nothing; a standalone run, with no hive,
+  keeps its files under its checkout as before.
+- Every WhatsApp pairing folder (`auth`, `auth_<label>`) is imported or reported: the one the hive used, else the one
+  used last, is the person's live pairing, and each other is sealed aside. Minds a hive that died left running, with
+  the old connectors folder in their sandbox, are restarted before the import, and copies an interrupted move left are
+  removed. A test hive in a temporary folder says in its log that its key is a plain file there.
+- What a mind writes as it runs (the WhatsApp inbox log and QR codes, the Home Assistant action log, glucose
+  observations and watches, Agentverse, Codex, body, VM, VM policy, Game Boy and assume state and traces) goes in the
+  mind's own memory folder (`OMEGACLAW_MEMORY_DIR`), never the code folder every mind shares.
+- A linked folder can no longer be the hive's code folder, sit inside it or hold it, as with its data folder.
+
+### Changed (Mac Studio restart prerequisite)
+- The Mac installer delivers a per-hive restart entry point and names it for Studio's exact-byte check. It keeps
+  the asleep-or-owner-approved rule and an override bound to the installed release's full commit. A missing or
+  changed entry point keeps live Studio sessions off. This replacement needs Jon's acceptance before a tester build.
+
+### Fixed (a deleted file's live event, #408)
+- A file an admin deletes from Files and storage now reaches everyone who sees its swarm as a live event, the way its
+  upload does. Before, the hive had no rule for that event, so it held it back from everyone but admins, and a full
+  run of the hive's tests failed on the missing rule.
+- Every pull request's smoke tests now include the check that each live event kind has a rule, so an event can't
+  reach main without one.
+
 ### Fixed (recent creations in Studio)
 - Studio's empty canvas lists your three newest saved designs, pictures or deployed Create apps in one list. Each opens the saved revision or app. The empty canvas also links to Artifacts.
 

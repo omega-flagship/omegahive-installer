@@ -24,6 +24,7 @@ import pytest
 from hive.core import create_plan_ports as cpp
 from hive.core.create_plan_ports import PROBE_PATH, Ports, frame_document, parse_check_output, probe_problem
 from hive.core.create_plan_members import counted_check
+from hive.core.ui_parts import FRAME_LINK, FRAME_SCRIPT
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "hive/plugins/create_acceptance_check/tools/probe.mjs"
@@ -182,6 +183,40 @@ def test_a_board_whose_logic_is_an_inline_script_fails_on_index_html_too(job):
     out = play(INLINE, tmp=job)
     assert out["outcome"] == "fail" and "index.html" in out["failing"], out
     assert "an inline <script>" in out["notes"][0] and out["notes"][0].startswith("index.html as the app frame runs it")
+
+
+# acceptance-tests#30 (staging, 21 Nov): "a tiny click-counter webpage as a single self-contained HTML file". The page
+# loads ./style.css and ./app.js with the frame's own two tags, the only way its style and code run under the frame's
+# CSP, and the probe counts what it loads from another origin.
+COUNTER = {"index.html": f'<!doctype html><html><head>{FRAME_LINK}</head><body>\n<p>Count: <span id="count">0</span></p>\n'
+                         f'<button id="add">+1</button>\n{FRAME_SCRIPT}</body></html>\n',
+           "style.css": "#add { font-size: 2em; }\n",
+           "app.js": "const count = document.querySelector('#count')\n"
+                     "document.querySelector('#add').addEventListener('click', () => {\n"
+                     "  count.textContent = String(Number(count.textContent) + 1)\n})\n"}
+COUNTER_PROBE = {"cases": [
+    {"name": "Each click adds one to the count", "files": ["app.js"],
+     "steps": [{"kind": "click", "selector": "#add"}, {"kind": "click", "selector": "#add"}],
+     "assertions": [{"kind": "text", "selector": "#count", "expected": "2"}]},
+    {"name": "Self-contained: it loads nothing from another origin", "files": ["index.html"], "steps": [],
+     "assertions": [{"kind": "count", "selector": '[src^="http"], [href^="http"], [src^="//"], [href^="//"]',
+                     "expected": 0}]},
+    {"name": "Self-contained as staging's probe read it: no link or script tags", "files": ["index.html"], "steps": [],
+     "assertions": [{"kind": "count", "selector": "link[href], script[src]", "expected": 0}]},
+]}
+
+
+def test_a_click_counter_loading_its_own_style_and_code_is_self_contained_as_the_frame_composes_it(job):
+    """Played as the frame composes it, the counter's click case passes, and so do a case counting what it loads from
+    another origin and staging's own case counting link and script tags, which the frame has already replaced. The
+    same counter written into index.html, as staging's builder had to with only index.html to write, never counts."""
+    out = play(COUNTER, COUNTER_PROBE, owned=["index.html", "style.css", "app.js"], tmp=job)
+    assert out["outcome"] == "pass", out
+    assert [c["passed"] for c in out["cases"]] == [True, True, True]
+    inline = {**COUNTER, "index.html": COUNTER["index.html"].replace("</body>", f"<script>{COUNTER['app.js']}</script></body>"),
+              "app.js": ""}
+    out = play(inline, COUNTER_PROBE, owned=["index.html", "style.css", "app.js"], tmp=job)
+    assert out["outcome"] == "fail" and "index.html" in out["failing"], out
 
 
 # What app.js adds while the page runs is held to the same CSP: the frame compiles no on* attribute however it got

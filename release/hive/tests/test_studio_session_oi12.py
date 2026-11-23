@@ -1,10 +1,13 @@
-"""OI12: pin the one owner-reviewed Mac override without widening host behavior.
+# Purpose: retain the adopted host restart pin and verify the standalone installer's exact restart artifact.
+"""OI12: pin the adopted host override and the candidate standalone installer entry point.
 
-Synthetic only. No Hive/session constructor, database, provider, restart or real
-host file is used. The positive case models the digest boundary explicitly; it
-does not establish that an installed safe-restart.sh has these bytes.
+The pin check reads the packaged entry point; the boundary cases use synthetic
+files and hashes. No Hive/session constructor, database, provider, restart or
+external host script is used. Native installation is checked separately.
 """
 from types import SimpleNamespace
+import hashlib
+from pathlib import Path
 
 
 REVIEWED_OVERRIDE_SHA256 = "de8c80c4cb7240a6b83f9657145c059461c0bcf95c387f4de7724c44eee24429"
@@ -26,11 +29,13 @@ def mac_file(monkeypatch, sessions, file):
     monkeypatch.setattr(sessions, "safe_restart_path", lambda: file)
 
 
-def test_OI12_pins_exactly_the_single_owner_reviewed_override():
+def test_OI12_keeps_the_host_override_and_pins_the_delivered_installer_entrypoint():
     from hive.core import studio_sessions as sessions
 
     assert type(sessions.MAC_SAFE_RESTART_OVERRIDE_HASHES) is tuple
-    assert sessions.MAC_SAFE_RESTART_OVERRIDE_HASHES == (REVIEWED_OVERRIDE_SHA256,)
+    entry = Path(__file__).resolve().parents[2] / "install/macos/safe-restart.py"
+    assert sessions.MAC_SAFE_RESTART_OVERRIDE_HASHES == (
+        REVIEWED_OVERRIDE_SHA256, hashlib.sha256(entry.read_bytes()).hexdigest())
 
 
 def test_OI12_mac_accepts_the_reviewed_digest_at_the_existing_reader_hash_seam(monkeypatch):

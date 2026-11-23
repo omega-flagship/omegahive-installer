@@ -22,7 +22,7 @@ import { DESKTOP_TICKER_BOTTOM, PHONE_TICKER_BOTTOM } from './tickerPlace'
 import { shown } from '../lib/displayName'
 import { usePhase } from './phase'
 import { clearSigninError, GOOGLE_REQUIRED, readSigninError, signinErrorWords } from './signinError'
-import { signinForm, signinWays, type SigninWays } from './signinForm'
+import { signinForm, signinWays, signinWho, type SigninWays } from './signinForm'
 
 // the explainer (copy for every view) loads with the views, not with the shell
 const ViewInfo = lazy(() => import('../tour/ViewInfo').then((r) => ({ default: r.ViewInfo })))
@@ -253,6 +253,8 @@ export function Login() {
   // what counts where this page was opened; until the hive has said, the operator's form, as before
   const ways: SigninWays = methods ? signinWays(methods) : { google: null, members: false, operator: true }
   const inviteToken = new URLSearchParams(window.location.search).get('invite')
+  // #15: who Google lets in here, and whom anyone else asks; null on an older hive (the card stays as it was)
+  const who = methods ? signinWho(methods.sso) : null
   // no password counts here, or an invitation, which is accepted with Google: the Google card
   if (methods && ((!ways.members && !ways.operator) || (inviteToken && ways.google))) {
     const inviteUrl = methods.sso.invite_login_url ?? methods.sso.login_url
@@ -262,11 +264,14 @@ export function Login() {
       <div className="fixed inset-0 z-40 flex items-center justify-center p-5">
         <m.div initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} className="glass-strong w-full max-w-sm rounded-[26px] p-6" role="dialog" aria-label="Sign in">
           <Brand signin={reach} />
-          <h1 className="mt-6 font-display text-2xl font-semibold tracking-tight">Invite only</h1>
-          <p className="mt-1.5 text-sm text-ink-3">Sign in with the Google account your invitation was sent to.</p>
+          <h1 className="mt-6 font-display text-2xl font-semibold tracking-tight">{who && !who.inviteOnly ? 'Sign in' : 'Invite only'}</h1>
+          <p className="mt-1.5 text-sm text-ink-3">{who && !who.inviteOnly ? who.line : 'Sign in with the Google account your invitation was sent to.'}</p>
           <SigninNotice code={signinError} />
           {url ? (
-            <GoogleButton href={url} top="mt-6" />
+            <>
+              <GoogleButton href={url} top="mt-6" />
+              {who?.inviteOnly && <p className="mt-3 text-[12px] leading-relaxed text-ink-3">{who.line}</p>}
+            </>
           ) : (
             <p className="mt-6 text-sm text-warn">Sign-in is not set up on this hive yet.</p>
           )}
@@ -310,6 +315,7 @@ export function Login() {
         <h1 className="mt-6 font-display text-2xl font-semibold tracking-tight">{form.heading}</h1>
         {/* from outside, people continue with Google; the form below is for test and agent accounts */}
         {ways.google && <GoogleButton href={ways.google} top="mt-6" />}
+        {ways.google && who && <p className="mt-3 text-[12px] leading-relaxed text-ink-3">{who.line}</p>}
         <p className={ways.google ? 'mt-5 text-sm text-ink-3' : 'mt-1.5 text-sm text-ink-3'}>{form.line}</p>
         <SigninNotice code={signinError} googleUrl={ways.google ? null : (methods?.sso.login_url ?? null)} />
         {form.email && (

@@ -173,13 +173,17 @@ def test_a_request_with_month_usd_behaves_as_before(money, monkeypatch, gw):
         assert body["starting_limit"] == {"usd": 50.0, "scope": "hive"}
 
 
-def test_an_unreadable_setting_is_the_default_with_a_warning(monkeypatch, caplog):
-    from hive.core.config import _start_limit
-    for raw, want in (("", 50.0), ("0", 0.0), ("25.5", 25.5), ("abc", 50.0), ("-3", 50.0), ("nan", 50.0), ("2e6", 50.0)):
+def test_an_unreadable_setting_refuses_the_start(monkeypatch, tmp_path):
+    # T-215: was the default with a warning; now, like every key of config.KEYS, a malformed value refuses (exit 78)
+    from hive.core.config import SettingsRefused, load_settings
+    monkeypatch.delenv("HIVE_CONFIG_FILE", raising=False)
+    for raw, want in (("", 50.0), ("0", 0.0), ("25.5", 25.5), ("1000000", 1_000_000.0)):
+        monkeypatch.setenv("HIVE_START_LIMIT_MONTH_USD", raw)   # "" is unset: hive/config.json's 50
+        assert load_settings(data_dir=tmp_path).start_limit_month_usd == want, raw
+    for raw in ("abc", "-3", "nan", "2e6"):
         monkeypatch.setenv("HIVE_START_LIMIT_MONTH_USD", raw)
-        caplog.clear()
-        assert _start_limit() == want, raw
-        assert bool(caplog.records) == (raw in ("abc", "-3", "nan", "2e6")), raw
+        with pytest.raises(SettingsRefused, match=f"HIVE_START_LIMIT_MONTH_USD={raw!r} in the environment is not"):
+            load_settings(data_dir=tmp_path)
 
 
 # ---- never over an operator's cap; the admin's own month_usd (coordinator, 2026-11-09) --------------------------------

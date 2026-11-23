@@ -1,7 +1,9 @@
+// Purpose: verify Coffee Room membership, owner requests and message presentation.
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { SimClient } from '../../api/sim/SimClient'
+import { useHive } from '../../store/store'
 import type { Room, RoomMessage } from '../../api/types'
 import { FEATURES } from '../../features/registry'
 import { href, parse } from '../../lib/router'
@@ -18,8 +20,8 @@ import { chrome as cosmosChrome } from '../../experiences/cosmos/chrome'
 import { chrome as fluxChrome } from '../../experiences/flux/chrome'
 import { chrome as constructChrome } from '../../experiences/construct/chrome'
 import {
-  COFFEE_DISCLOSURE, HERE_CAP, coffeeState, coffeeSubtitle, groupBody, heardBy, hereLabel, hereReached, isCoffee, isHere, isNote,
-  needsDisclosure, setCoffeeMembership, memberName, noteLabel,
+  COFFEE_DISCLOSURE, HERE_CAP, HERE_HINT, HERE_TYPING, coffeeState, coffeeSubtitle, groupBody, heardBy, hereHintWords, hereLabel, hereReached,
+  isCoffee, isHere, isNote, mindsIn, mindsOutside, namedOutside, needsDisclosure, canChangeCoffee, requestCoffeeMembership, setCoffeeMembership, memberName, noteLabel,
   originLabel, originOf, originRoute, pinFirst, privateBody, roomMatches, saysHere, startGroup, talkPrivately,
 } from './coffee'
 import { CoffeeListEntry, CoffeePublicNote, HereReached, NoteBody, OriginBackLink } from './CoffeeParts'
@@ -88,8 +90,37 @@ describe('Coffee Room adapter (Platform contract, CONFIRMED)', () => {
     expect(hereReached(msg({ here_reached: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] }))).toHaveLength(HERE_CAP)
     expect(hereReached(msg({}))).toEqual([])
     const name = (m: string) => ({ 'agent:a_1': 'Vega', 'agent:a_2': 'Deneb', 'agent:a_3': 'Mira' })[m] ?? m
-    expect(hereLabel(['agent:a_1', 'agent:a_2', 'agent:a_3'], name)).toBe('@here reached Vega, Deneb and Mira (awake)')
-    expect(hereLabel([], name)).toMatch(/no minds were awake/)
+    expect(hereLabel(['agent:a_1', 'agent:a_2', 'agent:a_3'], name, 3)).toBe('@here reached Vega, Deneb and Mira (awake)')
+    expect(hereLabel([], name, 2)).toBe('@here reached no one: no mind here was awake')
+    // round 1: a hive whose minds were all private, two of them awake, was told "no minds were awake"
+    expect(hereLabel([], name, 0)).toBe('@here reached no one: no minds are in the Coffee Room')
+  })
+
+  it('knows which of the hive’s minds the room leaves out: private ones their owners haven’t put in, and ones taken out', () => {
+    const minds = [
+      { id: 'a_1', coffee: 'member' as const }, { id: 'a_p', coffee: 'private' as const }, { id: 'a_o', coffee: 'opted_out' as const },
+      { id: 'a_m', coffee: 'not_a_mind' as const }, { id: 'a_x' },
+    ]
+    expect(mindsOutside(coffee, minds).map((a) => a.id)).toEqual(['a_p', 'a_o'])
+    expect(mindsOutside({ members: [{ member: 'agent:a_p', role: 'member', name: 'Quill' }] }, minds).map((a) => a.id)).toEqual(['a_o'])
+    expect(mindsIn(coffee)).toBe(2)
+    expect(mindsIn(room({}))).toBe(0)
+  })
+
+  it('finds a mind outside the room named after an @: its whole name, run together, or its first word, never a longer word', () => {
+    const names = ['Invented Juniper', 'Deneb']
+    for (const t of ['@Invented can you help', '@Invented Juniper hi', '@InventedJuniper hi', 'ok @invented, now', '@invented juniper'])
+      expect(namedOutside(t, names)).toEqual(['Invented Juniper'])
+    for (const t of ['@Inventedly post', 'Invented can you help', 'mail me@Invented', '@here']) expect(namedOutside(t, names)).toEqual([])
+    expect(namedOutside('@Deneb and @Invented', names)).toEqual(['Invented Juniper', 'Deneb'])
+  })
+
+  it('the line under the box says first who will not hear, then that no minds are in the room, then what @here does', () => {
+    expect(hereHintWords('@Invented hi', 2, ['Invented Juniper'])).toBe("Invented Juniper isn't in the Coffee Room, so it won't hear this. Its owner can add it under Members.")
+    expect(hereHintWords('@Invented @Lyra', 0, ['Invented Juniper', 'Lyra'])).toBe("Invented Juniper and Lyra aren't in the Coffee Room, so they won't hear this. Their owners can add them under Members.")
+    for (const t of ['@here', '']) expect(hereHintWords(t, 0, [])).toBe('No minds are in the Coffee Room yet, so @here and @names reach no one here. Owners can add their minds under Members.')
+    expect(hereHintWords('@here anyone?', 2, [])).toBe(HERE_TYPING)
+    expect(hereHintWords('hello', 2, [])).toBe(`Minds hear only messages that @mention them. ${HERE_HINT}`)
   })
 
   it('marks unprompted notes', () => {
@@ -119,7 +150,7 @@ describe('Coffee Room adapter (Platform contract, CONFIRMED)', () => {
   it("maps a mind's membership; app modules get no state and no toggle", () => {
     expect(coffeeState({ coffee: 'member' })?.on).toBe(true)
     expect(coffeeState({ coffee: 'opted_out' })?.on).toBe(false)
-    expect(coffeeState({ coffee: 'private' })?.why).toBe('Private minds join only if an admin adds them.')
+    expect(coffeeState({ coffee: 'private' })?.why).toBe('Private minds join only if their owner chooses to add them.')
     expect(coffeeState({ coffee: 'not_a_mind' })).toBeNull()
     expect(coffeeState({})).toBeNull()
   })
@@ -132,6 +163,82 @@ describe('Coffee Room adapter (Platform contract, CONFIRMED)', () => {
     expect(originLabel(coffee)).toBe('Started from a message in the Coffee Room')
     expect(originLabel(null)).toBe('Started from a message in another room')
     expect(originOf(room({ origin: { room_id: '', message_id: 'x' } }))).toBeNull()
+  })
+})
+
+describe('private Coffee Room consent', () => {
+  const own = { id: 'a_invented', name: 'Invented Juniper', owner: 'user:u_owner', visibility: 'private', coffee: 'private' as const, swarm_id: null }
+
+  it('only the owner puts a mind in or takes it out, public or private; an admin decides only for their own', () => {
+    const publicMind = { ...own, visibility: 'public', coffee: 'member' as const }
+    for (const mind of [own, publicMind, { ...publicMind, coffee: 'opted_out' as const }]) {
+      expect(canChangeCoffee(mind, 'user:u_owner')).toBe(true)
+      expect(canChangeCoffee(mind, 'user:u_admin')).toBe(false)
+      expect(canChangeCoffee(mind, undefined)).toBe(false)
+    }
+    expect(canChangeCoffee({ ...publicMind, owner: null }, 'user:operator')).toBe(true)       // no owner recorded: the hive owner's
+    expect(canChangeCoffee({ ...publicMind, owner: null }, 'user:u_admin')).toBe(false)
+  })
+
+  it('asking the owner sends a private message and never calls a membership write', async () => {
+    const createRoom = vi.fn(async (_body: { kind: string; members: string[] }) => room({ id: 'r_owner', kind: 'dm' }))
+    const postRoomMessage = vi.fn(async (_id: string, _text: string) => msg({}))
+    await requestCoffeeMembership(own, { createRoom, postRoomMessage })
+    expect(createRoom).toHaveBeenCalledWith({ kind: 'dm', members: ['user:u_owner'] })
+    expect(postRoomMessage).toHaveBeenCalledWith('r_owner', expect.stringContaining('Open Invented Juniper, choose Model'))
+    expect(postRoomMessage.mock.calls[0][1]).toContain('You can leave it private instead.')
+  })
+
+  it('asking about a mind that was taken out asks its owner to put it back', async () => {
+    const createRoom = vi.fn(async (_body: { kind: string; members: string[] }) => room({ id: 'r_owner', kind: 'dm' }))
+    const postRoomMessage = vi.fn(async (_id: string, _text: string) => msg({}))
+    await requestCoffeeMembership({ ...own, coffee: 'opted_out' as const }, { createRoom, postRoomMessage })
+    expect(createRoom).toHaveBeenCalledWith({ kind: 'dm', members: ['user:u_owner'] })
+    expect(postRoomMessage).toHaveBeenCalledWith('r_owner', 'Would you put Invented Juniper back in the Coffee Room? Open Invented Juniper, '
+      + 'choose Model and turn on “In the Coffee Room”. You can leave it out instead.')
+  })
+
+  it('a missing request API or a failed send is an error, not a claim the owner was asked', async () => {
+    await expect(requestCoffeeMembership(own, null)).rejects.toThrow('cannot send a private request')
+    await expect(requestCoffeeMembership(own, {})).rejects.toThrow('cannot send a private request')
+    await expect(requestCoffeeMembership(own, {
+      createRoom: async () => room({ id: 'r_owner', kind: 'dm' }),
+      postRoomMessage: async () => { throw new Error('Message was refused') },
+    })).rejects.toThrow('Message was refused')
+  })
+
+  it('leaving the requesting view between writes sends no message', async () => {
+    let alive = true
+    const postRoomMessage = vi.fn(async (_id: string, _text: string) => msg({}))
+    await expect(requestCoffeeMembership(own, {
+      createRoom: async () => { alive = false; return room({ id: 'r_owner', kind: 'dm' }) },
+      postRoomMessage,
+    }, () => alive)).rejects.toMatchObject({ code: 'operation_stopped' })
+    expect(postRoomMessage).not.toHaveBeenCalled()
+  })
+
+  it('a sign-in change between creating the private conversation and sending the request stops the second write', async () => {
+    const postRoomMessage = vi.fn(async (_id: string, _text: string) => msg({}))
+    await expect(requestCoffeeMembership(own, {
+      createRoom: async () => {
+        useHive.setState({ inits: useHive.getState().inits + 1 })
+        return room({ id: 'r_owner', kind: 'dm' })
+      },
+      postRoomMessage,
+    })).rejects.toMatchObject({ code: 'operation_stopped' })
+    expect(postRoomMessage).not.toHaveBeenCalled()
+  })
+
+  it('the simulator preserves a member creator and refuses an admin override before the owner opts in', async () => {
+    const c = sim()
+    c.simSignInAs('member')
+    const mind = await c.createAgent({ name: 'Invented Clover', kind: 'omega', model: 'invented/model', visibility: 'private' })
+    expect(mind.owner).toBe('user:p_rowan')
+    expect(mind.coffee).toBe('private')
+    c.simSignInAs('operator')
+    await expect(c.patchAgent(mind.id, { coffee: true })).rejects.toThrow('Only this mind’s owner')
+    c.simSignInAs('member')
+    expect((await c.patchAgent(mind.id, { coffee: true })).coffee).toBe('member')
   })
 })
 
@@ -237,8 +344,9 @@ describe('Coffee Room in the simulator (the confirmed contract, end to end)', ()
     await expect(c.updateRoom(cr.id, { name: 'Mine' })).rejects.toThrow(/admin/)
   })
 
-  it('an admin takes a mind out and puts it back; never an app module; members cannot', async () => {
+  it('a mind’s owner takes it out and puts it back; never an app module; anyone else cannot', async () => {
     const c = sim()
+    // the seeded minds record no owner, so they are the signed-in operator's
     const agents = await c.listAgents()
     const mind = agents.find((a) => a.coffee === 'member')!
     expect((await c.patchAgent(mind.id, { coffee: false })).coffee).toBe('opted_out')
@@ -247,7 +355,7 @@ describe('Coffee Room in the simulator (the confirmed contract, end to end)', ()
     const mod = agents.find((a) => a.coffee === 'not_a_mind')!
     await expect(c.patchAgent(mod.id, { coffee: true })).rejects.toThrow()
     c.simMember = true
-    await expect(c.patchAgent(mind.id, { coffee: false })).rejects.toThrow(/admin/)
+    await expect(c.patchAgent(mind.id, { coffee: false })).rejects.toThrow('Only this mind’s owner')
   })
 })
 
@@ -282,7 +390,7 @@ describe('stand-in FIX-FIRST (host r2 shapes)', () => {
     expect(needsDisclosure({ coffee: 'member' })).toBe(false)
   })
 
-  it('P3: the admin control shows the disclosure on a private mind before the switch', () => {
+  it('P3: the owner’s control shows the disclosure on a private mind before the switch', () => {
     // CoffeeMembershipControl renders through the store; the words it shows come from these two
     expect(coffeeState({ coffee: 'private' })?.on).toBe(false)
     expect(needsDisclosure({ coffee: 'private' })).toBe(true)
@@ -323,7 +431,9 @@ describe('Coffee Room UI pieces', () => {
     expect(render(createElement(HereReached, { message: msg({}), room: coffee }))).toBe('')
     // host r2 sends here_reached: [] on every message: no line unless the message was an @here
     expect(render(createElement(HereReached, { message: msg({ here_reached: [] }), room: coffee }))).toBe('')
-    expect(render(createElement(HereReached, { message: msg({ here_reached: [], text: '@here anyone?' }), room: coffee }))).toContain('no minds were awake')
+    expect(render(createElement(HereReached, { message: msg({ here_reached: [], text: '@here anyone?' }), room: coffee }))).toContain('no mind here was awake')
+    const noMinds = { ...coffee, members: coffee.members.filter((m) => !m.member.startsWith('agent:')) }
+    expect(render(createElement(HereReached, { message: msg({ here_reached: [], text: '@here anyone?' }), room: noMinds }))).toContain('no minds are in the Coffee Room')
   })
 
   it('draws a note quietly as "a thought from …"', () => {

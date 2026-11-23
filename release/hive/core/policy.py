@@ -21,6 +21,10 @@ import time
 from ..spaces import sexpr
 from . import metta_reach
 from .db import new_id, now
+from .foundation import (CODE as CREATE_CODE_PURPOSE, OMEGACODE_AUTHORIZE_SKILLS, WORKSPACE_HEADS,
+                         WRITE_SKILLS as CODE_MIND_WRITE_SKILLS)
+from . import views
+from .providers import own_coding
 from .services import CODE_MUTATING, parse_binding
 
 # Skills only an exact allow rule for that very skill can permit: no default, no glob, no swarm or hive rule.
@@ -221,6 +225,41 @@ FILE_SKILLS = {"read-file": 0, "write-file": 0, "write-file-base64": 0, "write-f
                "append-file-base64": 0, "delete-file": 0, "send-file": 0, "send-file-caption": 0, "send-family-file": 0,
                "send-whatsapp-file": 0, "send-whatsapp-file-caption": 0, "send-whatsapp-file-to": 1,
                "send-whatsapp-file-caption-to": 1, "reply-whatsapp-file-to": 1, "reply-whatsapp-file-caption-to": 1}
+
+# Jon in the testers' group, 17 Nov 09:03-09:04, after a tester's mind built a tic-tac-toe game itself instead of
+# handing it to Create: "Please stop the agents using their own coding skills", "Route them only through create",
+# "There is zero purpose for them to write their own code - it should be turned off". His line on
+# omega-flagship/omegahive#395 the same day separates building from thinking: "Building software goes to Create, with no
+# exceptions: anything that persists and runs later, such as apps, codebases, HTML apps and saved programs. Thinking in
+# code isn't software, so it stays a sandboxed tool that asks per use", enforced "by what actually runs the code, not by
+# file name". So a mind builds no software itself: it asks Create with hive-create, whose Code swarm writes, tests and
+# reviews it. Two refusals carry that rule, each OWN_CODE_REASON, at what would run what the mind built:
+#   - OWN_CODE_SKILLS, the skills that build software: a Code workspace, codex coding, a code mind and a web page
+#     (Policy.own_code, asked by _decide and by OmegaCode's approval redemption, services.redeem);
+#   - an artifact revision holding an HTML document a mind wrote through its own artifact skills (web_document), an
+#     app a browser would run (Policy.own_code_revision); a MeTTa view, a screen the hive composes and draws, stays, as
+#     Jon asked on omega-flagship/omegahive#65 that MeTTa compose every screen, and so does an app's view.
+# Thinking in code keeps the default that asks a person each use: shell, shell-confirm, vm-shell and run-metta-file are
+# on DEFAULT_ASK (the last two under Jon's rule on #230), and all four are approved one at a time (HIGH_RISK). A file a
+# mind writes, whatever its name, runs nowhere in the hive but there: the hive serves a mind's files under a sandboxing
+# content security policy and shows an artifact's body as text.
+# Jon's addition on #395: "a mind's own coding should be a per-mind setting, off by default, that its owner can switch
+# on, for example for a self-modifying Iter". So the wall is each mind's default, and no person's answer, admin rule,
+# role or app template lifts it: only the mind's owner does, for that one mind (options.own_coding, read by
+# providers.own_coding and kept the owner's by Hive.check_approval_options), and then its rules decide as for any skill.
+# Create's own minds, its Code swarm's controller and the helpers it spawns there (Policy.create_code_mind), are
+# Create: their role's rules decide for them (foundation.HELPER_DENIED keeps a helper on the proposal path), and the
+# Code controller itself acts as the host, never through a mind's skills.
+OWN_CODE_REASON = ('building software goes to Create: use hive-create "what to build"; only your owner can switch your '
+                   'own coding on')
+OWN_CODE_SKILLS = (
+    # a Code workspace: every head that works in one, and every operation OmegaCode authorizes in one, so a mind that
+    # reached OmegaCode some other way is refused there too
+    *WORKSPACE_HEADS, *OMEGACODE_AUTHORIZE_SKILLS,
+    # code built some other way: an edit proposal, codex coding, a code mind made or steered
+    "code-propose", "codex-code", "codex-code-start", *CODE_MIND_WRITE_SKILLS,
+    # a web page is an app a mind built
+    "write-web-page")
 # Approved one at a time (no Always or For a time). The second line holds the other names for the first line's acts;
 # the last two are code that runs, which Jon's rule says asks every time (omega-flagship/omegahive#299, item 2), so one
 # "Always" can never let a shell or a code run through for good.
@@ -327,6 +366,17 @@ def restrictiveness(mode):
 
 def _matches(pattern, skill):
     return fnmatch.fnmatchcase(skill, pattern)
+
+
+def web_document(kind, body):
+    """True when the hive would serve an artifact revision's body as a page that runs: an HTML view, the MCP Apps
+    resource that carries one, or an HTML document of any other kind, which a person may open as a view
+    (views.view_of, which sniffs as a browser does, so "<b>Note</b>" in a note stays text). A view in MeTTa is the
+    hive's own screen, and a body no view could be is the view check's to refuse (collab._add_revision)."""
+    try:
+        return isinstance(views.view_of(kind, str(body)), views.View)
+    except views.NotAView:
+        return False
 
 
 class Policy:
@@ -566,6 +616,46 @@ class Policy:
         except Exception:   # noqa: BLE001
             return False
 
+    def create_code_mind(self, agent):
+        """True for a mind of Create's own Code swarm: the mind the foundation binds as Create · Code (person_minds
+        purpose foundation_create_code) or any mind in its swarm, where its controller spawns its helpers. The wall
+        leaves Create's own minds alone (may_code); their role's rules decide for them.
+
+        Time: one indexed row read."""
+        db = getattr(getattr(self, "hive", None), "db", None)
+        if db is None or not agent.get("id"):
+            return False
+        if db.one("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'person_minds'") is None:
+            return False
+        row = db.one("SELECT agent_id, swarm_id FROM person_minds WHERE purpose = ?", (CREATE_CODE_PURPOSE,))
+        return row is not None and (agent["id"] == row["agent_id"]
+                                    or bool(row["swarm_id"]) and agent.get("swarm_id") == row["swarm_id"])
+
+    def own_code(self, agent, skill):
+        """OWN_CODE_REASON when skill builds software (OWN_CODE_SKILLS) and the wall holds for agent (may_code); None
+        otherwise. The gate (_decide) and OmegaCode's approval redemption (services.redeem) both ask, so an approval a
+        person gave before this rule, or while the mind's own coding was on, can't let it build once the wall is up."""
+        if any(_matches(p, skill) for p in OWN_CODE_SKILLS) and not self.may_code(agent):
+            return OWN_CODE_REASON
+        return None
+
+    def may_code(self, agent):
+        """True for a mind the wall leaves alone: one of Create's own minds, or one whose owner switched its own coding
+        on. Time: one indexed row read (create_code_mind)."""
+        return own_coding(agent) or self.create_code_mind(agent)
+
+    def own_code_revision(self, agent, kind, body, principal):
+        """OWN_CODE_REASON when a mind writes an artifact revision holding an HTML document (web_document) through its
+        own artifact skills, unless the wall leaves it alone (may_code); None otherwise. Its own skills reach collab
+        with no principal, the author then being the mind. An app a mind acts through passes the principal it acts under
+        (programs._acting), and what an app publishes is the app's, so an app's HTML view stays. A Studio maker's
+        proposal never reaches here: collab.add_revision asks only for a write Studio's fence did not bind."""
+        if not agent.get("id") or principal is not None:
+            return None
+        if not isinstance(body, str) or not web_document(kind, body) or self.may_code(agent):
+            return None
+        return OWN_CODE_REASON
+
     def _ceiling(self, agent_id, skill):
         swarms = getattr(getattr(self, "hive", None), "person_swarms", None)
         try:
@@ -616,6 +706,11 @@ class Policy:
             # #299 item 1: sudo reboot restarts the whole computer, so only a hive that is the mind's own VM offers it
             return "deny", "reboot-self restarts the whole computer, so only a hive set up as the mind's own VM offers it"
         rules = [*self.all_rules(), *extra]
+        refused = self.own_code(agent, skill)
+        if refused:
+            # a host rule like the two above: no rule row, so no person's answer, admin rule or role re-opens it; only
+            # the mind's owner lifts it, for that mind (own_coding)
+            return "deny", refused
         if skill in EXPLICIT_ONLY:
             exact = [r for r in rules if r["scope"] == f"agent:{agent['id']}" and r["skill"] == skill]
             if exact and exact[-1]["mode"] == "allow":

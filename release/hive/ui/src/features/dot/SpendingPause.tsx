@@ -1,6 +1,5 @@
-// Purpose: the notices on a mind's panel when the hive refuses its model calls for spending, or paces them.
 import { m } from 'framer-motion'
-import type { Agent, BudgetRefusal, BudgetSlowed } from '../../api/types'
+import type { Agent, BudgetRefusal } from '../../api/types'
 import { navigate } from '../../lib/router'
 import { useHive } from '../../store/store'
 import { Icon } from '../../ui/Icon'
@@ -51,32 +50,6 @@ export function SpendingPause({ agent, refusal, onFixBudget }: { agent: Agent; r
         <button onClick={() => dismiss(agent.id)} aria-label="Hide this notice" title="Hide until the hive refuses it again" className="-mr-1 shrink-0 rounded-lg p-1.5 text-ink-4 hover:bg-tint/[0.07] hover:text-ink">
           <Icon name="x" size={14} />
         </button>
-      </div>
-    </m.div>
-  )
-}
-
-/** "Slowed: spending faster than this month allows": the spend-rate guard is pacing this mind (budget.slowed) until a call
- *  is billed again. Says when its next call fits and that a higher monthly limit speeds it up. */
-export function SpendingSlowed({ slowed }: { slowed: BudgetSlowed }) {
-  const until = new Date(slowed.until)
-  const left = Math.ceil((until.getTime() - Date.now()) / 60000)
-  const when = left > 0
-    ? `Its next model call fits again at ${until.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}, in about ${left} minute${left === 1 ? '' : 's'}.`
-    : 'Its next model call fits again now.'
-  return (
-    <m.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-      <div role="status" className="mt-2 flex items-start gap-2.5 rounded-xl border border-warn/40 bg-warn/[0.07] px-3 py-2">
-        <Icon name="pause" size={16} className="mt-0.5 shrink-0 text-warn" />
-        <div className="min-w-0 flex-1">
-          <span className="text-[13px] font-semibold text-warn">Slowed: spending faster than this month allows</span>
-          <p className="mt-0.5 text-[12px] leading-snug text-ink-3">
-            {when} A higher monthly limit on Usage and limits speeds it up.
-          </p>
-          <button onClick={() => navigate({ name: 'usage' })} className="mt-1.5 inline-flex min-h-7 items-center gap-1 text-[12px] font-semibold text-ink underline-offset-2 hover:underline">
-            <Icon name="chart" size={12} /> Open Usage and limits
-          </button>
-        </div>
       </div>
     </m.div>
   )

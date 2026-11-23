@@ -3,29 +3,24 @@
  * is never shown, and neither is any raw error. The hive's answering minds follow Jon's naming rule; the person's own
  * mind keeps the name they chose.
  */
-import type { DoneOutcome, RefusalReason } from '../../api/ask'
+import type { AskExpensive, DoneOutcome, RefusalReason } from '../../api/ask'
 import type { HiveCapabilities, HiveMemory } from '../../lib/askMemory'
-import { plural } from '../../lib/plural'
 import type { AnswerSource } from '../../store/ask'
 import type { ResearchWakeView } from '../../store/askResearchWake'
 import type { WaitPhase } from './answerFacts'
 import { CHOOSE_WHO, HOST_SAY } from './answerer'
 
 export interface Offer {
-  kind: 'choose-swarm' | 'open-swarms' | 'wake' | 'new-thread' | 'raise-budget' | 'usage' | 'keys' | 'sessions' | 'retry' | 'stop'
+  kind: 'choose-swarm' | 'open-swarms' | 'wake' | 'usage' | 'keys' | 'sessions' | 'retry' | 'stop' | 'go-ahead'
   label: string
 }
 
-/** Jon 2026-10-05: an Ask thread starts at $0.25 and the person may raise it to $5. The page never sends more. */
-export const THREAD_LIMIT_MAX_USD = 5
-/** The steps offered when raising the limit for new threads (never above the host's maximum, never above $5). */
-export const RAISE_STEPS_USD = [1, 2, 5] as const
-export function raiseSteps(hostMax?: number | null): number[] {
-  const cap = Math.min(typeof hostMax === 'number' && hostMax > 0 ? hostMax : THREAD_LIMIT_MAX_USD, THREAD_LIMIT_MAX_USD)
-  return RAISE_STEPS_USD.filter((v) => v <= cap)
-}
-/** The raise offer's honest label: an open thread's limit is fixed when it starts; the raise is for new threads. */
-export const RAISE_FOR_NEW = `Raise the limit for new threads (up to $${THREAD_LIMIT_MAX_USD})`
+/** Where a person sees and changes limits (the Usage panel's limits). */
+export const USAGE_AND_LIMITS: Offer = { kind: 'usage', label: 'Usage & limits' }
+/** Where a person's own model keys and their limits live (features/registry money.keys). */
+export const YOUR_KEYS: Offer = { kind: 'keys', label: 'Your keys' }
+/** After an expensive stop: the stopped turn's words, sent again with go_ahead, so that turn never stops to ask. */
+export const GO_AHEAD: Offer = { kind: 'go-ahead', label: 'Go ahead' }
 
 export const REFUSAL_WORDS: Record<RefusalReason, { say: string; offer?: Offer[] }> = {
   not_available: { say: 'Asking a mind isn’t available on this hive yet. Opening pages, looks and search still work here.' },
@@ -37,7 +32,9 @@ export const REFUSAL_WORDS: Record<RefusalReason, { say: string; offer?: Offer[]
   coordinator_busy: { say: 'The coordinator is working for someone else; try again shortly.', offer: [{ kind: 'retry', label: 'Try again' }] },
   payer_conflict: { say: 'Someone else is already working with that mind, so it can’t start for you now. Try again later.' },
   mind_asleep: { say: 'The coordinator that would answer is asleep. Ask never wakes it on its own.', offer: [{ kind: 'wake', label: 'Wake it' }] },
-  spend_limit: { say: 'This has reached its spending limit. Nothing more was spent.', offer: [{ kind: 'new-thread', label: 'New thread' }, { kind: 'raise-budget', label: RAISE_FOR_NEW }, { kind: 'usage', label: 'See usage' }] },
+  // no Ask thread has a cap of its own (Jon on #294), so a refusal at admission is a mind's, swarm's, hive's or
+  // person's limit, which Usage & limits shows
+  spend_limit: { say: 'This has reached its spending limit. Nothing more was spent.', offer: [USAGE_AND_LIMITS] },
   ask_busy: { say: 'Your earlier request is still being answered; it is shown here so you can follow it.', offer: [{ kind: 'stop', label: 'Stop it' }] },
   rate_limited: { say: 'That was a lot of asks in a short time. Wait a minute, then try again.' },
   too_large: { say: 'That request is too long to send. Shorten it to under 4,000 characters.' },
@@ -104,11 +101,6 @@ export const DONE_WORDS: Record<DoneOutcome, string | null> = {
   error: 'Stopped here: something went wrong on the hive’s side. Nothing more was done.',
 }
 
-/** What a stop offers right where it appears (spend-stop r1: a spending stop is never a dead end). */
-export const DONE_OFFERS: Partial<Record<DoneOutcome, Offer[]>> = {
-  spend_cap: [{ kind: 'new-thread', label: 'New thread' }, { kind: 'raise-budget', label: RAISE_FOR_NEW }],
-}
-
 /**
  * j0-fixes r1 (J0 live): which limit stopped a spending stop. Platform's ask-limits r1 adds `limit {kind, current_usd,
  * limit_usd, estimate_usd}` to the done frame; until a host sends it, the page knows only the thread's own figures.
@@ -133,28 +125,27 @@ export function readDoneLimit(v: unknown): DoneLimit | null {
   return limit
 }
 
-/** Where a person sees and changes limits (the Usage panel's limits). */
-export const USAGE_AND_LIMITS: Offer = { kind: 'usage', label: 'Usage & limits' }
-/** Where a person's own model keys and their limits live (features/registry money.keys). */
-export const YOUR_KEYS: Offer = { kind: 'keys', label: 'Your keys' }
-const RAISE: Offer = { kind: 'raise-budget', label: RAISE_FOR_NEW }
-const NEW: Offer = { kind: 'new-thread', label: 'New thread' }
-
 /** The period a host figure is counted over is not in done.limit (Platform r1 open point 3): figures say only "of". */
 const amounts = (l: DoneLimit) => (l.current_usd !== null && l.limit_usd !== null ? ` (${money(l.current_usd)} of ${money(l.limit_usd)})` : '')
+/** An expensive stop's spend so far, as the question said it: " (about $1.20 so far)". */
+const about = (l: DoneLimit) => (l.current_usd !== null ? ` (about ${money(l.current_usd)} so far)` : '')
+/** Whether the stop followed a question nobody answered: a browser mind's turn can't be held to ask, so it stops unasked. */
+const waited = (asked: boolean) => (asked ? ', and no go-ahead came in time' : '')
 
 /**
- * What each limit kind says, and the way on that actually helps with it (Platform ask-limits r1 LIMIT_KINDS):
- *  - the raise for new threads only for the thread's own cap. The per-turn cap is the hive's setting
- *    (HIVE_ASK_CONDUCTOR_TURN_USD), which the raise never changes, so a per-turn stop offers asking again instead;
+ * What each limit kind says, and the way on that actually helps with it (Platform ask-limits r1 LIMIT_KINDS). No Ask
+ * turn or thread has a cap of its own any more (Jon on #294: limits come from the monthly allowance and the spend-rate
+ * guard), so no stop offers a new thread or a raise:
+ *  - `expensive`: the person's own threshold, reached with no go-ahead: its question went unanswered in time, or a
+ *    browser mind's turn, which can't be held to ask, got there; Go ahead sends the same words again with go_ahead,
+ *    and that turn never stops to ask;
  *  - a mind's, swarm's, hive's or person's limit is named with its figures and links to Usage & limits;
  *  - the key kinds point to the person's keys;
  *  - `session`: an ordinary work session on the mind caps it (ended from Messages, where sessions are listed).
  */
 const LIMIT_STOP: Record<string, { say: string; offer: Offer[] }> = {
-  thread: { say: 'Stopped here: this thread has used its spending limit{amounts}. Start a new thread to go on.', offer: [NEW, RAISE] },
-  per_turn: { say: 'Stopped here: this request reached the spending limit for one turn{amounts}. Each turn starts with a fresh limit, so you can ask again to carry on.', offer: [{ kind: 'retry', label: 'Ask again' }] },
-  mind_total: { say: 'Stopped here: this mind has reached its own spending limit{amounts}. Raising this thread’s limit would not help; an admin can raise the mind’s limit.', offer: [USAGE_AND_LIMITS] },
+  expensive: { say: 'Stopped here: this one looks expensive{about}{waited}.', offer: [GO_AHEAD] },
+  mind_total: { say: 'Stopped here: this mind has reached its own spending limit{amounts}. An admin can raise the mind’s limit.', offer: [USAGE_AND_LIMITS] },
   session: { say: 'Stopped here: a work session on this mind caps what it may spend{amounts}. Ending that session lifts the cap.', offer: [{ kind: 'sessions', label: 'Sessions' }, USAGE_AND_LIMITS] },
   swarm: { say: 'Stopped here: this swarm has reached its spending limit{amounts}. An admin can raise the swarm’s limit.', offer: [USAGE_AND_LIMITS] },
   hive: { say: 'Stopped here: the hive has reached its spending limit{amounts}. An admin can raise the hive’s limit.', offer: [USAGE_AND_LIMITS] },
@@ -165,6 +156,8 @@ const LIMIT_STOP: Record<string, { say: string; offer: Offer[] }> = {
   no_key_grant: { say: 'Stopped here: you don’t have permission to spend on this hive’s key. Ask its owner, or add your own key.', offer: [YOUR_KEYS] },
   // OI-13 (a done.limit kind once the conductor names it; at 2d6c9f44 limit_kind maps scope "use" to "unknown")
   own_key_needed: { say: 'Stopped here: this mind would run on someone else’s key. Add your own key in Keys, then ask again.', offer: [{ kind: 'keys', label: 'Add your own key' }] },
+  hive_spend_paused: { say: 'The hive owner paused new paid calls. They can resume them in Usage.', offer: [USAGE_AND_LIMITS] },
+  mind_spend_paused: { say: 'This mind’s owner paused new paid calls. They can resume them in Usage.', offer: [USAGE_AND_LIMITS] },
 }
 
 /** The host's own sentence for the same stop (conductor.py LIMIT_SAY monthly_total_required), in the page's voice. */
@@ -184,29 +177,19 @@ export function refusedSay(reason: RefusalReason | undefined, turnSpentUsd?: num
 /** The plain fallback: the host did not name the limit (today's host, or kind `unknown`). No remedy is promised. */
 export const SPEND_STOP_UNNAMED = 'Stopped here: a spending limit stopped this request, and the hive did not say which one. Usage & limits shows every limit.'
 
-/** The thread's own limit is the visible block: what is left is less than one turn's reservation, or under a tenth. */
-export const TURN_RESERVE_USD = 0.25
-export function threadBinds(t: { spent_usd: number; budget_usd: number } | null | undefined): boolean {
-  if (!t || !(t.budget_usd > 0)) return false
-  const left = t.budget_usd - t.spent_usd
-  return left <= Math.max(TURN_RESERVE_USD, t.budget_usd * 0.1)
-}
-
 /**
  * A spending stop in plain words, picked by the host's `done.limit.kind` (J0: "Raise the limit for new threads" was
  * offered when the thread had $0.00 of $5.00 spent, so it changed nothing). A known kind names its limit, with the
- * host's figures, and offers only the way on that helps. An unknown kind, or no `limit` at all (today's host), gets the
- * plain fallback with no remedy offered; the thread's own figures are added as a fact when the page has them. Nothing
- * is invented: no figure the host did not send.
+ * host's figures, and offers only the way on that helps. An unknown kind, or no `limit` at all, gets the plain fallback
+ * with no remedy offered. Nothing is invented: no figure the host did not send.
  */
-export function spendStop(limit: DoneLimit | null, thread?: { spent_usd: number; budget_usd: number } | null): { text: string; offer: Offer[] } {
+export function spendStop(limit: DoneLimit | null, asked = true): { text: string; offer: Offer[] } {
   // nothing was reached: the person's monthly total is missing. Their own keys' total is set under Your keys; the
   // hive's money is held by a month rule an admin sets in Usage & limits (an admin's own mind waits on that)
   if (limit?.reason === 'monthly_total_required') return { text: MONTHLY_TOTAL_STOP, offer: [limit.kind === 'member_allowance' ? USAGE_AND_LIMITS : YOUR_KEYS] }
   const known = limit ? LIMIT_STOP[limit.kind] : undefined
-  if (limit && known) return { text: known.say.replace('{amounts}', amounts(limit)), offer: known.offer }
-  const used = thread && Number.isFinite(thread.spent_usd) && Number.isFinite(thread.budget_usd) ? ` This thread has used ${money(thread.spent_usd)} of its ${money(thread.budget_usd)}.` : ''
-  return { text: `${SPEND_STOP_UNNAMED}${used}`, offer: [] }
+  if (limit && known) return { text: known.say.replace('{amounts}', amounts(limit)).replace('{about}', about(limit)).replace('{waited}', waited(asked)), offer: known.offer }
+  return { text: SPEND_STOP_UNNAMED, offer: [] }
 }
 
 /**
@@ -227,11 +210,6 @@ export function spokenRefusal(remedy: unknown): boolean {
 }
 export function doneErrorWords(code: unknown): string {
   return typeof code === 'string' && Object.prototype.hasOwnProperty.call(DONE_ERROR_WORDS, code) ? DONE_ERROR_WORDS[code] : DONE_WORDS.error!
-}
-
-/** The HTTP spend refusal's ways on, by the same rule: the thread raise only when the thread is the visible block. */
-export function spendRefusalOffers(thread: { spent_usd: number; budget_usd: number } | null | undefined): Offer[] {
-  return threadBinds(thread) ? [NEW, RAISE, { kind: 'usage', label: 'See usage' }] : [USAGE_AND_LIMITS]
 }
 
 export function refusalOf(code: unknown): RefusalReason {
@@ -277,16 +255,18 @@ export function steerUnreached(thread: { mind: { id: string } } | null | undefin
 export const money = (n: number) => `$${n.toFixed(2)}`
 
 /**
- * j0-fixes r1: who pays for a paid Ask row, and the limit that holds, from what the page already has. The host bills
- * the asking person on the hive's key (core/conductor.py, Billing); a turn in flight, or a request to the thread's own
- * mind, shows that thread's figures; a new thread shows the limit new threads start with. The cost of a request is not
- * known before it starts, and is said so: no estimate is ever invented.
+ * j0-fixes r1: who pays for a paid Ask row, and what holds it, from what the page already has. The host bills the
+ * asking person on the hive's key (core/conductor.py, Billing); a turn in flight, or a request to the thread's own
+ * mind, shows that thread's spend (a thread has no cap of its own); while the person's expensive-answer question is on,
+ * the threshold it stops at is said. The cost of a request is not known before it starts, and is said so: no estimate
+ * is ever invented.
  */
-export function paysLine(o: { steering: boolean; thread: { spent_usd: number; budget_usd: number; mind: { id: string } } | null; answererId: string | null; newThreadUsd: number | null | undefined }): string {
+export function paysLine(o: { steering: boolean; thread: { spent_usd: number; mind: { id: string } } | null; answererId: string | null; expensive: AskExpensive | null }): string {
   // the same thread's figures only for the same mind, by IDENTITY (j0-fixes r1.6): two minds may share a name
   const sameThread = !!o.thread && (o.steering || (!!o.answererId && o.thread.mind.id === o.answererId))
-  const limit = sameThread && o.thread ? `this thread has used ${money(o.thread.spent_usd)} of ${money(o.thread.budget_usd)}` : typeof o.newThreadUsd === 'number' && o.newThreadUsd > 0 ? `a new thread may spend up to ${money(o.newThreadUsd)}` : null
-  return `Paid by you${limit ? ` · ${limit}` : ''} · no estimate before it starts`
+  const used = sameThread && o.thread ? `this thread has used ${money(o.thread.spent_usd)}` : null
+  const asks = o.expensive?.on ? `stops to ask past ${money(o.expensive.usd)}` : null
+  return ['Paid by you', used, asks, 'no estimate before it starts'].filter(Boolean).join(' · ')
 }
 
 /** j0-fixes r1: an app as the Ask names it to a person (the program id stays internal): omegadesign is "Studio". */
@@ -312,19 +292,17 @@ export function memoryStatus(signedIn: boolean, hive: HiveMemory, caps: HiveCapa
 
 /**
  * Where an answer came from, in a line under it (answer.metta): a model alone, the asker's own mind's (by its name) or the
- * one the Ask uses, or the web, with how many of the pages it cites the researcher opened. Example: "From Vega’s model
- * alone, without a web search."
+ * one the Ask uses. Example: "From Vega’s model alone, without a web search."
  */
 export function answerSourceWords(source: AnswerSource, who?: string | null): string {
-  if (source.kind === 'model') return `From ${source.of === 'ask' ? 'the Ask’s' : who ? `${who}’s` : 'your mind’s'} model alone, without a web search.`
-  const opened = source.sources.filter((s) => s.verified).length
-  return opened ? `From the web: the researcher opened ${plural(opened, 'page')} it cites.` : 'From the web, though the researcher opened none of the pages it cites.'
+  return `From ${source.of === 'ask' ? 'the Ask’s' : who ? `${who}’s` : 'your mind’s'} model alone, without a web search.`
 }
 
 /**
  * How a research request held back by an asleep Research swarm stands (answerFacts.waitPhase), said under its answer once
- * something happened to it, with the coordinator's name once read. Empty before the press: the answer above already says
- * it wasn't sent and why.
+ * a press can't send it or something happened to it, with the coordinator's name once read: who may wake it is the host's
+ * rule (its owner or a hive admin, app.py control_refusal). Empty while it is read and before the press: the answer above
+ * already says it wasn't sent and why.
  */
 export function researchWakeWords(phase: WaitPhase, v: ResearchWakeView | null): string {
   const name = v?.name ?? 'the Research swarm'
@@ -337,11 +315,12 @@ export function researchWakeWords(phase: WaitPhase, v: ResearchWakeView | null):
       return v && v.step !== 'sending' ? `Waking ${name}…` : `Sending the research to ${name}…`
     case 'blocked':
       if (v?.gate === 'spending') return `${name} has reached its spending limit, so it can’t wake for this research.`
-      if (v?.gate === 'authority') return `You can’t wake ${name} with your current access, so the research wasn’t sent.`
+      if (v?.gate === 'authority') return `Only ${name}’s owner or a hive admin can wake it, so the research wasn’t sent.`
       return `${name} can’t be woken right now, so the research wasn’t sent.`
     case 'failed':
       if (v?.unsent === 'send') return `${name} is awake, but the research wasn’t sent. Press again to send it.`
       return v?.reason ? `Couldn’t wake ${name}. The hive says: ${v.reason}.` : `Couldn’t wake ${name}, so the research wasn’t sent.`
+    case 'checking':
     case 'ready':
       return ''
   }

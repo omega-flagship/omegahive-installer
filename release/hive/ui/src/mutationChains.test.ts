@@ -160,9 +160,19 @@ describe('the mutation sets are derived, and pinned', () => {
     // shares)
     // a made app changed in place: 218 = 216 plus createPlanRevise (POST /api/create/plans/{id}/revise: the person's
     // change) and createPlanRevert (POST …/{id}/revert: their Undo, or Put back on a version)
-    expect(client.writes.size).toBe(218)
+    // the Ask's go-ahead (Jon on #294): 219 = 218 plus askGoAhead (POST /api/ask/{op}/go-ahead: the person's answer to
+    // a turn that stopped as expensive)
+    // a person's connectors: 222 = 219 plus setConnectorSettings (PUT /api/connectors/{id}/settings: their own login),
+    // disconnectConnector (DELETE /api/connectors/{id}) and installConnector (PUT /api/connectors/{id}/minds/{mind}: a
+    // switch for one of their minds); connectors, its GET, is a read
+    // spend alerts (#706): 223 = 222 plus controlSpendAlert (POST /api/usage/spend-alerts/{id}/control: an owner's
+    // Pause or Resume of new paid calls); spendAlerts, its GET, is a read
+    expect(client.writes.size).toBe(223)
     for (const m of ['createPlanRevise', 'createPlanRevert']) expect(client.writes.has(m), m).toBe(true)
+    for (const m of ['setConnectorSettings', 'disconnectConnector', 'installConnector']) expect(client.writes.has(m), m).toBe(true)
     expect(client.writes.has('askTakeover')).toBe(false)
+    expect(client.writes.has('connectors')).toBe(false)
+    expect(client.writes.has('controlSpendAlert')).toBe(true)
     for (const m of ['createOfferStart', 'createOfferDismiss']) expect(client.writes.has(m), m).toBe(true)
     expect(client.writes.has('createOffers')).toBe(false)
     expect(client.writes.has('acknowledgeTaskStop')).toBe(true)
@@ -242,11 +252,17 @@ describe('the mutation sets are derived, and pinned', () => {
     // Studio's recent creations: 162 = 161 plus listCreations (GET of the person's newest designs, pictures and apps, for
     // the empty canvas's recent list). A GET; opening one sends nothing.
     // and 163 = 162 plus studioRecent (GET of the three newest creations the empty canvas reopens)
-    expect(client.reads.size).toBe(163)
+    // a person's connectors: 164 = 163 plus connectors (GET /api/connectors: which of their logins are entered and which
+    // of their minds have each). A GET; its changes are writes.
+    // spend alerts (#706): 165 = 164 plus spendAlerts (GET /api/usage/spend-alerts: the alerts this viewer may see). A
+    // GET; its Pause and Resume are writes.
+    expect(client.reads.size).toBe(165)
     for (const r of ['listCreations', 'studioRecent']) expect(client.reads.has(r), r).toBe(true)
     for (const r of ['artifactView', 'artifact', 'myStage', 'research']) expect(client.reads.has(r), r).toBe(true)
     expect(client.reads.has('feedbackLogs')).toBe(true)
     expect(client.reads.has('feedbackDrafts')).toBe(true)
+    expect(client.reads.has('connectors')).toBe(true)
+    expect(client.reads.has('spendAlerts')).toBe(true)
     expect(client.reads.has('createOffers')).toBe(true)
     expect(client.reads.has('feedback')).toBe(true)
     expect(client.reads.has('listTaskStops')).toBe(true)
@@ -275,8 +291,12 @@ describe('the mutation sets are derived, and pinned', () => {
   it('the store: 40 actions; the helper-derived members: exactly these', () => {
     expect(store.size).toBe(40)
     expect([...effects.members].filter((m) => !mutations.has(m)).sort()).toEqual([
-      'accept', 'applyCompletion', 'applyRename', 'burn', 'consume', 'deleteThread', 'demoAddKey', 'handback', 'heartbeat', 'helloGet', 'helloWake', 'mount', 'navigate', 'newThread',
-      'op', 'programAskCard', 'reinit', 'restorePersonal', 'revoke', 'setDefaultSwarm', 'setOwnLimit', 'setThreadLimit', 'steerTo', 'turnOff', 'unmount', 'useModel', 'wakeAll', 'wakeMind', 'writeLimit', 'writeProgress',
+      'accept', 'answerGoAhead', 'applyCompletion', 'applyRename', 'burn', 'consume', 'deleteThread', 'demoAddKey', 'handback', 'heartbeat', 'helloGet', 'helloWake',
+      'mount', 'navigate', 'newThread', 'op', 'programAskCard', 'reinit', 'restorePersonal', 'revoke', 'setAskWhenExpensive', 'setDefaultSwarm', 'setOwnLimit',
+      'steerTo', 'turnOff', 'unmount', 'useModel', 'wakeAll', 'wakeMind', 'writeLimit', 'writeProgress',
+      // Ask money (Jon on #294): answerGoAhead is the go-ahead question's POST /api/ask/{op}/go-ahead and
+      // setAskWhenExpensive the expensive-answer switch's PUT /api/me/ask, each one write sent only through the Ask
+      // store's action of that name; setThreadLimit left with the per-thread cap
       // First Light always finishable (Peter, 11-10): restorePersonal is the store action that sends an admin's
       // POST /api/swarms/{id}/restore of their archived personal mind's swarm, and wakeMind is First Light's host call for
       // POST /api/agents/{id}/wake of another of the person's minds; each is one write, sent only through the store
@@ -435,7 +455,7 @@ describe('every multi-write chain goes through the bound operation (lib/boundOpe
   it('the chains these rounds bind are bound: every write through op.write or a helper that binds its own', () => {
     for (const at of ['features/launch/LaunchSwarm.tsx:launch']) {
       const c = chains.find((x) => x.at === at)!
-      expect(sig(c)).toEqual(['createSwarm', 'setBudget', 'createAgent*', 'agentAction*', 'createGoal'])
+      expect(sig(c)).toEqual(['createSwarm', 'createAgent*', 'agentAction*', 'createGoal'])
       expect(c.writes.every((w) => w.bound), at).toBe(true)
     }
     const life = chains.filter((c) => c.at.startsWith('features/lifecycle/LifecyclePage.tsx:') && isChain(c))

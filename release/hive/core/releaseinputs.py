@@ -246,6 +246,8 @@ def _manifest(root, revision, until):
         if not _allowed(name):
             continue
         mode, kind, oid, size = meta.decode("ascii").split()
+        if mode == "160000" and kind == "commit":   # a submodule is another repository's commit, not a file of
+            continue                                 # this release: it has no blob to read and gets its own map
         _need(mode in {"100644", "100755"} and kind == "blob"
             and re.fullmatch("[0-9a-f]{40}", oid) is not None and size.isdigit(), "unsupported_file")
         length = int(size)
@@ -330,7 +332,11 @@ def _publish_source(fd, contents):
 
 
 def _verify_tuple(fd, raw, extractor, manifest, source_root):
-    _need(set(os.listdir(fd)) == {"manifest.json", "extractor", "source"}, "release_tuple_conflict")
+    # List through a descriptor opened now, not `fd`, which was opened before its entries were made: POSIX leaves it
+    # unspecified whether readdir shows those, and tmpfs on some Linux kernels does not (omega-flagship/omegahive#621).
+    # "." relative to `fd` is the same folder, with no path lookup.
+    with _owned(os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)) as now:
+        _need(set(os.listdir(now)) == {"manifest.json", "extractor", "source"}, "release_tuple_conflict")
     _need(nh._read_listed(fd, "manifest.json", len(raw), _sha(raw)) == raw, "release_tuple_conflict")
     with _owned(os.open("extractor", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
             dir_fd=fd)) as child:

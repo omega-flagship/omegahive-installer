@@ -1,8 +1,8 @@
-"""Private bounded Linux workspace for the existing runner, not a work grant.
+"""Purpose: Supply private, bounded workspaces for Linux sandbox jobs.
 
 Parent imports normally. The trusted standalone launcher loads this exact sibling
-Source without importing Hive. No resource is acquired at import. All project
-files are first created by the placed namespace child, never on the host job.
+source without importing Hive. The namespace child creates project files in
+its private filesystem. The parent job directory contains trusted metadata.
 SO_PEERCRED is deliberately not used: socketpair credentials describe its creator,
 whereas the descriptor sender is the original trusted B descendant.
 """
@@ -30,6 +30,7 @@ WORKSPACE_POLICY = (BYTES, INODES, MAX_INPUT_FILES, MAX_INPUT)
 CHUNK, TMPFS_MAGIC = 65536, 0x01021994
 PHASES = ("launcher-probe", "runtime-probe", "workload")
 FLAG = "--hive-runner-workspace-v1"
+MOUNT_PREFIX = "hive-mind-root-"
 
 
 def valid_workspace_policy(policy):
@@ -161,9 +162,12 @@ def _known_slot(slot):
 
 
 class WorkspaceJob(_Evidence):
-    def __init__(self, context):
+    def __init__(self, context=None, *, loop_until=None):
         super().__init__()
-        self.context, self.loop = context, context.loop
+        self.context = context
+        self.loop = context.loop if context is not None else asyncio.get_running_loop()
+        self.loop_until = context.loop_until if context is not None else loop_until
+        self.workspaces = context.workspaces if context is not None else [None] * len(PHASES)
         self.directory = _Owned()
         self.path = self.basis = None
         self.create_attempted = self.create_returned = self.removal_attempted = self.removed = False
@@ -171,7 +175,7 @@ class WorkspaceJob(_Evidence):
 
     def guard(self, until):
         _need(type(until) in (int, float) and math.isfinite(until)
-              and self.loop is asyncio.get_running_loop() and self.loop.time() < until <= self.context.loop_until)
+              and self.loop is asyncio.get_running_loop() and self.loop.time() < until <= self.loop_until)
 
     def create(self, until):
         try:
@@ -193,7 +197,7 @@ class WorkspaceJob(_Evidence):
     def dispose(self, until):
         if self.disposed:
             return True
-        for phase in self.context.workspaces:
+        for phase in self.workspaces:
             if phase is not None:
                 try:
                     _need(type(phase) is WorkspacePhase and phase.context is self.context and phase.job is self)
@@ -205,7 +209,7 @@ class WorkspaceJob(_Evidence):
                 else:
                     if phase.primary is not None:
                         self.remember(phase.primary, unknown=phase.unknown)
-        eligible = all(x is None or type(x) is WorkspacePhase and x.disposed for x in self.context.workspaces)
+        eligible = all(x is None or type(x) is WorkspacePhase and x.disposed for x in self.workspaces)
         try:
             if self.path is not None and self.basis is not None and eligible:
                 self.guard(until)
@@ -265,6 +269,7 @@ class WorkspacePhase(_Evidence):
         self.mount_basis = self.mount_path = self.facts = None
         self.spawn_attempted = self.handshake_attempted = self.accepted = False
         self.proc = None
+        self.process_cleanup = None
         self.ready = self.disposed = self.metadata_removed = False
         self.send_attempted = self.send_returned = self.receive_attempted = self.receive_returned = False
         self.receive_adoption_incomplete = False
@@ -273,16 +278,23 @@ class WorkspacePhase(_Evidence):
     def setup(self, until):
         try:
             self.job.guard(until)
+            # Deployments allow the standalone launcher's mount only under /tmp.
+            parent = None if self.resource is None else self.job.directory.value
             self.mkdir_attempted = True
-            os.mkdir(self.root_name, 0o700, dir_fd=self.job.directory.value)
+            if parent is None:
+                self.mount_path = tempfile.mkdtemp(prefix=MOUNT_PREFIX, dir="/tmp")
+                coordinate = self.mount_path
+            else:
+                os.mkdir(self.root_name, 0o700, dir_fd=parent)
+                self.mount_path = str(Path(self.job.path) / self.root_name)
+                coordinate = self.root_name
             self.mkdir_returned = True
             self.mountpoint.open_attempted = True
-            self.mountpoint.value = os.open(self.root_name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-                                           dir_fd=self.job.directory.value)
+            self.mountpoint.value = os.open(coordinate, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                           dir_fd=parent)
             self.mountpoint.returned = True
             self.mount_basis = os.fstat(self.mountpoint.value)
             _need(self.mount_basis.st_uid == os.getuid() and not self.mount_basis.st_mode & 0o077)
-            self.mount_path = str(Path(self.job.path) / self.root_name)
             self.pair_attempted = True
             self.pair_adoption_incomplete = True
             self.pair = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -338,7 +350,7 @@ class WorkspacePhase(_Evidence):
 
     async def _pause(self, until):
         self.job.guard(until)
-        await asyncio.sleep(min(.005, until - self.context.loop.time()))
+        await asyncio.sleep(min(.005, until - self.job.loop.time()))
         self.job.guard(until)
 
     async def _send(self, raw, until, fd=None):
@@ -381,9 +393,10 @@ class WorkspacePhase(_Evidence):
     async def handshake(self, proc, until):
         try:
             self.handshake_attempted = True
-            _need(self.resource.context is self.context and self.resource.proc is proc
-                  and self.resource.confirmed and self.resource.released and proc.returncode is None)
-            self.proc = proc
+            if self.resource is not None:
+                _need(self.resource.proc is proc)
+                self.proc = proc
+            _need(self._original_process(proc))
             _need(self.child.close(self))  # parent's duplicate of the inherited endpoint
             start = {"op": "workspace", "version": 1, "phase": self.index,
                 "path": self.mount_path, "dev": self.mount_basis.st_dev,
@@ -439,7 +452,7 @@ class WorkspacePhase(_Evidence):
                   and type(ready["phase"]) is int and ready["phase"] == self.index
                   and ready["op"] == "ready" and ready["files"] == self.plan)
             await self.verify_inputs(until)
-            _need(proc is self.resource.proc and proc.returncode is None)
+            _need(self._original_process(proc))
             await self._send(b"G", until)
             # Peer must close all its copies before C can inherit anything.
             while True:
@@ -457,6 +470,12 @@ class WorkspacePhase(_Evidence):
                           or self.receive_adoption_incomplete)
             raise
 
+    def _original_process(self, proc):
+        return (self.proc is proc and proc.returncode is None
+                and (self.resource is None or (
+                    self.resource.context is self.context and self.resource.proc is proc
+                    and self.resource.confirmed and self.resource.released)))
+
     async def verify_inputs(self, until):
         """Independent bounded parent FD/hash readbacks before releasing C."""
         for index, (name, length, digest) in enumerate(self.plan):
@@ -468,7 +487,8 @@ class WorkspacePhase(_Evidence):
                                      dir_fd=self.root.value)
                 slot.returned = True
                 before = os.fstat(slot.value)
-                _need(stat.S_ISREG(before.st_mode) and before.st_size == length and before.st_uid == os.getuid())
+                _need(stat.S_ISREG(before.st_mode) and before.st_nlink == 1
+                      and before.st_size == length and before.st_uid == os.getuid())
                 count, h = 0, hashlib.sha256()
                 while True:
                     self.job.guard(until)
@@ -483,7 +503,8 @@ class WorkspacePhase(_Evidence):
                     self.job.guard(until)
                 after = os.fstat(slot.value)
                 stamp = lambda s: (s.st_dev, s.st_ino, s.st_mode, s.st_uid, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
-                _need(stamp(before) == stamp(after) and count == length and h.hexdigest() == digest)
+                _need(stamp(before) == stamp(after) and after.st_nlink == 1
+                      and count == length and h.hexdigest() == digest)
             except BaseException as error:
                 self.remember(error)
             finally:
@@ -491,6 +512,11 @@ class WorkspacePhase(_Evidence):
             self.raise_first()
 
     def _physical(self):
+        if self.resource is None:
+            return (self.proc is not None and self.proc.returncode is not None
+                    and self.process_cleanup is not None
+                    and self.process_cleanup["original_process_reaped"]
+                    and self.process_cleanup["original_group_absent"])
         return (self.resource.finished and self.resource.process_reaped and self.resource.controls_closed
                 and self.resource.complete and self.resource.proc is self.proc)
 
@@ -505,13 +531,15 @@ class WorkspacePhase(_Evidence):
         try:
             if eligible and self.mount_basis is not None and not self.rmdir_attempted:
                 self.job.guard(until)
-                now = os.stat(self.root_name, dir_fd=self.job.directory.value, follow_symlinks=False)
+                parent = None if self.resource is None else self.job.directory.value
+                coordinate = self.mount_path if parent is None else self.root_name
+                now = os.stat(coordinate, dir_fd=parent, follow_symlinks=False)
                 _need((now.st_dev, now.st_ino) == (self.mount_basis.st_dev, self.mount_basis.st_ino))
                 _need(not os.listdir(self.mountpoint.value))
                 self.mountpoint.close(self)
                 _need(self.mountpoint.closed)
                 self.rmdir_attempted = True
-                os.rmdir(self.root_name, dir_fd=self.job.directory.value)
+                os.rmdir(coordinate, dir_fd=parent)
                 self.rmdir_returned = True
             if eligible and not self.metadata_cleanup_attempted:
                 # Only these exact trusted profile coordinates, never a project tree walk.
@@ -570,6 +598,13 @@ def prepare_phase(context, resource, index, inputs, *, work_loop_until):
     return phase.setup(work_loop_until)
 
 
+def prepare_single_phase(job, inputs, *, work_loop_until):
+    _need(type(job) is WorkspaceJob and job.context is None and job.ready and job.workspaces[2] is None)
+    phase = WorkspacePhase(None, None, 2, job, inputs)
+    job.workspaces[2] = phase
+    return phase.setup(work_loop_until)
+
+
 def require_context_terminal(context):
     from . import sandbox_resources as R
     _need(type(context) is R.ResourceContext and type(context.workspaces) is list
@@ -621,8 +656,8 @@ def artifact_directory(phase):
 async def read_outputs(phase, names, total_cap, *, cleanup_loop_until):
     """Original named-file contract through retained FD, with every read FD owned.
 
-    No adversarial recursive traversal. Errors/unknown closes do not free the
-    workspace or its capacity reservation. Generic/Darwin reader is unchanged.
+    Only opens declared flat names. A placed job retains its capacity
+    reservation until it can verify workspace cleanup.
     """
     directory = artifact_directory(phase)
     from . import run_backends
@@ -645,8 +680,9 @@ async def read_outputs(phase, names, total_cap, *, cleanup_loop_until):
                 continue
             owned.returned = True
             before = os.fstat(owned.value)
-            if not stat.S_ISREG(before.st_mode) or before.st_size > min(30 * 1024 * 1024, total_cap - total):
-                raise SandboxOutputLimit("sandbox artifact type or size refused")
+            if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                    or before.st_size > min(30 * 1024 * 1024, total_cap - total)):
+                raise SandboxOutputLimit("sandbox artifact type, link count, or size refused")
             chunks, size = [], 0
             while True:
                 phase.job.guard(cleanup_loop_until)
@@ -662,7 +698,7 @@ async def read_outputs(phase, names, total_cap, *, cleanup_loop_until):
                 phase.job.guard(cleanup_loop_until)
             after = os.fstat(owned.value)
             stamp = lambda s: (s.st_dev, s.st_ino, s.st_mode, s.st_uid, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
-            if stamp(before) != stamp(after) or size != before.st_size:
+            if stamp(before) != stamp(after) or after.st_nlink != 1 or size != before.st_size:
                 raise RuntimeError("sandbox artifact changed during read")
             data = b"".join(chunks)
         except BaseException as error:

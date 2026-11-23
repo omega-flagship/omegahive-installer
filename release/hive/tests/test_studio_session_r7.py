@@ -619,7 +619,7 @@ def test_f4_with_studio_sessions_absent_the_capabilities_say_why_and_never_when_
     monkeypatch.delenv("HIVE_STUDIO_MAKER_TEMPLATE")                       # template not ready (staging, 2026-11-19)
     got = caps(p)
     assert "studio_sessions" not in got and got["studio_off"] == "not_set_up"
-    put = p.client.put("/api/me/ask", headers=p.mg, json={"thread_budget_usd": 1.0})
+    put = p.client.put("/api/me/ask", headers=p.mg, json={"ask_when_expensive": True})   # the Ask's one setting now
     assert put.status_code == 200 and put.json()["capabilities"] == got, put.text                # PUT: same answer
     monkeypatch.setenv("HIVE_STUDIO_MAKER_TEMPLATE", p.template["id"])
     p.entry = studio_entry(hooks=True)                                     # the Studio app not attachable
@@ -896,7 +896,7 @@ def test_R72_kimi_the_step_skills_open_only_for_a_live_session_never_a_held_or_u
 def test_R73_studio_directions_is_true_together_with_studio_sessions_and_absent_whenever_it_is(p, monkeypatch):
     on = caps(p)
     assert on == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive), "studio_sessions": True, "studio_directions": True}
-    put = p.client.put("/api/me/ask", headers=p.mg, json={"thread_budget_usd": 1.0})
+    put = p.client.put("/api/me/ask", headers=p.mg, json={"ask_when_expensive": True})   # the Ask's one setting now
     assert put.status_code == 200 and put.json()["capabilities"] == on, put.text                 # PUT: same shape
     p.entry = studio_entry(hooks=True)                                     # program not attachable
     assert caps(p) == {"conductor": False, "memory": False, "code_test_intents": execution_available(p.hive), "studio_off": "not_set_up"}

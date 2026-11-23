@@ -1,5 +1,4 @@
-// Purpose: tests for the spending notices: a mind paused for spending, an expiry pass's estimate notice, an overrun, and
-// a mind the spend-rate guard is slowing.
+// Purpose: tests for the spending notices: a mind paused for spending, an expiry pass's estimate notice and an overrun.
 /**
  * A mind paused for spending says so at the top once per stretch (budget.refused, count 1), naming the limit that has no
  * room when the hive names it; the mind's page then names the same limit and offers to raise the mind's own budget only
@@ -9,7 +8,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { Agent, BudgetRefusal } from '../api/types'
-import { SpendingPause, SpendingSlowed } from '../features/dot/SpendingPause'
+import { SpendingPause } from '../features/dot/SpendingPause'
 import { bindingElsewhere, budgetMeter } from '../features/dot/callLimits'
 import { estimatedWords, overrunWords, refusalNotice } from './liveNotices'
 
@@ -75,21 +74,5 @@ describe('a mind paused for spending', () => {
     const row = { label: 'agent:a_rev:total', scope: 'agent:a_rev', period: 'total', limit_usd: 1.5, spent_usd: 0.5, held_usd: 0.05, room_usd: 0.95 }
     expect(budgetMeter(agent, { free: false, reason: null, limits: [row] })).toEqual({ cap: 1.5, used: 0.55 })
     expect(budgetMeter(agent, null)).toEqual({ cap: 2, used: 0.5 })
-  })
-})
-
-describe('a mind the spend-rate guard is slowing', () => {
-  it('its page says it is slowed, when its next call fits and that a higher monthly limit speeds it up', () => {
-    const now = Date.now()
-    const page = (minutes: number) => renderToStaticMarkup(createElement(SpendingSlowed, {
-      slowed: { until: new Date(now + minutes * 60000).toISOString(), at },
-    }))
-    const later = page(21)
-    expect(later).toContain('Slowed: spending faster than this month allows')
-    expect(later).toMatch(/Its next model call fits again at [^<]+, in about 21 minutes\./)
-    expect(later).toContain('A higher monthly limit on Usage and limits speeds it up.')
-    expect(later).toContain('Open Usage and limits')
-    expect(page(1)).toMatch(/in about 1 minute\./)
-    expect(page(-1)).toContain('Its next model call fits again now.')
   })
 })

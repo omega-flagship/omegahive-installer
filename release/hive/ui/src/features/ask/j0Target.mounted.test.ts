@@ -1,3 +1,4 @@
+// Purpose: prove, mounted, that the paid row the person sees and the context sent name the same answering mind.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
@@ -139,7 +140,7 @@ beforeEach(() => {
     programs: [{ id: 'omegadesign', name: 'OmegaDesign' }] as never,
   })
   useAskStore.getState().bind(useHive.getState().session, 'user:p_invented')
-  useAskStore.setState({ settings: { swarm_id: null, thread_budget_usd: 5, eligible }, personal: C as never })
+  useAskStore.setState({ settings: { swarm_id: null, eligible }, personal: C as never })
 })
 afterEach(() => {
   mounted.reverse().forEach((m) => m.unmount())
@@ -219,7 +220,7 @@ describe('thread with mind A → close → choose B: the row and the sent contex
     const row = f().list[0]
     expect(row.key).toBe('steer')
     expect(row.parts.map((p) => p.t).join('')).toBe('Tell Studio Maker now: make the date bigger')
-    expect(row.pays).toBe('Paid by you · this thread has used $0.00 of $5.00 · no estimate before it starts')
+    expect(row.pays).toBe('Paid by you · this thread has used $0.00 · no estimate before it starts')
   })
   it('r1.5 (stand-in r1.4 P1, behavioural): typing another mind’s name while A answers: row, chip and send all name A', async () => {
     await useAskStore.getState().send('Make a poster', { route: 'programs/omegadesign', experience: 'classic', program: 'omegadesign', swarm_id: 's_studio' })
@@ -269,13 +270,15 @@ describe('thread with mind A → close → choose B: the row and the sent contex
     expect(useAskStore.getState().carry).toBeNull()
     expect(useAskStore.getState().thread).toBeNull()
   })
-  it('the paid row says who pays and the limit, with no invented estimate', async () => {
+  it('the paid row says who pays and where it stops to ask, with no invented estimate', async () => {
     await threadWithA()
+    // the person's expensive-answer question (GET /api/me/ask): on, at their threshold now
+    useAskStore.setState((s) => ({ settings: s.settings && { ...s.settings, ask_when_expensive: true, expensive_usd: 0.62 } }))
     const m = mount(() => useAskField({ experience: 'classic' }))
     useAskStore.getState().setThreadOpen(false); m.settle()
     const f = () => m.tree as ReturnType<typeof useAskField>
     f().change('what is on today'); m.settle()
-    expect(f().list.find((c) => c.key === 'mind')?.pays).toBe('Paid by you · a new thread may spend up to $5.00 · no estimate before it starts')
+    expect(f().list.find((c) => c.key === 'mind')?.pays).toBe('Paid by you · stops to ask past $0.62 · no estimate before it starts')
   })
 })
 
@@ -384,7 +387,7 @@ it('pre-admission composer copy stays quiet for 400ms, then says waking rather t
     })
     useHive.setState({ client: client as HiveClient })
     useAskStore.getState().bind(useHive.getState().session, 'user:p_invented')
-    useAskStore.setState({ settings: { swarm_id: null, thread_budget_usd: 5, eligible }, personal: C as never })
+    useAskStore.setState({ settings: { swarm_id: null, eligible }, personal: C as never })
     const m = mount(() => useAskField({ experience: 'classic' }))
     const field = () => m.tree as ReturnType<typeof useAskField>
     const sent = useAskStore.getState().send('Read the note', { route: 'hive', experience: 'classic' })
@@ -424,7 +427,7 @@ it('an outgoing native chooser trigger cannot acquire the next credential’s As
   const client = useHive.getState().client!
   Object.assign(client, { authContext: () => credential })
   useAskStore.getState().bind(useHive.getState().session, 'user:p_invented')
-  useAskStore.setState({ settings: { swarm_id: null, thread_budget_usd: 5, eligible }, personal: C as never })
+  useAskStore.setState({ settings: { swarm_id: null, eligible }, personal: C as never })
   type El = { type: unknown; props: Record<string, unknown> }
   const elements = (tree: unknown): El[] => {
     if (Array.isArray(tree)) return tree.flatMap(elements)

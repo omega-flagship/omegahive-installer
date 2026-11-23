@@ -106,8 +106,14 @@ export function SessionView({ sessionId, roomId }: { sessionId: string; roomId: 
             ))}
           </div>
         )}
-        <Meter value={session.spent_usd} max={session.budget_usd} hue={session.mind.hue ?? 252} label={`Session spend $${session.spent_usd.toFixed(2)} of $${session.budget_usd.toFixed(2)}`} />
-        <p className="text-[11.5px] text-ink-4">${session.spent_usd.toFixed(2)} of ${session.budget_usd.toFixed(2)} this session. The cap is a hard limit on the mind while the session runs.</p>
+        {session.budget_usd > 0 ? (
+          <>
+            <Meter value={session.spent_usd} max={session.budget_usd} hue={session.mind.hue ?? 252} label={`Session spend $${session.spent_usd.toFixed(2)} of $${session.budget_usd.toFixed(2)}`} />
+            <p className="text-[11.5px] text-ink-4">${session.spent_usd.toFixed(2)} of ${session.budget_usd.toFixed(2)} this session. The cap is a hard limit on the mind while the session runs.</p>
+          </>
+        ) : (
+          <p className="text-[11.5px] text-ink-4">${session.spent_usd.toFixed(2)} spent this session. The hive&apos;s limits hold what it spends.</p>
+        )}
       </header>
       <div ref={scroller} className="thin-scroll min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3" aria-live="polite">
         {!items.length && <p className="pt-6 text-center text-[13px] text-ink-4">Say what you want done. {shown(session.mind.name)} hears every message here.</p>}

@@ -13,7 +13,10 @@
 ;   (Relates key task)             the item belongs to the task (the mind that showed it, the task's holder, the task)
 ;   (Ranked task ((key n) ...))    the items with interest in the task, n times in view with it, highest first
 ;   (Shares dir (kinds ...) (shares ...))   the shares a person last dragged a split of these kinds to
-;   (Log (statement ...))          what was said, newest first: (Show k t) (Recall k) (Compare a b t) (PutAway k) (Clear)
+;   (Log (statement ...))          what was said, newest first: (Show k t) (Recall k) (Compare a b t) (PutAway k) (Clear),
+;                                  and (Before (key ...) t), the page's fold of everything older than the newest Show,
+;                                  Compare or Clear: the keys it named since the newest Clear, newest first, and its
+;                                  newest task (arrangeSpace.ts foldLog)
 ;   (Episode n)                    the newest statement's number, echoed in Seen so the page credits interest once
 ;   (Dragging group i at)          a divider in the person's hand: the i-th divider of the group named by its path
 ;                                  (below), at that fraction of the group's length
@@ -70,7 +73,9 @@
 (= (arr-gap) 12)
 
 ; ---------- list helpers. A grounded list operation does not evaluate its arguments, so each is wrapped in an
-; equation whose arguments MeTTa evaluates first (a let costs about 0.3 ms in MeTTaScript; a call far less).
+; equation whose arguments MeTTa evaluates first (a let costs about 0.3 ms in MeTTaScript; a call far less). A helper
+; that walks a list uses MeTTaScript's fold, filter, union or unique, which loop in JavaScript: a rule that recursed once
+; per element ran MeTTa out of stack at about 400 elements (a log of 400 statements, a board of 400 minds).
 (= (arr-one $xs $d) (if (== $xs ()) $d (car-atom $xs)))
 (= (arr-cons $h $t) (cons-atom $h $t))
 (= (arr-rest $xs) (cdr-atom $xs))
@@ -78,22 +83,21 @@
 (= (arr-leaf $c) (== (get-metatype $c) Symbol))
 ; a quotient as a fraction: on two whole numbers MeTTaScript's / divides whole (7 / 2 is 3)
 (= (arr-div $a $b) (/ (* 1.0 $a) $b))
-(= (arr-in $x $xs) (if (== $xs ()) False (if (== $x (car-atom $xs)) True (arr-in $x (cdr-atom $xs)))))
-(= (arr-join $xs $ys) (if (== $xs ()) $ys (arr-cons (car-atom $xs) (arr-join (cdr-atom $xs) $ys))))
-(= (arr-minus $xs $ys) (if (== $xs ()) () (arr-keep-unless (car-atom $xs) (arr-minus (cdr-atom $xs) $ys) $ys)))
-(= (arr-keep-unless $x $rest $ys) (if (arr-in $x $ys) $rest (arr-cons $x $rest)))
-(= (arr-reverse $xs) (arr-reverse-onto $xs ()))
-(= (arr-reverse-onto $xs $acc) (if (== $xs ()) $acc (arr-reverse-onto (cdr-atom $xs) (arr-cons (car-atom $xs) $acc))))
-(= (arr-sum $xs) (if (== $xs ()) 0 (+ (car-atom $xs) (arr-sum (cdr-atom $xs)))))
-(= (arr-take $xs $n) (if (or (== $xs ()) (< $n 1)) () (arr-cons (car-atom $xs) (arr-take (cdr-atom $xs) (- $n 1)))))
+(= (arr-in $x $xs) (foldl-atom $xs False $found $y (if $found True (== $x $y))))
+(= (arr-join $xs $ys) (union-atom $xs $ys))
+(= (arr-minus $xs $ys) (filter-atom $xs $x (not (arr-in $x $ys))))
+(= (arr-reverse $xs) (foldl-atom $xs () $acc $x (cons-atom $x $acc)))
+(= (arr-sum $xs) (foldl-atom $xs 0 $acc $x (+ $acc $x)))
+(= (arr-take $xs $n) (arr-reverse (foldl-atom $xs () $acc $x (if (< (size-atom $acc) $n) (cons-atom $x $acc) $acc))))
+; each element once, at its first place
+(= (arr-unique $xs) (unique-atom $xs))
 (= (arr-smaller $a $b) (if (< $a $b) $a $b))
 (= (arr-larger $a $b) (if (> $a $b) $a $b))
 (= (arr-clamp $v $lo $hi) (arr-larger $lo (arr-smaller $v $hi)))
 
 ; ---------- items
 (= (arr-known $k) (if (== (collapse (match &self (Item $k $s $x) $s)) ()) False True))
-(= (arr-only-known $ks) (if (== $ks ()) () (arr-keep-if-known (car-atom $ks) (arr-only-known (cdr-atom $ks)))))
-(= (arr-keep-if-known $k $rest) (if (arr-known $k) (arr-cons $k $rest) $rest))
+(= (arr-only-known $ks) (filter-atom $ks $k (arr-known $k)))
 (= (arr-kind $k) (arr-one (collapse (match &self (Item $k $s $x) (arr-drawn $s $x))) none))
 (= (arr-drawn artifact $x) (arr-one (collapse (match &self (KindOf $x $d) $d)) artifact))
 (= (arr-drawn mind $x) mind)
@@ -107,34 +111,46 @@
 ; ---------- what the log asks for: walking from the newest statement back to the newest Show, Compare or Clear.
 ; (View how task anchored recalled gone): anchored is what the anchor named; recalled, oldest first, what was recalled
 ; after it; gone, what was put away after it. An older Recall or PutAway is undone by a newer one of the same item.
-(= (arr-view $log) (arr-walk $log () ()))
-(= (arr-walk $log $r $g) (if (== $log ()) (View clear none () $r $g) (arr-step (car-atom $log) (cdr-atom $log) $r $g)))
-(= (arr-step (Show $k $t) $rest $r $g) (View show $t ($k) $r $g))
-(= (arr-step (Compare $a $b $t) $rest $r $g) (View compare $t ($a $b) $r $g))
-(= (arr-step (Clear) $rest $r $g) (View clear none () $r $g))
-(= (arr-step (Recall $k) $rest $r $g) (arr-walk $rest (arr-recall $k $r $g) $g))
-(= (arr-step (PutAway $k) $rest $r $g) (arr-walk $rest $r (arr-put-away $k $r $g)))
+; The walk is a fold carrying (Walking recalled gone) until the anchor makes it a View; a log with no anchor, or one
+; that reaches the page's Before, ends as the empty stage with what was recalled.
+(= (arr-view $log) (arr-walk-end (foldl-atom $log (Walking () ()) $w $s (arr-walk-step $w $s))))
+(= (arr-walk-step (Walking $r $g) $s) (arr-step $s $r $g))
+(= (arr-walk-step (View $how $t $a $r $g) $s) (View $how $t $a $r $g))
+(= (arr-walk-end (Walking $r $g)) (View clear none () $r $g))
+(= (arr-walk-end (View $how $t $a $r $g)) (View $how $t $a $r $g))
+(= (arr-step (Show $k $t) $r $g) (View show $t ($k) $r $g))
+; comparing an item with itself is showing it, so it is drawn once
+(= (arr-step (Compare $a $b $t) $r $g) (if (== $a $b) (View show $t ($a) $r $g) (View compare $t ($a $b) $r $g)))
+(= (arr-step (Clear) $r $g) (View clear none () $r $g))
+(= (arr-step (Recall $k) $r $g) (Walking (arr-recall $k $r $g) $g))
+(= (arr-step (PutAway $k) $r $g) (Walking $r (arr-put-away $k $r $g)))
+(= (arr-step (Before $ks $t) $r $g) (View clear none () $r $g))
 ; walking newest first, $g holds the items put away after this statement and $r those recalled after it
 (= (arr-recall $k $r $g) (if (arr-in $k $g) $r (if (arr-in $k $r) $r (arr-cons $k $r))))
 (= (arr-put-away $k $r $g) (if (arr-in $k $r) $g (if (arr-in $k $g) $g (arr-cons $k $g))))
 
-; every key the log names since the stage last emptied (its newest Clear), newest first, each once
-(= (arr-named $log) (arr-dedupe (arr-named-all $log) ()))
-(= (arr-named-all $log) (if (== $log ()) () (arr-named-from (car-atom $log) (cdr-atom $log))))
-(= (arr-named-from $s $rest) (if (== $s (Clear)) () (arr-join (arr-keys-of $s) (arr-named-all $rest))))
+; every key the log names since the stage last emptied (its newest Clear), newest first, each once: a fold that gathers
+; (Naming keys) until a Clear makes it (Named keys)
+(= (arr-named $log) (arr-unique (arr-named-keys (foldl-atom $log (Naming ()) $n $s (arr-name-step $n $s)))))
+(= (arr-name-step (Naming $ks) $s) (if (== $s (Clear)) (Named $ks) (Naming (arr-join $ks (arr-keys-of $s)))))
+(= (arr-name-step (Named $ks) $s) (Named $ks))
+(= (arr-named-keys (Naming $ks)) $ks)
+(= (arr-named-keys (Named $ks)) $ks)
 (= (arr-keys-of (Show $k $t)) ($k))
 (= (arr-keys-of (Compare $a $b $t)) ($a $b))
 (= (arr-keys-of (Recall $k)) ($k))
 (= (arr-keys-of (PutAway $k)) ($k))
 (= (arr-keys-of (Clear)) ())
-(= (arr-dedupe $xs $seen) (if (== $xs ()) () (arr-dedupe-step (car-atom $xs) (cdr-atom $xs) $seen)))
-(= (arr-dedupe-step $x $rest $seen) (if (arr-in $x $seen) (arr-dedupe $rest $seen) (arr-cons $x (arr-dedupe $rest (arr-cons $x $seen)))))
+(= (arr-keys-of (Before $ks $t)) $ks)
 
 ; ---------- composing: the page's one call
 (= (arr-compose) (arr-from-log (arr-one (collapse (match &self (Log $l) $l)) ())))
 (= (arr-from-log $log) (arr-from-view (arr-view $log) (arr-named $log)))
+; a stage with no area has nowhere to draw anything: what was asked waits in the tray until the stage has room
 (= (arr-from-view (View $how $t $anchored $r $g) $named)
-   (arr-arrange $how $t (arr-only-known (arr-minus $anchored $g)) (arr-only-known (arr-minus $r $anchored)) $g $named))
+   (if (arr-no-area (arr-stage)) (arr-answer home none () () () $named)
+       (arr-arrange $how $t (arr-only-known (arr-minus $anchored $g)) (arr-only-known (arr-minus $r $anchored)) $g $named)))
+(= (arr-no-area ($w $h)) (or (<= $w 0) (<= $h 0)))
 (= (arr-stage) (arr-one (collapse (match &self (Stage $w $h) ($w $h))) (1280 800)))
 (= (arr-episode) (arr-one (collapse (match &self (Episode $n) $n)) 0))
 
@@ -145,8 +161,8 @@
    (if (== $items ()) (arr-home $named)
        (if (== (cdr-atom $items) ()) (arr-focus $t (car-atom $items) $gone $named (arr-stage))
            (if (and (== $how compare) (and (== $recalled ()) (== (size-atom $anchored) 2)))
-               (arr-lay-root compare $t (Group column $anchored) $named (arr-stage))
-               (arr-lay-root side $t (arr-side-root $how $anchored $recalled (arr-along-stage (arr-stage))) $named (arr-stage))))))
+               (arr-compare-or-first $t $anchored $gone $named (arr-stage))
+               (arr-side-or-fewer $how $t $anchored $recalled $gone $named (arr-stage))))))
 ; side by side: the anchor first (a compared pair stays one column within the row), then each recalled item, along the
 ; stage's longer side, as a tiling window manager splits a tall screen top to bottom (i3's default orientation auto)
 (= (arr-side-root $how $anchored $recalled $dir)
@@ -154,6 +170,22 @@
        (Group $dir (arr-cons (Group column $anchored) $recalled))
        (Group $dir (arr-join $anchored $recalled))))
 (= (arr-along-stage ($w $h)) (if (>= $w $h) row column))
+
+; side by side or compared only while every item can be drawn at its kind's least size, as the shown item keeps its own
+; above: otherwise the oldest recalled item gives way, into the tray, where a press brings it back as the newest, and a
+; compared pair that cannot stand one over the other gives way to its first. (Side by side something is always
+; recalled: two items with nothing recalled are a compared pair.)
+(= (arr-side-or-fewer $how $t $anchored $recalled $gone $named $stage)
+   (arr-side-if-fits $how $t $anchored $recalled $gone $named $stage (arr-side-root $how $anchored $recalled (arr-along-stage $stage))))
+(= (arr-side-if-fits $how $t $anchored $recalled $gone $named $stage $root)
+   (if (arr-fits $root $stage) (arr-lay-root side $t $root $named $stage) (arr-arrange $how $t $anchored (cdr-atom $recalled) $gone $named)))
+(= (arr-compare-or-first $t $anchored $gone $named $stage)
+   (if (arr-fits (Group column $anchored) $stage)
+       (arr-lay-root compare $t (Group column $anchored) $named $stage)
+       (arr-focus $t (car-atom $anchored) $gone $named $stage)))
+; a tree fits the stage when it can be laid inside the margin with every item at least its least size, both ways
+(= (arr-fits $root ($sw $sh))
+   (and (<= (arr-least-len row $root) (- $sw (* 2 (arr-margin)))) (<= (arr-least-len column $root) (- $sh (* 2 (arr-margin))))))
 
 ; the answer: the tray is every named, known item not placed, at home too: a shown item put away with nothing left in
 ; view waits there to be brought back, and after a Clear nothing is named
@@ -171,13 +203,14 @@
 (= (arr-task-of (Recall $k) $older) $older)
 (= (arr-task-of (PutAway $k) $older) $older)
 (= (arr-task-of (Clear) $older) $older)
+; the fold of everything older carries its newest task, as Show and Compare do (arrangeSpace.ts foldLog)
+(= (arr-task-of (Before $ks $t) $older) (if (== $t none) $older $t))
 (= (arr-tray $placed $named) (arr-minus (arr-only-known $named) (arr-placed-keys $placed)))
-(= (arr-placed-keys $placed) (if (== $placed ()) () (arr-cons (arr-key-of (car-atom $placed)) (arr-placed-keys (cdr-atom $placed)))))
+(= (arr-placed-keys $placed) (map-atom $placed $p (arr-key-of $p)))
 (= (arr-key-of (Placed $k $kind $role $x $y $w $h)) $k)
 ; interest is kept per task, so an arrangement without one credits nothing
 (= (arr-credit $t $seen) (if (== $t none) () $seen))
-(= (arr-unknown $named) (if (== $named ()) () (arr-unknown-step (car-atom $named) (arr-unknown (cdr-atom $named)))))
-(= (arr-unknown-step $k $rest) (if (arr-known $k) $rest (arr-cons $k $rest)))
+(= (arr-unknown $named) (filter-atom $named $k (not (arr-known $k))))
 
 ; ---------- one item shown: in the centre at its kind's size, which gives way to the stage's bounds (a preferred size
 ; under a required bound, as in Cassowary), and the task's other items in strips beside it
@@ -225,10 +258,14 @@
 ; (Kersten and Murphy's Mylar: an element with no interest is filtered from view).
 (= (arr-candidates $t $k $gone)
    (if (== $t none) ()
-       (arr-only-known (arr-minus (arr-dedupe (arr-join (arr-ranked $t) (arr-related $t)) ()) (arr-cons $k $gone)))))
+       (arr-only-known (arr-minus (arr-unique (arr-join (arr-ranked $t) (arr-related $t))) (arr-cons $k $gone)))))
 (= (arr-ranked $t) (arr-interested (arr-one (collapse (match &self (Ranked $t $l) $l)) ())))
-(= (arr-interested $l) (if (== $l ()) () (arr-interested-step (car-atom $l) (arr-interested (cdr-atom $l)))))
-(= (arr-interested-step ($k $n) $rest) (if (> $n 0) (arr-cons $k $rest) $rest))
+; map-atom, filter-atom and foldl-atom take their list as written, so a list one of them makes reaches the next through
+; an equation, which evaluates its arguments first
+(= (arr-interested $l) (arr-interest-keys (filter-atom $l $p (arr-interest-above-0 $p))))
+(= (arr-interest-keys $l) (map-atom $l $p (arr-interest-key $p)))
+(= (arr-interest-above-0 ($k $n)) (> $n 0))
+(= (arr-interest-key ($k $n)) $k)
 (= (arr-related $t) (collapse (match &self (Relates $k $t) $k)))
 
 ; strips left and right of the focused item: each item goes in the shorter strip (masonry's rule), as wide as the strip
@@ -288,8 +325,11 @@
 (= (arr-kinds $cs) (if (== $cs ()) () (arr-cons (arr-kind-or-group (car-atom $cs)) (arr-kinds (cdr-atom $cs)))))
 (= (arr-kind-or-group $c) (if (arr-leaf $c) (arr-kind $c) group))
 
+; the shares, learned or equal, with each child held at least at its least, then the divider in the person's hand
 (= (arr-lay-group $dir $cs $id $kinds $x $y $w $h)
-   (arr-lay-shared $dir $cs $id $kinds (arr-dragged $id (arr-shares $dir $kinds (size-atom $cs)) (arr-leasts $dir $cs $w $h)) $x $y $w $h))
+   (arr-lay-group-at $dir $cs $id $kinds (arr-leasts $dir $cs $w $h) $x $y $w $h))
+(= (arr-lay-group-at $dir $cs $id $kinds $leasts $x $y $w $h)
+   (arr-lay-shared $dir $cs $id $kinds (arr-dragged $id (arr-at-least (arr-usable (arr-shares $dir $kinds (size-atom $cs)) (size-atom $cs)) $leasts) $leasts) $x $y $w $h))
 (= (arr-lay-shared $dir $cs $id $kinds $shares $x $y $w $h)
    (arr-lay-children $dir $cs $shares $id $kinds $shares (arr-leasts $dir $cs $w $h) 0 0 $x $y $w $h
      (- (arr-length $dir $w $h) (* (arr-gap) (- (size-atom $cs) 1)))))
@@ -331,14 +371,16 @@
 (= (arr-div-h column $h) (arr-gap))
 (= (arr-merge (Laid $p1 $d1) $d (Laid $p2 $d2)) (Laid (arr-join $p1 $p2) (arr-join $d1 (arr-join $d $d2))))
 
-; the least share each child may take: its kind's least length over the group's room (a group child: the largest
-; least of its own children, so a compared pair keeps both halves drawable)
+; the least share each child may take: its kind's least length over the group's room. A group child's least length is,
+; along its own direction, its children's least lengths and the gaps between them, and across it the largest of them,
+; so a compared pair keeps both halves drawable in a row and in a column alike
 (= (arr-leasts $dir $cs $w $h) (arr-leasts-of $dir $cs (- (arr-length $dir $w $h) (* (arr-gap) (- (size-atom $cs) 1)))))
 (= (arr-leasts-of $dir $cs $room) (if (== $cs ()) () (arr-cons (arr-div (arr-least-len $dir (car-atom $cs)) $room) (arr-leasts-of $dir (cdr-atom $cs) $room))))
 (= (arr-least-len $dir $c) (if (arr-leaf $c) (arr-least-dir $dir (arr-least (arr-kind $c))) (arr-group-least $dir $c)))
 (= (arr-least-dir row ($w $h)) $w)
 (= (arr-least-dir column ($w $h)) $h)
-(= (arr-group-least $dir (Group $d $cs)) (arr-max-of (arr-least-lens $dir $cs)))
+(= (arr-group-least $dir (Group $d $cs))
+   (if (== $d $dir) (+ (arr-sum (arr-least-lens $dir $cs)) (* (arr-gap) (- (size-atom $cs) 1))) (arr-max-of (arr-least-lens $dir $cs))))
 (= (arr-least-lens $dir $cs) (if (== $cs ()) () (arr-cons (arr-least-len $dir (car-atom $cs)) (arr-least-lens $dir (cdr-atom $cs)))))
 (= (arr-max-of $xs) (if (== $xs ()) 0 (arr-larger (car-atom $xs) (arr-max-of (cdr-atom $xs)))))
 
@@ -350,11 +392,37 @@
 (= (arr-shares-of-reversed $dir $reversed) (arr-reverse (arr-one (collapse (match &self (Shares $dir $reversed $s) $s)) (arr-equal 2))))
 (= (arr-equal $n) (arr-repeat (/ 1.0 $n) $n))
 (= (arr-repeat $v $n) (if (< $n 1) () (arr-cons $v (arr-repeat $v (- $n 1)))))
+; a learned split is used only while it is one: a share for each child, each above 0, together the whole length
+(= (arr-usable $ss $n) (if (and (== (size-atom $ss) $n) (and (arr-all-above-0 $ss) (arr-near-1 (arr-sum $ss)))) $ss (arr-equal $n)))
+(= (arr-all-above-0 $xs) (foldl-atom $xs True $ok $x (if $ok (> $x 0) False)))
+(= (arr-near-1 $x) (and (> $x 0.999999) (< $x 1.000001)))
+
+; every child at least its least: a child the shares would draw smaller is held at its least, and what is left of the
+; length goes to the others as their shares wanted it, until none is under (CSS Flexbox's resolving of flexible lengths,
+; section 9.7, freezing each min violation). Only what fits is laid (arr-fits), so the leasts sum to 1 at most and one
+; child at least is always left to take the rest.
+; Time: at most n passes of about 4n steps, n children, since each pass holds at least one more child.
+(= (arr-at-least $ss $ls) (arr-hold $ss $ls (arr-repeat False (size-atom $ss))))
+(= (arr-hold $ss $ls $held)
+   (arr-hold-unless $ss $ls $held (arr-flex $ss $ls $held (- 1 (arr-sum-held $ls $held True)) (arr-sum-held $ss $held False))))
+(= (arr-hold-unless $ss $ls $held $try) (if (arr-any-under $try $ls) (arr-hold $ss $ls (arr-held-or-under $held $try $ls)) $try))
+(= (arr-flex $ss $ls $held $left $want)
+   (if (== $ss ()) ()
+       (arr-cons (if (car-atom $held) (car-atom $ls) (* $left (arr-div (car-atom $ss) $want)))
+                 (arr-flex (cdr-atom $ss) (cdr-atom $ls) (cdr-atom $held) $left $want))))
+(= (arr-sum-held $xs $held $which)
+   (if (== $xs ()) 0 (+ (if (== (car-atom $held) $which) (car-atom $xs) 0) (arr-sum-held (cdr-atom $xs) (cdr-atom $held) $which))))
+(= (arr-any-under $xs $ls) (if (== $xs ()) False (if (< (car-atom $xs) (car-atom $ls)) True (arr-any-under (cdr-atom $xs) (cdr-atom $ls)))))
+(= (arr-held-or-under $held $xs $ls)
+   (if (== $xs ()) () (arr-cons (or (car-atom $held) (< (car-atom $xs) (car-atom $ls))) (arr-held-or-under (cdr-atom $held) (cdr-atom $xs) (cdr-atom $ls)))))
 
 ; a divider in the person's hand moves share between its two neighbours only (i3's resize_neighboring_cons), never
-; past either one's least
+; past either one's least; a divider its group no longer has (the arrangement changed under the person's hand, as when
+; a mind shows something mid-drag) moves nothing
 (= (arr-dragged $id $shares $leasts)
-   (arr-one (collapse (match &self (Dragging $id $i $at) (arr-drag-shares $shares $leasts $i $at))) $shares))
+   (arr-one (collapse (match &self (Dragging $id $i $at) (arr-drag-if $shares $leasts $i $at))) $shares))
+(= (arr-drag-if $shares $leasts $i $at)
+   (if (and (>= $i 0) (< (+ $i 1) (size-atom $shares))) (arr-drag-shares $shares $leasts $i $at) $shares))
 (= (arr-drag-shares $shares $leasts $i $at)
    (arr-drag-pair $shares $i (arr-sum (arr-take $shares $i)) (+ (index-atom $shares $i) (index-atom $shares (+ $i 1)))
      (arr-clamp $at (+ (arr-sum (arr-take $shares $i)) (index-atom $leasts $i))

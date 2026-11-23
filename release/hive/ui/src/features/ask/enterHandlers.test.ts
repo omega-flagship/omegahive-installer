@@ -1,3 +1,4 @@
+// Purpose: prove Enter's money paths through each Ask skin's own key handler and what it draws, mounted.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
@@ -952,14 +953,16 @@ describe('ask-send-r1 (live eb006a94): the Ask button acts on exactly the row th
   })
 })
 
-describe('ask-send-r1 item 2 (pin): the thread money is the host thread view\'s own spend over its cap, never a mind\'s figures', () => {
-  it.each(['capsule', 'floating'] as const)('%s: a mind with prior spend and a fresh thread shows $0.00 / $0.25, never the mind\'s total', async (skin) => {
+describe('ask-send-r1 item 2 (pin): the thread money is the host thread view\'s own spend, never a mind\'s figures', () => {
+  // a thread has no cap of its own (Jon on #294), so its spend is shown alone
+  it.each(['capsule', 'floating'] as const)('%s: a mind with prior spend and a fresh thread shows $0.00 spent, never the mind\'s total', async (skin) => {
     const prior = { ...Object.values(useHive.getState().agents)[0], id: 'a_invented_maker', name: 'Maker', kind: 'omega' as const, status: 'awake' as const, spent_usd: 0.1695, budget_usd: 10 }
     useHive.setState({ agents: { ...useHive.getState().agents, [prior.id]: prior } })
-    useAskStore.setState({ thread: { id: 'ses_invented_fresh', mind: { id: prior.id, name: prior.name }, budget_usd: 0.25, spent_usd: 0 } })
+    useAskStore.setState({ thread: { id: 'ses_invented_fresh', mind: { id: prior.id, name: prior.name }, budget_usd: 0, spent_usd: 0 } })
     const m = mount(SKINS[skin])
     const all = text(m.tree)
-    expect(all, skin).toContain('$0.00 / $0.25')
+    expect(all, skin).toContain('$0.00 spent')
+    expect(all, skin).not.toContain(' / $')
     expect(all, skin).not.toContain('$0.17')
   })
 })

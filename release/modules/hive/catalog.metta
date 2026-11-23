@@ -5,14 +5,15 @@
 ; SKILLS line: unlisted, a mind told to use only listed skills answered that hive-asset-get wasn't available to it
 ; (tester report 11-13). test_skills_line_lists_allowed_skills.py keeps every notice's skill on some hint line.
 ; hive-request is how a mind asks another swarm for work; unlisted, a tester's minds said they lacked it. Building
-; software is hive-create's alone (the create hint below), so this hint names no builder.
+; software is hive-create's (the create hint below), so this hint names no builder.
 (SkillContextHint "files" "Files and shares: hive-asset-list - (the files you may read, newest first) | hive-asset-get sha256 - (fetch one into files/assets/) | hive-asset-put path name (share a file you made) | hive-shared sh_id * (read a space shared with you).")
 (SkillContextHint "requests" "Requests: hive-request {json} (ask another swarm for work: kind, to_swarm, title, from_goal, subject). To build software, use hive-create.")
 ; What each building, saving and changing skill is for, on the line every turn reads: a tester's mind on v0.38 made the
 ; tic-tac-toe they asked for itself as a view, told them to ask Create, and remade the game from scratch when asked to
 ; change it (Haley, 17 and 19 Nov). An app goes to Create (Jon in the testers' group, 17 Nov: "Route them only through
-; create"); a view shows something in the chat; a change keeps the artifact's id.
-(SkillContextHint "create" "Build software: when someone asks for an app, game, website, calculator, tool or script, or a change to one, hive-create what to build in their words: your person starts it in Create and Create builds it. Never build it yourself, as code or as a view.")
+; create") unless the mind's owner switched its own coding on (Jon on #395, 18 Nov); a view shows something in the
+; chat; a change keeps the artifact's id.
+(SkillContextHint "create" "Build software: when someone asks for an app, game, website, calculator, tool or script, or a change to one, hive-create what to build in their words: your person starts it in Create and Create builds it. Never build it yourself, as code or as a view, unless your owner switched your own coding on.")
 (SkillContextHint "artifacts" "Show and keep work: hive-artifact-create {json} saves a plan, note or view (kind view: a MeTTa screen drawn under your message, to show a plan, a comparison or a summary) | hive-revision ar_id {json} changes one you saved and keeps its id: never a new one for a change | hive-revision-read ar_id n. Put its ar_ id in your reply and the chat shows it.")
 (SkillCatalog "Hive commons: hive-publish statement f c | hive-query pattern | hive-belief statement")
 (SkillCatalog "Hive rooms: hive-rooms | hive-room-post r_id text - to reach a swarm-mate, post in your swarm's team room and @Name them")
@@ -96,7 +97,7 @@
 (SkillHelp "hive-goal-heartbeat" "hive-goal-heartbeat g_id - renew your hold on a goal you claimed while you work on it (a held goal whose lease runs out is reopened)")
 (SkillHelp "hive-goals" "hive-goals lists your held or assigned tasks, open swarm tasks, and recent completed work. hive-goal-history searches older work.")
 (SkillHelp "hive-revision-part" "hive-revision-part ar_id 1 text - stage part 1, 2, ... of a revision body too long for one turn (part 1 starts over), then post them joined exactly with hive-revision ar_id {\"parent\": 1, \"body_parts\": 3}. Split anywhere except next to a space.")
-(SkillHelp "hive-coffee-note" "hive-coffee-note text - post one short note to the Coffee Room, the hive-wide chat (at most one an hour; opted-out minds cannot; private and shared minds need an admin to opt them in)")
+(SkillHelp "hive-coffee-note" "hive-coffee-note text - post one short note to the Coffee Room, the hive-wide chat (at most one an hour; opted-out minds cannot; a private or shared mind joins only when its owner puts it in)")
 (SkillHelp "repo-query" "repo-query {\"view\":\"maps\"} - read repository maps, read-only. Views: maps | map {repo,sha} | presets {repo} | nodes {repo,sha,kind?,path_prefix?,q?} | node {repo,sha,node_id} | query {repo,sha,preset,params} | drift {repo,from,to}; limit and cursor page. Presets: imports, potential-dependents, defines, calls-expression, source-search, test-doc-links, drift. Static facts only: never runtime behaviour or test coverage.")
 (SkillCatalog "Google Calendar: calendar-read {json} - bounded read-only title, time and busy/free; the person must connect Google and allow this exact mind on the host You page")
 (SkillHelp "calendar-read" "calendar-read {\"time_min\":\"2026-10-26T00:00:00Z\",\"time_max\":\"2026-10-27T00:00:00Z\",\"limit\":20} - read the connected person's Calendar, at most 31 days and 100 items (default 20). Only op calendar.read is accepted; no principal or account field. Returns title, start/end and busy/free only. Read-only: no event creation, edits or invitations. The host checks current ownership, exact per-mind consent and policy again when it runs.")

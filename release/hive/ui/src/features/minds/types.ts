@@ -49,8 +49,14 @@ export interface ShareRead {
   created_at: string
 }
 
-export type SkillStatus = 'callable' | 'imported' | 'configured' | 'unknown'
+export type SkillStatus = 'callable' | 'imported' | 'configured' | 'left-out' | 'unknown'
 export type InventoryAvailability = 'boot-receipt' | 'receipt-stale' | 'no-boot-receipt'
+
+/** One requires entry a mind lacks, for a module it left out, with the hive's words for it: "the OmegaCode client". */
+export interface LeftOutNeed {
+  requires: string
+  needs: string
+}
 
 export interface InventorySkill {
   id: string
@@ -62,6 +68,8 @@ export interface InventorySkill {
   risk: unknown
   metadata: 'verified-source' | 'unverified'
   status: SkillStatus
+  /** What the skill's module needs that this mind lacks, when its status is left-out. */
+  left_out?: LeftOutNeed[] | null
   policy: { decision: 'allow' | 'ask' | 'deny'; reason: string | null; snapshot_at: string }
   route: { kind: string; note?: string }
 }
@@ -75,7 +83,7 @@ export interface MindInventory {
   inventory_revision: string | null
   loaded_at: string | null
   process: { boot_id: string; pid?: number | null } | null
-  modules: { id: string; version: string | null; source_digest: string | null; configured: boolean; loaded: boolean; source_verified: boolean }[]
+  modules: { id: string; version: string | null; source_digest: string | null; configured: boolean; loaded: boolean; source_verified: boolean; left_out?: LeftOutNeed[] }[]
   core: { source_digest: string; source_verified: boolean } | null
   skills: InventorySkill[]
   dynamic: { kind: string; id: string; registry_revision: string; swarm_id: string | null; status: string }[]

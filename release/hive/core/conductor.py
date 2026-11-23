@@ -47,20 +47,29 @@ Contract: ASK_CONDUCTOR_ACTION_VOCABULARY_v1_20261007.md, with "Platform's answe
   replaces the deltas) and `done` with outcome in OUTCOMES; a turn closed elsewhere ends with `done` alone. A say marked
   done ends the turn after its step with no further model call, unless a call of that step came back not ok; otherwise
   the turn ends on a model answer with no tool call, whose text may be empty. No closing reply is asked for (Jon on #358).
-- Each model call has MAX_TOKENS of output room. An answer that stops at its room (finish_reason length) is half
-  written: none of it is run or shown, and the same step is asked again with twice the room, within the limits below.
-- Limits per turn: 32 acts (every tool call counts), 12 model calls, 120 s, and a spend cap held through
-  the hive's cost reservations (scope askturn:<turn_id> beside the hive's own scopes). Reaching one ends the turn with an
-  answer that says so; nothing continues silently. ask-limits r1: the thread's own cap is a reservation row of its own
-  (askthread:<thread_id>, sessions.py) when the thread is held by its own scope. A spend stop's done frame names the
+- Each model call has HIVE_ASK_CONDUCTOR_MAX_TOKENS of output room. An answer that stops at its room (finish_reason
+  length) is half written: none of it is run or shown, and the same step is asked again with twice the room, within the
+  limits below.
+- Limits per turn, the hive's settings.ask_limits and never this code's: HIVE_ASK_CONDUCTOR_MAX_ACTS (every tool call
+  counts), _MAX_MODEL_CALLS and _TURN_SECONDS (32, 12 and 120 s in hive/config.json). Reaching one ends the turn with an
+  answer that says so; nothing continues silently. Money has no per-turn or per-thread cap (Jon's design on
+  omegahive#294, item 2): each call is held by the person's monthly allowance and every other limit someone set, through
+  the hive's cost reservations, with the turn's askturn:<turn_id> and its thread's askthread:<thread_id> recorded on
+  each reservation as labels that name its spend and cap nothing. Once a turn's settled spend reaches the person's
+  expensive_usd (ask.py: the lower of HIVE_ASK_EXPENSIVE_TIMES times their recent median answer and
+  HIVE_ASK_EXPENSIVE_OVER_USD, the hive's settings), the turn pauses once and asks
+  "This one looks expensive (about $X so far). Go ahead?" (a go_ahead frame): their Go ahead carries the same turn on,
+  their Stop ends it as any Stop does, and no answer within HIVE_ASK_GO_AHEAD_SECONDS ends it as a spend stop of kind
+  expensive, whose Go ahead asks again with go_ahead true. A turn asked with go_ahead true, or by a person who switched the
+  question off, never asks. A spend stop's done frame names the
   limit: limit {kind, current_usd, limit_usd, estimate_usd} (LIMIT_KINDS), beside the unchanged outcome "spend_cap",
   and the answer's last sentence (LIMIT_SAY[kind]) names it with a remedy that works. A model with no price, or a key
   that is gone, is not a limit: outcome "error" with error: unpriced_model | key_unavailable and its own words, and so is
   a person's own mind still on the demonstration model the host set: mind_not_connected, before any model call. When only
   their monthly total keeps that mind off the hive's own key (personal.waits_for_monthly_total), the turn ends as that
   route's call would: spend_cap, limit reason monthly_total_required.
-- Billing: the conductor's calls are recorded as usage of the turn's mind (the thread's cap, the person's allowance and
-  the swarm's limits all apply), paid by the asking person, on the hive's default key (never a key assigned to that
+- Billing: the conductor's calls are recorded as usage of the turn's mind (the person's allowance and the swarm's
+  limits apply), paid by the asking person, on the hive's default key (never a key assigned to that
   mind). Personal minds P2: when the Ask goes to the person's own personal mind (no addressed mind, page swarm or
   default swarm), the conductor runs as that mind: its model (unless an admin's A/B pick), its usage rows, its swarm's
   limits, and its $0 own cap replaced by the person's month allowance (budgets.allowance_pays); the turn view and the
@@ -101,8 +110,9 @@ from .collab import artifact_command
 from .code_controller_engine import EngineError
 from .config import CORE_ROOT, caller_judged, is_subscription
 from .refusals import spoken
+from .spend_monitor import SPEND_PAUSE_WORDS
 from .gateway import SEND_GATE, GatewayError, billable, split_model
-from .ask import MAX_TEXT, refusal
+from .ask import MAX_TEXT, ask_limits, refusal
 from .ask_intents import AUTO_SEND, KINDS, STUDIO, TASK, TEST, _iso_time, continued_turns
 from .hive import HiveError
 from .sessions import own_scope, thread_scope
@@ -114,7 +124,6 @@ log = logging.getLogger("hive")
 
 # the reviewed roster lives in the hive's one model-choice entry (model_route.py, D18's stand-in); names kept here
 from .model_route import ROSTER_DEFAULT as DEFAULT_MODEL, ROSTER_AB as DEFAULT_AB_MODELS, choose as _choose, roster as _roster
-DEFAULT_TURN_USD = 0.25
 
 
 def enabled():
@@ -139,22 +148,11 @@ def memory_enabled():
     return os.environ.get("HIVE_ASK_MEMORY", "").strip().lower() == "on"
 
 
-def turn_cap_usd():
-    try:
-        value = float(os.environ.get("HIVE_ASK_CONDUCTOR_TURN_USD", "") or DEFAULT_TURN_USD)
-    except ValueError:
-        value = DEFAULT_TURN_USD
-    return max(0.0, value)
-
-
 # ---- limits (Platform's answers 3 and 4) ----------------------------------------------------------------------------
 
-MAX_ACTS = 32
-MAX_MODEL_CALLS = 12
-TURN_SECONDS = 120.0
-RESULT_TIMEOUT = 15.0
+# acts, model calls, a turn's seconds, a result's wait and a call's output tokens are the hive's settings.ask_limits
+# (HIVE_ASK_CONDUCTOR_*, hive/core/config.py), read through ask.ask_limits; never module figures.
 MAX_RESULT_BYTES = 8 * 1024
-MAX_TOKENS = 1024
 MAX_ANSWER = 8000
 LATE_SETTLE_SECONDS = 300.0   # a paid call cut off by its turn's close is awaited this long (its own window, not the turn's)
 LATE_SHUTDOWN_GRACE = 10.0    # at shutdown, cut-off calls still out get this long to settle; after it they stay held unknown
@@ -170,10 +168,9 @@ LIMIT_SAY = {
     # a spend stop (outcome spend_cap) speaks by the limit it hit (done.limit.kind); {amounts} is " ($x of $y <period>)"
     # when the figures are known, else empty. "spend_cap" is the fallback for a limit the host cannot name.
     "spend_cap": "I stopped here: this request reached a spend limit{amounts}.",
-    "per_turn": "I stopped here: this request reached the spend limit for one turn{amounts}. Ask again to carry on: "
-                "each turn starts with a fresh limit.",
-    "thread": "I stopped here: this thread has used its spend limit{amounts}. Start a new thread to go on; you can "
-              "choose a bigger limit for new threads in Ask settings.",
+    # a turn that asked "Go ahead?" and heard nothing for HIVE_ASK_GO_AHEAD_SECONDS: {amounts} is " (about $x so far)"
+    "expensive": "I stopped here: this one looks expensive{amounts}, and no go-ahead came in time. Press Go ahead to run "
+                 "it again without stopping.",
     "mind_total": "I stopped here: this mind has reached its own spend limit{amounts}. An admin can raise this mind's "
                   "limit on the Limits page.",
     "session": "I stopped here: another work session on this mind caps what it may spend{amounts}. Ending that session "
@@ -193,13 +190,14 @@ LIMIT_SAY = {
     "no_key_grant": "I stopped here: you don't have permission to spend on this hive's key. Ask its owner for a grant, "
                     "or add your own key in your settings.",
     "own_key_needed": "I stopped here: this would run on someone else's key. Add your own key in Keys to go on.",
+    **SPEND_PAUSE_WORDS,
 }
 # gateway r1a (r1.1 §C, r1.2): a turn-bound call with no monthly total; done.limit.reason and the host's one sentence
 MONTHLY_TOTAL_REQUIRED = "monthly_total_required"
 LIMIT_SAY[MONTHLY_TOTAL_REQUIRED] = "I stopped here: set your monthly limit so your mind can spend."
 # done.limit.kind (ask-limits r1): which limit stopped a spend_cap turn; Surface maps these in words.ts
-LIMIT_KINDS = ("per_turn", "thread", "mind_total", "session", "swarm", "hive", "member_allowance", "key", "own_key_limit",
-               "own_key_required", "no_key_grant", "own_key_needed", "unknown")
+LIMIT_KINDS = ("expensive", "mind_total", "session", "swarm", "hive", "member_allowance", "key", "own_key_limit",
+               "own_key_required", "no_key_grant", "own_key_needed", "unknown", *SPEND_PAUSE_WORDS)
 # outcome "error" (not a limit): done.error is one of these codes, and the answer says this
 ERROR_SAY = {
     "unpriced_model": "I couldn't answer: the model Ask uses has no price set, so the hive won't spend money on it. An "
@@ -245,8 +243,6 @@ DISPATCH_REFUSED_SAY = {
     "research_busy": "You already have three research requests running. When one finishes I can start another.",
     "member_allowance": "Sending this research would go past your monthly allowance, so I didn't send it. An admin "
                         "can raise your allowance.",
-    "research_budget": "The Research swarm has reached its spending limit, so I didn't send this. An admin can raise "
-                       "its limit on the Limits page.",
     "spend_limit": "Sending this would go past a spending limit, so I didn't send it. Here's what I can tell you "
                    "myself.",
     # a kind this hive has not switched on (Studio sessions are off on a fresh install: studio_sessions.require_enabled)
@@ -618,7 +614,7 @@ class _Stop(Exception):
 
 def limit_kind(code, scope=None, session_rule=False):
     """The done.limit.kind of a refusal: its code, and the scope of the rule that refused it."""
-    if code in ("own_key_required", "no_key_grant", "own_key_needed"):
+    if code in SPEND_PAUSE_WORDS or code in ("own_key_required", "no_key_grant", "own_key_needed"):
         return code
     if code == "hive_budget_exhausted":
         return "hive"
@@ -627,8 +623,8 @@ def limit_kind(code, scope=None, session_rule=False):
     head = str(scope or "").split(":", 1)[0]
     if head == "agent":
         return "session" if session_rule else "mind_total"
-    return {"askturn": "per_turn", "askthread": "thread", "swarm": "swarm", "hive": "hive", "person": "member_allowance",
-            "key": "key", "keyuse": "own_key_limit"}.get(head, "unknown")
+    return {"swarm": "swarm", "hive": "hive", "person": "member_allowance", "key": "key",
+            "keyuse": "own_key_limit"}.get(head, "unknown")
 
 
 def limit_frame(detail):
@@ -668,13 +664,10 @@ def check_detail(hive, agent, exc, estimate):
 
 
 def reserve_detail(hive, exc):
-    """The limit detail of a reservation refused by one budget row (its label "<scope>:<period>", or an Ask scope).
+    """The limit detail of a reservation refused by one budget row (its label "<scope>:<period>"; the Ask's own labels
+    have no limit, so they never refuse).
     Lifted to module level with check_detail (gateway plan §2.2)."""
-    label = exc.scope
-    if label.startswith(("askturn:", "askthread:")):
-        scope, period = label, None
-    else:
-        scope, _, period = label.rpartition(":")
+    scope, _, period = exc.scope.rpartition(":")
     session_rule = False
     if scope.startswith("agent:") and period == "total":
         rule = hive.db.one("SELECT id, limit_usd FROM budgets WHERE scope = ? AND period = 'total'", (scope,))
@@ -695,7 +688,9 @@ def stop_say(stop):
     if d.get("reason") == MONTHLY_TOTAL_REQUIRED:
         return LIMIT_SAY[MONTHLY_TOTAL_REQUIRED]
     amounts = ""
-    if d.get("limit_usd") is not None and d.get("spent_usd") is not None:
+    if d.get("kind") == "expensive":   # what the question said: the turn's own spend so far, never a limit's period
+        amounts = f" (about ${float(d.get('spent_usd') or 0):.2f} so far)"
+    elif d.get("limit_usd") is not None and d.get("spent_usd") is not None:
         period = PERIOD_SAY.get(d.get("period"))
         amounts = f" (${float(d['spent_usd']):.2f} of ${float(d['limit_usd']):.2f}" + (f" {period})" if period else ")")
     return LIMIT_SAY.get(d.get("kind"), LIMIT_SAY["spend_cap"]).format(amounts=amounts)
@@ -1133,13 +1128,17 @@ def own_chat_text(hive, principal, mind_id, now_ms):
 # ---- the turn ------------------------------------------------------------------------------------------------------------
 
 class TurnState:
-    def __init__(self, turn_id, principal, operation_id, model, cap, private_page):
+    def __init__(self, turn_id, principal, operation_id, model, private_page, ask_above=None):
         self.turn_id, self.principal, self.operation_id, self.model = turn_id, principal, operation_id, model
-        self.cap, self.private_page = cap, private_page
+        self.private_page = private_page
+        # the person's expensive_usd when this turn may still ask "Go ahead?"; None once asked, or when it never asks
+        # (the person switched the question off, or asked this turn with go_ahead true)
+        self.ask_above = ask_above
+        self.go_ahead: asyncio.Future | None = None   # the person's answer while the turn waits on it (Conductor.go_ahead)
         self.acts = self.calls = 0
         self.spent = 0.0   # settled cost only; an unknown-outcome call stays a held liability in cost_reservations
         self.started = time.monotonic()
-        self.deadline = self.started + TURN_SECONDS
+        self.deadline = self.started   # Conductor.start sets it from its turn_seconds
         self.pending: dict[str, asyncio.Future] = {}   # act_id -> the result (the view lives only here)
         self.recorded: set[str] = set()               # act ids whose result is in (posted, or no_result)
         self.said: list[str] = []
@@ -1170,8 +1169,18 @@ class Conductor:
         # the dispatch seam (see dispatch()): linkage slice 2's intent recorder (ask_intents.Intents, built by Ask);
         # record only, never submit. None (a test's unbound seam) refuses.
         self.intents = getattr(hive.ask, "intents", None)
-        # limits, as instance values so a test may shorten the clock
-        self.turn_seconds, self.result_timeout = TURN_SECONDS, RESULT_TIMEOUT
+        # limits, as instance values so a test may shorten the clock: the hive's HIVE_ASK_CONDUCTOR_TURN_SECONDS and
+        # _RESULT_TIMEOUT_SECONDS (settings.ask_limits). None (settings built by hand, not by load_settings): deadline
+        # and start refuse rather than guess a clock, as ask.ask_limits does for the other limits.
+        limits = getattr(hive.settings, "ask_limits", None)
+        self.turn_seconds = limits.turn_seconds if limits is not None else None
+        self.result_timeout = limits.result_timeout_seconds if limits is not None else None
+        # how long a turn that asked "Go ahead?" waits for the person, outside its own turn_seconds: the hive's
+        # HIVE_ASK_GO_AHEAD_SECONDS (settings.ask_expensive), never this code's. One who has gone loses nothing by the
+        # stop, since its Go ahead asks again with go_ahead and never asks twice. None (settings built by hand, not by
+        # load_settings): _ask_go_ahead refuses rather than guess a wait.
+        expensive = getattr(hive.settings, "ask_expensive", None)
+        self.go_ahead_seconds = expensive.wait_seconds if expensive is not None else None
         if enabled():
             self.check_models()
 
@@ -1216,7 +1225,12 @@ class Conductor:
         return unpriced
 
     def deadline(self):
-        return time.time() + self.turn_seconds + EXPIRY_SLACK
+        return time.time() + self._turn_seconds() + EXPIRY_SLACK
+
+    def _turn_seconds(self):
+        if self.turn_seconds is None:
+            raise RuntimeError("settings.ask_limits is unset: load_settings reads HIVE_ASK_CONDUCTOR_TURN_SECONDS")
+        return self.turn_seconds
 
     # ---- start, stop -----------------------------------------------------------------------------------------------------
 
@@ -1234,10 +1248,9 @@ class Conductor:
             text, context = turn["text"], json.loads(turn["context_resolved"] or "{}")
         program = (context.get("program") or {}).get("id")
         private_page = bool(context.get("private")) or names_private(program) or names_private(context.get("route"))
-        # the per-turn cap only: the thread's cap is the coordinator's composed budget rule, which every reservation already
-        # checks (budgets.applicable); subtracting the mind-global spend here as well would count it twice (Kimi 4)
-        st = TurnState(turn["id"], turn["principal"], turn["operation_id"], turn["conductor_model"], turn_cap_usd(), private_page)
-        st.deadline = st.started + self.turn_seconds
+        ask_above = None if turn.get("go_ahead") else self.hive.ask.question_above(turn["principal"])
+        st = TurnState(turn["id"], turn["principal"], turn["operation_id"], turn["conductor_model"], private_page, ask_above)
+        st.deadline = st.started + self._turn_seconds()
         st.loop = asyncio.get_running_loop()
         self.turns[turn["id"]] = st
         notes = fence_notes(notes)
@@ -1365,12 +1378,15 @@ class Conductor:
             messages = [{"role": "system", "content": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]},
                         {"role": "system", "content": self._context_text(context, notes, earlier, chat, continued)},
                         {"role": "user", "content": text}]
-            room = MAX_TOKENS
+            limits = ask_limits(self.hive)
+            room = limits.max_tokens
             while True:
-                if st.calls >= MAX_MODEL_CALLS:
+                if st.calls >= limits.max_model_calls:
                     raise _Stop("call_cap")
                 if st.remaining() <= 0:
                     raise _Stop("time_cap")
+                if st.ask_above is not None and st.spent >= st.ask_above:
+                    await self._ask_go_ahead(st)
                 message = await self._model(st, mind, messages, room)
                 if st.cut:
                     # the answer stopped at its output limit, so its last call or text is half written: none of it is
@@ -1381,7 +1397,7 @@ class Conductor:
                              st.turn_id, room, 2 * room)
                     room *= 2
                     continue
-                room = MAX_TOKENS
+                room = limits.max_tokens
                 calls = message.get("tool_calls") or []
                 if not calls:
                     self._finish(st, self._answer_text(st, message.get("content") or ""), "complete")
@@ -1549,6 +1565,55 @@ class Conductor:
             return name or "a mind"
         return name_of
 
+    async def _ask_go_ahead(self, st):
+        """The once-per-turn question (Jon's design on omegahive#294, item 2): the turn's settled spend reached the
+        person's expensive_usd, so a go_ahead frame says so and the turn waits for them, outside its own 120 s, up to
+        go_ahead_seconds. Their Go ahead (go_ahead below) returns here and the turn carries on, asking nothing more;
+        their Stop closes the turn as any Stop does (Ask.stop), which cancels this wait with the task; no answer stops
+        the turn as a spend stop of kind expensive, whose Go ahead asks again with go_ahead true. The turn row's
+        deadline moves past the wait first, so Ask.expire never closes a turn that is only waiting on its person.
+        Time: one row write, one frame and one wait."""
+        if self.go_ahead_seconds is None:
+            raise RuntimeError("settings.ask_expensive is unset: load_settings reads HIVE_ASK_GO_AHEAD_SECONDS")
+        threshold, st.ask_above = st.ask_above, None   # asked once: whatever the answer, this turn never asks again
+        spent = round(st.spent, 6)
+        with self.hive.db.transaction():
+            self.hive.db.execute("UPDATE ask_turns SET deadline = ? WHERE id = ? AND state = 'conducting'",
+                                 (time.time() + self.go_ahead_seconds + max(0.0, st.remaining()) + EXPIRY_SLACK, st.turn_id))
+        st.go_ahead = st.loop.create_future()
+        self._emit(st, "go_ahead", spent_usd=spent, limit_usd=round(threshold, 6))
+        started = time.monotonic()
+        try:
+            await asyncio.wait_for(asyncio.shield(st.go_ahead), self.go_ahead_seconds)
+        except asyncio.TimeoutError:
+            raise _Stop("spend_cap", {"kind": "expensive", "spent_usd": spent, "limit_usd": threshold,
+                                      "estimate_usd": None}) from None
+        finally:
+            st.deadline += time.monotonic() - started   # the wait was the person's time, not the turn's
+            st.go_ahead = None
+        log.info("ask conductor: turn %s goes ahead past $%.4f at its person's word", st.turn_id, threshold)
+
+    def go_ahead(self, viewer, turn, data):
+        """POST /api/ask/{op}/go-ahead {go}, after the route proved the caller owns the turn: their answer to this turn's
+        question. go true carries the waiting turn on and marks it go_ahead (the turn row's own record of the person's
+        word); go false is their Stop. 409 not_waiting when this turn is not waiting on a go-ahead: never asked, already
+        answered, or closed."""
+        hive = self.hive
+        if not isinstance(data, dict) or set(data) != {"go"} or not isinstance(data["go"], bool):
+            raise refusal(hive, "invalid")
+        st = self.turns.get(turn["id"])
+        fresh = hive.ask._row(turn["id"])
+        future = st.go_ahead if st is not None and st.principal == viewer.principal else None
+        if fresh is None or fresh["state"] != "conducting" or future is None or future.done():
+            raise hive.error(409, "not_waiting", "That turn isn't waiting for a go-ahead.")
+        if not data["go"]:
+            hive.ask.stop(viewer, turn["operation_id"])
+            return {"ok": True, "go": False}
+        with hive.db.transaction():
+            hive.db.execute("UPDATE ask_turns SET go_ahead = 1 WHERE id = ?", (turn["id"],))
+        st.loop.call_soon_threadsafe(lambda: future.done() or future.set_result(True))
+        return {"ok": True, "go": True}
+
     @staticmethod
     def _context_text(context, notes, earlier="", chat="", continued=""):
         page = json.dumps(context, ensure_ascii=False)[:3000]
@@ -1572,7 +1637,7 @@ class Conductor:
                      "starting it again or handing over again what was handed over:\n" + continued)
         return text
 
-    async def _model(self, st, mind, messages, room=MAX_TOKENS):
+    async def _model(self, st, mind, messages, room):
         """One model call under the turn's limits, reserved like the gateway route, with room output tokens; returns the
         assistant message, and notes in st.cut whether it stopped at that limit."""
         hive, gw = self.hive, self.gateway
@@ -1627,12 +1692,13 @@ class Conductor:
             def budgets():
                 # money port r1.2: the asker's use of this key, read again before anything is held (disabled, revoked)
                 host_use_check(hive, agent["id"], key_id, st.principal, user=st.principal)
-                rows = [*self.budget_snapshot(hive, agent["id"], key_id, st.principal, False), (scope, st.cap, st.spent)]
-                # ask-limits r1: the thread's own cap, against the thread's own spend, read inside this transaction
+                # the turn's and its thread's labels name what the call is for and cap nothing (omegahive#294 item 2):
+                # the person's allowance and the hive's limits in budget_snapshot are what hold it
+                rows = [*self.budget_snapshot(hive, agent["id"], key_id, st.principal, False), (scope, None, None)]
                 t = hive.ask._row(st.turn_id)
                 thread = hive.db.one("SELECT * FROM work_sessions WHERE id = ?", (t["thread_id"],)) if t else None
                 if own_scope(thread):
-                    rows.append((thread_scope(thread["id"]), float(thread["budget_usd"]), hive.sessions.thread_spent(thread)))
+                    rows.append((thread_scope(thread["id"]), None, None))
                 return rows
             try:
                 # reserved, not yet dispatched: the call is dispatched only as it actually starts (below), so a turn
@@ -1640,8 +1706,7 @@ class Conductor:
                 self.reservations.reserve(reservation, {"agent": agent["id"], "model": st.model, "body": body, "payer": st.principal, "key": key_id},
                                           estimate, budgets, metadata={"agent": agent["id"], "model": st.model, "payer": st.principal,
                                                                        "key": key_id, "kind": "ask-conductor"},
-                                          subjects=host_subjects(hive, agent["id"], key_id, st.principal, False),
-                                          paced=False)   # the asker's own turn: its limits alone hold it (Hive.present_for)
+                                          subjects=host_subjects(hive, agent["id"], key_id, st.principal, False))
             except BudgetExhausted as exc:
                 raise _Stop("spend_cap", self._reserve_detail(agent, exc)) from None
             except HiveError as exc:
@@ -1825,6 +1890,7 @@ class Conductor:
     async def _tools(self, st, calls):
         """Every tool call of one model answer, in order: frames stream as they come; acts' results are awaited together."""
         out, waits, capped = [], [], False
+        max_acts = ask_limits(self.hive).max_acts
         for call in calls:
             call_id = str((call or {}).get("id") or f"call_{len(out)}")[:100]
             fn = (call or {}).get("function") or {}
@@ -1833,7 +1899,7 @@ class Conductor:
                 args = json.loads(fn.get("arguments") or "{}")
             except (TypeError, ValueError):
                 args = None
-            if st.acts >= MAX_ACTS:   # this call and the rest are refused; every slot is filled before the stop
+            if st.acts >= max_acts:   # this call and the rest are refused; every slot is filled before the stop
                 out.append(self._tool_result(call_id, {"ok": False, "reason": "act_cap"}))
                 capped = True
                 continue

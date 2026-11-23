@@ -1,5 +1,4 @@
-"""OS-level mind isolation: allowlisted environment; sandbox-exec denies the hive's files, other folders,
-outside networks and other local ports, and allows the mind's own folder and the hive on loopback."""
+"""Purpose: Verify environment filtering and the native macOS mind sandbox."""
 import os
 import pathlib
 import re
@@ -10,7 +9,7 @@ import threading
 
 import pytest
 
-from hive.supervisor.sandbox import available, loopback_ports, mind_environment, profile, runtime_roots
+from hive.supervisor.sandbox import available, code_client_src, loopback_ports, mind_environment, profile, runtime_roots
 
 
 def test_minds_never_inherit_secrets_or_app_settings():
@@ -42,6 +41,31 @@ def test_minds_get_the_model_cache_and_offline_switches_but_never_a_hugging_face
     env = mind_environment(hive_env, overlay)
     assert not {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HF_OIDC_RESOURCE", "HF_OIDC_ID_TOKEN"} & env.keys()
     assert env["TMPDIR"] == "/t"
+
+
+def test_minds_get_the_hives_code_release_as_their_omegacode_client(tmp_path, monkeypatch):
+    """Jon's fourth follow-up on #596: no installer set OMEGACODE_SRC, so the workspace skills were off on every
+    standard install, Macs running Code included. A mind gets the release the hive's Code service runs, from the
+    settings Code's setup gives the hive, and may read it; the owner's own OMEGACODE_SRC still wins, and a hive
+    without Code gives none."""
+    code = tmp_path / "code"
+    release = code / "releases" / "b1f2c3"
+    (release / "omegacode").mkdir(parents=True)
+    (release / "omegacode" / "client.py").write_text("")
+    own = {"HIVE_CODE_SERVICE_CONFIG": str(code / "config.json"), "HIVE_CODE_SERVICE_RELEASE": "b1f2c3"}
+    assert code_client_src(own) == str(release)                                                  # an own hive's Code
+    assert mind_environment(dict(own, PATH="/bin"), {})["OMEGACODE_SRC"] == str(release)
+    assert code_client_src({"HIVE_CODE_PYTHONPATH": str(release)}) == str(release)              # Code in its own container
+    assert code_client_src(dict(own, OMEGACODE_SRC="/owner/src")) == "/owner/src"               # the owner's own wins
+    for without in ({}, dict(own, HIVE_CODE_SERVICE_RELEASE="other"), dict(own, HIVE_CODE_SERVICE_RELEASE="../b1f2c3"),
+                    {"HIVE_CODE_PYTHONPATH": str(code)}):
+        assert code_client_src(without) is None and "OMEGACODE_SRC" not in mind_environment(without, {}), without
+    core = pathlib.Path(__file__).resolve().parents[2]
+    monkeypatch.delenv("OMEGACODE_SRC", raising=False)
+    monkeypatch.delenv("HIVE_CODE_PYTHONPATH", raising=False)
+    for name, value in own.items():
+        monkeypatch.setenv(name, value)
+    assert str(release.resolve()) in runtime_roots("/nonexistent", core)
 
 
 def test_runtime_roots_grant_the_hub_cache_and_never_hf_home(tmp_path, monkeypatch):
@@ -246,6 +270,39 @@ def test_sandbox_allows_only_the_mind_folder_and_the_hive(tmp_path):
     assert out["read_own"] == "ok" and out["write_own"] == "ok" and out["hive_port"] == "ok", (out, run.stderr[-500:])
     for denied in ("read_secret", "write_outside", "other_local_port", "internet", "unix_socket"):
         assert out[denied] != "ok", (denied, out)
+
+
+@pytest.mark.skipif(sys.platform != "darwin" or not available(), reason="sandbox-exec is macOS only")
+def test_seatbelt_workspace_admission_and_link_policy(tmp_path):
+    from hive.supervisor import mindfs, sandbox
+
+    mind, runtime = tmp_path / "mind", tmp_path / "runtime"
+    mind.mkdir()
+    runtime.mkdir()
+    ordinary, fixture = mind / "ordinary", runtime / "fixture"
+    ordinary.write_text("before")
+    fixture.write_text("read-only")
+    alias = mind / "linked"
+    os.link(fixture, alias)
+    script = ('test "$(cat ordinary)" = before && printf after > ordinary && '
+              'test "$(cat "$1")" = read-only && ! (printf changed > "$1") && '
+              'ln ordinary internal && ! ln "$1" external')
+    command = ["/bin/sh", "-c", script, "workspace-test", str(fixture)]
+    with pytest.raises(mindfs.UnsafeMindPath, match="hard link outside the writable workspace"):
+        sandbox.wrap(command, mind, [str(runtime)], tmp_path / "profiles", "alias-test", ports=())
+    assert ordinary.read_text() == "before"
+
+    alias.unlink()
+    argv, _ = sandbox.wrap(command, mind, [str(runtime)], tmp_path / "profiles", "alias-test", ports=())
+    accepted = subprocess.run(argv, cwd=mind, capture_output=True, text=True)
+    assert accepted.returncode == 0, accepted
+    assert ordinary.read_text() == "after" and fixture.read_text() == "read-only"
+    assert (mind / "internal").samefile(ordinary)
+    assert not (mind / "external").exists()
+    restart, _ = sandbox.wrap(["/bin/cat", "internal"], mind, [str(runtime)], tmp_path / "profiles",
+                              "alias-test", ports=())
+    restarted = subprocess.run(restart, cwd=mind, capture_output=True, text=True, timeout=60)
+    assert restarted.returncode == 0 and restarted.stdout == "after", restarted
 
 
 def test_roots_never_open_the_whole_disk_or_home():

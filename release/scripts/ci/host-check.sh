@@ -16,6 +16,7 @@
 set -euo pipefail
 
 RESTRICT=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+SWITCH_LOCK=/run/lock/omegahive-switch   # the host prep creates it, root-owned, mode 0666 (scripts/ci/switch-shard.sh)
 
 usage() { echo "usage: $0 baseline|compare DIR" >&2; exit 2; }
 [ $# -eq 2 ] || usage
@@ -49,6 +50,18 @@ snapshot() { # $1 = output directory
 check_restriction() { # $1 = when
   local v
   v=$(restriction)
+  # The value is the machine's, and on a server with several runners the full run's switch shard sets it to 0 under
+  # the host's switch lock (scripts/ci/switch-shard.sh), so 0 is right while some job holds that lock, never otherwise.
+  # Held only when flock -n exits 1 (the lock is taken); any other failure (unreadable lock file, no flock) is not a
+  # hold, so 0 then fails below.
+  if [ "$v" = 0 ] && [ -e "$SWITCH_LOCK" ]; then
+    local held=0
+    flock -n "$SWITCH_LOCK" true 2>/dev/null || held=$?
+    if [ "$held" = 1 ]; then
+      echo "host-check: restriction 0 $1, under the switch lock held by: $(cat "$SWITCH_LOCK" 2>/dev/null || echo '?')"
+      return 0
+    fi
+  fi
   if [ "$v" != 1 ]; then
     echo "::error::kernel.apparmor_restrict_unprivileged_userns is $v $1, not 1"
     return 1

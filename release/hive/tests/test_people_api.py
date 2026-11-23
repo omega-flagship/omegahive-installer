@@ -660,6 +660,40 @@ def test_family_signin_refuses_domain_people_and_google_is_offered(monkeypatch):
         gen.close()
 
 
+def test_auth_methods_says_who_can_sign_in_with_google(monkeypatch):
+    """acceptance-tests #15: the sign-in card can say who Google lets in. sso.domains = HIVE_SIGNIN_DOMAINS (normalised),
+    sso.open = a public hive (any verified Google account joins as a public visitor). HIVE_MEMBER_EMAILS is never listed."""
+    monkeypatch.setenv("HIVE_SIGNIN_DOMAINS", " SingularityNET.io , example.org")
+    monkeypatch.setenv("HIVE_MEMBER_EMAILS", "secret@elsewhere.com")
+    gen = _env(monkeypatch)
+    c, google, admin = next(gen)
+    try:
+        sso = c.get("/omegahive/api/auth/methods").json()["sso"]
+        assert sso["domains"] == ["singularitynet.io", "example.org"] and sso["open"] is False
+        assert "elsewhere.com" not in json.dumps(sso)
+        hive = c.app.state.hive
+        hive.db.execute("INSERT OR IGNORE INTO hive_owner (id, owner, via, set_at) VALUES (1, 'user:operator', 'operator', 'x')")
+        hive.db.execute("UPDATE hive_owner SET visibility = 'public' WHERE id = 1")
+        assert c.get("/omegahive/api/auth/methods").json()["sso"]["open"] is True
+    finally:
+        gen.close()
+
+
+def test_auth_methods_lists_no_domains_without_google(monkeypatch):
+    monkeypatch.setenv("HIVE_SIGNIN_DOMAINS", "singularitynet.io")
+    for name in ("HIVE_GOOGLE_CLIENT_ID", "HIVE_GOOGLE_CLIENT_SECRET", "HIVE_GOOGLE_REDIRECT_URI"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HIVE_SSO_USERS", "")
+    tmp = tempfile.mkdtemp(prefix="hive-people-")
+    settings = load_settings(data_dir=pathlib.Path(tmp), admin_password="pw", petta_path=PETTA, offline=True, base_path="/omegahive")
+    app = create_app(settings, supervisor=FakeSupervisor(), reconcile_seconds=0)
+    with TestClient(app, base_url="https://hive.example") as c:
+        app.state.hive.db.execute("INSERT OR IGNORE INTO hive_owner (id, owner, via, set_at) VALUES (1, 'user:operator', 'operator', 'x')")
+        app.state.hive.db.execute("UPDATE hive_owner SET visibility = 'public' WHERE id = 1")
+        sso = c.get("/omegahive/api/auth/methods").json()["sso"]
+        assert sso["domains"] == [] and sso["open"] is False
+
+
 def test_family_signin_unchanged_without_domains(monkeypatch):
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="hive-family-"))
     _family(monkeypatch, tmp, "ana@example.com")

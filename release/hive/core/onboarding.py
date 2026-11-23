@@ -276,7 +276,7 @@ class Onboarding:
                  own_keys > 0 or progress["key_choice"] == "hive-keys" or guest or free, own_keys=own_keys,
                  choice=progress["key_choice"], guest=guest, free_inference=free),
             monthly,
-            item("ask_prefs", "Set up your Ask: who answers, and what a conversation may spend",
+            item("ask_prefs", "Set up your Ask: who answers, and whether it asks before an answer that looks expensive",
                  hive.db.one("SELECT 1 FROM ask_prefs WHERE principal = ?", (principal,)) is not None),
             item("mind_awake", "Wake your personal mind and say hello",
                  mind is not None and (mind.get("last_active_at") is not None or mind["status"] in ("awake", "starting")),
@@ -335,7 +335,7 @@ class Onboarding:
         payer, own_key = hive.payer_for(mind, key_owner)
         estimate = gw.cost(provider, model, GREETING_TOKENS_IN, GREETING_TOKENS_OUT)
         budgets = hive.budgets
-        if float(mind.get("budget_usd") or 0) <= 0 and not budgets.paid_without_cap(mind, None, payer, own_key):
+        if float(mind.get("budget_usd") or 0) <= 0 and not budgets.paid_without_cap(mind, None, payer, own_key, key_id):
             raise self._refuse("no_budget")
         if float(mind.get("budget_usd") or 0) > 0 and float(mind.get("spent_usd") or 0) + estimate > float(mind["budget_usd"]):
             raise self._refuse("spend_limit")

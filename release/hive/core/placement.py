@@ -406,6 +406,10 @@ class Placement:
         self.hive.check_key_use(wanted.get("key"), may_use_key, _options_of(existing).get("key"))
         lock_owner = (existing or {}).get("owner") or owner or by
         self.hive.check_key_lock(lock_owner, _options_of(existing), wanted, by)   # app platform P3a: import too
+        if wanted.get("own_coding") and by != lock_owner:
+            # a mind's own coding is its owner's switch (Jon on omega-flagship/omegahive#395): brought in by anyone
+            # else, it arrives with its own coding off, the default
+            wanted.pop("own_coding")
         if wanted.get("tools") and not tools_ok:
             raise self.hive.error(403, "admin_only", "only a hive admin can do that")
         hidden = bool(wanted.get("key") and may_use_key is not None and not may_use_key(wanted["key"]))   # kept, unseen

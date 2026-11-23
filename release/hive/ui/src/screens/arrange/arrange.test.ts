@@ -1,9 +1,11 @@
 // Purpose: the stage's arrangement as MeTTa composes it (screens/arrange/lib_arrange.metta): showing an item, the
 // other items making room or vanishing, recalling one beside it, comparing two, and a dragged split learned for the
-// same kinds, with seeded random cases for the claims that must hold for every stage and every set of items.
-// INVENTED items, ids and tasks.
+// same kinds, every item side by side or compared kept at its kind's least size, and the page's fold of a long log
+// composing what the whole log composes, with seeded random cases for the claims that must hold for every stage, every
+// set of items and every log. INVENTED items, ids and tasks.
 import { describe, expect, it } from 'vitest'
-import { ArrangeError, ArrangeSpace, type ArrangeItem, type ArrangeState, type Arrangement, type Placed, type Source, type Statement } from './arrangeSpace'
+import { ArrangeError, ArrangeSpace, foldLog, type ArrangeItem, type ArrangeState, type Arrangement, type Placed, type Source, type Statement } from './arrangeSpace'
+import libArrange from './lib_arrange.metta?raw'
 
 const space = ArrangeSpace.open()
 const photo = 'ar_photo01'
@@ -359,10 +361,172 @@ describe('on a small stage the strips give way before what is shown', () => {
   })
 })
 
+describe('side by side and compared, every item keeps its kind’s least size', () => {
+  // the least size each kind is drawn at, read from the rules themselves (KindLeast)
+  const LEAST = Object.fromEntries([...libArrange.matchAll(/\(KindLeast (\w+) (\d+) (\d+)\)/g)].map((m) => [m[1], [Number(m[2]), Number(m[3])]]))
+  const pics = [1, 2, 3, 4, 5].map((i): ArrangeItem => ({ key: `ar_pic${i}`, source: 'artifact', stored: 'image' }))
+  const [p1, p2, p3, p4, p5] = pics.map((p) => p.key)
+  const withPics = { items: [...items, ...pics] }
+  const atLeast = (a: Arrangement, why: string) => {
+    for (const p of a.placed) {
+      const [lw, lh] = LEAST[p.kind]
+      expect(p.w, `${why}: ${p.key}'s width`).toBeGreaterThanOrEqual(lw - 1e-6)
+      expect(p.h, `${why}: ${p.key}'s height`).toBeGreaterThanOrEqual(lh - 1e-6)
+    }
+  }
+  // Jon's cases on stage 1: a phone at 390 x 760 with five pictures, and a drag at 200 x 200
+  const phone = { w: 390, h: 760 }
+  const five = [show(p1), recall(p2), recall(p3), recall(p4), recall(p5)]
+
+  it('on a phone, five pictures each keep their least height: the oldest recalled waits in the tray, and a press brings it back as the newest', () => {
+    // four pictures at least 150 high and the gaps between them fit in 760 - 2 x 24, five do not
+    const a = space.compose(state(five, { ...withPics, stage: phone }))
+    expect(a.mode).toBe('side')
+    expect(a.placed.map((p) => p.key)).toEqual([p1, p3, p4, p5])
+    expect(a.tray).toEqual([p2])
+    atLeast(a, 'five on a phone')
+    const back = space.compose(state([...five, recall(p2)], { ...withPics, stage: phone }))
+    expect(back.placed.map((p) => p.key)).toEqual([p1, p4, p5, p2])
+    expect(back.tray).toEqual([p3])
+  })
+
+  it('moves every divider there only between its neighbours’ least sizes, however far it is dragged', () => {
+    for (let index = 0; index < 3; index++) {
+      for (const to of [-5, 0, 0.5, 1, 5]) atLeast(space.compose(state(five, { ...withPics, stage: phone, dragging: { group: 'g', index, at: to } })), `divider ${index} at ${to}`)
+    }
+  })
+
+  it('never draws a width under the least at 200 x 200: what cannot stand beside the shown item waits in the tray', () => {
+    const a = space.compose(state([show(photo), recall(text)], { stage: { w: 200, h: 200 }, dragging: { group: 'g', index: 0, at: 0.01 } }))
+    expect([a.mode, a.dividers, a.tray]).toEqual(['focus', [], [text]])
+    for (const p of a.placed) expect(p.w > 0 && p.h > 0, p.key).toBe(true)
+  })
+
+  it('keeps both halves of a compared pair at their least when a recalled item is beside it in a column', () => {
+    // on a phone the row is a column, and the pair's own column inside it needs both halves and the gap between them
+    const log = [compare(photo, text), recall(vega)]
+    const a = space.compose(state(log, { stage: phone }))
+    expect(a.mode).toBe('side')
+    expect(a.placed.map((p) => p.key)).toEqual([photo, text, vega])
+    for (const to of [0, 1]) atLeast(space.compose(state(log, { stage: phone, dragging: { group: 'g', index: 0, at: to } })), `outer divider at ${to}`)
+  })
+
+  it('gives a compared pair that cannot stand one over the other to its first, the second waiting in the tray', () => {
+    // a picture at least 150 high over a text at least 140 high needs 302 px, and 300 - 2 x 24 leaves 252
+    const a = space.compose(state([compare(photo, text)], { stage: { w: 600, h: 300 } }))
+    expect([a.mode, a.placed.map((p) => p.key), a.tray]).toEqual(['focus', [photo], [text]])
+  })
+
+  it('uses a learned split only while it is one, and holds each side at least at its least', () => {
+    const side = [show(photo), recall(text)]
+    const broken = space.compose(state(side, { shares: [{ dir: 'row', kinds: ['image', 'text'], shares: [-0.5, 1.5] }] }))
+    expect(broken.dividers[0].shares).toEqual([0.5, 0.5])
+    const thin = space.compose(state(side, { shares: [{ dir: 'row', kinds: ['image', 'text'], shares: [0.05, 0.95] }] }))
+    // the picture is held at its least width, 200 px, and the text takes the rest
+    close(at(thin.placed, photo).w, 200)
+    close(at(thin.placed, text).w, 1440 - 2 * MARGIN - GAP - 200)
+  })
+
+  it('moves nothing for a divider its group no longer has, and refuses a divider index that is not a whole number', () => {
+    // a mind can show something while the person holds a divider, so the divider may be gone by the next frame
+    const side = [show(photo), recall(text)]
+    expect(space.compose(state(side, { dragging: { group: 'g', index: 3, at: 0.2 } })).dividers[0].shares).toEqual([0.5, 0.5])
+    for (const index of [0.5, -1]) expect(() => space.compose(state(side, { dragging: { group: 'g', index, at: 0.2 } })), String(index)).toThrow(ArrangeError)
+  })
+
+  it('draws nothing on a stage with no area, and keeps what was asked in the tray', () => {
+    for (const stage of [{ w: 0, h: 600 }, { w: 390, h: 0 }, { w: -10, h: -10 }]) {
+      const a = space.compose(state([show(photo), recall(text)], { stage }))
+      expect([a.mode, a.placed, a.dividers, a.tray], `${stage.w}x${stage.h}`).toEqual(['home', [], [], [text, photo]])
+    }
+  })
+
+  it('draws an item compared with itself once', () => {
+    const a = space.compose(state([compare(photo, photo)]))
+    expect(a.mode).toBe('focus')
+    expect(a.placed.filter((p) => p.key === photo)).toHaveLength(1)
+  })
+
+  it('never draws an item side by side or compared under its least size, off the stage or over another (seeded cases)', () => {
+    const keys = [photo, text, vega, orion, tip, p1, p2, p3, p4, p5]
+    const kinds = ['image', 'text', 'mind', 'task']
+    const say = (r: ReturnType<typeof random>): Statement => {
+      const n = r.int(0, 9)
+      return n < 2 ? show(r.pick(keys)) : n < 7 ? recall(r.pick(keys)) : n < 8 ? compare(r.pick(keys), r.pick(keys)) : n < 9 ? putAway(r.pick(keys)) : { say: 'clear' }
+    }
+    for (let seed = 1; seed <= 60; seed++) {
+      const r = random(seed)
+      const stage = r.next() < 0.3 ? r.pick([phone, { w: 760, h: 390 }, { w: 200, h: 200 }, { w: 0, h: 500 }]) : { w: r.int(1, 1800), h: r.int(1, 1100) }
+      const log = Array.from({ length: r.int(1, 10) }, () => say(r))
+      const split = r.next()
+      const shares = r.next() < 0.5 ? [{ dir: r.pick(['row', 'column'] as const), kinds: [r.pick(kinds), r.pick(kinds)], shares: r.next() < 0.5 ? [split * 2 - 0.5, r.next()] : [split, 1 - split] }] : []
+      const dragging = r.next() < 0.5 ? { group: r.pick(['g', 'g0']), index: r.int(0, 4), at: r.next() * 2 - 0.5 } : undefined
+      const a = space.compose(state(log, { ...withPics, stage, shares, dragging }))
+      const why = `seed ${seed}, stage ${stage.w}x${stage.h}`
+      if (a.mode === 'side' || a.mode === 'compare') atLeast(a, why)
+      // a divider moves between its two neighbours' least sizes, so those bounds never cross
+      for (const d of a.dividers) expect(d.lo, `${why}: divider ${d.group} ${d.index}`).toBeLessThanOrEqual(d.hi + 1e-9)
+      for (const p of a.placed) {
+        expect(p.w > 0 && p.h > 0, `${why}: ${p.key} drawn`).toBe(true)
+        expect(p.x >= -1e-6 && p.y >= -1e-6 && p.x + p.w <= stage.w + 1e-6 && p.y + p.h <= stage.h + 1e-6, `${why}: ${p.key} inside`).toBe(true)
+      }
+      for (let i = 0; i < a.placed.length; i++) for (let j = i + 1; j < a.placed.length; j++) expect(overlap(a.placed[i], a.placed[j]), `${why}: ${a.placed[i].key} and ${a.placed[j].key}`).toBe(false)
+    }
+  })
+})
+
 describe('interest is credited once per statement, in the task', () => {
   it('names what was in view for the newest statement, and nothing without a task', () => {
     expect(space.compose(state([show(photo)], { interest: { [tip]: { [text]: 1 } } })).seen).toEqual({ episode: 1, keys: [photo, text, vega] })
     expect(space.compose(state([show(photo, null)])).seen).toEqual({ episode: 1, keys: [] })
+  })
+})
+
+describe('the page folds a long log into what MeTTa reads', () => {
+  const gone = 'ar_gone01'
+  const keys = [photo, text, vega, orion, tip, gone]
+  const tasks = [tip, null, 'g_other01']
+  const say = (r: ReturnType<typeof random>): Statement => {
+    const n = r.int(0, 11)
+    // a before the page only ever writes as the oldest statement turns up anywhere too, so the fold holds for every log
+    return n < 2 ? show(r.pick(keys), r.pick(tasks)) : n < 6 ? recall(r.pick(keys)) : n < 7 ? { say: 'compare', a: r.pick(keys), b: r.pick(keys), task: r.pick(tasks) }
+      : n < 10 ? putAway(r.pick(keys)) : n < 11 ? { say: 'clear' } : { say: 'before', keys: [...new Set([r.pick(keys), r.pick(keys)])], task: r.pick(tasks) }
+  }
+  const stages = [{ w: 1440, h: 900 }, { w: 390, h: 760 }, { w: 800, h: 500 }]
+
+  it('composes what the whole log composes, folded at once or after every statement (seeded cases)', () => {
+    for (let seed = 1; seed <= 40; seed++) {
+      const r = random(seed)
+      const log = Array.from({ length: r.int(0, 40) }, () => say(r))
+      const st = state(log, { stage: r.pick(stages), interest: { [tip]: { [text]: r.int(0, 3), [orion]: r.int(0, 2) } } })
+      const whole = space.compose(st)
+      const folded = foldLog(log)
+      let stepwise: Statement[] = []
+      for (const s of log) stepwise = foldLog([...stepwise, s])
+      expect(space.compose({ ...st, log: folded }), `seed ${seed}: folded at once`).toEqual(whole)
+      expect(space.compose({ ...st, log: stepwise }), `seed ${seed}: folded after every statement`).toEqual(whole)
+      expect(foldLog(folded), `seed ${seed}: a folded log folds to itself`).toEqual(folded)
+    }
+  })
+
+  it('keeps the shown item and at most each named item’s newest statement after it, however long the session', () => {
+    const r = random(7)
+    let log: Statement[] = [show(photo)]
+    for (let i = 0; i < 1000; i++) {
+      log = foldLog([...log, r.next() < 0.5 ? recall(r.pick([text, vega, orion, tip, gone])) : putAway(r.pick([text, vega, orion, tip, gone]))])
+      expect(log.length, `after ${i + 1} statements`).toBeLessThanOrEqual(keys.length + 2)
+    }
+    expect(log[0]).toEqual(show(photo))
+    expect(at(space.compose(state(log)).placed, photo).role).toBe('shown')
+  })
+
+  it('composes a whole log of 1000 statements, where a rule recursing once per statement ran MeTTa out of stack', () => {
+    const r = random(11)
+    // the walk goes back through 999 recalls and put-aways to the one show
+    const log = [show(photo), ...Array.from({ length: 999 }, () => (r.next() < 0.5 ? recall(r.pick([text, vega, orion, gone])) : putAway(r.pick([text, vega, orion, gone]))))]
+    const whole = space.compose(state(log))
+    expect(at(whole.placed, photo).role).toBe('shown')
+    expect(space.compose(state(foldLog(log), { episode: log.length }))).toEqual(whole)
   })
 })
 

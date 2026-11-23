@@ -21,7 +21,7 @@ const WORKER = { id: 'a_worker01', name: 'Worker', swarm_id: 's_home', status: '
 const STRANGER = { id: 'a_strange1', name: 'Stranger', swarm_id: 's_elsewhere', status: 'awake', personal_of: null, kind: 'omega' }
 const OUTSIDE = { id: 'a_module01', name: 'Outside', swarm_id: 's_home', status: 'awake', personal_of: null, kind: 'module' }
 const home = { id: 's_home', name: 'Home', orchestrator: { id: 'a_orch0001', name: 'Orchestra', status: 'awake' } }
-const settings: AskSettings = { swarm_id: null, thread_budget_usd: 0.25, eligible: [home], capabilities: { conductor: true, memory: false } }
+const settings: AskSettings = { swarm_id: null, eligible: [home], capabilities: { conductor: true, memory: false } }
 const minds = [WORKER, STRANGER, OUTSIDE, { ...TAIGA, personal_of: 'user:p_ada', kind: 'omega' }]
 const base = { settings, personal: TAIGA, swarmOf: () => undefined, through: { minds }, thread: null, carry: null, threadOpen: false }
 const ctx = { route: 'hive', experience: 'classic' }

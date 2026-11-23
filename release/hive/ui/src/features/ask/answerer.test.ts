@@ -1,3 +1,4 @@
+// Purpose: prove who answers the Ask: the host's words for no mind or coordinator, choosing who answers, and the person's own mind.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement, createRef, type ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -31,7 +32,7 @@ type HiveClient = import('../../api/client').HiveClient
 const lyra = { id: 's_lyra', name: 'Lyra', orchestrator: { id: 'a_vega01', name: 'Vega', status: 'awake' } }
 const kelp = { id: 's_kelp', name: 'Kelp', orchestrator: { id: 'a_coral5', name: 'Coral', status: 'awake' } }
 const thread = { id: 'ses_ask1', mind: { id: 'a_vega01', name: 'Vega' }, budget_usd: 0.25, spent_usd: 0 }
-const settingsOf = (swarm_id: string | null, eligible = [lyra, kelp]): AskSettings => ({ swarm_id, thread_budget_usd: 0.25, eligible })
+const settingsOf = (swarm_id: string | null, eligible = [lyra, kelp]): AskSettings => ({ swarm_id, eligible })
 
 /** A synthetic host: refuses with `refuse` while no default is saved (as core/ask.py _route), else admits. */
 function host(o: { refuse?: 'no_mind' | 'no_orchestrator'; mind?: unknown; eligible?: typeof lyra[] } = {}) {

@@ -1,4 +1,4 @@
-"""Supervisor and drivers.  A driver only knows how to run one agent process.
+"""Purpose: Manage the lifecycle of local and Docker mind processes.
 
 Drivers implement ``start(agent, env) / stop(agent_id) / status(agent_id) ->
 "running" | "exited" | "absent" / logs(agent_id, tail)``.  Built in: ``local``
@@ -19,8 +19,9 @@ import signal
 import subprocess
 import sys
 
-from .sandbox import (NO_BACKEND, OPT_OUT, available as sandbox_available, loopback_ports, mind_environment, mind_sandbox_requested,
-                      mind_sandbox_status, runtime_roots, wrap as sandbox_wrap)
+from .sandbox import (NO_BACKEND, OPT_OUT, available as sandbox_available, backend as sandbox_backend, loopback_ports,
+                      mind_environment, mind_sandbox_requested, mind_sandbox_status, runtime_roots, think_swipl,
+                      wrap as sandbox_wrap)
 import threading
 import time
 
@@ -34,6 +35,19 @@ PREFLIGHT_SECONDS = 10
 class StartRefused(RuntimeError):
     """A mind that cannot start here as configured, with a reason a person can act on. The hive records it as the
     mind's error and leaves the mind stopped instead of retrying blindly."""
+
+
+def _admit_workspace(root, rel=""):
+    try:
+        mindfs.require_contained_links(root, rel)
+    except FileNotFoundError:
+        if os.path.lexists(os.path.join(root, rel) if rel else root):
+            raise
+    except mindfs.LinkedWorkspaceFile as exc:
+        raise StartRefused(f"{exc.strerror}. Replace it with an independent copy or remove the link, then try again.") from None
+    except mindfs.UnsafeMindPath:
+        raise StartRefused("This mind's workspace has an entry the hive cannot open safely. "
+                           "Ask the host owner to check the workspace, then try again.") from None
 
 
 def iter_preflight(image, run=subprocess.run, which=None):
@@ -130,6 +144,13 @@ class LocalDriver(Driver):
         self.petta_path = petta_path
         self.procs: dict[str, subprocess.Popen] = {}
         self.isolation: dict[str, dict] = {}  # agent_id -> the boundary the running process actually has
+
+    def read_roots(self):
+        """What a sandboxed mind may read beyond its own folder: the runtime it runs (sandbox.runtime_roots) and the
+        hive's shared libraries, read-only. Connector secrets are never among them: the hive serves a mind only those of
+        connectors its owner installed on it (hive/core/connectors.py)."""
+        settings = self.workspace.settings
+        return runtime_roots(self.petta_path, settings.core_root, [settings.data_dir / "libs"])
 
     # A mind runs in its own session, so it outlives a hive restart. Its process group is recorded in mind.pid, and
     # after a restart the hive adopts a mind that is still running instead of starting a duplicate; stop always ends
@@ -232,13 +253,42 @@ class LocalDriver(Driver):
                 time.sleep(0.1)
         return not self._group_members(pgid)
 
+    def _think(self, agent, root, full_env):
+        """macOS refuses an Iter worker's metta a sandbox inside the mind's (templates/iter/tools/_think_sandbox.py).
+        So there, while the mind's own coding is off, its PeTTa runs as a swipl of its own (sandbox.think_swipl) with
+        a scratch folder, which the worker learns from HIVE_THINK_SWIPL and HIVE_THINK_SCRATCH, and the mind's profile
+        gives that swipl the limits Linux's Landlock gives the same PeTTa. The (swipl, scratch) for sandbox.wrap, or
+        None: another kind or backend, own coding on, or no swipl copy here, where the kit's metta asks each use."""
+        from ..core.providers import own_coding
+        if agent.get("kind") != "iter" or own_coding(agent) or sandbox_backend() != "sandbox-exec":
+            return None
+        swipl = think_swipl()
+        if swipl is None:
+            logging.getLogger(__name__).warning("no swipl copy for %s's MeTTa beside this host's swipl; its metta asks "
+                                                "the hive's gate each use", agent["id"])
+            return None
+        mindfs.ensure_dir(root, "tmp/think")
+        full_env.update(HIVE_THINK_SWIPL=str(swipl), HIVE_THINK_SCRATCH=str(root / "tmp" / "think"))
+        return swipl, "tmp/think"
+
     def start(self, agent, env):
-        if self.status(agent["id"]) == "running":
+        try:
+            running = self.status(agent["id"]) == "running"
+        except ProcessObservationError as exc:
+            if isinstance(exc.__cause__, mindfs.UnsafeMindPath) and mind_sandbox_requested():
+                # A linked mind.pid blocks the normal status read too.
+                _admit_workspace(self.workspace.path(agent["id"]))
+            raise
+        if running:
             return
         if agent.get("kind") == "iter" and os.environ.get("HIVE_ALLOW_LOCAL_ITER") != "1":
             raise StartRefused("Iter workers rewrite their own tools and must run sandboxed: use the docker "
                                "driver, or set HIVE_ALLOW_LOCAL_ITER=1 to accept running one on this host")
         root = self.workspace.path(agent["id"])
+        requested = mind_sandbox_requested()
+        if requested:
+            # Refuse synchronously so the Hive can report why before spawning.
+            _admit_workspace(root)
         # The hive is not sandboxed and the mind may plant links in its own folder: agent.log is opened without
         # following anything (a link or hard link there is replaced by a fresh file), and it is the only descriptor of
         # the mind folder the child inherits (stdout and stderr). stdin is /dev/null; no other fd is passed.
@@ -248,7 +298,6 @@ class LocalDriver(Driver):
             full_env = mind_environment(os.environ, dict(env, TMPDIR=str(root / "tmp")))
             mindfs.ensure_dir(root, "tmp")
             command = self.workspace.command(agent, self.petta_path)
-            requested = mind_sandbox_requested()
             if requested and not sandbox_available():
                 raise RuntimeError(f"minds run in the OS sandbox, which is on by default, and it can't run here: "
                                    f"{mind_sandbox_status()['reason'] or NO_BACKEND}; refusing to start the mind without "
@@ -257,9 +306,9 @@ class LocalDriver(Driver):
                                            "profile": None, "started_at": time.time()}
             if requested:
                 # an OS boundary around the whole process tree (hive/supervisor/sandbox.py)
-                command, prof = sandbox_wrap(command, root, runtime_roots(self.petta_path, self.workspace.settings.core_root,
-                                                                           [self.workspace.settings.data_dir / "libs"]),
-                                             self.workspace.settings.data_dir / "sandbox", agent["id"])
+                think = self._think(agent, root, full_env)
+                command, prof = sandbox_wrap(command, root, self.read_roots(),
+                                             self.workspace.settings.data_dir / "sandbox", agent["id"], think=think)
                 self.isolation[agent["id"]]["profile"] = prof
             self.procs[agent["id"]] = subprocess.Popen(
                 command,
@@ -347,10 +396,11 @@ class DockerDriver(Driver):
             iter_preflight(os.environ.get("HIVE_ITER_IMAGE", ITER_IMAGE_DEFAULT))
         if self.status(agent["id"]) == "running":
             return
-        self._docker("rm", "-f", name)
         root = self.workspace.path(agent["id"])
         settings = self.workspace.settings
-        if agent.get("kind") != "iter":
+        if agent.get("kind") == "iter":
+            _admit_workspace(root)
+        else:
             # Docker resolves a bind-mount source on the host: a memory/ or run.metta the mind replaced with a link
             # would mount whatever it points at. Both must be real entries reached without links.
             for check, rel in ((mindfs.require_dir, "memory"), (mindfs.require_file, "run.metta")):
@@ -361,6 +411,8 @@ class DockerDriver(Driver):
                 except mindfs.UnsafeMindPath as exc:
                     raise StartRefused(f"this mind's folder holds a link where the hive mounts it ({exc.strerror}); "
                                        "remove it, then start again") from None
+            _admit_workspace(root, "memory")
+        self._docker("rm", "-f", name)
         if agent.get("kind") == "iter":
             args = ["run", "-d", "--name", name, "--network", self.network, "--label", "omegadots.agent=" + agent["id"],
                     "--memory", "1g", "--pids-limit", "256", "-v", f"{root}:/agent", "-w", "/agent"]
@@ -372,6 +424,8 @@ class DockerDriver(Driver):
                 raise RuntimeError(f"docker run failed: {result.stdout.strip()}")
             return
         from hive.runtime.native_core import runtime_directory
+        # A container gets no connector secret as a file: it asks the hive at HIVE_API_URL with its own token, as a
+        # native mind does, for the connectors its owner installed on it (hive/core/connectors.py).
         env = dict(env, OMEGACLAW_MEMORY_DIR="/agent/memory", OMEGACLAW_RUNTIME_CACHE="/opt/omegahive-cache")
         args = ["run", "-d", "--name", name, "--network", self.network,
                 "--label", "omegadots.agent=" + agent["id"],
@@ -443,6 +497,13 @@ class DockerDriver(Driver):
 
 class Supervisor:
     """Owns drivers and keeps agents in their desired state."""
+
+    # A mind outlives a hive that dies without its shutdown (a crash, a kill; a shutdown stops its minds first) and
+    # keeps the boundary and environment it was started with. A start records START_CONTRACT, what a start gives a
+    # mind now, beside the sandbox profiles, so a hive that starts again can tell a mind started under an older
+    # contract (every mind a hive before this one started, whose sandbox, container mount and environment still give
+    # it the connectors folder) from one started under this one (stop_older_starts).
+    START_CONTRACT = "connector-secrets-served"
 
     def __init__(self, settings, drivers=None):
         self.settings = settings
@@ -608,6 +669,15 @@ class Supervisor:
         studio = getattr(self.hive, "studio", None) if self.hive is not None else None
         return bool(getattr(studio, "enabled", False))
 
+    def _connector_modules(self, agent):
+        """Every connector module (hive/core/connectors.py), each on when this mind's owner installed its connector on it
+        and the host's loader doesn't import it already; empty for a hive without connectors."""
+        store = getattr(self.hive, "connectors", None) if self.hive is not None else None
+        if store is None:
+            return {}
+        installed = set(store.installed_modules(agent))
+        return {module: module in installed for module in store.modules()}
+
     def execution(self, agent_id):
         try:
             return self.driver(self._agent(agent_id)).execution(agent_id)
@@ -636,20 +706,24 @@ class Supervisor:
             env = self.env(agent)
             env.pop("OMEGACLAW_EXTRA_MODULES", None)   # R6.2: the supervisor owns this switch for every mind
             studio = self._studio_skills(agent)
-            if studio is not None:          # an omega mind: the Studio maker skills follow the hive's Studio setting
-                write = getattr(getattr(self, "workspace", None), "write_studio_skills", None)
+            if studio is not None:          # an omega mind: Studio follows the hive's setting, connectors its owner
+                wanted = {self.STUDIO_MODULE: studio, **self._connector_modules(agent)}
+                write = getattr(getattr(self, "workspace", None), "write_module_imports", None)
                 if callable(write):         # a supervisor built without a workspace (tests) has no run.metta to keep
-                    write(agent, studio)
+                    write(agent, wanted)
                 # and its prompt follows the hive's current template, role and persona (workspace.refresh_prompt)
                 refresh = getattr(getattr(self, "workspace", None), "refresh_prompt", None)
                 if callable(refresh):
                     refresh(agent)
-                if studio:
-                    env["OMEGACLAW_EXTRA_MODULES"] = self.STUDIO_MODULE
+                extras = [module for module, on in wanted.items() if on]
+                if extras:
+                    env["OMEGACLAW_EXTRA_MODULES"] = ",".join(extras)
             if person_swarms is not None:
                 person_swarms.require_current(agent_id)
             driver.start(agent, env)
             after = self._evidence(driver, agent_id)
+            if _UNKNOWN not in (before, after) and after is not None and after != before:
+                self._record_contract(agent_id)   # only a start that made a new execution says what that one got
             # Ask: owner evidence of a genuinely new execution, inside the same transition: start returned and the
             # running identity changed from a known one. A start that found the mind running, failed, or could not
             # read the identity is no context boundary (OmegaReview 7bfad52 B1; ask.py note_boundary).
@@ -670,6 +744,48 @@ class Supervisor:
             withdraw = getattr(self.hive, "withdraw_connection", None)
             if agent.get("kind") != "module" and callable(withdraw):
                 withdraw(agent_id)
+
+    def _contract(self, agent_id):
+        return pathlib.Path(self.settings.data_dir) / "sandbox" / f"{agent_id}.contract"
+
+    def _record_contract(self, agent_id):
+        path = self._contract(agent_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self.START_CONTRACT + "\n", encoding="utf-8")
+
+    # Time: one read of a small file per mind, and one driver status for each without this contract (on the first
+    # start after an upgrade, every running mind).
+    def stop_older_starts(self):
+        """Stop each running mind recorded under an older start contract, or none, before the hive moves anything such
+        a mind reads; the reconcile pass starts the ones the hive keeps awake again under this one. A child mind or a
+        Studio maker, whose lifecycle its parent or Studio holds, runs on until it ends: the connectors folder it may
+        still read then holds only the sealed key, which opens nothing without the hive's database. Returns the ids
+        stopped and the ids left running."""
+        stopped, kept = [], []
+        if self.hive is None:
+            return stopped, kept
+        minds = getattr(self.hive, "minds", None)
+        studio = getattr(self.hive, "studio", None)
+        for row in self.hive.db.all("SELECT id FROM agents WHERE deleted = 0 AND kind != 'module'"):
+            agent_id = row["id"]
+            try:
+                if self._contract(agent_id).read_text(encoding="utf-8").strip() == self.START_CONTRACT:
+                    continue
+            except OSError:
+                pass
+            try:
+                if self.driver(self._agent(agent_id)).status(agent_id) != "running":
+                    continue
+                if ((minds is not None and minds.is_child(agent_id))
+                        or (studio is not None and studio.studio_owns(agent_id))):
+                    kept.append(agent_id)
+                    continue
+                self.stop(agent_id)
+                stopped.append(agent_id)
+            except Exception as exc:   # one mind that cannot be read or stopped never stops the hive starting
+                logging.getLogger("hive").warning("minds: could not check or stop %s started under an older contract "
+                                                  "(%s)", agent_id, exc)
+        return stopped, kept
 
     def verify_stopped(self, agent_id):
         """Positive proof a mind is not running, after a stop (Kimi K1 on 021ef16): its driver reports it absent or
@@ -766,6 +882,8 @@ class Supervisor:
         self.hive.set_status(agent["id"], "starting")
         try:
             self.start(agent["id"])
+        except StartRefused as exc:
+            self.hive.set_status(agent["id"], "error", desired="stopped", error=f"start refused: {exc}")
         except Exception as exc:
             from ..core.hive import start_failure   # lazy, as hive.py imports the supervisor: no import cycle
             self.hive.set_status(agent["id"], "error", error=start_failure(exc))

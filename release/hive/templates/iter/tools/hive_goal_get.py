@@ -10,7 +10,9 @@ _spec.loader.exec_module(_hive)
 
 DESCRIPTION = ("Read a task (g_...) before working on it: its detail (what to do), binding and RESULT SCHEMA. "
                "A task with a result schema is finished with hive_goal_propose, whose JSON must fit that schema.")
-DETAIL_CHARS = 3500   # an Iter sees at most 5000 characters of one tool result
+# All the detail a goal keeps (hive/core/goals.py MAX_DETAIL_CHARS), so a Create step's whole task is one read. An Iter
+# sees at most 5000 characters of one tool result, which the 4400 below keeps the header and detail inside.
+DETAIL_CHARS = 4000
 
 
 def read(goal_id, reserve=0):

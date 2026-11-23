@@ -1,3 +1,4 @@
+// Purpose: prove an app page asks once before unsaved edits are left, and keeps the frame on screen when declined.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement, useEffect } from 'react'
 import type { CreationReference } from '../../lib/router'
@@ -760,7 +761,7 @@ describe('Draw live: the page continuation after the Ask turn', () => {
     const useHive = await hive(liveClient())
     useHive.setState({ programs: [{ id: 'omegadesign', name: 'Invented Create', description: '', enabled: true, ui: { entry: 'index.html' } }] as never, programDetails: { omegadesign: { describe: null } } as never })
     const { useAskStore } = await import('../../store/ask')
-    useAskStore.setState({ settings: { swarm_id: null, thread_budget_usd: 5, capabilities: { conductor: true, memory: true, studio_sessions: true, studio_directions: true } } } as never)
+    useAskStore.setState({ settings: { swarm_id: null, capabilities: { conductor: true, memory: true, studio_sessions: true, studio_directions: true } } } as never)
     const p = await mount({ id: 'omegadesign' })
     await p.act(flush)
     const item = () => menu.sections.flatMap((s) => s.items).find((i) => i.label === 'Draw live in Create…')!
@@ -836,7 +837,7 @@ describe('show run f4: on the mounted Create page, a hive that offers no live dr
       const { useAskStore } = await import('../../store/ask')
       const before = useAskStore.getState().settings
       // the /api/me/ask answer with studio_sessions absent: the reason is the only Studio key (hive/core/ask.py)
-      useAskStore.setState({ settings: { swarm_id: null, thread_budget_usd: 5, capabilities: { conductor: true, memory: true, studio_off: why } } } as never)
+      useAskStore.setState({ settings: { swarm_id: null, capabilities: { conductor: true, memory: true, studio_off: why } } } as never)
       try {
         const p = await mount({ id: 'omegadesign' })
         await p.act(flush)

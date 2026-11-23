@@ -2,6 +2,8 @@
 import json
 import secrets
 
+import pytest
+
 from hive.core.db import now
 from hive.core.hive import token_hash
 from hive.core.visibility import Viewer
@@ -178,15 +180,16 @@ def test_code_controller_events_follow_the_request_or_the_plan(client):
     assert not hive.visibility.event_visible(bob, json.dumps({"type": "code.controller", "request_id": "rq_vis1"}))
 
 
-def test_asset_stored_follows_the_assets_owner_swarm(client):
+@pytest.mark.parametrize("kind", ["asset.stored", "asset.deleted"])   # as emitted by assets.put and assets.delete
+def test_asset_events_follow_the_assets_owner_swarm(client, kind):
     from hive.core.visibility import event_rule
     ann = person(client, "u_ann8")
     hive = client.app.state.hive
     sw = client.post("/api/swarms", headers=ann, json={"name": "Files"}).json()
     mind = client.post("/api/agents", headers=ann, json={"name": "Filer", "kind": "module", "swarm_id": sw["id"]}).json()
     see, hidden, admin = Viewer("user:u_ann8", False), Viewer("user:u_bob8", False), Viewer("user:operator", True)
-    assert event_rule("asset.stored") == "asset"
-    frame = lambda **f: json.dumps({"type": "asset.stored", "sha256": "ab" * 32, **f})   # as emitted (assets.put)
+    assert event_rule(kind) == "asset"
+    frame = lambda **f: json.dumps({"type": kind, "sha256": "ab" * 32, **f})
     _sees3(hive, frame(owner_swarm=sw["id"], by="user:u_ann8"), see, hidden, admin, "person")
     _sees3(hive, frame(owner_swarm=sw["id"], by=f"agent:{mind['id']}"), see, hidden, admin, "mind")
     # the swarm shared with bob, but the mind that stored it still private to ann: withheld from bob

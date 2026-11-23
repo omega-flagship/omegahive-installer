@@ -1,10 +1,16 @@
-; Purpose: the Usage page, declared as atoms (screens/lib_screens.metta composes it): the signed-in person's spend this
-; month, the held calls and estimates, the spending limits with a row per limit, and the spend and tokens over time by
-; mind or model. features/usage/UsageView.tsx loads the lists, states the facts and data (usageScreen.ts,
-; heldCallsScreen.ts, limitsScreen.ts), draws the plan and carries out the presses; the money decisions stay in their
+; Purpose: the Usage page, declared as atoms (screens/lib_screens.metta composes it): the hive's spend alerts, the
+; signed-in person's spend this month, the held calls and estimates, the spending limits with a row per limit, and the
+; spend and tokens over time by mind or model; and the spend alert notice the shell shows elsewhere and one alert's
+; details. features/usage/UsageView.tsx loads the lists, states the facts and data (usageScreen.ts, heldCallsScreen.ts,
+; limitsScreen.ts, spendAlertDisplay.ts), draws the plan and carries out the presses; the money decisions stay in their
 ; dialogs (EstimateDialogs.tsx) and a removal asks in the confirm host.
 ;
 ; Facts the page states each time it composes:
+;   spend alerts (spendAlertDisplay.ts usageAlertFacts): flags alerts.available (the hive reports them) and
+;     alerts.action-failed, the value alerts.read (loading, error, empty or ready) and the count alerts.controls (the
+;     alerts this viewer may pause or resume); each alert's row composes spend-alert-detail on its own flags alert.open,
+;     alert.projection, alert.paused, alert.control and alert.writing; the notice (spend-alert-notice) reads the count
+;     alerts.open and the flag alerts.on-usage
 ;   four resources, each under its own name (screens/resourceFacts.ts): mine (your spend), held (the held calls),
 ;     limits (the spending limits) and spend (the spend over time): each its value, .stale and .empty, data .error
 ;   your spend: flags mine.allowance (you have an allowance) and mine.low (under a fifth of it is left, counting what is
@@ -12,12 +18,30 @@
 ;   held calls: counts held.unknown, held.inflight, estimates.open, estimates.more and overruns; flags held.inflight.open
 ;     (the in-flight row is open) and estimates.several (two or more estimates, so one decision can correct them all)
 ;   limits: flags limits.adding (the Add a cap form is open), limits.can-set, limits.can-remove-old, limits.hive-cap,
-;     limits.hive-all-time and limits.hive.editing (the monthly hive cap's editor is open); counts limits.people,
-;     limits.caps and limits.old
+;     limits.hive-all-time, limits.hive.editing (the monthly hive cap's editor is open) and limits.old.others (an old
+;     default is on someone else's mind or swarm, theirs to remove); counts limits.people, limits.caps, limits.old and
+;     limits.old.mine (the old defaults this viewer may remove)
 ;   spend: the value spend.view (chart or table), and the flags spend.any (anything was spent in this range or the one
 ;     before) and sim (the simulator's made-up costs)
 
 (Screen usage "Usage")
+
+(Part usage 1 section ((title "Spend alerts")))
+(When usage 1 (on alerts.available))
+(Part usage 2 notice ((tone info) (text "Loading spend alerts…")))
+(When usage 2 (is alerts.read loading))
+(Part usage 3 notice ((tone bad) (text (words "Could not load spend alerts. " (bind alerts.error)))))
+(When usage 3 (is alerts.read error))
+(Part usage 4 buttons ((items ((button "Try again" reload-spend-alerts ((variant ghost)))))))
+(When usage 4 (is alerts.read error))
+(Part usage 5 note ((text "No current spend alerts.")))
+(When usage 5 (is alerts.read empty))
+(Part usage 6 note ((text "Pausing holds new paid calls for the selected scope. Calls already admitted can finish.")))
+(When usage 6 (has alerts.controls))
+(Part usage 7 notice ((tone bad) (text (bind alerts.action-error))))
+(When usage 7 (on alerts.action-failed))
+(Part usage 8 stack ((source alerts.rows) (frame card) (label "Current spend alerts")))
+(When usage 8 (is alerts.read ready))
 
 ; ---------- your spend this month: against your allowance, with what is held, on your own keys, and by mind
 (Part usage 100 section ((title "Your spend this month") (body (bind mine.summary))))
@@ -169,10 +193,15 @@
 (When usage 351 (is limits ready))
 (When usage 351 (has limits.old))
 (When usage 351 (on limits.can-remove-old))
+(When usage 351 (has limits.old.mine))
 (Part usage 352 entries ((source limits.old) (label "Old form defaults") (title change) (meta reasons) (action action)
   (aria aria) (open remove-old-one)))
 (When usage 352 (is limits ready))
 (When usage 352 (has limits.old))
+; a mind's or swarm's cap is its owner's alone (#704): the rest stay theirs to remove
+(Part usage 353 note ((text "A cap on someone else’s mind or swarm is theirs to remove.")))
+(When usage 353 (is limits ready))
+(When usage 353 (on limits.old.others))
 
 ; ---------- spend and tokens over time: one row of filters above everything it scopes, kept at the top
 (Part usage 400 segmented ((label "Time range") (bind spend.range) (sticky yes)
@@ -267,3 +296,39 @@
 (When usage-limit 21 (on limit.holding))
 (Part usage-limit 22 note ((text (bind limit.unset))))
 (When usage-limit 22 (off limit.figured))
+
+(Screen spend-alert-notice "Spend alert")
+(Part spend-alert-notice 10 bar ((title "Spend alert") (icon alert)
+  (items ((button "View Usage" view-spend-alerts ((variant ghost)))))))
+(When spend-alert-notice 10 (has alerts.open))
+(When spend-alert-notice 10 (none-of ((on alerts.on-usage))))
+
+(Screen spend-alert-detail "Spend alert details")
+(Part spend-alert-detail 10 line ((title (bind alert.name)) (badge "Alert active")))
+(When spend-alert-detail 10 (on alert.open))
+(Part spend-alert-detail 11 line ((title (bind alert.name)) (badge "Alert cleared")))
+(When spend-alert-detail 11 (none-of ((on alert.open))))
+(Part spend-alert-detail 20 facts ((label "Alert details") (rows ((row "Alert spend" (bind alert.spend))
+  (row "Alert window" (bind alert.window)) (row "Opened" (bind alert.opened))))))
+(Part spend-alert-detail 21 note ((text (words "Cleared " (bind alert.closed)))))
+(When spend-alert-detail 21 (none-of ((on alert.open))))
+(Part spend-alert-detail 30 notice ((tone warn) (text (words "At this rate, the hive is projected to spend " (bind alert.projected) " against its " (bind alert.limit) " cap."))))
+(When spend-alert-detail 30 (on alert.projection))
+(Part spend-alert-detail 40 notice ((tone info) (text "New paid calls for this mind are paused.")))
+(When spend-alert-detail 40 (on alert.paused))
+(When spend-alert-detail 40 (none-of ((on alert.hive))))
+; a hive pause holds the hive’s money alone: a member’s own key is theirs (spend_monitor.HIVE_MONEY)
+(Part spend-alert-detail 42 notice ((tone info) (text "New paid calls on the hive’s money are paused. Calls people make on their own keys go on.")))
+(When spend-alert-detail 42 (on alert.paused))
+(When spend-alert-detail 42 (on alert.hive))
+(Part spend-alert-detail 41 note ((text "There is no pause set on this scope.")))
+(When spend-alert-detail 41 (none-of ((on alert.paused))))
+(Part spend-alert-detail 50 buttons ((items ((button "Pause paid calls" pause ((aria "Pause paid calls for {alert.name}") (variant danger)))))))
+(When spend-alert-detail 50 (on alert.control))
+(When spend-alert-detail 50 (on alert.open))
+(When spend-alert-detail 50 (none-of ((on alert.paused))))
+(Part spend-alert-detail 51 buttons ((items ((button "Resume paid calls" resume ((aria "Resume paid calls for {alert.name}") (variant primary)))))))
+(When spend-alert-detail 51 (on alert.control))
+(When spend-alert-detail 51 (on alert.paused))
+(Part spend-alert-detail 52 note ((text "Updating paid call status…")))
+(When spend-alert-detail 52 (on alert.writing))

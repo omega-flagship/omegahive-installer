@@ -1,9 +1,12 @@
 """Purpose: the heads #82 kept from 6606 that Jon's rule on omega-flagship/omegahive#230 says ask each time (they run
 code, capture a device, restart or change the hive or the mind, send outward, write to the web or outside the sandbox,
 or spend money), and the other names for a head that asks, ask a person by default; omega-flagship/omegahive#232 tracks
-them. A person can still let one mind run such a head, one approval lets one paid image through both of its gates, and
-an act approved one at a time stays so under every name it has. The MeTTa memory heads are decided by what their command
-reaches instead (Jon's call on omega-flagship/omegahive#76, test_metta_reach)."""
+them, and those that build software are refused to a mind by default, as Jon's line on omega-flagship/omegahive#395
+says. A person can still let one mind run such a head, one approval lets one paid image through both of its gates, an
+act approved one at a time stays so under every name it has, and a mind whose owner switched its own coding on, or one
+of Create · Code's own minds, edits in a Code workspace with each operation asked for its exact binding. The MeTTa
+memory heads are decided by what their command reaches instead (Jon's call on omega-flagship/omegahive#76,
+test_metta_reach)."""
 import fnmatch
 import json
 import pathlib
@@ -16,6 +19,7 @@ from hive.core.hive import HiveError
 from hive.core.services import CODE_MUTATING
 from hive.tests.test_core_api import client, make_swarm_and_agents  # noqa: F401  (fixture)
 from hive.tests.test_five_way_decisions import decide
+from hive.tests.test_minds_code_through_create import bind_create_code
 from hive.tests.test_phase2_api import authorize
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -79,6 +83,11 @@ def a_mind(client):
 
 def asks_by_name(skill):
     return skill in policy.HIGH_RISK or any(policy._matches(p, skill) for p in policy.DEFAULT_ASK)
+
+
+def own_code(skill):
+    """A head that builds software, which a mind is refused by default (policy.OWN_CODE_SKILLS)."""
+    return any(policy._matches(p, skill) for p in policy.OWN_CODE_SKILLS)
 
 
 def test_the_risk_scan_still_sees_known_declarations():
@@ -156,10 +165,14 @@ def _command(skill):
     return f'({skill}' + ' "invented-chat@g.us"' * index + ' "invented.txt")'
 
 
-def test_every_head_jons_rule_names_asks_a_person_at_the_policy_gate(client):
+def test_every_head_jons_rule_names_asks_a_person_at_the_policy_gate_unless_it_builds_software(client):
+    """Jon's line on omega-flagship/omegahive#395 refuses a mind the heads here that build software ("Building software
+    goes to Create, with no exceptions") unless its owner switched its own coding on; the rest still ask."""
     _, (a, _) = make_swarm_and_agents(client)
     answered = {skill: authorize(client, a, _command(skill))["decision"] for skill in ASK_EACH_TIME}
-    assert {skill: decision for skill, decision in answered.items() if decision != "pending"} == {}
+    assert answered == {skill: "deny" if own_code(skill) else "pending" for skill in ASK_EACH_TIME}
+    assert {skill for skill in ASK_EACH_TIME if own_code(skill)} == {"code-exec", "code-proof-check", "code-test-run",
+                                                                     "write-web-page"}
 
 
 def test_the_list_holds_every_send_whatsapp_head():
@@ -169,12 +182,19 @@ def test_the_list_holds_every_send_whatsapp_head():
     assert len(heads) == 10 and heads <= set(ASK_EACH_TIME)
 
 
-def test_code_edit_heads_run_while_the_operations_they_reach_ask_for_their_exact_binding(client):
-    """Why the edit, open and check heads stay allowed: each works inside the mind's Code workspace or records a verdict
-    on a finished run, and reaches an OmegaCode operation the hive asks a person for, bound to that exact operation
-    (test_services_api covers the binding and its one redemption). The heads that run code (code-exec,
-    code-proof-check, code-test-run) are on ASK_EACH_TIME."""
+@pytest.mark.parametrize("may_code", ("its owner switched its own coding on", "one of Create · Code's minds"))
+def test_code_edit_heads_run_while_the_operations_they_reach_ask_for_their_exact_binding(client, may_code):
+    """Why the edit, open and check heads stay allowed for a mind that may code: each works inside the mind's Code
+    workspace or records a verdict on a finished run, and reaches an OmegaCode operation the hive asks a person for,
+    bound to that exact operation (test_services_api covers the binding and its one redemption). The heads that run
+    code (code-exec, code-proof-check, code-test-run) are on ASK_EACH_TIME. Any other mind is refused them all
+    (policy.own_code)."""
     hive, mind = a_mind(client)
+    if may_code.startswith("its owner"):
+        hive.update_agent(mind["id"], {"options": {"own_coding": True}}, by=mind["owner"])
+    else:
+        bind_create_code(hive, mind["id"], mind["swarm_id"])
+    mind = hive.agent(mind["id"])
     for head, operation in (("code-open", "code-workspace"), ("code-replace", "code-edit"),
                             ("code-create", "code-edit"), ("code-move", "code-edit"), ("code-remove", "code-edit"),
                             ("code-check", "code-verify")):

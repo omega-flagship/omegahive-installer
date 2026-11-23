@@ -1,4 +1,4 @@
-"""What a mind process may see: its environment and, on macOS, what the OS lets it touch.
+"""Purpose: Define and launch the mind process environment and OS sandbox.
 
 Minds run as the hive's own OS user, so the hive's policy gate alone cannot stop a mind's shell or Python from
 reading the hive's files, environment or Docker socket. Two OS-level boundaries close that:
@@ -8,11 +8,15 @@ reading the hive's files, environment or Docker socket. Two OS-level boundaries 
    It does get where the hive's embedding model is cached (HF_HOME, HF_HUB_CACHE) and the offline switches, so a
    mind's memory can load the model read-only, and never a Hugging Face token: HF_TOKEN_PATH points at /dev/null and
    no variable huggingface_hub takes a token from (HF_TOKEN_SOURCES) reaches it.
+   It also gets OMEGACODE_SRC, the hive's own Code release (code_client_src), so a hive with Code gives its minds the
+   OmegaCode client the workspace skills call without any installer setting it.
 2. profile(): a sandbox-exec profile (deny by default). The mind may read only its own folder and the runtime it
    needs (system libraries, PeTTa, SWI-Prolog, the Python venv, the platform's code), write only its own folder,
    and connect only to the hive and the OmegaCode service on loopback. Every child process (shell, python) inherits
    it. So hive secrets, other minds' folders, private apps and the Docker socket are unreachable, and every model or
-   network call has to go through the hive's gateway, where egress is policed.
+   network call has to go through the hive's gateway, where egress is policed. An Iter worker's MeTTa runs as a
+   swipl of its own (think_swipl), which the profile also keeps off the network and out of every folder but a
+   scratch one, as Linux's Landlock keeps that MeTTa.
 """
 
 from __future__ import annotations
@@ -37,9 +41,31 @@ SECRETISH = ("SECRET", "TOKEN", "KEY", "PASSWORD", "PASS", "CREDENTIAL", "COOKIE
 HF_TOKEN_SOURCES = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HF_OIDC_RESOURCE", "HF_OIDC_ID_TOKEN")
 
 
+def code_client_src(env):
+    """The folder whose omegacode package holds the OmegaCode client a mind's workspace skills call (modules/code_workspace,
+    module_requires' service:omegacode): OMEGACODE_SRC when the hive's environment sets it; else the release this
+    hive's Code service runs, which Code's setup already names to the hive, HIVE_CODE_PYTHONPATH where Code runs in its
+    own container (install/linux/setup-code.sh) and <HIVE_CODE_SERVICE_CONFIG's folder>/releases/<HIVE_CODE_SERVICE_RELEASE>
+    on an own hive (install/macos/setup-code.sh unpacks it there). None when neither holds omegacode/client.py, so a
+    hive without Code gives its minds no client and leaves the workspace skills out, as before. Jon's fourth follow-up
+    on #596: no installer set OMEGACODE_SRC, so the workspace skills were off on every standard install, Macs running
+    Code included; a client from the release the service runs also matches that service."""
+    if env.get("OMEGACODE_SRC"):
+        return env["OMEGACODE_SRC"]
+    candidates = [env.get("HIVE_CODE_PYTHONPATH", "")]
+    config, release = env.get("HIVE_CODE_SERVICE_CONFIG", ""), env.get("HIVE_CODE_SERVICE_RELEASE", "").strip()
+    if config and release and "/" not in release:
+        candidates.append(str(pathlib.Path(config).parent / "releases" / release))
+    for candidate in candidates:
+        if candidate and (pathlib.Path(candidate) / "omegacode" / "client.py").is_file():
+            return candidate
+    return None
+
+
 def mind_environment(hive_env, mind_env):
     """The hive's environment filtered to what minds need, then the mind's own variables on top, less any Hugging
-    Face token source, then HF_TOKEN_PATH, which nothing overrides."""
+    Face token source, then HF_TOKEN_PATH, which nothing overrides. OMEGACODE_SRC is the hive's Code release where
+    the hive's environment doesn't set it (code_client_src)."""
     out = {}
     for name, value in hive_env.items():
         if name in PASS or name.startswith("LC_"):
@@ -48,6 +74,9 @@ def mind_environment(hive_env, mind_env):
             continue           # the supervisor's own per-mind switch: never inherited from the hive's environment
         elif name.startswith("OMEGACLAW_") and not any(s in name for s in SECRETISH):
             out[name] = value
+    src = code_client_src(hive_env)
+    if src:
+        out["OMEGACODE_SRC"] = src
     out.update(mind_env)
     for name in HF_TOKEN_SOURCES:
         out.pop(name, None)
@@ -254,23 +283,36 @@ def launcher():
     return ["/usr/bin/env", "HIVE_SANDBOX_PYTHON=" + interpreter()[0], path]
 
 
-def wrap(command, mind_dir, read_roots, profile_dir, agent_id, ports=None, programs=(), *, _runner_placement=None,
-         _runner_workspace=None):
-    """`command` wrapped in this host's OS boundary; writes the profile it enforces and returns (command, path)."""
+def wrap(command, mind_dir, read_roots, profile_dir, agent_id, ports=None, programs=(), *, think=None,
+         _runner_placement=None, _runner_workspace=None, _runner_workspace_until=None):
+    """`command` wrapped in this host's OS boundary; writes the profile it enforces and returns (command, path).
+    think: see profile(); only the macOS backend enforces it, so any other refuses it."""
     placement = None if _runner_placement is None else _runner_placement_words(_runner_placement)
+    workspace = []
     if _runner_workspace is not None:
-        if (placement is None or type(_runner_workspace) is not int or not 3 <= _runner_workspace <= 2**31 - 1
-                or str(_runner_workspace) in placement[:3]):
-            raise ValueError("workspace requires a distinct original fourth descriptor")
+        if type(_runner_workspace) is not int or not 3 <= _runner_workspace <= 2**31 - 1:
+            raise ValueError("invalid private runner workspace descriptor")
+        workspace = [_RUNNER_WORKSPACE_FLAG, str(_runner_workspace)]
+        if placement is None:
+            if (type(_runner_workspace_until) is not float or not math.isfinite(_runner_workspace_until)
+                    or _runner_workspace_until <= 0):
+                raise ValueError("standalone workspace requires an absolute deadline")
+            workspace.append(_runner_workspace_until.hex())
+        elif str(_runner_workspace) in placement[:3] or _runner_workspace_until is not None:
+            raise ValueError("placed workspace requires a distinct original fourth descriptor")
     ports = loopback_ports() if ports is None else ports
     kind = backend()
-    if placement is not None and kind != "landlock":
-        raise RuntimeError("runner placement is supported only by the Linux Landlock launcher")
+    if think is not None and kind != "sandbox-exec":
+        raise RuntimeError("limits for one executable inside a mind's sandbox are kept only by the macOS sandbox")
+    if (placement is not None or workspace) and kind != "landlock":
+        raise RuntimeError("private workspace and placement require the Linux Landlock launcher")
     profile_dir = pathlib.Path(profile_dir)
     profile_dir.mkdir(parents=True, exist_ok=True)
     if kind == "sandbox-exec":
+        from . import mindfs
+        mindfs.require_contained_links(mind_dir)
         path = profile_dir / f"{agent_id}.sb"
-        path.write_text(profile(mind_dir, read_roots, ports))
+        path.write_text(profile(mind_dir, read_roots, ports, think))
         return ["sandbox-exec", "-f", str(path)] + list(command), str(path)
     if kind == "landlock":
         import json
@@ -283,13 +325,12 @@ def wrap(command, mind_dir, read_roots, profile_dir, agent_id, ports=None, progr
             if len(encoded.encode()) > 65536:
                 raise ValueError("private runner profile exceeds64KiB")
             path.write_text(encoded)
-        workspace = [] if _runner_workspace is None else [_RUNNER_WORKSPACE_FLAG, str(_runner_workspace)]
         # Every launch goes by the launcher's own path, so its AppArmor profile attaches (flagship #2). Its shebang runs
         # HIVE_SANDBOX_PYTHON with -I -B -S, which ignores site, PYTHONPATH and user startup for the trusted P bootstrap;
         # the actual caller separately passes exactly the three placement descriptors, which env and the shebang's exec
         # inherit.
-        placed = [] if placement is None else [_RUNNER_PLACEMENT_FLAG, *placement, *workspace]
-        return launcher() + [str(path), *placed, "--"] + list(command), str(path)
+        placed = [] if placement is None else [_RUNNER_PLACEMENT_FLAG, *placement]
+        return launcher() + [str(path), *placed, *workspace, "--"] + list(command), str(path)
     raise RuntimeError("no OS isolation is available on this host")
 
 
@@ -321,8 +362,11 @@ def loopback_ports(environ=None):
     return tuple(dict.fromkeys([hive, *extras]))
 
 
-def profile(mind_dir, read_roots, ports=None):
-    """A deny-by-default sandbox-exec profile for one mind."""
+def profile(mind_dir, read_roots, ports=None, think=None):
+    """A deny-by-default sandbox-exec profile for one mind. think: (swipl, scratch) for an Iter worker whose kit metta
+    runs PeTTa as a swipl of its own (think_swipl), scratch a folder inside the mind's, joined to the resolved folder
+    as written. That one executable then gets what Linux's Landlock gives the kit's PeTTa
+    (templates/iter/tools/_think_sandbox.py): no network, no program of its own, and writes only beneath scratch."""
     ports = loopback_ports() if ports is None else ports
     outbound = " ".join(f'(remote ip "localhost:{p}")' for p in ports)
     mind_dir = pathlib.Path(mind_dir).resolve()
@@ -350,7 +394,45 @@ def profile(mind_dir, read_roots, ports=None):
         f"(allow network-outbound {outbound})" if outbound else "",
         "(allow network-bind (local ip \"localhost:*\"))",
     ]
+    if think is not None:
+        swipl, scratch = think
+        who = f"(process-path {_q(pathlib.Path(swipl).resolve())})"
+        # sandbox-exec takes the last rule that matches, so these come last, and each names the operations the rules
+        # above allow: on macOS 26.4.1 a trailing (deny network* ...) left this swipl the loopback port allowed above,
+        # while naming network-outbound refused it. So probed, as this swipl PeTTa connects nowhere, binds no port,
+        # starts no program and writes nothing outside scratch, while the worker's own processes still do all four.
+        lines += [f"(deny network-outbound network-inbound network-bind {who})",
+                  f"(deny process-exec process-fork {who})",
+                  f"(deny file-write* (require-all {who} (require-not (subpath {_q(mind_dir / scratch)}))"
+                  " (require-not (literal \"/dev/null\")) (require-not (literal \"/dev/dtracehelper\"))))"]
     return "\n".join(line for line in lines if line) + "\n"
+
+
+# The name of the swipl the kit's PeTTa runs as on macOS: a copy beside this host's swipl, so it loads as swipl does,
+# under a path of its own that a mind's profile can limit (profile's think), since macOS refuses a sandbox inside a
+# mind's own (templates/iter/tools/_think_sandbox.py).
+THINK_SWIPL = "swipl-think"
+
+
+def think_swipl():
+    """The kit's PeTTa's own swipl on this host, a copy beside the swipl on PATH, made again when that one changes.
+    Its resolved path, or None where there is no swipl or its folder can't take the copy, and then the kit's metta
+    asks the hive's gate each use. Time: two stats, plus one copy of swipl when it changed."""
+    found = shutil.which("swipl")
+    if not found:
+        return None
+    real = pathlib.Path(os.path.realpath(found))
+    copy = real.with_name(THINK_SWIPL)
+    try:
+        source = real.stat()
+        have = copy.stat() if copy.exists() else None
+        if have is None or (have.st_size, have.st_mtime_ns) != (source.st_size, source.st_mtime_ns):
+            fresh = copy.with_name(f".{THINK_SWIPL}.{os.getpid()}")
+            shutil.copy2(real, fresh)   # with its mode and times, so the next start finds it current
+            os.replace(fresh, copy)     # whole or not at all, even with two workers starting at once
+    except OSError:
+        return None
+    return copy
 
 
 def runtime_roots(petta_path, core_root, extra=()):
@@ -362,7 +444,7 @@ def runtime_roots(petta_path, core_root, extra=()):
     if swipl:
         roots.append(str(pathlib.Path(os.path.realpath(swipl)).parent.parent))
     venv = pathlib.Path(os.environ.get("VIRTUAL_ENV") or pathlib.Path(core_root).parent / ".runtime" / "venv312")
-    roots += [venv, os.environ.get("OMEGACODE_SRC")]
+    roots += [venv, code_client_src(os.environ)]
     roots.append(hf_hub_cache(os.environ))
     cfg = venv / "pyvenv.cfg"   # the interpreter the venv was made from (its standard library)
     if cfg.exists():

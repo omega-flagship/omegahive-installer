@@ -16,7 +16,8 @@ export function AppInstall({ programId, name, admin }: { programId: string; name
   const toast = useHive((s) => s.toast)
   const swarms = useHive((s) => s.swarms)
   const res = useResource(() => need(client, 'programInstall', 'Installing apps')(programId), { context: programId })
-  const people = useResource(() => need(client, 'listPeople', 'People')(), { context: 'people' })
+  // the people to allow, only for the admin who installs: GET /api/people is admin-only, and a member can open this tab
+  const people = useResource(() => (admin ? need(client, 'listPeople', 'People')() : Promise.resolve(null)), { context: ['people', admin], isEmpty: () => false })
   const [everyone, setEveryone] = useState(true)
   const [chosen, setChosen] = useState<string[]>([])
   const [useIn, setUseIn] = useState<string[]>([])

@@ -1,3 +1,4 @@
+// Purpose: prove the Ask speaks as the person's own mind and recalls what they discussed with it across threads.
 import { describe, expect, it } from 'vitest'
 import { memoryBackend } from '../../lib/askMemory/backend'
 import { recall, MIND_TALKS_MAX, type Forgets } from '../../lib/askMemory/recall'
@@ -81,7 +82,7 @@ describe('the reply renders once', () => {
 describe('the person never appears as an answerer; their mind does', () => {
   // Haley (an invented person) has deployed her mind as Taiga
   const taiga = { id: TAIGA, name: 'Taiga', swarm_id: 's_inv_taiga' }
-  const settings = { swarm_id: null, thread_budget_usd: 0.25, eligible: [] }
+  const settings = { swarm_id: null, eligible: [] }
   it('the floating box chip names the mind, never "you" or the person', () => {
     const chip = answererChip({ settings, personal: taiga })!
     for (const words of [chipWords(chip), nativeAnswererWords(chip, 'construct'), nativeAnswererWords(chip, 'professional'), nativeAnswererWords(chip, 'still')]) {
@@ -90,7 +91,7 @@ describe('the person never appears as an answerer; their mind does', () => {
     }
   })
   it('a page swarm that cannot answer routes to the mind, said by its name', () => {
-    const r = routeAround({ swarm_id: 's_inv_evo' } as never, { swarm_id: null, thread_budget_usd: 0.25, eligible: [{ id: 's_inv_lyra', name: 'Lyra', orchestrator: { id: 'a_o', name: 'Orion', status: 'awake' } }] } as never, taiga, () => ({ name: 'Evolve', coordinator_id: null }) as never)
+    const r = routeAround({ swarm_id: 's_inv_evo' } as never, { swarm_id: null, eligible: [{ id: 's_inv_lyra', name: 'Lyra', orchestrator: { id: 'a_o', name: 'Orion', status: 'awake' } }] } as never, taiga, () => ({ name: 'Evolve', coordinator_id: null }) as never)
     expect(r.note).toBe('Answering: Taiga')
   })
   it('the mind’s thread says the mind answers for the person, in its name', () => {

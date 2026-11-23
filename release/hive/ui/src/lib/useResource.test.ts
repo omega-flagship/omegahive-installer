@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, type HiveClient } from '../api/client'
 import { ResourceView } from '../ui/ResourceView'
-import { actionFailure, need, Resource, UnsupportedError, type ResourceState, type Visibility } from './useResource'
+import { actionFailure, need, noteRights, Resource, rightsEpoch, UnsupportedError, type ResourceState, type Visibility } from './useResource'
 import { onReadsInFlight, readsInFlight, trackRead } from './readsInFlight'
 
 const flush = async () => {
@@ -126,6 +126,94 @@ describe('Resource', () => {
     expect(fetcher).toHaveBeenCalledTimes(4)
   })
 
+  // acceptance-tests#13: a member's page kept polling admin-only reads that answer 403
+  it('stops polling after a 403, on the first read or on a refresh, until it is started again', async () => {
+    const { vis, set } = fakeVisibility()
+    let answer: 'ok' | 403 = 403
+    const fetcher = vi.fn(() => (answer === 403 ? Promise.reject(new ApiError(403, 'forbidden', 'Forbidden')) : Promise.resolve(['x'])))
+    const r = new Resource(fetcher, { poll: 1000, visibility: vis })
+    r.start()
+    await flush()
+    expect(r.getState().status).toBe('error')
+    vi.advanceTimersByTime(5000)
+    set(true)
+    set(false)
+    await flush()
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    // an explicit reload still reads
+    answer = 'ok'
+    await r.load()
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(r.getState().status).toBe('ready')
+    // a refresh that turns 403 keeps the data on screen and stops the poll there
+    answer = 403
+    vi.advanceTimersByTime(1000)
+    await flush()
+    expect(fetcher).toHaveBeenCalledTimes(3)
+    expect(r.getState()).toMatchObject({ status: 'ready', data: ['x'] })
+    vi.advanceTimersByTime(5000)
+    await flush()
+    expect(fetcher).toHaveBeenCalledTimes(3)
+    // start again (a new sign-in rebinds and restarts): it reads and polls again
+    answer = 'ok'
+    r.rebind('other')
+    r.start()
+    await flush()
+    vi.advanceTimersByTime(1000)
+    await flush()
+    expect(fetcher).toHaveBeenCalledTimes(5)
+    r.stop()
+  })
+
+  // Dot's read of #635: rights change mid-session (made admin, an owner's grant), so a 403-stopped read must not stay stopped
+  it('a 403-stopped read reads again when resumed, and polls again once that succeeds; others are left alone', async () => {
+    const { vis } = fakeVisibility()
+    let answer: 'ok' | 403 = 403
+    const fetcher = vi.fn(() => (answer === 403 ? Promise.reject(new ApiError(403, 'forbidden', 'Forbidden')) : Promise.resolve(['x'])))
+    const r = new Resource(fetcher, { poll: 1000, visibility: vis })
+    r.resumeForbidden()   // not started: nothing
+    await flush()
+    expect(fetcher).toHaveBeenCalledTimes(0)
+    r.start()
+    await flush()
+    vi.advanceTimersByTime(3000)
+    await flush()
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    // still forbidden: one more read, then idle again (one 403 per rights change, never a stream)
+    r.resumeForbidden()
+    await flush()
+    vi.advanceTimersByTime(3000)
+    await flush()
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    answer = 'ok'
+    r.resumeForbidden()
+    await flush()
+    expect(r.getState().status).toBe('ready')
+    vi.advanceTimersByTime(2000)
+    await flush()
+    expect(fetcher).toHaveBeenCalledTimes(5)
+    // a read that is not forbidden is not read again by a resume
+    r.resumeForbidden()
+    await flush()
+    expect(fetcher).toHaveBeenCalledTimes(5)
+    r.stop()
+    answer = 403
+    r.resumeForbidden()   // stopped: nothing
+    await flush()
+    expect(fetcher).toHaveBeenCalledTimes(5)
+  })
+
+  it('keeps polling after any other failure', async () => {
+    const fetcher = vi.fn(() => Promise.reject(new ApiError(500, 'boom', 'Server error')))
+    const r = new Resource(fetcher, { poll: 1000, visibility: fakeVisibility().vis })
+    r.start()
+    await flush()
+    vi.advanceTimersByTime(2000)
+    await flush()
+    expect(fetcher).toHaveBeenCalledTimes(3)
+    r.stop()
+  })
+
   it('notifies subscribers with a new snapshot on each change', async () => {
     const r = new Resource(() => Promise.resolve(['x']))
     const seen: string[] = []
@@ -215,6 +303,20 @@ describe('reads in flight (what the Ask waits for before it reads the page an ac
     b.rebind('ctx-bo')
     expect(readsInFlight()).toBe(0)
     b.stop()
+  })
+})
+
+describe('noteRights: who is signed in, and as what', () => {
+  it('moves the rights epoch only when the key changes, never on the first one seen', () => {
+    const start = rightsEpoch()
+    noteRights('user:p_ines|person|member')
+    expect(rightsEpoch()).toBe(start)
+    noteRights('user:p_ines|person|member')
+    expect(rightsEpoch()).toBe(start)
+    noteRights('user:p_ines|person|admin')
+    expect(rightsEpoch()).toBe(start + 1)
+    noteRights('user:p_ada|person|admin')
+    expect(rightsEpoch()).toBe(start + 2)
   })
 })
 

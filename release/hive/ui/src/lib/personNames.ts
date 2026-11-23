@@ -44,12 +44,16 @@ export function chatPerson(p: string, names: PeopleNames = {}): { label: string;
 }
 
 /**
- * The names this viewer may see: themselves (GET /api/auth/me) and, where the hive lists them, its people. Both reads
- * are bound to the identity they were made under (useResource), so an earlier sign-in's names are never shown.
+ * The names this viewer may see: themselves (GET /api/auth/me) and, for an admin, the hive's people. GET /api/people is
+ * admin-only, so a member's page never asks it (acceptance-tests#13: each ask was a 403 in the member's recent errors).
+ * Both reads are bound to the identity they were made under (useResource), so an earlier sign-in's names are never shown.
  */
 export function usePeopleNames(): PeopleNames {
   const client = useHive((s) => s.client)
-  const { me } = useMe()
-  const people = useResource(() => need(client, 'listPeople', 'People')().then((r) => r.people), { isEmpty: () => false })
+  const { me, admin } = useMe()
+  const people = useResource(
+    () => (admin ? need(client, 'listPeople', 'People')().then((r) => r.people) : Promise.resolve(null)),
+    { context: [me?.principal, admin], isEmpty: () => false },
+  )
   return { me: me ?? null, people: people.status === 'ready' ? (people.data ?? null) : null }
 }

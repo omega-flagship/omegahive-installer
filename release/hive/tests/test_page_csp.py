@@ -54,7 +54,9 @@ def test_the_page_carries_a_fresh_nonce_csp_however_it_is_asked_for(hive_at, bas
 
 def test_the_page_csp_names_what_the_page_and_its_frames_need_and_no_more():
     policy = dict(part.strip().split(" ", 1) for part in app_module.page_csp("0" * 8 + "-0000-0000-0000-" + "0" * 12).split(";"))
-    assert policy["script-src"] == "'self' 'nonce-00000000-0000-0000-0000-000000000000'"   # no 'unsafe-inline', no eval
+    # no 'unsafe-inline' and no JavaScript eval; 'wasm-unsafe-eval' only lets the page compile WebAssembly
+    assert policy["script-src"] == "'self' 'wasm-unsafe-eval' 'nonce-00000000-0000-0000-0000-000000000000'"
+    assert "'unsafe-eval'" not in policy["script-src"].split()
     assert policy["style-src"] == "'self' 'nonce-00000000-0000-0000-0000-000000000000'"
     assert policy["style-src-attr"] == "'unsafe-inline'"   # the frames' apps use style attributes (lib/appFrame.ts)
     assert policy["connect-src"] == policy["frame-src"] == policy["worker-src"] == policy["default-src"] == "'self'"
@@ -68,7 +70,7 @@ def test_a_build_without_the_slot_keeps_working_and_is_named(hive_at, caplog):
     hive = hive_at(page="<!doctype html><html><head><script>/* boot */</script></head><body></body></html>")
     out = hive.get("/")
     assert out.headers["content-security-policy"] == app_module.page_csp(None)
-    assert "script-src 'self' 'unsafe-inline';" in out.headers["content-security-policy"]
+    assert "script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline';" in out.headers["content-security-policy"]
     assert any("without the page nonce slot" in r.getMessage() for r in caplog.records)
 
 

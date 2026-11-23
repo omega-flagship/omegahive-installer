@@ -1,4 +1,5 @@
 /**
+ * Purpose: play the universal Ask's host in the browser, with an invented answering mind, for the simulated hive.
  * Purpose: SIM ONLY. The universal Ask's host side, played in the browser with an invented answering mind (Surface
  * universal Ask phase 1). It follows UNIVERSAL_ASK_HOST_CONTRACT_DRAFT_20261005 and Jon's ruling: the swarm's
  * orchestrator (coordinator) answers: the addressed mind's swarm, else the page's swarm, else the person's default
@@ -6,16 +7,20 @@
  *
  * It plays every event phase so the page can be proved against them: accepted, thinking (one frame is deliberately
  * dropped every third turn, so gap recovery through GET /api/ask/{op} is exercised), answer, proposal (navigate, ui),
- * ui-change (after the person keeps a proposed look), action-needs-confirm, presence (incl. sketch), done, refused,
- * and a hand-over's intent and dispatched frames with, for research, the report back after done.
- * "lose a step" plays a lost frame whose recovery read also fails (Review B2): a navigation after it must be held.
+ * ui-change (after the person keeps a proposed look), action-needs-confirm, presence (incl. sketch), go_ahead, done,
+ * refused,
+ * and a hand-over's intent and dispatched frames with, for research, the report back after done. "lose a step" plays a lost frame whose recovery read also fails (Review B2): a navigation after it must be held.
+ * Money as the host keeps it (Jon on omega-flagship/omegahive#294): no cap on a turn or a thread; a turn whose spend
+ * reaches the person's threshold asks once ("expensive" in the words plays one) unless they turned that off.
  */
 import { plural } from '../../lib/plural'
 import { AskRefusal } from '../ask'
-import type { ActResult, AskAccepted, AskCapabilities, AskBody, AskSettingsPut, AskEvent, AskSettings, AskSteerBody, AskSteerResult, AskThread, AskTurnState, AskWho, ResearchView } from '../ask'
+import type { ActResult, AskAccepted, AskCapabilities, AskBody, AskGoAheadResult, AskSettingsPut, AskEvent, AskSettings, AskSteerBody, AskSteerResult, AskThread, AskTurnState, AskWho, ResearchView } from '../ask'
 import type { Agent, Goal, Room, Swarm, WorkSession } from '../types'
 import { href } from '../../lib/router'
 import { designStarter } from './omegadesign'
+// the host's defaults (hive/config.json, the tree layer load_settings reads): the sim follows them, never its own copy
+import hiveConfig from '../../../../config.json'
 import { simBankedDemo } from './omegaTools'
 import { guidedIntent } from '../../features/guided/match'
 import { dwellMs } from '../../features/guided/machine'
@@ -65,7 +70,21 @@ interface Turn {
   tour?: { script: string; total: number; dwell: number[]; step: number; act: string; finish: (text: string) => void; title: string }
   /** the ids of this turn's memory notes: the only ids a revise may name (host conductor.note_ids) */
   noteIds: Set<string>
+  /** the turn's go-ahead question, while it waits on the person's answer (POST /api/ask/{op}/go-ahead) */
+  waiting?: { carryOn: () => void }
 }
+
+/** How long a turn waits on its go-ahead question before it stops as expensive (HIVE_ASK_GO_AHEAD_SECONDS). */
+export const GO_AHEAD_WAIT_MS = hiveConfig.HIVE_ASK_GO_AHEAD_SECONDS * 1000
+/**
+ * The host's expensive rule: an answer may spend up to TIMES the median of the person's last PAID_KEPT paid answers,
+ * never more than EXPENSIVE_CEILING_USD, and the ceiling alone until PAID_NEEDED of them (HIVE_ASK_EXPENSIVE_*).
+ */
+export const EXPENSIVE_CEILING_USD = hiveConfig.HIVE_ASK_EXPENSIVE_OVER_USD
+export const EXPENSIVE_TIMES = hiveConfig.HIVE_ASK_EXPENSIVE_TIMES
+export const PAID_KEPT = hiveConfig.HIVE_ASK_EXPENSIVE_MEDIANS
+export const PAID_NEEDED = hiveConfig.HIVE_ASK_EXPENSIVE_FEWEST
+const round3 = (n: number) => Math.round(n * 1000) / 1000
 
 /**
  * SIM: the steps a guided demo has, as the page will play them (a banked one reads the invented catalogue stand-in,
@@ -78,7 +97,7 @@ function simTour(base: GuideScript): GuideScript | null {
 }
 
 // the built host's exact keys (platform/ask-p1 at 6100794, hive/API.md "Universal Ask, phase 1")
-const ALLOWED = ['operation_id', 'text', 'context', 'thread', 'via', 'memory_notes', 'conversation', 'continues']
+const ALLOWED = ['operation_id', 'text', 'context', 'thread', 'via', 'memory_notes', 'conversation', 'continues', 'go_ahead']
 /**
  * The host's check of a turn's conversation (conductor.check_conversation): ≤ 8 exchanges, each exactly {said, answer,
  * by, at} with words and an answer, a mind id and a time ≥ 0, ≤ 8 KB in all (words, answers and ids, UTF-8).
@@ -162,7 +181,9 @@ const simReport = (requestId: string, title: string): ResearchView => ({
 })
 
 export class SimAsk {
-  private settings: AskSettings = { swarm_id: 's_lyra', thread_budget_usd: 0.25 }
+  private settings: { swarm_id: string | null; ask_when_expensive: boolean } = { swarm_id: 's_lyra', ask_when_expensive: true }
+  /** each person's latest paid answers, oldest first (what an answer settled at): their threshold reads them */
+  private paid = new Map<string, number[]>()
   private threads = new Map<string, AskThread>()
   private turns = new Map<string, Turn>()
   /** the reports the sim's research hand-overs made, by request id (GET /api/research/{id}) */
@@ -231,17 +252,32 @@ export class SimAsk {
   getSettings(): AskSettings {
     const all = this.d.swarms().filter((s) => !s.archived_at && s.coordinator_id).map((s) => this.choice(s.id)!)
     const eligible = this.answer.one ? all.filter((s) => s.id === 's_lyra') : all
-    return { swarm_id: this.settings.swarm_id, swarm: this.choice(this.settings.swarm_id), thread_budget_usd: this.settings.thread_budget_usd, max_thread_budget_usd: 5, eligible, capabilities: { ...this.flags, ...(this.codeTests !== undefined ? { code_test_intents: this.codeTests } : {}) } }
+    return { swarm_id: this.settings.swarm_id, swarm: this.choice(this.settings.swarm_id), ask_when_expensive: this.settings.ask_when_expensive, expensive_usd: this.threshold(this.d.principal()), eligible, capabilities: { ...this.flags, ...(this.codeTests !== undefined ? { code_test_intents: this.codeTests } : {}) } }
   }
   setSettings(b: AskSettingsPut): AskSettings {
     const keys = Object.keys(b ?? {})
-    if (keys.some((k) => !['swarm_id', 'mind_id', 'thread_budget_usd'].includes(k))) throw refuse(400, 'invalid', 'unexpected field')
+    if (keys.some((k) => !['swarm_id', 'mind_id', 'ask_when_expensive'].includes(k))) throw refuse(400, 'invalid', 'unexpected field')
     let swarm = b.swarm_id
     if (b.mind_id) swarm = this.d.agents().find((a) => a.id === b.mind_id)?.swarm_id ?? undefined
     if (swarm !== undefined && swarm !== null && !this.d.swarms().some((s) => s.id === swarm)) throw refuse(400, 'invalid', 'unknown swarm')
-    if (b.thread_budget_usd !== undefined && (typeof b.thread_budget_usd !== 'number' || b.thread_budget_usd <= 0 || b.thread_budget_usd > 5)) throw refuse(400, 'invalid', 'budget out of range')
-    this.settings = { swarm_id: swarm === undefined ? this.settings.swarm_id : swarm, thread_budget_usd: b.thread_budget_usd ?? this.settings.thread_budget_usd }
+    if (b.ask_when_expensive !== undefined && typeof b.ask_when_expensive !== 'boolean') throw refuse(400, 'invalid', 'ask_when_expensive')
+    this.settings = { swarm_id: swarm === undefined ? this.settings.swarm_id : swarm, ask_when_expensive: b.ask_when_expensive ?? this.settings.ask_when_expensive }
     return this.getSettings()
+  }
+
+  /**
+   * The person's threshold now: the lower of ten times the median of their last 20 paid answers (once they have 5)
+   * and $1. Time: p log p comparisons, p = their kept answers (at most 20).
+   */
+  threshold(principal: string): number {
+    const paid = [...(this.paid.get(principal) ?? [])].sort((a, b) => a - b)
+    if (paid.length < PAID_NEEDED) return EXPENSIVE_CEILING_USD
+    const mid = paid.length >> 1
+    const median = paid.length % 2 ? paid[mid] : (paid[mid - 1] + paid[mid]) / 2
+    return Math.min(EXPENSIVE_CEILING_USD, Math.round(EXPENSIVE_TIMES * median * 1e6) / 1e6)
+  }
+  private paidAnswer(principal: string, usd: number): void {
+    this.paid.set(principal, [...(this.paid.get(principal) ?? []), usd].slice(-PAID_KEPT))
   }
 
   /** Delete a thread and every turn in it (the person's own records). */
@@ -303,7 +339,7 @@ export class SimAsk {
     const sw = this.d.swarms().find((x) => x.coordinator_id)
     const mind = sw ? this.d.agents().find((a) => a.id === sw.coordinator_id) : undefined
     if (!sw || !mind) return
-    const thread: AskThread = { id: 'ses_asksimold', mind: { id: mind.id, name: mind.name }, swarm: { id: sw.id, name: sw.name }, budget_usd: 0.25, spent_usd: 0.031 }
+    const thread: AskThread = { id: 'ses_asksimold', mind: { id: mind.id, name: mind.name }, swarm: { id: sw.id, name: sw.name }, budget_usd: 0, spent_usd: 0.031 }
     const old = (n: number, principal: string, text: string, hoursAgo: number, deleted = false, th: AskThread = thread) => {
       const at = new Date(Date.now() - hoursAgo * 3_600_000).toISOString()
       const turn: Turn = {
@@ -347,7 +383,7 @@ export class SimAsk {
     const me = this.d.principal()
     const at = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString()
     const seed = (id: string, owner: string, hoursAgo: number, spent: number, ended = false) =>
-      this.sessionLog.set(id, { thread: { id, mind: { id: mind.id, name: mind.name }, swarm: { id: sw.id, name: sw.name }, budget_usd: 5, spent_usd: spent }, owner, created_at: at(hoursAgo), ended_at: ended ? at(hoursAgo - 0.5) : null })
+      this.sessionLog.set(id, { thread: { id, mind: { id: mind.id, name: mind.name }, swarm: { id: sw.id, name: sw.name }, budget_usd: 0, spent_usd: spent }, owner, created_at: at(hoursAgo), ended_at: ended ? at(hoursAgo - 0.5) : null })
     seed('ses_asksimopen1', me, 3, 0.06)
     seed('ses_asksimopen2', me, 26, 0)
     seed('ses_asksimdone1', me, 50, 0.12, true)
@@ -427,6 +463,7 @@ export class SimAsk {
     if (body.memory_notes !== undefined && !notesOk(body.memory_notes)) throw refuse(400, 'invalid', 'memory_notes')
     if (body.conversation !== undefined && !conversationOk(body.conversation)) throw refuse(400, 'invalid', 'conversation')
     if ('continues' in body && (typeof body.continues !== 'string' || !body.continues.length || body.continues.length > 120)) throw refuse(400, 'invalid', 'continues')
+    if (body.go_ahead !== undefined && body.go_ahead !== true) throw refuse(400, 'invalid', 'go_ahead')
     const canon = JSON.stringify(body)
     const principal = this.d.principal()
     const prior = this.turns.get(`${principal}|${body.operation_id}`)
@@ -455,12 +492,12 @@ export class SimAsk {
     const key = `${principal}|${mind.id}`
     let thread = this.threads.get(key)
     if (!thread) {
-      thread = { id: `ses_ask${(++this.count).toString(36)}${mind.id.slice(-3)}`, mind: { id: mind.id, name: mind.name }, swarm: { id: swarm.id, name: swarm.name }, budget_usd: this.settings.thread_budget_usd, spent_usd: 0 }
+      // a thread holds no cap of its own (Jon on #294): budget 0, its spend only
+      thread = { id: `ses_ask${(++this.count).toString(36)}${mind.id.slice(-3)}`, mind: { id: mind.id, name: mind.name }, swarm: { id: swarm.id, name: swarm.name }, budget_usd: 0, spent_usd: 0 }
       this.threads.set(key, thread)
       this.sessionLog.set(thread.id, { thread, owner: principal, created_at: new Date().toISOString(), ended_at: null })
     }
     thread.about = about ? { id: about.id, name: about.name } : null
-    if (thread.spent_usd >= thread.budget_usd) throw refuse(402, 'spend_limit', 'spend_limit')
     for (const t of this.turns.values()) if (t.thread.id === thread.id && t.state === 'open') throw refuse(409, 'ask_busy', 'ask_busy', { operation_id: t.op })
     const turn: Turn = { op: body.operation_id, turnId: `turn_${Date.now().toString(36)}${this.count++}`, canon, thread, events: [], state: 'open', principal, proposals: new Map(), heard: [], body, acts: new Set(), results: new Map(), noteIds: new Set((body.memory_notes ?? []).flatMap((n) => (typeof n === 'string' ? [] : [n.id]))), createdAt: new Date().toISOString() }
     this.turns.set(`${principal}|${body.operation_id}`, turn)
@@ -492,8 +529,26 @@ export class SimAsk {
     const t = this.turns.get(`${this.d.principal()}|${op}`)
     if (!t) throw refuse(404, 'not_available', 'no such turn')
     if (t.state !== 'open') return { stopped: false }
+    t.waiting = undefined
     this.push(t, { phase: 'refused', reason: 'stopped' })
     return { stopped: true }
+  }
+
+  /**
+   * POST /api/ask/{op}/go-ahead {go}: the turn's asker answers its question. 404 for a turn the caller cannot see, 400
+   * for any body but {go: boolean}, 409 not_waiting when it is not waiting; go true carries it on and it asks nothing
+   * more, false stops it exactly as stop does.
+   */
+  goAhead(op: string, b: { go: boolean }): AskGoAheadResult {
+    const t = this.turns.get(`${this.d.principal()}|${op}`)
+    if (!t) throw refuse(404, 'not_available', 'no such turn')
+    if (!b || typeof b !== 'object' || Object.keys(b).join() !== 'go' || typeof b.go !== 'boolean') throw refuse(400, 'invalid', 'go')
+    const waiting = t.waiting
+    if (t.state !== 'open' || !waiting) throw refuse(409, 'not_waiting', 'not_waiting')
+    t.waiting = undefined
+    if (b.go) waiting.carryOn()
+    else this.stop(op)
+    return { ok: true, go: b.go }
   }
 
   /**
@@ -783,25 +838,63 @@ export class SimAsk {
       for (const [m, lose] of memories) steps.push([260, m, lose])
       answer = `${answer} I will remember that${memories.length > 1 ? ' too' : ''}; it is kept in your browser, not on the hive.`
     }
-    // SIM (spend-stop r1): "hit the spending limit" ends the turn at the thread's limit, as the host's spend_cap does
-    // ($0.23 of $0.25: the next call would not fit), so the stop's New thread and raise can be tried
-    // j0-fixes r1: the done frame names the limit, as ask-limits r1's host does (done.limit); "hit the mind limit" plays
-    // the mind's own limit instead, and ?simlimit=absent plays today's host (no `limit` on the frame)
+    // SIM (spend-stop r1): "hit the spending limit" ends the turn at the person's monthly allowance, as the host's
+    // spend_cap does (no Ask turn or thread has a cap of its own any more); "hit the mind limit" plays the mind's own
+    // limit and "hit the swarm limit" the swarm's. The done frame names the limit, as ask-limits r1's host does
+    // (done.limit); ?simlimit=absent plays a host that does not (no `limit` on the frame)
     const capHit = /\b(hit|reach) the (mind |swarm )?(spending )?limit\b/.test(text)
-    const capKind = /\bthe mind (spending )?limit\b/.test(text) ? 'mind_total' : /\bthe swarm (spending )?limit\b/.test(text) ? 'swarm' : 'thread'
+    const capKind = /\bthe mind (spending )?limit\b/.test(text) ? 'mind_total' : /\bthe swarm (spending )?limit\b/.test(text) ? 'swarm' : 'member_allowance'
+    const capFigures: Record<string, [number, number]> = { mind_total: [3.89, 3.92], swarm: [45.66, 45.66], member_allowance: [4.98, 5] }
     const limitAbsent = typeof window !== 'undefined' && new URLSearchParams(window.location?.search ?? '').get('simlimit') === 'absent'
-    const spend = capHit && capKind !== 'thread' ? 0 : capHit ? Math.max(0, Math.round((t.thread.budget_usd - 0.02 - t.thread.spent_usd) * 1000) / 1000) : Math.round((0.008 + (body.text.length % 7) * 0.002) * 1000) / 1000
+    // SIM (Jon on #294): "expensive" in the words plays an answer whose spend reaches the person's threshold; it asks
+    // once, unless they turned that off or this request already carries their go-ahead
+    const expensive = !capHit && /\bexpensive\b/i.test(body.text)
+    const threshold = this.threshold(t.principal)
+    const asks = expensive && this.settings.ask_when_expensive && body.go_ahead !== true
+    const spentAtQuestion = round3(threshold * 1.05)
+    const spend = capHit ? 0 : expensive ? round3(threshold * 1.6) : round3(0.008 + (body.text.length % 7) * 0.002)
     if (capHit) answer = 'I started on that, then stopped before the next step.'
+    if (expensive) {
+      steps.push([600, { phase: 'thinking', step: 'building it' }])
+      answer = 'It’s built: a small tic-tac-toe app you can open from Apps. (Simulated: nothing was built.)'
+    }
     let at = 0
-    const ending: [number, Record<string, unknown>][] = [[650, { phase: 'answer', text: answer, message_id: `m_ask${t.turnId.slice(-5)}` }], [220, { phase: 'done', spent_usd: 0, turn_spent_usd: spend, outcome: capHit ? 'spend_cap' : 'complete', ...(capHit && !limitAbsent ? { limit: capKind === 'thread' ? { kind: 'thread', current_usd: Math.round((t.thread.spent_usd + spend) * 1000) / 1000, limit_usd: t.thread.budget_usd, estimate_usd: 0.03 } : { kind: capKind, current_usd: capKind === 'swarm' ? 45.66 : 3.89, limit_usd: capKind === 'swarm' ? 45.66 : 3.92, estimate_usd: 0.25 } } : {}) }]]
+    const ending: [number, Record<string, unknown>][] = [[650, { phase: 'answer', text: answer, message_id: `m_ask${t.turnId.slice(-5)}` }], [220, { phase: 'done', spent_usd: 0, turn_spent_usd: spend, outcome: capHit ? 'spend_cap' : 'complete', ...(capHit && !limitAbsent ? { limit: { kind: capKind, current_usd: capFigures[capKind][0], limit_usd: capFigures[capKind][1], estimate_usd: 0.25 } } : {}) }]]
     const send = (f: Record<string, unknown>, drop?: boolean) => {
       let frame = f
       if (frame.phase === 'answer' && t.heard.length) frame = { ...frame, text: `${String(frame.text)} You told me: “${t.heard.join('”, then “')}”; I took that in as I went.` }
       if (frame.phase === 'done') {
-        t.thread.spent_usd = Math.round((t.thread.spent_usd + spend) * 1000) / 1000
+        if (t.state !== 'open') return
+        // what the turn settled at joins the thread's spend and, when it cost more than nothing, the person's paid
+        // answers (the host's rule: a paid answer is a closed turn that cost more than nothing)
+        const settled = Number(frame.turn_spent_usd ?? 0)
+        t.thread.spent_usd = round3(t.thread.spent_usd + settled)
+        if (settled > 0) this.paidAnswer(t.principal, settled)
         frame = { ...frame, spent_usd: t.thread.spent_usd }
       }
       this.push(t, frame, false, drop)
+    }
+    // the question: once its spend reached the threshold, the turn waits on the person's answer; Go ahead plays the rest
+    // of the answer, and no answer within GO_AHEAD_WAIT_MS stops it as expensive (the page offers Go ahead)
+    const question = () => {
+      if (t.state !== 'open') return
+      this.push(t, { phase: 'go_ahead', spent_usd: spentAtQuestion, limit_usd: threshold })
+      const waiting = {
+        carryOn: () => {
+          let after = 0
+          for (const [ms, f] of [[300, { phase: 'thinking', step: 'carrying on' }] as [number, Record<string, unknown>], ...ending]) {
+            after += ms
+            this.d.later(after, () => send(f))
+          }
+        },
+      }
+      t.waiting = waiting
+      this.d.later(GO_AHEAD_WAIT_MS, () => {
+        if (t.waiting !== waiting || t.state !== 'open') return
+        t.waiting = undefined
+        send({ phase: 'answer', text: `I got part of the way. I stopped here: this one looks expensive (about $${spentAtQuestion.toFixed(2)} so far), so I'm waiting for your go-ahead. Ask again to go ahead.`, message_id: `m_ask${t.turnId.slice(-5)}` })
+        send({ phase: 'done', spent_usd: 0, turn_spent_usd: spentAtQuestion, outcome: 'spend_cap', limit: { kind: 'expensive', current_usd: spentAtQuestion, limit_usd: threshold, estimate_usd: null } })
+      })
     }
     // a guided demo's answer and done wait for its last step (the result loop calls finish)
     if (t.tour) {
@@ -816,7 +909,7 @@ export class SimAsk {
     // a hive whose conductor is off sends no acts (and so no guided demo waits on them)
     if (!this.flags.conductor && t.tour) t.tour = undefined
     const playable = this.flags.conductor ? extra : extra.filter(([, f]) => f.phase !== 'act')
-    const all: [number, Record<string, unknown>, boolean?][] = [...steps, ...playable, ...(t.tour ? [] : ending)]
+    const all: [number, Record<string, unknown>, boolean?][] = [...steps, ...playable, ...(t.tour || asks ? [] : ending)]
     for (const [ms, f, drop] of all) {
       at += ms
       this.d.later(at, () => send(f, drop))
@@ -827,5 +920,6 @@ export class SimAsk {
         at += ms
         this.d.later(at, () => this.push(t, f, true))
       }
+    if (asks) this.d.later(at + 400, question)
   }
 }

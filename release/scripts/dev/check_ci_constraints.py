@@ -2,15 +2,17 @@
 """Check that the Python packages installed in this interpreter are exactly the ones pinned in a constraints file.
 
 Usage:
-    python scripts/dev/check_ci_constraints.py PIN [--requirements REQUIREMENTS]
+    python scripts/dev/check_ci_constraints.py PIN [--requirements REQUIREMENTS] [--allow-extra]
 
 PIN is a pip constraints file of name==version lines (hive/ci-constraints.txt); comments and blank lines are skipped.
 The check runs `python -m pip freeze --all --exclude pip --exclude setuptools --exclude wheel` with this interpreter
 and fails when a package is installed with no line in PIN, installed at another version than its line, or has a line
-in PIN but is not installed. With --requirements, it also fails when a name in that file has no line in PIN, a line
-whose version is below the requirement's >= floor, or a line whose version is not the requirement's == pin. A
-``-c FILE`` line in the requirements names a constraints file that pip applies at install, so it adds no name and is
-skipped; any other option line, and any other operator, fails closed. On failure it prints what differs and the full
+in PIN but is not installed. With --allow-extra, a package installed with no line in PIN passes: every line must still
+be installed at its version (petta-toolchain's runtime-packages Python, which holds hive's pins and, installed under
+them, the packages tests/ci-runtime-requirements.txt adds). With --requirements, it also fails when a name in that
+file has no line in PIN, a line whose version is below the requirement's >= floor, or a line whose version is not the
+requirement's == pin. A ``-c FILE`` line in the requirements names a constraints file that pip applies at install,
+so it adds no name and is skipped; any other option line, and any other operator, fails closed. On failure it prints what differs and the full
 freeze, which is the regeneration output for PIN.
 
 Names are compared the way pip does (lowercase, runs of "-", "_" and "." as one "-"). Standard library only.
@@ -85,12 +87,13 @@ def at_or_above(version, floor):
     return have + (0,) * (width - len(have)) >= need + (0,) * (width - len(need))
 
 
-def compare(pin_text, freeze_text, requirements_text=None):
-    """Return the list of problems; empty means the installed set matches PIN (and PIN meets the requirements)."""
+def compare(pin_text, freeze_text, requirements_text=None, allow_extra=False):
+    """Return the list of problems; empty means the installed set matches PIN (and PIN meets the requirements).
+    With allow_extra, packages installed beyond PIN are no problem; PIN's lines must still all be installed."""
     pins, problems = parse_pins(pin_text, "PIN")
     installed, freeze_errors = parse_pins(freeze_text, "freeze")
     problems += freeze_errors
-    for name in sorted(installed.keys() - pins.keys()):
+    for name in [] if allow_extra else sorted(installed.keys() - pins.keys()):
         problems.append(f"installed but not in PIN: {name}=={installed[name]}")
     for name in sorted(pins.keys() - installed.keys()):
         problems.append(f"in PIN but not installed: {name}=={pins[name]}")
@@ -119,6 +122,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("pin", help="constraints file of name==version lines")
     parser.add_argument("--requirements", help="requirements file whose names and >= floors PIN must cover")
+    parser.add_argument("--allow-extra", action="store_true",
+                        help="pass packages installed beyond PIN; every PIN line must still be installed at its version")
     args = parser.parse_args(argv)
     with open(args.pin, encoding="utf-8") as handle:
         pin_text = handle.read()
@@ -127,9 +132,10 @@ def main(argv=None):
         with open(args.requirements, encoding="utf-8") as handle:
             requirements_text = handle.read()
     freeze = subprocess.run([sys.executable, *FREEZE_ARGS], check=True, capture_output=True, text=True).stdout
-    problems = compare(pin_text, freeze, requirements_text)
+    problems = compare(pin_text, freeze, requirements_text, args.allow_extra)
     if not problems:
-        print(f"{args.pin}: the installed packages match, {len(parse_pins(pin_text, 'PIN')[0])} pinned")
+        extra = ", others allowed" if args.allow_extra else ""
+        print(f"{args.pin}: the installed packages match, {len(parse_pins(pin_text, 'PIN')[0])} pinned{extra}")
         return 0
     print(f"{args.pin}: the installed packages do not match", file=sys.stderr)
     for problem in problems:

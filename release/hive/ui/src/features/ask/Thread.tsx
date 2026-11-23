@@ -21,7 +21,8 @@ import { useHive } from '../../store/store'
 import { canOwnKeySheet, OwnKeySheet, type OwnKeyClient } from '../ownKey/OwnKeySheet'
 import type { KeySetup } from '../ownKey/addOwnKey'
 import { useLook } from '../../shell/uiVariant'
-import { REFUSAL_WORDS, SIZE_WORDS, money, raiseSteps, refusedSay, shownMind, spendRefusalOffers, steerUnreached, threadLabel, type Offer } from './words'
+import { REFUSAL_WORDS, SIZE_WORDS, money, refusedSay, shownMind, steerUnreached, threadLabel, type Offer } from './words'
+import { GoAheadRow } from './GoAheadRow'
 import { GuideCard } from '../guided/GuideLayer'
 import { openAskMemory } from './memoryNav'
 import { currentEpoch } from '../../lib/identityEpoch'
@@ -72,9 +73,9 @@ function lit(text: string, words: string[]): ReactNode {
   return text.split(re).map((part, i) => (i % 2 ? <mark key={i} className="ask-lit-word">{part}</mark> : <Fragment key={i}>{part}</Fragment>))
 }
 
-function Btn({ children, onClick, tone = 'plain', label, pressed }: { children: ReactNode; onClick: () => void; tone?: 'plain' | 'primary' | 'quiet'; label?: string; pressed?: boolean }) {
+function Btn({ children, onClick, tone = 'plain', label }: { children: ReactNode; onClick: () => void; tone?: 'plain' | 'primary' | 'quiet'; label?: string }) {
   return (
-    <button type="button" className="ask-btn" data-tone={tone} onClick={onClick} aria-label={label} aria-pressed={pressed} data-takeover="">
+    <button type="button" className="ask-btn" data-tone={tone} onClick={onClick} aria-label={label} data-takeover="">
       {children}
     </button>
   )
@@ -93,41 +94,43 @@ function OfferButtons({ offers, retry, mind, op, keySetup }: { offers: Offer[]; 
     authority.current = activation
     return () => { if (authority.current === activation) authority.current = null }
   }, [activation])
-  const [open, setOpen] = useState<'swarm' | 'wake' | 'raise' | null>(null)
-  const [pick, setPick] = useState<number | null>(null)
-  const [saved, setSaved] = useState<number | null>(null)
+  const [open, setOpen] = useState<'swarm' | 'wake' | null>(null)
   const [said, setSaid] = useState<string | null>(null)
-  const toggle = (k: 'swarm' | 'wake' | 'raise') => setOpen((o) => (o === k ? null : k))
+  const toggle = (k: 'swarm' | 'wake') => setOpen((o) => (o === k ? null : k))
+  // a press that spends (asking again, going ahead) belongs to the render it was made in and the person signed in then
+  const current = () => authority.current === activation && activation.epoch === currentEpoch()
   const run = (o: Offer) => {
     if (o.kind === 'choose-swarm') toggle('swarm')
     else if (o.kind === 'open-swarms') navigate({ name: 'swarms' })
     else if (o.kind === 'usage') navigate({ name: 'usage' })
     else if (o.kind === 'keys') navigate({ name: 'me' })
     else if (o.kind === 'sessions') navigate({ name: 'messages' })
-    else if (o.kind === 'new-thread') void s.newThread()
-    else if (o.kind === 'raise-budget') toggle('raise')
     else if (o.kind === 'stop') void s.stop()
     else if (o.kind === 'wake') toggle('wake')
-    else if (o.kind === 'retry' && retry && op && authority.current === activation && activation.epoch === currentEpoch()) void s.retryLast(op, activation.epoch, retryContext)
+    else if (o.kind === 'retry' && retry && op && current()) void s.retryLast(op, activation.epoch, retryContext)
+    // an expensive stop: its own words go again with go_ahead, never as a steer of a request running now
+    else if (o.kind === 'go-ahead' && op && current())
+      void s.goAheadAgain(op).then((r) => setSaid(r === 'busy' ? 'Another request is running. Go ahead once it finishes.' : r === 'gone' ? 'This one can’t go ahead from here. Ask again.' : null))
   }
   const sleeper = mind ?? s.thread?.mind
-  const steps = raiseSteps(s.settings?.max_thread_budget_usd)
-  const own = s.thread ? money(s.thread.budget_usd) : null
   // Jon 11-05: own_key_needed's way on is the one add-your-key step, right here; on success the person's last words are
   // asked again through the thread's own retry (never the Keys page and back)
   const hiveClient = useHive((x) => x.client) as Partial<OwnKeyClient> | null
   // the sheet only where this client can run it (P3): otherwise "Add your own key" (Keys) stays the way on
   const keyClient = canOwnKeySheet(hiveClient) ? hiveClient : null
-  const sheet = !!(keySetup && keyClient && retry && op)
+  const sheet = !!(keySetup && keyClient && retry && op && retryContext)
   return (
     <>
       {sheet && <OwnKeySheet setup={keySetup!} client={keyClient!} action="ask" onDone={() => run({ kind: 'retry', label: 'Ask again' })} />}
       <span className="ask-offers">
         {offers
+          // only the latest request can be asked again (retryLast: an old button never spends for a newer request), so
+          // an older row offers no Try again that would do nothing when pressed
+          .filter((o) => o.kind !== 'retry' || retryContext)
           .filter((o) => o.kind !== 'wake' || sleeper)
           .filter((o) => !(sheet && o.kind === 'keys'))
           .map((o) => (
-            <Btn key={o.kind} onClick={() => run(o)} tone={o.kind === 'raise-budget' || o.kind === 'choose-swarm' ? 'primary' : 'plain'}>
+            <Btn key={o.kind} onClick={() => run(o)} tone={o.kind === 'go-ahead' || o.kind === 'choose-swarm' ? 'primary' : 'plain'}>
               {o.kind === 'wake' && sleeper ? `Wake ${shownMind(sleeper.name, sleeper.id)}` : o.label}
             </Btn>
           ))}
@@ -153,46 +156,12 @@ function OfferButtons({ offers, retry, mind, op, keySetup }: { offers: Offer[]; 
           <Btn onClick={() => setOpen(null)}>Not now</Btn>
         </span>
       )}
-      {open === 'raise' && (
-        // an open thread's limit is fixed when it starts (the host has no route to raise it): this sets new threads'
-        <span className="ask-offers" role="group" aria-label="Raise the limit for new threads">
-          <span className="ask-row-note">
-            {own ? `This thread keeps its ${own} limit. ` : ''}Choose the limit for new threads (up to {money(steps.at(-1) ?? 5)}):
-          </span>
-          {steps.map((v) => (
-            <Btn key={v} pressed={pick === v} tone={pick === v ? 'primary' : 'plain'} onClick={() => setPick(v)}>
-              {money(v)}
-            </Btn>
-          ))}
-          <Btn
-            tone="primary"
-            label={pick ? `Save ${money(pick)} for new threads` : 'Save (choose an amount first)'}
-            onClick={() => {
-              if (pick === null) return setSaid('Choose an amount first.')
-              void s.setThreadLimit(pick).then((ok) => {
-                setSaved(ok ? pick : null)
-                setSaid(ok ? `Saved. New threads start with a ${money(pick)} limit; this thread keeps its limit.` : 'The new limit could not be saved. Nothing changed. New thread still starts a thread at the current limit.')
-                if (ok) setOpen(null)
-              })
-            }}
-          >
-            Save
-          </Btn>
-        </span>
-      )}
-      {saved !== null && (
-        <span className="ask-offers">
-          <Btn tone="primary" onClick={() => void s.newThread()}>
-            {`Start a new thread at ${money(saved)}`}
-          </Btn>
-        </span>
-      )}
       {said && <span className="ask-row-note">{said}</span>}
     </>
   )
 }
 
-/** A note row; a stop that has a way on (spend_cap: New thread, the raise for new threads) offers it right there. */
+/** A note row; a stop that has a way on (an expensive stop: Go ahead; a limit: Usage & limits) offers it right there. */
 export function NoteRow({ r, lastYou }: { r: AskRow; lastYou?: string }) {
   if (r.fixCoordinator && r.swarm) return <CoordinatorNote r={r} swarmId={r.swarm} />
   if (!r.offer?.length && !r.ending)
@@ -558,6 +527,8 @@ function Row({ r, variant, words, lastYou, trail }: { r: AskRow; variant: Thread
       )
     case 'note':
       return <NoteRow r={r} lastYou={lastYou} />
+    case 'go-ahead':
+      return <GoAheadRow r={r} />
     case 'ui-change':
       return (
         <p className="ask-row ask-muted" data-kind="note">
@@ -582,12 +553,10 @@ function Row({ r, variant, words, lastYou, trail }: { r: AskRow; variant: Thread
       if (r.reason && PICKER_REASONS.includes(r.reason)) return <AnswererRefusal r={r} />
       if (r.reason === 'mind_asleep' && r.own) return <AnswererRefusal r={r} wake={r.mind} />
       const w = REFUSAL_WORDS[r.reason ?? 'not_available']
-      // j0-fixes r1: the thread raise only when the thread's own budget is the visible block (words.spendRefusalOffers)
-      const offers = r.reason === 'spend_limit' ? spendRefusalOffers(s.thread) : w.offer
       return (
         <div className="ask-row" data-kind="refused" role="note">
           <span className="ask-row-text">{refusedSay(r.reason, r.spentUsd)}</span>
-          {offers && <OfferButtons offers={offers} retry={lastYou} mind={r.mind} op={r.op} keySetup={r.keySetup} />}
+          {w.offer && <OfferButtons offers={w.offer} retry={lastYou} mind={r.mind} op={r.op} keySetup={r.keySetup} />}
           {r.ending && <EndingWayOn r={r} />}
         </div>
       )
@@ -596,7 +565,7 @@ function Row({ r, variant, words, lastYou, trail }: { r: AskRow; variant: Thread
 }
 
 /**
- * The thread header: who answers (never called Omega), spend over budget, New thread, Delete (behind a confirm). `sizes`,
+ * The thread header: who answers (never called Omega), what the thread has spent, New thread, Delete (behind a confirm). `sizes`,
  * where the host's Ask draws this thread (askSize.ts): the switch between the bubble and the half size for this mode,
  * and the collapse where the look has no other place for it (`collapse`); at half, Pin goes, since the thread already
  * has its column.
@@ -623,9 +592,10 @@ export function ThreadHead({ variant, onClose, pinnable, sizes }: { variant: Thr
       <div className="ask-head-line">
         <span className="ask-head-title">{t ? threadLabel(voice?.name ?? t.mind.name, about ?? t.about?.name, voice?.mind_id ?? t.mind.id, t.about?.id) : variant === 'letter' ? 'Today’s page' : 'Ask'}</span>
         {t && (
-          <span className="ask-spend" title="Spent / limit">
-            {money(t.spent_usd)} / {money(t.budget_usd)}
-            <span className="sr-only"> spent of the limit</span>
+          // a thread has no cap of its own (Jon on #294): its spend only
+          <span className="ask-spend" title="Spent in this thread">
+            {money(t.spent_usd)}
+            <span className="sr-only"> spent in this thread</span>
           </span>
         )}
         <span className="ask-head-tools">

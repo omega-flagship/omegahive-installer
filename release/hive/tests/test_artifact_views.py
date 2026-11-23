@@ -16,6 +16,7 @@ import types
 from urllib.parse import urlsplit
 
 from hive.core import views
+from hive.core.hive import token_hash
 from hive.tests.test_collab import call
 from hive.tests.test_core_api import client  # noqa: F401  (fixture)
 from hive.tests.test_visibility import person
@@ -32,8 +33,15 @@ TIP_METTA_2 = TIP_METTA.replace('(option "10" "10%") (option "15" "15%") (option
 
 
 def _maker(client, who):
+    """A mind whose owner, who, switched its own coding on: an HTML view is software a mind builds, which only such a
+    mind saves itself (Jon on omega-flagship/omegahive#395); a MeTTa view needs no switch."""
     swarm = client.post("/api/swarms", headers=who, json={"name": "Invented sums"}).json()
     maker = client.post("/api/agents", headers=who, json={"name": "Wren", "kind": "module", "swarm_id": swarm["id"]}).json()
+    # an owner-only setting needs a current signed-in person, as in test_owner_only_approvals_p3b
+    client.app.state.hive.db.execute("UPDATE sessions SET expires_at = ? WHERE token_hash = ?",
+                                     (time.time() + 3600, token_hash(who["Authorization"].split(" ", 1)[1])))
+    switched = client.patch(f"/api/agents/{maker['id']}", headers=who, json={"options": {"own_coding": True}})
+    assert switched.status_code == 200, switched.text
     return swarm, maker
 
 

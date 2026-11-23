@@ -1,3 +1,4 @@
+# Purpose: Read LibreLinkUp glucose and track watches in the mind's memory.
 import hashlib
 import json
 import os
@@ -8,9 +9,13 @@ import urllib.request
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-MEMORY = ROOT / "memory"
-CONFIG_FILE = MEMORY / "librelinkup.json"
-CACHE_FILE = MEMORY / "librelinkup_cache.json"
+# the mind's memory folder, for what it observes and watches: OMEGACLAW_MEMORY_DIR when a hive runs the mind, else this
+# copy's memory folder
+MEMORY = pathlib.Path(os.environ.get("OMEGACLAW_MEMORY_DIR") or ROOT / "memory")
+_HIVE_MODE = bool(os.environ.get("HIVE_API_URL") and os.environ.get("HIVE_WS_TOKEN"))
+CONFIG_FILE = ROOT / "memory" / "librelinkup.json"
+# Standalone keeps its combined session and watch file. The hive owns the session in hive mode.
+CACHE_FILE = MEMORY / "glucose_state.json" if _HIVE_MODE else ROOT / "memory" / "librelinkup_cache.json"
 TRACE_LOG = MEMORY / "glucose_observations.jsonl"
 WATCH_FILE = MEMORY / "glucose_watches.json"
 DEFAULT_WATCH_POLL_SECONDS = 300
@@ -55,9 +60,11 @@ def _read_json(path, default):
 
 
 def _write_json(path, data, mode=0o600):
-    MEMORY.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + f".tmp-{os.getpid()}")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    # created with its final mode, so a session ticket is never readable by others while it is written
+    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode), "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(data, ensure_ascii=False, sort_keys=True))
     os.replace(tmp, path)
     try:
         os.chmod(path, mode)
@@ -65,7 +72,36 @@ def _write_json(path, data, mode=0o600):
         pass
 
 
+def _hive_call(payload):
+    base = os.environ["HIVE_API_URL"].rstrip("/")
+    request = urllib.request.Request(
+        base + "/api/agent/connectors/librelinkup/request",
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    request.add_unredirected_header("Authorization", f"Bearer {os.environ['HIVE_WS_TOKEN']}")
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as exc:
+        try:
+            error = json.load(exc)["error"]
+            code, message = error["code"], error["message"]
+        except (ValueError, KeyError, TypeError):
+            raise RuntimeError(f"Hive HTTP {exc.code}: {exc.reason}") from exc
+        if code in {"connector_error", "connector_unreachable"}:
+            raise RuntimeError(message) from exc
+        raise RuntimeError(f"Hive HTTP {exc.code}: {code}: {message}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Hive unreachable: {exc}") from exc
+
+
 def _config():
+    if _HIVE_MODE:
+        settings = _hive_call({"op": "settings"})
+        return {"unit": _normalize_unit(settings["unit"]), "connections": settings["connections"],
+                "version": settings["version"]}
     data = _read_json(CONFIG_FILE, {})
     username = (
         os.environ.get("LIBRE_LINK_UP_USERNAME")
@@ -164,8 +200,10 @@ def _cache_valid(cache):
 
 
 def _login(config, force=False):
+    if _HIVE_MODE:
+        raise RuntimeError("The hive manages LibreLinkUp sessions")
     if not config["username"] or not config["password"]:
-        raise RuntimeError("LibreLinkUp is not configured; set credentials in memory/librelinkup.json or LIBRE_LINK_UP_USERNAME/PASSWORD")
+        raise RuntimeError(f"LibreLinkUp is not configured; set credentials in {CONFIG_FILE} or LIBRE_LINK_UP_USERNAME/PASSWORD")
     cache = _read_json(CACHE_FILE, {})
     if not force and _cache_valid(cache):
         return cache
@@ -202,6 +240,8 @@ def _login(config, force=False):
 
 
 def _connections(config, force_login=False):
+    if _HIVE_MODE:
+        return _hive_call({"op": "connections"})["data"]
     session = _login(config, force=force_login)
     try:
         response = _request(
@@ -258,10 +298,12 @@ def _connection_for_person(config, person, connections=None):
 
 
 def _graph(config, connection):
-    session = _login(config)
     patient_id = connection.get("patientId") or connection.get("id")
     if not patient_id:
         raise RuntimeError("LibreLinkUp connection has no patient id")
+    if _HIVE_MODE:
+        return _hive_call({"op": "graph", "patient_id": str(patient_id)})
+    session = _login(config)
     try:
         response = _request(
             session["base_url"],
@@ -432,14 +474,15 @@ def _format_obs(obs):
 
 
 def glucose_app_status():
-    config = _config()
-    configured = bool(config["username"] and config["password"])
-    cache = _read_json(CACHE_FILE, {})
+    configured = False
     redacted_user = ""
-    if config["username"]:
-        name = config["username"]
-        redacted_user = name[:2] + "***" + name[-4:] if len(name) > 6 else "***"
     try:
+        config = _config()
+        username = config.get("username", "")
+        configured = _HIVE_MODE or bool(username and config["password"])
+        if username:
+            redacted_user = username[:2] + "***" + username[-4:] if len(username) > 6 else "***"
+        cache = _read_json(CACHE_FILE, {})
         connections = _connections(config) if configured else []
         names = [f"{c.get('firstName','')} {c.get('lastName','')}".strip() or str(c.get("patientId")) for c in connections]
         return (
@@ -673,7 +716,7 @@ def pending_glucose_rings():
     watches = _read_json(WATCH_FILE, {})
     if not watches:
         return ""
-    config = _config()
+    config = None
     cache = _read_json(CACHE_FILE, {})
     seen = cache.get("seen_rings") if isinstance(cache.get("seen_rings"), dict) else {}
     notices = []
@@ -719,6 +762,8 @@ def pending_glucose_rings():
                         notices.append(_format_ring(stale_ring))
             continue
         try:
+            if config is None:
+                config = _config()
             obs = _current_observation(config, person)
             state.update({
                 "last_poll_at": now,

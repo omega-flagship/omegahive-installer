@@ -1,4 +1,6 @@
 /**
+ * Purpose: define the shapes of the Ask's shared fast path: effects, look patches, acts, chips, candidates and the
+ * world and scope they are read against.
  * The shared fast path's shapes (Surface universal Ask, phase 1; UNIVERSAL_ASK_DESIGN §2). One engine, used by every
  * experience; experiences add vocabulary only (vocab.ts). Everything here is data: a candidate says what it would do
  * as a declarative act, and only features/ask/run.ts performs it.
@@ -75,7 +77,7 @@ export interface Candidate extends Omit<Suggestion, 'act'> {
   confidence: number
   /** A slot is missing: one clarifying question, with chips (never about phrasing). */
   clarify?: { question: string; chips: Chip[] }
-  /** A paid row's line: who pays and what limit holds (features/ask/words paysLine; j0-fixes r1). Plain text. */
+  /** A paid row's line: who pays, what the thread has spent and where it stops to ask (features/ask/words paysLine). Plain text. */
   pays?: string
 }
 

@@ -45,7 +45,7 @@
 (OrganPrinciple agentverse "Optional dependency failure must be visible as status, not a boot-time cognition failure.")
 
 (RuntimeDependency omegaclaw.remote.agentverse python ">=3.10")
-(RuntimeDependency omegaclaw.remote.agentverse uagents ">=0.22")
+(RecommendedDependency omegaclaw.remote.agentverse uagents ">=0.22")
 (RuntimeConfig omegaclaw.remote.agentverse AGENTVERSE_API_KEY "optional-secret-for-registration")
 (RuntimeConfig omegaclaw.remote.agentverse AGENTVERSE_SEED_PHRASE "optional-secret-for-hosted-agent")
 (RuntimeState omegaclaw.remote.agentverse OMEGACLAW_AGENTVERSE_REGISTRY ignored)
