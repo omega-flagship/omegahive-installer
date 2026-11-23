@@ -54,7 +54,9 @@ HELPER_NOTE = "Foundation request helper: proposal path only"
 # of its own by default, the hive's total holds them all (Jon on 23 Nov: "ONE cap for the whole hive - set by the user").
 # A stored cap equal to one is taken as untouched, since the store cannot tell an owner's own $0.50 from the seed.
 # Review's $0.25 admitted about six Sonnet review calls (each reserves about $0.10), so it rose to $2, now gone too.
-OLD_CODE_CAPS_USD = (0.50,)
+# Create · Code's controller also got $5 from the Mac installer on every install before v0.43 (install/macos/
+# omegahive.sh's create step), so a stored $5 goes as well.
+OLD_CODE_CAPS_USD = (0.50, 5.00)
 OLD_REVIEW_CAPS_USD = (0.25, 2.00)
 HELPER_ORIGIN = "hive:foundation:code-helper:v1"   # the seeded per-agent rules before the helper role; migrated away
 HELPER_ROLE = "Foundation request helper"

@@ -510,11 +510,9 @@ enrol_lock() {
 
 # Create's Code service is enrolled once, as the hive's owner in a session from a one-time sign-in code that ends with
 # the step (POST /api/services/enrol; the service's operator route takes the one-time token and registers itself with
-# the hive), and the Create · Code controller, which the hive makes with 0.50 USD for its whole life, may spend up to 5,
-# about twenty requests at 0.25 each. The hive's own spending total needs no step here: the first key its owner adds
+# the hive). The Create · Code controller gets no cap here: it has none of its own, and the hive's total holds it (Jon on
+# 23 Nov, "ONE cap for the whole hive - set by the user"). That total needs no step either: the first key its owner adds
 # brings the hive's starting limit, 50 USD a month (hive/core/budgets.py seed_start_total, PhysixSNET/omegahive#35).
-# The cap is set without a line in the installer's window: a money line there, before any key or choice, reads as a
-# charge, and the mind's page shows the cap where it can be changed.
 #
 # On Linux start returns once the hive answers, while serve starts Code and enrols it in the background, so a create run
 # right after start found Code not listening and its register refused (a fresh Linux install, 17 November): create
@@ -558,9 +556,6 @@ try:
         service = f"http://127.0.0.1:{json.load(open(f'{code}/config.json'))['port']}"
         call("POST", "/v1/operator/register", {"enrol_token": enrol_token}, operator, url=service)
         print("Create's Code service is enrolled with your hive.")
-    for mind in call("GET", "/api/agents", token=token):
-        if mind.get("name") == "Create · Code controller" and float(mind.get("budget_usd") or 0) < 5:
-            call("PATCH", f"/api/agents/{mind['id']}", {"budget_usd": 5}, token)
 finally:
     call("POST", "/api/auth/logout", {}, token)   # this session was for the step alone
 PY

@@ -183,12 +183,12 @@ def test_existing_spend_lower_caps_stops_and_other_offers_are_preserved(f):
 
 
 @pytest.mark.parametrize("purpose, stored, owners", [(REVIEW, .25, False), (REVIEW, 2.00, False), (REVIEW, .30, True),
-                                                     (CODE, .50, False), (CODE, 1.0, True)])
+                                                     (CODE, .50, False), (CODE, 5.00, False), (CODE, 1.0, True)])
 def test_ensure_clears_only_a_cap_the_foundation_once_seeded(f, purpose, stored, owners):
     """Jon, 23 Nov: "ONE cap for the whole hive - set by the user", so no controller keeps a cap of its own by default.
     A hive made before this keeps the cap the foundation seeded its controller with until ensure runs after the update,
-    which clears exactly that (Review's $0.25, later $2.00; Code's $0.50). Any other cap is its owner's and stays. An
-    owner's own cap equal to a seed cannot be told apart, so it goes too."""
+    which clears exactly that (Review's $0.25, later $2.00; Code's $0.50, and the $5 the Mac installer gave it). Any
+    other cap is its owner's and stays. An owner's own cap equal to a seed cannot be told apart, so it goes too."""
     ctl = controller(f, purpose)
     f.db.execute("UPDATE agents SET budget_usd=? WHERE id=?", (stored, ctl["id"]))
     for _ in range(2):                                      # a second start changes nothing more
