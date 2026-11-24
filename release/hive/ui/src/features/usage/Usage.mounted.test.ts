@@ -36,7 +36,7 @@ import type { SpendAlertsView } from './useSpendAlerts'
 // App gives the page the signed-in spend alerts it reads (#706, useSpendAlerts); these tests read the limits and held
 // calls, so the page gets a feed with no alerts that asks the hive nothing
 const noAlerts: SpendAlertsView = {
-  status: 'empty', readError: undefined, refreshing: false, reload: () => undefined, alerts: [], canControl: false,
+  status: 'empty', readError: undefined, reload: () => undefined, alerts: [], canControl: false,
   pending: null, actionError: undefined, change: async () => undefined,
 }
 let doc: MiniDocument, host: MiniNode, root: Root, saved: Record<string, unknown>

@@ -75,12 +75,7 @@ def test_only_committed_paid_usage_is_counted_and_incidents_survive_restart(clie
     assert {(alert["scope"], alert["spent_usd"]) for alert in initial} == {("hive", 1), ("mind", 1)}
     assert all(alert["opened_at"] == stamp_of(AT) for alert in initial)
     SpendMonitor(hive, clock=lambda: AT + timedelta(seconds=5)).sweep()
-    for opened, current in zip(initial, _alerts(client), strict=True):
-        assert {**current, "projected_usd": opened["projected_usd"]} == opened
-        if opened["scope"] == "hive":
-            assert 50 < current["projected_usd"] < opened["projected_usd"]
-        else:
-            assert current["projected_usd"] is None
+    assert _alerts(client) == initial
 
     monitor.clock = lambda: AT + timedelta(hours=7)
     monitor.sweep()
@@ -166,6 +161,51 @@ def test_an_open_alert_refreshes_its_spend_window_and_cap_forecast(client):
     raised_cap = hive_alert()
     assert raised_cap == {**updated, "limit_usd": 4, "projected_usd": None}
     assert hints == [expected_hint]
+
+
+def test_forecast_refreshes_for_settled_hive_spend_and_stays_quiet_between_charges(client):
+    hive = client.app.state.hive
+    monitor = client.app.state.spend_monitor
+    _, (mind,) = make_swarm_and_agents(client, n=1)
+    _cap(hive.db, 50)
+    now = AT
+    monitor.clock = lambda: now
+    hints = []
+    hive.events.publish = lambda kind, **data: hints.append((kind, data))
+
+    def hive_alert():
+        return next(alert for alert in _alerts(client) if alert["scope"] == "hive")
+
+    _ledger(hive.db, mind, 1, now)
+    monitor.sweep()
+    opening = hive_alert()
+    assert opening["projected_usd"] == 63
+    hints.clear()
+
+    for _ in range(3):
+        now += timedelta(seconds=5)
+        monitor.sweep()
+        assert hive_alert() == opening
+        assert hints == []
+
+    outside_recent_windows = AT - timedelta(hours=12)
+    _ledger(hive.db, mind, 0.25, outside_recent_windows, key_person="user:u_member")
+    monitor.sweep()
+    assert hive_alert() == opening
+    assert hints == []
+
+    _ledger(hive.db, mind, 0.25, outside_recent_windows)
+    monitor.sweep()
+    current = hive_alert()
+    assert {**current, "projected_usd": opening["projected_usd"]} == opening
+    assert current["projected_usd"] == 63.249306
+    assert hints == [("spend.alert", {"principal": hive.ownhive.owner(), "alert_id": opening["id"]})]
+    hints.clear()
+
+    now += timedelta(seconds=5)
+    monitor.sweep()
+    assert hive_alert() == current
+    assert hints == []
 
 
 def test_current_owners_control_only_their_spending_scope(client):

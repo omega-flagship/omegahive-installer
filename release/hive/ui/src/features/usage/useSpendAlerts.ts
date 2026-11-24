@@ -43,10 +43,11 @@ export function useSpendAlerts(enabled: boolean) {
     if (enabled && has(client, 'spendAlerts')) return hiveBus.on((event) => hear(event))
   }, [client, enabled])
 
+  // A background read keeps the current alert on screen. The hive rechecks its state when the write arrives.
   async function change(id: string, choice: SpendControl) {
     const state = useHive.getState()
     if (!hasControl || state.client !== client || state.connection === 'unauthorized' ||
-      storeIdentity(state) !== identity || resource.refreshing || running.current?.identity === identity) return
+      storeIdentity(state) !== identity || running.current?.identity === identity) return
     const alert = alerts.find((item) => item.id === id)
     if (!alert || !allows(alert, choice)) return
     const binding = bindEpoch()
@@ -70,7 +71,6 @@ export function useSpendAlerts(enabled: boolean) {
   return {
     status: resource.error !== undefined && resource.status !== 'unsupported' ? 'error' as const : resource.status,
     readError: resource.error,
-    refreshing: resource.refreshing,
     reload: resource.reload,
     alerts,
     canControl: hasControl,

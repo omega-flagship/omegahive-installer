@@ -187,6 +187,7 @@ class Signal:
     window: int
     spent: int
     projected: int | None = None
+    forecast_charge: int = 0
 
 
 def _signal(amounts, history, cap, typical_charge):
@@ -219,16 +220,17 @@ def _project(conn, moment, cap, amounts, signal, owner):
     pace = min(Fraction(amounts[2], long), Fraction(amounts[3], short))
     if not pace:
         return signal
-    spent = conn.execute(
-        f"SELECT COALESCE(SUM(u.cost_usd),0) FROM usage u WHERE u.cost_usd > 0 AND u.created_at >= ? "
-        f"AND u.created_at <= ? AND {HIVE_MONEY}", (stamp_of(cap.start), stamp_of(moment), owner),
-    ).fetchone()[0]
+    spent, charge = conn.execute(
+        "SELECT COALESCE(SUM(u.cost_usd),0), COALESCE(MAX(u.id),0) FROM usage u "
+        f"WHERE u.cost_usd > 0 AND u.created_at >= ? AND u.created_at <= ? AND {HIVE_MONEY}",
+        (stamp_of(cap.start), stamp_of(moment), owner),
+    ).fetchone()
     remaining_ms = (cap.end - moment) // timedelta(milliseconds=1)
     estimate = micros(spent, ROUND_HALF_UP) + pace * Fraction(remaining_ms, 1000)
     if estimate <= cap.amount:
         return signal
     return Signal(True, True, signal.window if signal.active else long, signal.spent if signal.active else amounts[2],
-                  round(estimate))
+                  round(estimate), charge)
 
 
 class SpendMonitor:
@@ -320,10 +322,16 @@ class SpendMonitor:
                     "cap": cap.amount if scope == HIVE and cap.amount else None,
                 }
                 if row is not None:
-                    if all(row[key] == value for key, value in figures.items()):
+                    changed = {key for key, value in figures.items() if row[key] != value}
+                    if not changed:
+                        continue
+                    # Keep the displayed number between relevant charges. The forecast appearing or clearing still
+                    # changes what the alert tells the owner, even when that happens as time passes.
+                    if (changed == {"projected"} and row["projected"] is not None and signal.projected is not None
+                            and signal.forecast_charge <= row["last_charge"]):
                         continue
                     alert_id = row["id"]
-                    self.db.update("spend_alerts", alert_id, figures)
+                    self.db.update("spend_alerts", alert_id, {**figures, "last_charge": watermark})
                 else:
                     alert_id = "sa_" + uuid4().hex
                     self.db.insert("spend_alerts", {

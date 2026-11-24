@@ -36,10 +36,10 @@ function host(initial: SpendAlert[]) {
   return { client, read, write, set: (rows: SpendAlert[]) => { alerts = rows } }
 }
 
-function pendingWrite() {
-  let resolve!: (value: SpendAlert) => void
+function pending<T>() {
+  let resolve!: (value: T) => void
   let reject!: (error: Error) => void
-  const promise = new Promise<SpendAlert>((accept, fail) => { resolve = accept; reject = fail })
+  const promise = new Promise<T>((accept, fail) => { resolve = accept; reject = fail })
   return { promise, resolve, reject }
 }
 
@@ -130,7 +130,7 @@ describe('the same signed-in alerts feed the hive and Usage', () => {
 
   it('only submits an authorized row, locks it while in flight, and resumes after detection clears', async () => {
     const owner = host([hiveAlert, { ...mindAlert, can_control: false }])
-    const pause = pendingWrite()
+    const pause = pending<SpendAlert>()
     owner.write.mockReturnValueOnce(pause.promise)
     useHive.setState({ client: owner.client })
     await act(async () => root.render(<Session usage />))
@@ -153,6 +153,36 @@ describe('the same signed-in alerts feed the hive and Usage', () => {
     expect(box.textContent).toContain('No current spend alerts.')
   })
 
+  it.each([
+    ['pause', 'Pause', 'Resume'],
+    ['resume', 'Resume', 'Pause'],
+  ] as const)('sends %s during a background read and ignores its late answer', async (choice, label, nextLabel) => {
+    const before = { ...hiveAlert, paused: choice === 'resume' }
+    const after = { ...before, paused: choice === 'pause' }
+    const owner = host([before])
+    const reading = pending<SpendAlert[]>()
+    const writing = pending<SpendAlert>()
+    useHive.setState({ client: owner.client })
+    await act(async () => root.render(<Session usage />))
+    owner.read.mockReturnValueOnce(reading.promise)
+    owner.write.mockReturnValueOnce(writing.promise)
+    await act(async () => hint())
+    expect(owner.read).toHaveBeenCalledTimes(2)
+
+    const control = button(`${label} paid calls for Hive`)
+    expect(reactProps(control).disabled).toBe(false)
+    await act(async () => { press(control); press(control) })
+    expect(owner.write).toHaveBeenCalledExactlyOnceWith(hiveAlert.id, choice)
+    expect(reactProps(button(`${label} paid calls for Hive`)).disabled).toBe(true)
+
+    owner.set([after])
+    await act(async () => writing.resolve(after))
+    expect(button(`${nextLabel} paid calls for Hive`)).toBeDefined()
+    await act(async () => reading.resolve([before]))
+    expect(button(`${nextLabel} paid calls for Hive`)).toBeDefined()
+    expect(button(`${label} paid calls for Hive`)).toBeUndefined()
+  })
+
   it('shows a refusal immediately and refreshes away a row whose authority has changed', async () => {
     const owner = host([mindAlert])
     owner.write.mockImplementationOnce(async () => {
@@ -170,7 +200,7 @@ describe('the same signed-in alerts feed the hive and Usage', () => {
   it('clears earlier answers and ignores a late control for someone who signed out', async () => {
     const earlier = host([mindAlert])
     const later = host([])
-    const finishing = pendingWrite()
+    const finishing = pending<SpendAlert>()
     earlier.write.mockReturnValueOnce(finishing.promise)
     useHive.setState({ client: earlier.client })
     await act(async () => root.render(<Session usage />))

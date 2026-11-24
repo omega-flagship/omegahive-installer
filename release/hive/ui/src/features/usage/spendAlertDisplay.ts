@@ -29,7 +29,7 @@ export function usageAlertFacts(view: SpendAlertsView, compose: Compose) {
     return {
       id: alert.id,
       control: control && (open || alert.paused),
-      busy: view.pending !== null || view.refreshing,
+      busy: view.pending !== null,
       plan: compose('spend-alert-detail', { flags: {
         'alert.open': open,
         'alert.projection': open && alert.projected_usd !== null && alert.limit_usd !== null,
