@@ -1,5 +1,6 @@
-# conda-forge lock for osx-arm64, solved 2026-11-09 by micromamba 2.10.0-0 from: python=3.12 nodejs>=22.12,<27 uv git cmake ninja pkg-config gmp openssl yaml pcre2 libarchive zlib
+# conda-forge lock for osx-arm64, solved 2026-11-09, rewritten 2026-11-24 by micromamba 2.10.0-0 from: python=3.12 nodejs>=22.12,<27 uv git cmake ninja pkg-config gmp openssl yaml pcre2 libarchive zlib
 # Made by install/macos/conda-lock.sh; install with: micromamba create -p PREFIX -f THIS_FILE
+# download: 119 MB
 @EXPLICIT
 https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.10.23-hbd8a1cb_0.conda#sha256:95619b9c1184be7175392eeb0ee7eeb5ccf25d280951f4225f2d62e725790be3
 https://conda.anaconda.org/conda-forge/noarch/packaging-26.3-pyhc364b38_0.conda#sha256:c432626b16768b8dab228bfb706f7060c2d462a21c516d240f68f2f902b5a044

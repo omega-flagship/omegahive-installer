@@ -4,7 +4,8 @@
 # installer's release zip, so a tester's Mac needs neither Command Line Tools nor a 10-minute source build.
 #
 # Usage: install/macos/build-swipl-bundle.sh [WORKDIR]
-#        install/macos/build-swipl-bundle.sh --lock   (remake locks/bundle-*-osx-arm64.txt from the specs below)
+#        install/macos/build-swipl-bundle.sh --lock [ROLE...]   (remake locks/bundle-ROLE-osx-arm64.txt from the
+#                                            specs below for each ROLE named, tools, py or deps, or all three)
 #
 #   WORKDIR (default ~/swipl-bundle-build) holds micromamba, three conda-forge environments, the source, the build
 #   tree and the staged bundle. The outputs land in OUTDIR (default: this script's folder), each with a .sha256:
@@ -44,11 +45,15 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 # The environments' specs. The build installs only the locks made from them; --lock remakes the locks on purpose.
 TOOLS_SPECS="cmake ninja pkg-config"
 PY_SPECS="python=3.12 pip setuptools wheel"
-# conda-forge names: libyaml is "yaml" there.
-DEPS_SPECS="gmp openssl yaml pcre2 libarchive zlib"
+# conda-forge names: libyaml is "yaml" there. libxml2 is here only because libarchive links it. Its build without ICU
+# (hea22233) leaves out ICU's 35 MB of libraries.
+DEPS_SPECS="gmp openssl yaml pcre2 libarchive zlib libxml2-16=2.15.4=hea22233_1"
 if [ "${1:-}" = --lock ]; then
-  for role in tools py deps; do
-    case $role in tools) specs=$TOOLS_SPECS;; py) specs=$PY_SPECS;; deps) specs=$DEPS_SPECS;; esac
+  shift
+  [ "$#" -gt 0 ] || set -- tools py deps
+  for role in "$@"; do
+    case $role in tools) specs=$TOOLS_SPECS;; py) specs=$PY_SPECS;; deps) specs=$DEPS_SPECS;;
+      *) echo "--lock takes tools, py or deps, not $role" >&2; exit 2;; esac
     # shellcheck disable=SC2086  # specs are words
     /bin/bash "$SCRIPT_DIR/conda-lock.sh" osx-arm64 "$SCRIPT_DIR/locks/bundle-$role-osx-arm64.txt" $specs
   done
@@ -61,8 +66,8 @@ JANUS_VERSION=$JANUS_SWI_VERSION
 # Where the installer puts the toolchain's lib folder and the venv, relative to the folder holding swipl/.
 TOOLCHAIN_LIB=${TOOLCHAIN_LIB:-toolchain/envs/hive/lib}
 VENV_DIR=${VENV_DIR:-venv}
-# The packages deploy/setup_runtime.sh builds on Linux; janus is packages/swipy, which PeTTa loads on every run.
-PACKAGES="clib swipy plunit json sgml http zlib libedit pcre yaml chr clpqr cpp utf8proc archive ssl"
+# The packages every build takes (pins.sh).
+PACKAGES=$SWIPL_PACKAGES
 
 say() { printf '== %s\n' "$*"; }
 die() { printf 'build-swipl-bundle: %s\n' "$*" >&2; exit 1; }
@@ -106,12 +111,17 @@ fi
 # py is the Python janus compiles against, and deps holds exactly the libraries the bundle carries. Each comes from
 # its lock, so micromamba installs those exact builds and refuses a file whose sha256 differs.
 make_env() {
-  local prefix=$1 lock
+  local prefix=$1 lock digest
   lock=$SCRIPT_DIR/locks/bundle-$(basename "$1")-osx-arm64.txt
-  [ -f "$prefix/conda-meta/history" ] && return 0
   [ -f "$lock" ] || die "no lock $lock: run $0 --lock"
+  # An environment is reused only while it was made from its lock as the lock stands now; one made from an older
+  # lock is made again, so a changed lock always reaches the build.
+  digest=$(sha256 "$lock" | cut -d' ' -f1)
+  [ -f "$prefix/conda-meta/history" ] && [ "$(cat "$prefix/.omegahive-lock-sha256" 2>/dev/null)" = "$digest" ] && return 0
+  rm -rf "$prefix"
   "$MICROMAMBA" create -y --no-rc -p "$prefix" -f "$lock" > "$LOGS/env-$(basename "$prefix").log" 2>&1 \
     || die "micromamba could not create $prefix (see $LOGS/env-$(basename "$prefix").log)"
+  echo "$digest" > "$prefix/.omegahive-lock-sha256"
 }
 make_env "$TOOLS"
 make_env "$PY"
@@ -379,13 +389,14 @@ say "run it: version, every package loads, janus calls Python $PYVER"
 SWIPL="$BUNDLE/bin/swipl"
 "$SWIPL" --version | grep -q "version $SWIPL_VERSION for arm64-darwin" || die "bin/swipl is not $SWIPL_VERSION"
 # Every foreign library the build installed must load: dlopen resolves all of its references, so this is the
-# runtime twin of macho.py's check. The list comes from the tree, not from a list kept by hand.
+# runtime twin of macho.py's check. The list comes from the tree, not from a list kept by hand. Each capture below keeps
+# going when swipl fails, so die says which check it was.
 FOREIGN=$(cd "$CONTENTS/$HOME_REL/lib/$ARCH" && ls *.so | sed 's/\.so$//' | paste -sd, -)
-LOADED=$("$SWIPL" -g "forall(member(L, [$FOREIGN]), load_foreign_library(foreign(L))), writeln(ok), halt" 2>&1 | tail -1)
+LOADED=$("$SWIPL" -g "forall(member(L, [$FOREIGN]), load_foreign_library(foreign(L))), writeln(ok), halt" 2>&1 | tail -1) || true
 [ "$LOADED" = ok ] || die "a foreign library did not load: $LOADED"
-JANUS=$("$SWIPL" -g 'use_module(library(janus)), py_call(sys:version, V), split_string(V, " ", "", [N|_]), writeln(N), halt' 2>&1 | tail -1)
+JANUS=$("$SWIPL" -g 'use_module(library(janus)), py_call(sys:version, V), split_string(V, " ", "", [N|_]), writeln(N), halt' 2>&1 | tail -1) || true
 case "$JANUS" in "$PYVER".*) ;; *) die "janus did not run Python $PYVER: $JANUS";; esac
-LIBS=$("$SWIPL" -g 'forall(member(L, [ssl, crypto, pcre, yaml, archive, zlib, sgml, process, editline, uuid, sha, md5, readutil, socket, http/json, http/http_open]), use_module(library(L))), writeln(ok), halt' 2>&1 | tail -1)
+LIBS=$("$SWIPL" -g 'forall(member(L, [ssl, crypto, pcre, yaml, archive, zlib, sgml, process, editline, uuid, sha, md5, readutil, socket, http/json, http/http_open]), use_module(library(L))), writeln(ok), halt' 2>&1 | tail -1) || true
 [ "$LIBS" = ok ] || die "a package library did not load: $LIBS"
 say "janus runs Python $JANUS; ssl, crypto, pcre, yaml, archive, zlib and the rest load"
 

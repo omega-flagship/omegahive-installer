@@ -9,8 +9,9 @@
 # Usage: make-windows-release.sh <repo> <revision> <out.zip> [prebuilt file ...]
 #   Prebuilt files (Create's omegacode-309df.tgz, the Tools app's omega-tools-4e57d67.tgz, the Omega core's
 #   omega-core-a6bd778.bundle, which also gives a UI built here its pinned Omega files) go into the tarball's
-#   install/macos/ with their .sha256, as make-mac-release.sh puts them; the Mac-only SWI-Prolog bundle and janus wheel
-#   are not needed on Windows.
+#   install/macos/ with their .sha256, as make-mac-release.sh puts them. So do the Linux x86_64 SWI-Prolog bundle and
+#   janus wheel (install/macos/build-swipl-bundle-linux.sh makes them), which the WSL distro's setup unpacks instead of
+#   fetching SWI-Prolog's source from GitHub and building it; the Mac's arm64 ones are not needed on Windows.
 #   RELEASE_NAME   names the build (win-hive-v0.1 gives "Omega Hive v0.1" and RELEASE_VERSION 0.1)
 #   UPDATE_CHANNEL test labels it a test build; any other value, or none, a release
 #   UI_DIST_ZIP    a Mac release zip of the same revision whose built hive/ui/dist is reused; a paired release's name

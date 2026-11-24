@@ -9,15 +9,17 @@
 #
 # The toolchain is the hive's pinned one (docs/omegaclaw-core.md, STATUS.md): Python 3.12, SWI-Prolog 10.1.14 built
 # against it, PeTTa ae66fa8, janus-swi 1.5.3, Node 22.12 or later for the UI. As in Install OmegaClaw.command it is
-# user-local: micromamba from conda-forge, so Homebrew is neither needed nor used. On an arm64 Mac a release that
-# carries the prebuilt SWI-Prolog bundle and janus-swi wheel beside this script (install/macos/build-swipl-bundle.sh
-# makes them) is used as it is, and then nothing is compiled and Apple's Command Line Tools are not needed; otherwise
-# SWI-Prolog is built as deploy/setup_runtime.sh builds it, since no 10.1.14 macOS bundle is published.
+# user-local: micromamba from conda-forge, so Homebrew is neither needed nor used. On an arm64 Mac, and on Linux x86_64,
+# a release that carries the prebuilt SWI-Prolog bundle and janus-swi wheel for that computer beside this script
+# (install/macos/build-swipl-bundle.sh and build-swipl-bundle-linux.sh make them) is used as it is: nothing is compiled,
+# no SWI-Prolog source is fetched, and a Mac needs no Command Line Tools. Otherwise SWI-Prolog is built as
+# deploy/setup_runtime.sh builds it, since SWI-Prolog publishes no 10.1.14 bundle for either.
 #
 # The Windows installer (install/windows/Install-OmegaHive.ps1) runs this same script on Linux, inside the WSL distro it
-# makes for the hive, with OMEGAHIVE_FRONT=windows: the toolchain comes from locks/conda-linux-64.txt with its own GCC,
-# SWI-Prolog is built from source with it, macOS's quarantine and signing steps do nothing, and the Windows side
-# starts the hive and opens it in the Windows browser instead of this script.
+# makes for the hive, with OMEGAHIVE_FRONT=windows: the toolchain comes from locks/conda-linux-64.txt, SWI-Prolog is the
+# release's Linux bundle or, in a release without one or where it doesn't run, built from source with the GCC that
+# locks/conda-linux-64-build.txt adds to the toolchain for that build alone, macOS's quarantine and signing steps do
+# nothing, and the Windows side starts the hive and opens it in the Windows browser instead of this script.
 set -euo pipefail
 
 # A copy in the Trash, or in a folder macOS doesn't let Terminal read, cannot run: a tester's old copy in ~/.Trash failed
@@ -66,10 +68,17 @@ BUILD=$OH/build
 # pin_fetch.
 . "$SCRIPT_DIR/pins.sh"
 JANUS_VERSION=$JANUS_SWI_VERSION
-# The prebuilt runtime has one root swipl/, unpacked as $OH/swipl; its janus.so finds
-# libpython3.12 through an rpath into $OH/toolchain/envs/hive/lib.
-SWI_BUNDLE=$SCRIPT_DIR/swipl-10.1.14-macos-arm64.tar.gz
-JANUS_WHEEL=$SCRIPT_DIR/janus_swi-$JANUS_VERSION-cp312-cp312-macosx_11_0_arm64.whl
+# The prebuilt runtime for this computer has one root swipl/, unpacked as $OH/swipl; its janus.so finds libpython3.12
+# through a relative rpath into $OH/toolchain/envs/hive/lib. The Windows installer's WSL distro is Linux x86_64.
+case "$(uname -s)/$(uname -m)" in
+  Darwin/arm64)
+    SWI_BUNDLE=$SCRIPT_DIR/swipl-10.1.14-macos-arm64.tar.gz
+    JANUS_WHEEL=$SCRIPT_DIR/janus_swi-$JANUS_VERSION-cp312-cp312-macosx_11_0_arm64.whl ;;
+  Linux/x86_64)
+    SWI_BUNDLE=$SCRIPT_DIR/swipl-10.1.14-linux-x86_64.tar.gz
+    JANUS_WHEEL=$SCRIPT_DIR/janus_swi-$JANUS_VERSION-cp312-cp312-linux_x86_64.whl ;;
+  *) SWI_BUNDLE=""; JANUS_WHEEL="" ;;
+esac
 # Create's Code service rides in the release beside the bundle, untracked; with it there, the hive gets Create
 # (setup-code.sh lays it out, omegahive.sh runs it beside the hive and enrols it).
 CODE_TARBALL=$SCRIPT_DIR/omegacode-309df.tgz
@@ -81,7 +90,7 @@ TOOLS_TARBALL=$SCRIPT_DIR/omega-tools-$(printf '%s' "$OMEGA_TOOLS_COMMIT" | cut 
 STUDIO_ZIP=$SCRIPT_DIR/omegadesign-$OMEGADESIGN_VERSION.zip
 PREBUILT=0
 OS=$(uname -s)
-if [ "$OS" = Darwin ] && [ "$(uname -m)" = arm64 ] && [ -f "$SWI_BUNDLE" ] && [ -f "$JANUS_WHEEL" ]; then PREBUILT=1; fi
+if [ -n "$SWI_BUNDLE" ] && [ -f "$SWI_BUNDLE" ] && [ -f "$JANUS_WHEEL" ]; then PREBUILT=1; fi
 # What a person double-clicks to run this again: this file on a Mac, the release's Install Omega on Windows.
 AGAIN="double-click Install OmegaHive.command again"
 if [ "${OMEGAHIVE_FRONT:-}" = windows ]; then AGAIN="double-click Install Omega again"; fi
@@ -209,6 +218,26 @@ compilers() {
   SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
   export CC CXX SDKROOT
 }
+# What only a source build of SWI-Prolog or janus-swi needs, on Linux GCC with cmake, ninja and SWI-Prolog's libraries,
+# is the toolchain lock's build twin (locks/conda-<platform>-build.txt, solved with it by conda-lock.sh), added to the
+# toolchain just before such a build: a release whose prebuilt SWI-Prolog runs here never downloads it. Each package it
+# names is checked by the record micromamba keeps for it in conda-meta, so a toolchain that already holds them downloads
+# nothing and an add a stopped run left part-made is finished. A platform whose lock has no twin needs nothing more.
+build_tools() {
+  local twin=$SCRIPT_DIR/locks/conda-$PLATFORM-build.txt stem
+  [ -f "$twin" ] || return 0
+  while IFS= read -r stem; do
+    [ -f "$TOOLCHAIN/conda-meta/$stem.json" ] && continue
+    fetching "the build tools for SWI-Prolog's source build (GCC, cmake and ninja)" "$(download_mb "$twin")"
+    SUBLOG=$OH/logs/toolchain-build.log
+    HOME="$MAMBA_ROOT" "$MICROMAMBA" install -y --no-rc -p "$TOOLCHAIN" -f "$twin" </dev/null > "$SUBLOG" 2>&1
+    SUBLOG=""
+    fetched
+    return 0
+  done < <(sed -n -e 's|^https://.*/\([^/#]*\)\.conda#.*|\1|p' -e 's|^https://.*/\([^/#]*\)\.tar\.bz2#.*|\1|p' "$twin")
+}
+# A lock's download in MB, as its maker wrote it in its "# download:" line (conda-lock.sh, python-lock.py).
+download_mb() { sed -n 's/^# download: \([0-9]*\) MB$/\1/p' "$1"; }
 if [ "$PREBUILT" = 0 ]; then compilers; fi
 # Nothing the installer runs from this folder may carry the quarantine a browser download gave the release: macOS can
 # copy it onto what is unpacked from it, and Gatekeeper then refuses an ad hoc signed binary (a tester's prebuilt swipl
@@ -229,17 +258,21 @@ resign() {
 }
 # A Mac that refused a binary keeps holding any binary it has not yet run at that same real path, whatever its
 # signature: on the Mac mini a fresh copy signed under a new identifier stayed held where a quarantined swipl had been
-# refused, and a copy in a new folder ran, reached directly or through a link at the refused path. So each unpack of the
-# bundle ($1) goes into a folder of its own, swipl-<8 hex>, and $OH/swipl is a link to it. The folder sits beside the
-# link, at the depth the bundle's janus.so expects: its rpath reaches the toolchain's libpython seven folders up. From
-# stdin, since macOS tar copies an archive file's quarantine onto every file it unpacks.
+# refused, and a copy in a new folder ran, reached directly or through a link at the refused path. So on a Mac each
+# unpack of the bundle ($1) goes into a folder of its own, swipl-<8 hex>, and $OH/swipl is a link to it. The folder's
+# 8 hex digits come from /dev/urandom, as uuidgen isn't on every Linux. On Linux the bundle goes into $OH/swipl itself:
+# a Linux mind's sandbox shows it only its read roots, each at its real path (hive/supervisor/landlock.py's bind view),
+# so a link in $OH, outside them, leaves the mind's PATH entry $OH/swipl/bin missing there, and every mind of a Windows
+# hive stopped with "swipl: not found". Linux has no refusal held by path to step around. Either way the folder sits at
+# the depth the bundle's janus.so expects: its rpath reaches the toolchain's libpython seven folders up on a Mac and five
+# on Linux. From stdin, since macOS tar copies an archive file's quarantine onto every file it unpacks.
 unpack_swipl() {
-  local dir
-  dir=swipl-$(uuidgen | cut -c1-8 | tr 'A-F' 'a-f')
+  local dir=swipl
+  if [ "$OS" = Darwin ]; then dir=swipl-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n'); fi
   rm -rf "$OH/swipl" "$OH"/swipl-*
   mkdir -p "$OH/$dir"
   tar -xzf - -C "$OH/$dir" --strip-components 1 < "$1"
-  ln -s "$dir" "$OH/swipl"
+  if [ "$dir" != swipl ]; then ln -s "$dir" "$OH/swipl"; fi
   unquarantine "$OH/$dir"
   resign "$OH/$dir"
 }
@@ -257,13 +290,15 @@ export UV_CACHE_DIR="$BUILD/uv-cache" PIP_CACHE_DIR="$BUILD/pip-cache" npm_confi
 # pip checks for no newer pip, whose notice told every tester to run "python -m pip install --upgrade pip".
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 
-step "installing the toolchain (Python 3.12, Node, build tools) into $MAMBA_ROOT"
-# The download each lock makes: the Linux one carries GCC for SWI-Prolog's build (335 MB on the Windows laptop's first run).
-TOOLCHAIN_MB=125; if [ "$OS" = Linux ]; then TOOLCHAIN_MB=335; fi
 case "$OS/$(uname -m)" in
   Darwin/arm64) PLATFORM=osx-arm64 ;; Darwin/x86_64) PLATFORM=osx-64 ;; Linux/x86_64) PLATFORM=linux-64 ;;
   *) say "Unsupported computer: $OS on $(uname -m)"; false ;;
 esac
+# A lock with a build twin holds no build tools: they come with the twin, before a source build.
+TOOLCHAIN_LOCK=$SCRIPT_DIR/locks/conda-$PLATFORM.txt
+TOOLS="Python 3.12, Node and the build tools"
+if [ -f "$SCRIPT_DIR/locks/conda-$PLATFORM-build.txt" ]; then TOOLS="Python 3.12, Node, uv and git"; fi
+step "installing the toolchain ($TOOLS) into $MAMBA_ROOT"
 MICROMAMBA=$MAMBA_ROOT/bin/micromamba
 if [ ! -x "$MICROMAMBA" ]; then
   mkdir -p "$MAMBA_ROOT/bin"
@@ -275,10 +310,11 @@ fi
 export MAMBA_ROOT_PREFIX="$MAMBA_ROOT"
 # Each tool the steps below run from the toolchain is checked, git included: an install made before git joined the list
 # (v0.1 to v0.3) is made again from the lock rather than left to Apple's git, which needs the Command Line Tools. The
-# lock names each package's exact build by URL and sha256, and micromamba checks every one.
+# lock names each package's exact build by URL and sha256, and micromamba checks every one. The compilers aren't among
+# the tools: on Linux they come with the build twin (build_tools), only for a source build.
 if [ ! -x "$TOOLCHAIN/bin/python3.12" ] || [ ! -x "$TOOLCHAIN/bin/node" ] || [ ! -x "$TOOLCHAIN/bin/uv" ] \
-   || [ ! -x "$TOOLCHAIN/bin/git" ] || { [ "$OS" = Linux ] && [ ! -x "$TOOLCHAIN/bin/g++" ]; }; then
-  fetching "Python 3.12, Node and the build tools" "$TOOLCHAIN_MB"
+   || [ ! -x "$TOOLCHAIN/bin/git" ]; then
+  fetching "$TOOLS" "$(download_mb "$TOOLCHAIN_LOCK")"
   # An environment a stopped run left part-made is made again: create refuses an existing folder.
   rm -rf "$TOOLCHAIN"
   # micromamba records each environment it makes in ~/.conda/environments.txt and notes its package cache in
@@ -288,7 +324,7 @@ if [ ! -x "$TOOLCHAIN/bin/python3.12" ] || [ ! -x "$TOOLCHAIN/bin/node" ] || [ !
   # sha256 in the lock) go to their own log: in the installer's window, about 300 lines that a person who isn't
   # technical read as a virus warning. A failure shows the log's end.
   SUBLOG=$OH/logs/toolchain.log
-  HOME="$MAMBA_ROOT" "$MICROMAMBA" create -y --no-rc -p "$TOOLCHAIN" -f "$SCRIPT_DIR/locks/conda-$PLATFORM.txt" </dev/null \
+  HOME="$MAMBA_ROOT" "$MICROMAMBA" create -y --no-rc -p "$TOOLCHAIN" -f "$TOOLCHAIN_LOCK" </dev/null \
     > "$SUBLOG" 2>&1
   SUBLOG=""
   fetched
@@ -342,10 +378,12 @@ if [ "$PREBUILT" = 1 ]; then
   # "damaged" dialog again. A source build this Mac made after the bundle failed on it is kept, with its own janus.
   SWIPL_RAN=$(cat "$OH/swipl/.omegahive-ran" 2>/dev/null || true)
   if [ "$SWIPL_RAN" = "source $SWIPL_COMMIT" ]; then
-    say "Keeping the SWI-Prolog built from source on this Mac before."
+    say "Keeping the SWI-Prolog built from source on this computer before."
     PREBUILT=0
     compilers
-  elif [ "$SWIPL_RAN" != "bundle $BUNDLE_SHA256" ]; then
+  # On Linux a link at $OH/swipl is an earlier setup's layout, which its minds can't run (unpack_swipl), so the bundle
+  # is unpacked again into the folder.
+  elif [ "$SWIPL_RAN" != "bundle $BUNDLE_SHA256" ] || { [ "$OS" != Darwin ] && [ -L "$OH/swipl" ]; }; then
     (cd "$SCRIPT_DIR" && sha256 -c "$(basename "$SWI_BUNDLE").sha256" >/dev/null) \
       || { say "The prebuilt SWI-Prolog does not match its checksum; download the release again"; false; }
     unpack_swipl "$SWI_BUNDLE"
@@ -353,12 +391,18 @@ if [ "$PREBUILT" = 1 ]; then
   # A bundle that does not run here says why, then the hermetic source build takes over rather than setup stopping.
   if [ "$PREBUILT" = 1 ] && { ! SWIPL_SAYS=$("$OH/swipl/bin/swipl" --version 2>&1) \
        || ! printf '%s\n' "$SWIPL_SAYS" | grep -q ' 10\.1\.14 '; }; then
-    say "The prebuilt SWI-Prolog did not run on this Mac. It said:"
+    say "The prebuilt SWI-Prolog did not run on this computer. It said:"
     say "$SWIPL_SAYS"
-    say "Its attributes and signature, for whoever reads this:"
-    REAL=$(cd "$OH/swipl/bin" 2>/dev/null && cd "$(dirname "$(readlink swipl 2>/dev/null || echo swipl)")" && pwd)/swipl
-    xattr -l "$REAL" 2>&1 | head -n 5 || true
-    codesign -dv "$REAL" 2>&1 | head -n 4 || true
+    if [ "$OS" = Darwin ]; then
+      say "Its attributes and signature, for whoever reads this:"
+      REAL=$(cd "$OH/swipl/bin" 2>/dev/null && cd "$(dirname "$(readlink swipl 2>/dev/null || echo swipl)")" && pwd)/swipl
+      xattr -l "$REAL" 2>&1 | head -n 5 || true
+      codesign -dv "$REAL" 2>&1 | head -n 4 || true
+    else
+      # A library the loader could not find, or a glibc older than the bundle's 2.28 floor, shows here.
+      say "The libraries it found, for whoever reads this:"
+      ldd "$OH/swipl/bin/swipl" 2>&1 | head -n 20 || true
+    fi
     say "Building SWI-Prolog from source instead (a few minutes)."
     rm -rf "$OH/swipl" "$OH"/swipl-*
     PREBUILT=0
@@ -367,13 +411,14 @@ if [ "$PREBUILT" = 1 ]; then
 fi
 if [ "$PREBUILT" = 0 ] && ! "$OH/swipl/bin/swipl" --version 2>/dev/null | grep -q ' 10\.1\.14 '; then
   step "building SWI-Prolog 10.1.14 against the toolchain's Python 3.12 (a few minutes)"
+  build_tools
   rm -rf "$BUILD/swipl"
   fetching "SWI-Prolog 10.1.14's source" 40
   git clone --progress --depth 1 --branch "$SWIPL_TAG" https://github.com/SWI-Prolog/swipl-devel.git "$BUILD/swipl"
   [ "$(git -C "$BUILD/swipl" rev-parse HEAD)" = "$SWIPL_COMMIT" ] \
     || { say "SWI-Prolog's $SWIPL_TAG is not the pinned commit $SWIPL_COMMIT"; false; }
-  # The packages deploy/setup_runtime.sh builds; janus (packages/swipy) is the one PeTTa needs.
-  (cd "$BUILD/swipl" && for m in clib swipy plunit json sgml http zlib libedit pcre yaml chr clpqr cpp utf8proc archive ssl; do
+  # The packages every build takes (pins.sh); janus (packages/swipy) is the one PeTTa needs.
+  (cd "$BUILD/swipl" && for m in $SWIPL_PACKAGES; do
     echo "packages/$m"; done | xargs git submodule update --init --depth 1 --progress)
   fetched
   mkdir -p "$BUILD/swipl/build"
@@ -400,9 +445,10 @@ fi
 # A mind's sandbox may read the folder two levels above the real swipl (hive/supervisor/sandbox.py runtime_roots).
 # The source install links bin/swipl to lib/swipl/bin/<arch>/swipl, whose grandparent leaves out SWI-Prolog's library,
 # so there bin/swipl becomes a two-line wrapper whose own grandparent is $OH/swipl, the whole install; that build
-# still finds its home, compiled in. The bundle keeps its link: its target's grandparent is SWI-Prolog.app/Contents,
+# still finds its home, compiled in. The Mac bundle keeps its link: its target's grandparent is SWI-Prolog.app/Contents,
 # all of it, and janus_swi finds the bundle's home only through the link (through a wrapper it looked beside /bin/sh
-# and stopped, "could not find SWI-Prolog home", on the Mac mini's first prebuilt run).
+# and stopped, "could not find SWI-Prolog home", on the Mac mini's first prebuilt run). The Linux bundle's bin/swipl is
+# the real executable, whose grandparent is $OH/swipl itself (unpack_swipl), and it finds its home through swipl.home.
 if [ "$PREBUILT" = 0 ] && [ -L "$OH/swipl/bin/swipl" ]; then
   REAL_SWIPL=$(cd "$OH/swipl/bin" && cd "$(dirname "$(readlink swipl)")" && pwd)/swipl
   rm "$OH/swipl/bin/swipl"
@@ -444,7 +490,7 @@ else
   # Made again from nothing, so the venv holds exactly the list: an older install's torch and the rest go with it.
   rm -rf "$OH/venv"
   "$TOOLCHAIN/bin/python3.12" -m venv "$OH/venv"
-  fetching "the hive's Python packages" "$(sed -n 's/^# download: \([0-9]*\) MB$/\1/p' "$PYLOCK")"
+  fetching "the hive's Python packages" "$(download_mb "$PYLOCK")"
   # uv's line for each of about a hundred packages goes to its own log, as the toolchain's does.
   SUBLOG=$OH/logs/python-packages.log
   # Keep the environment and uv cache between attempts, so a dropped connection keeps completed packages.
@@ -477,6 +523,7 @@ if [ "$PREBUILT" = 1 ]; then
 else
   # The source release by its PyPI sha256, built with the hash-locked build tools of the Linux installer
   # (locks/janus-build.lock is its ci/linux-x86/inputs/build.lock, release/hive-20261109, byte for byte).
+  build_tools
   printf 'janus-swi==%s --hash=sha256:%s\n' "$JANUS_VERSION" "$JANUS_SWI_SDIST_SHA256" > "$BUILD/janus.req"
   "$OH/venv/bin/python" -m pip install -q --no-cache-dir --require-hashes -r "$SCRIPT_DIR/locks/janus-build.lock"
   PATH="$OH/swipl/bin:$PATH" "$OH/venv/bin/python" -m pip install -q --no-cache-dir --no-build-isolation \

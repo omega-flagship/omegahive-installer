@@ -3,7 +3,7 @@
 # keeps a download only when its checksum matches, the checksum commands both systems share, and how far above the
 # hive's port Create's Code service listens. Sourced by "Install OmegaHive.command" (on a Mac, and inside the Windows
 # installer's WSL distro), setup-code.sh, setup-tools.sh, omegahive.sh (run), build-swipl-bundle.sh,
-# check-swipl-bundle.sh and conda-lock.sh; plain sh, bash 3.2 too.
+# build-swipl-bundle-linux.sh, check-swipl-bundle.sh and conda-lock.sh; plain sh, bash 3.2 too.
 # The conda packages are pinned one by one in locks/ (made by conda-lock.sh), each by URL and sha256.
 # shellcheck disable=SC2034  # every assignment here is read by the scripts that source this file
 
@@ -19,6 +19,9 @@ MICROMAMBA_SHA256_linux_aarch64=3bb56786e21b9b24024f599fe9185b4a59dc3f9f59937a42
 # SWI-Prolog: the tag the hive runs (docs/omegaclaw-core.md) and the commit it names; a clone must land on this commit.
 SWIPL_TAG=V10.1.14
 SWIPL_COMMIT=69775434c8226897626b226aefcc8266499f1e2e
+# The packages every build of it takes, the source build and both bundles alike: the ones deploy/setup_runtime.sh builds
+# on Linux, janus (packages/swipy) the one PeTTa loads on every run.
+SWIPL_PACKAGES="clib swipy plunit json sgml http zlib libedit pcre yaml chr clpqr cpp utf8proc archive ssl"
 
 # PeTTa at the reviewed commit, as GitHub's codeload tarball (the same bytes on two downloads, 120306 of them).
 PETTA_COMMIT=ae66fa8e41dcd5539d614706bd4e5cfb34f9608d

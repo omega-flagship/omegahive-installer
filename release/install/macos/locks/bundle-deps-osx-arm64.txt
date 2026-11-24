@@ -1,21 +1,20 @@
-# conda-forge lock for osx-arm64, solved 2026-11-09 by micromamba 2.10.0-0 from: gmp openssl yaml pcre2 libarchive zlib
+# conda-forge lock for osx-arm64, solved 2026-11-24 by micromamba 2.10.0-0 from: gmp openssl yaml pcre2 libarchive zlib libxml2-16=2.15.4=hea22233_1
 # Made by install/macos/conda-lock.sh; install with: micromamba create -p PREFIX -f THIS_FILE
 @EXPLICIT
-https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.10.23-hbd8a1cb_0.conda#sha256:95619b9c1184be7175392eeb0ee7eeb5ccf25d280951f4225f2d62e725790be3
+https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.11.20-hbd8a1cb_0.conda#sha256:8c104262bf331b14478e36c6cedd63b558d4b7ff96f218742a91878353edeed1
 https://conda.anaconda.org/conda-forge/osx-arm64/bzip2-1.0.8-h4e30115_10.conda#sha256:8ec22f0ba25cbfc2e64d70cf29459eccd7ffdf6436f6a6ff15bbfef799f7d4f6
 https://conda.anaconda.org/conda-forge/osx-arm64/gmp-6.3.0-hf5e55b1_3.conda#sha256:980cb1bbc3656d6f923d44297a2c4ab75f20482b8930c70537fd7f1ef2378894
-https://conda.anaconda.org/conda-forge/osx-arm64/icu-78.3-py310h579977c_2.conda#sha256:6cdb5dee54c72e56ab189fb3ad33cb28533553d42590e7e831160248f4416a43
-https://conda.anaconda.org/conda-forge/osx-arm64/libarchive-3.8.11-gpl_h76147b0_100.conda#sha256:817a2977df0cca6b0dc2a9f9dcb1de184755fcd200c111aec9c94578908a08b1
-https://conda.anaconda.org/conda-forge/osx-arm64/libcxx-23.1.5-h55c6f16_0.conda#sha256:b4b1fd6107980fed8b4e7ae8b08257b50c0f88b8771a530dc4a561f5d796457b
+https://conda.anaconda.org/conda-forge/osx-arm64/libarchive-3.8.11-gpl_h54b43b9_101.conda#sha256:dfd3df5c31bbdae7cd2591390db2cb2456757dd11520b67f028491d679b1c0c9
+https://conda.anaconda.org/conda-forge/osx-arm64/libcxx-23.1.6-hc645fd0_0.conda#sha256:822b2a88313977594230b7be745324e4c50293a35cf9244bb19ecc9c2c385288
 https://conda.anaconda.org/conda-forge/osx-arm64/libiconv-1.18-he4c29f2_3.conda#sha256:689a14968267f2f97c07112fca5636e7d756036b9aee969911267c20bd3eea1f
 https://conda.anaconda.org/conda-forge/osx-arm64/liblzma-5.8.3-h8088a28_1.conda#sha256:23d0630046a3e8b164d8f80f2b74ed2605af2e7050ab9913018056402fae4311
-https://conda.anaconda.org/conda-forge/osx-arm64/libxml2-16-2.15.4-heb56d2d_1.conda#sha256:1acd4dd49c6f54440dc172ab469d0e2c7c3c02de5b1f21158a233eb585ec3c38
-https://conda.anaconda.org/conda-forge/osx-arm64/libxml2-2.15.4-h550178d_1.conda#sha256:f333b4c6c823ea317aeb0b817520ae3ba2fb16277923d848f5f2aee2049198e5
+https://conda.anaconda.org/conda-forge/osx-arm64/libxml2-16-2.15.4-hea22233_1.conda#sha256:458e6043db6d661b8914a3252b85b3d693e315711848efb92885fe7694f28de9
+https://conda.anaconda.org/conda-forge/osx-arm64/libxml2-2.15.4-hdcc4aff_1.conda#sha256:87b6bb897ff739c5aca1adbd026e730443cff2de01ee7185de9fa7496bf8a2ce
 https://conda.anaconda.org/conda-forge/osx-arm64/libzlib-1.3.2-h8088a28_3.conda#sha256:a18fa5d5bac452401459f966cf0d872224e8080c4ff93c77e168d43ab42ef9d7
-https://conda.anaconda.org/conda-forge/osx-arm64/lz4-c-1.10.0-hdca3b7d_2.conda#sha256:1887867b393eb3c2b336deaffcf228574821ea1e0dcb9ef7bf6c9f59cec40f03
+https://conda.anaconda.org/conda-forge/osx-arm64/lz4-c-1.11.1-ha89b795_0.conda#sha256:9f37a2d03a872312ff1d183fa3d9c1652906e0f9f7391ab90130e49b14976d3f
 https://conda.anaconda.org/conda-forge/osx-arm64/lzo-2.10-h74c22ad_1003.conda#sha256:95d5f16bfa62ff50980a5e0329920bb2b5ec66d0e0d6c87954603713c3519ece
 https://conda.anaconda.org/conda-forge/osx-arm64/openssl-3.6.5-h55eecbc_0.conda#sha256:44fbc526456571a9fb8fa18157f6f269d4d4bd40eef20183a93b9c9296f94497
 https://conda.anaconda.org/conda-forge/osx-arm64/pcre2-10.49-he63d830_0.conda#sha256:f43b18fac9436fbd6c34e7d37cbf9db5c689beb90488d54326032ceb59e8905a
-https://conda.anaconda.org/conda-forge/osx-arm64/yaml-0.2.5-h74c22ad_3.conda#sha256:3e78c43207502418fc5fb2317bbbefe5df8b6fc1051d90bdcd1c881c76bb4193
+https://conda.anaconda.org/conda-forge/osx-arm64/yaml-0.2.6-h602ebc4_0.conda#sha256:d490d5a90e9e754715306f6069ec33cd8b699bcf5246599d61f4c9355862076d
 https://conda.anaconda.org/conda-forge/osx-arm64/zlib-1.3.2-h8088a28_3.conda#sha256:ab46d85e4fcffff1b1c5cac517afa40b7ae784cf76fc9da1f55f6a6934291eb6
 https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda#sha256:da867f5092eb0cb746d353694f0098031fd9817a4ce7d5743121209ae0f406ca

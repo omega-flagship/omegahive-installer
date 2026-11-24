@@ -1,0 +1,29 @@
+# conda-forge lock for linux-64: what a source build adds to conda-linux-64.txt, solved with it 2026-11-09, rewritten 2026-11-24 by micromamba 2.10.0-0 from: cmake ninja pkg-config gmp openssl yaml pcre2 libarchive zlib libedit c-compiler cxx-compiler
+# Made by install/macos/conda-lock.sh; add with: micromamba install -p PREFIX -f THIS_FILE, into an environment made from conda-linux-64.txt
+# download: 200 MB
+@EXPLICIT
+https://conda.anaconda.org/conda-forge/linux-64/binutils_impl_linux-64-2.46.1-default_hfdba357_103.conda#sha256:98f9ddc6dc5d56a824b7eaea5bab6ad4bb47642288fc70d6b1b4024ac39d5595
+https://conda.anaconda.org/conda-forge/linux-64/c-compiler-2.0.0-ha29393d_0.conda#sha256:a54488d2b00380f542a2e1aa00dee3d878803a8c2c025dfce852a23685584dc6
+https://conda.anaconda.org/conda-forge/linux-64/cmake-4.4.5-hff7ac6b_0.conda#sha256:2fdc108bc51a8845fc1c25e1cb78f6781bdce439f637ff850c2fa9a5a92c56f6
+https://conda.anaconda.org/conda-forge/linux-64/conda-gcc-specs-15.3.0-h8846f6e_7.conda#sha256:395a5928fc78e8545afdb4e9bf074cf90e37ff8287a1f34cd98c9350da6c3095
+https://conda.anaconda.org/conda-forge/linux-64/cxx-compiler-2.0.0-hdab9b82_0.conda#sha256:384ab445d260e0d69e701c32eb0ed870d348ec7e3efc78d944823855d4512ca1
+https://conda.anaconda.org/conda-forge/linux-64/gcc-15.3.0-hc6a0c74_7.conda#sha256:f362d14caab740de46f60d5ca8a4340066704ff573bc0a618030ceca3a2b7f87
+https://conda.anaconda.org/conda-forge/linux-64/gcc_impl_linux-64-15.3.0-h6ad849d_7.conda#sha256:3c6deaf411a00aef601fb37f3a5e00aa4b85bace1fd2ebad347033aadc543c55
+https://conda.anaconda.org/conda-forge/linux-64/gmp-6.3.0-hfd2156b_3.conda#sha256:f36c336efc874f346a53a9011f67e997f9faac505562cc18c13b6d399cfe61c7
+https://conda.anaconda.org/conda-forge/linux-64/gxx-15.3.0-hc6a0c74_7.conda#sha256:b4d8243c72c114f3bc5189659f0ad7745d35b3c08fbd529d7dd32b7fbb631a5e
+https://conda.anaconda.org/conda-forge/linux-64/gxx_impl_linux-64-15.3.0-h90d9265_7.conda#sha256:23e396ca14d05c645f431175379ec010676827d0b7791131ef4f1422f522a755
+https://conda.anaconda.org/conda-forge/linux-64/libarchive-3.8.11-gpl_h3152399_100.conda#sha256:0b13f801fa48194d18819b0dc1aac182ea88089f81b87af2d3bacd69d3ff5cc5
+https://conda.anaconda.org/conda-forge/linux-64/libsanitizer-15.3.0-h54950a5_7.conda#sha256:9e5518e38502568f4591be965d48c1a3f79e2da4d74567f1a62e00244cf40222
+https://conda.anaconda.org/conda-forge/linux-64/libxml2-16-2.15.4-hf3af7cc_1.conda#sha256:d1906463070c21f3215cd5de93164f31c44d5bac6ae9b5d8f5adf42b1e304039
+https://conda.anaconda.org/conda-forge/linux-64/libxml2-2.15.4-h7df9aa5_1.conda#sha256:8c32be9e8720bc413d2b4267517459d7d71fad4a5f398a2aa8319b6d7b8a00e6
+https://conda.anaconda.org/conda-forge/linux-64/lz4-c-1.10.0-hee9eb32_2.conda#sha256:b8c0e930183e6b7f83cd35ace102f2b8c2f0faae41dc05255dc72f247dfc556a
+https://conda.anaconda.org/conda-forge/linux-64/lzo-2.10-hebe6cf0_1003.conda#sha256:a0a1400198e5302d8367f2ed53437ee3cc41dbc463cb481921ce765578780b7a
+https://conda.anaconda.org/conda-forge/linux-64/ninja-1.13.2-h171cf75_1.conda#sha256:2b5f2e865122f9fc0637f520a7cb22e16b9727b2db6761ee16cb5e6404412c81
+https://conda.anaconda.org/conda-forge/linux-64/pkg-config-0.29.2-h1114479_1013.conda#sha256:8f27ee1b6166c5be505dba4b0dd0f3b3b81ddec811f6118cc337b90cbd3937a4
+https://conda.anaconda.org/conda-forge/linux-64/rhash-1.4.6-hb03c661_2.conda#sha256:186a5b225077ad5f4656966da947d43307101950751ef4a239b455588756b4e1
+https://conda.anaconda.org/conda-forge/linux-64/yaml-0.2.5-hebe6cf0_3.conda#sha256:d164dfa75ecd538f6fd68765defcc06aa875bc697b9b215362d79a2a73125dd0
+https://conda.anaconda.org/conda-forge/linux-64/zlib-1.3.2-h25fd6f3_3.conda#sha256:16080a1c7724f7d25727cdc23c7658e0cec2db52448c1dc0c33467ee2c6e1c62
+https://conda.anaconda.org/conda-forge/noarch/kernel-headers_linux-64-6.12.0-he073ed8_6.conda#sha256:73b11f31db6c9ebe63d900334fa4f46859aa1ddd8f37cfa5f25a043e0a59253c
+https://conda.anaconda.org/conda-forge/noarch/libgcc-devel_linux-64-15.3.0-h2b852eb_107.conda#sha256:5200a1402eb3c3e9b0e4ba38b3cf163be136d020a15477fb86ce6e754d3ae515
+https://conda.anaconda.org/conda-forge/noarch/libstdcxx-devel_linux-64-15.3.0-hb2c5482_107.conda#sha256:4b2d94a9abf2feedea354e4256756c5dc255b84080e7faed9a324a101cf20e74
+https://conda.anaconda.org/conda-forge/noarch/sysroot_linux-64-2.39-hc4b9eeb_6.conda#sha256:7d235e4337f122f3439d0196e1c1c6e715a5b88fcbf24f944510186c84168e45
