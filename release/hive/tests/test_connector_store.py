@@ -570,6 +570,21 @@ def test_an_installer_update_carries_the_old_code_folders_secrets_to_the_next_st
     assert store.import_legacy(new) == []
 
 
+def test_the_bridges_own_hive_auth_file_beside_a_pairing_is_code_and_never_imported_or_reported(importing, monkeypatch):
+    """*auth* names the bridges' pairing folders; the hive-auth.mjs every release ships beside them is code, which the
+    import neither takes nor reports on each start."""
+    store, db, tmp_path = importing
+    shipped = {"modules/channel_whatsapp/src/whatsapp_bridge/hive-auth.mjs": "// the bridge's own code\n",
+               "channels/whatsapp_bridge/hive-auth.mjs": "// the bridge's own code\n"}
+    code = legacy(tmp_path / "code", {**LEGACY_FILES, **shipped})
+    db.execute("INSERT INTO people (id, email, role, created_at) VALUES ('u_admin', 'a@x', 'admin', '2026-01-01')")
+    monkeypatch.setattr(connectors, "host_loader_modules", lambda: set())
+    report = store.import_legacy(code)
+    assert len(report) == 5 and not any("hive-auth" in line for line in report)
+    assert all((code / rel).read_text() == text for rel, text in shipped.items())
+    assert store.import_legacy(code) == []
+
+
 def test_what_the_host_loads_stays_installed_on_the_persons_own_minds_and_whatsapp_on_the_oldest(importing, monkeypatch):
     store, db, tmp_path = importing
     code = legacy(tmp_path / "code")

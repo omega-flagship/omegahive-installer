@@ -15,6 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / 'install/macos/Install OmegaHive.command'
 LOGIN = 'memory/home_assistant.json'
 PAIRING = 'modules/channel_whatsapp/src/whatsapp_bridge/auth/creds.json'
+# The bridge's own code beside the pairing folder, which the pairing glob *auth* also names: every release ships it.
+BRIDGE_CODE = 'modules/channel_whatsapp/src/whatsapp_bridge/hive-auth.mjs'
 
 
 def swap_block():
@@ -37,7 +39,7 @@ class CodeSwapTests(unittest.TestCase):
         self.folder = tempfile.TemporaryDirectory(prefix='installer-swap-')
         work = Path(self.folder.name)
         self.oh, self.src = work / 'OmegaHive', work / 'release'
-        lay_out(self.src, {'RELEASE_COMMIT': 'new\n', 'hive/core/connector_files.py':
+        lay_out(self.src, {'RELEASE_COMMIT': 'new\n', BRIDGE_CODE: '// new\n', 'hive/core/connector_files.py':
                            (ROOT / 'hive/core/connector_files.py').read_text()})
         python = work / 'toolchain/bin/python3.12'
         python.parent.mkdir(parents=True)
@@ -55,7 +57,8 @@ class CodeSwapTests(unittest.TestCase):
         return subprocess.run(['bash', '-c', script], env=env, capture_output=True, text=True)
 
     def old_release(self, where):
-        return lay_out(self.oh / where, {'RELEASE_COMMIT': 'old\n', LOGIN: '{"token": "ha-old"}', PAIRING: '{"k": 1}'})
+        return lay_out(self.oh / where, {'RELEASE_COMMIT': 'old\n', LOGIN: '{"token": "ha-old"}', PAIRING: '{"k": 1}',
+                                         BRIDGE_CODE: '// old\n'})
 
     def assertCarried(self, run):
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
@@ -64,6 +67,8 @@ class CodeSwapTests(unittest.TestCase):
         self.assertEqual((self.oh / 'data/connectors' / LOGIN).read_text(), '{"token": "ha-old"}')
         self.assertEqual((self.oh / 'data/connectors' / PAIRING).read_text(), '{"k": 1}')
         self.assertFalse((self.oh / 'app' / LOGIN).exists())
+        self.assertFalse((self.oh / 'data/connectors' / BRIDGE_CODE).exists())     # code goes with the old folder
+        self.assertEqual((self.oh / 'app' / BRIDGE_CODE).read_text(), '// new\n')
 
     def test_an_update_carries_the_old_code_folders_logins_to_the_connectors_folder(self):
         self.old_release('app')

@@ -25,7 +25,11 @@ CARRIED = sorted({
     "memory/home_assistant.json", "modules/health_glucose/memory/librelinkup.json", "memory/librelinkup_cache.json",
     "memory/runtime/agentverse/local_seed.txt", "modules/channel_whatsapp/src/whatsapp_bridge/auth",
     "channels/whatsapp_bridge/auth_work"})
-CODE = {"hive/core/app.py": "# the old release's code\n", "memory/notes.md": "not a secret\n"}
+# Code the release ships, a file beside each pairing folder that *auth* also names among them: it stays to go with
+# the old folder, never carried.
+CODE = {"hive/core/app.py": "# the old release's code\n", "memory/notes.md": "not a secret\n",
+        "modules/channel_whatsapp/src/whatsapp_bridge/hive-auth.mjs": "// the bridge's own code\n",
+        "channels/whatsapp_bridge/hive-auth.mjs": "// the bridge's own code\n"}
 
 
 def lay_out(base, files):

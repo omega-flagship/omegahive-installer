@@ -1,6 +1,6 @@
 {
-  "source_commit": "3f3f7641ce6b656228335865c66f467b3f595a1d",
-  "mac_zip_sha256": "254d48865a19fb6af2679dba9d14dc234b82ef940b4376e47ff536454e46d8c4",
+  "source_commit": "4ee73b361b3f2b368d319694397ab82d532f9c82",
+  "mac_zip_sha256": "c0ed2288c5706b2e0fbf1438f0cd6f594a85277e3cfea8d5f0d2a67578fca3e3",
   "ui": {
     "mac_zip_prefix": "Omega Hive v0.43/omegahive/hive/ui/dist/",
     "archive_sha256": "d5b6852f78f325dc5485477d0c7c7f0a87792aae93f8132cf4fc81fa5c71d6aa",
@@ -24,5 +24,5 @@
     "bytes": 212230,
     "sha256": "64cbe4a1087a0fa5332b4a0aefec13b23f431cbe806f9dfe595466f51d868a08"
   },
-  "mac_zip_commit": "59361d793e8362b4c884e9bee79936be330e81a3"
+  "mac_zip_commit": "4ee73b361b3f2b368d319694397ab82d532f9c82"
 }

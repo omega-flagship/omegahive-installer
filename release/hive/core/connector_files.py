@@ -29,7 +29,8 @@ FOLDER = "connectors"
 
 # What a checkout's connectors kept in plain files, as (connector, entry, path relative to the checkout or the data
 # folder's connectors folder, how to read it). The first file found for an entry is imported. A path's last part may
-# be a glob, as the repository's .gitignore names the bridges' pairing folders (*auth*: auth, auth_<label>).
+# be a glob, as the repository's .gitignore names the bridges' pairing folders (*auth*: auth, auth_<label>); a glob
+# matches folders only, since the bridge's own hive-auth.mjs sits beside them.
 LEGACY = (
     ("home_assistant", "settings", "memory/home_assistant.json", "ha-json"),
     ("librelinkup", "settings", "modules/health_glucose/memory/librelinkup.json", "llu-json"),
@@ -54,14 +55,16 @@ def folder_unlinked(root, parent):
 
 
 def matches(root, rel):
-    """What a LEGACY path names under `root`: the path itself, or, when its last part is a glob, every entry of its
-    folder that part matches, sorted, never an interrupted move's .moving copy."""
+    """What a LEGACY path names under `root`: the path itself, or, when its last part is a glob, every folder of its
+    folder that part matches, sorted, never an interrupted move's .moving copy. A glob names a bridge's pairing
+    folders only: the bridge's own hive-auth.mjs beside them matches *auth* and is code the release ships."""
     parent, _, name = rel.rpartition("/")
     if not any(c in name for c in "*?["):
         return [rel] if os.path.lexists(pathlib.Path(root) / rel) else []
     where = folder_unlinked(root, parent)
     return [] if where is None else [f"{parent}/{n}" for n in sorted(os.listdir(where))
-                                     if fnmatch.fnmatchcase(n, name) and not n.endswith(MOVING)]
+                                     if fnmatch.fnmatchcase(n, name) and not n.endswith(MOVING)
+                                     and os.path.isdir(where / n)]
 
 
 def _through_link(root, parent):
@@ -82,7 +85,8 @@ def _reached(root, rel):
     where = pathlib.Path(root) / parent
     if not any(c in name for c in "*?["):
         return [rel] if os.path.lexists(where / name) else []
-    return [f"{parent}/{n}" for n in sorted(os.listdir(where)) if fnmatch.fnmatchcase(n, name)] if where.is_dir() else []
+    return [f"{parent}/{n}" for n in sorted(os.listdir(where))
+            if fnmatch.fnmatchcase(n, name) and os.path.isdir(where / n)] if where.is_dir() else []
 
 
 def _make_folders(root, parent):
