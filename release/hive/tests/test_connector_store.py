@@ -546,6 +546,30 @@ def test_a_checkouts_plain_secrets_become_the_first_admins_sealed_entries(import
     assert store.import_legacy(code) == []                         # every start after the first finds nothing
 
 
+def test_an_installer_update_carries_the_old_code_folders_secrets_to_the_next_starts_import(importing, monkeypatch):
+    """The Mac and Windows installer deletes the code folder an update replaces before the hive starts; what it carried
+    out of that folder first (connector_files.carry) is what the new hive's start imports."""
+    from hive.core import connector_files
+    store, db, tmp_path = importing
+    old, new = legacy(tmp_path / "app.old"), tmp_path / "app"
+    new.mkdir()
+    db.execute("INSERT INTO people (id, email, role, created_at) VALUES ('u_admin', 'a@x', 'admin', '2026-01-01')")
+    monkeypatch.setattr(connectors, "host_loader_modules", lambda: set())
+    lines, kept = connector_files.carry(old, tmp_path / "data", new)
+    assert kept == 0 and all(line.startswith("carried ") for line in lines)
+    report = store.import_legacy(new)
+    assert sorted(report) == sorted([
+        "imported connectors/memory/home_assistant.json as user:u_admin's home_assistant",
+        "imported connectors/modules/health_glucose/memory/librelinkup.json as user:u_admin's librelinkup",
+        "imported connectors/modules/health_glucose/memory/librelinkup_cache.json as user:u_admin's librelinkup",
+        "imported connectors/memory/runtime/agentverse/local_seed.txt as user:u_admin's agentverse",
+        "imported connectors/modules/channel_whatsapp/src/whatsapp_bridge/auth as user:u_admin's whatsapp"])
+    assert json.loads(store._get("user:u_admin", "home_assistant", "settings")) == {
+        "url": "http://homeassistant.local:8123", "token": "ha-legacy-token"}
+    assert not any((store.folder / rel).exists() or (old / rel).exists() for rel in LEGACY_FILES)
+    assert store.import_legacy(new) == []
+
+
 def test_what_the_host_loads_stays_installed_on_the_persons_own_minds_and_whatsapp_on_the_oldest(importing, monkeypatch):
     store, db, tmp_path = importing
     code = legacy(tmp_path / "code")

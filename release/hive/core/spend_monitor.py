@@ -313,14 +313,24 @@ class SpendMonitor:
                     self.db.execute("UPDATE spend_alerts SET closed_at = ? WHERE id = ?", (at, row["id"]))
                     self._refresh(row["recipient"], None)
                     row = None
-                if row is None and person and signal and signal.active:
+                if not person or not signal or (row is None and not signal.active):
+                    continue
+                figures = {
+                    "window_seconds": signal.window, "spent": signal.spent, "projected": signal.projected,
+                    "cap": cap.amount if scope == HIVE and cap.amount else None,
+                }
+                if row is not None:
+                    if all(row[key] == value for key, value in figures.items()):
+                        continue
+                    alert_id = row["id"]
+                    self.db.update("spend_alerts", alert_id, figures)
+                else:
                     alert_id = "sa_" + uuid4().hex
                     self.db.insert("spend_alerts", {
                         "id": alert_id, "scope": scope, "recipient": person, "opened_at": at, "last_charge": watermark,
-                        "window_seconds": signal.window, "spent": signal.spent, "projected": signal.projected,
-                        "cap": cap.amount if scope == HIVE and cap.amount else None,
+                        **figures,
                     })
-                    self._refresh(person, alert_id)
+                self._refresh(person, alert_id)
             self.db.execute(
                 "INSERT INTO spend_monitor_position VALUES (1, ?, ?) ON CONFLICT(singleton) DO UPDATE SET "
                 "before_id = excluded.before_id, evaluated_at = excluded.evaluated_at", (watermark, at),

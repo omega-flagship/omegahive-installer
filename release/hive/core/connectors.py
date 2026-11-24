@@ -21,7 +21,9 @@ owner's minds at a time, since a pairing is one live session.
 
 `import_legacy` runs once as the hive starts: what a checkout still holds under the code folder, or the data folder's
 connectors folder holds from an earlier release, becomes the entries of the hive's first admin (the operator in a
-password-only hive), each checked to open to the same bytes before its file goes. A connector whose module the host's
+password-only hive), each checked to open to the same bytes before its file goes. The Mac and Windows installer deletes
+the code folder an update replaces before the hive starts, so it first carries what that folder holds to the
+connectors folder (connector_files.carry). A connector whose module the host's
 loader already loads into every mind is installed on that person's own minds (WhatsApp on the oldest), so what worked
 keeps working; one it doesn't load stays uninstalled, since no mind used it. A person's own minds are those they made,
 not the ones the hive makes and keeps for a purpose: the foundation's Create · Code, Review and Research minds, a Studio
@@ -52,9 +54,10 @@ import threading
 import time
 
 from . import connector_calls, sealed
+# The legacy table and its path rules live where the installer's bare Python reads them too (connector_files.carry).
+from .connector_files import FOLDER, LEGACY, MOVING, folder_unlinked as _folder, matches as _matches
 from .redact import register as register_secret
 
-FOLDER = "connectors"
 NAME = re.compile(r"[A-Za-z0-9._@:+=-]{1,200}")
 MAX_VALUE = 1024 * 1024
 
@@ -556,46 +559,11 @@ class ConnectorStore:
                 sealed._write_private(target, json.dumps(state, ensure_ascii=False, sort_keys=True))
 
 
-# What a checkout's connectors kept in plain files, as (connector, entry, path relative to the checkout or the data
-# folder's connectors folder, how to read it). The first file found for an entry is imported. A path's last part may
-# be a glob, as the repository's .gitignore names the bridges' pairing folders (*auth*: auth, auth_<label>).
-LEGACY = (
-    ("home_assistant", "settings", "memory/home_assistant.json", "ha-json"),
-    ("librelinkup", "settings", "modules/health_glucose/memory/librelinkup.json", "llu-json"),
-    ("librelinkup", "settings", "memory/librelinkup.json", "llu-json"),
-    ("librelinkup", "session", "modules/health_glucose/memory/librelinkup_cache.json", "llu-cache"),
-    ("librelinkup", "session", "memory/librelinkup_cache.json", "llu-cache"),
-    ("agentverse", "seed", "memory/runtime/agentverse/local_seed.txt", "seed"),
-    ("whatsapp", "*", "modules/channel_whatsapp/src/whatsapp_bridge/*auth*", "baileys"),
-    ("whatsapp", "*", "channels/whatsapp_bridge/*auth*", "baileys"),
-)
 LLU_SESSION = ("base_url", "token", "expires", "account_id", "user_id_hash", "updated")
-MOVING = ".moving"   # the suffix of the copy #443's move staged beside each secret's place, as .<name>.moving
 
 
 class LegacyKept(Exception):
     """A legacy file stays where it is; the message says why."""
-
-
-def _folder(root, parent):
-    """`root`/`parent` when it is a folder reached through no link, else None."""
-    where = pathlib.Path(root)
-    for part in pathlib.PurePosixPath(parent).parts:
-        where = where / part
-        if where.is_symlink() or not where.is_dir():
-            return None
-    return where
-
-
-def _matches(root, rel):
-    """What a LEGACY path names under `root`: the path itself, or, when its last part is a glob, every entry of its
-    folder that part matches, sorted, never an interrupted move's .moving copy."""
-    parent, _, name = rel.rpartition("/")
-    if not any(c in name for c in "*?["):
-        return [rel] if os.path.lexists(pathlib.Path(root) / rel) else []
-    where = _folder(root, parent)
-    return [] if where is None else [f"{parent}/{n}" for n in sorted(os.listdir(where))
-                                     if fnmatch.fnmatchcase(n, name) and not n.endswith(MOVING)]
 
 
 def _unfinished_moves(folder):

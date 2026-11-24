@@ -308,11 +308,22 @@ if [ "$SRC" != "$OH/app" ]; then
   if [ "$OS" = Darwin ]; then ditto "$SRC" "$OH/app.new"; else cp -pR "$SRC" "$OH/app.new"; fi
   # This folder was approved when its installer was opened; the copy is not quarantined again file by file.
   unquarantine "$OH/app.new"
-  # Swapped by rename, as the J1 installer adopts a staged sibling: a run stopped here leaves the old code or the new.
-  rm -rf "$OH/app.old"
+  # Swapped by rename, as the J1 installer adopts a staged sibling: a run stopped here leaves the old code or the new,
+  # and an old folder a run stopped between the two renames left goes back to its place before the swap.
+  # The old folder can hold the person's logins and session keys (an earlier release kept them in memory/ and beside
+  # its bridges, hive/core/connector_files.py's LEGACY): each goes to the data folder's connectors folder, or into the
+  # new code, before the folder is deleted, and the hive's start imports it. Deleting it with them inside lost every
+  # one an update met. One that can't be moved stops the setup here, with the old folder kept.
+  retire_old_code() {
+    [ -d "$OH/app.old" ] || return 0
+    "$TOOLCHAIN/bin/python3.12" -I "$SRC/hive/core/connector_files.py" "$OH/app.old" "$OH/data" "$OH/app"
+    rm -rf "$OH/app.old"
+  }
+  if [ -d "$OH/app.old" ] && [ ! -d "$OH/app" ]; then mv "$OH/app.old" "$OH/app"; fi
+  retire_old_code
   if [ -d "$OH/app" ]; then mv "$OH/app" "$OH/app.old"; fi
   mv "$OH/app.new" "$OH/app"
-  rm -rf "$OH/app.old"
+  retire_old_code
 fi
 
 # The UI builds while SWI-Prolog and the Python packages are made; a bundle with a built hive/ui/dist skips it.
