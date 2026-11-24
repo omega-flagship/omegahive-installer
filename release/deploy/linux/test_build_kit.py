@@ -355,6 +355,28 @@ class KitContract(unittest.TestCase):
         with self.assertRaises(kit.Refused):
             kit.references({'schema': 'studio-linux-user-release/2', 'ready': True})
 
+    def test_a_platform_may_carry_swipl_prebuilt_named_for_its_version_and_architecture(self):
+        release = release_fixture()
+        release['platforms']['x86_64']['swipl_bundle'] = {'path': 'swipl-9.0.0-linux-x86_64.tar.gz', 'bytes': 1,
+                                                          'sha256': '7' * 64}
+        refs, _payload = kit.references(release)
+        self.assertIn('swipl-9.0.0-linux-x86_64.tar.gz', refs)
+        def bundle(**change):
+            return lambda candidate: candidate['platforms']['x86_64']['swipl_bundle'].update(change)
+        mutations = {
+            'another architecture': bundle(path='swipl-9.0.0-linux-aarch64.tar.gz'),
+            'another version': bundle(path='swipl-9.0.1-linux-x86_64.tar.gz'),
+            'a download': bundle(url='https://releases.astral.sh/runtime/swipl.tar.gz'),
+            'the other platform': lambda candidate: candidate['platforms']['aarch64'].update(
+                swipl_bundle=dict(candidate['platforms']['x86_64']['swipl_bundle'])),
+            'an item nobody reviewed': lambda candidate: candidate['platforms']['x86_64'].update(
+                janus_wheel={'path': 'janus.whl', 'bytes': 1, 'sha256': '6' * 64}),
+        }
+        for label, mutate in mutations.items():
+            candidate = copy.deepcopy(release); mutate(candidate)
+            with self.subTest(label), self.assertRaises(kit.Refused):
+                kit.references(candidate)
+
 
     def test_release_v2_keeps_independent_ui_pins_and_only_a_versioned_runtime_node(self):
         # The UI ships prebuilt, so no release names a Node to build it with; each platform pins the one Node a Code

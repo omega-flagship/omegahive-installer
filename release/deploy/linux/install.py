@@ -67,6 +67,12 @@ APPARMOR_ENABLED = P("/sys/module/apparmor/parameters/enabled")
 PATH_CHARACTERS = "Your installation path can use only letters, numbers, dots, underscores, hyphens and slashes."
 HOSTS = {"github.com", "nodejs.org", "files.pythonhosted.org", "www.swi-prolog.org",
          "download.swi-prolog.org", "astral.sh", "releases.astral.sh"}
+# Each platform's release items: fetched from its pinned public URL or carried in this download, and whether every
+# platform has it. A platform may carry SWI-Prolog prebuilt (flagship's install/macos/build-swipl-bundle-linux.sh)
+# beside the pinned source it builds otherwise; aarch64 has none.
+PLATFORM_ITEMS = {"uv": ("url", True), "python": ("url", True), "node": ("url", True), "swipl_source": ("url", True),
+                  "petta_source": ("url", True), "source_payload": ("local", True), "core_lock": ("local", True),
+                  "build_lock": ("local", True), "swipl_bundle": ("local", False)}
 UNIT = "omegahive.service"
 # Create's Code service: the user unit the hive's Code guard reads by this name (hive/core/code.py CODE_UNIT), on the
 # hive's port plus install/macos/pins.sh's CODE_PORT_OFFSET (8700 + 24), the published omegacode release's own port.
@@ -195,21 +201,25 @@ def validate_catalogue(value):
               for k in ("uv_version", "swipl_version")), "Reviewed runtime versions are missing.")
     need(type(value["platforms"]) is dict and set(value["platforms"]) == {"x86_64", "aarch64"},
          "Both Ubuntu architectures need a reviewed package set.")
-    for selected in value["platforms"].values():
-        need(type(selected) is dict and set(selected) == {"uv", "python", "node", "swipl_source", "petta_source",
-                                                        "source_payload", "core_lock", "build_lock"},
-             "A platform package set is incomplete.")
+    for arch, selected in value["platforms"].items():
+        need(type(selected) is dict and {name for name, (_, every) in PLATFORM_ITEMS.items() if every} <= set(selected)
+             <= set(PLATFORM_ITEMS), "A platform package set is incomplete.")
         for name, item in selected.items():
             need(type(item) is dict and type(item.get("bytes")) is int and 0 < item["bytes"] <= 512 * 1024**2
                  and type(item.get("sha256")) is str and re.fullmatch("[a-f0-9]{64}", item["sha256"]),
                  "A platform download or lock is not checksum-pinned.")
-            if name in {"core_lock", "build_lock", "source_payload"}:
+            if PLATFORM_ITEMS[name][0] == "local":
                 relative(item.get("path"))
             else:
                 url = urllib.parse.urlsplit(item.get("url", ""))
                 need(url.scheme == "https" and url.hostname in HOSTS and not url.username
                      and not url.password and not url.query and not url.fragment,
                      "A runtime download is not an approved public HTTPS artifact.")
+        # A prebuilt SWI-Prolog's name says the version and architecture it was built for, so no other release's or
+        # platform's bundle can stand in for it.
+        need("swipl_bundle" not in selected or (set(selected["swipl_bundle"]) == {"path", "bytes", "sha256"}
+             and selected["swipl_bundle"]["path"] == "swipl-" + value["swipl_version"] + "-linux-" + arch + ".tar.gz"),
+             "The prebuilt SWI-Prolog does not name this release's version and its computer's architecture.")
         # The Node a proposal's project check runs on: its pin names the version the installer checks it reports.
         need(type(selected["node"].get("version")) is str
              and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", selected["node"]["version"]), "The reviewed Node version is missing.")
@@ -1334,7 +1344,8 @@ class Installer:
         private_dir(self.root / "releases")
         selected = self.catalogue["platforms"][arch]
         # Validate every bundled postimage before the password prompt or any apt change.
-        for key in ("source_payload", "core_lock", "build_lock"): self.local(selected[key])
+        for key in sorted(selected):
+            if PLATFORM_ITEMS[key][0] == "local": self.local(selected[key])
         validate_lock(self.local(selected["core_lock"]), core=True)
         validate_lock(self.local(selected["build_lock"]))
         for spec in self.catalogue["apps"]: self.local(spec)
@@ -1425,19 +1436,12 @@ class Installer:
             need(nodelink.resolve(strict=True) == node, "The Node beside Python is not this release's pinned Node.")
             self.run([str(nodelink), "-e", "process.exit(process.version === "
                       + json.dumps("v" + selected["node"]["version"]) + " ? 0 : 1)"], timeout=30)
-            swisrc, pettasrc = runtime / "runtime/swipl-source", runtime / "runtime/PeTTa"
-            extract_tool(self.fetch(selected["swipl_source"]), swisrc)
+            pettasrc = runtime / "runtime/PeTTa"
             extract_tool(self.fetch(selected["petta_source"]), pettasrc)
-            swi = runtime / "runtime/swipl"; build = runtime / "runtime/swipl-build"
-            self.run(["/usr/bin/cmake", "-S", str(swisrc), "-B", str(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
-                      "-DSWIPL_PACKAGES_X=OFF", "-DSWIPL_PACKAGES_JAVA=OFF", "-DSWIPL_PACKAGES_ODBC=OFF", "-DSWIPL_PACKAGES_QT=OFF",
-                      "-DINSTALL_DOCUMENTATION=OFF", "-DBUILD_TESTING=OFF", "-DCMAKE_INSTALL_PREFIX=" + str(swi),
-                      "-DPython_EXECUTABLE=" + str(python), "-DPython_ROOT_DIR=" + str(pybase),
-                      "-DPython3_EXECUTABLE=" + str(python), "-DPython3_ROOT_DIR=" + str(pybase),
-                      "-DCMAKE_INSTALL_RPATH=" + str(libpython)], timeout=300)
-            self.run(["/usr/bin/cmake", "--build", str(build), "--parallel", "2"], timeout=1800)
-            self.run(["/usr/bin/cmake", "--install", str(build)], timeout=300)
-            swipl = place_swipl(swi)
+            swi = runtime / "runtime/swipl"
+            swipl = self.prebuilt_swipl(selected["swipl_bundle"], swi, libpython) if "swipl_bundle" in selected else None
+            if swipl is None:
+                swipl = self.built_swipl(selected["swipl_source"], swi, python, pybase, libpython)
             self.env.update(PATH=str(swi / "bin") + ":" + str(runtime / "venv/bin") + ":" + self.env["PATH"], LD_LIBRARY_PATH=str(libpython))
             # Locks cover current Hive requirements/constraints, the explicit Janus bridge, and reviewed runtime/build dependencies.
             # No deadline of the installer's own: uv stops a stalled download itself, by its HTTP read timeout.
@@ -1445,7 +1449,11 @@ class Installer:
                       "--build-constraint", str(self.local(selected["build_lock"])), str(self.local(selected["core_lock"]))], timeout=None,
                       env=dict(self.env, CC="/usr/bin/gcc", CXX="/usr/bin/g++"))
             self.run([str(venv), "-I", "-B", "-c", "import janus_swi as j; assert j.query_once('X is 1+1')['X'] == 2"], timeout=30)
-            self.run([str(swipl), "-g", "use_module(library(janus)),py_call(operator:add(20,22),V),(V=:=42->halt(0);halt(1))"], timeout=30)
+            # Prolog's side of janus as a mind runs it: without LD_LIBRARY_PATH, which never reaches a mind
+            # (hive/supervisor/sandbox.py PASS), so janus.so must find libpython by its own RUNPATH: the source build's
+            # absolute one, or python/lib beside the prebuilt bundle.
+            self.run([str(swipl), "-g", "use_module(library(janus)),py_call(operator:add(20,22),V),(V=:=42->halt(0);halt(1))"],
+                     timeout=30, env={k: v for k, v in self.env.items() if k != "LD_LIBRARY_PATH"})
             self.omega_core(app, venv)
             code = self.code_service(app, selected["source_payload"]["files"])
             data = self.root / "data"
@@ -1479,6 +1487,52 @@ class Installer:
         finally:
             if self.log is not None: self.log.close()
             os.close(lockfd)
+
+    def prebuilt_swipl(self, spec, swi, libpython):
+        """SWI-Prolog unpacked from this download's prebuilt bundle (flagship's install/macos/build-swipl-bundle-linux.sh),
+        or None when it doesn't run on this computer, once the setup log says why: the source build then takes over, as
+        in the Mac and Windows setup (install/macos/Install OmegaHive.command).
+
+        Every library the bundle carries is found relative to the file needing it, and janus.so, SWI-Prolog's side of
+        janus, finds libpython in python/lib beside swipl/, where this release keeps its Python; it also names the
+        Windows setup's toolchain/envs/hive/lib, which isn't here. That is the one way a mind's swipl has: a mind's
+        sandbox shows only the folders it may read, this Python among them (hive/supervisor/landlock.py
+        _private_root), and LD_LIBRARY_PATH never reaches a mind."""
+        need(swi.parent / "python/lib" == libpython, "The prebuilt SWI-Prolog expects this release's Python beside it.")
+        extract_tool(self.local(spec), swi)
+        swipl = swipl_executable(swi)
+        version = ",".join(self.catalogue["swipl_version"].split("."))
+        try:
+            self.run([str(swipl), "-g", "current_prolog_flag(version_data,swi(" + version + ",_))->halt(0);halt(1)"], timeout=60)
+            return swipl
+        except CommandFailed:
+            pass
+        # What the loader found, for whoever reads the setup log: a library it could not find, or a glibc older than
+        # the bundle's.
+        try:
+            self.run(["/usr/bin/ldd", str(swipl)], timeout=30)
+        except CommandFailed:
+            pass
+        print("The prebuilt SWI-Prolog didn't run on this computer, so setup builds it from source instead, which takes "
+              "a few more minutes. The setup log says why.", flush=True)
+        need(shutil.rmtree.avoids_symlink_attacks, "This Python cannot safely remove the prebuilt SWI-Prolog.")
+        shutil.rmtree(swi)
+        return None
+
+    def built_swipl(self, spec, swi, python, pybase, libpython):
+        """SWI-Prolog built from its pinned source release against this release's Python, where this download carries
+        no prebuilt one for this computer or that one didn't run here."""
+        swisrc, build = swi.parent / "swipl-source", swi.parent / "swipl-build"
+        extract_tool(self.fetch(spec), swisrc)
+        self.run(["/usr/bin/cmake", "-S", str(swisrc), "-B", str(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
+                  "-DSWIPL_PACKAGES_X=OFF", "-DSWIPL_PACKAGES_JAVA=OFF", "-DSWIPL_PACKAGES_ODBC=OFF", "-DSWIPL_PACKAGES_QT=OFF",
+                  "-DINSTALL_DOCUMENTATION=OFF", "-DBUILD_TESTING=OFF", "-DCMAKE_INSTALL_PREFIX=" + str(swi),
+                  "-DPython_EXECUTABLE=" + str(python), "-DPython_ROOT_DIR=" + str(pybase),
+                  "-DPython3_EXECUTABLE=" + str(python), "-DPython3_ROOT_DIR=" + str(pybase),
+                  "-DCMAKE_INSTALL_RPATH=" + str(libpython)], timeout=300)
+        self.run(["/usr/bin/cmake", "--build", str(build), "--parallel", "2"], timeout=1800)
+        self.run(["/usr/bin/cmake", "--install", str(build)], timeout=300)
+        return place_swipl(swi)
 
     def omega_core(self, app, python):
         """Minds run on singnet/Omega at the revision core-dependency.json pins (hive/runtime/core.py), and a release

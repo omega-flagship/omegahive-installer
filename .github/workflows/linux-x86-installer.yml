@@ -57,6 +57,7 @@ jobs:
           sha256sum -c omega-core-*.bundle.sha256
           sha256sum -c omegadesign-*.zip.sha256
           sha256sum -c omegacode-*.tgz.sha256
+          sha256sum -c swipl-*-linux-x86_64.tar.gz.sha256
           tar -xzf ui-dist.tar.gz -C "$GITHUB_WORKSPACE/release/hive/ui"
       - name: Fetch checksum-pinned uv and compile the current x86_64 lock
         run: |

@@ -66,12 +66,20 @@ resolving a symlink to the base interpreter would lose the installed environment
 The live service and the minds' sandbox both select this canonical environment executable.
 Create's acceptance check, a sandboxed tool that needs only the standard library, runs on the
 base interpreter instead (RUNTIME_CONTRACT.md, Create's Make).
-SWI is built
-into the same versioned home release, then the existing bridge directions are
-checked before the service starts. The installer then moves the SWI executable to
-the prefix's `bin/swipl` and leaves a link at its installed place, as the Mac
-bundle does: a mind's sandbox may read the folder two above the `swipl` the hive
-finds, and only from there does that folder hold `libswipl` and SWI's library.
+On x86_64 the download carries SWI-Prolog prebuilt (flagship's
+`install/macos/build-swipl-bundle-linux.sh`, the release manifest's `swipl_bundle`),
+which the installer unpacks into the versioned home release and checks reports the
+release's version; elsewhere, or where it doesn't run, SWI is built from its pinned
+source into the same folder. Either way the existing bridge directions are checked
+before the service starts, Prolog's side without `LD_LIBRARY_PATH`, which no mind
+gets. The prebuilt bundle's janus.so finds libpython in `python/lib` beside it,
+where the release keeps its Python and a mind's sandbox can see it. After a source
+build the installer moves the SWI executable to the
+prefix's `bin/swipl` and leaves a link at its installed place, where the prebuilt
+bundle already has it, as the Mac bundle does: a mind's sandbox may read the
+folder two above the `swipl` the hive finds, and only from there does that folder
+hold `libswipl` and SWI's library. janus-swi is built from its locked source
+release against whichever SWI-Prolog the install has.
 The core lock holds hive/requirements.txt, the Janus bridge and the packages a
 mind imports beyond them (openai, chromadb, py-landlock: install/macos/python-lock.py's
 MINDS, at the versions its linux-64 lock pins). Minds run on singnet/Omega at the

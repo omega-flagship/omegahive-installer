@@ -276,6 +276,12 @@ have another source identity. No npm install, UI build or Node prerequisite runs
 on the user's machine; the one Node it gets is the pinned nodejs.org runtime each
 platform's `node` entry names with its version, which the installer checks it reports. UI artifact/build-source metadata is retained separately
 from the descriptor, without introducing environment, credential or authority fields.
+Where the platform carries `swipl_bundle` the installer unpacks that prebuilt
+SWI-Prolog into `runtime/swipl`, beside `runtime/python`, whose `lib` its janus.so
+names, and checks it reports the catalogue's `swipl_version`; otherwise, or when
+it doesn't run, it builds `swipl_source` into the same folder. `swipl_bin` names
+`runtime/swipl/bin/swipl` either way, and Prolog's side of janus is checked
+without `LD_LIBRARY_PATH`, as a mind runs it.
 
 The installer validates the rendered unit using `systemd-analyze --user verify`
 before daemon-reload/start, refuses percent signs in generated home/service

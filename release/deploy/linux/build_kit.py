@@ -41,6 +41,17 @@ TEXT_SUFFIXES = {'.py', '.sh', '.md', '.txt', '.json', '.yaml', '.yml', '.toml',
 PUBLIC_HOSTS = {'github.com', 'files.pythonhosted.org',
                 'www.swi-prolog.org', 'download.swi-prolog.org', 'astral.sh',
                 'releases.astral.sh', 'nodejs.org'}
+# Each platform's release items, as install.py's PLATFORM_ITEMS: fetched from its pinned public URL or carried in the
+# kit, and whether every platform has it. A platform may carry SWI-Prolog prebuilt beside the source it builds
+# otherwise.
+PLATFORM_ITEMS = {'uv': ('url', True), 'python': ('url', True), 'node': ('url', True), 'swipl_source': ('url', True),
+                  'petta_source': ('url', True), 'source_payload': ('local', True), 'core_lock': ('local', True),
+                  'build_lock': ('local', True), 'swipl_bundle': ('local', False)}
+
+
+def platform_items(platform, where):
+    """The names of this platform's items that come from WHERE, 'url' or 'local', in a fixed order."""
+    return [name for name in sorted(platform) if PLATFORM_ITEMS[name][0] == where]
 
 
 class Refused(Exception):
@@ -474,18 +485,22 @@ def references(release):
             and type(code['sha256']) is str and re.fullmatch('[a-f0-9]{64}', code['sha256']), 'code_service_pin_required')
     refs.add(code['path'])
     payload = None
-    for platform in release['platforms'].values():
-        require(type(platform) is dict and set(platform) == {'uv', 'python', 'node', 'swipl_source',
-                'petta_source', 'source_payload', 'core_lock', 'build_lock'}, 'closed_platform_inputs')
+    for arch, platform in release['platforms'].items():
+        require(type(platform) is dict and {name for name, (_, every) in PLATFORM_ITEMS.items() if every}
+                <= set(platform) <= set(PLATFORM_ITEMS), 'closed_platform_inputs')
         if payload is None:
             payload = platform['source_payload']
         require(platform['source_payload'] == payload, 'one_identical_source_tarball_required')
-        for key in ('source_payload', 'core_lock', 'build_lock'):
+        for key in platform_items(platform, 'local'):
             refs.add(relative_name(platform[key]['path']))
+        # A prebuilt SWI-Prolog's name says the version and architecture it was built for (install.py checks the same).
+        require('swipl_bundle' not in platform or (set(platform['swipl_bundle']) == {'path', 'bytes', 'sha256'}
+                and platform['swipl_bundle']['path'] == 'swipl-' + release['swipl_version'] + '-linux-' + arch + '.tar.gz'),
+                'swipl_bundle_names_its_version_and_platform')
         # The Node a proposal's project check runs on also names its version, which the installer checks it reports.
         require(type(platform['node'].get('version')) is str
                 and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', platform['node']['version']), 'node_version_required')
-        for key in ('uv', 'python', 'node', 'swipl_source', 'petta_source'):
+        for key in platform_items(platform, 'url'):
             item = platform[key]
             url = urlsplit(item['url'])
             require(url.scheme == 'https' and url.hostname in PUBLIC_HOSTS and not url.username
@@ -573,7 +588,7 @@ def main():
             public_text(body, terms)
     inspect_source(bodies[payload['path']], prefix, payload['files'], github['tree'], terms)
     for platform in release['platforms'].values():
-        for key in ('source_payload', 'core_lock', 'build_lock'):
+        for key in platform_items(platform, 'local'):
             item = platform[key]
             require(all(artifacts[item['path']][k] == item[k] for k in ('bytes', 'sha256')), 'local_payload_pin_mismatch')
         validate_lock(bodies[platform['core_lock']['path']], core=True)

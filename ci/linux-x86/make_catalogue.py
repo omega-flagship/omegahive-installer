@@ -1,8 +1,9 @@
 """Purpose: build the checksum-bound x86_64 catalogue and bundle for one exact public release.
 
 Mirrors the reviewed aarch64 internal catalogue shape (studio-linux-user-release/2): the same apps, UI, bootstrap,
-SWI and PeTTa pins, with the x86_64 Python/uv pins and the source inventory recomputed from the exact source tarball.
-Every input is checked against a pin; nothing is downloaded here.
+SWI and PeTTa pins, with the x86_64 Python/uv pins and the source inventory recomputed from the exact source tarball,
+plus x86_64's prebuilt SWI-Prolog (swipl_bundle), which aarch64 lacks. Every input is checked against a pin; nothing is
+downloaded here.
 """
 import argparse
 import hashlib
@@ -90,6 +91,9 @@ def main():
         "source_payload": source,
         "core_lock": core,
         "build_lock": build,
+        # SWI-Prolog prebuilt for Linux x86_64 by flagship's install/macos/build-swipl-bundle-linux.sh, so an install
+        # here unpacks it rather than fetching and compiling swipl_source, which stays for a computer it doesn't run on.
+        "swipl_bundle": stage("swipl-%s-linux-x86_64.tar.gz" % base["swipl_version"]),
     }
     for app in base["apps"]:
         stage(app["path"], app)

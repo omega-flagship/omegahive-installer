@@ -17,15 +17,17 @@ every named local input is beneath the fixed sibling `kit-inputs/` directory.
 The CLI is `python3 -I -B -S build_kit.py --build-reviewed-kit`. No arbitrary input
 path, output directory, command, module or build dispatcher is accepted.
 
-The outer `kit-inputs.json` keeps the seven-key `omegahive-linux-kit-inputs/1` schema shown by the disabled example: `schema`, `ready`, `github`, `forbidden_public_terms`, `installer_template`, `release_manifest`, and `artifacts`. Artifact pins are exact `{path, bytes, sha256}` objects. `artifacts` is the complete outer payload: `install.py`, `release-manifest.json`, the identical scrubbed source tarball, platform core/build locks, the two app archives, the bootstrap helper/seed, and both the prebuilt UI archive and its raw manifest. The fixed installer template has a separate three-field pin and is not an outer payload member. Files must be regular, single-link, owned by the current user, without group/world write access, and stable while read. Symlink ancestry is refused. All paths are canonical relative names; duplicate or extra declarations are refused. The tool does not enumerate a directory to discover inputs.
+The outer `kit-inputs.json` keeps the seven-key `omegahive-linux-kit-inputs/1` schema shown by the disabled example: `schema`, `ready`, `github`, `forbidden_public_terms`, `installer_template`, `release_manifest`, and `artifacts`. Artifact pins are exact `{path, bytes, sha256}` objects. `artifacts` is the complete outer payload: `install.py`, `release-manifest.json`, the identical scrubbed source tarball, platform core/build locks, a platform's prebuilt SWI-Prolog bundle where it carries one, the Studio app archive, the bootstrap helper, the Omega core bundle, Create's Code service release, and both the prebuilt UI archive and its raw manifest. The fixed installer template has a separate three-field pin and is not an outer payload member. Files must be regular, single-link, owned by the current user, without group/world write access, and stable while read. Symlink ancestry is refused. All paths are canonical relative names; duplicate or extra declarations are refused. The tool does not enumerate a directory to discover inputs.
 
 ## Prebuilt UI in the release manifest
 
-The pinned `release_manifest` artifact contains the separate release-manifest document. That document uses schema `studio-linux-user-release/2`; its `ui_prebuilt` field is nested inside the release manifest and does not add a key to `kit-inputs.json`. The release v2 contract has no `node_version` or per-platform `node` package. The historical kit packager R3 donor validates the earlier release-manifest schema. This disabled R7 Source successor implements v2 validation; its execution and release qualification remain unestablished.
+The pinned `release_manifest` artifact contains the separate release-manifest document. That document uses schema `studio-linux-user-release/2`; its `ui_prebuilt` field is nested inside the release manifest and does not add a key to `kit-inputs.json`. The release v2 contract has no top-level `node_version`; each platform's `node` package names its own version, which the installer checks Node reports. The historical kit packager R3 donor validates the earlier release-manifest schema. This disabled R7 Source successor implements v2 validation; its execution and release qualification remain unestablished.
 
 `ui_prebuilt` has exactly `archive`, `manifest`, `source_revision`, and `source_tree`. Each of `archive` and `manifest` is an exact `{path, bytes, sha256}` `ArtifactSpec`. Their local files must also be included in `kit-inputs.artifacts`; the builder verifies each file against its declared path, byte count, and SHA256. `source_revision` and `source_tree` must match the raw UI manifest's `source_commit` and `source_tree`. They describe the UI build source independently from the release tarball's `github.commit` and `github.tree`.
 
 `omega_core` is one exact `{path, bytes, sha256}` `ArtifactSpec` named `omega-core-<first 7 hex of core-dependency.json's revision>.bundle`, the git bundle of the pinned singnet/Omega revision that the release's Mac zip also ships. Its local file must be in `kit-inputs.artifacts`; the builder checks it like the UI pins, and the installer checks the name against the revision before `scripts/setup_core.py --source` clones it.
+
+A platform may carry `swipl_bundle`, one exact `{path, bytes, sha256}` `ArtifactSpec` named `swipl-<swipl_version>-linux-<platform>.tar.gz`: SWI-Prolog prebuilt for that platform by flagship's `install/macos/build-swipl-bundle-linux.sh`. Its local file must be in `kit-inputs.artifacts`; the builder checks its name and pin, and the installer unpacks it in place of building `swipl_source`, which every platform still names for a computer the bundle doesn't run on. x86_64 carries one and aarch64 doesn't.
 
 The raw UI manifest has exactly six keys: `built_with`, `file_count`, `files`, `format`, `source_commit`, and `source_tree`. Its format is `omegahive.ui-prebuilt/1`; `files` is a complete mapping from canonical relative paths to exact `{bytes, sha256}` rows. The currently pinned owner-supplied manifest declares 223 files (7,682,459 total file bytes) from source commit `ee370059eb0f28356bc1c3fc78caaa0d2183d6c6` and tree `a56a4f732610a6b43198ac4bf0652b83a5f790e4`. Its `built_with` value records `npm ci && npm run build (node v26.0.0) on the Mini`; this is build provenance, not an installation command or a user-side prerequisite.
 
@@ -51,8 +53,8 @@ omissions does not qualify as the supplied full Git tree. Such a mismatch must
 be reconciled explicitly before a final release is bound.
 
 All module rows join both source vectors; the top-level `install.py` joins
-`deploy/linux/install.py`. Both app archives keep their exact original bytes and
-have closed file inventories. Source/app links, undeclared directories, duplicate
+`deploy/linux/install.py`. The Studio app archive keeps its exact original bytes and
+has a closed file inventory. Source/app links, undeclared directories, duplicate
 members and unsafe paths are rejected. App program digests remain subject to the
 installer's separate canonical program-admission check; this packager does not
 execute that check. Locks require exact versions and SHA256 hashes; the core lock
@@ -98,8 +100,9 @@ then receives Base64 after its existing marker. It needs no new local-artifact
 lookup hook. The installer resolves each release-manifest local `path` beneath
 its extracted bundle, before any privileged dependency phase.
 
-Limits match the reviewed installer: at most 128 outer members, 64 MiB per member
-and compressed bundle, 128 MiB total outer payload, and 96 MiB final script.
+Limits follow the reviewed installer's `SCRIPT_LIMIT` of 128 MiB for the final
+script: the compressed bundle and each outer member at most three quarters of it
+(96 MiB), at most 128 outer members and 192 MiB of outer payload.
 Source inventory is bounded to 5,000 files / 256 MiB and its complete tar stream
 to 288 MiB. Each source/app inventory file is at most 8 MiB. These stricter input
 limits may refuse a larger release rather than silently expand the contract.

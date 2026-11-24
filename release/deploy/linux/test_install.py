@@ -953,14 +953,20 @@ class InstallerTests(unittest.TestCase):
                 install.manage('uninstall', home)
             run.assert_not_called(); self.assertEqual((runtime / 'keep').read_text(), 'unrecorded')
 
-    def complete_workflow(self, restricted):
-        """Fail once after extraction, rerun to completion, and return every command with the hive's private root."""
+    def complete_workflow(self, restricted, arch='aarch64', prebuilt=None):
+        """Fail once after extraction, rerun to completion, and return every command, the hive's private root, whether
+        the AppArmor profile was written, the folders extract_tool unpacked and what setup printed. prebuilt is None
+        for a download without a prebuilt SWI-Prolog for arch, 'runs' or 'fails' for one whose swipl does or doesn't
+        run."""
         with tempfile.TemporaryDirectory() as name:
             home = Path(name); root = home / '.local/share/omegahive'; root.mkdir(parents=True, mode=0o700)
             for folder in ('data', 'cache'):
                 (root / folder).mkdir(mode=0o700); (root / folder / 'keep').write_text(folder)
             bundle = home / 'bundle'; bundle.mkdir(); payload = bundle / 'synthetic'; payload.write_bytes(b'not executed')
-            value = catalogue(); attempted = []; commands = []
+            value = catalogue(); attempted = []; commands = []; tools = []; janus_envs = []
+            if prebuilt:
+                value['platforms'][arch]['swipl_bundle'] = {'path': 'swipl-10.1.14-linux-' + arch + '.tar.gz',
+                                                            'bytes': 1, 'sha256': '7' * 64}
             def source(_archive, destination, rows, _prefix):
                 destination.mkdir(); attempted.append(destination)
                 for item in rows:
@@ -970,31 +976,44 @@ class InstallerTests(unittest.TestCase):
                     raise install.Refused('synthetic extraction failure')
                 self.assertFalse((destination / 'old-partial').exists())
             def tool(_archive, destination):
-                destination.mkdir(parents=True)
+                destination.mkdir(parents=True); tools.append(destination.name)
                 if destination.name == 'uv': (destination / 'uv').write_bytes(b'never executed')
                 if destination.name == 'node':
                     (destination / 'bin').mkdir(); (destination / 'bin/node').write_bytes(b'never executed')
                 if destination.name == 'python':
                     (destination / 'bin').mkdir(); (destination / 'lib').mkdir()
                     (destination / 'bin/python3.12').write_bytes(b'never executed')
+                if destination.name == 'swipl':
+                    # The prebuilt bundle's layout: the executable itself at bin/swipl, the link SWI's tools use beside
+                    # its home, and swipl.home naming that home.
+                    launcher = destination / 'bin/swipl'; launcher.parent.mkdir()
+                    launcher.write_bytes(b'never executed'); launcher.chmod(0o700)
+                    link = destination / 'lib/swipl/bin' / (arch + '-linux') / 'swipl'; link.parent.mkdir(parents=True)
+                    link.symlink_to('../../../../bin/swipl')
+                    (destination / 'swipl.home').write_text('lib/swipl\n')
             def venv(path, _source):
                 path.parent.mkdir(parents=True); path.write_bytes(b'never executed'); return path
             def run(instance, argv, **kwargs):
                 commands.append(argv)
+                if argv[1:2] == ['-g'] and 'py_call' in argv[2]:
+                    janus_envs.append(kwargs.get('env'))
                 if argv[0] == '/usr/bin/systemd-analyze':
                     scratch = Path(kwargs['env']['XDG_RUNTIME_DIR'])
                     self.assertEqual(scratch.parent, runtime); self.assertTrue(scratch.is_dir())
+                if prebuilt == 'fails' and argv[1:2] == ['-g'] and 'version_data' in argv[2]:
+                    raise install.CommandFailed('synthetic: this swipl does not run here', 1)
                 if argv[:2] == ['/usr/bin/cmake', '--install']:
                     prefix = root / 'releases/test-1/runtime/swipl'
-                    target = prefix / 'lib/swipl/bin/aarch64-linux/swipl'
+                    target = prefix / 'lib/swipl/bin' / (arch + '-linux') / 'swipl'
                     target.parent.mkdir(parents=True); target.write_bytes(b'never executed'); target.chmod(0o700)
                     launcher = prefix / 'bin/swipl'; launcher.parent.mkdir()
-                    launcher.symlink_to('../lib/swipl/bin/aarch64-linux/swipl')
+                    launcher.symlink_to('../lib/swipl/bin/' + arch + '-linux/swipl')
             def ui(_archive, _manifest, destination, _provenance):
                 destination.mkdir(parents=True); return b'{}'
-            runtime = home / 'run'; runtime.mkdir(mode=0o700)
+            runtime = home / 'run'; runtime.mkdir(mode=0o700); printed = io.StringIO()
             with ExitStack() as stack:
-                stack.enter_context(patch.object(install, 'preflight', return_value='aarch64'))
+                stack.enter_context(patch.object(install, 'preflight', return_value=arch))
+                stack.enter_context(redirect_stdout(printed))
                 stack.enter_context(patch.object(install, 'userns_restricted', return_value=restricted))
                 stack.enter_context(patch.object(install.Installer, 'omega_core', lambda obj, app, python: commands.append(['omega-core', str(app)])))
                 stack.enter_context(patch.object(install, 'apparmor_enabled', return_value=True))
@@ -1027,37 +1046,92 @@ class InstallerTests(unittest.TestCase):
             self.assertIn(['/usr/bin/systemctl', '--user', 'enable', 'omegahive.service', 'omegacode.service'], commands)
             self.assertLess(commands.index(['/usr/bin/systemctl', '--user', 'start', 'omegahive.service']),
                             commands.index(['/usr/bin/systemctl', '--user', 'start', 'omegacode.service']))
-            # The executable now sits at the prefix's bin and its installed place links to it (place_swipl).
+            # The executable sits at the prefix's bin and its installed place links to it: place_swipl moves it there
+            # after a source build, and the prebuilt bundle comes that way.
             canonical_swipl = root / 'releases/test-1/runtime/swipl/bin/swipl'
             self.assertTrue(canonical_swipl.is_file() and not canonical_swipl.is_symlink())
-            self.assertEqual((root / 'releases/test-1/runtime/swipl/lib/swipl/bin/aarch64-linux/swipl').resolve(), canonical_swipl)
+            self.assertEqual((root / 'releases/test-1/runtime/swipl/lib/swipl/bin' / (arch + '-linux') / 'swipl').resolve(),
+                             canonical_swipl)
             self.assertEqual(json.loads((root / 'runtime.json').read_text())['swipl_bin'], str(canonical_swipl))
+            # A prebuilt SWI-Prolog's janus.so finds libpython in python/lib beside swipl/, so no toolchain folder is
+            # made for it, and Prolog's side of janus is checked without LD_LIBRARY_PATH, which never reaches a mind.
+            self.assertFalse((root / 'releases/test-1/runtime/toolchain').exists())
+            self.assertTrue(janus_envs)
+            self.assertTrue(all(env is not None and 'LD_LIBRARY_PATH' not in env for env in janus_envs))
             descriptor = json.loads((root / 'runtime.json').read_text())
             self.assertEqual(descriptor['schema'], 'studio-linux-user-runtime/3')
             self.assertEqual(descriptor['code_service'], code_record(root))
             self.assertEqual((descriptor['port'], descriptor['browser_port']), (8700, 8701))
             self.assertEqual(len(descriptor), 19)
-            self.assertEqual([argv[0] for argv in commands if len(argv) > 1 and argv[1] == '-g'], [str(canonical_swipl)])
+            # A prebuilt SWI-Prolog is first asked its version; every install then checks janus from Prolog's side.
+            self.assertEqual([argv[0] for argv in commands if len(argv) > 1 and argv[1] == '-g'],
+                             [str(canonical_swipl)] * (2 if prebuilt else 1))
             core = commands.index(['omega-core', str(root / 'releases/test-1/app')])
             self.assertLess(core, commands.index(['/usr/bin/systemctl', '--user', 'enable', 'omegahive.service', 'omegacode.service']))
             self.assertGreater(core, max(i for i, argv in enumerate(commands) if len(argv) > 1 and argv[1] == '-g'))
-            return commands, root, (root / 'releases/test-1/omegahive.apparmor').exists()
+            return SimpleNamespace(commands=commands, root=root, tools=tools, printed=printed.getvalue(),
+                                   profile=(root / 'releases/test-1/omegahive.apparmor').exists())
 
     def test_failure_after_extraction_can_rerun_complete_workflow_without_losing_data(self):
-        commands, _root, profile_written = self.complete_workflow(restricted=False)
-        self.assertIn(['/usr/bin/unshare', '--user', '--map-root-user', '--mount', '--net', '--pid', '--fork', '/usr/bin/true'], commands)
+        result = self.complete_workflow(restricted=False)
+        self.assertIn(['/usr/bin/unshare', '--user', '--map-root-user', '--mount', '--net', '--pid', '--fork', '/usr/bin/true'], result.commands)
         # The Code service's profile is loaded on every release; only a restricted host also needs the launcher's.
-        self.assertTrue(profile_written)
-        self.assertTrue(any(install.APPARMOR_PARSER in argv for argv in commands))
+        self.assertTrue(result.profile)
+        self.assertTrue(any(install.APPARMOR_PARSER in argv for argv in result.commands))
+        # A download without a prebuilt SWI-Prolog for this computer builds it from the pinned source.
+        self.assertIn('swipl-source', result.tools); self.assertNotIn('swipl', result.tools)
+        self.assertTrue(any(argv[0] == '/usr/bin/cmake' for argv in result.commands))
 
     def test_restricted_userns_host_loads_the_launcher_profile_instead_of_the_plain_probe(self):
-        commands, root, profile_written = self.complete_workflow(restricted=True)
+        result = self.complete_workflow(restricted=True)
+        commands, root = result.commands, result.root
         self.assertFalse(any(argv[:1] == ['/usr/bin/unshare'] for argv in commands))
-        self.assertTrue(profile_written)
+        self.assertTrue(result.profile)
         target = '/etc/apparmor.d/' + install.apparmor_file_name(install.os.getuid())
         source = root / 'releases/test-1/omegahive.apparmor'
         self.assertIn(['/usr/bin/sudo', '-S', '/usr/bin/install', '-o', 'root', '-g', 'root', '-m', '0644', str(source), target], commands)
         self.assertIn(['/usr/bin/sudo', '-S', install.APPARMOR_PARSER, '-r', target], commands)
+
+    def test_prebuilt_swipl_is_unpacked_beside_the_releases_python_and_nothing_is_compiled(self):
+        result = self.complete_workflow(restricted=False, arch='x86_64', prebuilt='runs')
+        runtime = result.root / 'releases/test-1/runtime'
+        self.assertIn('swipl', result.tools); self.assertNotIn('swipl-source', result.tools)
+        self.assertFalse(any(argv[0] in ('/usr/bin/cmake', '/usr/bin/ldd') for argv in result.commands))
+        self.assertIn([str(runtime / 'swipl/bin/swipl'), '-g',
+                       'current_prolog_flag(version_data,swi(10,1,14,_))->halt(0);halt(1)'], result.commands)
+        self.assertNotIn("didn't run", result.printed)
+
+    def test_prebuilt_swipl_that_does_not_run_gives_way_to_the_source_build(self):
+        result = self.complete_workflow(restricted=False, arch='x86_64', prebuilt='fails')
+        self.assertEqual([name for name in result.tools if name.startswith('swipl')], ['swipl', 'swipl-source'])
+        # The setup log gets what the loader found before the source build starts.
+        programs = [argv[0] for argv in result.commands]
+        self.assertLess(programs.index('/usr/bin/ldd'), programs.index('/usr/bin/cmake'))
+        self.assertIn("The prebuilt SWI-Prolog didn't run on this computer", result.printed)
+
+    def test_catalogue_takes_a_prebuilt_swipl_only_named_for_its_version_and_architecture(self):
+        value = catalogue()
+        value['platforms']['x86_64']['swipl_bundle'] = {'path': 'swipl-10.1.14-linux-x86_64.tar.gz', 'bytes': 1,
+                                                        'sha256': '7' * 64}
+        self.assertIs(install.validate_catalogue(value), value)
+        def bundle(**change):
+            return lambda candidate: candidate['platforms']['x86_64']['swipl_bundle'].update(change)
+        mutations = {
+            'another architecture': bundle(path='swipl-10.1.14-linux-aarch64.tar.gz'),
+            'another version': bundle(path='swipl-10.1.13-linux-x86_64.tar.gz'),
+            'a folder': bundle(path='bundles/swipl-10.1.14-linux-x86_64.tar.gz'),
+            'a download': bundle(url='https://github.com/publisher/releases/download/reviewed/swipl.tar.gz'),
+            'an oversized one': bundle(bytes=512 * 1024**2 + 1),
+            'the other platform': lambda candidate: candidate['platforms']['aarch64'].update(
+                swipl_bundle=dict(candidate['platforms']['x86_64']['swipl_bundle'])),
+            'an item nobody reviewed': lambda candidate: candidate['platforms']['x86_64'].update(
+                janus_wheel={'path': 'janus.whl', 'bytes': 1, 'sha256': '6' * 64}),
+            'no source to fall back on': lambda candidate: candidate['platforms']['x86_64'].pop('swipl_source'),
+        }
+        for label, mutate in mutations.items():
+            changed = copy.deepcopy(value); mutate(changed)
+            with self.subTest(label), self.assertRaises(install.Refused):
+                install.validate_catalogue(changed)
 
     def test_disk_refusal_names_required_gb_before_native_sandbox_check(self):
         with patch.object(install.P, 'read_text', return_value='ID=ubuntu\nVERSION_ID="22.04"\n'), \
